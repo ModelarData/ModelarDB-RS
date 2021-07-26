@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2018"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
+[profile.release]
+lto = true
+codegen-units = 1
+
 [dependencies]
 datafusion = { git = "https://github.com/apache/arrow-datafusion/", rev = "18dbbb4" }
 
