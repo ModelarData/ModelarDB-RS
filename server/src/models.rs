@@ -4,7 +4,7 @@ use datafusion::arrow::array::{Int32Array, Int64Array, Int32Builder,
 
 
 pub fn length(num_rows: usize, gids: &Int32Array, start_times: &Int64Array,
-	      end_times: &Int64Array, sampling_intervals: &Vec<i32>) -> usize {
+	      end_times: &Int64Array, sampling_intervals: &[i32]) -> usize {
     //TODO: Use SIMD through the arrow kernels if all data is from a single time
     // series, or if all queried time series use the same sampling interval
     let mut data_points = 0;
@@ -108,7 +108,7 @@ fn grid_gorilla(
     timestamps: &mut TimestampMillisecondBuilder,
     values: &mut Float32Builder) {
 
-    let mut bits = Bits::new(&model);
+    let mut bits = Bits::new(model);
     let mut stored_leading_zeroes = std::u32::MAX;
     let mut stored_trailing_zeroes: u32 = 0;
     let mut last_value = bits.read_bits(32);
@@ -159,16 +159,16 @@ struct Bits<'a> {
 impl<'a> Bits<'a> {
     pub fn new(bytes: &'a [u8]) -> Bits<'a> {
 	Self {
-	    bytes: bytes,
+	    bytes,
 	    current_bit: 0,
 	}
     }
 
-    pub fn read_bit(self: &mut Self) -> bool {
+    pub fn read_bit(&mut self) -> bool {
 	self.read_bits(1) == 1
     }
 
-    pub fn read_bits(self: &mut Self, count: u8) -> u32 {
+    pub fn read_bits(&mut self, count: u8) -> u32 {
 	let mut value: u64 = 0;
 	let start = self.current_bit;
 	let end = self.current_bit + count as u64;

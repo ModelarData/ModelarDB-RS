@@ -1,10 +1,8 @@
-use std::fs::DirEntry;
+use std::fs::{DirEntry, read_dir};
 use std::path::Path;
 
 /** Public Types **/
-//TODO: reuse existing type in datafusion catalog stop copying?
 pub struct Catalog {
-    pub cores: usize,
     pub tables: Vec<Table>,
     pub model_tables: Vec<ModelTable>
 }
@@ -14,7 +12,7 @@ pub struct Table {
     pub path: String
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ModelTable {
     pub name: String,
     pub segment_folder: String,
@@ -23,10 +21,25 @@ pub struct ModelTable {
 
 
 /** Public Methods **/
+impl Catalog {
+    pub fn table_names(&self) -> Vec<String> {
+	let mut table_names: Vec<String> = vec!();
+	for table in &self.tables {
+	    table_names.push(table.name.clone());
+	}
+
+	for model_table in &self.model_tables {
+	    table_names.push(model_table.name.clone());
+	}
+	table_names
+    }
+}
+
+/** Public Functions **/
 pub fn build_catalog(data_folder: &str) -> Catalog {
     let mut tables = vec!();
     let mut model_tables = vec!();
-    if let Ok(data_folder) = std::fs::read_dir(data_folder) {
+    if let Ok(data_folder) = read_dir(data_folder) {
 	for dir_entry in data_folder {
 	    if let Ok(dir_entry) = dir_entry {
 		let dir_entry_path = dir_entry.path();
@@ -34,7 +47,7 @@ pub fn build_catalog(data_folder: &str) -> Catalog {
 		    let file_name = dir_entry.file_name()
 			.to_str().unwrap().to_string();
 		    if is_parquet_file(&dir_entry) {
-			let name = if let Some(index) = file_name.find(".") {
+			let name = if let Some(index) = file_name.find('.') {
 			    file_name[0..index].to_string()
 			} else {
 			    file_name
@@ -60,8 +73,7 @@ pub fn build_catalog(data_folder: &str) -> Catalog {
     } else {
 	eprintln!("ERROR: unable to open data folder {}", &data_folder);
     }
-    //TODO: read cores from system instead of being hard-codded
-    Catalog { cores: 4, tables, model_tables }
+    Catalog { tables, model_tables }
 }
 
 /** Private Methods **/

@@ -1,0 +1,11 @@
+[package]
+name = "mmdbc"
+version = "0.1.0"
+edition = "2018"
+authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
+
+[dependencies]
+arrow = "5.0.0"
+arrow-flight = "5.0.0"
+tonic = "0.4.3"
+tokio = "1.9.0"

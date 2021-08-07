@@ -48,15 +48,15 @@ impl TableProvider for DataPointView {
     }
 
     fn schema(&self) -> SchemaRef {
-	Arc::new(Schema::new(vec![
+	Arc::new(Schema::new(vec!(
 	    Field::new("tid", DataType::Int32, false),
 	    Field::new(
 		"timestamp",
 		DataType::Timestamp(TimeUnit::Millisecond, None),
-		false,
+		false
 	    ),
 	    Field::new("value", DataType::Float32, false)
-	]))
+	)))
     }
 
     fn supports_filter_pushdown(&self, _filter: &Expr)
@@ -179,7 +179,7 @@ impl GridStream {
 	GridStream { schema, model_table, input }
     }
 
-    fn grid(self: &Self, batch: &RecordBatch) -> ArrowResult<RecordBatch> {
+    fn grid(&self, batch: &RecordBatch) -> ArrowResult<RecordBatch> {
 	//TODO: how to efficiently construct and return only the requested columns?
 	//TODO: it is necessary to only return batch_limit data points to prevent skew?
 	//TODO: should start_time and end_time be unsigned integers instead?
