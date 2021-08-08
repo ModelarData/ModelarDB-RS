@@ -1,5 +1,9 @@
 use std::fs::{DirEntry, read_dir};
-use std::path::Path;
+use std::{fs::File, path::Path};
+
+use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
+use datafusion::parquet::errors::ParquetError;
+use datafusion::parquet::record::RowAccessor;
 
 /** Public Types **/
 pub struct Catalog {
@@ -55,10 +59,15 @@ pub fn build_catalog(data_folder: &str) -> Catalog {
 			tables.push(Table { name, path: path.to_string() });
 		    } else if is_model_folder(&dir_entry) {
 			//TODO: check model_types and read time_series
-			let segment_folder = path.to_string() + "/segment";
-			model_tables.push(
-			    ModelTable { name: file_name, segment_folder,
-					 sampling_intervals: vec![60000;30] });
+			let table_folder = path.to_string();
+			let segment_folder = table_folder.clone() + "/segment";
+			let time_series_file = table_folder.clone() + "/time_series.parquet";
+			if let Ok(sampling_intervals) = read_sampling_intervals(&time_series_file) {
+			    model_tables.push(
+				ModelTable { name: file_name, segment_folder, sampling_intervals });
+			} else {
+			    eprintln!("ERROR: no sampling interval for {}", path);
+			}
 		    } else {
 			eprintln!("ERROR: unsupported file or folder {}", path);
 		    }
@@ -97,4 +106,18 @@ fn is_parquet_file(dir_entry: &DirEntry) -> bool {
     } else {
 	false
     }
+}
+
+fn read_sampling_intervals(time_series_file: &str) -> Result<Vec<i32>, ParquetError> {
+    let path = Path::new(time_series_file);
+    let mut sampling_intervals = vec!();
+    sampling_intervals.push(0); //Tid indexing is one based
+    if let Ok(file) = File::open(&path) {
+	let reader = SerializedFileReader::new(file)?;
+	let rows = reader.get_row_iter(None)?;
+	for row in rows {
+	    sampling_intervals.push(row.get_int(2)?);
+	}
+    }
+    Ok(sampling_intervals)
 }
