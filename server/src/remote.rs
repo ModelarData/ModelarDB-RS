@@ -95,19 +95,21 @@ impl FlightService for FlightServiceHandler {
     ) -> Result<Response<SchemaResult>, Status> {
         if let Some(table_name) = request.into_inner().path.get(0) {
             let execution = self.context.execution.clone();
-            if let Some(catalog) = execution.catalog("datafusion") { //default catalog
-                if let Some(schema) = catalog.schema("public") { //default schema
+            if let Some(catalog) = execution.catalog("datafusion") {
+                //default catalog
+                if let Some(schema) = catalog.schema("public") {
+                    //default schema
                     if let Some(table) = schema.table(table_name) {
                         let schema = &*table.schema();
                         let options = IpcWriteOptions::default();
                         let schema_as_ipc = SchemaAsIpc::new(schema, &options);
-			if let Ok(sr) = schema_as_ipc.try_into() {
-			    Ok(Response::new(sr))
-			} else {
-			    Err(Status::internal("unable to serialize schema"))
-			}
-		    } else {
-			Err(Status::not_found("table does not exist"))
+                        if let Ok(sr) = schema_as_ipc.try_into() {
+                            Ok(Response::new(sr))
+                        } else {
+                            Err(Status::internal("unable to serialize schema"))
+                        }
+                    } else {
+                        Err(Status::not_found("table does not exist"))
                     }
                 } else {
                     Err(Status::internal("schema does not exist"))
