@@ -1,5 +1,6 @@
 use std::fs::{read_dir, DirEntry};
 use std::{fs::File, path::Path};
+use std::io::Read;
 
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
@@ -39,7 +40,7 @@ impl Catalog {
 }
 
 /** Public Functions **/
-pub fn build_catalog(data_folder: &str) -> Catalog {
+pub fn new(data_folder: &str) -> Catalog {
     let mut tables = vec![];
     let mut model_tables = vec![];
     if let Ok(data_folder) = read_dir(data_folder) {
@@ -49,28 +50,14 @@ pub fn build_catalog(data_folder: &str) -> Catalog {
                 if let Some(path) = dir_entry_path.to_str() {
                     let file_name = dir_entry.file_name().to_str().unwrap().to_string();
                     if is_parquet_file(&dir_entry) {
-                        let name = if let Some(index) = file_name.find('.') {
-                            file_name[0..index].to_string()
-                        } else {
-                            file_name
-                        };
-                        tables.push(Table {
-                            name,
-                            path: path.to_string(),
-                        });
+                        tables.push(new_table(file_name, path.to_string()));
+                        eprintln!("INFO: initialized table {}", path);
                     } else if is_model_folder(&dir_entry) {
-                        //TODO: check model_types and read time_series
-                        let table_folder = path.to_string();
-                        let segment_folder = table_folder.clone() + "/segment";
-                        let time_series_file = table_folder.clone() + "/time_series.parquet";
-                        if let Ok(sampling_intervals) = read_sampling_intervals(&time_series_file) {
-                            model_tables.push(ModelTable {
-                                name: file_name,
-                                segment_folder,
-                                sampling_intervals,
-                            });
+                        if let Ok(model_table) = new_model_table(file_name, path.to_string()) {
+                            model_tables.push(model_table);
+                            eprintln!("INFO: initialized model table {}", path);
                         } else {
-                            eprintln!("ERROR: no sampling interval for {}", path);
+                            eprintln!("ERROR: unsupported model table {}", path);
                         }
                     } else {
                         eprintln!("ERROR: unsupported file or folder {}", path);
@@ -93,6 +80,26 @@ pub fn build_catalog(data_folder: &str) -> Catalog {
 }
 
 /** Private Methods **/
+fn is_parquet_file(dir_entry: &DirEntry) -> bool {
+    let mut file = File::open(dir_entry.path()).unwrap();
+    let mut magic_bytes = vec![0u8; 4];
+    let _ = file.read_exact(&mut magic_bytes);
+    magic_bytes == [80, 65, 82, 49] //Magic bytes PAR1
+}
+
+fn new_table(file_name: String, path: String) -> Table {
+    let name = if let Some(index) = file_name.find('.') {
+        file_name[0..index].to_string()
+    } else {
+        file_name
+    };
+
+    Table {
+        name,
+        path,
+    }
+}
+
 fn is_model_folder(dir_entry: &DirEntry) -> bool {
     if let Ok(metadata) = dir_entry.metadata() {
         if metadata.is_dir() {
@@ -103,24 +110,36 @@ fn is_model_folder(dir_entry: &DirEntry) -> bool {
                     path.push(required_file_name);
                     Path::new(&path).exists()
                 })
-                .all(|exists| exists);
+            .all(|exists| exists);
         }
     }
     false
 }
 
-fn is_parquet_file(dir_entry: &DirEntry) -> bool {
-    if let Some(extension) = dir_entry.path().extension() {
-        extension == "parquet"
-    } else {
-        false
+fn new_model_table(table_name: String, table_folder: String) -> Result<ModelTable, ParquetError> {
+    //Ensure only supported model types are used
+    let model_types_file = table_folder.clone() + "/model_type.parquet";
+    let path = Path::new(&model_types_file);
+    if let Ok(file) = File::open(&path) {
+        let reader = SerializedFileReader::new(file)?;
+        let rows = reader.get_row_iter(None)?;
+        for row in rows {
+            let mtid = row.get_int(0)?;
+            let name = row.get_bytes(1)?.as_utf8()?;
+            match (mtid, name) {
+                (1, "dk.aau.modelardb.core.models.UncompressedModelType") => (), 
+                (2, "dk.aau.modelardb.core.models.PMC_MeanModelType") => (),
+                (3, "dk.aau.modelardb.core.models.SwingFilterModelType") => (),
+                (4, "dk.aau.modelardb.core.models.FacebookGorillaModelType") => (),
+                _ => return Err(ParquetError::General("unsupported model type".to_string()))
+            }
+        }
     }
-}
 
-fn read_sampling_intervals(time_series_file: &str) -> Result<Vec<i32>, ParquetError> {
-    let path = Path::new(time_series_file);
-    let mut sampling_intervals = vec![];
-    sampling_intervals.push(0); //Tid indexing is one based
+    //TODO: Read groups, sampling intervals, and members
+    let time_series_file = table_folder.clone() + "/time_series.parquet";
+    let path = Path::new(&time_series_file);
+    let mut sampling_intervals = vec![0]; //Tid indexing is one based
     if let Ok(file) = File::open(&path) {
         let reader = SerializedFileReader::new(file)?;
         let rows = reader.get_row_iter(None)?;
@@ -128,5 +147,10 @@ fn read_sampling_intervals(time_series_file: &str) -> Result<Vec<i32>, ParquetEr
             sampling_intervals.push(row.get_int(2)?);
         }
     }
-    Ok(sampling_intervals)
+
+    Ok(ModelTable {
+        name: table_name,
+        segment_folder: table_folder + "/segment",
+        sampling_intervals,
+    })
 }

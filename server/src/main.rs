@@ -22,7 +22,7 @@ fn main() {
     args.next(); //Skip executable
     if let Some(data_folder) = args.next() {
         //Build context
-        let catalog = catalog::build_catalog(&data_folder);
+        let catalog = catalog::new(&data_folder);
         let runtime = Runtime::new().unwrap();
         let execution = engine::new(&catalog);
         let context = Arc::new(Context {
