@@ -5,12 +5,12 @@ edition = "2018"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
-datafusion = { git = "https://github.com/apache/arrow-datafusion/", rev = "18dbbb4" }
+datafusion = "5.0.0"
 num_cpus = "1.13.0"
 
-tokio = "1.9.0"
-async-trait = "0.1.50"
+tokio = "1.10.0"
+async-trait = "0.1.51"
 futures = "0.3.16"
 
-arrow-flight = "5.0.0"
-tonic = "0.4.3"
+arrow-flight = "5.1.0"
+tonic = "0.5.2"
