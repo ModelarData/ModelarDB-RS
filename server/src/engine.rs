@@ -17,14 +17,14 @@ use std::sync::Arc;
 use datafusion::prelude::{ExecutionConfig, ExecutionContext};
 
 use crate::catalog::Catalog;
+use crate::optimizer::model_simple_aggregates;
 use crate::tables::DataPointView;
 
 /** Public Functions **/
 pub fn new(catalog: &Catalog) -> ExecutionContext {
-    let config = ExecutionConfig::new()
-        .add_optimizer_rule(Arc::new(crate::optimizer::PrintOptimizerRule {}))
-        .with_query_planner(Arc::new(crate::optimizer::PrintQueryPlanner {}))
-        .add_physical_optimizer_rule(Arc::new(crate::optimizer::PrintPhysicalOptimizerRule {}));
+    let config = ExecutionConfig::new().add_physical_optimizer_rule(Arc::new(
+        model_simple_aggregates::ModelSimpleAggregatesPhysicalOptimizerRule {},
+    ));
     let mut ctx = ExecutionContext::with_config(config);
 
     //Initializes tables consisting of standard Apache Parquet files

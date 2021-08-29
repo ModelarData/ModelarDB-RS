@@ -150,7 +150,7 @@ fn new_model_table(table_name: String, table_folder: String) -> Result<ModelTabl
         }
     }
 
-    //TODO: Read groups, sampling intervals, and members
+    //TODO: Read groups and members
     let time_series_file = table_folder.clone() + "/time_series.parquet";
     let path = Path::new(&time_series_file);
     let mut sampling_intervals = vec![0]; //Tid indexing is one based

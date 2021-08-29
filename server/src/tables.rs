@@ -135,9 +135,11 @@ impl TableProvider for DataPointView {
 }
 
 /* ExecutionPlan */
+//GridExec is public so the physical optimizer rules can pattern match on it, and
+//model_table is public so the rules can reuse it as context is not in their scope.
 #[derive(Debug, Clone)]
-struct GridExec {
-    model_table: Arc<ModelTable>,
+pub struct GridExec {
+    pub model_table: Arc<ModelTable>,
     projection: Option<Vec<usize>>,
     predicate: Option<Expr>,
     batch_size: usize,

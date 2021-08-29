@@ -12,6 +12,8 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+pub mod model_simple_aggregates;
+
 use std::sync::Arc;
 
 use datafusion::error::Result;
@@ -30,7 +32,7 @@ impl OptimizerRule for PrintOptimizerRule {
     fn optimize(
         &self,
         plan: &LogicalPlan,
-        execution_props: &ExecutionProps,
+        _execution_props: &ExecutionProps,
     ) -> Result<LogicalPlan> {
         println!("LOGICAL PLAN[START]\n {:#?} \nLOGICAL PLAN[END]", &plan);
         Ok(plan.clone())
@@ -61,7 +63,7 @@ impl PhysicalOptimizerRule for PrintPhysicalOptimizerRule {
     fn optimize(
         &self,
         plan: Arc<dyn ExecutionPlan>,
-        config: &ExecutionConfig,
+        _config: &ExecutionConfig,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         println!("EXECUTION PLAN[START]\n {:#?} \nEXECUTION PLAN[END]", &plan);
         Ok(plan.clone())
