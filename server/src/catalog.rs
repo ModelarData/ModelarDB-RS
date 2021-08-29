@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 use std::fs::{read_dir, DirEntry};
-use std::{fs::File, path::Path};
 use std::io::Read;
+use std::{fs::File, path::Path};
 
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
@@ -108,10 +108,7 @@ fn new_table(file_name: String, path: String) -> Table {
         file_name
     };
 
-    Table {
-        name,
-        path,
-    }
+    Table { name, path }
 }
 
 fn is_model_folder(dir_entry: &DirEntry) -> bool {
@@ -124,7 +121,7 @@ fn is_model_folder(dir_entry: &DirEntry) -> bool {
                     path.push(required_file_name);
                     Path::new(&path).exists()
                 })
-            .all(|exists| exists);
+                .all(|exists| exists);
         }
     }
     false
@@ -141,11 +138,11 @@ fn new_model_table(table_name: String, table_folder: String) -> Result<ModelTabl
             let mtid = row.get_int(0)?;
             let name = row.get_bytes(1)?.as_utf8()?;
             match (mtid, name) {
-                (1, "dk.aau.modelardb.core.models.UncompressedModelType") => (), 
+                (1, "dk.aau.modelardb.core.models.UncompressedModelType") => (),
                 (2, "dk.aau.modelardb.core.models.PMC_MeanModelType") => (),
                 (3, "dk.aau.modelardb.core.models.SwingFilterModelType") => (),
                 (4, "dk.aau.modelardb.core.models.FacebookGorillaModelType") => (),
-                _ => return Err(ParquetError::General("unsupported model type".to_string()))
+                _ => return Err(ParquetError::General("unsupported model type".to_string())),
             }
         }
     }
