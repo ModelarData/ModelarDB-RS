@@ -122,12 +122,14 @@ fn repl(rt: Runtime, mut fsc: FlightServiceClient<Channel>) -> Result<()> {
         //Get user input
         input.clear();
         print!("ModelarDB> ");
-        std::io::stdout().flush()?;
-        std::io::stdin().read_line(&mut input)?;
+        io::stdout().flush()?;
+        io::stdin().read_line(&mut input)?;
         input.pop(); //Removes \n
 
-        //Execute and print query or command
-        execute_and_print_query_or_command(&rt, &mut fsc, &input)?;
+        //Execute query or command
+        if let Err(message) = execute_and_print_query_or_command(&rt, &mut fsc, &input) {
+            eprintln!("{}", message);
+        }
     }
     Ok(())
 }
