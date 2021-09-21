@@ -13,8 +13,9 @@
  * limitations under the License.
  */
 use std::convert::TryFrom;
+use std::env;
 use std::error::Error;
-use std::fs::File;
+use std::fs::{metadata, File};
 use std::io::{self, BufRead, Write};
 use std::sync::Arc;
 
@@ -38,13 +39,25 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 /** Public Methods **/
 fn main() {
-    let mut args = std::env::args();
-    args.next(); //Drop path of executable
+    let args = env::args();
+    if args.len() > 3 {
+        //The errors are consciously ignored as the program is terminating
+        let binary_path = env::current_exe().unwrap();
+        let binary_name = binary_path.file_name().unwrap();
+        println!(
+            "usage: {} [server_address] [query_file]",
+            binary_name.to_str().unwrap()
+        );
+        return;
+    }
+    let (address, query_file) = parse_arguments(args);
+
     if let Ok(rt) = tokio::runtime::Runtime::new() {
-        match connect(&rt, "127.0.0.1", 9999) {
+        let address = address.unwrap_or("127.0.0.1".to_string());
+        match connect(&rt, &address, 9999) {
             Ok(fsc) => {
                 //Execute queries
-                let result = if let Some(query_file) = args.next() {
+                let result = if let Some(query_file) = query_file {
                     file(rt, fsc, &query_file)
                 } else {
                     repl(rt, fsc)
@@ -56,7 +69,7 @@ fn main() {
                     Err(message) => eprintln!("{}", message),
                 };
             }
-            Err(message) => eprintln!("{}", message),
+            Err(message) => eprintln!("error: cannot connect to {} due to a {}", address, message),
         }
     } else {
         eprintln!("error: unable to initialize run-time");
@@ -64,8 +77,24 @@ fn main() {
 }
 
 /** Private Functions **/
+fn parse_arguments(mut args: env::Args) -> (Option<String>, Option<String>) {
+    args.next(); //Drop the path of the executable
+    let mut address = None;
+    let mut query_file = None;
+
+    while let Some(arg) = args.next() {
+        let metadata = metadata(&arg);
+        if metadata.is_ok() && metadata.unwrap().is_file() {
+            query_file = Some(arg); //A file is probably the query file
+        } else {
+            address = Some(arg); //Otherwise, it is probably the address
+        }
+    }
+    (address, query_file)
+}
+
 fn connect(rt: &Runtime, host: &str, port: u16) -> Result<FlightServiceClient<Channel>> {
-    let address = format!("http://{}:{}", host, port);
+    let address = format!("grpc://{}:{}", host, port);
     rt.block_on(async {
         let fsc = FlightServiceClient::connect(address).await?;
         Ok(fsc)
