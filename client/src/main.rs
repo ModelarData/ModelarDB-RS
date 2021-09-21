@@ -16,7 +16,7 @@ use std::convert::TryFrom;
 use std::env;
 use std::error::Error;
 use std::fs::{metadata, File};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead};
 use std::sync::Arc;
 
 use arrow::datatypes::Schema;
@@ -117,19 +117,27 @@ fn file(rt: Runtime, mut fsc: FlightServiceClient<Channel>, queries_path: &str) 
 }
 
 fn repl(rt: Runtime, mut fsc: FlightServiceClient<Channel>) -> Result<()> {
-    let mut input = String::new();
-    while &input != "exit" {
-        //Get user input
-        input.clear();
-        print!("ModelarDB> ");
-        io::stdout().flush()?;
-        io::stdin().read_line(&mut input)?;
-        input.pop(); //Removes \n
+    let mut editor = rustyline::Editor::<()>::new();
+    let history_file_name = ".mmdbc_history";
+    if let Some(mut home) = dirs::home_dir() {
+        home.push(history_file_name);
+        let _ = editor.load_history(&home);
+    }
 
-        //Execute query or command
-        if let Err(message) = execute_and_print_query_or_command(&rt, &mut fsc, &input) {
-            eprintln!("{}", message);
+    loop {
+        if let Ok(line) = editor.readline("ModelarDB> ") {
+            editor.add_history_entry(line.as_str());
+            if let Err(message) = execute_and_print_query_or_command(&rt, &mut fsc, &line) {
+                eprintln!("{}", message);
+            }
+        } else {
+            break;
         }
+    }
+
+    if let Some(mut home) = dirs::home_dir() {
+        home.push(history_file_name);
+        let _ = editor.append_history(&home);
     }
     Ok(())
 }
