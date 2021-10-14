@@ -23,6 +23,9 @@ use datafusion::prelude::ExecutionContext;
 use std::sync::Arc;
 use tokio::runtime::Runtime;
 
+#[global_allocator]
+static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
+
 /** Public Types **/
 pub struct Context {
     catalog: catalog::Catalog,

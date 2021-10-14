@@ -9,9 +9,11 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 datafusion = "5.0.0"
 num_cpus = "1.13.0"
 
-tokio = "1.10.0"
+tokio = { version = "1.12.0", features = ["rt-multi-thread"] }
 async-trait = "0.1.51"
-futures = "0.3.16"
+futures = "0.3.17"
 
-arrow-flight = "5.1.0"
+arrow-flight = "5.5.0"
 tonic = "0.5.2"
+
+snmalloc-rs = "0.2.28"
