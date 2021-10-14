@@ -114,15 +114,15 @@ impl TableProvider for DataPointView {
         .unwrap();
 
         //Create the grid node
-        Ok(Arc::new(GridExec {
-            model_table: self.model_table.clone(),
-            projection: projection.clone(),
+        let limited_batch_size = limit.map(|l| min(l, batch_size)).unwrap_or(batch_size);
+        Ok(GridExec::new(
+            self.model_table.clone(),
+            projection.clone(),
             predicate,
-            batch_size: limit.map(|l| min(l, batch_size)).unwrap_or(batch_size),
-            limit,
-            schema: self.schema(),
-            input: Arc::new(parquet_exec),
-        }))
+            limited_batch_size,
+            self.schema(),
+            Arc::new(parquet_exec),
+        ))
     }
 
     fn statistics(&self) -> Statistics {
@@ -140,12 +140,41 @@ impl TableProvider for DataPointView {
 #[derive(Debug, Clone)]
 pub struct GridExec {
     pub model_table: Arc<ModelTable>,
-    projection: Option<Vec<usize>>,
     predicate: Option<Expr>,
-    batch_size: usize,
-    limit: Option<usize>,
+    limited_batch_size: usize,
     schema: SchemaRef,
     input: Arc<dyn ExecutionPlan>,
+}
+
+impl GridExec {
+    pub fn new(
+        model_table: Arc<ModelTable>,
+        projection: Option<Vec<usize>>,
+        predicate: Option<Expr>,
+        limited_batch_size: usize,
+        schema: SchemaRef,
+        input: Arc<dyn ExecutionPlan>,
+    ) -> Arc<Self> {
+        let schema = if let Some(projection) = projection {
+            //Modifies the schema according to the projection
+            let original_schema_fields = schema.fields().clone();
+            let mut projected_schema_fields = Vec::with_capacity(projection.len());
+            for column in projection {
+                projected_schema_fields.push(original_schema_fields.get(column).unwrap().clone())
+            }
+            Arc::new(Schema::new(projected_schema_fields))
+        } else {
+            schema
+        };
+
+        Arc::new(GridExec {
+            model_table,
+            predicate,
+            limited_batch_size,
+            schema,
+            input,
+        })
+    }
 }
 
 #[async_trait]
@@ -288,13 +317,16 @@ impl GridStream {
         }
 
         //Return the batch of reconstructed data points
-        let columns: Vec<ArrayRef> = vec![
-            Arc::new(tids.finish()),
-            Arc::new(timestamps.finish()),
-            Arc::new(values.finish()),
-        ];
-        let batch = RecordBatch::try_new(self.schema.clone(), columns).unwrap();
-        Ok(batch)
+        let columns: Vec<ArrayRef> = self.schema.fields().iter().map(|field| {
+            let column: ArrayRef = match field.name().as_str() {
+                "tid" => Arc::new(tids.finish()),
+                "timestamp" =>  Arc::new(timestamps.finish()),
+                "value" => Arc::new(values.finish()),
+                column => panic!("unsupported column {}", column)
+            };
+            column
+        }).collect();
+        Ok(RecordBatch::try_new(self.schema.clone(), columns).unwrap())
     }
 }
 
