@@ -17,6 +17,7 @@ use std::env;
 use std::error::Error;
 use std::fs::{metadata, File};
 use std::io::{self, BufRead};
+use std::process;
 use std::sync::Arc;
 
 use arrow::datatypes::Schema;
@@ -195,6 +196,9 @@ fn execute_command(
                 }
                 Ok(())
             })
+        }
+        "\\q" => {
+            process::exit(0);
         }
         _ => Err(Box::new(ArrowError::ParseError(
             "unknown command".to_owned(),
