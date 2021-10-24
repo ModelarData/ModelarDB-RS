@@ -20,7 +20,9 @@ use crate::catalog::ModelTable;
 use crate::models;
 use crate::tables::GridExec;
 
-use datafusion::arrow::array::{ArrayRef, Int32Array, Int64Array, UInt64Array};
+use datafusion::arrow::array::{
+    ArrayRef, BinaryArray, Float32Array, Int32Array, Int64Array, UInt64Array,
+};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::datatypes::Field;
 use datafusion::arrow::datatypes::Schema;
@@ -29,13 +31,32 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::Result;
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::expressions::format_state_name;
-use datafusion::physical_plan::expressions::Count;
+use datafusion::physical_plan::expressions::{Avg, Count, Max, Min, Sum};
 use datafusion::physical_plan::hash_aggregate::HashAggregateExec;
 use datafusion::physical_plan::ColumnarValue;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use datafusion::prelude::ExecutionConfig;
 use datafusion::scalar::ScalarValue;
+
+//Helper Functions
+fn new_hash_aggregate(
+    hash_aggregate_exec: &HashAggregateExec,
+    model_aggregate_expr: Arc<ModelAggregateExpr>,
+    grid_exec: &GridExec,
+) -> Arc<HashAggregateExec> {
+    //Assumes the GridExec only have a single child
+    Arc::new(
+        HashAggregateExec::try_new(
+            *hash_aggregate_exec.mode(),
+            hash_aggregate_exec.group_expr().to_vec(),
+            vec![model_aggregate_expr],
+            grid_exec.children()[0].clone(), //Removes the GridExec
+            hash_aggregate_exec.input_schema(),
+        )
+        .unwrap(),
+    )
+}
 
 //Optimizer Rule
 pub struct ModelSimpleAggregatesPhysicalOptimizerRule {}
@@ -46,24 +67,49 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
         if let Some(hae) = plan.as_any().downcast_ref::<HashAggregateExec>() {
             let children = &hae.children();
             if children.len() == 1 {
-                let aggr_expr = hae.aggr_expr(); //TODO: support the simple aggregate functions
-                if aggr_expr.len() == 1 && aggr_expr[0].as_any().downcast_ref::<Count>().is_some() {
-                    if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                        let mce = Arc::new(ModelCountPhysicalExpr {
-                            model_table: ge.model_table.clone(),
-                        });
-                        let mca = Arc::new(ModelCountAggregateExpr::new(mce));
-                        let hae = Arc::new(
-                            HashAggregateExec::try_new(
-                                *hae.mode(),
-                                hae.group_expr().to_vec(),
-                                vec![mca],
-                                ge.children()[0].clone(), //Removes the GridExec
-                                hae.input_schema(),
-                            )
-                            .unwrap(),
-                        );
-                        return Some(hae);
+                let ae = hae.aggr_expr();
+                if ae.len() == 1 {
+                    //TODO: factor out shared generic code using macro or function?
+                    if ae[0].as_any().downcast_ref::<Count>().is_some() {
+                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
+                            let mae = ModelAggregateExpr::new(
+                                ModelAggregateType::Count,
+                                ge.model_table.clone(),
+                            );
+                            return Some(new_hash_aggregate(hae, mae, ge));
+                        }
+                    } else if ae[0].as_any().downcast_ref::<Min>().is_some() {
+                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
+                            let mae = ModelAggregateExpr::new(
+                                ModelAggregateType::Min,
+                                ge.model_table.clone(),
+                            );
+                            return Some(new_hash_aggregate(hae, mae, ge));
+                        }
+                    } else if ae[0].as_any().downcast_ref::<Max>().is_some() {
+                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
+                            let mae = ModelAggregateExpr::new(
+                                ModelAggregateType::Max,
+                                ge.model_table.clone(),
+                            );
+                            return Some(new_hash_aggregate(hae, mae, ge));
+                        }
+                    } else if ae[0].as_any().downcast_ref::<Sum>().is_some() {
+                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
+                            let mae = ModelAggregateExpr::new(
+                                ModelAggregateType::Sum,
+                                ge.model_table.clone(),
+                            );
+                            return Some(new_hash_aggregate(hae, mae, ge));
+                        }
+                    } else if ae[0].as_any().downcast_ref::<Avg>().is_some() {
+                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
+                            let mae = ModelAggregateExpr::new(
+                                ModelAggregateType::Avg,
+                                ge.model_table.clone(),
+                            );
+                            return Some(new_hash_aggregate(hae, mae, ge));
+                        }
                     }
                 }
             }
@@ -80,6 +126,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
     }
 }
 
+//TODO: determine if some structs or traits can be removed or parametrized?
 impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
     fn optimize(
         &self,
@@ -94,57 +141,95 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
     }
 
     fn name(&self) -> &str {
-        "model_count_physical_query_plan"
+        "ModelSimpleAggregatesPhysicalOptimizerRule"
     }
 }
 
-//Aggregte Expression
+//Aggregate Expressions
 #[derive(Debug)]
-pub struct ModelCountAggregateExpr {
-    name: String,
-    data_type: DataType,
-    nullable: bool,
-    expr: Arc<dyn PhysicalExpr>,
+enum ModelAggregateType {
+    Count,
+    Min,
+    Max,
+    Sum,
+    Avg,
 }
 
-impl ModelCountAggregateExpr {
-    fn new(expr: Arc<dyn PhysicalExpr>) -> Self {
-        Self {
-            name: "ModelCountAggregateExpr".to_string(),
-            data_type: DataType::UInt64,
-            nullable: false,
-            expr,
-        }
+#[derive(Debug)]
+pub struct ModelAggregateExpr {
+    name: String,
+    aggregate_type: ModelAggregateType,
+    data_type: DataType,
+    model_table: Arc<ModelTable>,
+}
+
+impl ModelAggregateExpr {
+    fn new(aggregate_type: ModelAggregateType, model_table: Arc<ModelTable>) -> Arc<Self> {
+        let data_type = match &aggregate_type {
+            ModelAggregateType::Count => DataType::UInt64,
+            ModelAggregateType::Min => DataType::Float32,
+            ModelAggregateType::Max => DataType::Float32,
+            ModelAggregateType::Sum => DataType::Float32,
+            ModelAggregateType::Avg => DataType::Float32,
+        };
+
+        Arc::new(Self {
+            name: format!("{:?}AggregateExpr", aggregate_type),
+            aggregate_type,
+            data_type,
+            model_table,
+        })
     }
 }
 
-impl AggregateExpr for ModelCountAggregateExpr {
+impl AggregateExpr for ModelAggregateExpr {
     fn as_any(&self) -> &dyn Any {
         self
     }
 
     fn field(&self) -> Result<Field> {
-        Ok(Field::new(
-            &self.name,
-            self.data_type.clone(),
-            self.nullable,
-        ))
+        Ok(Field::new(self.name(), self.data_type.clone(), false))
     }
 
     fn state_fields(&self) -> Result<Vec<Field>> {
-        Ok(vec![Field::new(
-            &format_state_name(&self.name, "count"),
-            self.data_type.clone(),
-            true,
-        )])
+        let fields = match &self.aggregate_type {
+            ModelAggregateType::Sum =>  vec![Field::new("SUM", DataType::Float32, false)],
+            ModelAggregateType::Avg =>  vec![Field::new("COUNT", DataType::UInt64, false), Field::new("SUM", DataType::Float32, false)],
+            _ =>  vec![Field::new(&format_state_name(self.name(), "NOT NULL"), self.data_type.clone(), false)]
+        };
+        Ok(fields)
     }
 
     fn expressions(&self) -> Vec<Arc<dyn PhysicalExpr>> {
-        vec![self.expr.clone()]
+        let expr: Arc<dyn PhysicalExpr> = match &self.aggregate_type {
+            ModelAggregateType::Count => Arc::new(ModelCountPhysicalExpr {
+                model_table: self.model_table.clone(),
+            }),
+            ModelAggregateType::Min => Arc::new(ModelMinPhysicalExpr {
+                model_table: self.model_table.clone(),
+            }),
+            ModelAggregateType::Max => Arc::new(ModelMaxPhysicalExpr {
+                model_table: self.model_table.clone(),
+            }),
+            ModelAggregateType::Sum => Arc::new(ModelSumPhysicalExpr {
+                model_table: self.model_table.clone(),
+            }),
+            ModelAggregateType::Avg => Arc::new(ModelAvgPhysicalExpr {
+                model_table: self.model_table.clone(),
+            }),
+        };
+        vec![expr]
     }
 
     fn create_accumulator(&self) -> Result<Box<dyn Accumulator>> {
-        Ok(Box::new(ModelCountAccumulator { count: 0 }))
+        let accum: Box<dyn Accumulator> = match self.aggregate_type {
+            ModelAggregateType::Count => Box::new(ModelCountAccumulator { count: 0 }),
+            ModelAggregateType::Min => Box::new(ModelMinAccumulator { min: f32::MAX }),
+            ModelAggregateType::Max => Box::new(ModelMaxAccumulator { max: f32::MIN }),
+            ModelAggregateType::Sum => Box::new(ModelSumAccumulator { sum: 0.0 }),
+            ModelAggregateType::Avg => Box::new(ModelAvgAccumulator { sum: 0.0, count: 0 }),
+        };
+        Ok(accum)
     }
 
     fn name(&self) -> &str {
@@ -152,6 +237,7 @@ impl AggregateExpr for ModelCountAggregateExpr {
     }
 }
 
+//Count
 #[derive(Debug)]
 pub struct ModelCountPhysicalExpr {
     model_table: Arc<ModelTable>,
@@ -222,8 +308,8 @@ impl Accumulator for ModelCountAccumulator {
     }
 
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
-        for values in values {
-            self.count += values
+        for array in values {
+            self.count += array
                 .as_any()
                 .downcast_ref::<UInt64Array>()
                 .unwrap()
@@ -241,6 +327,532 @@ impl Accumulator for ModelCountAccumulator {
     }
 
     fn evaluate(&self) -> Result<ScalarValue> {
-        Ok(ScalarValue::UInt64(Some(self.count)))
+        unreachable!()
+    }
+}
+
+//Min
+#[derive(Debug)]
+pub struct ModelMinPhysicalExpr {
+    model_table: Arc<ModelTable>,
+}
+
+impl Display for ModelMinPhysicalExpr {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "ModelMinPhysicalExpr(Float32)")
+    }
+}
+
+impl PhysicalExpr for ModelMinPhysicalExpr {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
+        Ok(DataType::Float32)
+    }
+
+    fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
+        Ok(false)
+    }
+
+    fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
+        let gids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        let start_times = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let end_times = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let mtids = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        let models = batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap();
+        let gaps = batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap();
+
+        let mut min = f32::MAX;
+        let num_rows = gids.len();
+        for row_index in 0..num_rows {
+            let gid = gids.value(row_index);
+            let start_time = start_times.value(row_index);
+            let end_time = end_times.value(row_index);
+            let mtid = mtids.value(row_index);
+            let sampling_interval = *self
+                .model_table
+                .sampling_intervals
+                .get(gid as usize)
+                .unwrap();
+            let model = models.value(row_index);
+            let gaps = gaps.value(row_index);
+            min = f32::min(
+                min,
+                models::min(
+                    gid,
+                    start_time,
+                    end_time,
+                    mtid,
+                    sampling_interval,
+                    model,
+                    gaps,
+                ),
+            );
+        }
+
+        //If a ScalarValue is returned an array is filled with the value it contains
+        let mut result = Float32Array::builder(1);
+        result.append_value(min).unwrap();
+        Ok(ColumnarValue::Array(Arc::new(result.finish())))
+    }
+}
+
+#[derive(Debug)]
+struct ModelMinAccumulator {
+    min: f32,
+}
+
+impl Accumulator for ModelMinAccumulator {
+    fn update(&mut self, _values: &[ScalarValue]) -> Result<()> {
+        unreachable!()
+    }
+
+    fn merge(&mut self, _states: &[ScalarValue]) -> Result<()> {
+        unreachable!()
+    }
+
+    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+        for array in values {
+            self.min = f32::min(
+                self.min,
+                array
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .unwrap()
+                    .value(0),
+            );
+        }
+        Ok(())
+    }
+
+    fn merge_batch(&mut self, _states: &[ArrayRef]) -> Result<()> {
+        unreachable!()
+    }
+
+    fn state(&self) -> Result<Vec<ScalarValue>> {
+        Ok(vec![ScalarValue::Float32(Some(self.min))])
+    }
+
+    fn evaluate(&self) -> Result<ScalarValue> {
+        unreachable!()
+    }
+}
+
+//Max
+#[derive(Debug)]
+pub struct ModelMaxPhysicalExpr {
+    model_table: Arc<ModelTable>,
+}
+
+impl Display for ModelMaxPhysicalExpr {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "ModelMaxPhysicalExpr(Float32)")
+    }
+}
+
+impl PhysicalExpr for ModelMaxPhysicalExpr {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
+        Ok(DataType::Float32)
+    }
+
+    fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
+        Ok(false)
+    }
+
+    fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
+        let gids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        let start_times = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let end_times = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let mtids = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        let models = batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap();
+        let gaps = batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap();
+
+        let mut max = f32::MIN;
+        let num_rows = gids.len();
+        for row_index in 0..num_rows {
+            let gid = gids.value(row_index);
+            let start_time = start_times.value(row_index);
+            let end_time = end_times.value(row_index);
+            let mtid = mtids.value(row_index);
+            let sampling_interval = *self
+                .model_table
+                .sampling_intervals
+                .get(gid as usize)
+                .unwrap();
+            let model = models.value(row_index);
+            let gaps = gaps.value(row_index);
+            max = f32::max(
+                max,
+                models::max(
+                    gid,
+                    start_time,
+                    end_time,
+                    mtid,
+                    sampling_interval,
+                    model,
+                    gaps,
+                ),
+            );
+        }
+
+        //If a ScalarValue is returned an array is filled with the value it contains
+        let mut result = Float32Array::builder(1);
+        result.append_value(max).unwrap();
+        Ok(ColumnarValue::Array(Arc::new(result.finish())))
+    }
+}
+
+#[derive(Debug)]
+struct ModelMaxAccumulator {
+    max: f32,
+}
+
+impl Accumulator for ModelMaxAccumulator {
+    fn update(&mut self, _values: &[ScalarValue]) -> Result<()> {
+        unreachable!()
+    }
+
+    fn merge(&mut self, _states: &[ScalarValue]) -> Result<()> {
+        unreachable!()
+    }
+
+    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+        for array in values {
+            self.max = f32::max(
+                self.max,
+                array
+                    .as_any()
+                    .downcast_ref::<Float32Array>()
+                    .unwrap()
+                    .value(0),
+            );
+        }
+        Ok(())
+    }
+
+    fn merge_batch(&mut self, _states: &[ArrayRef]) -> Result<()> {
+        unreachable!()
+    }
+
+    fn state(&self) -> Result<Vec<ScalarValue>> {
+        Ok(vec![ScalarValue::Float32(Some(self.max))])
+    }
+
+    fn evaluate(&self) -> Result<ScalarValue> {
+        unreachable!()
+    }
+}
+
+//Sum
+#[derive(Debug)]
+pub struct ModelSumPhysicalExpr {
+    model_table: Arc<ModelTable>,
+}
+
+impl Display for ModelSumPhysicalExpr {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "ModelSumPhysicalExpr(Float32)")
+    }
+}
+
+impl PhysicalExpr for ModelSumPhysicalExpr {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
+        Ok(DataType::Float32)
+    }
+
+    fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
+        Ok(false)
+    }
+
+    fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
+        let gids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        let start_times = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let end_times = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let mtids = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        let models = batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap();
+        let gaps = batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap();
+
+        let mut sum = 0.0;
+        let num_rows = gids.len();
+        for row_index in 0..num_rows {
+            let gid = gids.value(row_index);
+            let start_time = start_times.value(row_index);
+            let end_time = end_times.value(row_index);
+            let mtid = mtids.value(row_index);
+            let sampling_interval = *self
+                .model_table
+                .sampling_intervals
+                .get(gid as usize)
+                .unwrap();
+            let model = models.value(row_index);
+            let gaps = gaps.value(row_index);
+            sum += models::sum(
+                gid,
+                start_time,
+                end_time,
+                mtid,
+                sampling_interval,
+                model,
+                gaps,
+            );
+        }
+
+        //If a ScalarValue is returned an array is filled with the value it contains
+        let mut result = Float32Array::builder(1);
+        result.append_value(sum as f32).unwrap();
+        Ok(ColumnarValue::Array(Arc::new(result.finish())))
+    }
+}
+
+#[derive(Debug)]
+struct ModelSumAccumulator {
+    sum: f32,
+}
+
+impl Accumulator for ModelSumAccumulator {
+    fn update(&mut self, _values: &[ScalarValue]) -> Result<()> {
+        unreachable!()
+    }
+
+    fn merge(&mut self, _states: &[ScalarValue]) -> Result<()> {
+        unreachable!()
+    }
+
+    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+        for array in values {
+            self.sum += array
+                .as_any()
+                .downcast_ref::<Float32Array>()
+                .unwrap()
+                .value(0)
+        }
+        Ok(())
+    }
+
+    fn merge_batch(&mut self, _states: &[ArrayRef]) -> Result<()> {
+        unreachable!()
+    }
+
+    fn state(&self) -> Result<Vec<ScalarValue>> {
+        Ok(vec![ScalarValue::Float32(Some(self.sum))])
+    }
+
+    fn evaluate(&self) -> Result<ScalarValue> {
+        unreachable!()
+    }
+}
+
+//Avg
+#[derive(Debug)]
+pub struct ModelAvgPhysicalExpr {
+    model_table: Arc<ModelTable>,
+}
+
+impl Display for ModelAvgPhysicalExpr {
+    fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
+        write!(f, "ModelAvgPhysicalExpr(Float32)")
+    }
+}
+
+impl PhysicalExpr for ModelAvgPhysicalExpr {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
+        Ok(DataType::Float32)
+    }
+
+    fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
+        Ok(false)
+    }
+
+    fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
+        let gids = batch
+            .column(0)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        let start_times = batch
+            .column(1)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let end_times = batch
+            .column(2)
+            .as_any()
+            .downcast_ref::<Int64Array>()
+            .unwrap();
+        let mtids = batch
+            .column(3)
+            .as_any()
+            .downcast_ref::<Int32Array>()
+            .unwrap();
+        let models = batch
+            .column(4)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap();
+        let gaps = batch
+            .column(5)
+            .as_any()
+            .downcast_ref::<BinaryArray>()
+            .unwrap();
+
+        let mut sum = 0.0;
+        let mut count: u64 = 0;
+        let num_rows = gids.len();
+        for row_index in 0..num_rows {
+            let gid = gids.value(row_index);
+            let start_time = start_times.value(row_index);
+            let end_time = end_times.value(row_index);
+            let mtid = mtids.value(row_index);
+            let sampling_interval = *self
+                .model_table
+                .sampling_intervals
+                .get(gid as usize)
+                .unwrap();
+            let model = models.value(row_index);
+            let gaps = gaps.value(row_index);
+            sum += models::sum(
+                gid,
+                start_time,
+                end_time,
+                mtid,
+                sampling_interval,
+                model,
+                gaps,
+            );
+            count += (((end_time - start_time) / sampling_interval as i64) + 1) as u64;
+        }
+
+        //If a ScalarValue is returned an array is filled with the value it contains
+        let mut result = Float32Array::builder(2);
+        result.append_value(sum as f32).unwrap();
+        result.append_value(count as f32).unwrap();
+        Ok(ColumnarValue::Array(Arc::new(result.finish())))
+    }
+}
+
+#[derive(Debug)]
+struct ModelAvgAccumulator {
+    sum: f32,
+    count: u64,
+}
+
+impl Accumulator for ModelAvgAccumulator {
+    fn update(&mut self, _values: &[ScalarValue]) -> Result<()> {
+        unreachable!()
+    }
+
+    fn merge(&mut self, _states: &[ScalarValue]) -> Result<()> {
+        unreachable!()
+    }
+
+    fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
+        for array in values {
+            let array = array.as_any().downcast_ref::<Float32Array>().unwrap();
+            self.sum += array.value(0) as f32;
+            self.count += array.value(1) as u64;
+        }
+        Ok(())
+    }
+
+    fn merge_batch(&mut self, _states: &[ArrayRef]) -> Result<()> {
+        unreachable!()
+    }
+
+    fn state(&self) -> Result<Vec<ScalarValue>> {
+        //Must match datafusion::physical_plan::expressions::AvgAccumulator
+        Ok(vec![ 
+            ScalarValue::UInt64(Some(self.count)),
+            ScalarValue::Float32(Some(self.sum)),
+        ])
+    }
+
+    fn evaluate(&self) -> Result<ScalarValue> {
+        unreachable!()
     }
 }

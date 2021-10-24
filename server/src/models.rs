@@ -24,7 +24,7 @@ pub fn length(
     end_times: &Int64Array,
     sampling_intervals: &[i32],
 ) -> usize {
-    //TODO: Use SIMD through the arrow kernels if all data is from a single time
+    //TODO: use SIMD through the arrow kernels if all data is from a single time
     // series, or if all queried time series use the same sampling interval
     let mut data_points = 0;
     for row_index in 0..num_rows {
@@ -37,9 +37,9 @@ pub fn length(
 }
 
 pub fn grid(
-    //TOOD: Support time series with different number of values and data types?
-    //TODO: Translate the gid to the proper tids to support groups.
-    //TODO: Can the tid be stored once per batch of data points from a model?
+    //TOOD: support time series with different number of values and data types?
+    //TODO: translate the gid to the proper tids to support groups.
+    //TODO: can the tid be stored once per batch of data points from a model?
     gid: i32,
     start_time: i64,
     end_time: i64,
@@ -89,7 +89,423 @@ pub fn grid(
     }
 }
 
+pub fn min(
+    gid: i32,
+    start_time: i64,
+    end_time: i64,
+    mtid: i32,
+    sampling_interval: i32,
+    model: &[u8],
+    gaps: &[u8],
+) -> f32 {
+    match mtid {
+        2 => min_max_pmc_mean(
+            gid,
+            start_time,
+            end_time,
+            sampling_interval,
+            model,
+            gaps,
+        ),
+        3 => min_swing(
+            gid,
+            start_time,
+            end_time,
+            sampling_interval,
+            model,
+            gaps,
+        ),
+        4 => min_gorilla(
+            gid,
+            start_time,
+            end_time,
+            sampling_interval,
+            model,
+            gaps,
+        ),
+        _ => panic!("unknown model type"),
+    }
+}
+
+pub fn max(
+    gid: i32,
+    start_time: i64,
+    end_time: i64,
+    mtid: i32,
+    sampling_interval: i32,
+    model: &[u8],
+    gaps: &[u8],
+) -> f32 {
+    match mtid {
+        2 => min_max_pmc_mean(
+            gid,
+            start_time,
+            end_time,
+            sampling_interval,
+            model,
+            gaps,
+        ),
+        3 => max_swing(
+            gid,
+            start_time,
+            end_time,
+            sampling_interval,
+            model,
+            gaps,
+        ),
+        4 => max_gorilla(
+            gid,
+            start_time,
+            end_time,
+            sampling_interval,
+            model,
+            gaps,
+        ),
+        _ => panic!("unknown model type"),
+    }
+}
+
+pub fn sum(
+    gid: i32,
+    start_time: i64,
+    end_time: i64,
+    mtid: i32,
+    sampling_interval: i32,
+    model: &[u8],
+    gaps: &[u8],
+) -> f32 {
+    match mtid {
+        2 => sum_pmc_mean(
+            gid,
+            start_time,
+            end_time,
+            sampling_interval,
+            model,
+            gaps,
+        ),
+        3 => sum_swing(
+            gid,
+            start_time,
+            end_time,
+            sampling_interval,
+            model,
+            gaps,
+        ),
+        4 => sum_gorilla(
+            gid,
+            start_time,
+            end_time,
+            sampling_interval,
+            model,
+            gaps,
+        ),
+        _ => panic!("unknown model type"),
+    }
+}
+
 /** Private Functions **/
+//Decode
+fn decode_pmc_mean(model: &[u8]) -> f32 {
+    f32::from_be_bytes(model.try_into().unwrap())
+}
+
+fn decode_swing(model: &[u8]) -> (f64, f64) {
+    if model.len() == 16 {
+        (
+            f64::from_be_bytes(model[0..8].try_into().unwrap()),
+            f64::from_be_bytes(model[8..16].try_into().unwrap()),
+        )
+    } else if model.len() == 12 {
+        (
+            f32::from_be_bytes(model[0..4].try_into().unwrap()) as f64,
+            f64::from_be_bytes(model[4..12].try_into().unwrap()),
+        )
+    } else {
+        (
+            f32::from_be_bytes(model[0..4].try_into().unwrap()) as f64,
+            f32::from_be_bytes(model[4..8].try_into().unwrap()) as f64,
+        )
+    }
+}
+
+//TODO: can decode_gorilla be shared without allocating an array for min, max, etc?
+fn decode_gorilla(
+    start_time: i64,
+    end_time: i64,
+    sampling_interval: i32,
+    model: &[u8],
+    values: &mut Float32Builder,
+) {
+    let mut bits = Bits::new(model);
+    let mut stored_leading_zeroes = std::u32::MAX;
+    let mut stored_trailing_zeroes: u32 = 0;
+    let mut last_value = bits.read_bits(32);
+
+    //The first value is stored as a f32
+    values.append_value(f32::from_bits(last_value)).unwrap();
+
+    //The following values are stored as the delta of XOR
+    let length_without_head = (end_time - start_time) / sampling_interval as i64;
+    for _ in 0..length_without_head{
+        if bits.read_bit() {
+            if bits.read_bit() {
+                //New leading and trailing zeros
+                stored_leading_zeroes = bits.read_bits(5);
+                let mut significant_bits = bits.read_bits(6);
+                if significant_bits == 0 {
+                    significant_bits = 32;
+                }
+                stored_trailing_zeroes = 32 - significant_bits - stored_leading_zeroes;
+            }
+
+            let count = 32 - stored_leading_zeroes - stored_trailing_zeroes;
+            let mut value = bits.read_bits(count as u8);
+            value <<= stored_trailing_zeroes;
+            value ^= last_value;
+            last_value = value;
+        }
+        values.append_value(f32::from_bits(last_value)).unwrap();
+    }
+}
+
+//Bits
+//The implementation of this Type is based on code published by Ilkka Rauta
+// under the MIT/Apache2 license. LINK: https://github.com/irauta/bitreader
+struct Bits<'a> {
+    bytes: &'a [u8],
+    current_bit: u64,
+}
+
+impl<'a> Bits<'a> {
+    pub fn new(bytes: &'a [u8]) -> Bits<'a> {
+        Self {
+            bytes,
+            current_bit: 0,
+        }
+    }
+
+    pub fn read_bit(&mut self) -> bool {
+        self.read_bits(1) == 1
+    }
+
+    pub fn read_bits(&mut self, count: u8) -> u32 {
+        let mut value: u64 = 0;
+        let start = self.current_bit;
+        let end = self.current_bit + count as u64;
+        for bit in start..end {
+            let current_byte = (bit / 8) as usize;
+            let byte = self.bytes[current_byte];
+            let shift = 7 - (bit % 8);
+            let bit: u64 = (byte >> shift) as u64 & 1;
+            value = (value << 1) | bit;
+        }
+        self.current_bit = end;
+        value as u32
+    }
+}
+
+//Min
+fn min_max_pmc_mean(
+    gid: i32,
+    start_time: i64,
+    end_time: i64,
+    sampling_interval: i32,
+    model: &[u8],
+    gaps: &[u8],
+) -> f32 {
+    decode_pmc_mean(model)
+}
+
+fn min_swing(
+    gid: i32,
+    start_time: i64,
+    end_time: i64,
+    sampling_interval: i32,
+    model: &[u8],
+    gaps: &[u8],
+) -> f32 {
+    let (a, b) = decode_swing(model);
+    if a == 0.0 {
+        b as f32
+    } else if a > 0.0 {
+        (a * start_time as f64 + b) as f32
+    } else {
+        (a * end_time as f64 + b) as f32
+    }
+}
+
+fn min_gorilla(
+    gid: i32,
+    start_time: i64,
+    end_time: i64,
+    sampling_interval: i32,
+    model: &[u8],
+    gaps: &[u8],
+) -> f32 {
+    let mut bits = Bits::new(model);
+    let mut stored_leading_zeroes = std::u32::MAX;
+    let mut stored_trailing_zeroes: u32 = 0;
+    let mut last_value = bits.read_bits(32);
+
+    //The first value is stored as a f32
+    let mut min_value = f32::from_bits(last_value);
+
+    //The following values are stored as the delta of XOR
+    let length_without_head = (end_time - start_time) / sampling_interval as i64;
+    for _ in 0..length_without_head {
+        if bits.read_bit() {
+            if bits.read_bit() {
+                //New leading and trailing zeros
+                stored_leading_zeroes = bits.read_bits(5);
+                let mut significant_bits = bits.read_bits(6);
+                if significant_bits == 0 {
+                    significant_bits = 32;
+                }
+                stored_trailing_zeroes = 32 - significant_bits - stored_leading_zeroes;
+            }
+
+            let count = 32 - stored_leading_zeroes - stored_trailing_zeroes;
+            let mut value = bits.read_bits(count as u8);
+            value <<= stored_trailing_zeroes;
+            value ^= last_value;
+            last_value = value;
+        }
+        min_value = f32::min(min_value, f32::from_bits(last_value));
+    }
+    min_value
+}
+
+//Max
+fn max_swing(
+    gid: i32,
+    start_time: i64,
+    end_time: i64,
+    sampling_interval: i32,
+    model: &[u8],
+    gaps: &[u8],
+) -> f32 {
+    let (a, b) = decode_swing(model);
+    if a == 0.0 {
+        b as f32
+    } else if a < 0.0 {
+        (a * start_time as f64 + b) as f32
+    } else {
+        (a * end_time as f64 + b) as f32
+    }
+}
+
+fn max_gorilla(
+    gid: i32,
+    start_time: i64,
+    end_time: i64,
+    sampling_interval: i32,
+    model: &[u8],
+    gaps: &[u8],
+) -> f32 {
+    let mut bits = Bits::new(model);
+    let mut stored_leading_zeroes = std::u32::MAX;
+    let mut stored_trailing_zeroes: u32 = 0;
+    let mut last_value = bits.read_bits(32);
+
+    //The first value is stored as a f32
+    let mut max_value = f32::from_bits(last_value);
+
+    //The following values are stored as the delta of XOR
+    let length_without_head = (end_time - start_time) / sampling_interval as i64;
+    for _ in 0..length_without_head {
+        if bits.read_bit() {
+            if bits.read_bit() {
+                //New leading and trailing zeros
+                stored_leading_zeroes = bits.read_bits(5);
+                let mut significant_bits = bits.read_bits(6);
+                if significant_bits == 0 {
+                    significant_bits = 32;
+                }
+                stored_trailing_zeroes = 32 - significant_bits - stored_leading_zeroes;
+            }
+
+            let count = 32 - stored_leading_zeroes - stored_trailing_zeroes;
+            let mut value = bits.read_bits(count as u8);
+            value <<= stored_trailing_zeroes;
+            value ^= last_value;
+            last_value = value;
+        }
+        max_value = f32::max(max_value, f32::from_bits(last_value));
+    }
+    max_value
+}
+
+//Sum
+fn sum_pmc_mean(
+    gid: i32,
+    start_time: i64,
+    end_time: i64,
+    sampling_interval: i32,
+    model: &[u8],
+    gaps: &[u8],
+) -> f32 {
+    let length = ((end_time - start_time) / sampling_interval as i64) + 1;
+    length as f32 * decode_pmc_mean(model)
+}
+
+fn sum_swing(
+    gid: i32,
+    start_time: i64,
+    end_time: i64,
+    sampling_interval: i32,
+    model: &[u8],
+    gaps: &[u8],
+) -> f32 {
+    let (a, b) = decode_swing(model);
+    let first = a * start_time as f64 + b;
+    let last = a * end_time as f64 + b;
+    let average = (first + last) / 2.0;
+    let length = ((end_time - start_time) / sampling_interval as i64) + 1;
+    (average * length as f64) as f32
+}
+
+fn sum_gorilla(
+    gid: i32,
+    start_time: i64,
+    end_time: i64,
+    sampling_interval: i32,
+    model: &[u8],
+    gaps: &[u8],
+) -> f32 {
+    let mut bits = Bits::new(model);
+    let mut stored_leading_zeroes = std::u32::MAX;
+    let mut stored_trailing_zeroes: u32 = 0;
+    let mut last_value = bits.read_bits(32);
+
+    //The first value is stored as a f32
+    let mut sum = f32::from_bits(last_value);
+
+    //The following values are stored as the delta of XOR
+    let length_without_head = (end_time - start_time) / sampling_interval as i64;
+    for _ in 0..length_without_head {
+        if bits.read_bit() {
+            if bits.read_bit() {
+                //New leading and trailing zeros
+                stored_leading_zeroes = bits.read_bits(5);
+                let mut significant_bits = bits.read_bits(6);
+                if significant_bits == 0 {
+                    significant_bits = 32;
+                }
+                stored_trailing_zeroes = 32 - significant_bits - stored_leading_zeroes;
+            }
+
+            let count = 32 - stored_leading_zeroes - stored_trailing_zeroes;
+            let mut value = bits.read_bits(count as u8);
+            value <<= stored_trailing_zeroes;
+            value ^= last_value;
+            last_value = value;
+        }
+        sum += f32::from_bits(last_value);
+    }
+    sum
+}
+
+//Grid
 fn grid_pmc_mean(
     gid: i32,
     start_time: i64,
@@ -101,7 +517,7 @@ fn grid_pmc_mean(
     timestamps: &mut TimestampMillisecondBuilder,
     values: &mut Float32Builder,
 ) {
-    let value = f32::from_be_bytes(model.try_into().unwrap());
+    let value = decode_pmc_mean(model);
     let sampling_interval = sampling_interval as usize;
     for timestamp in (start_time..=end_time).step_by(sampling_interval) {
         tids.append_value(gid).unwrap();
@@ -121,24 +537,7 @@ fn grid_swing(
     timestamps: &mut TimestampMillisecondBuilder,
     values: &mut Float32Builder,
 ) {
-    //The linear function might have required double precision floating-point
-    let (a, b) = if model.len() == 16 {
-        (
-            f64::from_be_bytes(model[0..8].try_into().unwrap()),
-            f64::from_be_bytes(model[8..16].try_into().unwrap()),
-        )
-    } else if model.len() == 12 {
-        (
-            f32::from_be_bytes(model[0..4].try_into().unwrap()) as f64,
-            f64::from_be_bytes(model[4..12].try_into().unwrap()),
-        )
-    } else {
-        (
-            f32::from_be_bytes(model[0..4].try_into().unwrap()) as f64,
-            f32::from_be_bytes(model[4..8].try_into().unwrap()) as f64,
-        )
-    };
-
+    let (a, b) = decode_swing(model);
     let sampling_interval = sampling_interval as usize;
     for timestamp in (start_time..=end_time).step_by(sampling_interval) {
         tids.append_value(gid).unwrap();
@@ -194,41 +593,5 @@ fn grid_gorilla(
             last_value = value;
         }
         values.append_value(f32::from_bits(last_value)).unwrap();
-    }
-}
-
-//Bits
-//The implementation of this Type is based on code published by Ilkka Rauta
-// under the MIT/Apache2 license. LINK: https://github.com/irauta/bitreader
-struct Bits<'a> {
-    bytes: &'a [u8],
-    current_bit: u64,
-}
-
-impl<'a> Bits<'a> {
-    pub fn new(bytes: &'a [u8]) -> Bits<'a> {
-        Self {
-            bytes,
-            current_bit: 0,
-        }
-    }
-
-    pub fn read_bit(&mut self) -> bool {
-        self.read_bits(1) == 1
-    }
-
-    pub fn read_bits(&mut self, count: u8) -> u32 {
-        let mut value: u64 = 0;
-        let start = self.current_bit;
-        let end = self.current_bit + count as u64;
-        for bit in start..end {
-            let current_byte = (bit / 8) as usize;
-            let byte = self.bytes[current_byte];
-            let shift = 7 - (bit % 8);
-            let bit: u64 = (byte >> shift) as u64 & 1;
-            value = (value << 1) | bit;
-        }
-        self.current_bit = end;
-        value as u32
     }
 }

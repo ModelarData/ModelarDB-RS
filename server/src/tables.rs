@@ -85,7 +85,7 @@ impl TableProvider for DataPointView {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        //TODO: Centralize rewriting of predicates
+        //TODO: centralize rewriting of predicates
         //Rewrite logical_plan predicates
         let rewritten_filters: Vec<Expr> = filters
             .iter()
@@ -244,7 +244,8 @@ impl GridStream {
     fn grid(&self, batch: &RecordBatch) -> ArrowResult<RecordBatch> {
         //TODO: how to efficiently construct and return only the requested columns?
         //TODO: it is necessary to only return batch_limit data points to prevent skew?
-        //TODO: should start_time and end_time be unsigned integers instead?
+        //TODO: can start_time and end_time be converted to timestamps without adding overhead?
+        //TODO: can the signed ints from Java be cast to unsigned ints without adding overhead?
         let gids = batch
             .column(0)
             .as_any()
