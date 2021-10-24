@@ -53,7 +53,7 @@ fn main() {
     let (address, query_file) = parse_arguments(args);
 
     if let Ok(rt) = tokio::runtime::Runtime::new() {
-        let address = address.unwrap_or("127.0.0.1".to_string());
+        let address = address.unwrap_or_else(|| "127.0.0.1".to_string());
         match connect(&rt, &address, 9999) {
             Ok(fsc) => {
                 //Execute queries
@@ -82,7 +82,7 @@ fn parse_arguments(mut args: env::Args) -> (Option<String>, Option<String>) {
     let mut address = None;
     let mut query_file = None;
 
-    while let Some(arg) = args.next() {
+    for arg in args {
         let metadata = metadata(&arg);
         if metadata.is_ok() && metadata.unwrap().is_file() {
             query_file = Some(arg); //A file is probably the query file
@@ -124,14 +124,10 @@ fn repl(rt: Runtime, mut fsc: FlightServiceClient<Channel>) -> Result<()> {
         let _ = editor.load_history(&home);
     }
 
-    loop {
-        if let Ok(line) = editor.readline("ModelarDB> ") {
-            editor.add_history_entry(line.as_str());
-            if let Err(message) = execute_and_print_query_or_command(&rt, &mut fsc, &line) {
-                eprintln!("{}", message);
-            }
-        } else {
-            break;
+    while let Ok(line) = editor.readline("ModelarDB> ") {
+        editor.add_history_entry(line.as_str());
+        if let Err(message) = execute_and_print_query_or_command(&rt, &mut fsc, &line) {
+            eprintln!("{}", message);
         }
     }
 
