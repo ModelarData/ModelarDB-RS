@@ -2,7 +2,7 @@
 name = "mmdbd"
 version = "0.1.0"
 license = "Apache-2.0"
-edition = "2018"
+edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
