@@ -16,9 +16,10 @@ pub mod model_simple_aggregates;
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
+
 use datafusion::error::Result;
-use datafusion::execution::context::ExecutionProps;
-use datafusion::execution::context::QueryPlanner;
+use datafusion::execution::context::{ExecutionContextState, ExecutionProps, QueryPlanner};
 use datafusion::logical_plan::LogicalPlan;
 use datafusion::optimizer::optimizer::OptimizerRule;
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
@@ -45,15 +46,19 @@ impl OptimizerRule for PrintOptimizerRule {
 
 pub struct PrintQueryPlanner {}
 
+#[async_trait]
 impl QueryPlanner for PrintQueryPlanner {
-    fn create_physical_plan(
+    async fn create_physical_plan(
         &self,
-        plan: &datafusion::logical_plan::LogicalPlan,
-        ctx_state: &datafusion::execution::context::ExecutionContextState,
-    ) -> Result<std::sync::Arc<dyn datafusion::physical_plan::ExecutionPlan>> {
-        println!("QUERY PLANNER[START]\n {:#?} \nQUERY PLANNER[END]", &plan);
+        logical_plan: &LogicalPlan,
+        ctx_state: &ExecutionContextState,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
+        println!(
+            "QUERY PLANNER[START]\n {:#?} \nQUERY PLANNER[END]",
+            &logical_plan
+        );
         let planner = DefaultPhysicalPlanner::default();
-        planner.create_physical_plan(plan, ctx_state)
+        planner.create_physical_plan(logical_plan, ctx_state).await
     }
 }
 

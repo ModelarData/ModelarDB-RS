@@ -41,7 +41,7 @@ fn main() {
         //Build context
         let catalog = catalog::new(&data_folder);
         let runtime = Runtime::new().unwrap();
-        let execution = engine::new(&catalog);
+        let execution = runtime.block_on(engine::new(&catalog));
         let context = Arc::new(Context {
             catalog,
             runtime,

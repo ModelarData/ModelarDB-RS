@@ -147,7 +147,7 @@ impl FlightService for FlightServiceHandler {
 
         //Execute client query
         let mut execution = self.context.execution.clone();
-        let df = execution.sql(query).unwrap();
+        let df = execution.sql(query).await.unwrap();
         let results = df.collect().await.unwrap();
 
         //Transmit schema

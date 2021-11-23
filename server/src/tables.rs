@@ -29,13 +29,16 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit}
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
 
+use datafusion::datasource::object_store::local::LocalFileSystem;
+use datafusion::datasource::object_store::ObjectStore;
 use datafusion::datasource::{
-    datasource::Statistics, datasource::TableProviderFilterPushDown, TableProvider,
+    datasource::TableProviderFilterPushDown, PartitionedFile, TableProvider,
 };
 use datafusion::error::{DataFusionError, Result};
 use datafusion::logical_plan::{binary_expr, col, combine_filters, Expr};
 use datafusion::physical_plan::{
-    parquet::ParquetExec, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream,
+    file_format::ParquetExec, file_format::PhysicalPlanConfig, ExecutionPlan, Partitioning,
+    RecordBatchStream, SendableRecordBatchStream, Statistics,
 };
 
 use crate::catalog::ModelTable;
@@ -43,42 +46,45 @@ use crate::models;
 
 /** Public Types **/
 pub struct DataPointView {
-    max_concurrency: usize,
+    object_store: Arc<dyn ObjectStore>,
     model_table: Arc<ModelTable>,
+    schema: Arc<Schema>,
 }
 
 impl DataPointView {
-    pub fn new(max_concurrency: usize, model_table: &Arc<ModelTable>) -> Arc<Self> {
+    pub fn new(model_table: &Arc<ModelTable>) -> Arc<Self> {
         Arc::new(DataPointView {
-            max_concurrency,
             model_table: model_table.clone(),
+            object_store: Arc::new(LocalFileSystem {}),
+            schema: Arc::new(Schema::new(vec![
+                Field::new("tid", DataType::Int32, false),
+                Field::new(
+                    "timestamp",
+                    DataType::Timestamp(TimeUnit::Millisecond, None),
+                    false,
+                ),
+                Field::new("value", DataType::Float32, false),
+            ])),
         })
     }
 }
 
 /** Private Methods **/
+#[async_trait]
 impl TableProvider for DataPointView {
     fn as_any(&self) -> &dyn Any {
         self
     }
 
     fn schema(&self) -> SchemaRef {
-        Arc::new(Schema::new(vec![
-            Field::new("tid", DataType::Int32, false),
-            Field::new(
-                "timestamp",
-                DataType::Timestamp(TimeUnit::Millisecond, None),
-                false,
-            ),
-            Field::new("value", DataType::Float32, false),
-        ]))
+        self.schema.clone()
     }
 
     fn supports_filter_pushdown(&self, _filter: &Expr) -> Result<TableProviderFilterPushDown> {
         Ok(TableProviderFilterPushDown::Inexact)
     }
 
-    fn scan(
+    async fn scan(
         &self,
         projection: &Option<Vec<usize>>,
         batch_size: usize,
@@ -102,35 +108,52 @@ impl TableProvider for DataPointView {
             .collect();
 
         //Create the data source node
-        let predicate = combine_filters(&rewritten_filters);
-        let parquet_exec = ParquetExec::try_from_path(
-            &self.model_table.segment_folder,
-            Some(vec![0, 1, 2, 3, 4, 5]),
-            predicate.clone(),
+        let partitioned_files: Vec<PartitionedFile> = self
+            .object_store
+            .list_file(&self.model_table.segment_folder)
+            .await?
+            .map(|file_meta| PartitionedFile {
+                file_meta: file_meta.unwrap(),
+                partition_values: vec![],
+            })
+            .collect::<Vec<PartitionedFile>>()
+            .await;
+
+        //TODO: accumulate the size with filters
+        //https://github.com/apache/arrow-datafusion/blob/master/datafusion/src/datasource/listing/table.rs#L251
+        let statistics = Statistics {
+            num_rows: None,
+            total_byte_size: None,
+            column_statistics: None,
+            is_exact: false,
+        };
+
+        //TODO: partition the files properly
+        let physical_plan_config = PhysicalPlanConfig {
+            object_store: self.object_store.clone(),
+            file_schema: self.model_table.segment_group_file_schema.clone(),
+            file_groups: vec![partitioned_files],
+            statistics,
+            projection: None,
             batch_size,
-            self.max_concurrency,
             limit,
-        )
-        .unwrap();
+            table_partition_cols: vec![],
+        };
+
+        let predicate = combine_filters(&rewritten_filters);
+        let parquet_exec = Arc::new(ParquetExec::new(physical_plan_config, predicate.clone()));
 
         //Create the grid node
         let limited_batch_size = limit.map(|l| min(l, batch_size)).unwrap_or(batch_size);
-        Ok(GridExec::new(
+        let grid_exec: Arc<dyn ExecutionPlan> = GridExec::new(
             self.model_table.clone(),
             projection.clone(),
             predicate,
             limited_batch_size,
             self.schema(),
-            Arc::new(parquet_exec),
-        ))
-    }
-
-    fn statistics(&self) -> Statistics {
-        Statistics {
-            num_rows: None,
-            total_byte_size: None,
-            column_statistics: None,
-        }
+            parquet_exec,
+        );
+        Ok(grid_exec)
     }
 }
 
@@ -218,6 +241,15 @@ impl ExecutionPlan for GridExec {
             self.model_table.clone(),
             self.input.execute(partition).await?,
         )))
+    }
+
+    fn statistics(&self) -> Statistics {
+        Statistics {
+            num_rows: None,
+            total_byte_size: None,
+            column_statistics: None,
+            is_exact: false,
+        }
     }
 }
 
@@ -318,15 +350,20 @@ impl GridStream {
         }
 
         //Return the batch of reconstructed data points
-        let columns: Vec<ArrayRef> = self.schema.fields().iter().map(|field| {
-            let column: ArrayRef = match field.name().as_str() {
-                "tid" => Arc::new(tids.finish()),
-                "timestamp" =>  Arc::new(timestamps.finish()),
-                "value" => Arc::new(values.finish()),
-                column => panic!("unsupported column {}", column)
-            };
-            column
-        }).collect();
+        let columns: Vec<ArrayRef> = self
+            .schema
+            .fields()
+            .iter()
+            .map(|field| {
+                let column: ArrayRef = match field.name().as_str() {
+                    "tid" => Arc::new(tids.finish()),
+                    "timestamp" => Arc::new(timestamps.finish()),
+                    "value" => Arc::new(values.finish()),
+                    column => panic!("unsupported column {}", column),
+                };
+                column
+            })
+            .collect();
         Ok(RecordBatch::try_new(self.schema.clone(), columns).unwrap())
     }
 }

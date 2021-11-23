@@ -14,8 +14,10 @@
  */
 use std::fs::{read_dir, DirEntry};
 use std::io::Read;
+use std::sync::Arc;
 use std::{fs::File, path::Path};
 
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use datafusion::parquet::record::RowAccessor;
@@ -35,6 +37,7 @@ pub struct Table {
 pub struct ModelTable {
     pub name: String,
     pub segment_folder: String,
+    pub segment_group_file_schema: Arc<Schema>,
     pub sampling_intervals: Vec<i32>,
 }
 
@@ -57,6 +60,15 @@ impl Catalog {
 pub fn new(data_folder: &str) -> Catalog {
     let mut tables = vec![];
     let mut model_tables = vec![];
+    let model_table_segment_group_file_schema = Arc::new(Schema::new(vec![
+        Field::new("gid", DataType::Int32, false),
+        Field::new("start_time", DataType::Int64, false),
+        Field::new("end_time", DataType::Int64, false),
+        Field::new("mtid", DataType::Int32, false),
+        Field::new("model", DataType::Binary, false),
+        Field::new("gaps", DataType::Binary, false),
+    ]));
+
     if let Ok(data_folder) = read_dir(data_folder) {
         for dir_entry in data_folder {
             if let Ok(dir_entry) = dir_entry {
@@ -67,7 +79,11 @@ pub fn new(data_folder: &str) -> Catalog {
                         tables.push(new_table(file_name, path.to_string()));
                         eprintln!("INFO: initialized table {}", path);
                     } else if is_model_folder(&dir_entry) {
-                        if let Ok(model_table) = new_model_table(file_name, path.to_string()) {
+                        if let Ok(model_table) = new_model_table(
+                            file_name,
+                            path.to_string(),
+                            &model_table_segment_group_file_schema,
+                        ) {
                             model_tables.push(model_table);
                             eprintln!("INFO: initialized model table {}", path);
                         } else {
@@ -127,7 +143,11 @@ fn is_model_folder(dir_entry: &DirEntry) -> bool {
     false
 }
 
-fn new_model_table(table_name: String, table_folder: String) -> Result<ModelTable, ParquetError> {
+fn new_model_table(
+    table_name: String,
+    table_folder: String,
+    segment_group_file_schema: &Arc<Schema>,
+) -> Result<ModelTable, ParquetError> {
     //Ensure only supported model types are used
     let model_types_file = table_folder.clone() + "/model_type.parquet";
     let path = Path::new(&model_types_file);
@@ -162,6 +182,7 @@ fn new_model_table(table_name: String, table_folder: String) -> Result<ModelTabl
     Ok(ModelTable {
         name: table_name,
         segment_folder: table_folder + "/segment",
+        segment_group_file_schema: segment_group_file_schema.clone(),
         sampling_intervals,
     })
 }
