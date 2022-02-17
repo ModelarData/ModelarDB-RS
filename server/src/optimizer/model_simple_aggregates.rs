@@ -193,9 +193,16 @@ impl AggregateExpr for ModelAggregateExpr {
 
     fn state_fields(&self) -> Result<Vec<Field>> {
         let fields = match &self.aggregate_type {
-            ModelAggregateType::Sum =>  vec![Field::new("SUM", DataType::Float32, false)],
-            ModelAggregateType::Avg =>  vec![Field::new("COUNT", DataType::UInt64, false), Field::new("SUM", DataType::Float32, false)],
-            _ =>  vec![Field::new(&format_state_name(self.name(), "NOT NULL"), self.data_type.clone(), false)]
+            ModelAggregateType::Sum => vec![Field::new("SUM", DataType::Float32, false)],
+            ModelAggregateType::Avg => vec![
+                Field::new("COUNT", DataType::UInt64, false),
+                Field::new("SUM", DataType::Float32, false),
+            ],
+            _ => vec![Field::new(
+                &format_state_name(self.name(), "NOT NULL"),
+                self.data_type.clone(),
+                false,
+            )],
         };
         Ok(fields)
     }
@@ -299,14 +306,6 @@ struct ModelCountAccumulator {
 }
 
 impl Accumulator for ModelCountAccumulator {
-    fn update(&mut self, _values: &[ScalarValue]) -> Result<()> {
-        unreachable!()
-    }
-
-    fn merge(&mut self, _states: &[ScalarValue]) -> Result<()> {
-        unreachable!()
-    }
-
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
             self.count += array
@@ -429,14 +428,6 @@ struct ModelMinAccumulator {
 }
 
 impl Accumulator for ModelMinAccumulator {
-    fn update(&mut self, _values: &[ScalarValue]) -> Result<()> {
-        unreachable!()
-    }
-
-    fn merge(&mut self, _states: &[ScalarValue]) -> Result<()> {
-        unreachable!()
-    }
-
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
             self.min = f32::min(
@@ -562,14 +553,6 @@ struct ModelMaxAccumulator {
 }
 
 impl Accumulator for ModelMaxAccumulator {
-    fn update(&mut self, _values: &[ScalarValue]) -> Result<()> {
-        unreachable!()
-    }
-
-    fn merge(&mut self, _states: &[ScalarValue]) -> Result<()> {
-        unreachable!()
-    }
-
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
             self.max = f32::max(
@@ -692,14 +675,6 @@ struct ModelSumAccumulator {
 }
 
 impl Accumulator for ModelSumAccumulator {
-    fn update(&mut self, _values: &[ScalarValue]) -> Result<()> {
-        unreachable!()
-    }
-
-    fn merge(&mut self, _states: &[ScalarValue]) -> Result<()> {
-        unreachable!()
-    }
-
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
             self.sum += array
@@ -823,14 +798,6 @@ struct ModelAvgAccumulator {
 }
 
 impl Accumulator for ModelAvgAccumulator {
-    fn update(&mut self, _values: &[ScalarValue]) -> Result<()> {
-        unreachable!()
-    }
-
-    fn merge(&mut self, _states: &[ScalarValue]) -> Result<()> {
-        unreachable!()
-    }
-
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
             let array = array.as_any().downcast_ref::<Float32Array>().unwrap();
@@ -846,7 +813,7 @@ impl Accumulator for ModelAvgAccumulator {
 
     fn state(&self) -> Result<Vec<ScalarValue>> {
         //Must match datafusion::physical_plan::expressions::AvgAccumulator
-        Ok(vec![ 
+        Ok(vec![
             ScalarValue::UInt64(Some(self.count)),
             ScalarValue::Float32(Some(self.sum)),
         ])

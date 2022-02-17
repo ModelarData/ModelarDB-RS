@@ -13,7 +13,6 @@
  * limitations under the License.
  */
 use std::any::Any;
-use std::cmp::min;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -35,10 +34,11 @@ use datafusion::datasource::{
     datasource::TableProviderFilterPushDown, PartitionedFile, TableProvider,
 };
 use datafusion::error::{DataFusionError, Result};
+use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::logical_plan::{binary_expr, col, combine_filters, Expr};
 use datafusion::physical_plan::{
-    file_format::ParquetExec, file_format::PhysicalPlanConfig, ExecutionPlan, Partitioning,
-    RecordBatchStream, SendableRecordBatchStream, Statistics,
+    expressions::PhysicalSortExpr, file_format::FileScanConfig, file_format::ParquetExec,
+    ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream, Statistics,
 };
 
 use crate::catalog::ModelTable;
@@ -87,7 +87,6 @@ impl TableProvider for DataPointView {
     async fn scan(
         &self,
         projection: &Option<Vec<usize>>,
-        batch_size: usize,
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
@@ -129,27 +128,25 @@ impl TableProvider for DataPointView {
         };
 
         //TODO: partition the files properly
-        let physical_plan_config = PhysicalPlanConfig {
+        let file_scan_config = FileScanConfig {
             object_store: self.object_store.clone(),
             file_schema: self.model_table.segment_group_file_schema.clone(),
             file_groups: vec![partitioned_files],
             statistics,
             projection: None,
-            batch_size,
             limit,
             table_partition_cols: vec![],
         };
 
         let predicate = combine_filters(&rewritten_filters);
-        let parquet_exec = Arc::new(ParquetExec::new(physical_plan_config, predicate.clone()));
+        let parquet_exec = Arc::new(ParquetExec::new(file_scan_config, predicate.clone()));
 
         //Create the grid node
-        let limited_batch_size = limit.map(|l| min(l, batch_size)).unwrap_or(batch_size);
         let grid_exec: Arc<dyn ExecutionPlan> = GridExec::new(
             self.model_table.clone(),
             projection.clone(),
             predicate,
-            limited_batch_size,
+            limit,
             self.schema(),
             parquet_exec,
         );
@@ -164,7 +161,7 @@ impl TableProvider for DataPointView {
 pub struct GridExec {
     pub model_table: Arc<ModelTable>,
     predicate: Option<Expr>,
-    limited_batch_size: usize,
+    limit: Option<usize>,
     schema: SchemaRef,
     input: Arc<dyn ExecutionPlan>,
 }
@@ -174,7 +171,7 @@ impl GridExec {
         model_table: Arc<ModelTable>,
         projection: Option<Vec<usize>>,
         predicate: Option<Expr>,
-        limited_batch_size: usize,
+        limit: Option<usize>,
         schema: SchemaRef,
         input: Arc<dyn ExecutionPlan>,
     ) -> Arc<Self> {
@@ -193,7 +190,7 @@ impl GridExec {
         Arc::new(GridExec {
             model_table,
             predicate,
-            limited_batch_size,
+            limit,
             schema,
             input,
         })
@@ -218,6 +215,11 @@ impl ExecutionPlan for GridExec {
         self.input.output_partitioning()
     }
 
+    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
+        //TODO: is grid guaranteed to always output data ordered by tid and time?
+        None
+    }
+
     fn with_new_children(
         &self,
         children: Vec<Arc<dyn ExecutionPlan>>,
@@ -235,11 +237,15 @@ impl ExecutionPlan for GridExec {
         }
     }
 
-    async fn execute(&self, partition: usize) -> Result<SendableRecordBatchStream> {
+    async fn execute(
+        &self,
+        partition: usize,
+        runtime: Arc<RuntimeEnv>,
+    ) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(GridStream::new(
             self.schema.clone(),
             self.model_table.clone(),
-            self.input.execute(partition).await?,
+            self.input.execute(partition, runtime).await?,
         )))
     }
 
@@ -275,7 +281,7 @@ impl GridStream {
 
     fn grid(&self, batch: &RecordBatch) -> ArrowResult<RecordBatch> {
         //TODO: how to efficiently construct and return only the requested columns?
-        //TODO: it is necessary to only return batch_limit data points to prevent skew?
+        //TODO: it is necessary to only return batch_size data points to prevent skew?
         //TODO: can start_time and end_time be converted to timestamps without adding overhead?
         //TODO: can the signed ints from Java be cast to unsigned ints without adding overhead?
         let gids = batch
