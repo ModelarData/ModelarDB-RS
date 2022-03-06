@@ -988,7 +988,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mmdbc"
+name = "mmdb"
 version = "0.1.0"
 dependencies = [
  "arrow",
