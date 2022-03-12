@@ -12,6 +12,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+mod helper;
+
+use self::helper::ClientHelper;
+
 use std::convert::TryFrom;
 use std::env;
 use std::error::Error;
@@ -30,8 +34,9 @@ use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::utils::flight_data_to_arrow_batch;
 use arrow_flight::{Criteria, FlightDescriptor};
 
-use tokio::runtime::Runtime;
+use rustyline::Editor;
 
+use tokio::runtime::Runtime;
 use tonic::transport::Channel;
 use tonic::Request;
 
@@ -118,7 +123,9 @@ fn file(rt: Runtime, mut fsc: FlightServiceClient<Channel>, queries_path: &str) 
 }
 
 fn repl(rt: Runtime, mut fsc: FlightServiceClient<Channel>) -> Result<()> {
-    let mut editor = rustyline::Editor::<()>::new();
+    let mut editor = Editor::<ClientHelper>::new();
+    let table_names = retrieve_table_names(&rt, &mut fsc)?;
+    editor.set_helper(Some(ClientHelper::new(table_names)));
     let history_file_name = ".mmdbc_history";
     if let Some(mut home) = dirs::home_dir() {
         home.push(history_file_name);
@@ -181,21 +188,12 @@ fn execute_command(
         }
         "\\dt" => {
             //List all tables
-            let criteria = Criteria { expression: vec![] };
-            let request = Request::new(criteria);
-            rt.block_on(async {
-                let mut stream = fsc.list_flights(request).await?.into_inner();
-                let flights = stream
-                    .message()
-                    .await?
-                    .ok_or("transport error: no messages received")?;
-                if let Some(fd) = flights.flight_descriptor {
-                    for table in fd.path {
-                        println!("{}", table);
-                    }
+            if let Ok(tables) = retrieve_table_names(rt, fsc) {
+                for table in tables {
+                    println!("{}", table);
                 }
-                Ok(())
-            })
+            }
+            Ok(())
         }
         "\\q" => {
             process::exit(0);
@@ -204,6 +202,30 @@ fn execute_command(
             "unknown command".to_owned(),
         ))),
     }
+}
+
+fn retrieve_table_names(
+    rt: &Runtime,
+    fsc: &mut FlightServiceClient<Channel>,
+) -> Result<Vec<String>> {
+    let criteria = Criteria { expression: vec![] };
+    let request = Request::new(criteria);
+
+    rt.block_on(async {
+        let mut stream = fsc.list_flights(request).await?.into_inner();
+        let flights = stream
+            .message()
+            .await?
+            .ok_or("transport error: no messages received")?;
+
+        let mut table_names = vec![];
+        if let Some(fd) = flights.flight_descriptor {
+            for table in fd.path {
+                table_names.push(table);
+            }
+        }
+        Ok(table_names)
+    })
 }
 
 fn execute_query(
