@@ -51,14 +51,16 @@ impl QueryPlanner for PrintQueryPlanner {
     async fn create_physical_plan(
         &self,
         logical_plan: &LogicalPlan,
-        ctx_state: &ExecutionContextState,
+        execution_state: &ExecutionContextState,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         println!(
             "QUERY PLANNER[START]\n {:#?} \nQUERY PLANNER[END]",
             &logical_plan
         );
         let planner = DefaultPhysicalPlanner::default();
-        planner.create_physical_plan(logical_plan, ctx_state).await
+        planner
+            .create_physical_plan(logical_plan, execution_state)
+            .await
     }
 }
 
