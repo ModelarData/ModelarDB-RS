@@ -292,7 +292,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
             .downcast_ref::<Int64Array>()
             .unwrap();
 
-        let count = models::length(
+        let count = models::count(
             gids.len(),
             gids,
             start_times,
@@ -404,8 +404,7 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
             let sampling_interval = self
                 .model_table
                 .sampling_intervals
-                .get(gid as usize)
-                .unwrap(); 
+                .value(gid as usize);
             let model = models.value(row_index);
             let gaps = gaps.value(row_index);
             min = f32::min(
@@ -415,7 +414,7 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
                     start_time,
                     end_time,
                     mtid,
-                    *sampling_interval,
+                    sampling_interval,
                     model,
                     gaps,
                 ),
@@ -529,8 +528,7 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
             let sampling_interval = self
                 .model_table
                 .sampling_intervals
-                .get(gid as usize)
-                .unwrap();
+                .value(gid as usize);
             let model = models.value(row_index);
             let gaps = gaps.value(row_index);
             max = f32::max(
@@ -540,7 +538,7 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
                     start_time,
                     end_time,
                     mtid,
-                    *sampling_interval,
+                    sampling_interval,
                     model,
                     gaps,
                 ),
@@ -654,8 +652,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
             let sampling_interval = self
                 .model_table
                 .sampling_intervals
-                .get(gid as usize)
-                .unwrap();
+                .value(gid as usize);
             let model = models.value(row_index);
             let gaps = gaps.value(row_index);
             sum += models::sum(
@@ -663,7 +660,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
                 start_time,
                 end_time,
                 mtid,
-                *sampling_interval,
+                sampling_interval,
                 model,
                 gaps,
             );
@@ -774,8 +771,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
             let sampling_interval = self
                 .model_table
                 .sampling_intervals
-                .get(gid as usize)
-                .unwrap();
+                .value(gid as usize);
             let model = models.value(row_index);
             let gaps = gaps.value(row_index);
             sum += models::sum(
@@ -783,11 +779,11 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
                 start_time,
                 end_time,
                 mtid,
-                *sampling_interval,
+                sampling_interval,
                 model,
                 gaps,
             );
-            count += (((end_time - start_time) / *sampling_interval as i64) + 1) as u64;
+            count += (((end_time - start_time) / sampling_interval as i64) + 1) as u64;
         }
 
         //If a ScalarValue is returned an array is filled with the value it contains

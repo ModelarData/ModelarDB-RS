@@ -22,7 +22,8 @@ use async_trait::async_trait;
 use futures::stream::{Stream, StreamExt};
 
 use datafusion::arrow::array::{
-    ArrayRef, BinaryArray, Float32Array, Int32Array, Int64Array, TimestampMillisecondArray,
+    ArrayRef, BinaryArray, Float32Array, Int32Array, Int64Array, StringArray, StringBuilder,
+    TimestampMillisecondArray,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::arrow::error::Result as ArrowResult;
@@ -45,27 +46,55 @@ use crate::catalog::ModelTable;
 use crate::models;
 
 /** Public Types **/
+/* TableProvider */
 pub struct DataPointView {
     object_store: Arc<dyn ObjectStore>,
     model_table: Arc<ModelTable>,
     schema: Arc<Schema>,
 }
 
+/** Public Methods **/
 impl DataPointView {
     pub fn new(model_table: &Arc<ModelTable>) -> Arc<Self> {
+        let mut columns = vec![
+            Field::new("tid", DataType::Int32, false),
+            Field::new(
+                "timestamp",
+                DataType::Timestamp(TimeUnit::Millisecond, None),
+                false,
+            ),
+            Field::new("value", DataType::Float32, false),
+        ];
+
+        //TODO: support dimensions with levels that are not strings?
+        for level in &model_table.denormalized_dimensions {
+            let level = level.as_any().downcast_ref::<StringArray>().unwrap();
+            columns.push(Field::new(level.value(0), DataType::Utf8, false));
+        }
+
         Arc::new(DataPointView {
             model_table: model_table.clone(),
             object_store: Arc::new(LocalFileSystem {}),
-            schema: Arc::new(Schema::new(vec![
-                Field::new("tid", DataType::Int32, false),
-                Field::new(
-                    "timestamp",
-                    DataType::Timestamp(TimeUnit::Millisecond, None),
-                    false,
-                ),
-                Field::new("value", DataType::Float32, false),
-            ])),
+            schema: Arc::new(Schema::new(columns)),
         })
+    }
+
+    fn rewrite_and_combine_filters(&self, filters: &[Expr]) -> Option<Expr> {
+        //TODO: implement rewriting of predicates
+        let rewritten_filters: Vec<Expr> = filters
+            .iter()
+            .map(|filter| match filter {
+                Expr::BinaryExpr { left, op, right } => {
+                    if **left == col("tid") {
+                        binary_expr(col("gid"), *op, *right.clone())
+                    } else {
+                        filter.clone()
+                    }
+                }
+                _ => filter.clone(),
+            })
+            .collect();
+        combine_filters(&rewritten_filters)
     }
 }
 
@@ -90,22 +119,6 @@ impl TableProvider for DataPointView {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        //TODO: centralize rewriting of predicates
-        //Rewrite logical_plan predicates
-        let rewritten_filters: Vec<Expr> = filters
-            .iter()
-            .map(|filter| match filter {
-                Expr::BinaryExpr { left, op, right } => {
-                    if **left == col("tid") {
-                        binary_expr(col("gid"), *op, *right.clone())
-                    } else {
-                        filter.clone()
-                    }
-                }
-                _ => filter.clone(),
-            })
-            .collect();
-
         //Create the data source node
         let partitioned_files: Vec<PartitionedFile> = self
             .object_store
@@ -119,7 +132,6 @@ impl TableProvider for DataPointView {
             .await;
 
         //TODO: accumulate the size with filters
-        //https://github.com/apache/arrow-datafusion/blob/master/datafusion/src/datasource/listing/table.rs#L251
         let statistics = Statistics {
             num_rows: None,
             total_byte_size: None,
@@ -127,7 +139,7 @@ impl TableProvider for DataPointView {
             is_exact: false,
         };
 
-        //TODO: partition the files properly
+        //TODO: partition and limit the number of rows read from the files properly
         let file_scan_config = FileScanConfig {
             object_store: self.object_store.clone(),
             file_schema: self.model_table.segment_group_file_schema.clone(),
@@ -137,15 +149,13 @@ impl TableProvider for DataPointView {
             limit,
             table_partition_cols: vec![],
         };
-
-        let predicate = combine_filters(&rewritten_filters);
-        let parquet_exec = Arc::new(ParquetExec::new(file_scan_config, predicate.clone()));
+        let predicate = self.rewrite_and_combine_filters(filters);
+        let parquet_exec = Arc::new(ParquetExec::new(file_scan_config, predicate));
 
         //Create the grid node
         let grid_exec: Arc<dyn ExecutionPlan> = GridExec::new(
             self.model_table.clone(),
-            projection.clone(),
-            predicate,
+            projection,
             limit,
             self.schema(),
             parquet_exec,
@@ -160,38 +170,44 @@ impl TableProvider for DataPointView {
 #[derive(Debug, Clone)]
 pub struct GridExec {
     pub model_table: Arc<ModelTable>,
-    predicate: Option<Expr>,
+    projection: Vec<usize>,
     limit: Option<usize>,
-    schema: SchemaRef,
+    schema_after_projection: SchemaRef,
     input: Arc<dyn ExecutionPlan>,
 }
 
 impl GridExec {
     pub fn new(
         model_table: Arc<ModelTable>,
-        projection: Option<Vec<usize>>,
-        predicate: Option<Expr>,
+        projection: &Option<Vec<usize>>,
         limit: Option<usize>,
         schema: SchemaRef,
         input: Arc<dyn ExecutionPlan>,
     ) -> Arc<Self> {
-        let schema = if let Some(projection) = projection {
-            //Modifies the schema according to the projection
-            let original_schema_fields = schema.fields().clone();
-            let mut projected_schema_fields = Vec::with_capacity(projection.len());
-            for column in projection {
-                projected_schema_fields.push(original_schema_fields.get(column).unwrap().clone())
-            }
-            Arc::new(Schema::new(projected_schema_fields))
+        //Modifies the schema so it matches the passed projection
+        let schema_after_projection = if let Some(ref projection) = projection {
+            Arc::new(schema.project(projection).unwrap())
         } else {
             schema
         };
 
+        //Ensures a projection is present for looking up members
+        let projection: Vec<usize> = if let Some(projection) = projection {
+            projection.to_vec()
+        } else {
+            schema_after_projection
+                .fields()
+                .iter()
+                .enumerate()
+                .map(|(i, _)| i)
+                .collect()
+        };
+
         Arc::new(GridExec {
             model_table,
-            predicate,
+            projection,
             limit,
-            schema,
+            schema_after_projection,
             input,
         })
     }
@@ -204,7 +220,7 @@ impl ExecutionPlan for GridExec {
     }
 
     fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+        self.schema_after_projection.clone()
     }
 
     fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
@@ -243,8 +259,10 @@ impl ExecutionPlan for GridExec {
         runtime: Arc<RuntimeEnv>,
     ) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(GridStream::new(
-            self.schema.clone(),
             self.model_table.clone(),
+            self.projection.clone(),
+            self.limit,
+            self.schema_after_projection.clone(),
             self.input.execute(partition, runtime).await?,
         )))
     }
@@ -261,26 +279,31 @@ impl ExecutionPlan for GridExec {
 
 /* Stream */
 struct GridStream {
-    schema: SchemaRef,
     model_table: Arc<ModelTable>,
+    projection: Vec<usize>,
+    limit: Option<usize>,
+    schema_after_projection: SchemaRef,
     input: SendableRecordBatchStream,
 }
 
 impl GridStream {
     fn new(
-        schema: SchemaRef,
         model_table: Arc<ModelTable>,
+        projection: Vec<usize>,
+        limit: Option<usize>,
+        schema_after_projection: SchemaRef,
         input: SendableRecordBatchStream,
     ) -> Self {
         GridStream {
-            schema,
             model_table,
+            projection,
+            limit,
+            schema_after_projection,
             input,
         }
     }
 
     fn grid(&self, batch: &RecordBatch) -> ArrowResult<RecordBatch> {
-        //TODO: how to efficiently construct and return only the requested columns?
         //TODO: it is necessary to only return batch_size data points to prevent skew?
         //TODO: can start_time and end_time be converted to timestamps without adding overhead?
         //TODO: can the signed ints from Java be cast to unsigned ints without adding overhead?
@@ -315,9 +338,15 @@ impl GridStream {
             .downcast_ref::<BinaryArray>()
             .unwrap();
 
-        //Compute the number of data points to allocate space for
-        let num_rows = batch.num_rows();
-        let data_points = models::length(
+        //Compute the number of data points that will be reconstructed from the models and allocate
+        //memory for the them. It is assumed that most queries will request tids, timestamps, and
+        //values so they are written to the arrays together by a single iteration over the models.
+        //A segment represents at least one data points, so only limit segments are needed if set.
+        //TODO: reduce limit for each batch of data points returned to not output more than needed
+        let num_rows = batch
+            .num_rows()
+            .min(self.limit.unwrap_or(usize::max_value()));
+        let data_points = models::count(
             num_rows,
             gids,
             start_times,
@@ -328,17 +357,13 @@ impl GridStream {
         let mut timestamps = TimestampMillisecondArray::builder(data_points);
         let mut values = Float32Array::builder(data_points);
 
-        //Reconstruct the data points using the models
+        //Reconstructs the data points from the segments
         for row_index in 0..num_rows {
             let gid = gids.value(row_index);
             let start_time = start_times.value(row_index);
             let end_time = end_times.value(row_index);
             let mtid = mtids.value(row_index);
-            let sampling_interval = *self
-                .model_table
-                .sampling_intervals
-                .get(gid as usize)
-                .unwrap();
+            let sampling_interval = self.model_table.sampling_intervals.value(gid as usize);
             let model = models.value(row_index);
             let gaps = gaps.value(row_index);
             models::grid(
@@ -355,22 +380,41 @@ impl GridStream {
             );
         }
 
-        //Return the batch of reconstructed data points
-        let columns: Vec<ArrayRef> = self
-            .schema
-            .fields()
-            .iter()
-            .map(|field| {
-                let column: ArrayRef = match field.name().as_str() {
-                    "tid" => Arc::new(tids.finish()),
-                    "timestamp" => Arc::new(timestamps.finish()),
-                    "value" => Arc::new(values.finish()),
-                    column => panic!("unsupported column {}", column),
-                };
-                column
-            })
-            .collect();
-        Ok(RecordBatch::try_new(self.schema.clone(), columns).unwrap())
+        //Joins the reconstructed data points with the members
+        let mut columns: Vec<ArrayRef> =
+            Vec::with_capacity(self.schema_after_projection.fields().len());
+        let tids = Arc::new(tids.finish()); //Finished before the loop so it can be used by add_dimension_column
+
+        //Returns the batch of reconstructed data points with metadata
+        for column in &self.projection {
+            match column {
+                0 => columns.push(tids.clone()),
+                1 => columns.push(Arc::new(timestamps.finish())),
+                2 => columns.push(Arc::new(values.finish())),
+                column => columns.push(self.add_dimension_column(&tids, *column)),
+            }
+        }
+        Ok(RecordBatch::try_new(self.schema_after_projection.clone(), columns).unwrap())
+    }
+
+    fn add_dimension_column(&self, tids: &Int32Array, column: usize) -> ArrayRef {
+        //TODO: support dimensions with levels that are not strings?
+        let level = self
+            .model_table
+            .denormalized_dimensions
+            .get(column - 3)
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+
+        let mut members = StringBuilder::new(level.iter().map(|s| s.unwrap().len()).sum());
+        for tid in tids {
+            members
+                .append_value(level.value(tid.unwrap() as usize))
+                .unwrap();
+        }
+        Arc::new(members.finish())
     }
 }
 
@@ -387,6 +431,6 @@ impl Stream for GridStream {
 
 impl RecordBatchStream for GridStream {
     fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+        self.schema_after_projection.clone()
     }
 }

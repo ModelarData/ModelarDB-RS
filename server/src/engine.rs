@@ -39,7 +39,7 @@ pub async fn new(catalog: &Catalog) -> ExecutionContext {
     for table in &catalog.model_tables {
         let name = table.name.clone();
         let model_table = (*table).clone();
-        let table_provider = DataPointView::new(&Arc::new(model_table));
+        let table_provider = DataPointView::new(&model_table);
         if ctx.register_table(name.as_str(), table_provider).is_err() {
             eprintln!("ERROR: unable to initialize model table {}", name);
         }

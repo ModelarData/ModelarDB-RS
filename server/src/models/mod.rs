@@ -20,25 +20,6 @@ use datafusion::arrow::array::{
     Float32Builder, Int32Array, Int32Builder, Int64Array, TimestampMillisecondBuilder,
 };
 
-pub fn length(
-    num_rows: usize,
-    gids: &Int32Array,
-    start_times: &Int64Array,
-    end_times: &Int64Array,
-    sampling_intervals: &[i32],
-) -> usize {
-    //TODO: use SIMD through the arrow kernels if all data is from a single time
-    // series, or if all queried time series use the same sampling interval
-    let mut data_points = 0;
-    for row_index in 0..num_rows {
-        let tid = gids.value(row_index) as usize;
-        let sampling_interval = *sampling_intervals.get(tid).unwrap() as i64;
-        data_points +=
-            ((end_times.value(row_index) - start_times.value(row_index)) / sampling_interval) + 1;
-    }
-    data_points as usize
-}
-
 //TODO: can mtid be converted to a model type enum without adding overhead?
 pub fn grid(
     //TODO: support time series with different number of values and data types?
@@ -91,6 +72,25 @@ pub fn grid(
         ),
         _ => panic!("unknown model type"),
     }
+}
+
+//TODO: refactor count to operate on values instead of arrays for consistency?.
+pub fn count(
+    num_rows: usize,
+    gids: &Int32Array,
+    start_times: &Int64Array,
+    end_times: &Int64Array,
+    sampling_intervals: &Int32Array,
+) -> usize {
+    //Assumes all arrays are the same length and contain less or equal to num_rows elements
+    let mut data_points = 0;
+    for row_index in 0..num_rows {
+        let tid = gids.value(row_index) as usize;
+        let sampling_interval = sampling_intervals.value(tid) as i64;
+        data_points +=
+            ((end_times.value(row_index) - start_times.value(row_index)) / sampling_interval) + 1;
+    }
+    data_points as usize
 }
 
 pub fn min(
