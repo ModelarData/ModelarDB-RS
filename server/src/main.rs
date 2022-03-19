@@ -14,6 +14,7 @@
  */
 mod catalog;
 mod engine;
+mod macros;
 mod models;
 mod optimizer;
 mod remote;

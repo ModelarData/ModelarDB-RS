@@ -307,36 +307,7 @@ impl GridStream {
         //TODO: it is necessary to only return batch_size data points to prevent skew?
         //TODO: can start_time and end_time be converted to timestamps without adding overhead?
         //TODO: can the signed ints from Java be cast to unsigned ints without adding overhead?
-        let gids = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .unwrap();
-        let start_times = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let end_times = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let mtids = batch
-            .column(3)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .unwrap();
-        let models = batch
-            .column(4)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
-        let gaps = batch
-            .column(5)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
+        crate::downcast_arrays!(gids, start_times, end_times, mtids, models, gaps, batch);
 
         //Compute the number of data points that will be reconstructed from the models and allocate
         //memory for the them. It is assumed that most queries will request tids, timestamps, and

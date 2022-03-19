@@ -363,36 +363,7 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        let gids = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .unwrap();
-        let start_times = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let end_times = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let mtids = batch
-            .column(3)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .unwrap();
-        let models = batch
-            .column(4)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
-        let gaps = batch
-            .column(5)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
+        crate::downcast_arrays!(gids, start_times, end_times, mtids, models, gaps, batch);
 
         let mut min = f32::MAX;
         let num_rows = gids.len();
@@ -487,36 +458,7 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        let gids = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .unwrap();
-        let start_times = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let end_times = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let mtids = batch
-            .column(3)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .unwrap();
-        let models = batch
-            .column(4)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
-        let gaps = batch
-            .column(5)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
+        crate::downcast_arrays!(gids, start_times, end_times, mtids, models, gaps, batch);
 
         let mut max = f32::MIN;
         let num_rows = gids.len();
@@ -611,36 +553,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        let gids = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .unwrap();
-        let start_times = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let end_times = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let mtids = batch
-            .column(3)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .unwrap();
-        let models = batch
-            .column(4)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
-        let gaps = batch
-            .column(5)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
+        crate::downcast_arrays!(gids, start_times, end_times, mtids, models, gaps, batch);
 
         let mut sum = 0.0;
         let num_rows = gids.len();
@@ -729,36 +642,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        let gids = batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .unwrap();
-        let start_times = batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let end_times = batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let mtids = batch
-            .column(3)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .unwrap();
-        let models = batch
-            .column(4)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
-        let gaps = batch
-            .column(5)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
+        crate::downcast_arrays!(gids, start_times, end_times, mtids, models, gaps, batch);
 
         let mut sum = 0.0;
         let mut count: u64 = 0;
