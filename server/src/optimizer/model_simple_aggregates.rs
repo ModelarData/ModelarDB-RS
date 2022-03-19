@@ -180,7 +180,7 @@ impl ModelAggregateExpr {
         };
 
         Arc::new(Self {
-            name: format!("{:?}AggregateExpr", aggregate_type),
+            name: format!("Model{:?}AggregateExpr", aggregate_type),
             aggregate_type,
             data_type,
             model_table,

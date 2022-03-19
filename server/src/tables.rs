@@ -13,6 +13,8 @@
  * limitations under the License.
  */
 use std::any::Any;
+use std::fmt;
+use std::fmt::Formatter;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
@@ -39,7 +41,9 @@ use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::logical_plan::{binary_expr, col, combine_filters, Expr};
 use datafusion::physical_plan::{
     expressions::PhysicalSortExpr, file_format::FileScanConfig, file_format::ParquetExec,
-    ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream, Statistics,
+    metrics::BaselineMetrics, metrics::ExecutionPlanMetricsSet, metrics::MetricsSet,
+    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream,
+    Statistics,
 };
 
 use crate::catalog::ModelTable;
@@ -174,6 +178,7 @@ pub struct GridExec {
     limit: Option<usize>,
     schema_after_projection: SchemaRef,
     input: Arc<dyn ExecutionPlan>,
+    metrics: ExecutionPlanMetricsSet,
 }
 
 impl GridExec {
@@ -209,6 +214,7 @@ impl GridExec {
             limit,
             schema_after_projection,
             input,
+            metrics: ExecutionPlanMetricsSet::new(),
         })
     }
 }
@@ -264,6 +270,7 @@ impl ExecutionPlan for GridExec {
             self.limit,
             self.schema_after_projection.clone(),
             self.input.execute(partition, runtime).await?,
+            BaselineMetrics::new(&self.metrics, partition),
         )))
     }
 
@@ -275,6 +282,25 @@ impl ExecutionPlan for GridExec {
             is_exact: false,
         }
     }
+
+    fn metrics(&self) -> Option<MetricsSet> {
+        Some(self.metrics.clone_inner())
+    }
+
+    fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> fmt::Result {
+        let columns: Vec<&String> = self
+            .schema_after_projection
+            .fields()
+            .iter()
+            .map(|f| f.name())
+            .collect();
+
+        write!(
+            f,
+            "GridExec: projection={:?}, limit={:?}, columns={:?}",
+            self.projection, self.limit, columns
+        )
+    }
 }
 
 /* Stream */
@@ -284,6 +310,7 @@ struct GridStream {
     limit: Option<usize>,
     schema_after_projection: SchemaRef,
     input: SendableRecordBatchStream,
+    baseline_metrics: BaselineMetrics,
 }
 
 impl GridStream {
@@ -293,6 +320,7 @@ impl GridStream {
         limit: Option<usize>,
         schema_after_projection: SchemaRef,
         input: SendableRecordBatchStream,
+        baseline_metrics: BaselineMetrics,
     ) -> Self {
         GridStream {
             model_table,
@@ -300,10 +328,14 @@ impl GridStream {
             limit,
             schema_after_projection,
             input,
+            baseline_metrics,
         }
     }
 
     fn grid(&self, batch: &RecordBatch) -> ArrowResult<RecordBatch> {
+        //The timer records the time elapsed when dropped
+        let _timer = self.baseline_metrics.elapsed_compute().timer();
+
         //TODO: it is necessary to only return batch_size data points to prevent skew?
         //TODO: can start_time and end_time be converted to timestamps without adding overhead?
         //TODO: can the signed ints from Java be cast to unsigned ints without adding overhead?
@@ -393,10 +425,11 @@ impl Stream for GridStream {
     type Item = ArrowResult<RecordBatch>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-        self.input.poll_next_unpin(cx).map(|x| match x {
+        let poll = self.input.poll_next_unpin(cx).map(|x| match x {
             Some(Ok(batch)) => Some(self.grid(&batch)),
             other => other,
-        })
+        });
+        self.baseline_metrics.record_poll(poll)
     }
 }
 
