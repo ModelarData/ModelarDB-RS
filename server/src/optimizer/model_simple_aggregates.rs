@@ -35,6 +35,7 @@ use datafusion::physical_plan::expressions::{Avg, Count, Max, Min, Sum};
 use datafusion::physical_plan::hash_aggregate::HashAggregateExec;
 use datafusion::physical_plan::ColumnarValue;
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use datafusion::prelude::ExecutionConfig;
 use datafusion::scalar::ScalarValue;
@@ -67,48 +68,53 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
         if let Some(hae) = plan.as_any().downcast_ref::<HashAggregateExec>() {
             let children = &hae.children();
             if children.len() == 1 {
-                let ae = hae.aggr_expr();
-                if ae.len() == 1 {
-                    //TODO: factor out shared generic code using macro or function?
-                    if ae[0].as_any().downcast_ref::<Count>().is_some() {
-                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                            let mae = ModelAggregateExpr::new(
-                                ModelAggregateType::Count,
-                                ge.model_table.clone(),
-                            );
-                            return Some(new_hash_aggregate(hae, mae, ge));
-                        }
-                    } else if ae[0].as_any().downcast_ref::<Min>().is_some() {
-                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                            let mae = ModelAggregateExpr::new(
-                                ModelAggregateType::Min,
-                                ge.model_table.clone(),
-                            );
-                            return Some(new_hash_aggregate(hae, mae, ge));
-                        }
-                    } else if ae[0].as_any().downcast_ref::<Max>().is_some() {
-                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                            let mae = ModelAggregateExpr::new(
-                                ModelAggregateType::Max,
-                                ge.model_table.clone(),
-                            );
-                            return Some(new_hash_aggregate(hae, mae, ge));
-                        }
-                    } else if ae[0].as_any().downcast_ref::<Sum>().is_some() {
-                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                            let mae = ModelAggregateExpr::new(
-                                ModelAggregateType::Sum,
-                                ge.model_table.clone(),
-                            );
-                            return Some(new_hash_aggregate(hae, mae, ge));
-                        }
-                    } else if ae[0].as_any().downcast_ref::<Avg>().is_some() {
-                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                            let mae = ModelAggregateExpr::new(
-                                ModelAggregateType::Avg,
-                                ge.model_table.clone(),
-                            );
-                            return Some(new_hash_aggregate(hae, mae, ge));
+                if let Some(rp) = children[0].as_any().downcast_ref::<RepartitionExec>() {
+                    let children = &rp.children();
+                    if children.len() == 1 {
+                        let ae = hae.aggr_expr();
+                        if ae.len() == 1 {
+                            //TODO: simplify and factor out shared code using macros or functions
+                            if ae[0].as_any().downcast_ref::<Count>().is_some() {
+                                if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
+                                    let mae = ModelAggregateExpr::new(
+                                        ModelAggregateType::Count,
+                                        ge.model_table.clone(),
+                                        );
+                                    return Some(new_hash_aggregate(hae, mae, ge));
+                                }
+                            } else if ae[0].as_any().downcast_ref::<Min>().is_some() {
+                                if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
+                                    let mae = ModelAggregateExpr::new(
+                                        ModelAggregateType::Min,
+                                        ge.model_table.clone(),
+                                        );
+                                    return Some(new_hash_aggregate(hae, mae, ge));
+                                }
+                            } else if ae[0].as_any().downcast_ref::<Max>().is_some() {
+                                if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
+                                    let mae = ModelAggregateExpr::new(
+                                        ModelAggregateType::Max,
+                                        ge.model_table.clone(),
+                                        );
+                                    return Some(new_hash_aggregate(hae, mae, ge));
+                                }
+                            } else if ae[0].as_any().downcast_ref::<Sum>().is_some() {
+                                if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
+                                    let mae = ModelAggregateExpr::new(
+                                        ModelAggregateType::Sum,
+                                        ge.model_table.clone(),
+                                        );
+                                    return Some(new_hash_aggregate(hae, mae, ge));
+                                }
+                            } else if ae[0].as_any().downcast_ref::<Avg>().is_some() {
+                                if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
+                                    let mae = ModelAggregateExpr::new(
+                                        ModelAggregateType::Avg,
+                                        ge.model_table.clone(),
+                                        );
+                                    return Some(new_hash_aggregate(hae, mae, ge));
+                                }
+                            }
                         }
                     }
                 }
@@ -285,6 +291,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
             .as_any()
             .downcast_ref::<Int64Array>()
             .unwrap();
+
         let count = models::length(
             gids.len(),
             gids,
@@ -394,11 +401,11 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
             let start_time = start_times.value(row_index);
             let end_time = end_times.value(row_index);
             let mtid = mtids.value(row_index);
-            let sampling_interval = *self
+            let sampling_interval = self
                 .model_table
                 .sampling_intervals
                 .get(gid as usize)
-                .unwrap();
+                .unwrap(); 
             let model = models.value(row_index);
             let gaps = gaps.value(row_index);
             min = f32::min(
@@ -408,7 +415,7 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
                     start_time,
                     end_time,
                     mtid,
-                    sampling_interval,
+                    *sampling_interval,
                     model,
                     gaps,
                 ),
@@ -519,7 +526,7 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
             let start_time = start_times.value(row_index);
             let end_time = end_times.value(row_index);
             let mtid = mtids.value(row_index);
-            let sampling_interval = *self
+            let sampling_interval = self
                 .model_table
                 .sampling_intervals
                 .get(gid as usize)
@@ -533,7 +540,7 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
                     start_time,
                     end_time,
                     mtid,
-                    sampling_interval,
+                    *sampling_interval,
                     model,
                     gaps,
                 ),
@@ -644,7 +651,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
             let start_time = start_times.value(row_index);
             let end_time = end_times.value(row_index);
             let mtid = mtids.value(row_index);
-            let sampling_interval = *self
+            let sampling_interval = self
                 .model_table
                 .sampling_intervals
                 .get(gid as usize)
@@ -656,7 +663,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
                 start_time,
                 end_time,
                 mtid,
-                sampling_interval,
+                *sampling_interval,
                 model,
                 gaps,
             );
@@ -764,7 +771,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
             let start_time = start_times.value(row_index);
             let end_time = end_times.value(row_index);
             let mtid = mtids.value(row_index);
-            let sampling_interval = *self
+            let sampling_interval = self
                 .model_table
                 .sampling_intervals
                 .get(gid as usize)
@@ -776,11 +783,11 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
                 start_time,
                 end_time,
                 mtid,
-                sampling_interval,
+                *sampling_interval,
                 model,
                 gaps,
             );
-            count += (((end_time - start_time) / sampling_interval as i64) + 1) as u64;
+            count += (((end_time - start_time) / *sampling_interval as i64) + 1) as u64;
         }
 
         //If a ScalarValue is returned an array is filled with the value it contains
