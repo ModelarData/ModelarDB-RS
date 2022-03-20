@@ -38,13 +38,14 @@ use datafusion::datasource::{
 };
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::runtime_env::RuntimeEnv;
-use datafusion::logical_plan::{binary_expr, col, combine_filters, Expr};
+use datafusion::logical_plan::{binary_expr, col, combine_filters, Expr, Operator};
 use datafusion::physical_plan::{
     expressions::PhysicalSortExpr, file_format::FileScanConfig, file_format::ParquetExec,
     metrics::BaselineMetrics, metrics::ExecutionPlanMetricsSet, metrics::MetricsSet,
     DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream,
     Statistics,
 };
+use datafusion::scalar::ScalarValue::{Int64, TimestampNanosecond};
 
 use crate::catalog::ModelTable;
 use crate::models;
@@ -84,13 +85,30 @@ impl DataPointView {
     }
 
     fn rewrite_and_combine_filters(&self, filters: &[Expr]) -> Option<Expr> {
-        //TODO: implement rewriting of predicates
+        //TODO: implement rewriting of members to group ids
         let rewritten_filters: Vec<Expr> = filters
             .iter()
             .map(|filter| match filter {
                 Expr::BinaryExpr { left, op, right } => {
                     if **left == col("tid") {
+                        //Assumes time series are not grouped so tids and gids are equivalent
+                        //time series
                         binary_expr(col("gid"), *op, *right.clone())
+                    } else if **left == col("timestamp") {
+                        match op {
+                            Operator::Gt => binary_expr(col("end_time"), *op, self.to_i64(right)),
+                            Operator::GtEq => binary_expr(col("end_time"), *op, self.to_i64(right)),
+                            Operator::Lt => binary_expr(col("start_time"), *op, self.to_i64(right)),
+                            Operator::LtEq => {
+                                binary_expr(col("start_time"), *op, self.to_i64(right))
+                            }
+                            Operator::Eq => binary_expr(
+                                binary_expr(col("start_time"), Operator::LtEq, self.to_i64(right)),
+                                Operator::And,
+                                binary_expr(col("end_time"), Operator::GtEq, self.to_i64(right)),
+                            ),
+                            _ => filter.clone(),
+                        }
                     } else {
                         filter.clone()
                     }
@@ -99,6 +117,22 @@ impl DataPointView {
             })
             .collect();
         combine_filters(&rewritten_filters)
+    }
+
+    fn to_i64(&self, expr: &Expr) -> Expr {
+        //Assumes the expression is a literal with a timestamp at nanosecond resolution
+        //TODO: add proper error handling if expr can be anything but TimestampNanosecond
+        let nanoseconds_to_millisecond = 1_000_000;
+        if let Expr::Literal(value) = expr {
+            if let TimestampNanosecond(value, _timezone) = value {
+                //TODO: ensure timezone is handled correctly as part of the conversion to ms
+                Expr::Literal(Int64(Some(value.unwrap() / nanoseconds_to_millisecond)))
+            } else {
+                panic!("Expr::Literal(value) is not a TimestampNanosecond");
+            }
+        } else {
+            panic!("the expression is not an Expr::Literal");
+        }
     }
 }
 
@@ -424,6 +458,7 @@ impl GridStream {
 impl Stream for GridStream {
     type Item = ArrowResult<RecordBatch>;
 
+    //TODO: prune the segments returned by input before reconstructing data points
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let poll = self.input.poll_next_unpin(cx).map(|x| match x {
             Some(Ok(batch)) => Some(self.grid(&batch)),
