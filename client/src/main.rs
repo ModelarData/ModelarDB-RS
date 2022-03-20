@@ -112,12 +112,22 @@ fn file(rt: Runtime, mut fsc: FlightServiceClient<Channel>, queries_path: &str) 
     let lines = io::BufReader::new(file).lines();
 
     for line in lines {
+        //Removes all comments
         let input = line?;
-        println!("{}", &input);
-        if let Err(message) = execute_and_print_query_or_command(&rt, &mut fsc, &input) {
-            eprintln!("{}", message);
+        let query = if let Some(comment_start) = input.find("--") {
+            input[0..comment_start].to_owned()
+        } else {
+            input
+        };
+
+        //Executes the query
+        if ! query.is_empty() {
+            println!("{}", query);
+            if let Err(message) = execute_and_print_query_or_command(&rt, &mut fsc, &query) {
+                eprintln!("{}", message);
+            }
+            println!(); //Formatting newline
         }
-        println!(); //Formatting newline
     }
     Ok(())
 }
