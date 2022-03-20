@@ -12,6 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::str::from_utf8;
@@ -50,6 +51,11 @@ pub fn start_arrow_flight_server(context: Arc<Context>, port: i16) {
             .await
             .unwrap()
     });
+}
+
+/** Private Functions **/
+fn to_invalid_argument(err: impl Error) -> Status {
+    Status::invalid_argument(format!("{}", err))
 }
 
 //The type is based on the Arrow examples published under the Apache2 license.
@@ -142,20 +148,20 @@ impl FlightService for FlightServiceHandler {
     ) -> Result<Response<Self::DoGetStream>, Status> {
         //Extract client query
         let message = request.get_ref();
-        let query = from_utf8(&message.ticket).unwrap();
+        let query = from_utf8(&message.ticket).map_err(to_invalid_argument)?;
         eprintln!("Executing: {}", query);
 
-        //Execute client query
+        //Executes client query
         let mut execution = self.context.execution.clone();
-        let df = execution.sql(query).await.unwrap();
-        let results = df.collect().await.unwrap();
+        let df = execution.sql(query).await.map_err(to_invalid_argument)?;
+        let results = df.collect().await.map_err(to_invalid_argument)?;
 
-        //Transmit schema
+        //Transmits schema
         let options = IpcWriteOptions::default();
         let schema_flight_data = SchemaAsIpc::new(&df.schema().clone().into(), &options).into();
         let mut flights: Vec<Result<FlightData, Status>> = vec![Ok(schema_flight_data)];
 
-        //Transmit result set
+        //Transmits result set
         let mut batches: Vec<Result<FlightData, Status>> = results
             .iter()
             .flat_map(|result| {
