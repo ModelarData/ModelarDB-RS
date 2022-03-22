@@ -37,13 +37,13 @@ use datafusion::datasource::{
     datasource::TableProviderFilterPushDown, PartitionedFile, TableProvider,
 };
 use datafusion::error::{DataFusionError, Result};
-use datafusion::execution::runtime_env::RuntimeEnv;
-use datafusion::logical_plan::{binary_expr, col, combine_filters, Expr, Operator};
+use datafusion::execution::{context::ExecutionProps, runtime_env::RuntimeEnv};
+use datafusion::logical_plan::{binary_expr, col, combine_filters, Expr, Operator, ToDFSchema};
 use datafusion::physical_plan::{
     expressions::PhysicalSortExpr, file_format::FileScanConfig, file_format::ParquetExec,
-    metrics::BaselineMetrics, metrics::ExecutionPlanMetricsSet, metrics::MetricsSet,
-    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream,
-    Statistics,
+    filter::FilterExec, metrics::BaselineMetrics, metrics::ExecutionPlanMetricsSet,
+    metrics::MetricsSet, planner, DisplayFormatType, ExecutionPlan, Partitioning,
+    RecordBatchStream, SendableRecordBatchStream, Statistics,
 };
 use datafusion::scalar::ScalarValue::{Int64, TimestampNanosecond};
 
@@ -92,7 +92,6 @@ impl DataPointView {
                 Expr::BinaryExpr { left, op, right } => {
                     if **left == col("tid") {
                         //Assumes time series are not grouped so tids and gids are equivalent
-                        //time series
                         binary_expr(col("gid"), *op, *right.clone())
                     } else if **left == col("timestamp") {
                         match op {
@@ -133,6 +132,34 @@ impl DataPointView {
         } else {
             panic!("the expression is not an Expr::Literal");
         }
+    }
+
+    fn add_filter_exec(
+        &self,
+        predicate: &Option<Expr>,
+        input: &Arc<ParquetExec>,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
+        let predicate = predicate
+            .as_ref()
+            .ok_or_else(|| DataFusionError::Plan("predicate is none".to_owned()))?;
+
+        let df_schema = self
+            .model_table
+            .segment_group_file_schema
+            .clone()
+            .to_dfschema()?;
+
+        let physical_predicate = planner::create_physical_expr(
+            predicate,
+            &df_schema,
+            &self.model_table.segment_group_file_schema,
+            &ExecutionProps::new(),
+        )?;
+
+        Ok(Arc::new(FilterExec::try_new(
+            physical_predicate,
+            input.clone(),
+        )?))
     }
 }
 
@@ -187,8 +214,12 @@ impl TableProvider for DataPointView {
             limit,
             table_partition_cols: vec![],
         };
+
         let predicate = self.rewrite_and_combine_filters(filters);
-        let parquet_exec = Arc::new(ParquetExec::new(file_scan_config, predicate));
+        let parquet_exec = Arc::new(ParquetExec::new(file_scan_config, predicate.clone()));
+        let input = self
+            .add_filter_exec(&predicate, &parquet_exec)
+            .unwrap_or(parquet_exec);
 
         //Create the grid node
         let grid_exec: Arc<dyn ExecutionPlan> = GridExec::new(
@@ -196,7 +227,7 @@ impl TableProvider for DataPointView {
             projection,
             limit,
             self.schema(),
-            parquet_exec,
+            input,
         );
         Ok(grid_exec)
     }
@@ -286,7 +317,7 @@ impl ExecutionPlan for GridExec {
                 ..self.clone()
             }))
         } else {
-            Err(DataFusionError::Internal(format!(
+            Err(DataFusionError::Plan(format!(
                 "A single child must be provided {:?}",
                 self
             )))
@@ -458,7 +489,6 @@ impl GridStream {
 impl Stream for GridStream {
     type Item = ArrowResult<RecordBatch>;
 
-    //TODO: prune the segments returned by input before reconstructing data points
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let poll = self.input.poll_next_unpin(cx).map(|x| match x {
             Some(Ok(batch)) => Some(self.grid(&batch)),
