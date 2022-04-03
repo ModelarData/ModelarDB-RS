@@ -12,7 +12,7 @@ representing irregular time series using a model-based approach while only
 requiring users to specify an error bound, develop a query optimizer that
 allows queries to automatically exploit the model-based representation, and
 provide a single easy to use relational query interface. MiniModelarDB is
-designed for Unix-like operating systems and tested on Linux and macOS.
+designed for Unix-like operating systems and is tested on Linux.
 
 MiniModelarDB intentionally does not gather usage data. So, all users are highly
 encouraged to post comments, suggestions, and bugs as GitHub issues, especially
