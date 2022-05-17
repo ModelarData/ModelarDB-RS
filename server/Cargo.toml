@@ -6,13 +6,14 @@ edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
-datafusion = "7.0.0"
+datafusion = "8.0.0"
+datafusion-data-access = "8.0.0"
 
-tokio = { version = "1.17.0", features = ["rt-multi-thread"] }
-async-trait = "0.1.52"
+tokio = { version = "1.18.2", features = ["rt-multi-thread"] }
+async-trait = "0.1.53"
 futures = "0.3.21"
 
-arrow-flight = "9.0.2"
-tonic = "0.6.2"
+arrow-flight = "13.0.0"
+tonic = "0.7.2"
 
 snmalloc-rs = "0.2.28"

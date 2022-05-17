@@ -81,12 +81,14 @@ pub fn new(data_folder: &str) -> Catalog {
                 let dir_entry_path = dir_entry.path();
                 if let Some(path) = dir_entry_path.to_str() {
                     let file_name = dir_entry.file_name().to_str().unwrap().to_string();
+                    //HACK: workaround for datafusion 8.0.0 lowercasing table names in queries
+                    let normalized_file_name = file_name.to_ascii_lowercase();
                     if is_parquet_file(&dir_entry) {
-                        tables.push(new_table(file_name, path.to_string()));
+                        tables.push(new_table(normalized_file_name, path.to_string()));
                         eprintln!("INFO: initialized table {}", path);
                     } else if is_model_folder(&dir_entry) {
                         if let Ok(model_table) = new_model_table(
-                            file_name,
+                            normalized_file_name,
                             path.to_string(),
                             &model_table_segment_group_file_schema,
                         ) {

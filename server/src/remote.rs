@@ -114,8 +114,8 @@ impl FlightService for FlightServiceHandler {
         request: Request<FlightDescriptor>,
     ) -> Result<Response<SchemaResult>, Status> {
         if let Some(table_name) = request.into_inner().path.get(0) {
-            let execution = self.context.execution.clone();
-            if let Some(catalog) = execution.catalog("datafusion") {
+            let session = self.context.session.clone();
+            if let Some(catalog) = session.catalog("datafusion") {
                 //default catalog
                 if let Some(schema) = catalog.schema("public") {
                     //default schema
@@ -152,8 +152,8 @@ impl FlightService for FlightServiceHandler {
         eprintln!("Executing: {}", query);
 
         //Executes client query
-        let mut execution = self.context.execution.clone();
-        let df = execution.sql(query).await.map_err(to_invalid_argument)?;
+        let session = self.context.session.clone();
+        let df = session.sql(query).await.map_err(to_invalid_argument)?;
         let results = df.collect().await.map_err(to_invalid_argument)?;
 
         //Transmits schema

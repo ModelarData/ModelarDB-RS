@@ -32,28 +32,28 @@ use datafusion::error::Result;
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::expressions::format_state_name;
 use datafusion::physical_plan::expressions::{Avg, Count, Max, Min, Sum};
-use datafusion::physical_plan::hash_aggregate::HashAggregateExec;
+use datafusion::physical_plan::aggregates::AggregateExec;
 use datafusion::physical_plan::ColumnarValue;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
-use datafusion::prelude::ExecutionConfig;
+use datafusion::prelude::SessionConfig;
 use datafusion::scalar::ScalarValue;
 
 //Helper Functions
-fn new_hash_aggregate(
-    hash_aggregate_exec: &HashAggregateExec,
+fn new_aggregate(
+    aggregate_exec: &AggregateExec,
     model_aggregate_expr: Arc<ModelAggregateExpr>,
     grid_exec: &GridExec,
-) -> Arc<HashAggregateExec> {
+) -> Arc<AggregateExec> {
     //Assumes the GridExec only have a single child
     Arc::new(
-        HashAggregateExec::try_new(
-            *hash_aggregate_exec.mode(),
-            hash_aggregate_exec.group_expr().to_vec(),
+        AggregateExec::try_new(
+            *aggregate_exec.mode(),
+            aggregate_exec.group_expr().to_vec(),
             vec![model_aggregate_expr],
             grid_exec.children()[0].clone(), //Removes the GridExec
-            hash_aggregate_exec.input_schema(),
+            aggregate_exec.input_schema(),
         )
         .unwrap(),
     )
@@ -65,7 +65,7 @@ pub struct ModelSimpleAggregatesPhysicalOptimizerRule {}
 impl ModelSimpleAggregatesPhysicalOptimizerRule {
     fn optimize(&self, plan: &Arc<dyn ExecutionPlan>) -> Option<Arc<dyn ExecutionPlan>> {
         //Matches a simple aggregate performed without filtering out segments
-        if let Some(hae) = plan.as_any().downcast_ref::<HashAggregateExec>() {
+        if let Some(hae) = plan.as_any().downcast_ref::<AggregateExec>() {
             let children = &hae.children();
             if children.len() == 1 {
                 if let Some(rp) = children[0].as_any().downcast_ref::<RepartitionExec>() {
@@ -80,7 +80,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                         ModelAggregateType::Count,
                                         ge.model_table.clone(),
                                         );
-                                    return Some(new_hash_aggregate(hae, mae, ge));
+                                    return Some(new_aggregate(hae, mae, ge));
                                 }
                             } else if ae[0].as_any().downcast_ref::<Min>().is_some() {
                                 if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
@@ -88,7 +88,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                         ModelAggregateType::Min,
                                         ge.model_table.clone(),
                                         );
-                                    return Some(new_hash_aggregate(hae, mae, ge));
+                                    return Some(new_aggregate(hae, mae, ge));
                                 }
                             } else if ae[0].as_any().downcast_ref::<Max>().is_some() {
                                 if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
@@ -96,7 +96,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                         ModelAggregateType::Max,
                                         ge.model_table.clone(),
                                         );
-                                    return Some(new_hash_aggregate(hae, mae, ge));
+                                    return Some(new_aggregate(hae, mae, ge));
                                 }
                             } else if ae[0].as_any().downcast_ref::<Sum>().is_some() {
                                 if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
@@ -104,7 +104,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                         ModelAggregateType::Sum,
                                         ge.model_table.clone(),
                                         );
-                                    return Some(new_hash_aggregate(hae, mae, ge));
+                                    return Some(new_aggregate(hae, mae, ge));
                                 }
                             } else if ae[0].as_any().downcast_ref::<Avg>().is_some() {
                                 if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
@@ -112,7 +112,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                         ModelAggregateType::Avg,
                                         ge.model_table.clone(),
                                         );
-                                    return Some(new_hash_aggregate(hae, mae, ge));
+                                    return Some(new_aggregate(hae, mae, ge));
                                 }
                             }
                         }
@@ -125,7 +125,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
         //TODO: handle plans were multiple children must be updated
         for child in plan.children() {
             if let Some(new_child) = self.optimize(&child) {
-                return Some(plan.with_new_children(vec![new_child]).unwrap());
+                return Some(plan.clone().with_new_children(vec![new_child]).unwrap());
             }
         }
         None
@@ -137,7 +137,7 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
     fn optimize(
         &self,
         plan: Arc<dyn ExecutionPlan>,
-        _config: &ExecutionConfig,
+        _config: &SessionConfig,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         if let Some(optimized_plan) = self.optimize(&plan) {
             Ok(optimized_plan)

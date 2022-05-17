@@ -23,7 +23,9 @@ use std::sync::Arc;
 
 use tokio::runtime::Runtime;
 
-use datafusion::prelude::{ExecutionConfig, ExecutionContext};
+use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
+use datafusion::execution::runtime_env::RuntimeEnv;
+use datafusion::execution::options::ParquetReadOptions;
 
 use crate::catalog::Catalog;
 use crate::optimizer::model_simple_aggregates;
@@ -36,7 +38,7 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 pub struct Context {
     catalog: catalog::Catalog,
     runtime: Runtime,
-    execution: ExecutionContext,
+    session: SessionContext,
 }
 
 /** Public Functions **/
@@ -47,16 +49,16 @@ fn main() {
         //Build Context
         let catalog = catalog::new(&data_folder);
         let runtime = Runtime::new().unwrap();
-        let mut execution = create_execution_context();
+        let mut session = create_session_context();
 
         //Register Tables
-        runtime.block_on(register_tables(&mut execution, &catalog));
+        runtime.block_on(register_tables(&mut session, &catalog));
 
         //Start Interface
         let context = Arc::new(Context {
             catalog,
             runtime,
-            execution,
+            session,
         });
         remote::start_arrow_flight_server(context, 9999);
     } else {
@@ -68,17 +70,23 @@ fn main() {
 }
 
 /** Private Functions **/
-fn create_execution_context() -> ExecutionContext {
-    let config = ExecutionConfig::new().add_physical_optimizer_rule(Arc::new(
-        model_simple_aggregates::ModelSimpleAggregatesPhysicalOptimizerRule {},
-    ));
-    ExecutionContext::with_config(config)
+fn create_session_context() -> SessionContext {
+    let config = SessionConfig::new();
+    let runtime = Arc::new(RuntimeEnv::default());
+    let state = SessionState::with_config_rt(config, runtime).with_physical_optimizer_rules(vec![
+        Arc::new(model_simple_aggregates::ModelSimpleAggregatesPhysicalOptimizerRule {}),
+    ]);
+    SessionContext::with_state(state)
 }
 
-async fn register_tables(execution: &mut ExecutionContext, catalog: &Catalog) {
+async fn register_tables(session: &mut SessionContext, catalog: &Catalog) {
     //Initializes tables consisting of standard Apache Parquet files
     for table in &catalog.tables {
-        if execution.register_parquet(&table.name, &table.path).await.is_err() {
+        if session
+            .register_parquet(&table.name, &table.path, ParquetReadOptions::default())
+            .await
+            .is_err()
+        {
             eprintln!("ERROR: unable to initialize table {}", table.name);
         }
     }
@@ -88,7 +96,10 @@ async fn register_tables(execution: &mut ExecutionContext, catalog: &Catalog) {
         let name = table.name.clone();
         let model_table = (*table).clone();
         let table_provider = DataPointView::new(&model_table);
-        if execution.register_table(name.as_str(), table_provider).is_err() {
+        if session
+            .register_table(name.as_str(), table_provider)
+            .is_err()
+        {
             eprintln!("ERROR: unable to initialize model table {}", name);
         }
     }

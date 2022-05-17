@@ -30,14 +30,11 @@ use datafusion::arrow::array::{
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
-
-use datafusion::datasource::object_store::local::LocalFileSystem;
-use datafusion::datasource::object_store::ObjectStore;
 use datafusion::datasource::{
-    datasource::TableProviderFilterPushDown, PartitionedFile, TableProvider,
+    datasource::TableProviderFilterPushDown, listing::PartitionedFile, TableProvider, TableType,
 };
 use datafusion::error::{DataFusionError, Result};
-use datafusion::execution::{context::ExecutionProps, runtime_env::RuntimeEnv};
+use datafusion::execution::context::{ExecutionProps, TaskContext};
 use datafusion::logical_plan::{binary_expr, col, combine_filters, Expr, Operator, ToDFSchema};
 use datafusion::physical_plan::{
     expressions::PhysicalSortExpr, file_format::FileScanConfig, file_format::ParquetExec,
@@ -46,6 +43,9 @@ use datafusion::physical_plan::{
     RecordBatchStream, SendableRecordBatchStream, Statistics,
 };
 use datafusion::scalar::ScalarValue::{Int64, TimestampNanosecond};
+
+use datafusion_data_access::object_store::local::LocalFileSystem;
+use datafusion_data_access::object_store::ObjectStore;
 
 use crate::catalog::ModelTable;
 use crate::models;
@@ -178,6 +178,10 @@ impl TableProvider for DataPointView {
         Ok(TableProviderFilterPushDown::Inexact)
     }
 
+    fn table_type(&self) -> TableType {
+        TableType::Base
+    }
+
     async fn scan(
         &self,
         projection: &Option<Vec<usize>>,
@@ -192,6 +196,7 @@ impl TableProvider for DataPointView {
             .map(|file_meta| PartitionedFile {
                 file_meta: file_meta.unwrap(),
                 partition_values: vec![],
+                range: None,
             })
             .collect::<Vec<PartitionedFile>>()
             .await;
@@ -308,13 +313,17 @@ impl ExecutionPlan for GridExec {
     }
 
     fn with_new_children(
-        &self,
+        self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         if children.len() == 1 {
             Ok(Arc::new(GridExec {
+                model_table: self.model_table.clone(),
+                projection: self.projection.clone(),
+                limit: self.limit,
+                schema_after_projection: self.schema_after_projection.clone(),
                 input: children[0].clone(),
-                ..self.clone()
+                metrics: ExecutionPlanMetricsSet::new(),
             }))
         } else {
             Err(DataFusionError::Plan(format!(
@@ -324,17 +333,17 @@ impl ExecutionPlan for GridExec {
         }
     }
 
-    async fn execute(
+    fn execute(
         &self,
         partition: usize,
-        runtime: Arc<RuntimeEnv>,
+        task_context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(GridStream::new(
             self.model_table.clone(),
             self.projection.clone(),
             self.limit,
             self.schema_after_projection.clone(),
-            self.input.execute(partition, runtime).await?,
+            self.input.execute(partition, task_context)?,
             BaselineMetrics::new(&self.metrics, partition),
         )))
     }

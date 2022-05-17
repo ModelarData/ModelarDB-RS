@@ -19,13 +19,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use datafusion::error::Result;
-use datafusion::execution::context::{ExecutionContextState, ExecutionProps, QueryPlanner};
+use datafusion::execution::context::{SessionState, ExecutionProps, QueryPlanner};
 use datafusion::logical_plan::LogicalPlan;
 use datafusion::optimizer::optimizer::OptimizerRule;
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::planner::DefaultPhysicalPlanner;
 use datafusion::physical_plan::{ExecutionPlan, PhysicalPlanner};
-use datafusion::prelude::ExecutionConfig;
+use datafusion::prelude::SessionConfig;
 
 pub struct PrintOptimizerRule {}
 
@@ -51,7 +51,7 @@ impl QueryPlanner for PrintQueryPlanner {
     async fn create_physical_plan(
         &self,
         logical_plan: &LogicalPlan,
-        execution_state: &ExecutionContextState,
+        session_state: &SessionState,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         println!(
             "QUERY PLANNER[START]\n {:#?} \nQUERY PLANNER[END]",
@@ -59,7 +59,7 @@ impl QueryPlanner for PrintQueryPlanner {
         );
         let planner = DefaultPhysicalPlanner::default();
         planner
-            .create_physical_plan(logical_plan, execution_state)
+            .create_physical_plan(logical_plan, session_state)
             .await
     }
 }
@@ -70,7 +70,7 @@ impl PhysicalOptimizerRule for PrintPhysicalOptimizerRule {
     fn optimize(
         &self,
         plan: Arc<dyn ExecutionPlan>,
-        _config: &ExecutionConfig,
+        _config: &SessionConfig,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         println!("EXECUTION PLAN[START]\n {:#?} \nEXECUTION PLAN[END]", &plan);
         Ok(plan.clone())
