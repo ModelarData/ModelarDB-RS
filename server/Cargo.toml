@@ -16,4 +16,4 @@ futures = "0.3.21"
 arrow-flight = "13.0.0"
 tonic = "0.7.2"
 
-snmalloc-rs = "0.2.28"
+snmalloc-rs = "0.3.0"
