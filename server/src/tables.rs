@@ -30,22 +30,22 @@ use datafusion::arrow::array::{
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::datasource::{
     datasource::TableProviderFilterPushDown, listing::PartitionedFile, TableProvider, TableType,
 };
 use datafusion::error::{DataFusionError, Result};
-use datafusion::execution::context::{ExecutionProps, TaskContext};
-use datafusion::logical_plan::{binary_expr, col, combine_filters, Expr, Operator, ToDFSchema};
+use datafusion::execution::context::{ExecutionProps, SessionState, TaskContext};
+use datafusion::logical_plan::{col, combine_filters, Expr, Operator, ToDFSchema};
 use datafusion::physical_plan::{
     expressions::PhysicalSortExpr, file_format::FileScanConfig, file_format::ParquetExec,
     filter::FilterExec, metrics::BaselineMetrics, metrics::ExecutionPlanMetricsSet,
-    metrics::MetricsSet, planner, DisplayFormatType, ExecutionPlan, Partitioning,
+    metrics::MetricsSet, DisplayFormatType, ExecutionPlan, Partitioning,
     RecordBatchStream, SendableRecordBatchStream, Statistics,
 };
 use datafusion::scalar::ScalarValue::{Int64, TimestampNanosecond};
 
-use datafusion_data_access::object_store::local::LocalFileSystem;
-use datafusion_data_access::object_store::ObjectStore;
+use datafusion_physical_expr::planner;
 
 use crate::catalog::ModelTable;
 use crate::models;
@@ -53,7 +53,7 @@ use crate::models;
 /** Public Types **/
 /* TableProvider */
 pub struct DataPointView {
-    object_store: Arc<dyn ObjectStore>,
+    object_store_url: ObjectStoreUrl,
     model_table: Arc<ModelTable>,
     schema: Arc<Schema>,
 }
@@ -79,7 +79,7 @@ impl DataPointView {
 
         Arc::new(DataPointView {
             model_table: model_table.clone(),
-            object_store: Arc::new(LocalFileSystem {}),
+            object_store_url: ObjectStoreUrl::local_filesystem(),
             schema: Arc::new(Schema::new(columns)),
         })
     }
@@ -92,19 +92,33 @@ impl DataPointView {
                 Expr::BinaryExpr { left, op, right } => {
                     if **left == col("tid") {
                         //Assumes time series are not grouped so tids and gids are equivalent
-                        binary_expr(col("gid"), *op, *right.clone())
+                        self.binary_expr(col("gid"), *op, *right.clone())
                     } else if **left == col("timestamp") {
                         match op {
-                            Operator::Gt => binary_expr(col("end_time"), *op, self.to_i64(right)),
-                            Operator::GtEq => binary_expr(col("end_time"), *op, self.to_i64(right)),
-                            Operator::Lt => binary_expr(col("start_time"), *op, self.to_i64(right)),
-                            Operator::LtEq => {
-                                binary_expr(col("start_time"), *op, self.to_i64(right))
+                            Operator::Gt => {
+                                self.binary_expr(col("end_time"), *op, self.to_i64(right))
                             }
-                            Operator::Eq => binary_expr(
-                                binary_expr(col("start_time"), Operator::LtEq, self.to_i64(right)),
+                            Operator::GtEq => {
+                                self.binary_expr(col("end_time"), *op, self.to_i64(right))
+                            }
+                            Operator::Lt => {
+                                self.binary_expr(col("start_time"), *op, self.to_i64(right))
+                            }
+                            Operator::LtEq => {
+                                self.binary_expr(col("start_time"), *op, self.to_i64(right))
+                            }
+                            Operator::Eq => self.binary_expr(
+                                self.binary_expr(
+                                    col("start_time"),
+                                    Operator::LtEq,
+                                    self.to_i64(right),
+                                ),
                                 Operator::And,
-                                binary_expr(col("end_time"), Operator::GtEq, self.to_i64(right)),
+                                self.binary_expr(
+                                    col("end_time"),
+                                    Operator::GtEq,
+                                    self.to_i64(right),
+                                ),
                             ),
                             _ => filter.clone(),
                         }
@@ -116,6 +130,14 @@ impl DataPointView {
             })
             .collect();
         combine_filters(&rewritten_filters)
+    }
+
+    fn binary_expr(&self, left: Expr, op: Operator, right: Expr) -> Expr {
+        Expr::BinaryExpr {
+            left: Box::new(left),
+            op,
+            right: Box::new(right),
+        }
     }
 
     fn to_i64(&self, expr: &Expr) -> Expr {
@@ -184,13 +206,16 @@ impl TableProvider for DataPointView {
 
     async fn scan(
         &self,
+        ctx: &SessionState,
         projection: &Option<Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         //Create the data source node
-        let partitioned_files: Vec<PartitionedFile> = self
-            .object_store
+        let partitioned_files: Vec<PartitionedFile> = ctx //Assumes ObjectStore exists
+            .runtime_env
+            .object_store(&self.object_store_url)
+            .unwrap()
             .list_file(&self.model_table.segment_folder)
             .await?
             .map(|file_meta| PartitionedFile {
@@ -211,7 +236,7 @@ impl TableProvider for DataPointView {
 
         //TODO: partition and limit the number of rows read from the files properly
         let file_scan_config = FileScanConfig {
-            object_store: self.object_store.clone(),
+            object_store_url: self.object_store_url.clone(),
             file_schema: self.model_table.segment_group_file_schema.clone(),
             file_groups: vec![partitioned_files],
             statistics,

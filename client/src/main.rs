@@ -16,6 +16,7 @@ mod helper;
 
 use self::helper::ClientHelper;
 
+use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::env;
 use std::error::Error;
@@ -121,7 +122,7 @@ fn file(rt: Runtime, mut fsc: FlightServiceClient<Channel>, queries_path: &str) 
         };
 
         //Executes the query
-        if ! query.is_empty() {
+        if !query.is_empty() {
             println!("{}", query);
             if let Err(message) = execute_and_print_query_or_command(&rt, &mut fsc, &query) {
                 eprintln!("{}", message);
@@ -261,9 +262,9 @@ fn execute_query(
         //Get data in result set
         let mut results = vec![];
         while let Some(flight_data) = stream.message().await? {
-            let dictionaries_by_field = vec![None; schema.fields().len()];
+            let dictionaries_by_id = HashMap::new();
             let record_batch =
-                flight_data_to_arrow_batch(&flight_data, schema.clone(), &dictionaries_by_field)?;
+                flight_data_to_arrow_batch(&flight_data, schema.clone(), &dictionaries_by_id)?;
             results.push(record_batch);
         }
         Ok(results)

@@ -19,9 +19,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 use datafusion::error::Result;
-use datafusion::execution::context::{SessionState, ExecutionProps, QueryPlanner};
+use datafusion::execution::context::{QueryPlanner, SessionState};
 use datafusion::logical_plan::LogicalPlan;
 use datafusion::optimizer::optimizer::OptimizerRule;
+use datafusion::optimizer::OptimizerConfig;
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::planner::DefaultPhysicalPlanner;
 use datafusion::physical_plan::{ExecutionPlan, PhysicalPlanner};
@@ -33,7 +34,7 @@ impl OptimizerRule for PrintOptimizerRule {
     fn optimize(
         &self,
         plan: &LogicalPlan,
-        _execution_props: &ExecutionProps,
+        _execution_props: &OptimizerConfig,
     ) -> Result<LogicalPlan> {
         println!("LOGICAL PLAN[START]\n {:#?} \nLOGICAL PLAN[END]", &plan);
         Ok(plan.clone())
