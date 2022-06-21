@@ -82,7 +82,7 @@ impl Completer for ClientHelper {
         let candidates: Vec<String> = self
             .completion_candidates
             .iter()
-            .filter(|result| result.starts_with(&uppercase_prefix))
+            .filter(|result| result.to_uppercase().starts_with(&uppercase_prefix))
             .map(String::from)
             .collect();
         Ok((start, candidates))
