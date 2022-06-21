@@ -29,7 +29,7 @@ use datafusion::execution::options::ParquetReadOptions;
 
 use crate::catalog::Catalog;
 use crate::optimizer::model_simple_aggregates;
-use crate::tables::DataPointView;
+use crate::tables::ModelTable;
 
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
@@ -81,26 +81,23 @@ fn create_session_context() -> SessionContext {
 
 async fn register_tables(session: &mut SessionContext, catalog: &Catalog) {
     //Initializes tables consisting of standard Apache Parquet files
-    for table in &catalog.tables {
+    for table_metadata in &catalog.table_metadata {
         if session
-            .register_parquet(&table.name, &table.path, ParquetReadOptions::default())
+            .register_parquet(&table_metadata.name, &table_metadata.path, ParquetReadOptions::default())
             .await
             .is_err()
         {
-            eprintln!("ERROR: unable to initialize table {}", table.name);
+            eprintln!("ERROR: unable to initialize table {}", table_metadata.name);
         }
     }
 
     //Initializes tables storing time series as models in Apache Parquet files
-    for table in &catalog.model_tables {
-        let name = table.name.clone();
-        let model_table = (*table).clone();
-        let table_provider = DataPointView::new(&model_table);
+    for model_table_metadata in &catalog.model_table_metadata {
         if session
-            .register_table(name.as_str(), table_provider)
+            .register_table(model_table_metadata.name.as_str(), ModelTable::new(model_table_metadata))
             .is_err()
         {
-            eprintln!("ERROR: unable to initialize model table {}", name);
+            eprintln!("ERROR: unable to initialize model table {}", model_table_metadata.name);
         }
     }
 }

@@ -47,20 +47,20 @@ use datafusion::scalar::ScalarValue::{Int64, TimestampNanosecond};
 
 use datafusion_physical_expr::planner;
 
-use crate::catalog::ModelTable;
+use crate::catalog::ModelTableMetadata;
 use crate::models;
 
 /** Public Types **/
 /* TableProvider */
-pub struct DataPointView {
+pub struct ModelTable {
     object_store_url: ObjectStoreUrl,
-    model_table: Arc<ModelTable>,
+    model_table_metadata: Arc<ModelTableMetadata>,
     schema: Arc<Schema>,
 }
 
 /** Public Methods **/
-impl DataPointView {
-    pub fn new(model_table: &Arc<ModelTable>) -> Arc<Self> {
+impl ModelTable {
+    pub fn new(model_table_metadata: &Arc<ModelTableMetadata>) -> Arc<Self> {
         let mut columns = vec![
             Field::new("tid", DataType::Int32, false),
             Field::new(
@@ -72,13 +72,13 @@ impl DataPointView {
         ];
 
         //TODO: support dimensions with levels that are not strings?
-        for level in &model_table.denormalized_dimensions {
+        for level in &model_table_metadata.denormalized_dimensions {
             let level = level.as_any().downcast_ref::<StringArray>().unwrap();
             columns.push(Field::new(level.value(0), DataType::Utf8, false));
         }
 
-        Arc::new(DataPointView {
-            model_table: model_table.clone(),
+        Arc::new(ModelTable {
+            model_table_metadata: model_table_metadata.clone(),
             object_store_url: ObjectStoreUrl::local_filesystem(),
             schema: Arc::new(Schema::new(columns)),
         })
@@ -166,7 +166,7 @@ impl DataPointView {
             .ok_or_else(|| DataFusionError::Plan("predicate is none".to_owned()))?;
 
         let df_schema = self
-            .model_table
+            .model_table_metadata
             .segment_group_file_schema
             .clone()
             .to_dfschema()?;
@@ -174,7 +174,7 @@ impl DataPointView {
         let physical_predicate = planner::create_physical_expr(
             predicate,
             &df_schema,
-            &self.model_table.segment_group_file_schema,
+            &self.model_table_metadata.segment_group_file_schema,
             &ExecutionProps::new(),
         )?;
 
@@ -187,7 +187,7 @@ impl DataPointView {
 
 /** Private Methods **/
 #[async_trait]
-impl TableProvider for DataPointView {
+impl TableProvider for ModelTable {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -216,7 +216,7 @@ impl TableProvider for DataPointView {
             .runtime_env
             .object_store(&self.object_store_url)
             .unwrap()
-            .list_file(&self.model_table.segment_folder)
+            .list_file(&self.model_table_metadata.segment_folder)
             .await?
             .map(|file_meta| PartitionedFile {
                 file_meta: file_meta.unwrap(),
@@ -237,7 +237,7 @@ impl TableProvider for DataPointView {
         //TODO: partition and limit the number of rows read from the files properly
         let file_scan_config = FileScanConfig {
             object_store_url: self.object_store_url.clone(),
-            file_schema: self.model_table.segment_group_file_schema.clone(),
+            file_schema: self.model_table_metadata.segment_group_file_schema.clone(),
             file_groups: vec![partitioned_files],
             statistics,
             projection: None,
@@ -253,7 +253,7 @@ impl TableProvider for DataPointView {
 
         //Create the grid node
         let grid_exec: Arc<dyn ExecutionPlan> = GridExec::new(
-            self.model_table.clone(),
+            self.model_table_metadata.clone(),
             projection,
             limit,
             self.schema(),
@@ -265,10 +265,10 @@ impl TableProvider for DataPointView {
 
 /* ExecutionPlan */
 //GridExec is public so the physical optimizer rules can pattern match on it, and
-//model_table is public so the rules can reuse it as context is not in their scope.
+//model_table_metadata is public so the rules use it as context is not in their scope.
 #[derive(Debug, Clone)]
 pub struct GridExec {
-    pub model_table: Arc<ModelTable>,
+    pub model_table_metadata: Arc<ModelTableMetadata>,
     projection: Vec<usize>,
     limit: Option<usize>,
     schema_after_projection: SchemaRef,
@@ -278,7 +278,7 @@ pub struct GridExec {
 
 impl GridExec {
     pub fn new(
-        model_table: Arc<ModelTable>,
+        model_table_metadata: Arc<ModelTableMetadata>,
         projection: &Option<Vec<usize>>,
         limit: Option<usize>,
         schema: SchemaRef,
@@ -304,7 +304,7 @@ impl GridExec {
         };
 
         Arc::new(GridExec {
-            model_table,
+            model_table_metadata,
             projection,
             limit,
             schema_after_projection,
@@ -343,7 +343,7 @@ impl ExecutionPlan for GridExec {
     ) -> Result<Arc<dyn ExecutionPlan>> {
         if children.len() == 1 {
             Ok(Arc::new(GridExec {
-                model_table: self.model_table.clone(),
+                model_table_metadata: self.model_table_metadata.clone(),
                 projection: self.projection.clone(),
                 limit: self.limit,
                 schema_after_projection: self.schema_after_projection.clone(),
@@ -364,7 +364,7 @@ impl ExecutionPlan for GridExec {
         task_context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(GridStream::new(
-            self.model_table.clone(),
+            self.model_table_metadata.clone(),
             self.projection.clone(),
             self.limit,
             self.schema_after_projection.clone(),
@@ -404,7 +404,7 @@ impl ExecutionPlan for GridExec {
 
 /* Stream */
 struct GridStream {
-    model_table: Arc<ModelTable>,
+    model_table_metadata: Arc<ModelTableMetadata>,
     projection: Vec<usize>,
     limit: Option<usize>,
     schema_after_projection: SchemaRef,
@@ -414,7 +414,7 @@ struct GridStream {
 
 impl GridStream {
     fn new(
-        model_table: Arc<ModelTable>,
+        model_table_metadata: Arc<ModelTableMetadata>,
         projection: Vec<usize>,
         limit: Option<usize>,
         schema_after_projection: SchemaRef,
@@ -422,7 +422,7 @@ impl GridStream {
         baseline_metrics: BaselineMetrics,
     ) -> Self {
         GridStream {
-            model_table,
+            model_table_metadata,
             projection,
             limit,
             schema_after_projection,
@@ -453,7 +453,7 @@ impl GridStream {
             gids,
             start_times,
             end_times,
-            &self.model_table.sampling_intervals,
+            &self.model_table_metadata.sampling_intervals,
         );
         let mut tids = Int32Array::builder(data_points);
         let mut timestamps = TimestampMillisecondArray::builder(data_points);
@@ -465,7 +465,7 @@ impl GridStream {
             let start_time = start_times.value(row_index);
             let end_time = end_times.value(row_index);
             let mtid = mtids.value(row_index);
-            let sampling_interval = self.model_table.sampling_intervals.value(gid as usize);
+            let sampling_interval = self.model_table_metadata.sampling_intervals.value(gid as usize);
             let model = models.value(row_index);
             let gaps = gaps.value(row_index);
             models::grid(
@@ -502,7 +502,7 @@ impl GridStream {
     fn add_dimension_column(&self, tids: &Int32Array, column: usize) -> ArrayRef {
         //TODO: support dimensions with levels that are not strings?
         let level = self
-            .model_table
+            .model_table_metadata
             .denormalized_dimensions
             .get(column - 3)
             .unwrap()

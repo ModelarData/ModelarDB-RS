@@ -16,7 +16,7 @@ use std::any::Any;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
-use crate::catalog::ModelTable;
+use crate::catalog::ModelTableMetadata;
 use crate::models;
 use crate::tables::GridExec;
 
@@ -78,7 +78,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                 if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
                                     let mae = ModelAggregateExpr::new(
                                         ModelAggregateType::Count,
-                                        ge.model_table.clone(),
+                                        ge.model_table_metadata.clone(),
                                         );
                                     return Some(new_aggregate(hae, mae, ge));
                                 }
@@ -86,7 +86,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                 if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
                                     let mae = ModelAggregateExpr::new(
                                         ModelAggregateType::Min,
-                                        ge.model_table.clone(),
+                                        ge.model_table_metadata.clone(),
                                         );
                                     return Some(new_aggregate(hae, mae, ge));
                                 }
@@ -94,7 +94,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                 if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
                                     let mae = ModelAggregateExpr::new(
                                         ModelAggregateType::Max,
-                                        ge.model_table.clone(),
+                                        ge.model_table_metadata.clone(),
                                         );
                                     return Some(new_aggregate(hae, mae, ge));
                                 }
@@ -102,7 +102,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                 if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
                                     let mae = ModelAggregateExpr::new(
                                         ModelAggregateType::Sum,
-                                        ge.model_table.clone(),
+                                        ge.model_table_metadata.clone(),
                                         );
                                     return Some(new_aggregate(hae, mae, ge));
                                 }
@@ -110,7 +110,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                 if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
                                     let mae = ModelAggregateExpr::new(
                                         ModelAggregateType::Avg,
-                                        ge.model_table.clone(),
+                                        ge.model_table_metadata.clone(),
                                         );
                                     return Some(new_aggregate(hae, mae, ge));
                                 }
@@ -166,11 +166,11 @@ pub struct ModelAggregateExpr {
     name: String,
     aggregate_type: ModelAggregateType,
     data_type: DataType,
-    model_table: Arc<ModelTable>,
+    model_table_metadata: Arc<ModelTableMetadata>,
 }
 
 impl ModelAggregateExpr {
-    fn new(aggregate_type: ModelAggregateType, model_table: Arc<ModelTable>) -> Arc<Self> {
+    fn new(aggregate_type: ModelAggregateType, model_table_metadata: Arc<ModelTableMetadata>) -> Arc<Self> {
         let data_type = match &aggregate_type {
             ModelAggregateType::Count => DataType::UInt64,
             ModelAggregateType::Min => DataType::Float32,
@@ -183,7 +183,7 @@ impl ModelAggregateExpr {
             name: format!("Model{:?}AggregateExpr", aggregate_type),
             aggregate_type,
             data_type,
-            model_table,
+            model_table_metadata,
         })
     }
 }
@@ -216,19 +216,19 @@ impl AggregateExpr for ModelAggregateExpr {
     fn expressions(&self) -> Vec<Arc<dyn PhysicalExpr>> {
         let expr: Arc<dyn PhysicalExpr> = match &self.aggregate_type {
             ModelAggregateType::Count => Arc::new(ModelCountPhysicalExpr {
-                model_table: self.model_table.clone(),
+                model_table_metadata: self.model_table_metadata.clone(),
             }),
             ModelAggregateType::Min => Arc::new(ModelMinPhysicalExpr {
-                model_table: self.model_table.clone(),
+                model_table_metadata: self.model_table_metadata.clone(),
             }),
             ModelAggregateType::Max => Arc::new(ModelMaxPhysicalExpr {
-                model_table: self.model_table.clone(),
+                model_table_metadata: self.model_table_metadata.clone(),
             }),
             ModelAggregateType::Sum => Arc::new(ModelSumPhysicalExpr {
-                model_table: self.model_table.clone(),
+                model_table_metadata: self.model_table_metadata.clone(),
             }),
             ModelAggregateType::Avg => Arc::new(ModelAvgPhysicalExpr {
-                model_table: self.model_table.clone(),
+                model_table_metadata: self.model_table_metadata.clone(),
             }),
         };
         vec![expr]
@@ -253,7 +253,7 @@ impl AggregateExpr for ModelAggregateExpr {
 //Count
 #[derive(Debug)]
 pub struct ModelCountPhysicalExpr {
-    model_table: Arc<ModelTable>,
+    model_table_metadata: Arc<ModelTableMetadata>,
 }
 
 impl Display for ModelCountPhysicalExpr {
@@ -297,7 +297,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
             gids,
             start_times,
             end_times,
-            &self.model_table.sampling_intervals,
+            &self.model_table_metadata.sampling_intervals,
         ) as u64;
 
         //If a ScalarValue is returned an array is filled with the value it contains
@@ -340,7 +340,7 @@ impl Accumulator for ModelCountAccumulator {
 //Min
 #[derive(Debug)]
 pub struct ModelMinPhysicalExpr {
-    model_table: Arc<ModelTable>,
+    model_table_metadata: Arc<ModelTableMetadata>,
 }
 
 impl Display for ModelMinPhysicalExpr {
@@ -373,7 +373,7 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
             let end_time = end_times.value(row_index);
             let mtid = mtids.value(row_index);
             let sampling_interval = self
-                .model_table
+                .model_table_metadata
                 .sampling_intervals
                 .value(gid as usize);
             let model = models.value(row_index);
@@ -435,7 +435,7 @@ impl Accumulator for ModelMinAccumulator {
 //Max
 #[derive(Debug)]
 pub struct ModelMaxPhysicalExpr {
-    model_table: Arc<ModelTable>,
+    model_table_metadata: Arc<ModelTableMetadata>,
 }
 
 impl Display for ModelMaxPhysicalExpr {
@@ -468,7 +468,7 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
             let end_time = end_times.value(row_index);
             let mtid = mtids.value(row_index);
             let sampling_interval = self
-                .model_table
+                .model_table_metadata
                 .sampling_intervals
                 .value(gid as usize);
             let model = models.value(row_index);
@@ -530,7 +530,7 @@ impl Accumulator for ModelMaxAccumulator {
 //Sum
 #[derive(Debug)]
 pub struct ModelSumPhysicalExpr {
-    model_table: Arc<ModelTable>,
+    model_table_metadata: Arc<ModelTableMetadata>,
 }
 
 impl Display for ModelSumPhysicalExpr {
@@ -563,7 +563,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
             let end_time = end_times.value(row_index);
             let mtid = mtids.value(row_index);
             let sampling_interval = self
-                .model_table
+                .model_table_metadata
                 .sampling_intervals
                 .value(gid as usize);
             let model = models.value(row_index);
@@ -619,7 +619,7 @@ impl Accumulator for ModelSumAccumulator {
 //Avg
 #[derive(Debug)]
 pub struct ModelAvgPhysicalExpr {
-    model_table: Arc<ModelTable>,
+    model_table_metadata: Arc<ModelTableMetadata>,
 }
 
 impl Display for ModelAvgPhysicalExpr {
@@ -653,7 +653,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
             let end_time = end_times.value(row_index);
             let mtid = mtids.value(row_index);
             let sampling_interval = self
-                .model_table
+                .model_table_metadata
                 .sampling_intervals
                 .value(gid as usize);
             let model = models.value(row_index);

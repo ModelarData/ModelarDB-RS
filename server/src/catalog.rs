@@ -29,17 +29,17 @@ use datafusion::parquet::record::RowAccessor;
 
 /** Public Types **/
 pub struct Catalog {
-    pub tables: Vec<Table>,
-    pub model_tables: Vec<Arc<ModelTable>>,
+    pub table_metadata: Vec<TableMetadata>,
+    pub model_table_metadata: Vec<Arc<ModelTableMetadata>>,
 }
 
-pub struct Table {
+pub struct TableMetadata {
     pub name: String,
     pub path: String,
 }
 
 #[derive(Debug)]
-pub struct ModelTable {
+pub struct ModelTableMetadata {
     pub name: String,
     pub segment_folder: String,
     pub segment_group_file_schema: Arc<Schema>,
@@ -51,12 +51,12 @@ pub struct ModelTable {
 impl Catalog {
     pub fn table_names(&self) -> Vec<String> {
         let mut table_names: Vec<String> = vec![];
-        for table in &self.tables {
-            table_names.push(table.name.clone());
+        for table_metadata in &self.table_metadata {
+            table_names.push(table_metadata.name.clone());
         }
 
-        for model_table in &self.model_tables {
-            table_names.push(model_table.name.clone());
+        for model_table_metadata in &self.model_table_metadata {
+            table_names.push(model_table_metadata.name.clone());
         }
         table_names
     }
@@ -64,8 +64,8 @@ impl Catalog {
 
 /** Public Functions **/
 pub fn new(data_folder: &str) -> Catalog {
-    let mut tables = vec![];
-    let mut model_tables = vec![];
+    let mut table_metadata = vec![];
+    let mut model_table_metadata = vec![];
     let model_table_segment_group_file_schema = Arc::new(Schema::new(vec![
         Field::new("gid", DataType::Int32, false),
         Field::new("start_time", DataType::Int64, false),
@@ -84,15 +84,15 @@ pub fn new(data_folder: &str) -> Catalog {
                     //HACK: workaround for datafusion 8.0.0 lowercasing table names in queries
                     let normalized_file_name = file_name.to_ascii_lowercase();
                     if is_parquet_file(&dir_entry) {
-                        tables.push(new_table(normalized_file_name, path.to_string()));
+                        table_metadata.push(new_table_metadata(normalized_file_name, path.to_string()));
                         eprintln!("INFO: initialized table {}", path);
-                    } else if is_model_folder(&dir_entry) {
-                        if let Ok(model_table) = new_model_table(
+                    } else if is_folder_a_model_table(&dir_entry) {
+                        if let Ok(mtd) = read_model_table_metadata(
                             normalized_file_name,
                             path.to_string(),
                             &model_table_segment_group_file_schema,
                         ) {
-                            model_tables.push(model_table);
+                            model_table_metadata.push(mtd);
                             eprintln!("INFO: initialized model table {}", path);
                         } else {
                             eprintln!("ERROR: unsupported model table {}", path);
@@ -112,8 +112,8 @@ pub fn new(data_folder: &str) -> Catalog {
         eprintln!("ERROR: unable to open data folder {}", &data_folder);
     }
     Catalog {
-        tables,
-        model_tables,
+        table_metadata,
+        model_table_metadata,
     }
 }
 
@@ -125,17 +125,17 @@ fn is_parquet_file(dir_entry: &DirEntry) -> bool {
     magic_bytes == [80, 65, 82, 49] //Magic bytes PAR1
 }
 
-fn new_table(file_name: String, path: String) -> Table {
+fn new_table_metadata(file_name: String, path: String) -> TableMetadata {
     let name = if let Some(index) = file_name.find('.') {
         file_name[0..index].to_string()
     } else {
         file_name
     };
 
-    Table { name, path }
+    TableMetadata { name, path }
 }
 
-fn is_model_folder(dir_entry: &DirEntry) -> bool {
+fn is_folder_a_model_table(dir_entry: &DirEntry) -> bool {
     if let Ok(metadata) = dir_entry.metadata() {
         if metadata.is_dir() {
             return ["model_type.parquet", "time_series.parquet", "segment"]
@@ -151,11 +151,11 @@ fn is_model_folder(dir_entry: &DirEntry) -> bool {
     false
 }
 
-fn new_model_table(
+fn read_model_table_metadata(
     table_name: String,
     table_folder: String,
     segment_group_file_schema: &Arc<Schema>,
-) -> Result<Arc<ModelTable>, ParquetError> {
+) -> Result<Arc<ModelTableMetadata>, ParquetError> {
     //Ensure only supported model types are used
     let model_types_file = table_folder.clone() + "/model_type.parquet";
     let path = Path::new(&model_types_file);
@@ -191,7 +191,7 @@ fn new_model_table(
         let sampling_intervals = extract_and_shift_int32_column(&rows, 2)?;
         let denormalized_dimensions = extract_and_shift_denormalized_dimensions(&rows, 4)?;
 
-        Ok(Arc::new(ModelTable {
+        Ok(Arc::new(ModelTableMetadata {
             name: table_name,
             segment_folder: table_folder + "/segment",
             segment_group_file_schema: segment_group_file_schema.clone(),
