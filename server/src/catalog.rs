@@ -83,10 +83,10 @@ pub fn new(data_folder: &str) -> Catalog {
                     let file_name = dir_entry.file_name().to_str().unwrap().to_string();
                     //HACK: workaround for datafusion 8.0.0 lowercasing table names in queries
                     let normalized_file_name = file_name.to_ascii_lowercase();
-                    if is_parquet_file(&dir_entry) {
+                    if is_dir_entry_a_table(&dir_entry) {
                         table_metadata.push(new_table_metadata(normalized_file_name, path.to_string()));
                         eprintln!("INFO: initialized table {}", path);
-                    } else if is_folder_a_model_table(&dir_entry) {
+                    } else if is_dir_entry_a_model_table(&dir_entry) {
                         if let Ok(mtd) = read_model_table_metadata(
                             normalized_file_name,
                             path.to_string(),
@@ -118,7 +118,26 @@ pub fn new(data_folder: &str) -> Catalog {
 }
 
 /** Private Methods **/
-fn is_parquet_file(dir_entry: &DirEntry) -> bool {
+//TODO: check the files for tables and model tables have the correct schema
+fn is_dir_entry_a_table(dir_entry: &DirEntry) -> bool {
+    if let Ok(metadata) = dir_entry.metadata() {
+	if metadata.is_file() {
+	    is_dir_entry_a_parquet_file(dir_entry)
+	} else if metadata.is_dir() {
+	    if let Ok(mut data_folder) = read_dir(dir_entry.path()) {
+		data_folder.all(|result|  result.is_ok() && is_dir_entry_a_parquet_file(&result.unwrap()))
+	    } else {
+		false
+	    }
+	} else {
+	    false
+	}
+    } else {
+	false
+    }
+}
+
+fn is_dir_entry_a_parquet_file(dir_entry: &DirEntry) -> bool {
     let mut file = File::open(dir_entry.path()).unwrap();
     let mut magic_bytes = vec![0u8; 4];
     let _ = file.read_exact(&mut magic_bytes);
@@ -135,7 +154,7 @@ fn new_table_metadata(file_name: String, path: String) -> TableMetadata {
     TableMetadata { name, path }
 }
 
-fn is_folder_a_model_table(dir_entry: &DirEntry) -> bool {
+fn is_dir_entry_a_model_table(dir_entry: &DirEntry) -> bool {
     if let Ok(metadata) = dir_entry.metadata() {
         if metadata.is_dir() {
             return ["model_type.parquet", "time_series.parquet", "segment"]
