@@ -18,3 +18,6 @@ arrow-flight = "15.0.0"
 tonic = "0.7.2"
 
 snmalloc-rs = "0.3.1"
+
+[dev-dependencies]
+proptest = "1.0.0"
