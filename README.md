@@ -40,14 +40,14 @@ license is bundled with the program.
 
 ## Development
 All code should follow the official [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md). 
-Subjects not covered in the style guide, or requirements specific to this repository, is covered here. 
+Subjects not covered in the style guide, or requirements specific to this repository, are covered here. 
 
 ### Documentation
 All public functions should have an accompanying doc comment that describes the purpose of the function. If necessary, 
-the doc comment can also include a description of each argument, the return value and examples.
+the doc comment can also include a description of each argument, the return value, and examples.
 
 All modules should have an accompanying doc comment that describes the general functionality of the module. A brief description 
-of the public functions, structs, enums or other central elements of the module can be included.
+of the public functions, structs, enums, or other central elements of the module can be included.
 
 All private functions should have an accompanying comment that describes the purpose of the function.
 
