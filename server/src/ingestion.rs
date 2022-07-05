@@ -25,15 +25,16 @@
 use futures::{executor::block_on, stream::StreamExt};
 use paho_mqtt as mqtt;
 use std::{process, time::Duration};
-use paho_mqtt::AsyncClient;
+use paho_mqtt::{AsyncClient, Message, Receiver};
 
 pub struct Ingestor {
-    broker: String,
-    client: String,
-    topics: [String],
-    qos: [u8; 2],
+    broker: &'static str,
+    client: &'static str,
+    topics: &'static [&'static str],
+    qos: [i32],
 }
 
+// TODO: Add debug logging with tracer log.
 impl Ingestor {
     /// Create a broker client with the specified Ingestor fields.
     pub fn create_client(self) -> AsyncClient {
@@ -48,5 +49,26 @@ impl Ingestor {
         });
 
         client
+    }
+
+    /// Make the connection to the broker and subscribe to the specified topics.
+    pub fn subscribe_to_broker(self, client: &mut AsyncClient) -> async_channel::Receiver<Option<Message>> {
+        // Get message stream before connecting.
+        let mut stream = client.get_stream(25);
+
+        // Define last will and testament message to notify other clients about disconnect.
+        let lwt = mqtt::Message::new("mdb_lwt", "ModelarDB lost connection", mqtt::QOS_1);
+
+        let connect_options = mqtt::ConnectOptionsBuilder::new()
+            .keep_alive_interval(Duration::from_secs(30))
+            .mqtt_version(mqtt::MQTT_VERSION_3_1_1)
+            .clean_session(false)
+            .will_message(lwt)
+            .finalize();
+
+        client.connect(connect_options).await?;
+        client.subscribe_many(self.topics, &self.qos).await?;
+
+        stream
     }
 }
