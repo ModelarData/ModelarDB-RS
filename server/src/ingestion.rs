@@ -24,5 +24,8 @@
  */
 
 pub struct Ingestor {
-
+    broker: String,
+    client: String,
+    topics: [String],
+    qos: [u8; 2],
 }
