@@ -22,10 +22,31 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+use futures::{executor::block_on, stream::StreamExt};
+use paho_mqtt as mqtt;
+use std::{process, time::Duration};
+use paho_mqtt::AsyncClient;
 
 pub struct Ingestor {
     broker: String,
     client: String,
     topics: [String],
     qos: [u8; 2],
+}
+
+impl Ingestor {
+    /// Create a broker client with the specified Ingestor fields.
+    pub fn create_client(self) -> AsyncClient {
+        let create_options = mqtt::CreateOptionsBuilder::new()
+            .server_uri(self.broker)
+            .client_id(self.client)
+            .finalize();
+
+        let mut client = mqtt::AsyncClient::new(create_options).unwrap_or_else(|e| {
+            println!("Error creating the client: {:?}", e);
+            process::exit(1);
+        });
+
+        client
+    }
 }
