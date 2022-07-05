@@ -21,6 +21,7 @@ mod remote;
 mod storage;
 mod tables;
 mod types;
+mod ingestion;
 
 use std::sync::Arc;
 
