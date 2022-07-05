@@ -25,13 +25,13 @@
 use futures::{executor::block_on, stream::StreamExt};
 use paho_mqtt as mqtt;
 use std::{process, time::Duration};
-use paho_mqtt::{AsyncClient, Message, Receiver};
+use paho_mqtt::{AsyncClient, AsyncReceiver, Message};
 
 pub struct Ingestor {
     broker: &'static str,
     client: &'static str,
     topics: &'static [&'static str],
-    qos: [i32],
+    qos: &'static [i32],
 }
 
 // TODO: Add debug logging with tracer log.
@@ -52,8 +52,8 @@ impl Ingestor {
     }
 
     /// Make the connection to the broker and subscribe to the specified topics.
-    pub fn subscribe_to_broker(self, client: &mut AsyncClient) -> async_channel::Receiver<Option<Message>> {
-        // Get message stream before connecting.
+    pub fn subscribe_to_broker(self, client: &mut AsyncClient) ->  AsyncReceiver<Option<Message>> {
+        // Get message stream before connecting since messages can arrive as soon as the connection is made.
         let mut stream = client.get_stream(25);
 
         // Define last will and testament message to notify other clients about disconnect.
@@ -70,5 +70,24 @@ impl Ingestor {
         client.subscribe_many(self.topics, &self.qos).await?;
 
         stream
+    }
+
+    /// Ingest the published messages in a loop until connection is lost.
+    pub fn ingest_messages(self, stream: &mut AsyncReceiver<Option<Message>>, client: &mut AsyncClient ) {
+        // While the message stream resolves to the next item in the stream, ingest the messages.
+        while let Some(msg_opt) = stream.next().await {
+            if let Some(msg) = msg_opt {
+                // TODO: Currently the messages are just printed. Actually save the messages to a file or in memory.
+                println!("{}", msg);
+            }
+            else {
+                // A "None" means we were disconnected. Try to reconnect...
+                println!("Lost connection. Attempting reconnect.");
+                while let Err(err) = client.reconnect().await {
+                    println!("Error reconnecting: {}", err);
+                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                }
+            }
+        }
     }
 }
