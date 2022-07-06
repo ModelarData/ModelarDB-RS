@@ -28,10 +28,10 @@ use paho_mqtt::{AsyncClient, AsyncReceiver, Message};
 use std::{process, time::Duration};
 
 pub struct Ingestor {
-    broker: &'static str,
-    client_id: &'static str,
-    topics: &'static [&'static str],
-    qos: &'static [i32],
+    pub broker: &'static str,
+    pub client_id: &'static str,
+    pub topics: &'static [&'static str],
+    pub qos: &'static [i32],
 }
 
 // TODO: Add debug logging with tracer log.
@@ -42,7 +42,7 @@ impl Ingestor {
     /// * `compress_callback` - Function called on the messages when a batch of messages has been
     /// ingested into memory. Due to possible memory limitations, the messages can also be supplied
     /// to the compress callback through a file path.
-    fn start(self, compress_callback: fn()) {
+    pub fn start(self, compress_callback: fn(msg: Message)) {
         let mut client = create_client(self.broker, self.client_id);
 
         if let Err(err) = block_on(async {
@@ -100,7 +100,7 @@ async fn subscribe_to_broker(
 async fn ingest_messages(
     stream: &mut AsyncReceiver<Option<Message>>,
     client: &mut AsyncClient,
-    compress_callback: fn(),
+    compress_callback: fn(msg: Message),
 ) {
     // While the message stream resolves to the next item in the stream, ingest the messages.
     while let Some(msg_opt) = stream.next().await {
