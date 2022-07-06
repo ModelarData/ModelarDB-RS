@@ -36,12 +36,7 @@ pub struct Ingestor {
 
 impl Ingestor {
     /// Create a broker client, subscribe to the topics and start ingesting messages.
-    ///
-    /// # Arguments
-    /// * `compress_callback` - Function called on the messages when a batch of messages has been
-    /// ingested into memory. Due to possible memory limitations, the messages can also be supplied
-    /// to the compress callback through a file path.
-    pub fn start(self, compress_callback: fn(msg: Message)) {
+    pub fn start(self) {
         println!("Creating MQTT broker client.");
         let mut client = create_client(self.broker, self.client_id);
 
@@ -49,7 +44,7 @@ impl Ingestor {
             let mut stream = subscribe_to_broker(&mut client, self.topics, self.qos).await;
 
             println!("Waiting for messages...");
-            ingest_messages(&mut stream, &mut client, compress_callback).await;
+            ingest_messages(&mut stream, &mut client).await;
 
             Ok::<(), mqtt::Error>(())
         }) {
@@ -104,15 +99,11 @@ async fn subscribe_to_broker(
 
 // TODO: Send the messages to the storage engine when they are retrieved.
 /// Ingest the published messages in a loop until connection is lost.
-async fn ingest_messages(
-    stream: &mut AsyncReceiver<Option<Message>>,
-    client: &mut AsyncClient,
-    compress_callback: fn(msg: Message),
-) {
+async fn ingest_messages(stream: &mut AsyncReceiver<Option<Message>>, client: &mut AsyncClient) {
     // While the message stream resolves to the next item in the stream, ingest the messages.
     while let Some(msg_opt) = stream.next().await {
         if let Some(msg) = msg_opt {
-            compress_callback(msg)
+            println!("{}", msg);
         } else {
             // A "None" means we were disconnected. Try to reconnect...
             println!("Lost connection. Attempting reconnect.");
