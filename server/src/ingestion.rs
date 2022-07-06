@@ -3,9 +3,9 @@
 //! The connection settings of the ingestor are controlled through the broker, client, topics,
 //! and qos fields. Note that the client ID should be unique.
 //!
-//! To use the ingestor, first create the client, then use the created client to connect to the
-//! the broker and subscribe to the specific topics. Connecting returns a message stream that
-//! can be looped over to ingest the messages that are published to the topics.
+//! To use the ingestor, run the "ingestor.start()" function. This functions first creates the client.
+//! Then it uses the created client to connect to the broker and subscribe to the specified topics.
+//! The connection message stream is then looped over to ingest the messages that are published to the topics.
 //!
 
 /* Copyright 2021 The MiniModelarDB Contributors
@@ -35,7 +35,26 @@ pub struct Ingestor {
 }
 
 // TODO: Add debug logging with tracer log.
-impl Ingestor {}
+impl Ingestor {
+    /// Create a broker client, subscribe to the topics and start ingesting messages.
+    ///
+    /// # Arguments
+    /// * `compress_callback` - Function called on the messages when a batch of messages has been
+    /// ingested into memory. Due to possible memory limitations, the messages can also be supplied
+    /// to the compress callback through a file path.
+    fn start(self, compress_callback: fn()) {
+        let mut client = create_client(self.broker, self.client_id);
+
+        if let Err(err) = block_on(async {
+            let mut stream = subscribe_to_broker(&mut client, self.topics, self.qos).await;
+            ingest_messages(&mut stream, &mut client, compress_callback);
+
+            Ok::<(), mqtt::Error>(())
+        }) {
+            eprintln!("{}", err);
+        }
+    }
+}
 
 /// Create a broker client with the given broker URI and client ID.
 fn create_client(broker: &str, client_id: &str) -> AsyncClient {
@@ -53,7 +72,7 @@ fn create_client(broker: &str, client_id: &str) -> AsyncClient {
 }
 
 /// Make the connection to the broker and subscribe to the specified topics.
-fn subscribe_to_broker(
+async fn subscribe_to_broker(
     client: &mut AsyncClient,
     topics: &[&str],
     qos: &[i32],
@@ -78,7 +97,11 @@ fn subscribe_to_broker(
 }
 
 /// Ingest the published messages in a loop until connection is lost.
-fn ingest_messages(stream: &mut AsyncReceiver<Option<Message>>, client: &mut AsyncClient) {
+async fn ingest_messages(
+    stream: &mut AsyncReceiver<Option<Message>>,
+    client: &mut AsyncClient,
+    compress_callback: fn(),
+) {
     // While the message stream resolves to the next item in the stream, ingest the messages.
     while let Some(msg_opt) = stream.next().await {
         if let Some(msg) = msg_opt {
