@@ -29,64 +29,63 @@ use paho_mqtt::{AsyncClient, AsyncReceiver, Message};
 
 pub struct Ingestor {
     broker: &'static str,
-    client: &'static str,
+    client_id: &'static str,
     topics: &'static [&'static str],
     qos: &'static [i32],
 }
 
 // TODO: Add debug logging with tracer log.
-impl Ingestor {
-    /// Create a broker client with the specified Ingestor fields.
-    pub fn create_client(self) -> AsyncClient {
-        let create_options = mqtt::CreateOptionsBuilder::new()
-            .server_uri(self.broker)
-            .client_id(self.client)
-            .finalize();
+impl Ingestor {}
 
-        let mut client = mqtt::AsyncClient::new(create_options).unwrap_or_else(|e| {
-            println!("Error creating the client: {:?}", e);
-            process::exit(1);
-        });
+/// Create a broker client with the given broker URI and client ID.
+fn create_client(broker: &str, client_id: &str) -> AsyncClient {
+    let create_options = mqtt::CreateOptionsBuilder::new()
+        .server_uri(broker)
+        .client_id(client_id)
+        .finalize();
 
-        client
-    }
+    let mut client = mqtt::AsyncClient::new(create_options).unwrap_or_else(|e| {
+        println!("Error creating the client: {:?}", e);
+        process::exit(1);
+    });
 
-    /// Make the connection to the broker and subscribe to the specified topics.
-    pub fn subscribe_to_broker(self, client: &mut AsyncClient) ->  AsyncReceiver<Option<Message>> {
-        // Get message stream before connecting since messages can arrive as soon as the connection is made.
-        let mut stream = client.get_stream(25);
+    client
+}
 
-        // Define last will and testament message to notify other clients about disconnect.
-        let lwt = mqtt::Message::new("mdb_lwt", "ModelarDB lost connection", mqtt::QOS_1);
+/// Make the connection to the broker and subscribe to the specified topics.
+fn subscribe_to_broker(client: &mut AsyncClient, topics: &[&str], qos: &[i32]) -> AsyncReceiver<Option<Message>> {
+    // Get message stream before connecting since messages can arrive as soon as the connection is made.
+    let mut stream = client.get_stream(25);
 
-        let connect_options = mqtt::ConnectOptionsBuilder::new()
-            .keep_alive_interval(Duration::from_secs(30))
-            .mqtt_version(mqtt::MQTT_VERSION_3_1_1)
-            .clean_session(false)
-            .will_message(lwt)
-            .finalize();
+    // Define last will and testament message to notify other clients about disconnect.
+    let lwt = mqtt::Message::new("mdb_lwt", "ModelarDB lost connection", mqtt::QOS_1);
 
-        client.connect(connect_options).await?;
-        client.subscribe_many(self.topics, &self.qos).await?;
+    let connect_options = mqtt::ConnectOptionsBuilder::new()
+        .keep_alive_interval(Duration::from_secs(30))
+        .mqtt_version(mqtt::MQTT_VERSION_3_1_1)
+        .clean_session(false)
+        .will_message(lwt)
+        .finalize();
 
-        stream
-    }
+    client.connect(connect_options).await;
+    client.subscribe_many(topics, qos).await;
 
-    /// Ingest the published messages in a loop until connection is lost.
-    pub fn ingest_messages(self, stream: &mut AsyncReceiver<Option<Message>>, client: &mut AsyncClient ) {
-        // While the message stream resolves to the next item in the stream, ingest the messages.
-        while let Some(msg_opt) = stream.next().await {
-            if let Some(msg) = msg_opt {
-                // TODO: Currently the messages are just printed. Actually save the messages to a file or in memory.
-                println!("{}", msg);
-            }
-            else {
-                // A "None" means we were disconnected. Try to reconnect...
-                println!("Lost connection. Attempting reconnect.");
-                while let Err(err) = client.reconnect().await {
-                    println!("Error reconnecting: {}", err);
-                    tokio::time::sleep(Duration::from_millis(1000)).await;
-                }
+    stream
+}
+
+/// Ingest the published messages in a loop until connection is lost.
+fn ingest_messages(stream: &mut AsyncReceiver<Option<Message>>, client: &mut AsyncClient) {
+    // While the message stream resolves to the next item in the stream, ingest the messages.
+    while let Some(msg_opt) = stream.next().await {
+        if let Some(msg) = msg_opt {
+            // TODO: Currently the messages are just printed. Actually save the messages to a file or in memory.
+            println!("{}", msg);
+        } else {
+            // A "None" means we were disconnected. Try to reconnect...
+            println!("Lost connection. Attempting reconnect.");
+            while let Err(err) = client.reconnect().await {
+                println!("Error reconnecting: {}", err);
+                tokio::time::sleep(Duration::from_millis(1000)).await;
             }
         }
     }
