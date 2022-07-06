@@ -1,6 +1,6 @@
 //! Module containing support for data ingestion from an MQTT broker.
 //!
-//! The connection settings of the ingestor are controlled through the broker, client, topics,
+//! The connection settings of the ingestor are controlled through the broker, client_id, topics,
 //! and qos fields. Note that the client ID should be unique.
 //!
 //! To use the ingestor, run the "ingestor.start()" function. This functions first creates the client.
@@ -34,7 +34,6 @@ pub struct Ingestor {
     pub qos: &'static [i32],
 }
 
-// TODO: Add debug logging with tracer log.
 impl Ingestor {
     /// Create a broker client, subscribe to the topics and start ingesting messages.
     ///
@@ -43,10 +42,13 @@ impl Ingestor {
     /// ingested into memory. Due to possible memory limitations, the messages can also be supplied
     /// to the compress callback through a file path.
     pub fn start(self, compress_callback: fn(msg: Message)) {
+        println!("Creating MQTT broker client.");
         let mut client = create_client(self.broker, self.client_id);
 
         if let Err(err) = block_on(async {
             let mut stream = subscribe_to_broker(&mut client, self.topics, self.qos).await;
+
+            println!("Waiting for messages...");
             ingest_messages(&mut stream, &mut client, compress_callback).await;
 
             Ok::<(), mqtt::Error>(())
@@ -65,7 +67,7 @@ fn create_client(broker: &str, client_id: &str) -> AsyncClient {
         .finalize();
 
     let mut client = mqtt::AsyncClient::new(create_options).unwrap_or_else(|e| {
-        println!("Error creating the client: {:?}", e);
+        eprintln!("Error creating the client: {:?}", e);
         process::exit(1);
     });
 
@@ -91,12 +93,16 @@ async fn subscribe_to_broker(
         .will_message(lwt)
         .finalize();
 
+    println!("Connecting to MQTT broker.");
     client.connect(connect_options).await;
+
+    println!("Subscribing to topics: {:?}", topics);
     client.subscribe_many(topics, qos).await;
 
     stream
 }
 
+// TODO: Send the messages to the storage engine when they are retrieved.
 /// Ingest the published messages in a loop until connection is lost.
 async fn ingest_messages(
     stream: &mut AsyncReceiver<Option<Message>>,
@@ -106,13 +112,12 @@ async fn ingest_messages(
     // While the message stream resolves to the next item in the stream, ingest the messages.
     while let Some(msg_opt) = stream.next().await {
         if let Some(msg) = msg_opt {
-            // TODO: Currently the messages are just printed. Actually save the messages to a file or in memory.
             compress_callback(msg)
         } else {
             // A "None" means we were disconnected. Try to reconnect...
             println!("Lost connection. Attempting reconnect.");
             while let Err(err) = client.reconnect().await {
-                println!("Error reconnecting: {}", err);
+                eprintln!("Error reconnecting: {}", err);
                 tokio::time::sleep(Duration::from_millis(1000)).await;
             }
         }
