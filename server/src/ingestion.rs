@@ -24,8 +24,8 @@
  */
 use futures::{executor::block_on, stream::StreamExt};
 use paho_mqtt as mqtt;
-use std::{process, time::Duration};
 use paho_mqtt::{AsyncClient, AsyncReceiver, Message};
+use std::{process, time::Duration};
 
 pub struct Ingestor {
     broker: &'static str,
@@ -53,7 +53,11 @@ fn create_client(broker: &str, client_id: &str) -> AsyncClient {
 }
 
 /// Make the connection to the broker and subscribe to the specified topics.
-fn subscribe_to_broker(client: &mut AsyncClient, topics: &[&str], qos: &[i32]) -> AsyncReceiver<Option<Message>> {
+fn subscribe_to_broker(
+    client: &mut AsyncClient,
+    topics: &[&str],
+    qos: &[i32],
+) -> AsyncReceiver<Option<Message>> {
     // Get message stream before connecting since messages can arrive as soon as the connection is made.
     let mut stream = client.get_stream(25);
 
