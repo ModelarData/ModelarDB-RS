@@ -47,7 +47,7 @@ impl Ingestor {
 
         if let Err(err) = block_on(async {
             let mut stream = subscribe_to_broker(&mut client, self.topics, self.qos).await;
-            ingest_messages(&mut stream, &mut client, compress_callback);
+            ingest_messages(&mut stream, &mut client, compress_callback).await;
 
             Ok::<(), mqtt::Error>(())
         }) {
@@ -56,6 +56,7 @@ impl Ingestor {
     }
 }
 
+/** Private Functions **/
 /// Create a broker client with the given broker URI and client ID.
 fn create_client(broker: &str, client_id: &str) -> AsyncClient {
     let create_options = mqtt::CreateOptionsBuilder::new()
@@ -106,7 +107,7 @@ async fn ingest_messages(
     while let Some(msg_opt) = stream.next().await {
         if let Some(msg) = msg_opt {
             // TODO: Currently the messages are just printed. Actually save the messages to a file or in memory.
-            println!("{}", msg);
+            compress_callback(msg)
         } else {
             // A "None" means we were disconnected. Try to reconnect...
             println!("Lost connection. Attempting reconnect.");
