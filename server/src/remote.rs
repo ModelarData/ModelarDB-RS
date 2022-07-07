@@ -58,8 +58,8 @@ fn to_invalid_argument(err: impl Error) -> Status {
     Status::invalid_argument(format!("{}", err))
 }
 
-//The type is based on the Arrow examples published under the Apache2 license.
-//LINK: https://github.com/apache/arrow-rs/blob/master/arrow-flight/examples
+// The type is based on the Arrow examples published under the Apache2 license.
+// LINK: https://github.com/apache/arrow-rs/blob/master/arrow-flight/examples
 /** Private Types **/
 struct FlightServiceHandler {
     context: Arc<Context>,
@@ -116,9 +116,9 @@ impl FlightService for FlightServiceHandler {
         if let Some(table_name) = request.into_inner().path.get(0) {
             let session = self.context.session.clone();
             if let Some(catalog) = session.catalog("datafusion") {
-                //default catalog
+                // default catalog.
                 if let Some(schema) = catalog.schema("public") {
-                    //default schema
+                    // default schema.
                     if let Some(table) = schema.table(table_name) {
                         let schema = &*table.schema();
                         let options = IpcWriteOptions::default();
@@ -146,12 +146,12 @@ impl FlightService for FlightServiceHandler {
         &self,
         request: Request<Ticket>,
     ) -> Result<Response<Self::DoGetStream>, Status> {
-        //Extract client query
+        // Extract client query.
         let message = request.get_ref();
         let query = from_utf8(&message.ticket).map_err(to_invalid_argument)?;
         eprintln!("Executing: {}", query);
 
-        //Executes client query
+        // Executes client query.
         let session = self.context.session.clone();
         let df = session.sql(query).await.map_err(to_invalid_argument)?;
         let results = df.collect().await.map_err(to_invalid_argument)?;

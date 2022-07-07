@@ -71,7 +71,7 @@ impl ModelTable {
             Field::new("value", DataType::Float32, false),
         ];
 
-        //TODO: support dimensions with levels that are not strings?
+        // TODO: support dimensions with levels that are not strings?
         for level in &model_table_metadata.denormalized_dimensions {
             let level = level.as_any().downcast_ref::<StringArray>().unwrap();
             columns.push(Field::new(level.value(0), DataType::Utf8, false));
@@ -85,13 +85,13 @@ impl ModelTable {
     }
 
     fn rewrite_and_combine_filters(&self, filters: &[Expr]) -> Option<Expr> {
-        //TODO: implement rewriting of members to group ids
+        // TODO: implement rewriting of members to group ids.
         let rewritten_filters: Vec<Expr> = filters
             .iter()
             .map(|filter| match filter {
                 Expr::BinaryExpr { left, op, right } => {
                     if **left == col("tid") {
-                        //Assumes time series are not grouped so tids and gids are equivalent
+                        // Assumes time series are not grouped so tids and gids are equivalent.
                         self.binary_expr(col("gid"), *op, *right.clone())
                     } else if **left == col("timestamp") {
                         match op {
@@ -141,12 +141,12 @@ impl ModelTable {
     }
 
     fn to_i64(&self, expr: &Expr) -> Expr {
-        //Assumes the expression is a literal with a timestamp at nanosecond resolution
-        //TODO: add proper error handling if expr can be anything but TimestampNanosecond
+        // Assumes the expression is a literal with a timestamp at nanosecond resolution.
+        // TODO: add proper error handling if expr can be anything but TimestampNanosecond.
         let nanoseconds_to_millisecond = 1_000_000;
         if let Expr::Literal(value) = expr {
             if let TimestampNanosecond(value, _timezone) = value {
-                //TODO: ensure timezone is handled correctly as part of the conversion to ms
+                // TODO: ensure timezone is handled correctly as part of the conversion to ms.
                 Expr::Literal(Int64(Some(value.unwrap() / nanoseconds_to_millisecond)))
             } else {
                 panic!("Expr::Literal(value) is not a TimestampNanosecond");
