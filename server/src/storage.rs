@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use datafusion::arrow::array::PrimitiveBuilder;
 use datafusion::arrow::datatypes::Float32Type;
 use datafusion::parquet::data_type::Int64Type;
+use datafusion::physical_plan::DisplayFormatType::Default;
 
 /// Storage engine struct responsible for keeping track of all uncompressed data and invoking the
 /// compressor to move the uncompressed data into persistent model-based storage. The fields should
@@ -37,3 +38,19 @@ pub struct StorageEngine {
     data: HashMap<String, (PrimitiveBuilder<Int64Type>, PrimitiveBuilder<Float32Type>, [&'static str])>,
     data_buffer: HashMap<String, String>
 }
+
+impl Default for StorageEngine {
+    fn default() -> Self {
+        StorageEngine {
+            data: HashMap::new(),
+            data_buffer: HashMap::new()
+        }
+    }
+}
+
+impl StorageEngine {
+    pub fn new() -> Self {
+        Default::default()
+    }
+}
+
