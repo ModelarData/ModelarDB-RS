@@ -17,6 +17,7 @@ use std::io::Read;
 use std::sync::Arc;
 use std::{fs::File, path::Path};
 use std::str;
+use std::fs::OpenOptions;
 
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::array::{Array, ArrayRef, BinaryArray, Int32Array, Int32Builder, StringBuilder};
@@ -138,7 +139,7 @@ fn is_dir_entry_a_table(dir_entry: &DirEntry) -> bool {
 }
 
 fn is_dir_entry_a_parquet_file(dir_entry: &DirEntry) -> bool {
-    let mut file = File::open(dir_entry.path()).unwrap();
+    let mut file = OpenOptions::new().write(true).open(dir_entry.path()).unwrap();
     let mut magic_bytes = vec![0u8; 4];
     let _ = file.read_exact(&mut magic_bytes);
     magic_bytes == [80, 65, 82, 49] //Magic bytes PAR1

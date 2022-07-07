@@ -19,7 +19,10 @@ mod optimizer;
 mod remote;
 mod tables;
 
-use std::sync::Arc;
+
+use std::{fs::File, sync::Arc};
+
+use tracing_subscriber::{filter, prelude::*};
 
 use tokio::runtime::Runtime;
 
@@ -43,6 +46,29 @@ pub struct Context {
 
 /** Public Functions **/
 fn main() {
+
+    // A layer that logs events to a file.
+    let file = File::create("debug.log");
+    let file = match file  {Ok(file) => file,Err(error) => panic!("Error: {:?}",error),};
+    let debug_log = tracing_subscriber::fmt::layer()
+        .with_writer(Arc::new(file));
+    
+    // A layer that logs events to stdout.
+
+    let stdout_log = tracing_subscriber::fmt::layer()
+    .pretty();
+    
+    tracing_subscriber::registry()
+        .with(
+            stdout_log
+                // Add an `INFO` filter to the stdout logging layer
+                .with_filter(filter::LevelFilter::INFO)
+                // Combine the filtered `stdout_log` layer with the
+                // `debug_log` layer, producing a new `Layered` layer.
+                .and_then(debug_log)
+        )
+        .init();
+
     let mut args = std::env::args();
     args.next(); //Skip executable
     if let Some(data_folder) = args.next() {
@@ -65,7 +91,7 @@ fn main() {
         //The errors are consciously ignored as the program is terminating
         let binary_path = std::env::current_exe().unwrap();
         let binary_name = binary_path.file_name().unwrap();
-        println!("usage: {} data_folder", binary_name.to_str().unwrap());
+        tracing::info!(" Usage: {} data_folder ", binary_name.to_str().unwrap());
     }
 }
 

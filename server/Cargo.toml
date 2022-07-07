@@ -10,6 +10,9 @@ datafusion = "9.0.0"
 datafusion-data-access = "9.0.0"
 datafusion-physical-expr = "9.0.0"
 
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
 tokio = { version = "1.19.2", features = ["rt-multi-thread"] }
 async-trait = "0.1.56"
 futures = "0.3.21"
