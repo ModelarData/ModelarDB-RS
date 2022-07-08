@@ -21,17 +21,17 @@
  * limitations under the License.
  */
 use std::collections::{HashMap, VecDeque};
-use datafusion::arrow::array::{PrimitiveBuilder};
+use datafusion::arrow::array::{Float32Array, PrimitiveBuilder, TimestampMillisecondArray};
 use datafusion::arrow::datatypes::{Float32Type, TimestampMillisecondType};
 use paho_mqtt::Message;
 
 type TimeStamp = TimestampMillisecondType;
 type Value = Float32Type;
-type MetaData = Vec<&'static str>;
+type MetaData = Vec<String>;
 
 struct DataPoint {
-    timestamp: TimeStamp,
-    value: Value,
+    timestamp: i64,
+    value: f32,
     metadata: MetaData
 }
 
@@ -68,6 +68,7 @@ pub struct StorageEngine {
 impl Default for StorageEngine {
     fn default() -> Self {
         StorageEngine {
+            // TODO: Maybe create with estimated capacity to avoid reallocation.
             data: HashMap::new(),
             data_buffer: HashMap::new(),
             compression_queue: VecDeque::new()
@@ -81,9 +82,29 @@ impl StorageEngine {
     }
 
     /// Format the given message and insert it into the in-memory storage.
-    pub fn insert_message(self, message: Message) {
+    pub fn insert_message(mut self, message: Message) {
         let data_point = format_message(&message);
         let key = generate_unique_key(&data_point);
+
+        if let Some(time_series) = self.data.get_mut(&*key) {
+            // If the key exists, add the timestamp and value to the builders.
+            time_series.timestamps.append_value(data_point.timestamp).unwrap();
+            time_series.values.append_value(data_point.value).unwrap();
+        } else {
+            // If the key does not already exist, create a new entry.
+            let mut time_series = TimeSeries {
+                timestamps: TimestampMillisecondArray::builder(100),
+                values: Float32Array::builder(100),
+                metadata: data_point.metadata
+            };
+
+            time_series.timestamps.append_value(data_point.timestamp).unwrap();
+            time_series.values.append_value(data_point.value).unwrap();
+
+            self.data.insert(key, time_series);
+            // TODO: Check if the current memory use is larger than the threshold.
+            // TODO: If so, save the first n (start with n=1) items in the compression queue in the buffer.
+        }
     }
 
     // TODO: When it is formatted it should be inserted in to the data field.
@@ -95,17 +116,17 @@ impl StorageEngine {
 
 /// Given a raw MQTT message, extract the message components and return them as a data point.
 fn format_message(message: &Message) -> DataPoint {
-    let message_payload = msg.payload_str();
+    let message_payload = message.payload_str();
     let first_last_off: &str = &message_payload[1..message_payload.len() - 1];
 
     let timestamp_value: Vec<&str> = first_last_off.split(", ").collect();
-    let timestamp = timestamp_value[0].parse::<TimeStamp>().unwrap();
-    let value = timestamp_value[1].parse::<Value>().unwrap();
+    let timestamp = timestamp_value[0].parse::<i64>().unwrap();
+    let value = timestamp_value[1].parse::<f32>().unwrap();
 
     DataPoint {
         timestamp,
         value,
-        metadata: vec![message.topic()]
+        metadata: vec![message.topic().to_string()]
     }
 }
 
