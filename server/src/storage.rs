@@ -23,8 +23,6 @@
 use std::collections::{HashMap, VecDeque};
 use datafusion::arrow::array::{PrimitiveBuilder};
 use datafusion::arrow::datatypes::{Float32Type, TimestampMillisecondType};
-use datafusion::parquet::data_type::Int64Type;
-use datafusion::physical_plan::DisplayFormatType::Default;
 
 type TimeStamp = TimestampMillisecondType;
 type Value = Float32Type;
@@ -32,12 +30,12 @@ type Value = Float32Type;
 struct TimeSeries {
     timestamps: PrimitiveBuilder<TimeStamp>,
     values: PrimitiveBuilder<Value>,
-    metadata: [String],
+    metadata: Vec<String>,
 }
 
 struct BufferedTimeSeries {
     path: String,
-    metadata: [String],
+    metadata: Vec<String>,
 }
 
 struct QueuedTimeSeries {
