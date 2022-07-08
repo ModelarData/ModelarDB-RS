@@ -28,7 +28,22 @@ use datafusion::physical_plan::DisplayFormatType::Default;
 
 type TimeStamp = TimestampMillisecondType;
 type Value = Float32Type;
-type TimeSeries = (PrimitiveBuilder<TimeStamp>, PrimitiveBuilder<Value>, [&'static str]);
+
+struct TimeSeries {
+    timestamps: PrimitiveBuilder<TimeStamp>,
+    values: PrimitiveBuilder<Value>,
+    metadata: [String],
+}
+
+struct BufferedTimeSeries {
+    path: String,
+    metadata: [String],
+}
+
+struct QueuedTimeSeries {
+    key: String,
+    start_timestamp: TimeStamp,
+}
 
 /// Storage engine struct responsible for keeping track of all uncompressed data and invoking the
 /// compressor to move the uncompressed data into persistent model-based storage. The fields should
@@ -37,10 +52,11 @@ type TimeSeries = (PrimitiveBuilder<TimeStamp>, PrimitiveBuilder<Value>, [&'stat
 /// # Fields
 /// * `data` - Hash map from the time series ID to the in-memory uncompressed data of the time series.
 /// * `data_buffer` - Hash map from the time series ID to the path of the parquet file buffer.
+/// * `compression_queue` - Prioritized queue of time series that can be compressed.
 pub struct StorageEngine {
     data: HashMap<String, TimeSeries>,
-    data_buffer: HashMap<String, String>,
-    compression_queue: VecDeque<String>
+    data_buffer: HashMap<String, BufferedTimeSeries>,
+    compression_queue: VecDeque<QueuedTimeSeries>
 }
 
 impl Default for StorageEngine {
