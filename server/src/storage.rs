@@ -23,19 +23,26 @@
 use std::collections::{HashMap, VecDeque};
 use datafusion::arrow::array::{PrimitiveBuilder};
 use datafusion::arrow::datatypes::{Float32Type, TimestampMillisecondType};
+use paho_mqtt::Message;
 
 type TimeStamp = TimestampMillisecondType;
 type Value = Float32Type;
 
+struct DataPoint {
+    timestamp: TimeStamp,
+    value: Value,
+    metadata: Vec<&'static str>
+}
+
 struct TimeSeries {
     timestamps: PrimitiveBuilder<TimeStamp>,
     values: PrimitiveBuilder<Value>,
-    metadata: Vec<String>,
+    metadata: Vec<&'static str>,
 }
 
 struct BufferedTimeSeries {
     path: String,
-    metadata: Vec<String>,
+    metadata: Vec<&'static str>,
 }
 
 struct QueuedTimeSeries {
@@ -72,7 +79,11 @@ impl StorageEngine {
         Default::default()
     }
 
-    // TODO: Create a function to receive new messages.
+    /// Format the given message and insert it into the in-memory storage.
+    pub fn insert_message(message: Message) {
+        let data_point = format_message(message);
+    }
+
     // TODO: Convert the message to the internal format used in the storage engine.
     // TODO: When it is formatted it should be inserted in to the data field.
     // TODO: If it already exists it should be just be appended to the builders.
@@ -81,3 +92,18 @@ impl StorageEngine {
     // TODO: It should also be pushed onto the "to-be-compressed" queue.
 }
 
+/// Given a raw MQTT message, extract the message components and return them as a data point.
+fn format_message(message: Message) -> DataPoint {
+    let message_payload = msg.payload_str();
+    let first_last_off: &str = &message_payload[1..message_payload.len() - 1];
+
+    let timestamp_value: Vec<&str> = first_last_off.split(", ").collect();
+    let timestamp = timestamp_value[0].parse::<TimeStamp>().unwrap();
+    let value = timestamp_value[1].parse::<Value>().unwrap();
+
+    DataPoint {
+        timestamp,
+        value,
+        metadata: vec![message.topic()]
+    }
+}
