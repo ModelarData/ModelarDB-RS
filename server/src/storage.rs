@@ -29,12 +29,14 @@ type TimeStamp = TimestampMillisecondType;
 type Value = Float32Type;
 type MetaData = Vec<String>;
 
+#[derive(Debug)]
 struct DataPoint {
     timestamp: i64,
     value: f32,
     metadata: MetaData
 }
 
+#[derive(Debug)]
 struct TimeSeries {
     timestamps: PrimitiveBuilder<TimeStamp>,
     values: PrimitiveBuilder<Value>,
@@ -86,11 +88,19 @@ impl StorageEngine {
         let data_point = format_message(&message);
         let key = generate_unique_key(&data_point);
 
+        println!("Inserting data point {:?} into key {}", data_point, key);
+
         if let Some(time_series) = self.data.get_mut(&*key) {
+            println!("Found existing time series with key {}", key);
+
             // If the key exists, add the timestamp and value to the builders.
             time_series.timestamps.append_value(data_point.timestamp).unwrap();
             time_series.values.append_value(data_point.value).unwrap();
+
+            println!("Inserted data point into {:?}", time_series)
         } else {
+            println!("Could not find time series with key {}", key);
+
             // If the key does not already exist, create a new entry.
             let mut time_series = TimeSeries {
                 timestamps: TimestampMillisecondArray::builder(100),
@@ -101,12 +111,11 @@ impl StorageEngine {
             time_series.timestamps.append_value(data_point.timestamp).unwrap();
             time_series.values.append_value(data_point.value).unwrap();
 
+            println!("Inserted data point into {:?}", time_series);
+
             self.data.insert(key, time_series);
-            // TODO: Check if the current memory use is larger than the threshold.
-            // TODO: If so, save the first n (start with n=1) items in the compression queue in the buffer.
         }
     }
-
     // TODO: When it is formatted it should be inserted in to the data field.
     // TODO: If it already exists it should be just be appended to the builders.
 
