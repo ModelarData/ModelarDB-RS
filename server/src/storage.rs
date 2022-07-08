@@ -1,5 +1,5 @@
 //! Module containing support for formatting uncompressed data, storing uncompressed data both
-//! in-memory and in a parquet file data buffer and storing compressed data.
+//! in-memory and in a parquet file data buffer, and storing compressed data.
 //!
 //! The interface for interacting with the storage engine is the public "StorageEngine" struct that
 //! exposes the public "new" and "insert_data" functions. The storage engine should always be
@@ -20,7 +20,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use datafusion::arrow::array::{PrimitiveBuilder};
 use datafusion::arrow::datatypes::{Float32Type, TimestampMillisecondType};
 use datafusion::parquet::data_type::Int64Type;
@@ -39,14 +39,16 @@ type TimeSeries = (PrimitiveBuilder<TimeStamp>, PrimitiveBuilder<Value>, [&'stat
 /// * `data_buffer` - Hash map from the time series ID to the path of the parquet file buffer.
 pub struct StorageEngine {
     data: HashMap<String, TimeSeries>,
-    data_buffer: HashMap<String, String>
+    data_buffer: HashMap<String, String>,
+    compression_queue: VecDeque<String>
 }
 
 impl Default for StorageEngine {
     fn default() -> Self {
         StorageEngine {
             data: HashMap::new(),
-            data_buffer: HashMap::new()
+            data_buffer: HashMap::new(),
+            compression_queue: VecDeque::new()
         }
     }
 }
@@ -55,5 +57,13 @@ impl StorageEngine {
     pub fn new() -> Self {
         Default::default()
     }
+
+    // TODO: Create a function to receive new messages.
+    // TODO: Convert the message to the internal format used in the storage engine.
+    // TODO: When it is formatted it should be inserted in to the data field.
+    // TODO: If it already exists it should be just be appended to the builders.
+
+    // TODO: If it does not exist a new entry should be added that also adds the metadata.
+    // TODO: It should also be pushed onto the "to-be-compressed" queue.
 }
 
