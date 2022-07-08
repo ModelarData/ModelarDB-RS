@@ -21,21 +21,24 @@
  * limitations under the License.
  */
 use std::collections::HashMap;
-use datafusion::arrow::array::PrimitiveBuilder;
-use datafusion::arrow::datatypes::Float32Type;
+use datafusion::arrow::array::{PrimitiveBuilder};
+use datafusion::arrow::datatypes::{Float32Type, TimestampMillisecondType};
 use datafusion::parquet::data_type::Int64Type;
 use datafusion::physical_plan::DisplayFormatType::Default;
+
+type TimeStamp = TimestampMillisecondType;
+type Value = Float32Type;
+type TimeSeries = (PrimitiveBuilder<TimeStamp>, PrimitiveBuilder<Value>, [&'static str]);
 
 /// Storage engine struct responsible for keeping track of all uncompressed data and invoking the
 /// compressor to move the uncompressed data into persistent model-based storage. The fields should
 /// not be directly modified and are therefore only changed when using "insert_data".
 ///
 /// # Fields
-/// * `data` - The in-memory representation of uncompressed data. A hash map from the time series ID
-/// to a tuple with the following format: (timestamp_array_builder, value_array_builder, \[metadata]).
+/// * `data` - Hash map from the time series ID to the in-memory uncompressed data of the time series.
 /// * `data_buffer` - Hash map from the time series ID to the path of the parquet file buffer.
 pub struct StorageEngine {
-    data: HashMap<String, (PrimitiveBuilder<Int64Type>, PrimitiveBuilder<Float32Type>, [&'static str])>,
+    data: HashMap<String, TimeSeries>,
     data_buffer: HashMap<String, String>
 }
 
