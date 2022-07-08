@@ -81,8 +81,9 @@ impl StorageEngine {
     }
 
     /// Format the given message and insert it into the in-memory storage.
-    pub fn insert_message(message: Message) {
-        let data_point = format_message(message);
+    pub fn insert_message(self, message: Message) {
+        let data_point = format_message(&message);
+        let key = generate_unique_key(&data_point);
     }
 
     // TODO: When it is formatted it should be inserted in to the data field.
@@ -93,7 +94,7 @@ impl StorageEngine {
 }
 
 /// Given a raw MQTT message, extract the message components and return them as a data point.
-fn format_message(message: Message) -> DataPoint {
+fn format_message(message: &Message) -> DataPoint {
     let message_payload = msg.payload_str();
     let first_last_off: &str = &message_payload[1..message_payload.len() - 1];
 
@@ -106,4 +107,10 @@ fn format_message(message: Message) -> DataPoint {
         value,
         metadata: vec![message.topic()]
     }
+}
+
+// TODO: Currently the only information we have to uniquely identify a sensor is the ID. If this changes, change this function.
+/// Generates an unique key for a time series based on the information in the message.
+fn generate_unique_key(data_point: &DataPoint) -> String {
+    data_point.metadata.join("-")
 }
