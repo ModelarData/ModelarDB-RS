@@ -27,22 +27,23 @@ use paho_mqtt::Message;
 
 type TimeStamp = TimestampMillisecondType;
 type Value = Float32Type;
+type MetaData = Vec<&'static str>;
 
 struct DataPoint {
     timestamp: TimeStamp,
     value: Value,
-    metadata: Vec<&'static str>
+    metadata: MetaData
 }
 
 struct TimeSeries {
     timestamps: PrimitiveBuilder<TimeStamp>,
     values: PrimitiveBuilder<Value>,
-    metadata: Vec<&'static str>,
+    metadata: MetaData
 }
 
 struct BufferedTimeSeries {
     path: String,
-    metadata: Vec<&'static str>,
+    metadata: MetaData
 }
 
 struct QueuedTimeSeries {
@@ -84,7 +85,6 @@ impl StorageEngine {
         let data_point = format_message(message);
     }
 
-    // TODO: Convert the message to the internal format used in the storage engine.
     // TODO: When it is formatted it should be inserted in to the data field.
     // TODO: If it already exists it should be just be appended to the builders.
 
