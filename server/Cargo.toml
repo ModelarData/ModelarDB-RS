@@ -18,3 +18,5 @@ arrow-flight = "15.0.0"
 tonic = "0.7.2"
 
 snmalloc-rs = "0.3.1"
+
+paho-mqtt = {version = "0.11", default-features = false, features = ["bundled"]}
