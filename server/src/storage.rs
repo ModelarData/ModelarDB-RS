@@ -25,11 +25,14 @@ use datafusion::arrow::datatypes::{Float32Type, TimestampMillisecondType};
 use paho_mqtt::Message;
 use std::collections::{HashMap, VecDeque};
 use std::fmt;
-use std::fmt::{Formatter, Write};
+use std::fmt::{Formatter};
 
 type TimeStamp = TimestampMillisecondType;
 type Value = Float32Type;
 type MetaData = Vec<String>;
+
+const RESERVED_MEMORY_BYTES: u32 = 5000;
+const BUFFER_COUNT: u16 = 1;
 
 #[derive(Debug)]
 struct DataPoint {
@@ -112,10 +115,6 @@ impl StorageEngine {
 
             self.queue_time_series(key.clone(), data_point.timestamp);
             self.data.insert(key, time_series);
-
-            // TODO: Check if the current memory use is larger than the threshold.
-            // TODO: If so, move the first n (start with n=1) to the parquet data buffer.
-            // TODO: Maybe keep track how many messages until we should check again to avoid issue with no new time series causing no checks.
         }
 
         println!() // Formatting newline.
@@ -131,6 +130,17 @@ impl StorageEngine {
         };
 
         self.compression_queue.push_back(queued_time_series);
+    }
+
+    /// Check if the current memory usage exceeds RESERVED_MEMORY_BYTES bytes.
+    fn is_out_of_memory(self) -> bool {
+        // TODO: Maybe keep track how many messages until we should check again to avoid issue
+        //       with no new time series causing no checks.
+        false
+    }
+
+    /// Moving BUFFER_COUNT time series from the in-memory storage to a parquet file buffer.
+    fn buffer_data(self) {
     }
 }
 
