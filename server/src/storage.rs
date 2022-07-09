@@ -20,10 +20,12 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-use datafusion::arrow::array::{Float32Array, PrimitiveBuilder, TimestampMillisecondArray};
+use datafusion::arrow::array::{ArrayBuilder, Float32Array, PrimitiveBuilder, TimestampMillisecondArray};
 use datafusion::arrow::datatypes::{Float32Type, TimestampMillisecondType};
 use paho_mqtt::Message;
 use std::collections::{HashMap, VecDeque};
+use std::fmt;
+use std::fmt::{Formatter, Write};
 
 type TimeStamp = TimestampMillisecondType;
 type Value = Float32Type;
@@ -36,11 +38,20 @@ struct DataPoint {
     metadata: MetaData,
 }
 
-#[derive(Debug)]
 struct TimeSeries {
     timestamps: PrimitiveBuilder<TimeStamp>,
     values: PrimitiveBuilder<Value>,
     metadata: MetaData,
+}
+
+impl fmt::Display for TimeSeries {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(&*format!("Time series with {} data point(s) (", self.timestamps.len()));
+        f.write_str(&*format!("timestamp capacity: {}, ", self.timestamps.capacity()));
+        f.write_str(&*format!("values capacity: {})", self.values.capacity()));
+
+        Ok(())
+    }
 }
 
 struct BufferedTimeSeries {
@@ -84,18 +95,18 @@ impl StorageEngine {
     }
 
     /// Format the given message and insert it into the in-memory storage.
-    pub fn insert_message(mut self, message: Message) {
+    pub fn insert_message(&mut self, message: Message) {
         let data_point = format_message(&message);
         let key = generate_unique_key(&data_point);
 
-        println!("Inserting data point {:?} into key {}", data_point, key);
+        println!("Inserting data point {:?} into key '{}'", data_point, key);
 
         if let Some(time_series) = self.data.get_mut(&*key) {
-            println!("Found existing time series with key {}", key);
+            println!("Found existing time series with key '{}'", key);
 
             update_time_series(&data_point, time_series);
         } else {
-            println!("Could not find time series with key {}. Creating time series.", key);
+            println!("Could not find time series with key '{}'. Creating time series.", key);
 
             let time_series = create_time_series(data_point);
             self.data.insert(key, time_series);
@@ -106,6 +117,8 @@ impl StorageEngine {
             // TODO: If so, move the first n (start with n=1) to the parquet data buffer.
             // TODO: Maybe keep track how many messages until we should check again to avoid issue with no new time series causing no checks.
         }
+
+        println!() // Formatting newline.
     }
 }
 
@@ -137,7 +150,7 @@ fn update_time_series(data_point: &DataPoint, time_series: &mut TimeSeries) {
     time_series.timestamps.append_value(data_point.timestamp).unwrap();
     time_series.values.append_value(data_point.value).unwrap();
 
-    println!("Inserted data point into {:?}", time_series)
+    println!("Inserted data point into {}", time_series)
 }
 
 /// Create a new time series struct and add the timestamp and value to the time series array builders.
