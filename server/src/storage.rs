@@ -61,7 +61,7 @@ struct BufferedTimeSeries {
 
 struct QueuedTimeSeries {
     key: String,
-    start_timestamp: TimeStamp,
+    start_timestamp: i64,
 }
 
 /// Storage engine struct responsible for keeping track of all uncompressed data and invoking the
@@ -89,6 +89,7 @@ impl Default for StorageEngine {
     }
 }
 
+// TODO: Fix use of types so it uses the type alias for timestamps and values instead of i64 and f32.
 impl StorageEngine {
     pub fn new() -> Self {
         Default::default()
@@ -99,24 +100,37 @@ impl StorageEngine {
         let data_point = format_message(&message);
         let key = generate_unique_key(&data_point);
 
-        println!("Inserting data point {:?} into key '{}'", data_point, key);
+        println!("Inserting data point {:?} into key '{}'.", data_point, key);
 
         if let Some(time_series) = self.data.get_mut(&*key) {
-            println!("Found existing time series with key '{}'", key);
+            println!("Found existing time series with key '{}'.", key);
 
             update_time_series(&data_point, time_series);
         } else {
             println!("Could not find time series with key '{}'. Creating time series.", key);
+            let time_series = create_time_series(&data_point);
 
-            let time_series = create_time_series(data_point);
+            self.queue_time_series(key.clone(), data_point.timestamp);
             self.data.insert(key, time_series);
-
-            // TODO: It should also be pushed onto the "to-be-compressed" queue.
 
             // TODO: Check if the current memory use is larger than the threshold.
             // TODO: If so, move the first n (start with n=1) to the parquet data buffer.
             // TODO: Maybe keep track how many messages until we should check again to avoid issue with no new time series causing no checks.
         }
+
+        println!() // Formatting newline.
+    }
+
+    /// Push the time series referenced by the given key on to the compression queue.
+    fn queue_time_series(&mut self, key: String, timestamp: i64) {
+        println!("Pushing time series with key '{}' to the back of the compression queue.", key);
+
+        let queued_time_series = QueuedTimeSeries {
+            key: key.clone(),
+            start_timestamp: timestamp
+        };
+
+        self.compression_queue.push_back(queued_time_series);
     }
 }
 
@@ -144,7 +158,7 @@ fn generate_unique_key(data_point: &DataPoint) -> String {
 }
 
 /// Create a new time series struct and add the timestamp and value to the time series array builders.
-fn create_time_series(data_point: DataPoint) -> TimeSeries {
+fn create_time_series(data_point: &DataPoint) -> TimeSeries {
     let mut time_series = TimeSeries {
         timestamps: TimestampMillisecondArray::builder(100),
         values: Float32Array::builder(100),
@@ -160,5 +174,5 @@ fn update_time_series(data_point: &DataPoint, time_series: &mut TimeSeries) {
     time_series.timestamps.append_value(data_point.timestamp).unwrap();
     time_series.values.append_value(data_point.value).unwrap();
 
-    println!("Inserted data point into {}\n", time_series)
+    println!("Inserted data point into {}.", time_series)
 }
