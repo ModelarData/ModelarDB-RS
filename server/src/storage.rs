@@ -20,10 +20,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-use std::collections::{HashMap, VecDeque};
 use datafusion::arrow::array::{Float32Array, PrimitiveBuilder, TimestampMillisecondArray};
 use datafusion::arrow::datatypes::{Float32Type, TimestampMillisecondType};
 use paho_mqtt::Message;
+use std::collections::{HashMap, VecDeque};
 
 type TimeStamp = TimestampMillisecondType;
 type Value = Float32Type;
@@ -33,19 +33,19 @@ type MetaData = Vec<String>;
 struct DataPoint {
     timestamp: i64,
     value: f32,
-    metadata: MetaData
+    metadata: MetaData,
 }
 
 #[derive(Debug)]
 struct TimeSeries {
     timestamps: PrimitiveBuilder<TimeStamp>,
     values: PrimitiveBuilder<Value>,
-    metadata: MetaData
+    metadata: MetaData,
 }
 
 struct BufferedTimeSeries {
     path: String,
-    metadata: MetaData
+    metadata: MetaData,
 }
 
 struct QueuedTimeSeries {
@@ -64,7 +64,7 @@ struct QueuedTimeSeries {
 pub struct StorageEngine {
     data: HashMap<String, TimeSeries>,
     data_buffer: HashMap<String, BufferedTimeSeries>,
-    compression_queue: VecDeque<QueuedTimeSeries>
+    compression_queue: VecDeque<QueuedTimeSeries>,
 }
 
 impl Default for StorageEngine {
@@ -73,7 +73,7 @@ impl Default for StorageEngine {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             data: HashMap::new(),
             data_buffer: HashMap::new(),
-            compression_queue: VecDeque::new()
+            compression_queue: VecDeque::new(),
         }
     }
 }
@@ -121,7 +121,7 @@ fn format_message(message: &Message) -> DataPoint {
     DataPoint {
         timestamp,
         value,
-        metadata: vec![message.topic().to_string()]
+        metadata: vec![message.topic().to_string()],
     }
 }
 
@@ -145,7 +145,7 @@ fn create_time_series(data_point: DataPoint) -> TimeSeries {
     let mut time_series = TimeSeries {
         timestamps: TimestampMillisecondArray::builder(100),
         values: Float32Array::builder(100),
-        metadata: data_point.metadata.to_vec()
+        metadata: data_point.metadata.to_vec(),
     };
 
     update_time_series(&data_point, &mut time_series);
