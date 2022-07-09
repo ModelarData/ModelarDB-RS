@@ -79,6 +79,7 @@ pub struct StorageEngine {
     data: HashMap<String, TimeSeries>,
     data_buffer: HashMap<String, BufferedTimeSeries>,
     compression_queue: VecDeque<QueuedTimeSeries>,
+    remaining_bytes: u32,
 }
 
 impl Default for StorageEngine {
@@ -88,6 +89,7 @@ impl Default for StorageEngine {
             data: HashMap::new(),
             data_buffer: HashMap::new(),
             compression_queue: VecDeque::new(),
+            remaining_bytes: RESERVED_MEMORY_BYTES,
         }
     }
 }
@@ -120,6 +122,7 @@ impl StorageEngine {
         println!() // Formatting newline.
     }
 
+    /** Private Methods **/
     /// Push the time series referenced by the given key on to the compression queue.
     fn queue_time_series(&mut self, key: String, timestamp: i64) {
         println!("Pushing time series with key '{}' to the back of the compression queue.", key);
@@ -132,11 +135,32 @@ impl StorageEngine {
         self.compression_queue.push_back(queued_time_series);
     }
 
-    /// Check if the current memory usage exceeds RESERVED_MEMORY_BYTES bytes.
-    fn is_out_of_memory(self) -> bool {
-        // TODO: Maybe keep track how many messages until we should check again to avoid issue
-        //       with no new time series causing no checks.
-        false
+    /// Create a new time series struct and add the timestamp and value to the time series array builders.
+    fn create_time_series(data_point: &DataPoint) -> TimeSeries {
+        // TODO: Before creating, check if there is enough memory and initiate data buffering if not.
+
+
+        let mut time_series = TimeSeries {
+            // Note that the actual internal capacity might be slightly larger than these values. Apache
+            // arrow defines the argument as being the lower bound for how many items the builder can hold.
+            timestamps: TimestampMillisecondArray::builder(100),
+            values: Float32Array::builder(100),
+            metadata: data_point.metadata.to_vec(),
+        };
+
+        update_time_series(&data_point, &mut time_series);
+        time_series
+    }
+
+    /// Add the timestamp and value from the data point to the time series array builders.
+    fn update_time_series(data_point: &DataPoint, time_series: &mut TimeSeries) {
+        // TODO: Before updating, check if the update will expand the capacity of the builders.
+        // TODO: If so, and there is not enough memory for the expansion, initiate data buffering.
+
+        time_series.timestamps.append_value(data_point.timestamp).unwrap();
+        time_series.values.append_value(data_point.value).unwrap();
+
+        println!("Inserted data point into {}.", time_series)
     }
 
     /// Moving BUFFER_COUNT time series from the in-memory storage to a parquet file buffer.
@@ -165,24 +189,4 @@ fn format_message(message: &Message) -> DataPoint {
 /// Generates an unique key for a time series based on the information in the message.
 fn generate_unique_key(data_point: &DataPoint) -> String {
     data_point.metadata.join("-")
-}
-
-/// Create a new time series struct and add the timestamp and value to the time series array builders.
-fn create_time_series(data_point: &DataPoint) -> TimeSeries {
-    let mut time_series = TimeSeries {
-        timestamps: TimestampMillisecondArray::builder(100),
-        values: Float32Array::builder(100),
-        metadata: data_point.metadata.to_vec(),
-    };
-
-    update_time_series(&data_point, &mut time_series);
-    time_series
-}
-
-/// Add the timestamp and value from the data point to the time series array builders.
-fn update_time_series(data_point: &DataPoint, time_series: &mut TimeSeries) {
-    time_series.timestamps.append_value(data_point.timestamp).unwrap();
-    time_series.values.append_value(data_point.value).unwrap();
-
-    println!("Inserted data point into {}.", time_series)
 }
