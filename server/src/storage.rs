@@ -117,11 +117,10 @@ impl StorageEngine {
             // TODO: If so, move the first n (start with n=1) to the parquet data buffer.
             // TODO: Maybe keep track how many messages until we should check again to avoid issue with no new time series causing no checks.
         }
-
-        println!() // Formatting newline.
     }
 }
 
+/** Private Functions **/
 /// Given a raw MQTT message, extract the message components and return them as a data point.
 fn format_message(message: &Message) -> DataPoint {
     let message_payload = message.payload_str();
@@ -144,15 +143,6 @@ fn generate_unique_key(data_point: &DataPoint) -> String {
     data_point.metadata.join("-")
 }
 
-/// Add the timestamp and value from the data point to the time series array builders.
-fn update_time_series(data_point: &DataPoint, time_series: &mut TimeSeries) {
-    // If the key exists, add the timestamp and value to the builders.
-    time_series.timestamps.append_value(data_point.timestamp).unwrap();
-    time_series.values.append_value(data_point.value).unwrap();
-
-    println!("Inserted data point into {}", time_series)
-}
-
 /// Create a new time series struct and add the timestamp and value to the time series array builders.
 fn create_time_series(data_point: DataPoint) -> TimeSeries {
     let mut time_series = TimeSeries {
@@ -163,4 +153,12 @@ fn create_time_series(data_point: DataPoint) -> TimeSeries {
 
     update_time_series(&data_point, &mut time_series);
     time_series
+}
+
+/// Add the timestamp and value from the data point to the time series array builders.
+fn update_time_series(data_point: &DataPoint, time_series: &mut TimeSeries) {
+    time_series.timestamps.append_value(data_point.timestamp).unwrap();
+    time_series.values.append_value(data_point.value).unwrap();
+
+    println!("Inserted data point into {}\n", time_series)
 }
