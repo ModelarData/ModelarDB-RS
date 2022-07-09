@@ -93,34 +93,20 @@ impl StorageEngine {
         if let Some(time_series) = self.data.get_mut(&*key) {
             println!("Found existing time series with key {}", key);
 
-            // If the key exists, add the timestamp and value to the builders.
-            time_series.timestamps.append_value(data_point.timestamp).unwrap();
-            time_series.values.append_value(data_point.value).unwrap();
-
-            println!("Inserted data point into {:?}", time_series)
+            update_time_series(&data_point, time_series);
         } else {
-            println!("Could not find time series with key {}", key);
+            println!("Could not find time series with key {}. Creating time series.", key);
 
-            // If the key does not already exist, create a new entry.
-            let mut time_series = TimeSeries {
-                timestamps: TimestampMillisecondArray::builder(100),
-                values: Float32Array::builder(100),
-                metadata: data_point.metadata
-            };
-
-            time_series.timestamps.append_value(data_point.timestamp).unwrap();
-            time_series.values.append_value(data_point.value).unwrap();
-
-            println!("Inserted data point into {:?}", time_series);
-
+            let time_series = create_time_series(data_point);
             self.data.insert(key, time_series);
+
+            // TODO: It should also be pushed onto the "to-be-compressed" queue.
+
+            // TODO: Check if the current memory use is larger than the threshold.
+            // TODO: If so, move the first n (start with n=1) to the parquet data buffer.
+            // TODO: Maybe keep track how many messages until we should check again to avoid issue with no new time series causing no checks.
         }
     }
-    // TODO: When it is formatted it should be inserted in to the data field.
-    // TODO: If it already exists it should be just be appended to the builders.
-
-    // TODO: If it does not exist a new entry should be added that also adds the metadata.
-    // TODO: It should also be pushed onto the "to-be-compressed" queue.
 }
 
 /// Given a raw MQTT message, extract the message components and return them as a data point.
@@ -143,4 +129,25 @@ fn format_message(message: &Message) -> DataPoint {
 /// Generates an unique key for a time series based on the information in the message.
 fn generate_unique_key(data_point: &DataPoint) -> String {
     data_point.metadata.join("-")
+}
+
+/// Add the timestamp and value from the data point to the time series array builders.
+fn update_time_series(data_point: &DataPoint, time_series: &mut TimeSeries) {
+    // If the key exists, add the timestamp and value to the builders.
+    time_series.timestamps.append_value(data_point.timestamp).unwrap();
+    time_series.values.append_value(data_point.value).unwrap();
+
+    println!("Inserted data point into {:?}", time_series)
+}
+
+/// Create a new time series struct and add the timestamp and value to the time series array builders.
+fn create_time_series(data_point: DataPoint) -> TimeSeries {
+    let mut time_series = TimeSeries {
+        timestamps: TimestampMillisecondArray::builder(100),
+        values: Float32Array::builder(100),
+        metadata: data_point.metadata.to_vec()
+    };
+
+    update_time_series(&data_point, &mut time_series);
+    time_series
 }
