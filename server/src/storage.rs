@@ -105,6 +105,7 @@ impl StorageEngine {
     pub fn insert_message(&mut self, message: Message) {
         println!("{}", self.remaining_bytes);
 
+        let mut needed_bytes = 0;
         let data_point = format_message(&message);
         let key = generate_unique_key(&data_point);
 
@@ -113,36 +114,36 @@ impl StorageEngine {
         if let Some(time_series) = self.data.get_mut(&*key) {
             println!("Found existing time series with key '{}'.", key);
 
-            // If the update will trigger reallocation of a builder and there is not enough memory,
-            // buffer data before updating the time series.
-            let needed_bytes = get_needed_memory_for_update(&time_series);
-            if needed_bytes > self.remaining_bytes {
-                println!("Buffering data.")
-            }
-
-            self.remaining_bytes = self.remaining_bytes - needed_bytes;
-
             update_time_series(&data_point, time_series);
+
+            // If further updates will trigger reallocation of the builder, find how many bytes are required.
+            needed_bytes = get_needed_memory_for_update(&time_series);
         } else {
             println!("Could not find time series with key '{}'. Creating time series.", key);
 
-            let needed_bytes = get_needed_memory_for_create();
-            if needed_bytes > self.remaining_bytes {
-                println!("Buffering data.")
-            }
-
-            self.remaining_bytes = self.remaining_bytes - needed_bytes;
-
+            self.manage_memory_use(get_needed_memory_for_create());
             let time_series = create_time_series(&data_point);
 
             self.queue_time_series(key.clone(), data_point.timestamp);
             self.data.insert(key, time_series);
         }
 
+        // TODO: Ideally this should happen before updating or immediately after.
+        // Managing memory use for updating last to avoid problem with ownership of self.
+        self.manage_memory_use(needed_bytes);
         println!() // Formatting newline.
     }
 
     /** Private Methods **/
+    /// Based on the given needed bytes, buffer data if necessary and update the remaining reserved bytes.
+    fn manage_memory_use(&mut self, needed_bytes: usize) {
+        if needed_bytes > self.remaining_bytes {
+            println!("Buffering data.")
+        }
+
+        self.remaining_bytes = self.remaining_bytes - needed_bytes;
+    }
+
     /// Push the time series referenced by the given key on to the compression queue.
     fn queue_time_series(&mut self, key: String, timestamp: Timestamp) {
         println!("Pushing time series with key '{}' to the back of the compression queue.", key);
