@@ -20,12 +20,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-use datafusion::arrow::array::{ArrayBuilder, Float32Array, PrimitiveBuilder, TimestampMillisecondArray};
-use datafusion::arrow::datatypes::{Float32Type, TimestampMillisecondType};
+use datafusion::arrow::array::{ArrayBuilder, Float32Array, PrimitiveArray, PrimitiveBuilder, TimestampMillisecondArray};
+use datafusion::arrow::datatypes::{DataType, Field, Float32Type, Schema, TimestampMillisecondType};
 use paho_mqtt::Message;
 use std::collections::{HashMap, VecDeque};
 use std::{fmt, mem};
 use std::fmt::{Formatter};
+use std::fs::File;
+use std::sync::Arc;
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::parquet::arrow::ArrowWriter;
+use datafusion::parquet::file::properties::WriterProperties;
 
 type Timestamp = i64;
 type Value = f32;
@@ -227,4 +232,25 @@ fn update_time_series(data_point: &DataPoint, time_series: &mut TimeSeries) {
     time_series.values.append_value(data_point.value).unwrap();
 
     println!("Inserted data point into {}.", time_series)
+}
+
+/// Write the given arrow arrays to a parquet file with the given path.
+fn write_data_to_parquet(timestamps: PrimitiveArray<TimestampMillisecondType>, values: PrimitiveArray<Float32Type>, path: String) {
+    let schema = Schema::new(vec![
+        Field::new("timestamps", DataType::Int64, false),
+        Field::new("values", DataType::Float32, false)
+    ]);
+
+    let batch = RecordBatch::try_new(
+        Arc::new(schema),
+        vec![Arc::new(timestamps), Arc::new(values)]
+    ).unwrap();
+
+    // Write the record batch to the parquet file buffer.
+    let file = File::create(path).unwrap();
+    let props = WriterProperties::builder().build();
+    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
+
+    writer.write(&batch).expect("Writing batch.");
+    writer.close().unwrap();
 }
