@@ -22,7 +22,9 @@ mod tables;
 
 use std::{fs::File, sync::Arc};
 
+use tracing::{debug, error, info, warn, Level, event, instrument, span};
 use tracing_subscriber::{filter, prelude::*};
+use tracing_futures::Instrument;
 
 use tokio::runtime::Runtime;
 
@@ -46,7 +48,6 @@ pub struct Context {
 
 /** Public Functions **/
 fn main() {
-
     // A layer that logs events to a file.
     let file = File::create("debug.log");
     let file = match file  {Ok(file) => file,Err(error) => panic!("Error: {:?}",error),};
@@ -68,7 +69,7 @@ fn main() {
                 .and_then(debug_log)
         )
         .init();
-
+    
     let mut args = std::env::args();
     args.next(); //Skip executable
     if let Some(data_folder) = args.next() {
@@ -76,6 +77,7 @@ fn main() {
         let catalog = catalog::new(&data_folder);
         let runtime = Runtime::new().unwrap();
         let mut session = create_session_context();
+        
 
         //Register Tables
         runtime.block_on(register_tables(&mut session, &catalog));
@@ -88,10 +90,12 @@ fn main() {
         });
         remote::start_arrow_flight_server(context, 9999);
     } else {
+        let span_load = span!(Level::INFO, "load_folder");
+        let _enter = span_load.enter();
         //The errors are consciously ignored as the program is terminating
         let binary_path = std::env::current_exe().unwrap();
         let binary_name = binary_path.file_name().unwrap();
-        tracing::info!(" Usage: {} data_folder ", binary_name.to_str().unwrap());
+        error!(" Usage: {} data_folder ", binary_name.to_str().unwrap());
     }
 }
 

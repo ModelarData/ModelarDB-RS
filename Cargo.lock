@@ -1215,6 +1215,7 @@ dependencies = [
  "tokio",
  "tonic",
  "tracing",
+ "tracing-futures",
  "tracing-subscriber",
 ]
 
