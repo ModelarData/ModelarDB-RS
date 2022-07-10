@@ -127,7 +127,9 @@ impl StorageEngine {
             println!("Could not find time series with key '{}'. Creating time series.", key);
 
             self.manage_memory_use(get_needed_memory_for_create());
-            let time_series = create_time_series(&data_point);
+
+            let mut time_series = create_time_series(data_point.metadata.to_vec());
+            update_time_series(&data_point, &mut time_series);
 
             self.queue_time_series(key.clone(), data_point.timestamp);
             self.data.insert(key, time_series);
@@ -159,9 +161,11 @@ impl StorageEngine {
                     let path = format!("{}-{}.parquet", key, queued_time_series.start_timestamp);
 
                     write_data_to_parquet(timestamps, values, path);
+
+                    // Replace the in-memory time series with new empty builders.
+
                 }
             }
-            // TODO: Replace the in-memory time series with new empty builders.
             // TODO: Update the remaining bytes to reflect that data has been moved to the buffer.
         }
 
@@ -212,18 +216,16 @@ fn get_needed_memory_for_create() -> usize {
     needed_bytes_timestamps + needed_bytes_values
 }
 
-/// Create a new time series struct and add the timestamp and value to the time series array builders.
-fn create_time_series(data_point: &DataPoint) -> TimeSeries {
-    let mut time_series = TimeSeries {
+// TODO: Maybe implement the "new" function for the struct instead.
+/// Create a new time series struct with the given metadata and builders with initial capacity.
+fn create_time_series(metadata: MetaData) -> TimeSeries {
+    TimeSeries {
         // Note that the actual internal capacity might be slightly larger than these values. Apache
         // arrow defines the argument as being the lower bound for how many items the builder can hold.
         timestamps: TimestampMillisecondArray::builder(INITIAL_BUILDER_CAPACITY),
         values: Float32Array::builder(INITIAL_BUILDER_CAPACITY),
-        metadata: data_point.metadata.to_vec(),
-    };
-
-    update_time_series(&data_point, &mut time_series);
-    time_series
+        metadata,
+    }
 }
 
 /// Check if an update will expand the capacity of the builders. If so, get the needed bytes for the new capacity.
