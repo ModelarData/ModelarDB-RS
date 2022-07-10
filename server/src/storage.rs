@@ -31,7 +31,7 @@ type Timestamp = i64;
 type Value = f32;
 type MetaData = Vec<String>;
 
-const RESERVED_MEMORY_BYTES: u32 = 5000;
+const RESERVED_MEMORY_BYTES: usize = 5000;
 const BUFFER_COUNT: u16 = 1;
 const INITIAL_BUILDER_CAPACITY: usize = 100;
 
@@ -80,7 +80,7 @@ pub struct StorageEngine {
     data: HashMap<String, TimeSeries>,
     data_buffer: HashMap<String, BufferedTimeSeries>,
     compression_queue: VecDeque<QueuedTimeSeries>,
-    remaining_bytes: u32,
+    remaining_bytes: usize,
 }
 
 impl Default for StorageEngine {
@@ -102,6 +102,8 @@ impl StorageEngine {
 
     /// Format the given message and insert it into the in-memory storage.
     pub fn insert_message(&mut self, message: Message) {
+        println!("{}", self.remaining_bytes);
+
         let data_point = format_message(&message);
         let key = generate_unique_key(&data_point);
 
@@ -116,9 +118,9 @@ impl StorageEngine {
             update_time_series(&data_point, time_series);
         } else {
             println!("Could not find time series with key '{}'. Creating time series.", key);
-            let time_series = create_time_series(&data_point);
 
-            // TODO: Before creating, check if there is enough memory and initiate data buffering if not.
+            self.check_memory_for_create();
+            let time_series = create_time_series(&data_point);
 
             self.queue_time_series(key.clone(), data_point.timestamp);
             self.data.insert(key, time_series);
@@ -140,8 +142,21 @@ impl StorageEngine {
         self.compression_queue.push_back(queued_time_series);
     }
 
+    /// Check if there is enough memory available to create a new time series, initiate buffering if not.
+    fn check_memory_for_create(&mut self) {
+        let needed_bytes_timestamps = mem::size_of::<Timestamp>() * INITIAL_BUILDER_CAPACITY;
+        let needed_bytes_values = mem::size_of::<Value>() * INITIAL_BUILDER_CAPACITY;
+
+        if (needed_bytes_timestamps + needed_bytes_values) > self.remaining_bytes as usize {
+            self.buffer_data()
+        }
+
+        self.remaining_bytes = self.remaining_bytes - needed_bytes_timestamps - needed_bytes_values;
+    }
+
     /// Moving BUFFER_COUNT time series from the in-memory storage to a parquet file buffer.
-    fn buffer_data(self) {
+    fn buffer_data(&mut self) {
+        println!("Buffering data.")
     }
 }
 
@@ -173,8 +188,8 @@ fn create_time_series(data_point: &DataPoint) -> TimeSeries {
     let mut time_series = TimeSeries {
         // Note that the actual internal capacity might be slightly larger than these values. Apache
         // arrow defines the argument as being the lower bound for how many items the builder can hold.
-        timestamps: TimestampMillisecondArray::builder(100),
-        values: Float32Array::builder(100),
+        timestamps: TimestampMillisecondArray::builder(INITIAL_BUILDER_CAPACITY),
+        values: Float32Array::builder(INITIAL_BUILDER_CAPACITY),
         metadata: data_point.metadata.to_vec(),
     };
 
