@@ -76,6 +76,7 @@ struct QueuedTimeSeries {
 /// * `data` - Hash map from the time series ID to the in-memory uncompressed data of the time series.
 /// * `data_buffer` - Hash map from the time series ID to the path of the parquet file buffer.
 /// * `compression_queue` - Prioritized queue of time series that can be compressed.
+/// * `remaining_bytes` - Continuously updated tracker of how many of the reserved bytes are remaining.
 pub struct StorageEngine {
     data: HashMap<String, TimeSeries>,
     data_buffer: HashMap<String, BufferedTimeSeries>,
@@ -112,14 +113,26 @@ impl StorageEngine {
         if let Some(time_series) = self.data.get_mut(&*key) {
             println!("Found existing time series with key '{}'.", key);
 
-            // TODO: Before updating, check if the update will expand the capacity of the builders.
-            // TODO: If so, and there is not enough memory for the expansion, initiate data buffering.
+            // If the update will trigger reallocation of a builder and there is not enough memory,
+            // buffer data before updating the time series.
+            let needed_bytes = get_needed_memory_for_update(&time_series);
+            if needed_bytes > self.remaining_bytes {
+                println!("Buffering data.")
+            }
+
+            self.remaining_bytes = self.remaining_bytes - needed_bytes;
 
             update_time_series(&data_point, time_series);
         } else {
             println!("Could not find time series with key '{}'. Creating time series.", key);
 
-            self.check_memory_for_create();
+            let needed_bytes = get_needed_memory_for_create();
+            if needed_bytes > self.remaining_bytes {
+                println!("Buffering data.")
+            }
+
+            self.remaining_bytes = self.remaining_bytes - needed_bytes;
+
             let time_series = create_time_series(&data_point);
 
             self.queue_time_series(key.clone(), data_point.timestamp);
@@ -140,23 +153,6 @@ impl StorageEngine {
         };
 
         self.compression_queue.push_back(queued_time_series);
-    }
-
-    /// Check if there is enough memory available to create a new time series, initiate buffering if not.
-    fn check_memory_for_create(&mut self) {
-        let needed_bytes_timestamps = mem::size_of::<Timestamp>() * INITIAL_BUILDER_CAPACITY;
-        let needed_bytes_values = mem::size_of::<Value>() * INITIAL_BUILDER_CAPACITY;
-
-        if (needed_bytes_timestamps + needed_bytes_values) > self.remaining_bytes as usize {
-            self.buffer_data()
-        }
-
-        self.remaining_bytes = self.remaining_bytes - needed_bytes_timestamps - needed_bytes_values;
-    }
-
-    /// Moving BUFFER_COUNT time series from the in-memory storage to a parquet file buffer.
-    fn buffer_data(&mut self) {
-        println!("Buffering data.")
     }
 }
 
@@ -183,6 +179,14 @@ fn generate_unique_key(data_point: &DataPoint) -> String {
     data_point.metadata.join("-")
 }
 
+/// Check if there is enough memory available to create a new time series, initiate buffering if not.
+fn get_needed_memory_for_create() -> usize {
+    let needed_bytes_timestamps = mem::size_of::<Timestamp>() * INITIAL_BUILDER_CAPACITY;
+    let needed_bytes_values = mem::size_of::<Value>() * INITIAL_BUILDER_CAPACITY;
+
+    needed_bytes_timestamps + needed_bytes_values
+}
+
 /// Create a new time series struct and add the timestamp and value to the time series array builders.
 fn create_time_series(data_point: &DataPoint) -> TimeSeries {
     let mut time_series = TimeSeries {
@@ -195,6 +199,25 @@ fn create_time_series(data_point: &DataPoint) -> TimeSeries {
 
     update_time_series(&data_point, &mut time_series);
     time_series
+}
+
+/// Check if an update will expand the capacity of the builders. If so, get the needed bytes for the new capacity.
+fn get_needed_memory_for_update(time_series: &TimeSeries) -> usize {
+    let len = time_series.timestamps.len();
+    let mut needed_bytes_timestamps: usize = 0;
+    let mut needed_bytes_values: usize = 0;
+
+    // If the current length is equal to the capacity, adding one more value will trigger reallocation.
+    if len == time_series.timestamps.capacity() {
+        needed_bytes_timestamps = mem::size_of::<Timestamp>() * time_series.timestamps.capacity();
+    }
+
+    // Note that there is no guarantee that the timestamps capacity is equal to the values capacity.
+    if len == time_series.values.capacity() {
+        needed_bytes_values = mem::size_of::<Value>() * time_series.values.capacity();
+    }
+
+    needed_bytes_timestamps + needed_bytes_values
 }
 
 /// Add the timestamp and value from the data point to the time series array builders.
