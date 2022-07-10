@@ -143,7 +143,26 @@ impl StorageEngine {
     /// Based on the given needed bytes, buffer data if necessary and update the remaining reserved bytes.
     fn manage_memory_use(&mut self, needed_bytes: usize) {
         if needed_bytes > self.remaining_bytes {
-            println!("Buffering data.")
+            println!("Not enough memory. Moving {} time series to data buffer.", BUFFER_COUNT);
+
+            // Move the BUFFER_COUNT first time series from the compression queue to the data buffer.
+            for n in 0..BUFFER_COUNT + 1 {
+                if let Some(queued_time_series) = self.compression_queue.pop_front() {
+                    let key = &*queued_time_series.key;
+                    println!("Moving time series with key '{}' to data buffer.", key);
+
+                    // Finish the builders and write them to the parquet file buffer.
+                    let mut time_series = self.data.get_mut(key).unwrap();
+
+                    let timestamps = time_series.timestamps.finish();
+                    let values = time_series.values.finish();
+                    let path = format!("{}-{}.parquet", key, queued_time_series.start_timestamp);
+
+                    write_data_to_parquet(timestamps, values, path);
+                }
+            }
+            // TODO: Replace the in-memory time series with new empty builders.
+            // TODO: Update the remaining bytes to reflect that data has been moved to the buffer.
         }
 
         self.remaining_bytes = self.remaining_bytes - needed_bytes;
