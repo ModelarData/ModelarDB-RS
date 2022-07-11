@@ -69,6 +69,18 @@ impl fmt::Display for TimeSeries {
     }
 }
 
+impl TimeSeries {
+    fn new(metadata: MetaData) -> TimeSeries {
+        TimeSeries {
+            // Note that the actual internal capacity might be slightly larger than these values. Apache
+            // arrow defines the argument as being the lower bound for how many items the builder can hold.
+            timestamps: TimestampMicrosecondArray::builder(INITIAL_BUILDER_CAPACITY),
+            values: Float32Array::builder(INITIAL_BUILDER_CAPACITY),
+            metadata,
+        }
+    }
+}
+
 struct BufferedTimeSeries {
     path: String,
     metadata: MetaData,
@@ -89,15 +101,15 @@ struct QueuedTimeSeries {
 /// * `compression_queue` - Prioritized queue of time series that can be compressed.
 /// * `remaining_bytes` - Continuously updated tracker of how many of the reserved bytes are remaining.
 pub struct StorageEngine {
+    // TODO: Look into using a BTreeMap to avoid having both a compression queue and a data field.
     data: HashMap<String, TimeSeries>,
     data_buffer: HashMap<String, BufferedTimeSeries>,
     compression_queue: VecDeque<QueuedTimeSeries>,
-    // TODO: Maybe change to "used_bytes" to solve minor issue with crashing when going below 0.
     remaining_bytes: usize,
 }
 
-impl Default for StorageEngine {
-    fn default() -> Self {
+impl StorageEngine {
+    pub fn new() -> Self {
         StorageEngine {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             data: HashMap::new(),
@@ -105,12 +117,6 @@ impl Default for StorageEngine {
             compression_queue: VecDeque::new(),
             remaining_bytes: RESERVED_MEMORY_BYTES,
         }
-    }
-}
-
-impl StorageEngine {
-    pub fn new() -> Self {
-        Default::default()
     }
 
     /// Format the given message and insert it into the in-memory storage.
@@ -135,7 +141,7 @@ impl StorageEngine {
 
             self.manage_memory_use(get_needed_memory_for_create());
 
-            let mut time_series = create_time_series(data_point.metadata.to_vec());
+            let mut time_series = TimeSeries::new(data_point.metadata.to_vec());
             update_time_series(&data_point, &mut time_series);
 
             self.queue_time_series(key.clone(), data_point.timestamp);
@@ -151,6 +157,7 @@ impl StorageEngine {
     /** Private Methods **/
     // TODO: We have to always be sure of the remaining bytes to avoid "leaking".
     // TODO: If all time series are buffered it should return to the initial reserved bytes.
+    // TODO: Fix problem where the needed bytes are larger than the total freed bytes.
     /// Based on the given needed bytes, buffer data if necessary and update the remaining reserved bytes.
     fn manage_memory_use(&mut self, needed_bytes: usize) {
         if needed_bytes > self.remaining_bytes {
@@ -227,6 +234,7 @@ fn format_message(message: &Message) -> DataPoint {
     }
 }
 
+// TODO: This could be moved to the data point struct implementation.
 // TODO: Currently the only information we have to uniquely identify a sensor is the ID. If this changes, change this function.
 /// Generates an unique key for a time series based on the information in the message.
 fn generate_unique_key(data_point: &DataPoint) -> String {
@@ -241,24 +249,14 @@ fn get_needed_memory_for_create() -> usize {
     needed_bytes_timestamps + needed_bytes_values
 }
 
-// TODO: Maybe implement the "new" function for the struct instead.
-/// Create a new time series struct with the given metadata and builders with initial capacity.
-fn create_time_series(metadata: MetaData) -> TimeSeries {
-    TimeSeries {
-        // Note that the actual internal capacity might be slightly larger than these values. Apache
-        // arrow defines the argument as being the lower bound for how many items the builder can hold.
-        timestamps: TimestampMicrosecondArray::builder(INITIAL_BUILDER_CAPACITY),
-        values: Float32Array::builder(INITIAL_BUILDER_CAPACITY),
-        metadata,
-    }
-}
-
+// TODO: This could be moved to the struct implementation.
 /// Return the size in bytes of the given time series. Note that only the size of the builders are considered.
 fn get_size_of_time_series(time_series: &TimeSeries) -> usize {
     (mem::size_of::<Timestamp>() * time_series.timestamps.capacity())
         + (mem::size_of::<Value>() * time_series.values.capacity())
 }
 
+// TODO: This could be moved to the struct implementation.
 /// Check if an update will expand the capacity of the builders. If so, get the needed bytes for the new capacity.
 fn get_needed_memory_for_update(time_series: &TimeSeries) -> usize {
     let len = time_series.timestamps.len();
@@ -278,6 +276,7 @@ fn get_needed_memory_for_update(time_series: &TimeSeries) -> usize {
     needed_bytes_timestamps + needed_bytes_values
 }
 
+// TODO: This could be moved to the struct implementation.
 /// Add the timestamp and value from the data point to the time series array builders.
 fn update_time_series(data_point: &DataPoint, time_series: &mut TimeSeries) {
     time_series.timestamps.append_value(data_point.timestamp).unwrap();
@@ -286,6 +285,7 @@ fn update_time_series(data_point: &DataPoint, time_series: &mut TimeSeries) {
     println!("Inserted data point into {}.", time_series)
 }
 
+// TODO: This could *maybe* be moved to the struct implementation.
 /// Write the given arrow arrays to a parquet file with the given path.
 fn write_data_to_parquet(
     timestamps: PrimitiveArray<TimestampMicrosecondType>,
@@ -306,7 +306,7 @@ fn write_data_to_parquet(
     let file = File::create(path).unwrap();
     let props = WriterProperties::builder()
         .set_dictionary_enabled(false)
-        // TODO: Look into the effect of using a PLAIN encoding.
+        // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
         .set_encoding(Encoding::PLAIN)
         .build();
     let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
