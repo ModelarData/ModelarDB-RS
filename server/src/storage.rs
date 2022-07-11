@@ -21,11 +21,11 @@
  * limitations under the License.
  */
 use datafusion::arrow::array::{
-    ArrayBuilder, Float32Array, PrimitiveArray, PrimitiveBuilder, TimestampMillisecondArray,
+    ArrayBuilder, Float32Array, PrimitiveArray, PrimitiveBuilder, TimestampMicrosecondArray,
 };
-use datafusion::arrow::datatypes::TimeUnit::Millisecond;
+use datafusion::arrow::datatypes::TimeUnit::Microsecond;
 use datafusion::arrow::datatypes::{
-    DataType, Field, Float32Type, Schema, TimestampMillisecondType,
+    DataType, Field, Float32Type, Schema, TimestampMicrosecondType,
 };
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
@@ -42,7 +42,7 @@ type Timestamp = i64;
 type Value = f32;
 type MetaData = Vec<String>;
 
-const RESERVED_MEMORY_BYTES: usize = 3500;
+const RESERVED_MEMORY_BYTES: usize = 5000;
 const BUFFER_COUNT: u16 = 1;
 const INITIAL_BUILDER_CAPACITY: usize = 100;
 
@@ -54,7 +54,7 @@ struct DataPoint {
 }
 
 struct TimeSeries {
-    timestamps: PrimitiveBuilder<TimestampMillisecondType>,
+    timestamps: PrimitiveBuilder<TimestampMicrosecondType>,
     values: PrimitiveBuilder<Float32Type>,
     metadata: MetaData,
 }
@@ -149,6 +149,8 @@ impl StorageEngine {
     }
 
     /** Private Methods **/
+    // TODO: We have to always be sure of the remaining bytes to avoid "leaking".
+    // TODO: If all time series are buffered it should return to the initial reserved bytes.
     /// Based on the given needed bytes, buffer data if necessary and update the remaining reserved bytes.
     fn manage_memory_use(&mut self, needed_bytes: usize) {
         if needed_bytes > self.remaining_bytes {
@@ -182,18 +184,17 @@ impl StorageEngine {
 
                     self.data_buffer.insert(key.to_owned(), buffered_time_series);
 
-                    // Replace the in-memory time series with new empty builders.
-                    let mut new_time_series = create_time_series(time_series.metadata.to_vec());
-                    self.data.insert(key.to_owned(), new_time_series);
+                    println!("Freeing {} bytes from the reserved memory.", size);
+                    self.data.remove(key);
 
                     // Update the remaining bytes to reflect that data has been moved to the buffer.
-                    self.remaining_bytes += size;
+                    self.remaining_bytes = self.remaining_bytes + size;
                 }
             }
             // TODO: It might be necessary to shrink the hashmap to fit dependent on how it handles replacing with insert.
         }
 
-        self.remaining_bytes -= needed_bytes;
+        self.remaining_bytes = self.remaining_bytes - needed_bytes;
     }
 
     /// Push the time series referenced by the given key on to the compression queue.
@@ -246,7 +247,7 @@ fn create_time_series(metadata: MetaData) -> TimeSeries {
     TimeSeries {
         // Note that the actual internal capacity might be slightly larger than these values. Apache
         // arrow defines the argument as being the lower bound for how many items the builder can hold.
-        timestamps: TimestampMillisecondArray::builder(INITIAL_BUILDER_CAPACITY),
+        timestamps: TimestampMicrosecondArray::builder(INITIAL_BUILDER_CAPACITY),
         values: Float32Array::builder(INITIAL_BUILDER_CAPACITY),
         metadata,
     }
@@ -287,12 +288,12 @@ fn update_time_series(data_point: &DataPoint, time_series: &mut TimeSeries) {
 
 /// Write the given arrow arrays to a parquet file with the given path.
 fn write_data_to_parquet(
-    timestamps: PrimitiveArray<TimestampMillisecondType>,
+    timestamps: PrimitiveArray<TimestampMicrosecondType>,
     values: PrimitiveArray<Float32Type>,
     path: String,
 ) {
     let schema = Schema::new(vec![
-        Field::new("timestamps", DataType::Timestamp(Millisecond, None), false),
+        Field::new("timestamps", DataType::Timestamp(Microsecond, None), false),
         Field::new("values", DataType::Float32, false),
     ]);
 
