@@ -228,6 +228,12 @@ fn create_time_series(metadata: MetaData) -> TimeSeries {
     }
 }
 
+/// Return the size in bytes of the given time series. Note that only the size of the builders are considered.
+fn get_size_of_time_series(time_series: &TimeSeries) -> usize {
+    (mem::size_of::<Timestamp>() * time_series.timestamps.capacity()) +
+        (mem::size_of::<Value>() * time_series.values.capacity())
+}
+
 /// Check if an update will expand the capacity of the builders. If so, get the needed bytes for the new capacity.
 fn get_needed_memory_for_update(time_series: &TimeSeries) -> usize {
     let len = time_series.timestamps.len();
