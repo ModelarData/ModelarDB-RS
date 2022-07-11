@@ -20,19 +20,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-use datafusion::arrow::array::{ArrayBuilder, Float32Array, PrimitiveArray, PrimitiveBuilder, TimestampMillisecondArray};
-use datafusion::arrow::datatypes::{DataType, Field, Float32Type, Schema, TimestampMillisecondType};
-use paho_mqtt::Message;
-use std::collections::{HashMap, VecDeque};
-use std::{fmt, mem};
-use std::fmt::{Formatter};
-use std::fs::File;
-use std::sync::Arc;
+use datafusion::arrow::array::{
+    ArrayBuilder, Float32Array, PrimitiveArray, PrimitiveBuilder, TimestampMillisecondArray,
+};
 use datafusion::arrow::datatypes::TimeUnit::Millisecond;
+use datafusion::arrow::datatypes::{
+    DataType, Field, Float32Type, Schema, TimestampMillisecondType,
+};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
+use paho_mqtt::Message;
+use std::collections::{HashMap, VecDeque};
+use std::fmt::Formatter;
+use std::fs::File;
+use std::sync::Arc;
+use std::{fmt, mem};
 
 type Timestamp = i64;
 type Value = f32;
@@ -151,7 +155,7 @@ impl StorageEngine {
             println!("Not enough memory. Moving {} time series to data buffer.", BUFFER_COUNT);
 
             // Move the BUFFER_COUNT first time series from the compression queue to the data buffer.
-            for n in 0..BUFFER_COUNT {
+            for _n in 0..BUFFER_COUNT {
                 if let Some(queued_time_series) = self.compression_queue.pop_front() {
                     let key = &*queued_time_series.key;
                     println!("Moving time series with key '{}' to data buffer.", key);
@@ -162,20 +166,24 @@ impl StorageEngine {
 
                     let timestamps = time_series.timestamps.finish();
                     let values = time_series.values.finish();
-                    let path = format!("{}_{}.parquet", key.replace("/", "-"), queued_time_series.start_timestamp);
+                    let path = format!(
+                        "{}_{}.parquet",
+                        key.replace("/", "-"),
+                        queued_time_series.start_timestamp
+                    );
 
                     write_data_to_parquet(timestamps, values, path.to_owned());
 
                     // Add the buffered time series to the data buffer hashmap to save the path.
                     let buffered_time_series = BufferedTimeSeries {
                         path: path.to_owned(),
-                        metadata: time_series.metadata.to_vec()
+                        metadata: time_series.metadata.to_vec(),
                     };
 
                     self.data_buffer.insert(key.to_owned(), buffered_time_series);
 
                     // Replace the in-memory time series with new empty builders.
-                    let mut new_time_series= create_time_series(time_series.metadata.to_vec());
+                    let mut new_time_series = create_time_series(time_series.metadata.to_vec());
                     self.data.insert(key.to_owned(), new_time_series);
 
                     // Update the remaining bytes to reflect that data has been moved to the buffer.
@@ -194,7 +202,7 @@ impl StorageEngine {
 
         let queued_time_series = QueuedTimeSeries {
             key: key.clone(),
-            start_timestamp: timestamp
+            start_timestamp: timestamp,
         };
 
         self.compression_queue.push_back(queued_time_series);
@@ -246,8 +254,8 @@ fn create_time_series(metadata: MetaData) -> TimeSeries {
 
 /// Return the size in bytes of the given time series. Note that only the size of the builders are considered.
 fn get_size_of_time_series(time_series: &TimeSeries) -> usize {
-    (mem::size_of::<Timestamp>() * time_series.timestamps.capacity()) +
-        (mem::size_of::<Value>() * time_series.values.capacity())
+    (mem::size_of::<Timestamp>() * time_series.timestamps.capacity())
+        + (mem::size_of::<Value>() * time_series.values.capacity())
 }
 
 /// Check if an update will expand the capacity of the builders. If so, get the needed bytes for the new capacity.
@@ -278,10 +286,14 @@ fn update_time_series(data_point: &DataPoint, time_series: &mut TimeSeries) {
 }
 
 /// Write the given arrow arrays to a parquet file with the given path.
-fn write_data_to_parquet(timestamps: PrimitiveArray<TimestampMillisecondType>, values: PrimitiveArray<Float32Type>, path: String) {
+fn write_data_to_parquet(
+    timestamps: PrimitiveArray<TimestampMillisecondType>,
+    values: PrimitiveArray<Float32Type>,
+    path: String,
+) {
     let schema = Schema::new(vec![
         Field::new("timestamps", DataType::Timestamp(Millisecond, None), false),
-        Field::new("values", DataType::Float32, false)
+        Field::new("values", DataType::Float32, false),
     ]);
 
     let batch = RecordBatch::try_new(
