@@ -28,15 +28,17 @@ use std::{fmt, mem};
 use std::fmt::{Formatter};
 use std::fs::File;
 use std::sync::Arc;
+use datafusion::arrow::datatypes::TimeUnit::Millisecond;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
+use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
 
 type Timestamp = i64;
 type Value = f32;
 type MetaData = Vec<String>;
 
-const RESERVED_MEMORY_BYTES: usize = 5000;
+const RESERVED_MEMORY_BYTES: usize = 3500;
 const BUFFER_COUNT: u16 = 1;
 const INITIAL_BUILDER_CAPACITY: usize = 100;
 
@@ -86,6 +88,7 @@ pub struct StorageEngine {
     data: HashMap<String, TimeSeries>,
     data_buffer: HashMap<String, BufferedTimeSeries>,
     compression_queue: VecDeque<QueuedTimeSeries>,
+    // TODO: Maybe change to "used_bytes" to solve minor issue with crashing when going below 0.
     remaining_bytes: usize,
 }
 
@@ -108,7 +111,7 @@ impl StorageEngine {
 
     /// Format the given message and insert it into the in-memory storage.
     pub fn insert_message(&mut self, message: Message) {
-        println!("{}", self.remaining_bytes);
+        println!("Remaining bytes: {}", self.remaining_bytes);
 
         let mut needed_bytes = 0;
         let data_point = format_message(&message);
@@ -148,28 +151,41 @@ impl StorageEngine {
             println!("Not enough memory. Moving {} time series to data buffer.", BUFFER_COUNT);
 
             // Move the BUFFER_COUNT first time series from the compression queue to the data buffer.
-            for n in 0..BUFFER_COUNT + 1 {
+            for n in 0..BUFFER_COUNT {
                 if let Some(queued_time_series) = self.compression_queue.pop_front() {
                     let key = &*queued_time_series.key;
                     println!("Moving time series with key '{}' to data buffer.", key);
 
                     // Finish the builders and write them to the parquet file buffer.
                     let mut time_series = self.data.get_mut(key).unwrap();
+                    let size = get_size_of_time_series(time_series);
 
                     let timestamps = time_series.timestamps.finish();
                     let values = time_series.values.finish();
-                    let path = format!("{}-{}.parquet", key, queued_time_series.start_timestamp);
+                    let path = format!("{}_{}.parquet", key.replace("/", "-"), queued_time_series.start_timestamp);
 
-                    write_data_to_parquet(timestamps, values, path);
+                    write_data_to_parquet(timestamps, values, path.to_owned());
+
+                    // Add the buffered time series to the data buffer hashmap to save the path.
+                    let buffered_time_series = BufferedTimeSeries {
+                        path: path.to_owned(),
+                        metadata: time_series.metadata.to_vec()
+                    };
+
+                    self.data_buffer.insert(key.to_owned(), buffered_time_series);
 
                     // Replace the in-memory time series with new empty builders.
+                    let mut new_time_series= create_time_series(time_series.metadata.to_vec());
+                    self.data.insert(key.to_owned(), new_time_series);
 
+                    // Update the remaining bytes to reflect that data has been moved to the buffer.
+                    self.remaining_bytes += size;
                 }
             }
-            // TODO: Update the remaining bytes to reflect that data has been moved to the buffer.
+            // TODO: It might be necessary to shrink the hashmap to fit dependent on how it handles replacing with insert.
         }
 
-        self.remaining_bytes = self.remaining_bytes - needed_bytes;
+        self.remaining_bytes -= needed_bytes;
     }
 
     /// Push the time series referenced by the given key on to the compression queue.
@@ -264,7 +280,7 @@ fn update_time_series(data_point: &DataPoint, time_series: &mut TimeSeries) {
 /// Write the given arrow arrays to a parquet file with the given path.
 fn write_data_to_parquet(timestamps: PrimitiveArray<TimestampMillisecondType>, values: PrimitiveArray<Float32Type>, path: String) {
     let schema = Schema::new(vec![
-        Field::new("timestamps", DataType::Int64, false),
+        Field::new("timestamps", DataType::Timestamp(Millisecond, None), false),
         Field::new("values", DataType::Float32, false)
     ]);
 
@@ -275,7 +291,11 @@ fn write_data_to_parquet(timestamps: PrimitiveArray<TimestampMillisecondType>, v
 
     // Write the record batch to the parquet file buffer.
     let file = File::create(path).unwrap();
-    let props = WriterProperties::builder().build();
+    let props = WriterProperties::builder()
+        .set_dictionary_enabled(false)
+        // TODO: Look into the effect of using a PLAIN encoding.
+        .set_encoding(Encoding::PLAIN)
+        .build();
     let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
 
     writer.write(&batch).expect("Writing batch.");
