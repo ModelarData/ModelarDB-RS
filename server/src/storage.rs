@@ -53,6 +53,14 @@ struct DataPoint {
     metadata: MetaData,
 }
 
+impl DataPoint {
+    // TODO: Currently the only information we have to uniquely identify a sensor is the ID. If this changes, change this function.
+    /// Generates an unique key for a time series based on the information in the message.
+    fn generate_unique_key(&self) -> String {
+        self.metadata.join("-")
+    }
+}
+
 struct TimeSeries {
     timestamps: PrimitiveBuilder<TimestampMicrosecondType>,
     values: PrimitiveBuilder<Float32Type>,
@@ -101,7 +109,6 @@ struct QueuedTimeSeries {
 /// * `compression_queue` - Prioritized queue of time series that can be compressed.
 /// * `remaining_bytes` - Continuously updated tracker of how many of the reserved bytes are remaining.
 pub struct StorageEngine {
-    // TODO: Look into using a BTreeMap to avoid having both a compression queue and a data field.
     data: HashMap<String, TimeSeries>,
     data_buffer: HashMap<String, BufferedTimeSeries>,
     compression_queue: VecDeque<QueuedTimeSeries>,
@@ -113,6 +120,10 @@ impl StorageEngine {
         StorageEngine {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             data: HashMap::new(),
+            // TODO: Instead of having to look in two different places when getting the data for
+            //       compression, have a single hashmap with elements with a trait (rust book).
+            //       The trait should have a function to get the data and the compressor can then just
+            //       use this function. This would have a different implementation for buffered and normal.
             data_buffer: HashMap::new(),
             compression_queue: VecDeque::new(),
             remaining_bytes: RESERVED_MEMORY_BYTES,
@@ -125,7 +136,7 @@ impl StorageEngine {
 
         let mut needed_bytes = 0;
         let data_point = format_message(&message);
-        let key = generate_unique_key(&data_point);
+        let key = data_point.generate_unique_key();
 
         println!("Inserting data point {:?} into key '{}'.", data_point, key);
 
@@ -165,6 +176,8 @@ impl StorageEngine {
 
             // Move the BUFFER_COUNT first time series from the compression queue to the data buffer.
             for _n in 0..BUFFER_COUNT {
+                // TODO: We should not pop since they still need to be compressed.
+                // TODO: We also need to find the first BUFFER_COUNT elements that are not buffered yet.
                 if let Some(queued_time_series) = self.compression_queue.pop_front() {
                     let key = &*queued_time_series.key;
                     println!("Moving time series with key '{}' to data buffer.", key);
@@ -232,13 +245,6 @@ fn format_message(message: &Message) -> DataPoint {
         value,
         metadata: vec![message.topic().to_string()],
     }
-}
-
-// TODO: This could be moved to the data point struct implementation.
-// TODO: Currently the only information we have to uniquely identify a sensor is the ID. If this changes, change this function.
-/// Generates an unique key for a time series based on the information in the message.
-fn generate_unique_key(data_point: &DataPoint) -> String {
-    data_point.metadata.join("-")
 }
 
 /// Check if there is enough memory available to create a new time series, initiate buffering if not.
