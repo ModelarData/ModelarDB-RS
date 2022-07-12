@@ -31,7 +31,7 @@ use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
 use paho_mqtt::Message;
 use crate::storage::data_point::DataPoint;
-use crate::storage::time_series::{BufferedTimeSeries, QueuedTimeSeries, TimeSeries};
+use crate::storage::time_series::{BufferedTimeSeries, QueuedTimeSeries, TimeSeriesBuilder};
 
 type Timestamp = i64;
 type Value = f32;
@@ -51,7 +51,7 @@ const INITIAL_BUILDER_CAPACITY: usize = 100;
 /// * `compression_queue` - Prioritized queue of time series that can be compressed.
 /// * `remaining_bytes` - Continuously updated tracker of how many of the reserved bytes are remaining.
 pub struct StorageEngine {
-    data: HashMap<String, TimeSeries>,
+    data: HashMap<String, TimeSeriesBuilder>,
     data_buffer: HashMap<String, BufferedTimeSeries>,
     compression_queue: VecDeque<QueuedTimeSeries>,
     remaining_bytes: usize,
@@ -96,10 +96,10 @@ impl StorageEngine {
         } else {
             println!("Could not find time series with key '{}'. Creating time series.", key);
 
-            let needed_bytes = TimeSeries::get_needed_memory_for_create();
+            let needed_bytes = TimeSeriesBuilder::get_needed_memory_for_create();
             self.manage_memory_use(needed_bytes);
 
-            let mut time_series = TimeSeries::new(data_point.metadata.to_vec());
+            let mut time_series = TimeSeriesBuilder::new(data_point.metadata.to_vec());
             time_series.insert_data(&data_point);
 
             self.queue_time_series(key.clone(), data_point.timestamp);
