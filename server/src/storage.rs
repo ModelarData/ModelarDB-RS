@@ -132,9 +132,8 @@ impl TimeSeries {
         println!("Inserted data point into {}.", self)
     }
 
-    /// Write the data in the time series to a parquet file with the given path.
-    /// Note that calling this method finishes the builders.
-    fn write_data_to_parquet(&mut self, path: String) {
+    /// Finishes the array builders and returns the data in a structured record batch.
+    fn get_data(&mut self) -> RecordBatch {
         let timestamps = self.timestamps.finish();
         let values = self.values.finish();
 
@@ -143,22 +142,10 @@ impl TimeSeries {
             Field::new("values", DataType::Float32, false),
         ]);
 
-        let batch = RecordBatch::try_new(
+        RecordBatch::try_new(
             Arc::new(schema),
             vec![Arc::new(timestamps), Arc::new(values)]
-        ).unwrap();
-
-        // Write the record batch to the parquet file buffer.
-        let file = File::create(path).unwrap();
-        let props = WriterProperties::builder()
-            .set_dictionary_enabled(false)
-            // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
-            .set_encoding(Encoding::PLAIN)
-            .build();
-        let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
-
-        writer.write(&batch).expect("Writing batch.");
-        writer.close().unwrap();
+        ).unwrap()
     }
 }
 
@@ -268,7 +255,8 @@ impl StorageEngine {
                     let ts_size = time_series.get_size();
 
                     // Finish the builders and write them to the parquet file buffer.
-                    time_series.write_data_to_parquet(path.to_owned());
+                    let batch = time_series.get_data();
+                    write_batch_to_parquet(batch, path.to_owned());
 
                     // Add the buffered time series to the data buffer hashmap to save the path.
                     let buffered_time_series = BufferedTimeSeries {
@@ -319,4 +307,19 @@ fn format_message(message: &Message) -> DataPoint {
         value,
         metadata: vec![message.topic().to_string()],
     }
+}
+
+/// Write the given record batch to a parquet file with the given path.
+fn write_batch_to_parquet(batch: RecordBatch, path: String) {
+    // Write the record batch to the parquet file buffer.
+    let file = File::create(path).unwrap();
+    let props = WriterProperties::builder()
+        .set_dictionary_enabled(false)
+        // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
+        .set_encoding(Encoding::PLAIN)
+        .build();
+    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
+
+    writer.write(&batch).expect("Writing batch.");
+    writer.close().unwrap();
 }
