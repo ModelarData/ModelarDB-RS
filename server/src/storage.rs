@@ -20,8 +20,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+mod data_point;
+
 use datafusion::arrow::array::{
-    ArrayBuilder, Float32Array, PrimitiveArray, PrimitiveBuilder, TimestampMicrosecondArray,
+    ArrayBuilder, Float32Array, PrimitiveBuilder, TimestampMicrosecondArray,
 };
 use datafusion::arrow::datatypes::TimeUnit::Microsecond;
 use datafusion::arrow::datatypes::{
@@ -37,6 +39,7 @@ use std::fmt::Formatter;
 use std::fs::File;
 use std::sync::Arc;
 use std::{fmt, mem};
+use crate::storage::data_point::DataPoint;
 
 type Timestamp = i64;
 type Value = f32;
@@ -45,21 +48,6 @@ type MetaData = Vec<String>;
 const RESERVED_MEMORY_BYTES: usize = 3500;
 const BUFFER_COUNT: u16 = 1;
 const INITIAL_BUILDER_CAPACITY: usize = 100;
-
-#[derive(Debug)]
-struct DataPoint {
-    timestamp: Timestamp,
-    value: Value,
-    metadata: MetaData,
-}
-
-impl DataPoint {
-    // TODO: Currently the only information we have to uniquely identify a sensor is the ID. If this changes, change this function.
-    /// Generates an unique key for a time series based on the information in the message.
-    fn generate_unique_key(&self) -> String {
-        self.metadata.join("-")
-    }
-}
 
 // TODO: Move time series structs into separate file.
 // TODO: Maybe also move data point struct and format message function into separate file.
@@ -205,7 +193,7 @@ impl StorageEngine {
     pub fn insert_message(&mut self, message: Message) {
         println!("Remaining bytes: {}", self.remaining_bytes);
 
-        let data_point = format_message(&message);
+        let data_point = DataPoint::from_message(&message);
         let key = data_point.generate_unique_key();
 
         println!("Inserting data point {:?} into key '{}'.", data_point, key);
@@ -293,23 +281,6 @@ impl StorageEngine {
         };
 
         self.compression_queue.push_back(queued_time_series);
-    }
-}
-
-/** Private Functions **/
-/// Given a raw MQTT message, extract the message components and return them as a data point.
-fn format_message(message: &Message) -> DataPoint {
-    let message_payload = message.payload_str();
-    let first_last_off: &str = &message_payload[1..message_payload.len() - 1];
-
-    let timestamp_value: Vec<&str> = first_last_off.split(", ").collect();
-    let timestamp = timestamp_value[0].parse::<Timestamp>().unwrap();
-    let value = timestamp_value[1].parse::<Value>().unwrap();
-
-    DataPoint {
-        timestamp,
-        value,
-        metadata: vec![message.topic().to_string()],
     }
 }
 
