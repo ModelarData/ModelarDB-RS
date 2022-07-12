@@ -31,7 +31,7 @@ use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
 use paho_mqtt::Message;
 use crate::storage::data_point::DataPoint;
-use crate::storage::time_series::{BufferedTimeSeries, QueuedTimeSeries, TimeSeriesBuilder};
+use crate::storage::time_series::{BufferedTimeSeries, QueuedTimeSeries, TimeSeries, TimeSeriesBuilder};
 
 type Timestamp = i64;
 type Value = f32;
