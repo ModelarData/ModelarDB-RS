@@ -205,7 +205,6 @@ impl StorageEngine {
     pub fn insert_message(&mut self, message: Message) {
         println!("Remaining bytes: {}", self.remaining_bytes);
 
-        let mut needed_bytes = 0;
         let data_point = format_message(&message);
         let key = data_point.generate_unique_key();
 
@@ -216,12 +215,14 @@ impl StorageEngine {
 
             time_series.insert_data(&data_point);
 
-            // If further updates will trigger reallocation of the builder, find how many bytes are required.
-            needed_bytes = time_series.get_needed_memory_for_update();
+            // If further updates will trigger reallocation of the builder, ensure there is enough memory.
+            let needed_bytes = time_series.get_needed_memory_for_update();
+            self.manage_memory_use(needed_bytes);
         } else {
             println!("Could not find time series with key '{}'. Creating time series.", key);
 
-            self.manage_memory_use(TimeSeries::get_needed_memory_for_create());
+            let needed_bytes = TimeSeries::get_needed_memory_for_create();
+            self.manage_memory_use(needed_bytes);
 
             let mut time_series = TimeSeries::new(data_point.metadata.to_vec());
             time_series.insert_data(&data_point);
@@ -230,13 +231,9 @@ impl StorageEngine {
             self.data.insert(key, time_series);
         }
 
-        // TODO: Ideally this should happen before updating or immediately after.
-        // Managing memory use for updating last to avoid problem with ownership of self.
-        self.manage_memory_use(needed_bytes);
         println!() // Formatting newline.
     }
 
-    /** Private Methods **/
     // TODO: We have to always be sure of the remaining bytes to avoid "leaking".
     // TODO: If all time series are buffered it should return to the initial reserved bytes.
     // TODO: Fix problem where the needed bytes are larger than the total freed bytes.
