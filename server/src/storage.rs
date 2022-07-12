@@ -61,6 +61,9 @@ impl DataPoint {
     }
 }
 
+// TODO: Move time series structs into separate file.
+// TODO: Maybe also move data point struct and format message function into separate file.
+// TODO: Write more documentation for this.
 struct TimeSeries {
     timestamps: PrimitiveBuilder<TimestampMicrosecondType>,
     values: PrimitiveBuilder<Float32Type>,
@@ -128,6 +131,35 @@ impl TimeSeries {
 
         println!("Inserted data point into {}.", self)
     }
+
+    /// Write the data in the time series to a parquet file with the given path.
+    /// Note that calling this method finishes the builders.
+    fn write_data_to_parquet(&mut self, path: String) {
+        let timestamps = self.timestamps.finish();
+        let values = self.values.finish();
+
+        let schema = Schema::new(vec![
+            Field::new("timestamps", DataType::Timestamp(Microsecond, None), false),
+            Field::new("values", DataType::Float32, false),
+        ]);
+
+        let batch = RecordBatch::try_new(
+            Arc::new(schema),
+            vec![Arc::new(timestamps), Arc::new(values)]
+        ).unwrap();
+
+        // Write the record batch to the parquet file buffer.
+        let file = File::create(path).unwrap();
+        let props = WriterProperties::builder()
+            .set_dictionary_enabled(false)
+            // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
+            .set_encoding(Encoding::PLAIN)
+            .build();
+        let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
+
+        writer.write(&batch).expect("Writing batch.");
+        writer.close().unwrap();
+    }
 }
 
 struct BufferedTimeSeries {
@@ -156,6 +188,10 @@ pub struct StorageEngine {
     remaining_bytes: usize,
 }
 
+// TODO: For compression to work we need a way to access the compression queue.
+// TODO: The field is private so we need a method that pops the first item, retrieves the data from
+//       in-memory or the buffer and returns it in a record batch.
+// TODO: We also need support saving the compression result. This should also be on the storage engine.
 impl StorageEngine {
     pub fn new() -> Self {
         StorageEngine {
@@ -228,14 +264,11 @@ impl StorageEngine {
                         queued_time_series.start_timestamp
                     );
 
-                    // Finish the builders and write them to the parquet file buffer.
                     let mut time_series = self.data.get_mut(key).unwrap();
                     let ts_size = time_series.get_size();
 
-                    let timestamps = time_series.timestamps.finish();
-                    let values = time_series.values.finish();
-
-                    write_data_to_parquet(timestamps, values, path.to_owned());
+                    // Finish the builders and write them to the parquet file buffer.
+                    time_series.write_data_to_parquet(path.to_owned());
 
                     // Add the buffered time series to the data buffer hashmap to save the path.
                     let buffered_time_series = BufferedTimeSeries {
@@ -286,34 +319,4 @@ fn format_message(message: &Message) -> DataPoint {
         value,
         metadata: vec![message.topic().to_string()],
     }
-}
-
-// TODO: This could *maybe* be moved to the struct implementation.
-/// Write the given arrow arrays to a parquet file with the given path.
-fn write_data_to_parquet(
-    timestamps: PrimitiveArray<TimestampMicrosecondType>,
-    values: PrimitiveArray<Float32Type>,
-    path: String,
-) {
-    let schema = Schema::new(vec![
-        Field::new("timestamps", DataType::Timestamp(Microsecond, None), false),
-        Field::new("values", DataType::Float32, false),
-    ]);
-
-    let batch = RecordBatch::try_new(
-        Arc::new(schema),
-        vec![Arc::new(timestamps), Arc::new(values)]
-    ).unwrap();
-
-    // Write the record batch to the parquet file buffer.
-    let file = File::create(path).unwrap();
-    let props = WriterProperties::builder()
-        .set_dictionary_enabled(false)
-        // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
-        .set_encoding(Encoding::PLAIN)
-        .build();
-    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
-
-    writer.write(&batch).expect("Writing batch.");
-    writer.close().unwrap();
 }
