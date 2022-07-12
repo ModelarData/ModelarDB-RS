@@ -21,25 +21,17 @@
  * limitations under the License.
  */
 mod data_point;
+mod time_series;
 
-use datafusion::arrow::array::{
-    ArrayBuilder, Float32Array, PrimitiveBuilder, TimestampMicrosecondArray,
-};
-use datafusion::arrow::datatypes::TimeUnit::Microsecond;
-use datafusion::arrow::datatypes::{
-    DataType, Field, Float32Type, Schema, TimestampMicrosecondType,
-};
+use std::collections::{HashMap, VecDeque};
+use std::fs::File;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
 use paho_mqtt::Message;
-use std::collections::{HashMap, VecDeque};
-use std::fmt::Formatter;
-use std::fs::File;
-use std::sync::Arc;
-use std::{fmt, mem};
 use crate::storage::data_point::DataPoint;
+use crate::storage::time_series::{BufferedTimeSeries, QueuedTimeSeries, TimeSeries};
 
 type Timestamp = i64;
 type Value = f32;
@@ -48,109 +40,6 @@ type MetaData = Vec<String>;
 const RESERVED_MEMORY_BYTES: usize = 3500;
 const BUFFER_COUNT: u16 = 1;
 const INITIAL_BUILDER_CAPACITY: usize = 100;
-
-/// Struct representing a single time series consisting of a series of timestamps and values.
-/// Note that since array builders are used, the data can only be read once the builders are
-/// finished and can not be further appended to after.
-///
-/// # Fields
-/// * `timestamps` - Arrow array builder consisting of timestamps with microsecond precision.
-/// * `values` - Arrow array builder consisting of float values.
-/// * `metadata` - List of metadata used to uniquely identify the time series (and related sensor).
-struct TimeSeries {
-    timestamps: PrimitiveBuilder<TimestampMicrosecondType>,
-    values: PrimitiveBuilder<Float32Type>,
-    metadata: MetaData,
-}
-
-impl fmt::Display for TimeSeries {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&*format!("Time series with {} data point(s) (", self.timestamps.len()));
-        f.write_str(&*format!("timestamp capacity: {}, ", self.timestamps.capacity()));
-        f.write_str(&*format!("values capacity: {})", self.values.capacity()));
-
-        Ok(())
-    }
-}
-
-impl TimeSeries {
-    fn new(metadata: MetaData) -> TimeSeries {
-        TimeSeries {
-            // Note that the actual internal capacity might be slightly larger than these values. Apache
-            // arrow defines the argument as being the lower bound for how many items the builder can hold.
-            timestamps: TimestampMicrosecondArray::builder(INITIAL_BUILDER_CAPACITY),
-            values: Float32Array::builder(INITIAL_BUILDER_CAPACITY),
-            metadata,
-        }
-    }
-
-    /// Return the size in bytes of the given time series. Note that only the size of the builders are considered.
-    fn get_size(&self) -> usize {
-        (mem::size_of::<Timestamp>() * self.timestamps.capacity())
-            + (mem::size_of::<Value>() * self.values.capacity())
-    }
-
-    /// Check if there is enough memory available to create a new time series, initiate buffering if not.
-    fn get_needed_memory_for_create() -> usize {
-        let needed_bytes_timestamps = mem::size_of::<Timestamp>() * INITIAL_BUILDER_CAPACITY;
-        let needed_bytes_values = mem::size_of::<Value>() * INITIAL_BUILDER_CAPACITY;
-
-        needed_bytes_timestamps + needed_bytes_values
-    }
-
-    /// Check if an update will expand the capacity of the builders. If so, get the needed bytes for the new capacity.
-    fn get_needed_memory_for_update(&self) -> usize {
-        let len = self.timestamps.len();
-        let mut needed_bytes_timestamps: usize = 0;
-        let mut needed_bytes_values: usize = 0;
-
-        // If the current length is equal to the capacity, adding one more value will trigger reallocation.
-        if len == self.timestamps.capacity() {
-            needed_bytes_timestamps = mem::size_of::<Timestamp>() * self.timestamps.capacity();
-        }
-
-        // Note that there is no guarantee that the timestamps capacity is equal to the values capacity.
-        if len == self.values.capacity() {
-            needed_bytes_values = mem::size_of::<Value>() * self.values.capacity();
-        }
-
-        needed_bytes_timestamps + needed_bytes_values
-    }
-
-    /// Add the timestamp and value from the data point to the time series array builders.
-    fn insert_data(&mut self, data_point: &DataPoint) {
-        self.timestamps.append_value(data_point.timestamp).unwrap();
-        self.values.append_value(data_point.value).unwrap();
-
-        println!("Inserted data point into {}.", self)
-    }
-
-    /// Finishes the array builders and returns the data in a structured record batch.
-    fn get_data(&mut self) -> RecordBatch {
-        let timestamps = self.timestamps.finish();
-        let values = self.values.finish();
-
-        let schema = Schema::new(vec![
-            Field::new("timestamps", DataType::Timestamp(Microsecond, None), false),
-            Field::new("values", DataType::Float32, false),
-        ]);
-
-        RecordBatch::try_new(
-            Arc::new(schema),
-            vec![Arc::new(timestamps), Arc::new(values)]
-        ).unwrap()
-    }
-}
-
-struct BufferedTimeSeries {
-    path: String,
-    metadata: MetaData,
-}
-
-struct QueuedTimeSeries {
-    key: String,
-    start_timestamp: Timestamp,
-}
 
 /// Struct responsible for keeping track of all uncompressed data, either in memory or in a file buffer.
 /// The struct also provides a queue to prioritize data for compression. The fields should
