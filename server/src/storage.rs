@@ -63,7 +63,14 @@ impl DataPoint {
 
 // TODO: Move time series structs into separate file.
 // TODO: Maybe also move data point struct and format message function into separate file.
-// TODO: Write more documentation for this.
+/// Struct representing a single time series consisting of a series of timestamps and values.
+/// Note that since array builders are used, the data can only be read once the builders are
+/// finished and can not be further appended to after.
+///
+/// # Fields
+/// * `timestamps` - Arrow array builder consisting of timestamps with microsecond precision.
+/// * `values` - Arrow array builder consisting of float values.
+/// * `metadata` - List of metadata used to uniquely identify the time series (and related sensor).
 struct TimeSeries {
     timestamps: PrimitiveBuilder<TimestampMicrosecondType>,
     values: PrimitiveBuilder<Float32Type>,
@@ -159,8 +166,8 @@ struct QueuedTimeSeries {
     start_timestamp: Timestamp,
 }
 
-/// Storage engine struct responsible for keeping track of all uncompressed data and invoking the
-/// compressor to move the uncompressed data into persistent model-based storage. The fields should
+/// Struct responsible for keeping track of all uncompressed data, either in memory or in a file buffer.
+/// The struct also provides a queue to prioritize data for compression. The fields should
 /// not be directly modified and are therefore only changed when using "insert_data".
 ///
 /// # Fields
