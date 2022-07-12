@@ -13,62 +13,82 @@
  * limitations under the License.
  */
 
+//! Implementation of the PMC-Mean model type from the [Poor Man’s Compression
+//! paper] and efficient computation of aggregates for models of type PMC-Mean
+//! as described in the [ModelarDB paper].
+//!
+//! [Poor Man’s Compression paper]: https://ieeexplore.ieee.org/document/1260811
+//! [ModelarDB paper]: https://dl.acm.org/doi/abs/10.14778/3236187.3236215
+
 use std::convert::TryInto;
 
 use datafusion::arrow::array::{Float32Builder, Int32Builder, TimestampMillisecondBuilder};
 
-/** Public Type **/
-struct PMCMeanFitState {
-    error: f32,
-    size: u32,
-    min: f32,
-    max: f32,
-    sum: f64,
+///The state the PMC-Mean model type needs while fitting a model to a time
+/// series segment.
+struct PMCMeanModelType {
+    /// Maximum relative error for the value of each data point.
+    error_bound: f32,
+    /// Minimum value in the segment the current model is fitted to.
+    min_value: f32,
+    /// Maximum value in the segment the current model is fitted to.
+    max_value: f32,
+    /// The sum of the values in the segment the current model is fitted to.
+    sum_of_values: f64,
+    /// The number of data points the current model has been fitted to.
+    length: u32,
 }
 
-impl PMCMeanFitState {
-    fn new(error: f32) -> Self {
+impl PMCMeanModelType {
+    fn new(error_bound: f32) -> Self {
         Self {
-            error,
-            size: 0,
-            min: f32::NAN,
-            max: f32::NAN,
-            sum: 0.0,
+            error_bound,
+            min_value: f32::NAN,
+            max_value: f32::NAN,
+            sum_of_values: 0.0,
+            length: 0,
         }
     }
 
-    fn fit(&mut self, value: f32) -> bool {
-        let next_sum = self.sum + value as f64;
-        let average = next_sum / (self.size + 1) as f64;
+    /// Attempt to update the current model of type PMC-Mean to also represent
+    /// `value`. Returns `true` if the model can also represent `value`,
+    /// otherwise `false`.
+    fn fit_value(&mut self, value: f32) -> bool {
+        let next_sum_of_values = self.sum_of_values + value as f64;
+        let average = next_sum_of_values / (self.length + 1) as f64;
 
-        let next_min = f32::min(self.min, value);
-        let next_max = f32::max(self.max, value);
-        if PMCMeanFitState::within_percentage_error_bound(self.error, average as f32, next_min)
-            || PMCMeanFitState::within_percentage_error_bound(self.error, average as f32, next_max)
+        let next_min_value = f32::min(self.min_value, value);
+        let next_max_value = f32::max(self.max_value, value);
+        if PMCMeanModelType::is_value_within_error_bound(self, average as f32, next_min_value)
+            || PMCMeanModelType::is_value_within_error_bound(self, average as f32, next_max_value)
         {
-            self.min = next_min;
-            self.max = next_max;
-            self.sum = next_sum;
-            self.size += 1;
+            self.min_value = next_min_value;
+            self.max_value = next_max_value;
+            self.sum_of_values = next_sum_of_values;
+            self.length += 1;
             true
         } else {
             false
         }
     }
 
-    fn get(&self) -> f32 {
-        (self.sum / self.size as f64) as f32
+    /// Return the current model. For a model of type PMC-Mean, its coefficient
+    /// is the average value of the bounded time series the model represents.
+    fn get_model(&self) -> f32 {
+        (self.sum_of_values / self.length as f64) as f32
     }
 
-    fn within_percentage_error_bound(error: f32, real: f32, approximation: f32) -> bool {
-	//Necessary as the method would return NaN if approximation and real are zero
-	if approximation == real || (real.is_nan() && approximation.is_nan()) {
-	    true
-	} else {
-	    let difference = real - approximation;
-	    let result = f32::abs(difference / real);
-	    (result * 100.0) <= error
-	}
+    /// Determine if `approximate_value` is within the relative
+    /// `self.error_bound` of `real_value`.
+    fn is_value_within_error_bound(&self, real_value: f32, approximate_value: f32) -> bool {
+        // Needed as the calculation in else becomes NaN if both values are zero.
+        if approximate_value == real_value || (real_value.is_nan() && approximate_value.is_nan()) {
+            true
+        } else {
+            let difference = real_value - approximate_value;
+            let result = f32::abs(difference / real_value);
+            (result * 100.0) <= self.error_bound
+        }
     }
 }
 
@@ -98,64 +118,65 @@ mod tests {
 
     #[test]
     fn test_fit_sequence_of_nans() {
-        let mut state = PMCMeanFitState::new(0.0);
+        let mut state = PMCMeanModelType::new(0.0);
         for value in SEQUENCE_OF_NAN {
-            assert!(state.fit(value));
+            assert!(state.fit_value(value));
         }
-        assert!(state.get().is_nan());
+        assert!(state.get_model().is_nan());
     }
 
     #[test]
     fn test_fit_sequence_of_positive_infinity() {
-        let mut state = PMCMeanFitState::new(0.0);
+        let mut state = PMCMeanModelType::new(0.0);
         for value in SEQUENCE_OF_POSITIVE_INFINITY {
-            assert!(state.fit(value));
+            assert!(state.fit_value(value));
         }
-        assert!(state.get() == f32::INFINITY);
+        assert!(state.get_model() == f32::INFINITY);
     }
 
     #[test]
     fn test_fit_sequence_of_negative_infinity() {
-        let mut state = PMCMeanFitState::new(0.0);
+        let mut state = PMCMeanModelType::new(0.0);
         for value in SEQUENCE_OF_NEGATIVE_INFINITY {
-            assert!(state.fit(value));
+            assert!(state.fit_value(value));
         }
-        assert!(state.get() == f32::NEG_INFINITY);
+        assert!(state.get_model() == f32::NEG_INFINITY);
     }
 
     proptest! {
         #[test]
         fn test_fit_one_value_always_succeeds(value in f32::ANY) {
-            prop_assert!(PMCMeanFitState::new(0.0).fit(value));
+            prop_assert!(PMCMeanModelType::new(0.0).fit_value(value));
         }
 
         #[test]
         fn test_fit_nan_other_always_fails(value in f32::ANY) {
             prop_assume!( ! value.is_nan());
-            let mut state = PMCMeanFitState::new(0.0);
-            assert!(state.fit(f32::NAN));
-            prop_assert!( ! state.fit(value));
+            let mut state = PMCMeanModelType::new(0.0);
+            assert!(state.fit_value(f32::NAN));
+            prop_assert!( ! state.fit_value(value));
         }
 
         #[test]
         fn test_fit_positive_infinity_other_always_fails(value in f32::ANY) {
             prop_assume!(value != f32::INFINITY);
-            let mut state = PMCMeanFitState::new(0.0);
-            assert!(state.fit(f32::INFINITY));
-            prop_assert!( ! state.fit(value));
+            let mut state = PMCMeanModelType::new(0.0);
+            assert!(state.fit_value(f32::INFINITY));
+            prop_assert!( ! state.fit_value(value));
         }
 
         #[test]
         fn test_fit_negative_infinity_other_always_fails(value in f32::ANY) {
             prop_assume!(value != f32::NEG_INFINITY);
-            let mut state = PMCMeanFitState::new(0.0);
-            assert!(state.fit(f32::NEG_INFINITY));
-            prop_assert!( ! state.fit(value));
+            let mut state = PMCMeanModelType::new(0.0);
+            assert!(state.fit_value(f32::NEG_INFINITY));
+            prop_assert!( ! state.fit_value(value));
         }
     }
 }
 
-/** Public Functions **/
+/// Compute the minimum and maximum value for the bounded time series whose
+/// values are represented by model.
 pub fn min_max(
     gid: i32,
     start_time: i64,
@@ -164,9 +185,11 @@ pub fn min_max(
     model: &[u8],
     gaps: &[u8],
 ) -> f32 {
-    decode(model)
+    decode_model(model)
 }
 
+/// Compute the sum of the values for the bounded time series whose values are
+/// represented by the model.
 pub fn sum(
     gid: i32,
     start_time: i64,
@@ -176,9 +199,11 @@ pub fn sum(
     gaps: &[u8],
 ) -> f32 {
     let length = ((end_time - start_time) / sampling_interval as i64) + 1;
-    length as f32 * decode(model)
+    length as f32 * decode_model(model)
 }
 
+/// Reconstruct the data points for the bounded time series whose values are
+///  represented by the model.
 pub fn grid(
     gid: i32,
     start_time: i64,
@@ -190,7 +215,7 @@ pub fn grid(
     timestamps: &mut TimestampMillisecondBuilder,
     values: &mut Float32Builder,
 ) {
-    let value = decode(model);
+    let value = decode_model(model);
     let sampling_interval = sampling_interval as usize;
     for timestamp in (start_time..=end_time).step_by(sampling_interval) {
         tids.append_value(gid).unwrap();
@@ -199,7 +224,7 @@ pub fn grid(
     }
 }
 
-/** Private Functions **/
-fn decode(model: &[u8]) -> f32 {
+/// Decode the model's coefficient in the byte array to a floating-point value.
+fn decode_model(model: &[u8]) -> f32 {
     f32::from_be_bytes(model.try_into().unwrap())
 }
