@@ -49,8 +49,6 @@ const RESERVED_MEMORY_BYTES: usize = 3500;
 const BUFFER_COUNT: u16 = 1;
 const INITIAL_BUILDER_CAPACITY: usize = 100;
 
-// TODO: Move time series structs into separate file.
-// TODO: Maybe also move data point struct and format message function into separate file.
 /// Struct representing a single time series consisting of a series of timestamps and values.
 /// Note that since array builders are used, the data can only be read once the builders are
 /// finished and can not be further appended to after.
