@@ -29,15 +29,15 @@ pub fn min(
     let mut stored_trailing_zeroes: u32 = 0;
     let mut last_value = bits.read_bits(32);
 
-    //The first value is stored as a f32
+    // The first value is stored as a f32.
     let mut min_value = f32::from_bits(last_value);
 
-    //The following values are stored as the delta of XOR
+    // The following values are stored as the delta of XOR.
     let length_without_head = (end_time - start_time) / sampling_interval as i64;
     for _ in 0..length_without_head {
         if bits.read_bit() {
             if bits.read_bit() {
-                //New leading and trailing zeros
+                // New leading and trailing zeros.
                 stored_leading_zeroes = bits.read_bits(5);
                 let mut significant_bits = bits.read_bits(6);
                 if significant_bits == 0 {
@@ -70,15 +70,15 @@ pub fn max(
     let mut stored_trailing_zeroes: u32 = 0;
     let mut last_value = bits.read_bits(32);
 
-    //The first value is stored as a f32
+    // The first value is stored as a f32.
     let mut max_value = f32::from_bits(last_value);
 
-    //The following values are stored as the delta of XOR
+    // The following values are stored as the delta of XOR.
     let length_without_head = (end_time - start_time) / sampling_interval as i64;
     for _ in 0..length_without_head {
         if bits.read_bit() {
             if bits.read_bit() {
-                //New leading and trailing zeros
+                // New leading and trailing zeros.
                 stored_leading_zeroes = bits.read_bits(5);
                 let mut significant_bits = bits.read_bits(6);
                 if significant_bits == 0 {
@@ -111,15 +111,15 @@ pub fn sum(
     let mut stored_trailing_zeroes: u32 = 0;
     let mut last_value = bits.read_bits(32);
 
-    //The first value is stored as a f32
+    // The first value is stored as a f32.
     let mut sum = f32::from_bits(last_value);
 
-    //The following values are stored as the delta of XOR
+    // The following values are stored as the delta of XOR.
     let length_without_head = (end_time - start_time) / sampling_interval as i64;
     for _ in 0..length_without_head {
         if bits.read_bit() {
             if bits.read_bit() {
-                //New leading and trailing zeros
+                // New leading and trailing zeros.
                 stored_leading_zeroes = bits.read_bits(5);
                 let mut significant_bits = bits.read_bits(6);
                 if significant_bits == 0 {
@@ -155,12 +155,12 @@ pub fn grid(
     let mut stored_trailing_zeroes: u32 = 0;
     let mut last_value = bits.read_bits(32);
 
-    //The first value is stored as a f32
+    // The first value is stored as a f32.
     tids.append_value(gid).unwrap();
     timestamps.append_value(start_time).unwrap();
     values.append_value(f32::from_bits(last_value)).unwrap();
 
-    //The following values are stored as the delta of XOR
+    // The following values are stored as the delta of XOR.
     let second_timestamp = start_time + sampling_interval as i64;
     let sampling_interval = sampling_interval as usize;
     for timestamp in (second_timestamp..=end_time).step_by(sampling_interval) {
@@ -169,7 +169,7 @@ pub fn grid(
 
         if bits.read_bit() {
             if bits.read_bit() {
-                //New leading and trailing zeros
+                // New leading and trailing zeros.
                 stored_leading_zeroes = bits.read_bits(5);
                 let mut significant_bits = bits.read_bits(6);
                 if significant_bits == 0 {

@@ -40,13 +40,13 @@ use datafusion::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use datafusion::prelude::SessionConfig;
 use datafusion::scalar::ScalarValue;
 
-//Helper Functions
+// Helper Functions.
 fn new_aggregate(
     aggregate_exec: &AggregateExec,
     model_aggregate_expr: Arc<ModelAggregateExpr>,
     grid_exec: &GridExec,
 ) -> Arc<AggregateExec> {
-    //Assumes the GridExec only have a single child
+    // Assumes the GridExec only have a single child.
     Arc::new(
         AggregateExec::try_new(
             *aggregate_exec.mode(),
@@ -59,12 +59,12 @@ fn new_aggregate(
     )
 }
 
-//Optimizer Rule
+// Optimizer Rule.
 pub struct ModelSimpleAggregatesPhysicalOptimizerRule {}
 
 impl ModelSimpleAggregatesPhysicalOptimizerRule {
     fn optimize(&self, plan: &Arc<dyn ExecutionPlan>) -> Option<Arc<dyn ExecutionPlan>> {
-        //Matches a simple aggregate performed without filtering out segments
+        // Matches a simple aggregate performed without filtering out segments.
         if let Some(hae) = plan.as_any().downcast_ref::<AggregateExec>() {
             let children = &hae.children();
             if children.len() == 1 {
@@ -73,7 +73,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                     if children.len() == 1 {
                         let ae = hae.aggr_expr();
                         if ae.len() == 1 {
-                            //TODO: simplify and factor out shared code using macros or functions
+                            // TODO: simplify and factor out shared code using macros or functions.
                             if ae[0].as_any().downcast_ref::<Count>().is_some() {
                                 if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
                                     let mae = ModelAggregateExpr::new(
@@ -121,8 +121,8 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
             }
         }
 
-        //Visit the children
-        //TODO: handle plans were multiple children must be updated
+        // Visit the children.
+        // TODO: handle plans were multiple children must be updated.
         for child in plan.children() {
             if let Some(new_child) = self.optimize(&child) {
                 return Some(plan.clone().with_new_children(vec![new_child]).unwrap());
@@ -132,7 +132,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
     }
 }
 
-//TODO: determine if some structs or traits can be removed or parametrized?
+// TODO: determine if some structs or traits can be removed or parametrized?
 impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
     fn optimize(
         &self,
@@ -151,7 +151,7 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
     }
 }
 
-//Aggregate Expressions
+// Aggregate Expressions.
 #[derive(Debug)]
 enum ModelAggregateType {
     Count,
