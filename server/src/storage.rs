@@ -94,6 +94,14 @@ impl TimeSeries {
             + (mem::size_of::<Value>() * self.values.capacity())
     }
 
+    /// Check if there is enough memory available to create a new time series, initiate buffering if not.
+    fn get_needed_memory_for_create() -> usize {
+        let needed_bytes_timestamps = mem::size_of::<Timestamp>() * INITIAL_BUILDER_CAPACITY;
+        let needed_bytes_values = mem::size_of::<Value>() * INITIAL_BUILDER_CAPACITY;
+
+        needed_bytes_timestamps + needed_bytes_values
+    }
+
     /// Check if an update will expand the capacity of the builders. If so, get the needed bytes for the new capacity.
     fn get_needed_memory_for_update(&self) -> usize {
         let len = self.timestamps.len();
@@ -175,7 +183,7 @@ impl StorageEngine {
         } else {
             println!("Could not find time series with key '{}'. Creating time series.", key);
 
-            self.manage_memory_use(get_needed_memory_for_create());
+            self.manage_memory_use(TimeSeries::get_needed_memory_for_create());
 
             let mut time_series = TimeSeries::new(data_point.metadata.to_vec());
             update_time_series(&data_point, &mut time_series);
@@ -270,14 +278,6 @@ fn format_message(message: &Message) -> DataPoint {
         value,
         metadata: vec![message.topic().to_string()],
     }
-}
-
-/// Check if there is enough memory available to create a new time series, initiate buffering if not.
-fn get_needed_memory_for_create() -> usize {
-    let needed_bytes_timestamps = mem::size_of::<Timestamp>() * INITIAL_BUILDER_CAPACITY;
-    let needed_bytes_values = mem::size_of::<Value>() * INITIAL_BUILDER_CAPACITY;
-
-    needed_bytes_timestamps + needed_bytes_values
 }
 
 // TODO: This could be moved to the struct implementation.
