@@ -1,6 +1,6 @@
 /// Module containing support for different kinds of stored time series.
 ///
-/// The main TimeSeries struct provides support for inserting and storing data in a in-memory time
+/// The main TimeSeriesBuilder struct provides support for inserting and storing data in a in-memory time
 /// series. Furthermore, the data can be retrieved as a structured record batch. BufferedTimeSeries
 /// provides a simple struct to keep track of time series that have been saved to a file buffer.
 /// Similarly the data can be retrieved from the buffer as a record batch. Finally, the QueuedTimeSeries
@@ -30,21 +30,21 @@ use datafusion::arrow::record_batch::RecordBatch;
 use crate::storage::data_point::DataPoint;
 use crate::storage::{INITIAL_BUILDER_CAPACITY, MetaData, Timestamp, Value};
 
-/// Struct representing a single time series consisting of a series of timestamps and values.
-/// Note that since array builders are used, the data can only be read once the builders are
+/// Struct representing a single time series being built, consisting of a series of timestamps and
+/// values. Note that since array builders are used, the data can only be read once the builders are
 /// finished and can not be further appended to after.
 ///
 /// # Fields
 /// * `timestamps` - Arrow array builder consisting of timestamps with microsecond precision.
 /// * `values` - Arrow array builder consisting of float values.
 /// * `metadata` - List of metadata used to uniquely identify the time series (and related sensor).
-pub struct TimeSeries {
+pub struct TimeSeriesBuilder {
     timestamps: PrimitiveBuilder<TimestampMicrosecondType>,
     values: PrimitiveBuilder<Float32Type>,
     pub metadata: MetaData,
 }
 
-impl fmt::Display for TimeSeries {
+impl fmt::Display for TimeSeriesBuilder {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(&*format!("Time series with {} data point(s) (", self.timestamps.len()));
         f.write_str(&*format!("timestamp capacity: {}, ", self.timestamps.capacity()));
@@ -54,9 +54,9 @@ impl fmt::Display for TimeSeries {
     }
 }
 
-impl TimeSeries {
-    pub fn new(metadata: MetaData) -> TimeSeries {
-        TimeSeries {
+impl TimeSeriesBuilder {
+    pub fn new(metadata: MetaData) -> TimeSeriesBuilder {
+        TimeSeriesBuilder {
             // Note that the actual internal capacity might be slightly larger than these values. Apache
             // arrow defines the argument as being the lower bound for how many items the builder can hold.
             timestamps: TimestampMicrosecondArray::builder(INITIAL_BUILDER_CAPACITY),
