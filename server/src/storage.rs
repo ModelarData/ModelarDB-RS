@@ -120,6 +120,14 @@ impl TimeSeries {
 
         needed_bytes_timestamps + needed_bytes_values
     }
+
+    /// Add the timestamp and value from the data point to the time series array builders.
+    fn insert_data(&mut self, data_point: &DataPoint) {
+        self.timestamps.append_value(data_point.timestamp).unwrap();
+        self.values.append_value(data_point.value).unwrap();
+
+        println!("Inserted data point into {}.", self)
+    }
 }
 
 struct BufferedTimeSeries {
@@ -176,7 +184,7 @@ impl StorageEngine {
         if let Some(time_series) = self.data.get_mut(&*key) {
             println!("Found existing time series with key '{}'.", key);
 
-            update_time_series(&data_point, time_series);
+            time_series.insert_data(&data_point);
 
             // If further updates will trigger reallocation of the builder, find how many bytes are required.
             needed_bytes = time_series.get_needed_memory_for_update();
@@ -186,7 +194,7 @@ impl StorageEngine {
             self.manage_memory_use(TimeSeries::get_needed_memory_for_create());
 
             let mut time_series = TimeSeries::new(data_point.metadata.to_vec());
-            update_time_series(&data_point, &mut time_series);
+            time_series.insert_data(&data_point);
 
             self.queue_time_series(key.clone(), data_point.timestamp);
             self.data.insert(key, time_series);
@@ -278,15 +286,6 @@ fn format_message(message: &Message) -> DataPoint {
         value,
         metadata: vec![message.topic().to_string()],
     }
-}
-
-// TODO: This could be moved to the struct implementation.
-/// Add the timestamp and value from the data point to the time series array builders.
-fn update_time_series(data_point: &DataPoint, time_series: &mut TimeSeries) {
-    time_series.timestamps.append_value(data_point.timestamp).unwrap();
-    time_series.values.append_value(data_point.value).unwrap();
-
-    println!("Inserted data point into {}.", time_series)
 }
 
 // TODO: This could *maybe* be moved to the struct implementation.
