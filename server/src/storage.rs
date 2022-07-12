@@ -93,6 +93,25 @@ impl TimeSeries {
         (mem::size_of::<Timestamp>() * self.timestamps.capacity())
             + (mem::size_of::<Value>() * self.values.capacity())
     }
+
+    /// Check if an update will expand the capacity of the builders. If so, get the needed bytes for the new capacity.
+    fn get_needed_memory_for_update(&self) -> usize {
+        let len = self.timestamps.len();
+        let mut needed_bytes_timestamps: usize = 0;
+        let mut needed_bytes_values: usize = 0;
+
+        // If the current length is equal to the capacity, adding one more value will trigger reallocation.
+        if len == self.timestamps.capacity() {
+            needed_bytes_timestamps = mem::size_of::<Timestamp>() * self.timestamps.capacity();
+        }
+
+        // Note that there is no guarantee that the timestamps capacity is equal to the values capacity.
+        if len == self.values.capacity() {
+            needed_bytes_values = mem::size_of::<Value>() * self.values.capacity();
+        }
+
+        needed_bytes_timestamps + needed_bytes_values
+    }
 }
 
 struct BufferedTimeSeries {
@@ -152,7 +171,7 @@ impl StorageEngine {
             update_time_series(&data_point, time_series);
 
             // If further updates will trigger reallocation of the builder, find how many bytes are required.
-            needed_bytes = get_needed_memory_for_update(&time_series);
+            needed_bytes = time_series.get_needed_memory_for_update();
         } else {
             println!("Could not find time series with key '{}'. Creating time series.", key);
 
@@ -186,7 +205,12 @@ impl StorageEngine {
                 // TODO: We also need to find the first BUFFER_COUNT elements that are not buffered yet.
                 if let Some(queued_time_series) = self.compression_queue.pop_front() {
                     let key = &*queued_time_series.key;
-                    println!("Moving time series with key '{}' to data buffer.", key);
+
+                    let path = format!(
+                        "{}_{}.parquet",
+                        key.replace("/", "-"),
+                        queued_time_series.start_timestamp
+                    );
 
                     // Finish the builders and write them to the parquet file buffer.
                     let mut time_series = self.data.get_mut(key).unwrap();
@@ -194,11 +218,6 @@ impl StorageEngine {
 
                     let timestamps = time_series.timestamps.finish();
                     let values = time_series.values.finish();
-                    let path = format!(
-                        "{}_{}.parquet",
-                        key.replace("/", "-"),
-                        queued_time_series.start_timestamp
-                    );
 
                     write_data_to_parquet(timestamps, values, path.to_owned());
 
@@ -257,26 +276,6 @@ fn format_message(message: &Message) -> DataPoint {
 fn get_needed_memory_for_create() -> usize {
     let needed_bytes_timestamps = mem::size_of::<Timestamp>() * INITIAL_BUILDER_CAPACITY;
     let needed_bytes_values = mem::size_of::<Value>() * INITIAL_BUILDER_CAPACITY;
-
-    needed_bytes_timestamps + needed_bytes_values
-}
-
-// TODO: This could be moved to the struct implementation.
-/// Check if an update will expand the capacity of the builders. If so, get the needed bytes for the new capacity.
-fn get_needed_memory_for_update(time_series: &TimeSeries) -> usize {
-    let len = time_series.timestamps.len();
-    let mut needed_bytes_timestamps: usize = 0;
-    let mut needed_bytes_values: usize = 0;
-
-    // If the current length is equal to the capacity, adding one more value will trigger reallocation.
-    if len == time_series.timestamps.capacity() {
-        needed_bytes_timestamps = mem::size_of::<Timestamp>() * time_series.timestamps.capacity();
-    }
-
-    // Note that there is no guarantee that the timestamps capacity is equal to the values capacity.
-    if len == time_series.values.capacity() {
-        needed_bytes_values = mem::size_of::<Value>() * time_series.values.capacity();
-    }
 
     needed_bytes_timestamps + needed_bytes_values
 }
