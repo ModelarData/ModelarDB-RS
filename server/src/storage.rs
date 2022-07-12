@@ -42,7 +42,7 @@ type Timestamp = i64;
 type Value = f32;
 type MetaData = Vec<String>;
 
-const RESERVED_MEMORY_BYTES: usize = 5000;
+const RESERVED_MEMORY_BYTES: usize = 3500;
 const BUFFER_COUNT: u16 = 1;
 const INITIAL_BUILDER_CAPACITY: usize = 100;
 
@@ -86,6 +86,12 @@ impl TimeSeries {
             values: Float32Array::builder(INITIAL_BUILDER_CAPACITY),
             metadata,
         }
+    }
+
+    /// Return the size in bytes of the given time series. Note that only the size of the builders are considered.
+    fn get_size(&self) -> usize {
+        (mem::size_of::<Timestamp>() * self.timestamps.capacity())
+            + (mem::size_of::<Value>() * self.values.capacity())
     }
 }
 
@@ -184,7 +190,7 @@ impl StorageEngine {
 
                     // Finish the builders and write them to the parquet file buffer.
                     let mut time_series = self.data.get_mut(key).unwrap();
-                    let size = get_size_of_time_series(time_series);
+                    let ts_size = time_series.get_size();
 
                     let timestamps = time_series.timestamps.finish();
                     let values = time_series.values.finish();
@@ -204,11 +210,11 @@ impl StorageEngine {
 
                     self.data_buffer.insert(key.to_owned(), buffered_time_series);
 
-                    println!("Freeing {} bytes from the reserved memory.", size);
+                    println!("Freeing {} bytes from the reserved memory.", ts_size);
                     self.data.remove(key);
 
                     // Update the remaining bytes to reflect that data has been moved to the buffer.
-                    self.remaining_bytes = self.remaining_bytes + size;
+                    self.remaining_bytes = self.remaining_bytes + ts_size;
                 }
             }
             // TODO: It might be necessary to shrink the hashmap to fit dependent on how it handles replacing with insert.
@@ -253,13 +259,6 @@ fn get_needed_memory_for_create() -> usize {
     let needed_bytes_values = mem::size_of::<Value>() * INITIAL_BUILDER_CAPACITY;
 
     needed_bytes_timestamps + needed_bytes_values
-}
-
-// TODO: This could be moved to the struct implementation.
-/// Return the size in bytes of the given time series. Note that only the size of the builders are considered.
-fn get_size_of_time_series(time_series: &TimeSeries) -> usize {
-    (mem::size_of::<Timestamp>() * time_series.timestamps.capacity())
-        + (mem::size_of::<Value>() * time_series.values.capacity())
 }
 
 // TODO: This could be moved to the struct implementation.
