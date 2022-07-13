@@ -178,12 +178,12 @@ mod tests {
 /// Compute the minimum and maximum value for the bounded time series whose
 /// values are represented by model.
 pub fn min_max(
-    gid: i32,
-    start_time: i64,
-    end_time: i64,
-    sampling_interval: i32,
+    _gid: i32,
+    _start_time: i64,
+    _end_time: i64,
+    _sampling_interval: i32,
     model: &[u8],
-    gaps: &[u8],
+    _gaps: &[u8],
 ) -> f32 {
     decode_model(model)
 }
@@ -191,12 +191,12 @@ pub fn min_max(
 /// Compute the sum of the values for the bounded time series whose values are
 /// represented by the model.
 pub fn sum(
-    gid: i32,
+    _gid: i32,
     start_time: i64,
     end_time: i64,
     sampling_interval: i32,
     model: &[u8],
-    gaps: &[u8],
+    _gaps: &[u8],
 ) -> f32 {
     let length = ((end_time - start_time) / sampling_interval as i64) + 1;
     length as f32 * decode_model(model)
@@ -210,7 +210,7 @@ pub fn grid(
     end_time: i64,
     sampling_interval: i32,
     model: &[u8],
-    gaps: &[u8],
+    _gaps: &[u8],
     tids: &mut Int32Builder,
     timestamps: &mut TimestampMillisecondBuilder,
     values: &mut Float32Builder,
