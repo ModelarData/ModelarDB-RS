@@ -1,6 +1,6 @@
-/// Module containing representation of a single internal data point. Note that this struct is mainly
-/// used when transitioning from a raw message into the in-memory representation.
-///
+//! Module containing representation of a single internal data point. Note that this struct is mainly
+//! used when transitioning from a raw message into the in-memory representation.
+//!
 /* Copyright 2021 The MiniModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
