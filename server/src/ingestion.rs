@@ -47,7 +47,7 @@ impl Ingestor {
             let mut stream = self.subscribe_to_broker(&mut client).await;
 
             println!("Waiting for messages...");
-            ingest_messages(&mut stream, &mut client).await;
+            Self::ingest_messages(&mut stream, &mut client).await;
 
             Ok::<(), mqtt::Error>(())
         }) {
@@ -86,26 +86,26 @@ impl Ingestor {
         println!("Connecting to MQTT broker.");
         client.connect(connect_options).await;
 
-        println!("Subscribing to topics: {:?}", topics);
+        println!("Subscribing to topics: {:?}", self.topics);
         client.subscribe_many(self.topics, self.qos).await;
 
         stream
     }
-}
 
-// TODO: Send the messages to the storage engine when they are retrieved.
-/// Ingest the published messages in a loop until connection is lost.
-async fn ingest_messages(stream: &mut AsyncReceiver<Option<Message>>, client: &mut AsyncClient) {
-    // While the message stream resolves to the next item in the stream, ingest the messages.
-    while let Some(msg_opt) = stream.next().await {
-        if let Some(msg) = msg_opt {
-            println!("{}", msg);
-        } else {
-            // A "None" means we were disconnected. Try to reconnect...
-            println!("Lost connection. Attempting reconnect.");
-            while let Err(err) = client.reconnect().await {
-                eprintln!("Error reconnecting: {}", err);
-                tokio::time::sleep(Duration::from_millis(1000)).await;
+    // TODO: Send the messages to the storage engine when they are retrieved.
+    /// Ingest the published messages in a loop until connection is lost.
+    async fn ingest_messages(stream: &mut AsyncReceiver<Option<Message>>, client: &mut AsyncClient) {
+        // While the message stream resolves to the next item in the stream, ingest the messages.
+        while let Some(msg_opt) = stream.next().await {
+            if let Some(msg) = msg_opt {
+                println!("{}", msg);
+            } else {
+                // A "None" means we were disconnected. Try to reconnect...
+                println!("Lost connection. Attempting reconnect.");
+                while let Err(err) = client.reconnect().await {
+                    eprintln!("Error reconnecting: {}", err);
+                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                }
             }
         }
     }
