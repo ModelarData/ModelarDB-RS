@@ -1,11 +1,11 @@
-/// Module containing support for different kinds of stored time series.
-///
-/// The main TimeSeriesBuilder struct provides support for inserting and storing data in a in-memory time
-/// series. Furthermore, the data can be retrieved as a structured record batch. BufferedTimeSeries
-/// provides a simple struct to keep track of time series that have been saved to a file buffer.
-/// Similarly the data can be retrieved from the buffer as a record batch. Finally, the QueuedTimeSeries
-/// struct provides a simple representation that can be inserted into a queue.
-///
+//! Module containing support for different kinds of stored time series.
+//!
+//! The main TimeSeriesBuilder struct provides support for inserting and storing data in a in-memory time
+//! series. Furthermore, the data can be retrieved as a structured record batch. BufferedTimeSeries
+//! provides a simple struct to keep track of time series that have been saved to a file buffer.
+//! Similarly the data can be retrieved from the buffer as a record batch. Finally, the QueuedTimeSeries
+//! struct provides a simple representation that can be inserted into a queue.
+//!
 /* Copyright 2021 The MiniModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
