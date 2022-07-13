@@ -41,7 +41,7 @@ impl Ingestor {
     /// Create a broker client, subscribe to the topics and start ingesting messages.
     pub fn start(self) {
         println!("Creating MQTT broker client.");
-        let mut client = create_client(self.broker, self.client_id);
+        let mut client = self.create_client();
 
         if let Err(err) = block_on(async {
             let mut stream = subscribe_to_broker(&mut client, self.topics, self.qos).await;
@@ -54,21 +54,19 @@ impl Ingestor {
             eprintln!("{}", err);
         }
     }
-}
 
-/// Create a broker client with the given broker URI and client ID.
-fn create_client(broker: &str, client_id: &str) -> AsyncClient {
-    let create_options = mqtt::CreateOptionsBuilder::new()
-        .server_uri(broker)
-        .client_id(client_id)
-        .finalize();
+    /// Create a broker client with the given broker URI and client ID.
+    fn create_client(&self) -> AsyncClient {
+        let create_options = mqtt::CreateOptionsBuilder::new()
+            .server_uri(self.broker)
+            .client_id(self.client_id)
+            .finalize();
 
-    let mut client = mqtt::AsyncClient::new(create_options).unwrap_or_else(|e| {
-        eprintln!("Error creating the client: {:?}", e);
-        process::exit(1);
-    });
-
-    client
+        mqtt::AsyncClient::new(create_options).unwrap_or_else(|e| {
+            eprintln!("Error creating the client: {:?}", e);
+            process::exit(1);
+        })
+    }
 }
 
 /// Make the connection to the broker and subscribe to the specified topics.
