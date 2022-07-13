@@ -22,18 +22,16 @@
  */
 use std::{fmt, mem};
 use std::fmt::Formatter;
+use std::fs::File;
 use std::sync::Arc;
 use datafusion::arrow::array::{ArrayBuilder, Float32Array, PrimitiveBuilder, TimestampMicrosecondArray};
 use datafusion::arrow::datatypes::{DataType, Field, Float32Type, Schema, TimestampMicrosecondType};
 use datafusion::arrow::datatypes::TimeUnit::Microsecond;
-use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::arrow::record_batch::{RecordBatch, RecordBatchReader};
+use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader, ProjectionMask};
+use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use crate::storage::data_point::DataPoint;
 use crate::storage::{INITIAL_BUILDER_CAPACITY, MetaData, Timestamp, Value};
-
-/// Trait to provide common functionality between different kinds of time series.
-pub trait TimeSeries {
-    fn get_data(&mut self) -> RecordBatch;
-}
 
 /// Struct representing a single time series being built, consisting of a series of timestamps and
 /// values. Note that since array builders are used, the data can only be read once the builders are
@@ -56,24 +54,6 @@ impl fmt::Display for TimeSeriesBuilder {
         f.write_str(&*format!("values capacity: {})", self.values.capacity()));
 
         Ok(())
-    }
-}
-
-impl TimeSeries for TimeSeriesBuilder {
-    /// Finishes the array builders and returns the data in a structured record batch.
-    fn get_data(&mut self) -> RecordBatch {
-        let timestamps = self.timestamps.finish();
-        let values = self.values.finish();
-
-        let schema = Schema::new(vec![
-            Field::new("timestamps", DataType::Timestamp(Microsecond, None), false),
-            Field::new("values", DataType::Float32, false),
-        ]);
-
-        RecordBatch::try_new(
-            Arc::new(schema),
-            vec![Arc::new(timestamps), Arc::new(values)]
-        ).unwrap()
     }
 }
 
@@ -128,11 +108,50 @@ impl TimeSeriesBuilder {
 
         println!("Inserted data point into {}.", self)
     }
+
+    /// Finishes the array builders and returns the data in a structured record batch.
+    fn get_data(&mut self) -> RecordBatch {
+        let timestamps = self.timestamps.finish();
+        let values = self.values.finish();
+
+        let schema = Schema::new(vec![
+            Field::new("timestamps", DataType::Timestamp(Microsecond, None), false),
+            Field::new("values", DataType::Float32, false),
+        ]);
+
+        RecordBatch::try_new(
+            Arc::new(schema),
+            vec![Arc::new(timestamps), Arc::new(values)]
+        ).unwrap()
+    }
 }
 
 pub struct BufferedTimeSeries {
     pub path: String,
     pub metadata: MetaData,
+}
+
+impl BufferedTimeSeries {
+    fn get_data(&mut self) -> RecordBatch {
+        let file = File::open(&self.path).unwrap();
+        let file_reader = SerializedFileReader::new(file).unwrap();
+
+        let file_metadata = file_reader.metadata().file_metadata();
+        let mask = ProjectionMask::leaves(file_metadata.schema_descr(), [0]);
+
+        let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(file_reader));
+
+        println!("Converted arrow schema is: {}", arrow_reader.get_schema().unwrap());
+        println!("Arrow schema after projection is: {}",
+                 arrow_reader.get_schema_by_columns(mask.clone()).unwrap());
+
+        let mut unprojected = arrow_reader.get_record_reader(2048).unwrap();
+        println!("Unprojected reader schema: {}", unprojected.schema());
+
+        let mut record_batch_reader = arrow_reader.get_record_reader_by_columns(mask, 2048).unwrap();
+        // TODO: Fix problem where the values are missing. This might be a print issue.
+        record_batch_reader.next().unwrap().unwrap()
+    }
 }
 
 pub struct QueuedTimeSeries {
