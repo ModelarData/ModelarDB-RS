@@ -1,14 +1,4 @@
-//! Module containing support for data ingestion from an MQTT broker.
-//!
-//! The connection settings of the ingestor are controlled through the broker, client_id, topics,
-//! and qos fields. Note that the client ID should be unique.
-//!
-//! To use the ingestor, run the "ingestor.start()" function. This functions first creates the client.
-//! Then it uses the created client to connect to the broker and subscribe to the specified topics.
-//! The connection message stream is then looped over to ingest the messages that are published to the topics.
-//!
-
-/* Copyright 2021 The MiniModelarDB Contributors
+/* Copyright 2022 The MiniModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,15 +12,28 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+//! Support for data ingestion from an MQTT broker.
+//!
+//! To use the ingestor, run the "ingestor.start()" function. This function first creates the client.
+//! Then it uses the created client to connect to the broker and subscribe to the specified topics.
+//! The connection message stream is then looped over to ingest the messages that are published to the topics.
+
 use futures::{executor::block_on, stream::StreamExt};
 use paho_mqtt as mqtt;
 use paho_mqtt::{AsyncClient, AsyncReceiver, Message};
 use std::{process, time::Duration};
 
+/// A single MQTT client that can subscribe to the specified broker and ingest messages from the
+/// specified topics. Note that after creation, the ingestor needs to be started to ingest messages.
 pub struct Ingestor {
+    /// Server URI for the MQTT broker.
     pub broker: &'static str,
+    /// ID that is used to uniquely identify the ingestor as a client to the MQTT broker.
     pub client_id: &'static str,
+    /// Specific topics that should be subscribed to. Use "\[*]" to subscribe to all topics.
     pub topics: &'static [&'static str],
+    /// The quality of service for each subscribed-to topic. Should be of same length as `topics` field.
     pub qos: &'static [i32],
 }
 
@@ -53,7 +56,6 @@ impl Ingestor {
     }
 }
 
-/** Private Functions **/
 /// Create a broker client with the given broker URI and client ID.
 fn create_client(broker: &str, client_id: &str) -> AsyncClient {
     let create_options = mqtt::CreateOptionsBuilder::new()
