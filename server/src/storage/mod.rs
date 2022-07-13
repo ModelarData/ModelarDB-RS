@@ -1,12 +1,4 @@
-//! Module containing support for formatting uncompressed data, storing uncompressed data both
-//! in-memory and in a parquet file data buffer, and storing compressed data.
-//!
-//! The interface for interacting with the storage engine is the public "StorageEngine" struct that
-//! exposes the public "new" and "insert_data" functions. The storage engine should always be
-//! initialized with "StorageEngine::new()". Using "insert_data", sensor data can be inserted into
-//! the engine where it is further processed to reach the final compressed state.
-//!
-/* Copyright 2021 The MiniModelarDB Contributors
+/* Copyright 2022 The MiniModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +12,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+//! Support for formatting uncompressed data, storing uncompressed data both
+//! in-memory and in a parquet file data buffer, and storing compressed data.
+//!
+//! The interface for interacting with the storage engine is the public "StorageEngine" struct that
+//! exposes the public "new" and "insert_data" functions. The storage engine should always be
+//! initialized with "StorageEngine::new()". Using "insert_data", sensor data can be inserted into
+//! the engine where it is further processed to reach the final compressed state.
+
 mod data_point;
 mod time_series;
 
@@ -31,7 +32,7 @@ use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
 use paho_mqtt::Message;
 use crate::storage::data_point::DataPoint;
-use crate::storage::time_series::{BufferedTimeSeries, QueuedTimeSeries, TimeSeries, TimeSeriesBuilder};
+use crate::storage::time_series::{BufferedTimeSeries, QueuedTimeSeries, TimeSeriesBuilder};
 
 type Timestamp = i64;
 type Value = f32;
@@ -41,20 +42,17 @@ const RESERVED_MEMORY_BYTES: usize = 3500;
 const BUFFER_COUNT: u16 = 1;
 const INITIAL_BUILDER_CAPACITY: usize = 100;
 
-/// Struct responsible for keeping track of all uncompressed data, either in memory or in a file buffer.
-/// The struct also provides a queue to prioritize data for compression. The fields should
-/// not be directly modified and are therefore only changed when using "insert_data".
-///
-/// # Fields
-/// * `data` - Hash map from the time series ID to the in-memory uncompressed data of the time series.
-/// * `data_buffer` - Hash map from the time series ID to the path of the parquet file buffer.
-/// * `compression_queue` - Prioritized queue of time series that can be compressed.
-/// * `remaining_bytes` - Continuously updated tracker of how many of the reserved bytes are remaining.
+/// Keeping track of all uncompressed data, either in memory or in a file buffer. Also provides a
+/// queue to prioritize data for compression. The fields should not be directly modified and are
+/// therefore only changed when using "insert_data".
 pub struct StorageEngine {
+    /// The uncompressed time series while they are being built.
     data: HashMap<String, TimeSeriesBuilder>,
-    // TODO: When we have two buffered time series from the same sensor we have a key duplicate. Fix this.
+    /// The uncompressed time series, saved in a parquet file buffer.
     data_buffer: HashMap<String, BufferedTimeSeries>,
+    /// Prioritized queue of time series that can be compressed.
     compression_queue: VecDeque<QueuedTimeSeries>,
+    /// Continuously updated tracker of how many of the reserved bytes are remaining.
     remaining_bytes: usize,
 }
 
@@ -86,7 +84,8 @@ impl StorageEngine {
             println!("Found existing time series with key '{}'.", key);
 
             time_series.insert_data(&data_point);
-
+            // TODO: Fix the problem where if we increase capacity but does use the space yet and that ts is then
+            //       buffered. The extra space is not accounted for.
             // If further updates will trigger reallocation of the builder, ensure there is enough memory.
             let needed_bytes = time_series.get_needed_memory_for_update();
             self.manage_memory_use(needed_bytes);
@@ -140,7 +139,7 @@ impl StorageEngine {
                         metadata: time_series.metadata.to_vec(),
                     };
 
-                    println!("{:?}", buffered_time_series.get_data());
+                    // TODO: When we have two buffered time series from the same sensor we have a key duplicate. Fix this.
                     self.data_buffer.insert(key.to_owned(), buffered_time_series);
 
                     println!("Freeing {} bytes from the reserved memory.", ts_size);

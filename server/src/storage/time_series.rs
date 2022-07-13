@@ -1,12 +1,4 @@
-//! Module containing support for different kinds of stored time series.
-//!
-//! The main TimeSeriesBuilder struct provides support for inserting and storing data in a in-memory time
-//! series. Furthermore, the data can be retrieved as a structured record batch. BufferedTimeSeries
-//! provides a simple struct to keep track of time series that have been saved to a file buffer.
-//! Similarly the data can be retrieved from the buffer as a record batch. Finally, the QueuedTimeSeries
-//! struct provides a simple representation that can be inserted into a queue.
-//!
-/* Copyright 2021 The MiniModelarDB Contributors
+/* Copyright 2022 The MiniModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -20,6 +12,15 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+//! Support for different kinds of stored time series.
+//!
+//! The main TimeSeriesBuilder struct provides support for inserting and storing data in a in-memory time
+//! series. Furthermore, the data can be retrieved as a structured record batch. BufferedTimeSeries
+//! provides a simple struct to keep track of time series that have been saved to a file buffer.
+//! Similarly the data can be retrieved from the buffer as a record batch. Finally, the QueuedTimeSeries
+//! struct provides a simple representation that can be inserted into a queue.
+
 use std::{fmt, mem};
 use std::fmt::Formatter;
 use std::fs::File;
@@ -33,17 +34,15 @@ use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use crate::storage::data_point::DataPoint;
 use crate::storage::{INITIAL_BUILDER_CAPACITY, MetaData, Timestamp, Value};
 
-/// Struct representing a single time series being built, consisting of a series of timestamps and
-/// values. Note that since array builders are used, the data can only be read once the builders are
-/// finished and can not be further appended to after.
-///
-/// # Fields
-/// * `timestamps` - Arrow array builder consisting of timestamps with microsecond precision.
-/// * `values` - Arrow array builder consisting of float values.
-/// * `metadata` - List of metadata used to uniquely identify the time series (and related sensor).
+/// A single time series being built, consisting of a series of timestamps and values. Note that
+/// since array builders are used, the data can only be read once the builders are finished and
+/// can not be further appended to after.
 pub struct TimeSeriesBuilder {
+    /// Builder consisting of timestamps with microsecond precision.
     timestamps: PrimitiveBuilder<TimestampMicrosecondType>,
+    /// Builder consisting of float values.
     values: PrimitiveBuilder<Float32Type>,
+    /// Metadata used to uniquely identify the time series (and related sensor).
     pub metadata: MetaData,
 }
 
@@ -74,7 +73,8 @@ impl TimeSeriesBuilder {
             + (mem::size_of::<Value>() * self.values.capacity())
     }
 
-    /// Check if there is enough memory available to create a new time series, initiate buffering if not.
+    // TODO: Fix the issue where the calculated size of a created time series does not match the actual.
+    /// Return the constant amount of bytes needed to allocate memory for a new time series.
     pub fn get_needed_memory_for_create() -> usize {
         let needed_bytes_timestamps = mem::size_of::<Timestamp>() * INITIAL_BUILDER_CAPACITY;
         let needed_bytes_values = mem::size_of::<Value>() * INITIAL_BUILDER_CAPACITY;
@@ -109,8 +109,8 @@ impl TimeSeriesBuilder {
         println!("Inserted data point into {}.", self)
     }
 
-    /// Finishes the array builders and returns the data in a structured record batch.
-    fn get_data(&mut self) -> RecordBatch {
+    /// Finish the array builders and return the data in a structured record batch.
+    pub fn get_data(&mut self) -> RecordBatch {
         let timestamps = self.timestamps.finish();
         let values = self.values.finish();
 
@@ -132,7 +132,8 @@ pub struct BufferedTimeSeries {
 }
 
 impl BufferedTimeSeries {
-    fn get_data(&mut self) -> RecordBatch {
+    /// Retrieve the data from the saved path and return it in a structured record batch.
+    pub fn get_data(&mut self) -> RecordBatch {
         let file = File::open(&self.path).unwrap();
         let file_reader = SerializedFileReader::new(file).unwrap();
 

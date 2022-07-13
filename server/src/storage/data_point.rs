@@ -1,7 +1,4 @@
-//! Module containing representation of a single internal data point. Note that this struct is mainly
-//! used when transitioning from a raw message into the in-memory representation.
-//!
-/* Copyright 2021 The MiniModelarDB Contributors
+/* Copyright 2022 The MiniModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,6 +12,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+//! Support for a single internal data point. Note that this struct is mainly
+//! used when transitioning from a raw message into the in-memory representation.
+
 use paho_mqtt::Message;
 use crate::storage::{MetaData, Timestamp, Value};
 
