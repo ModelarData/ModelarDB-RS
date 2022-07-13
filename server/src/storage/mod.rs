@@ -52,6 +52,7 @@ const INITIAL_BUILDER_CAPACITY: usize = 100;
 /// * `remaining_bytes` - Continuously updated tracker of how many of the reserved bytes are remaining.
 pub struct StorageEngine {
     data: HashMap<String, TimeSeriesBuilder>,
+    // TODO: When we have two buffered time series from the same sensor we have a key duplicate. Fix this.
     data_buffer: HashMap<String, BufferedTimeSeries>,
     compression_queue: VecDeque<QueuedTimeSeries>,
     remaining_bytes: usize,
@@ -66,10 +67,6 @@ impl StorageEngine {
         StorageEngine {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             data: HashMap::new(),
-            // TODO: Instead of having to look in two different places when getting the data for
-            //       compression, have a single hashmap with elements with a trait (rust book).
-            //       The trait should have a function to get the data and the compressor can then just
-            //       use this function. This would have a different implementation for buffered and normal.
             data_buffer: HashMap::new(),
             compression_queue: VecDeque::new(),
             remaining_bytes: RESERVED_MEMORY_BYTES,
@@ -138,11 +135,12 @@ impl StorageEngine {
                     write_batch_to_parquet(batch, path.to_owned());
 
                     // Add the buffered time series to the data buffer hashmap to save the path.
-                    let buffered_time_series = BufferedTimeSeries {
+                    let mut buffered_time_series = BufferedTimeSeries {
                         path: path.to_owned(),
                         metadata: time_series.metadata.to_vec(),
                     };
 
+                    println!("{:?}", buffered_time_series.get_data());
                     self.data_buffer.insert(key.to_owned(), buffered_time_series);
 
                     println!("Freeing {} bytes from the reserved memory.", ts_size);
@@ -171,6 +169,7 @@ impl StorageEngine {
     }
 }
 
+// TODO: create a folder for the buffered data.
 /// Write the given record batch to a parquet file with the given path.
 fn write_batch_to_parquet(batch: RecordBatch, path: String) {
     // Write the record batch to the parquet file buffer.
