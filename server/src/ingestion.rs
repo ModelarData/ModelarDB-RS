@@ -44,7 +44,7 @@ impl Ingestor {
         let mut client = self.create_client();
 
         if let Err(err) = block_on(async {
-            let mut stream = subscribe_to_broker(&mut client, self.topics, self.qos).await;
+            let mut stream = self.subscribe_to_broker(&mut client).await;
 
             println!("Waiting for messages...");
             ingest_messages(&mut stream, &mut client).await;
@@ -67,34 +67,30 @@ impl Ingestor {
             process::exit(1);
         })
     }
-}
 
-/// Make the connection to the broker and subscribe to the specified topics.
-async fn subscribe_to_broker(
-    client: &mut AsyncClient,
-    topics: &[&str],
-    qos: &[i32],
-) -> AsyncReceiver<Option<Message>> {
-    // Get message stream before connecting since messages can arrive as soon as the connection is made.
-    let mut stream = client.get_stream(25);
+    /// Make the connection to the broker and subscribe to the specified topics.
+    async fn subscribe_to_broker(&self, client: &mut AsyncClient) -> AsyncReceiver<Option<Message>> {
+        // Get message stream before connecting since messages can arrive as soon as the connection is made.
+        let mut stream = client.get_stream(25);
 
-    // Define last will and testament message to notify other clients about disconnect.
-    let lwt = mqtt::Message::new("mdb_lwt", "ModelarDB lost connection", mqtt::QOS_1);
+        // Define last will and testament message to notify other clients about disconnect.
+        let lwt = mqtt::Message::new("mdb_lwt", "ModelarDB lost connection", mqtt::QOS_1);
 
-    let connect_options = mqtt::ConnectOptionsBuilder::new()
-        .keep_alive_interval(Duration::from_secs(30))
-        .mqtt_version(mqtt::MQTT_VERSION_3_1_1)
-        .clean_session(false)
-        .will_message(lwt)
-        .finalize();
+        let connect_options = mqtt::ConnectOptionsBuilder::new()
+            .keep_alive_interval(Duration::from_secs(30))
+            .mqtt_version(mqtt::MQTT_VERSION_3_1_1)
+            .clean_session(false)
+            .will_message(lwt)
+            .finalize();
 
-    println!("Connecting to MQTT broker.");
-    client.connect(connect_options).await;
+        println!("Connecting to MQTT broker.");
+        client.connect(connect_options).await;
 
-    println!("Subscribing to topics: {:?}", topics);
-    client.subscribe_many(topics, qos).await;
+        println!("Subscribing to topics: {:?}", topics);
+        client.subscribe_many(self.topics, self.qos).await;
 
-    stream
+        stream
+    }
 }
 
 // TODO: Send the messages to the storage engine when they are retrieved.
