@@ -21,18 +21,15 @@
 //! Similarly the data can be retrieved from the buffer as a record batch. Finally, the QueuedTimeSeries
 //! struct provides a simple representation that can be inserted into a queue.
 
-use std::{fmt, mem};
+use std::{fmt};
 use std::fmt::Formatter;
-use std::fs::File;
 use std::sync::Arc;
 use datafusion::arrow::array::{ArrayBuilder, Float32Array, PrimitiveBuilder, TimestampMicrosecondArray};
 use datafusion::arrow::datatypes::{DataType, Field, Float32Type, Schema, TimestampMicrosecondType};
 use datafusion::arrow::datatypes::TimeUnit::Microsecond;
-use datafusion::arrow::record_batch::{RecordBatch, RecordBatchReader};
-use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader, ProjectionMask};
-use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
+use datafusion::arrow::record_batch::{RecordBatch};
 use crate::storage::data_point::DataPoint;
-use crate::storage::{INITIAL_BUILDER_CAPACITY, MetaData, Timestamp, Value};
+use crate::storage::{INITIAL_BUILDER_CAPACITY, MetaData};
 
 /// A single time series being built, consisting of a series of timestamps and values. Note that
 /// since array builders are used, the data can only be read once the builders are finished and
@@ -67,23 +64,12 @@ impl TimeSeriesBuilder {
         }
     }
 
-    /// Check if an update will expand the capacity of the builders. If so, get the needed bytes for the new capacity.
-    pub fn get_needed_memory_for_update(&self) -> usize {
-        let len = self.timestamps.len();
-        let mut needed_bytes_timestamps: usize = 0;
-        let mut needed_bytes_values: usize = 0;
+    /// If at least one of the builders are at capacity, return true.
+    pub fn is_full(&self) -> bool {
+        // The length is always the same for both builders.
+        let length = self.timestamps.len();
 
-        // If the current length is equal to the capacity, adding one more value will trigger reallocation.
-        if len == self.timestamps.capacity() {
-            needed_bytes_timestamps = mem::size_of::<Timestamp>() * self.timestamps.capacity();
-        }
-
-        // Note that there is no guarantee that the timestamps capacity is equal to the values capacity.
-        if len == self.values.capacity() {
-            needed_bytes_values = mem::size_of::<Value>() * self.values.capacity();
-        }
-
-        needed_bytes_timestamps + needed_bytes_values
+        length == self.timestamps.capacity() || length == self.values.capacity()
     }
 
     /// Add the timestamp and value from the data point to the time series array builders.

@@ -32,14 +32,12 @@ use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
 use paho_mqtt::Message;
 use crate::storage::data_point::DataPoint;
-use crate::storage::time_series::{BufferedTimeSeries, QueuedTimeSeries, TimeSeriesBuilder};
+use crate::storage::time_series::{TimeSeriesBuilder};
 
 type Timestamp = i64;
 type Value = f32;
 type MetaData = Vec<String>;
 
-const RESERVED_MEMORY_BYTES: usize = 3500;
-const BUFFER_COUNT: u16 = 1;
 const INITIAL_BUILDER_CAPACITY: usize = 100;
 
 /// Keeping track of all uncompressed data, either in memory or in a file buffer. The fields should
@@ -47,6 +45,8 @@ const INITIAL_BUILDER_CAPACITY: usize = 100;
 pub struct StorageEngine {
     /// The uncompressed time series while they are being built.
     data: HashMap<String, TimeSeriesBuilder>,
+    /// Prioritized queue of finished time series that are ready for compression.
+    compression_queue: VecDeque<TimeSeriesBuilder>
 }
 
 impl StorageEngine {
@@ -54,6 +54,7 @@ impl StorageEngine {
         StorageEngine {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             data: HashMap::new(),
+            compression_queue: VecDeque::new()
         }
     }
 
@@ -68,6 +69,13 @@ impl StorageEngine {
             println!("Found existing time series with key '{}'.", key);
 
             time_series.insert_data(&data_point);
+
+            if time_series.is_full() {
+                println!("Time series is full, moving it to the compression queue.");
+
+                let finished_time_series = self.data.remove(&*key).unwrap();
+                self.compression_queue.push_back(finished_time_series);
+            }
         } else {
             println!("Could not find time series with key '{}'. Creating time series.", key);
 
@@ -76,8 +84,6 @@ impl StorageEngine {
 
             self.data.insert(key, time_series);
         }
-
-        println!() // Formatting newline.
     }
 }
 
