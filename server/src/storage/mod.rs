@@ -48,33 +48,18 @@ const INITIAL_BUILDER_CAPACITY: usize = 100;
 pub struct StorageEngine {
     /// The uncompressed time series while they are being built.
     data: HashMap<String, TimeSeriesBuilder>,
-    /// The uncompressed time series, saved in a parquet file buffer.
-    data_buffer: HashMap<String, BufferedTimeSeries>,
-    /// Prioritized queue of time series that can be compressed.
-    compression_queue: VecDeque<QueuedTimeSeries>,
-    /// Continuously updated tracker of how many of the reserved bytes are remaining.
-    remaining_bytes: usize,
 }
 
-// TODO: For compression to work we need a way to access the compression queue.
-// TODO: The field is private so we need a method that pops the first item, retrieves the data from
-//       in-memory or the buffer and returns it in a record batch.
-// TODO: We also need support saving the compression result. This should also be on the storage engine.
 impl StorageEngine {
     pub fn new() -> Self {
         StorageEngine {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             data: HashMap::new(),
-            data_buffer: HashMap::new(),
-            compression_queue: VecDeque::new(),
-            remaining_bytes: RESERVED_MEMORY_BYTES,
         }
     }
 
     /// Format the given message and insert it into the in-memory storage.
     pub fn insert_message(&mut self, message: Message) {
-        println!("Remaining bytes: {}", self.remaining_bytes);
-
         let data_point = DataPoint::from_message(&message);
         let key = data_point.generate_unique_key();
 
@@ -84,87 +69,16 @@ impl StorageEngine {
             println!("Found existing time series with key '{}'.", key);
 
             time_series.insert_data(&data_point);
-            // TODO: Fix the problem where if we increase capacity but does use the space yet and that ts is then
-            //       buffered. The extra space is not accounted for.
-            // If further updates will trigger reallocation of the builder, ensure there is enough memory.
-            let needed_bytes = time_series.get_needed_memory_for_update();
-            self.manage_memory_use(needed_bytes);
         } else {
             println!("Could not find time series with key '{}'. Creating time series.", key);
-
-            let needed_bytes = TimeSeriesBuilder::get_needed_memory_for_create();
-            self.manage_memory_use(needed_bytes);
 
             let mut time_series = TimeSeriesBuilder::new(data_point.metadata.to_vec());
             time_series.insert_data(&data_point);
 
-            self.queue_time_series(key.clone(), data_point.timestamp);
             self.data.insert(key, time_series);
         }
 
         println!() // Formatting newline.
-    }
-
-    // TODO: We have to always be sure of the remaining bytes to avoid "leaking".
-    // TODO: If all time series are buffered it should return to the initial reserved bytes.
-    // TODO: Fix problem where the needed bytes are larger than the total freed bytes.
-    /// Based on the given needed bytes, buffer data if necessary and update the remaining reserved bytes.
-    fn manage_memory_use(&mut self, needed_bytes: usize) {
-        if needed_bytes > self.remaining_bytes {
-            println!("Not enough memory. Moving {} time series to data buffer.", BUFFER_COUNT);
-
-            // Move the BUFFER_COUNT first time series from the compression queue to the data buffer.
-            for _n in 0..BUFFER_COUNT {
-                // TODO: We should not pop since they still need to be compressed.
-                // TODO: We also need to find the first BUFFER_COUNT elements that are not buffered yet.
-                if let Some(queued_time_series) = self.compression_queue.pop_front() {
-                    let key = &*queued_time_series.key;
-
-                    let path = format!(
-                        "{}_{}.parquet",
-                        key.replace("/", "-"),
-                        queued_time_series.start_timestamp
-                    );
-
-                    let mut time_series = self.data.get_mut(key).unwrap();
-                    let ts_size = time_series.get_size();
-
-                    // Finish the builders and write them to the parquet file buffer.
-                    let batch = time_series.get_data();
-                    write_batch_to_parquet(batch, path.to_owned());
-
-                    // Add the buffered time series to the data buffer hashmap to save the path.
-                    let mut buffered_time_series = BufferedTimeSeries {
-                        path: path.to_owned(),
-                        metadata: time_series.metadata.to_vec(),
-                    };
-
-                    // TODO: When we have two buffered time series from the same sensor we have a key duplicate. Fix this.
-                    self.data_buffer.insert(key.to_owned(), buffered_time_series);
-
-                    println!("Freeing {} bytes from the reserved memory.", ts_size);
-                    self.data.remove(key);
-
-                    // Update the remaining bytes to reflect that data has been moved to the buffer.
-                    self.remaining_bytes = self.remaining_bytes + ts_size;
-                }
-            }
-            // TODO: It might be necessary to shrink the hashmap to fit dependent on how it handles replacing with insert.
-        }
-
-        self.remaining_bytes = self.remaining_bytes - needed_bytes;
-    }
-
-    /// Push the time series referenced by the given key on to the compression queue.
-    fn queue_time_series(&mut self, key: String, timestamp: Timestamp) {
-        println!("Pushing time series with key '{}' to the back of the compression queue.", key);
-
-        let queued_time_series = QueuedTimeSeries {
-            key: key.clone(),
-            start_timestamp: timestamp,
-        };
-
-        self.compression_queue.push_back(queued_time_series);
     }
 }
 
