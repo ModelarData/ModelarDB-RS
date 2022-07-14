@@ -15,21 +15,22 @@
 
 //! Support for different kinds of stored time series.
 //!
-//! The main TimeSeriesBuilder struct provides support for inserting and storing data in a in-memory time
-//! series. Furthermore, the data can be retrieved as a structured record batch. BufferedTimeSeries
-//! provides a simple struct to keep track of time series that have been saved to a file buffer.
-//! Similarly the data can be retrieved from the buffer as a record batch. Finally, the QueuedTimeSeries
-//! struct provides a simple representation that can be inserted into a queue.
+//! The main TimeSeriesBuilder struct provides support for inserting and storing data in a in-memory
+//! time series. Furthermore, the data can be retrieved as a structured record batch.
 
-use std::{fmt};
+use std::{fmt, fs};
 use std::fmt::Formatter;
+use std::fs::File;
 use std::sync::Arc;
 use datafusion::arrow::array::{ArrayBuilder, Float32Array, PrimitiveBuilder, TimestampMicrosecondArray};
 use datafusion::arrow::datatypes::{DataType, Field, Float32Type, Schema, TimestampMicrosecondType};
 use datafusion::arrow::datatypes::TimeUnit::Microsecond;
 use datafusion::arrow::record_batch::{RecordBatch};
+use datafusion::parquet::arrow::ArrowWriter;
+use datafusion::parquet::basic::Encoding;
+use datafusion::parquet::file::properties::WriterProperties;
 use crate::storage::data_point::DataPoint;
-use crate::storage::{INITIAL_BUILDER_CAPACITY, MetaData};
+use crate::storage::{INITIAL_BUILDER_CAPACITY, MetaData, Timestamp};
 
 /// A single time series being built, consisting of a series of timestamps and values. Note that
 /// since array builders are used, the data can only be read once the builders are finished and
@@ -41,6 +42,8 @@ pub struct TimeSeriesBuilder {
     values: PrimitiveBuilder<Float32Type>,
     /// Metadata used to uniquely identify the time series (and related sensor).
     pub metadata: MetaData,
+    /// First timestamp used to uniquely identify the time series from other from the same sensor.
+    first_timestamp: Timestamp,
 }
 
 impl fmt::Display for TimeSeriesBuilder {
@@ -54,13 +57,14 @@ impl fmt::Display for TimeSeriesBuilder {
 }
 
 impl TimeSeriesBuilder {
-    pub fn new(metadata: MetaData) -> TimeSeriesBuilder {
+    pub fn new(data_point: &DataPoint) -> TimeSeriesBuilder {
         TimeSeriesBuilder {
             // Note that the actual internal capacity might be slightly larger than these values. Apache
             // arrow defines the argument as being the lower bound for how many items the builder can hold.
             timestamps: TimestampMicrosecondArray::builder(INITIAL_BUILDER_CAPACITY),
             values: Float32Array::builder(INITIAL_BUILDER_CAPACITY),
-            metadata,
+            metadata: data_point.metadata.to_vec(),
+            first_timestamp: data_point.timestamp
         }
     }
 
@@ -95,4 +99,28 @@ impl TimeSeriesBuilder {
             vec![Arc::new(timestamps), Arc::new(values)]
         ).unwrap()
     }
+
+    /// Write the given data to persistent parquet file storage.
+    pub fn save_compressed_data(&self, data: RecordBatch) {
+        let folder_name = self.metadata.join("-");
+        fs::create_dir_all(&folder_name);
+
+        let path = format!("{}/{}.parquet", folder_name, self.first_timestamp);
+        write_batch_to_parquet(data, path);
+    }
+}
+
+/// Write the given record batch to a parquet file with the given path.
+fn write_batch_to_parquet(batch: RecordBatch, path: String) {
+    // Write the record batch to the parquet file buffer.
+    let file = File::create(path).unwrap();
+    let props = WriterProperties::builder()
+        .set_dictionary_enabled(false)
+        // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
+        .set_encoding(Encoding::PLAIN)
+        .build();
+    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
+
+    writer.write(&batch).expect("Writing batch.");
+    writer.close().unwrap();
 }
