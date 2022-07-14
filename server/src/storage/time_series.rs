@@ -67,21 +67,6 @@ impl TimeSeriesBuilder {
         }
     }
 
-    /// Return the size in bytes of the given time series. Note that only the size of the builders are considered.
-    pub fn get_size(&self) -> usize {
-        (mem::size_of::<Timestamp>() * self.timestamps.capacity())
-            + (mem::size_of::<Value>() * self.values.capacity())
-    }
-
-    // TODO: Fix the issue where the calculated size of a created time series does not match the actual.
-    /// Return the constant amount of bytes needed to allocate memory for a new time series.
-    pub fn get_needed_memory_for_create() -> usize {
-        let needed_bytes_timestamps = mem::size_of::<Timestamp>() * INITIAL_BUILDER_CAPACITY;
-        let needed_bytes_values = mem::size_of::<Value>() * INITIAL_BUILDER_CAPACITY;
-
-        needed_bytes_timestamps + needed_bytes_values
-    }
-
     /// Check if an update will expand the capacity of the builders. If so, get the needed bytes for the new capacity.
     pub fn get_needed_memory_for_update(&self) -> usize {
         let len = self.timestamps.len();
@@ -124,38 +109,4 @@ impl TimeSeriesBuilder {
             vec![Arc::new(timestamps), Arc::new(values)]
         ).unwrap()
     }
-}
-
-pub struct BufferedTimeSeries {
-    pub path: String,
-    pub metadata: MetaData,
-}
-
-impl BufferedTimeSeries {
-    /// Retrieve the data from the saved path and return it in a structured record batch.
-    pub fn get_data(&mut self) -> RecordBatch {
-        let file = File::open(&self.path).unwrap();
-        let file_reader = SerializedFileReader::new(file).unwrap();
-
-        let file_metadata = file_reader.metadata().file_metadata();
-        let mask = ProjectionMask::leaves(file_metadata.schema_descr(), [0]);
-
-        let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(file_reader));
-
-        println!("Converted arrow schema is: {}", arrow_reader.get_schema().unwrap());
-        println!("Arrow schema after projection is: {}",
-                 arrow_reader.get_schema_by_columns(mask.clone()).unwrap());
-
-        let mut unprojected = arrow_reader.get_record_reader(2048).unwrap();
-        println!("Unprojected reader schema: {}", unprojected.schema());
-
-        let mut record_batch_reader = arrow_reader.get_record_reader_by_columns(mask, 2048).unwrap();
-        // TODO: Fix problem where the values are missing. This might be a print issue.
-        record_batch_reader.next().unwrap().unwrap()
-    }
-}
-
-pub struct QueuedTimeSeries {
-    pub key: String,
-    pub start_timestamp: Timestamp,
 }
