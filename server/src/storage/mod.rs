@@ -42,9 +42,8 @@ const RESERVED_MEMORY_BYTES: usize = 3500;
 const BUFFER_COUNT: u16 = 1;
 const INITIAL_BUILDER_CAPACITY: usize = 100;
 
-/// Keeping track of all uncompressed data, either in memory or in a file buffer. Also provides a
-/// queue to prioritize data for compression. The fields should not be directly modified and are
-/// therefore only changed when using "insert_data".
+/// Keeping track of all uncompressed data, either in memory or in a file buffer. The fields should
+/// not be directly modified and are therefore only changed when using "insert_data".
 pub struct StorageEngine {
     /// The uncompressed time series while they are being built.
     data: HashMap<String, TimeSeriesBuilder>,
