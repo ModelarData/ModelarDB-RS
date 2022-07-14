@@ -39,7 +39,7 @@ impl DataPoint {
         DataPoint {
             timestamp,
             value,
-            metadata: vec![message.topic().to_string()],
+            metadata: vec![message.topic().to_string().replace("/", "-")],
         }
     }
 

@@ -15,21 +15,12 @@
 
 //! Support for formatting uncompressed data, storing uncompressed data both
 //! in-memory and in a parquet file data buffer, and storing compressed data.
-//!
-//! The interface for interacting with the storage engine is the public "StorageEngine" struct that
-//! exposes the public "new" and "insert_data" functions. The storage engine should always be
-//! initialized with "StorageEngine::new()". Using "insert_data", sensor data can be inserted into
-//! the engine where it is further processed to reach the final compressed state.
 
 mod data_point;
 mod time_series;
 
 use std::collections::{HashMap, VecDeque};
-use std::fs::File;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::ArrowWriter;
-use datafusion::parquet::basic::Encoding;
-use datafusion::parquet::file::properties::WriterProperties;
 use paho_mqtt::Message;
 use crate::storage::data_point::DataPoint;
 use crate::storage::time_series::{TimeSeriesBuilder};
@@ -38,7 +29,7 @@ type Timestamp = i64;
 type Value = f32;
 type MetaData = Vec<String>;
 
-const INITIAL_BUILDER_CAPACITY: usize = 100;
+const INITIAL_BUILDER_CAPACITY: usize = 50;
 
 /// Keeping track of all uncompressed data, either in memory or in a file buffer. The fields should
 /// not be directly modified and are therefore only changed when using "insert_data".
@@ -79,26 +70,15 @@ impl StorageEngine {
         } else {
             println!("Could not find time series with key '{}'. Creating time series.", key);
 
-            let mut time_series = TimeSeriesBuilder::new(data_point.metadata.to_vec());
+            let mut time_series = TimeSeriesBuilder::new(&data_point);
             time_series.insert_data(&data_point);
 
             self.data.insert(key, time_series);
         }
     }
-}
 
-// TODO: create a folder for the buffered data.
-/// Write the given record batch to a parquet file with the given path.
-fn write_batch_to_parquet(batch: RecordBatch, path: String) {
-    // Write the record batch to the parquet file buffer.
-    let file = File::create(path).unwrap();
-    let props = WriterProperties::builder()
-        .set_dictionary_enabled(false)
-        // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
-        .set_encoding(Encoding::PLAIN)
-        .build();
-    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
-
-    writer.write(&batch).expect("Writing batch.");
-    writer.close().unwrap();
+    /// If possible, return the oldest finished time series from the compression queue.
+    pub fn get_finished_time_series(&mut self) -> Option<TimeSeriesBuilder> {
+        self.compression_queue.pop_front()
+    }
 }
