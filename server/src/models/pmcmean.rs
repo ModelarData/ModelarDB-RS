@@ -20,7 +20,7 @@
 //! [Poor Man’s Compression paper]: https://ieeexplore.ieee.org/document/1260811
 //! [ModelarDB paper]: https://dl.acm.org/doi/abs/10.14778/3236187.3236215
 
-use std::convert::TryInto;
+use std::error::Error;
 
 use datafusion::arrow::array::{Float32Builder, Int32Builder, TimestampMillisecondBuilder};
 
@@ -40,13 +40,17 @@ struct PMCMeanModelType {
 }
 
 impl PMCMeanModelType {
-    fn new(error_bound: f32) -> Self {
-        Self {
-            error_bound,
-            min_value: f32::NAN,
-            max_value: f32::NAN,
-            sum_of_values: 0.0,
-            length: 0,
+    fn try_new(error_bound: f32) -> Result<Self, String> {
+        if error_bound < 0.0 || error_bound.is_infinite() || error_bound.is_nan() {
+            Err("The error bound cannot be negative, infinite, or NaN".to_string())
+        } else {
+            Ok(Self {
+                error_bound,
+                min_value: f32::NAN,
+                max_value: f32::NAN,
+                sum_of_values: 0.0,
+                length: 0,
+            })
         }
     }
 
@@ -106,7 +110,7 @@ pub fn min_max(
     decode_model(model)
 }
 
-/// Compute the sum of the values for the a series segment whose values are
+/// Compute the sum of the values for a time series segment whose values are
 /// represented by a model of type PMC-Mean.
 pub fn sum(
     _gid: i32,
@@ -142,7 +146,7 @@ pub fn grid(
     }
 }
 
-/// Read the coefficient of a model of type PMC-Mean from a slice of bytes. The
+/// Read the coefficient for a model of type PMC-Mean from a slice of bytes. The
 /// coefficient is the average value of the time series segment whose vales are
 /// represented by the model.
 fn decode_model(model: &[u8]) -> f32 {
@@ -160,96 +164,147 @@ mod tests {
     use proptest::num::f32;
     use proptest::{prop_assert, prop_assume, proptest};
 
-    // Testing for PMCMeanModelType.
+    // Tests for PMCMeanModelType.
+    proptest! {
     #[test]
-    fn test_fit_sequence_of_nans() {
-        fit_sequence_of_constant_value(f32::NAN)
+    fn test_error_bound_can_be_positive(error_bound in f32::POSITIVE) {
+        assert!(PMCMeanModelType::try_new(error_bound).is_ok())
     }
 
     #[test]
-    fn test_fit_sequence_of_positive_infinity() {
-        fit_sequence_of_constant_value(f32::INFINITY)
+    fn test_error_bound_cannot_be_negative(error_bound in f32::NEGATIVE) {
+        assert!(PMCMeanModelType::try_new(error_bound).is_err())
+    }
     }
 
     #[test]
-    fn test_fit_sequence_of_negative_infinity() {
-        fit_sequence_of_constant_value(f32::NEG_INFINITY)
+    fn test_error_bound_cannot_be_positive_infinity() {
+        assert!(PMCMeanModelType::try_new(f32::INFINITY).is_err())
     }
 
-    fn fit_sequence_of_constant_value(value: f32) {
-        let mut state = PMCMeanModelType::new(0.0);
+    #[test]
+    fn test_error_bound_cannot_be_negative_infinity() {
+        assert!(PMCMeanModelType::try_new(f32::NEG_INFINITY).is_err())
+    }
+
+    #[test]
+    fn test_error_bound_cannot_be_nan() {
+        assert!(PMCMeanModelType::try_new(f32::NAN).is_err())
+    }
+
+    #[test]
+    fn test_can_fit_sequence_of_positive_infinity_with_error_bound_zero() {
+        can_fit_sequence_of_value_with_error_bound_zero(f32::INFINITY)
+    }
+
+    #[test]
+    fn test_can_fit_sequence_of_negative_infinity_with_error_bound_zero() {
+        can_fit_sequence_of_value_with_error_bound_zero(f32::NEG_INFINITY)
+    }
+
+    #[test]
+    fn test_can_fit_sequence_of_nans_with_error_bound_zero() {
+        can_fit_sequence_of_value_with_error_bound_zero(f32::NAN)
+    }
+
+    fn can_fit_sequence_of_value_with_error_bound_zero(value: f32) {
+        let mut model_type = PMCMeanModelType::try_new(0.0).unwrap();
         for _ in 0..5 {
-            assert!(state.fit_value(value));
+            assert!(model_type.fit_value(value));
         }
 
         if value.is_nan() {
-            assert!(state.get_model().is_nan());
+            assert!(model_type.get_model().is_nan());
         } else {
-            assert!(state.get_model() == value);
+            assert_eq!(model_type.get_model(), value);
         }
     }
 
+    proptest! {
     #[test]
-    fn test_fit_sequence_of_different_values_with_error_bound_zero() {
-        assert!(!fit_sequence_of_different_values(0.0))
+    fn test_can_fit_one_value(value in f32::ANY) {
+        prop_assert!(PMCMeanModelType::try_new(0.0).unwrap().fit_value(value));
     }
 
     #[test]
-    fn test_fit_sequence_of_different_values_with_error_bound_five() {
-        assert!(fit_sequence_of_different_values(5.0))
+    fn test_cannot_fit_other_value_and_positive_infinity(value in f32::ANY) {
+        prop_assume!(value != f32::INFINITY);
+        let mut model_type = PMCMeanModelType::try_new(f32::MAX).unwrap();
+        prop_assert!(model_type.fit_value(value));
+        prop_assert!(!model_type.fit_value(f32::INFINITY));
     }
 
-    fn fit_sequence_of_different_values(error_bound: f32) -> bool {
-        let mut state = PMCMeanModelType::new(error_bound);
+    #[test]
+    fn test_cannot_fit_other_value_and_negative_infinity(value in f32::ANY) {
+        prop_assume!(value != f32::NEG_INFINITY);
+        let mut model_type = PMCMeanModelType::try_new(f32::MAX).unwrap();
+        prop_assert!(model_type.fit_value(value));
+        prop_assert!(!model_type.fit_value(f32::NEG_INFINITY));
+    }
+
+    #[test]
+    fn test_cannot_fit_other_value_and_nan(value in f32::ANY) {
+        prop_assume!(!value.is_nan());
+        let mut model_type = PMCMeanModelType::try_new(f32::MAX).unwrap();
+        prop_assert!(model_type.fit_value(value));
+        prop_assert!(!model_type.fit_value(f32::NAN));
+    }
+
+    #[test]
+    fn test_cannot_fit_positive_infinity_and_other_value(value in f32::ANY) {
+        prop_assume!(value != f32::INFINITY);
+        let mut model_type = PMCMeanModelType::try_new(f32::MAX).unwrap();
+        prop_assert!(model_type.fit_value(f32::INFINITY));
+        prop_assert!(!model_type.fit_value(value));
+    }
+
+    #[test]
+    fn test_cannot_fit_negative_infinity_and_other_value(value in f32::ANY) {
+        prop_assume!(value != f32::NEG_INFINITY);
+        let mut model_type = PMCMeanModelType::try_new(f32::MAX).unwrap();
+        prop_assert!(model_type.fit_value(f32::NEG_INFINITY));
+        prop_assert!(!model_type.fit_value(value));
+    }
+
+    #[test]
+    fn test_cannot_fit_nan_and_other_value(value in f32::ANY) {
+        prop_assume!(!value.is_nan());
+        let mut model_type = PMCMeanModelType::try_new(f32::MAX).unwrap();
+        prop_assert!(model_type.fit_value(f32::NAN));
+        prop_assert!(!model_type.fit_value(value));
+    }
+    }
+
+    #[test]
+    fn test_cannot_fit_sequence_of_different_values_with_error_bound_zero() {
+        assert!(!fit_sequence_of_different_values_with_error_bound(0.0))
+    }
+
+    #[test]
+    fn test_can_fit_sequence_of_different_values_with_error_bound_five() {
+        assert!(fit_sequence_of_different_values_with_error_bound(5.0))
+    }
+
+    fn fit_sequence_of_different_values_with_error_bound(error_bound: f32) -> bool {
+        let mut model_type = PMCMeanModelType::try_new(error_bound).unwrap();
         let mut fit_all_values = true;
-        for value in [42.0, 42.8, 42.0] {
-            fit_all_values &= state.fit_value(value);
+        for value in [42.0, 42.0, 42.8, 42.0, 42.0] {
+            fit_all_values &= model_type.fit_value(value);
         }
         return fit_all_values;
     }
 
-    proptest! {
-    #[test]
-    fn test_fit_one_value_always_succeeds(value in f32::ANY) {
-        prop_assert!(PMCMeanModelType::new(0.0).fit_value(value));
-    }
-
-    #[test]
-    fn test_fit_nan_other_always_fails(value in f32::ANY) {
-        prop_assume!(!value.is_nan());
-        let mut state = PMCMeanModelType::new(0.0);
-        assert!(state.fit_value(f32::NAN));
-        prop_assert!(!state.fit_value(value));
-    }
-
-    #[test]
-    fn test_fit_positive_infinity_other_always_fails(value in f32::ANY) {
-        prop_assume!(value != f32::INFINITY);
-        let mut state = PMCMeanModelType::new(0.0);
-        assert!(state.fit_value(f32::INFINITY));
-        prop_assert!(!state.fit_value(value));
-    }
-
-    #[test]
-    fn test_fit_negative_infinity_other_always_fails(value in f32::ANY) {
-        prop_assume!(value != f32::NEG_INFINITY);
-        let mut state = PMCMeanModelType::new(0.0);
-        assert!(state.fit_value(f32::NEG_INFINITY));
-        prop_assert!(!state.fit_value(value));
-    }
-    }
-
-    // Tests for min_max.
+    // Tests for min_max().
     proptest! {
     #[test]
     fn test_min_max(value in f32::ANY) {
         let model = value.to_be_bytes();
-        let min_max = min_max(1, 0, 0, 0, &model, &[]);
+        let min_max = min_max(1, 1657734000, 1657734540, 60, &model, &[]);
         prop_assert!(equal_or_nan(min_max, value));
     }
     }
 
-    // Tests for sum.
+    // Tests for sum().
     proptest! {
     #[test]
     fn test_sum(value in f32::ANY) {
@@ -259,7 +314,7 @@ mod tests {
     }
     }
 
-    // Tests for the grid.
+    // Tests for grid().
     proptest! {
     #[test]
     fn test_grid(value in f32::ANY) {
@@ -299,7 +354,7 @@ mod tests {
     }
     }
 
-    // Tests for the decode_model.
+    // Tests for the decode_model().
     proptest! {
     #[test]
     fn test_decode_model(value in f32::ANY) {
@@ -308,7 +363,7 @@ mod tests {
     }
     }
 
-    // Tests for equal_or_nan.
+    // Tests for equal_or_nan().
     proptest! {
     #[test]
     fn test_equal_or_nan_equal(value in f32::ANY) {
