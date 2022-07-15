@@ -28,18 +28,32 @@ pub struct DataPoint {
 
 impl DataPoint {
     /// Given a raw MQTT message, extract the message components and return them as a data point.
-    pub fn from_message(message: &Message) -> DataPoint {
-        let message_payload = message.payload_str();
-        let first_last_off: &str = &message_payload[1..message_payload.len() - 1];
+    pub fn from_message(message: &Message) -> Result<Self, String> {
+        let payload = message.payload_str();
 
-        let timestamp_value: Vec<&str> = first_last_off.split(", ").collect();
-        let timestamp = timestamp_value[0].parse::<Timestamp>().unwrap();
-        let value = timestamp_value[1].parse::<Value>().unwrap();
+        if payload.chars().next().unwrap() != '[' || payload.chars().last().unwrap() != ']' {
+            Err("The message does not have the correct format.".to_string())
+        } else {
+            let first_last_off: &str = &payload[1..payload.len() - 1];
+            let timestamp_value: Vec<&str> = first_last_off.split(", ").collect();
 
-        DataPoint {
-            timestamp,
-            value,
-            metadata: vec![message.topic().to_string().replace("/", "-")],
+            if timestamp_value.len() != 2 {
+                Err("The message can only contain a timestamp and a single value.".to_string())
+            } else {
+                if let Ok(timestamp) = timestamp_value[0].parse::<Timestamp>() {
+                    if let Ok(value) = timestamp_value[1].parse::<Value>() {
+                        Ok(Self {
+                            timestamp,
+                            value,
+                            metadata: vec![message.topic().to_string().replace("/", "-")],
+                        })
+                    } else {
+                        Err("Value could not be parsed.".to_string())
+                    }
+                } else {
+                    Err("Timestamp could not be parsed.".to_string())
+                }
+            }
         }
     }
 
