@@ -20,13 +20,9 @@
 
 use crate::storage::data_point::DataPoint;
 use crate::storage::{MetaData, Timestamp, INITIAL_BUILDER_CAPACITY};
-use datafusion::arrow::array::{
-    ArrayBuilder, Float32Array, PrimitiveBuilder, TimestampMicrosecondArray,
-};
+use datafusion::arrow::array::{ArrayBuilder, Float32Builder, TimestampMicrosecondBuilder};
 use datafusion::arrow::datatypes::TimeUnit::Microsecond;
-use datafusion::arrow::datatypes::{
-    DataType, Field, Float32Type, Schema, TimestampMicrosecondType,
-};
+use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Encoding;
@@ -41,9 +37,9 @@ use std::{fmt, fs};
 /// can not be further appended to after.
 pub struct SegmentBuilder {
     /// Builder consisting of timestamps with microsecond precision.
-    timestamps: PrimitiveBuilder<TimestampMicrosecondType>,
+    timestamps: TimestampMicrosecondBuilder,
     /// Builder consisting of float values.
-    values: PrimitiveBuilder<Float32Type>,
+    values: Float32Builder,
     /// Metadata used to uniquely identify the segment (and related sensor).
     pub metadata: MetaData,
     /// First timestamp used to uniquely identify the segment from other from the same sensor.
@@ -65,18 +61,22 @@ impl SegmentBuilder {
         Self {
             // Note that the actual internal capacity might be slightly larger than these values. Apache
             // arrow defines the argument as being the lower bound for how many items the builder can hold.
-            timestamps: TimestampMicrosecondArray::builder(INITIAL_BUILDER_CAPACITY),
-            values: Float32Array::builder(INITIAL_BUILDER_CAPACITY),
+            timestamps: TimestampMicrosecondBuilder::new(INITIAL_BUILDER_CAPACITY),
+            values: Float32Builder::new(INITIAL_BUILDER_CAPACITY),
             metadata: data_point.metadata.to_vec(),
             first_timestamp: data_point.timestamp,
         }
     }
 
+    /// Return how many data points the segment currently contains.
+    pub fn get_length(&self) -> usize {
+        // The length is always the same for both builders.
+        self.timestamps.len()
+    }
+
     /// If at least one of the builders are at capacity, return true.
     pub fn is_full(&self) -> bool {
-        // The length is always the same for both builders.
-        let length = self.timestamps.len();
-
+        let length = self.get_length();
         length == self.timestamps.capacity() || length == self.values.capacity()
     }
 
@@ -129,8 +129,61 @@ fn write_batch_to_parquet(batch: RecordBatch, path: String) {
     writer.close().unwrap();
 }
 
-// TODO: Test checking if an empty segment is full.
-// TODO: Test checking if a full segment is full.
-// TODO: Test inserting a data point into the segment.
-// TODO: Test Getting the data from a segment.
-// TODO: Maybe test saving the compressed data (how to test saving files?)
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use paho_mqtt::Message;
+
+    fn get_empty_segment_builder() -> (DataPoint, SegmentBuilder) {
+        let message = Message::new("ModelarDB/test", "[1657878396943245, 30]", 1);
+
+        let data_point = DataPoint::from_message(&message).unwrap();
+        let segment_builder = SegmentBuilder::new(&data_point);
+
+        (data_point, segment_builder)
+    }
+
+    #[test]
+    fn test_can_get_length() {
+        let (data_point, mut segment_builder) = get_empty_segment_builder();
+
+        assert_eq!(segment_builder.get_length(), 0);
+    }
+
+    #[test]
+    fn test_can_insert_data_point() {
+        let (data_point, mut segment_builder) = get_empty_segment_builder();
+        segment_builder.insert_data(&data_point);
+
+        assert_eq!(segment_builder.get_length(), 1);
+    }
+
+    #[test]
+    fn test_can_check_segment_is_full() {
+        let (data_point, mut segment_builder) = get_empty_segment_builder();
+
+        for _ in 0..segment_builder.timestamps.capacity() {
+            segment_builder.insert_data(&data_point)
+        }
+
+        assert!(segment_builder.is_full());
+    }
+
+    #[test]
+    fn test_can_check_segment_is_not_full() {
+        let (data_point, mut segment_builder) = get_empty_segment_builder();
+
+        assert!(!segment_builder.is_full());
+    }
+
+    #[test]
+    fn test_can_get_data() {
+        let (data_point, mut segment_builder) = get_empty_segment_builder();
+        segment_builder.insert_data(&data_point);
+        segment_builder.insert_data(&data_point);
+
+        let data = segment_builder.get_data();
+        assert_eq!(data.num_columns(), 2);
+        assert_eq!(data.num_rows(), 2);
+    }
+}

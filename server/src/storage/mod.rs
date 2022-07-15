@@ -21,7 +21,6 @@ mod segment;
 
 use crate::storage::data_point::DataPoint;
 use crate::storage::segment::SegmentBuilder;
-use datafusion::arrow::record_batch::RecordBatch;
 use paho_mqtt::Message;
 use std::collections::vec_deque::VecDeque;
 use std::collections::HashMap;
@@ -32,8 +31,8 @@ type MetaData = Vec<String>;
 
 const INITIAL_BUILDER_CAPACITY: usize = 50;
 
-/// Keeping track of all uncompressed data, either in memory or in a file buffer. The fields should
-/// not be directly modified and are therefore only changed when using "insert_data".
+/// Keeping track of all uncompressed data, either in memory or in a file buffer. The data field should
+/// not be directly modified and is therefore only changed when using "insert_data".
 pub struct StorageEngine {
     /// The uncompressed segments while they are being built.
     data: HashMap<String, SegmentBuilder>,
@@ -52,34 +51,37 @@ impl StorageEngine {
 
     /// Format the given message and insert it into the in-memory storage.
     pub fn insert_message(&mut self, message: Message) {
-         match DataPoint::from_message(&message) {
-             Ok(data_point) => {
-                 let key = data_point.generate_unique_key();
+        match DataPoint::from_message(&message) {
+            Ok(data_point) => {
+                let key = data_point.generate_unique_key();
 
-                 println!("Inserting data point {:?} into key '{}'.", data_point, key);
+                println!("Inserting data point {:?} into key '{}'.", data_point, key);
 
-                 if let Some(segment) = self.data.get_mut(&*key) {
-                     println!("Found existing segment with key '{}'.", key);
+                if let Some(segment) = self.data.get_mut(&*key) {
+                    println!("Found existing segment with key '{}'.", key);
 
-                     segment.insert_data(&data_point);
+                    segment.insert_data(&data_point);
 
-                     if segment.is_full() {
-                         println!("Segment is full, moving it to the compression queue.");
+                    if segment.is_full() {
+                        println!("Segment is full, moving it to the compression queue.");
 
-                         let finished_segment = self.data.remove(&*key).unwrap();
-                         self.compression_queue.push_back(finished_segment);
-                     }
-                 } else {
-                     println!("Could not find segment with key '{}'. Creating segment.", key);
+                        let finished_segment = self.data.remove(&*key).unwrap();
+                        self.compression_queue.push_back(finished_segment);
+                    }
+                } else {
+                    println!(
+                        "Could not find segment with key '{}'. Creating segment.",
+                        key
+                    );
 
-                     let mut segment = SegmentBuilder::new(&data_point);
-                     segment.insert_data(&data_point);
+                    let mut segment = SegmentBuilder::new(&data_point);
+                    segment.insert_data(&data_point);
 
-                     self.data.insert(key, segment);
-                 }
-             }
-             Err(e) => eprintln!("Message could not be inserting into storage: {:?}", e)
-         }
+                    self.data.insert(key, segment);
+                }
+            }
+            Err(e) => eprintln!("Message could not be inserting into storage: {:?}", e),
+        }
     }
 
     /// If possible, return the oldest finished segment from the compression queue.
@@ -142,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    fn test_can_get_finished_segment_when_full() {
+    fn test_can_get_finished_segment_when_finished() {
         let mut key = String::new();
         let mut storage_engine = StorageEngine::new();
 
@@ -154,7 +156,7 @@ mod tests {
     }
 
     #[test]
-    fn test_can_get_multiple_finished_segments_when_multiple_full() {
+    fn test_can_get_multiple_finished_segments_when_multiple_finished() {
         let mut key = String::new();
         let mut storage_engine = StorageEngine::new();
 
@@ -167,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cannot_get_finished_segment_when_not_full() {
+    fn test_cannot_get_finished_segment_when_not_finished() {
         let mut storage_engine = StorageEngine::new();
 
         assert!(storage_engine.get_finished_segment().is_none());
