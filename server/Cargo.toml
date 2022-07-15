@@ -22,3 +22,4 @@ snmalloc-rs = "0.3.3"
 [dev-dependencies]
 proptest = "1.0.0"
 paho-mqtt = {version = "0.11", default-features = false, features = ["bundled"]}
+rand = "0.8"
