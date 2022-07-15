@@ -52,30 +52,34 @@ impl StorageEngine {
 
     /// Format the given message and insert it into the in-memory storage.
     pub fn insert_message(&mut self, message: Message) {
-        let data_point = DataPoint::from_message(&message);
-        let key = data_point.generate_unique_key();
+         match DataPoint::from_message(&message) {
+             Ok(data_point) => {
+                 let key = data_point.generate_unique_key();
 
-        println!("Inserting data point {:?} into key '{}'.", data_point, key);
+                 println!("Inserting data point {:?} into key '{}'.", data_point, key);
 
-        if let Some(segment) = self.data.get_mut(&*key) {
-            println!("Found existing segment with key '{}'.", key);
+                 if let Some(segment) = self.data.get_mut(&*key) {
+                     println!("Found existing segment with key '{}'.", key);
 
-            segment.insert_data(&data_point);
+                     segment.insert_data(&data_point);
 
-            if segment.is_full() {
-                println!("Segment is full, moving it to the compression queue.");
+                     if segment.is_full() {
+                         println!("Segment is full, moving it to the compression queue.");
 
-                let finished_segment = self.data.remove(&*key).unwrap();
-                self.compression_queue.push_back(finished_segment);
-            }
-        } else {
-            println!("Could not find segment with key '{}'. Creating segment.", key);
+                         let finished_segment = self.data.remove(&*key).unwrap();
+                         self.compression_queue.push_back(finished_segment);
+                     }
+                 } else {
+                     println!("Could not find segment with key '{}'. Creating segment.", key);
 
-            let mut segment = SegmentBuilder::new(&data_point);
-            segment.insert_data(&data_point);
+                     let mut segment = SegmentBuilder::new(&data_point);
+                     segment.insert_data(&data_point);
 
-            self.data.insert(key, segment);
-        }
+                     self.data.insert(key, segment);
+                 }
+             }
+             Err(e) => eprintln!("Message could not be inserting into storage: {:?}", e)
+         }
     }
 
     /// If possible, return the oldest finished segment from the compression queue.
@@ -102,7 +106,17 @@ mod tests {
 
         storage_engine.insert_message(message.clone());
 
-        DataPoint::from_message(&message).generate_unique_key()
+        DataPoint::from_message(&message).unwrap().generate_unique_key()
+    }
+
+    #[test]
+    fn test_insert_invalid_message() {
+        let mut storage_engine = StorageEngine::new();
+
+        let message = Message::new("ModelarDB/test", "invalid", 1);
+        storage_engine.insert_message(message.clone());
+
+        assert!(storage_engine.data.is_empty());
     }
 
     #[test]
