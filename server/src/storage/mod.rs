@@ -110,7 +110,7 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_invalid_message() {
+    fn test_cannot_insert_invalid_message() {
         let mut storage_engine = StorageEngine::new();
 
         let message = Message::new("ModelarDB/test", "invalid", 1);
@@ -120,7 +120,7 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_message_into_new_segment() {
+    fn test_can_insert_message_into_new_segment() {
         let mut storage_engine = StorageEngine::new();
         let key = insert_generated_message(&mut storage_engine);
 
@@ -129,7 +129,7 @@ mod tests {
     }
 
     #[test]
-    fn test_insert_message_into_existing_segment() {
+    fn test_can_insert_message_into_existing_segment() {
         let mut key = String::new();
         let mut storage_engine = StorageEngine::new();
 
@@ -142,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn test_segment_is_finished_when_full() {
+    fn test_can_get_finished_segment_when_full() {
         let mut key = String::new();
         let mut storage_engine = StorageEngine::new();
 
@@ -154,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_finished_segment_multiple_finished() {
+    fn test_can_get_multiple_finished_segments_when_multiple_full() {
         let mut key = String::new();
         let mut storage_engine = StorageEngine::new();
 
@@ -167,7 +167,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_finished_segment_none_finished() {
+    fn test_cannot_get_finished_segment_when_not_full() {
         let mut storage_engine = StorageEngine::new();
 
         assert!(storage_engine.get_finished_segment().is_none());

@@ -65,4 +65,56 @@ impl DataPoint {
     }
 }
 
-// TODO: Test for getting a data point from a message.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn get_message_with_payload(payload: &str) -> Message {
+        Message::new("ModelarDB/test", payload, 1)
+    }
+
+    #[test]
+    fn test_can_get_data_point_from_valid_message() {
+        let message = get_message_with_payload("[1657878396943245, 30]");
+        let result = DataPoint::from_message(&message);
+
+        assert!(result.is_ok());
+
+        let data_point = result.unwrap();
+        assert_eq!(data_point.timestamp, 1657878396943245);
+        assert_eq!(data_point.value, 30 as f32);
+        assert_eq!(data_point.metadata, vec!["ModelarDB-test".to_string()])
+    }
+
+    #[test]
+    fn test_cannot_get_data_point_from_message_with_invalid_format() {
+        let message = get_message_with_payload("1657878396943245, 30");
+        let result = DataPoint::from_message(&message);
+
+        assert!(result.is_err())
+    }
+
+    #[test]
+    fn test_cannot_get_data_point_from_message_with_multiple_values() {
+        let message = get_message_with_payload("[1657878396943245, 30, 40]");
+        let result = DataPoint::from_message(&message);
+
+        assert!(result.is_err())
+    }
+
+    #[test]
+    fn test_cannot_get_data_point_from_message_with_invalid_timestamp() {
+        let message = get_message_with_payload("[invalid, 30]");
+        let result = DataPoint::from_message(&message);
+
+        assert!(result.is_err())
+    }
+
+    #[test]
+    fn test_cannot_get_data_point_from_message_with_invalid_value() {
+        let message = get_message_with_payload("[1657878396943245, invalid]");
+        let result = DataPoint::from_message(&message);
+
+        assert!(result.is_err())
+    }
+}
