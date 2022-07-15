@@ -16,8 +16,8 @@
 //! Support for a single internal data point. Note that this struct is mainly
 //! used when transitioning from a raw message into the in-memory representation.
 
-use paho_mqtt::Message;
 use crate::storage::{MetaData, Timestamp, Value};
+use paho_mqtt::Message;
 
 #[derive(Debug)]
 pub struct DataPoint {
@@ -43,9 +43,12 @@ impl DataPoint {
         }
     }
 
-    // TODO: Currently the only information we have to uniquely identify a sensor is the ID. If this changes, change this function.
+    // TODO: Currently the only information we have to uniquely identify a sensor is the topic.
+    //       If this changes, change this function.
     /// Generates an unique key for a time series based on the information in the message.
     pub fn generate_unique_key(&self) -> String {
         self.metadata.join("-")
     }
 }
+
+// TODO: Test for getting a data point from a message.

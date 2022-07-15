@@ -13,42 +13,46 @@
  * limitations under the License.
  */
 
-//! Support for different kinds of stored time series.
+//! Support for different kinds of stored segments.
 //!
-//! The main TimeSeriesBuilder struct provides support for inserting and storing data in a in-memory
-//! time series. Furthermore, the data can be retrieved as a structured record batch.
+//! The main SegmentBuilder struct provides support for inserting and storing data in a in-memory
+//! segment. Furthermore, the data can be retrieved as a structured record batch.
 
-use std::{fmt, fs};
-use std::fmt::Formatter;
-use std::fs::File;
-use std::sync::Arc;
-use datafusion::arrow::array::{ArrayBuilder, Float32Array, PrimitiveBuilder, TimestampMicrosecondArray};
-use datafusion::arrow::datatypes::{DataType, Field, Float32Type, Schema, TimestampMicrosecondType};
+use crate::storage::data_point::DataPoint;
+use crate::storage::{MetaData, Timestamp, INITIAL_BUILDER_CAPACITY};
+use datafusion::arrow::array::{
+    ArrayBuilder, Float32Array, PrimitiveBuilder, TimestampMicrosecondArray,
+};
 use datafusion::arrow::datatypes::TimeUnit::Microsecond;
-use datafusion::arrow::record_batch::{RecordBatch};
+use datafusion::arrow::datatypes::{
+    DataType, Field, Float32Type, Schema, TimestampMicrosecondType,
+};
+use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
-use crate::storage::data_point::DataPoint;
-use crate::storage::{INITIAL_BUILDER_CAPACITY, MetaData, Timestamp};
+use std::fmt::Formatter;
+use std::fs::File;
+use std::sync::Arc;
+use std::{fmt, fs};
 
-/// A single time series being built, consisting of a series of timestamps and values. Note that
+/// A single segment being built, consisting of a series of timestamps and values. Note that
 /// since array builders are used, the data can only be read once the builders are finished and
 /// can not be further appended to after.
-pub struct TimeSeriesBuilder {
+pub struct SegmentBuilder {
     /// Builder consisting of timestamps with microsecond precision.
     timestamps: PrimitiveBuilder<TimestampMicrosecondType>,
     /// Builder consisting of float values.
     values: PrimitiveBuilder<Float32Type>,
-    /// Metadata used to uniquely identify the time series (and related sensor).
+    /// Metadata used to uniquely identify the segment (and related sensor).
     pub metadata: MetaData,
-    /// First timestamp used to uniquely identify the time series from other from the same sensor.
+    /// First timestamp used to uniquely identify the segment from other from the same sensor.
     first_timestamp: Timestamp,
 }
 
-impl fmt::Display for TimeSeriesBuilder {
+impl fmt::Display for SegmentBuilder {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&*format!("Time series with {} data point(s) (", self.timestamps.len()));
+        f.write_str(&*format!("Segment with {} data point(s) (", self.timestamps.len()));
         f.write_str(&*format!("timestamp capacity: {}, ", self.timestamps.capacity()));
         f.write_str(&*format!("values capacity: {})", self.values.capacity()));
 
@@ -56,15 +60,15 @@ impl fmt::Display for TimeSeriesBuilder {
     }
 }
 
-impl TimeSeriesBuilder {
-    pub fn new(data_point: &DataPoint) -> TimeSeriesBuilder {
-        TimeSeriesBuilder {
+impl SegmentBuilder {
+    pub fn new(data_point: &DataPoint) -> Self {
+        Self {
             // Note that the actual internal capacity might be slightly larger than these values. Apache
             // arrow defines the argument as being the lower bound for how many items the builder can hold.
             timestamps: TimestampMicrosecondArray::builder(INITIAL_BUILDER_CAPACITY),
             values: Float32Array::builder(INITIAL_BUILDER_CAPACITY),
             metadata: data_point.metadata.to_vec(),
-            first_timestamp: data_point.timestamp
+            first_timestamp: data_point.timestamp,
         }
     }
 
@@ -76,7 +80,7 @@ impl TimeSeriesBuilder {
         length == self.timestamps.capacity() || length == self.values.capacity()
     }
 
-    /// Add the timestamp and value from the data point to the time series array builders.
+    /// Add the timestamp and value from the data point to the segment array builders.
     pub fn insert_data(&mut self, data_point: &DataPoint) {
         self.timestamps.append_value(data_point.timestamp).unwrap();
         self.values.append_value(data_point.value).unwrap();
@@ -100,7 +104,7 @@ impl TimeSeriesBuilder {
         ).unwrap()
     }
 
-    /// Write the given data to persistent parquet file storage.
+    /// Write `data` to persistent parquet file storage.
     pub fn save_compressed_data(&self, data: RecordBatch) {
         let folder_name = self.metadata.join("-");
         fs::create_dir_all(&folder_name);
@@ -110,7 +114,7 @@ impl TimeSeriesBuilder {
     }
 }
 
-/// Write the given record batch to a parquet file with the given path.
+/// Write `batch` to a parquet file at the location given by `path`.
 fn write_batch_to_parquet(batch: RecordBatch, path: String) {
     // Write the record batch to the parquet file buffer.
     let file = File::create(path).unwrap();
@@ -124,3 +128,9 @@ fn write_batch_to_parquet(batch: RecordBatch, path: String) {
     writer.write(&batch).expect("Writing batch.");
     writer.close().unwrap();
 }
+
+// TODO: Test checking if an empty segment is full.
+// TODO: Test checking if a full segment is full.
+// TODO: Test inserting a data point into the segment.
+// TODO: Test Getting the data from a segment.
+// TODO: Maybe test saving the compressed data (how to test saving files?)
