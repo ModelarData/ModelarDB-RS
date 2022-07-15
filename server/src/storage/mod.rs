@@ -23,8 +23,8 @@ use crate::storage::data_point::DataPoint;
 use crate::storage::segment::SegmentBuilder;
 use datafusion::arrow::record_batch::RecordBatch;
 use paho_mqtt::Message;
-use std::collections::{HashMap};
 use std::collections::vec_deque::VecDeque;
+use std::collections::HashMap;
 
 type Timestamp = i64;
 type Value = f32;
@@ -84,8 +84,78 @@ impl StorageEngine {
     }
 }
 
-// TODO: Test for inserting a message into a segment that does not exist.
-// TODO: Test for inserting a message into a segment that does exist.
-// TODO: Test for inserting a message into a segment that becomes full.
-// TODO: Test for getting a finished segment while there is none.
-// TODO: Test for getting a finished segment when they are at least one.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::Rng;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn insert_generated_message(storage_engine: &mut StorageEngine) -> String {
+        let value = rand::thread_rng().gen_range(0..100);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_micros();
+
+        let payload = format!("[{}, {}]", timestamp, value);
+        let message = Message::new("ModelarDB/test", payload, 1);
+
+        storage_engine.insert_message(message.clone());
+
+        DataPoint::from_message(&message).generate_unique_key()
+    }
+
+    #[test]
+    fn test_insert_message_into_new_segment() {
+        let mut storage_engine = StorageEngine::new();
+        let key = insert_generated_message(&mut storage_engine);
+
+        assert!(storage_engine.data.contains_key(&key));
+        assert_eq!(storage_engine.data.get(&key).unwrap().get_length(), 1);
+    }
+
+    #[test]
+    fn test_insert_message_into_existing_segment() {
+        let mut key = String::new();
+        let mut storage_engine = StorageEngine::new();
+
+        for _ in 0..2 {
+            key = insert_generated_message(&mut storage_engine);
+        }
+
+        assert!(storage_engine.data.contains_key(&key));
+        assert_eq!(storage_engine.data.get(&key).unwrap().get_length(), 2);
+    }
+
+    #[test]
+    fn test_segment_is_finished_when_full() {
+        let mut key = String::new();
+        let mut storage_engine = StorageEngine::new();
+
+        for _ in 0..INITIAL_BUILDER_CAPACITY * 2 {
+            key = insert_generated_message(&mut storage_engine);
+        }
+
+        assert!(storage_engine.get_finished_segment().is_some());
+    }
+
+    #[test]
+    fn test_get_finished_segment_multiple_finished() {
+        let mut key = String::new();
+        let mut storage_engine = StorageEngine::new();
+
+        for _ in 0..INITIAL_BUILDER_CAPACITY * 3 {
+            key = insert_generated_message(&mut storage_engine);
+        }
+
+        assert!(storage_engine.get_finished_segment().is_some());
+        assert!(storage_engine.get_finished_segment().is_some());
+    }
+
+    #[test]
+    fn test_get_finished_segment_none_finished() {
+        let mut storage_engine = StorageEngine::new();
+
+        assert!(storage_engine.get_finished_segment().is_none());
+    }
+}

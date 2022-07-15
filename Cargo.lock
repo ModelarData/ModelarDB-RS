@@ -1261,6 +1261,7 @@ dependencies = [
  "datafusion-physical-expr",
  "futures",
  "paho-mqtt",
+ "rand",
  "snmalloc-rs",
  "tokio",
  "tonic",
