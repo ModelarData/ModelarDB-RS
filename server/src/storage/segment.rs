@@ -32,6 +32,10 @@ use std::fs::File;
 use std::sync::Arc;
 use std::{fmt, fs};
 
+trait UncompressedSegment {
+    fn get_data(&mut self) -> RecordBatch;
+}
+
 /// A single segment being built, consisting of a series of timestamps and values. Note that
 /// since array builders are used, the data can only be read once the builders are finished and
 /// can not be further appended to after.
@@ -53,6 +57,24 @@ impl fmt::Display for SegmentBuilder {
         f.write_str(&*format!("values capacity: {})", self.values.capacity()));
 
         Ok(())
+    }
+}
+
+impl UncompressedSegment for SegmentBuilder {
+    /// Finish the array builders and return the data in a structured record batch.
+    fn get_data(&mut self) -> RecordBatch {
+        let timestamps = self.timestamps.finish();
+        let values = self.values.finish();
+
+        let schema = Schema::new(vec![
+            Field::new("timestamps", DataType::Timestamp(Microsecond, None), false),
+            Field::new("values", DataType::Float32, false),
+        ]);
+
+        RecordBatch::try_new(
+            Arc::new(schema),
+            vec![Arc::new(timestamps), Arc::new(values)]
+        ).unwrap()
     }
 }
 
@@ -86,22 +108,6 @@ impl SegmentBuilder {
         self.values.append_value(data_point.value).unwrap();
 
         println!("Inserted data point into {}.", self)
-    }
-
-    /// Finish the array builders and return the data in a structured record batch.
-    pub fn get_data(&mut self) -> RecordBatch {
-        let timestamps = self.timestamps.finish();
-        let values = self.values.finish();
-
-        let schema = Schema::new(vec![
-            Field::new("timestamps", DataType::Timestamp(Microsecond, None), false),
-            Field::new("values", DataType::Float32, false),
-        ]);
-
-        RecordBatch::try_new(
-            Arc::new(schema),
-            vec![Arc::new(timestamps), Arc::new(values)]
-        ).unwrap()
     }
 
     /// Write `data` to persistent parquet file storage.
