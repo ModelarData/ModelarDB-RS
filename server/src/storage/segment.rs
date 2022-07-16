@@ -23,14 +23,15 @@ use crate::storage::{MetaData, Timestamp, INITIAL_BUILDER_CAPACITY};
 use datafusion::arrow::array::{ArrayBuilder, Float32Builder, TimestampMicrosecondBuilder};
 use datafusion::arrow::datatypes::TimeUnit::Microsecond;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::ArrowWriter;
+use datafusion::arrow::record_batch::{RecordBatch, RecordBatchReader};
+use datafusion::parquet::arrow::{ArrowReader, ArrowWriter, ParquetFileArrowReader, ProjectionMask};
 use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
 use std::fmt::Formatter;
 use std::fs::File;
 use std::sync::Arc;
 use std::{fmt, fs};
+use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 
 trait UncompressedSegment {
     fn get_data(&mut self) -> RecordBatch;
@@ -120,6 +121,32 @@ impl SegmentBuilder {
     }
 }
 
+/// A single segment that has been saved to a parquet file buffer due to memory constraints.
+pub struct BufferedSegment {
+    /// Path to the file containing the uncompressed data in the segment.
+    path: String,
+    /// Metadata used to uniquely identify the segment (and related sensor).
+    pub metadata: MetaData,
+    /// First timestamp used to uniquely identify the segment from other from the same sensor.
+    first_timestamp: Timestamp,
+}
+
+impl UncompressedSegment for BufferedSegment {
+    /// Retrieve the data from the parquet file buffer and return it in a structured record batch.
+    fn get_data(&mut self) -> RecordBatch {
+        let file = File::open(&self.path).unwrap();
+        let file_reader = SerializedFileReader::new(file).unwrap();
+
+        let file_metadata = file_reader.metadata().file_metadata();
+        let mask = ProjectionMask::leaves(file_metadata.schema_descr(), [0]);
+
+        let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(file_reader));
+        let mut record_batch_reader = arrow_reader.get_record_reader_by_columns(mask, 2048).unwrap();
+
+        record_batch_reader.next().unwrap().unwrap()
+    }
+}
+
 /// Write `batch` to a parquet file at the location given by `path`.
 fn write_batch_to_parquet(batch: RecordBatch, path: String) {
     // Write the record batch to the parquet file buffer.
@@ -133,16 +160,6 @@ fn write_batch_to_parquet(batch: RecordBatch, path: String) {
 
     writer.write(&batch).expect("Writing batch.");
     writer.close().unwrap();
-}
-
-/// A single segment that has been saved to a parquet file buffer due to memory constraints.
-pub struct BufferedSegment {
-    /// Path to the file containing the uncompressed data in the segment.
-    path: String,
-    /// Metadata used to uniquely identify the segment (and related sensor).
-    pub metadata: MetaData,
-    /// First timestamp used to uniquely identify the segment from other from the same sensor.
-    first_timestamp: Timestamp,
 }
 
 #[cfg(test)]
