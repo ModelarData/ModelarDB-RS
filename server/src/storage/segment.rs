@@ -16,7 +16,7 @@
 //! Support for different kinds of stored segments.
 //!
 //! The main SegmentBuilder struct provides support for inserting and storing data in a in-memory
-//! segment. Furthermore, the data can be retrieved as a structured record batch.
+//! segment. The BufferedSegment provides support for storing uncompressed data in a parquet buffer.
 
 use crate::storage::data_point::DataPoint;
 use crate::storage::{MetaData, Timestamp, INITIAL_BUILDER_CAPACITY};
@@ -127,6 +127,16 @@ fn write_batch_to_parquet(batch: RecordBatch, path: String) {
 
     writer.write(&batch).expect("Writing batch.");
     writer.close().unwrap();
+}
+
+/// A single segment that has been saved to a parquet file buffer due to memory constraints.
+pub struct BufferedSegment {
+    /// Path to the file containing the uncompressed data in the segment.
+    path: String,
+    /// Metadata used to uniquely identify the segment (and related sensor).
+    pub metadata: MetaData,
+    /// First timestamp used to uniquely identify the segment from other from the same sensor.
+    first_timestamp: Timestamp,
 }
 
 #[cfg(test)]
