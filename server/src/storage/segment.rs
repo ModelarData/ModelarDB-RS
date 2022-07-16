@@ -119,9 +119,11 @@ impl UncompressedSegment for BufferedSegment {
         let file = File::open(&self.path).unwrap();
         let file_reader = SerializedFileReader::new(file).unwrap();
 
+        // Specify that we want to read the first two columns (timestamps, values) from the file.
         let file_metadata = file_reader.metadata().file_metadata();
-        let mask = ProjectionMask::leaves(file_metadata.schema_descr(), [0]);
+        let mask = ProjectionMask::leaves(file_metadata.schema_descr(), [0, 1]);
 
+        // Convert the read data into a structured record batch.
         let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(file_reader));
         let mut record_batch_reader = arrow_reader
             .get_record_reader_by_columns(mask, 2048)
