@@ -55,7 +55,7 @@ impl StorageEngine {
         }
     }
 
-    /// Format the given message and insert it into the in-memory storage.
+    /// Format `message` and insert it into the in-memory storage.
     pub fn insert_message(&mut self, message: Message) {
         match DataPoint::from_message(&message) {
             Ok(data_point) => {
@@ -75,10 +75,7 @@ impl StorageEngine {
                         self.compression_queue.push_back(finished_segment);
                     }
                 } else {
-                    println!(
-                        "Could not find segment with key '{}'. Creating segment.",
-                        key
-                    );
+                    println!("Could not find segment with key '{}'. Creating segment.", key);
 
                     let mut segment = SegmentBuilder::new(&data_point);
                     segment.insert_data(&data_point);
@@ -86,7 +83,7 @@ impl StorageEngine {
                     self.data.insert(key, segment);
                 }
             }
-            Err(e) => eprintln!("Message could not be inserting into storage: {:?}", e),
+            Err(e) => eprintln!("Message could not be inserted into storage: {:?}", e),
         }
     }
 
