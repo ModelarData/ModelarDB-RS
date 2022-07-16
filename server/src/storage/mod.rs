@@ -24,6 +24,12 @@ use crate::storage::segment::SegmentBuilder;
 use paho_mqtt::Message;
 use std::collections::vec_deque::VecDeque;
 use std::collections::HashMap;
+use std::fs;
+use std::fs::File;
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::parquet::arrow::ArrowWriter;
+use datafusion::parquet::basic::Encoding;
+use datafusion::parquet::file::properties::WriterProperties;
 
 type Timestamp = i64;
 type Value = f32;
@@ -88,6 +94,28 @@ impl StorageEngine {
     pub fn get_finished_segment(&mut self) -> Option<SegmentBuilder> {
         self.compression_queue.pop_front()
     }
+
+    /// Write `data` to persistent parquet file storage.
+    pub fn save_compressed_data(key: String, data: RecordBatch) {
+        fs::create_dir_all("compressed");
+
+        let path = format!("{}/{}.parquet", folder_name, key);
+        write_batch_to_parquet(data, path);
+    }
+}
+
+/// Write `batch` to a parquet file at the location given by `path`.
+fn write_batch_to_parquet(batch: RecordBatch, path: String) {
+    let file = File::create(path).unwrap();
+    let props = WriterProperties::builder()
+        .set_dictionary_enabled(false)
+        // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
+        .set_encoding(Encoding::PLAIN)
+        .build();
+    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
+
+    writer.write(&batch).expect("Writing batch.");
+    writer.close().unwrap();
 }
 
 #[cfg(test)]

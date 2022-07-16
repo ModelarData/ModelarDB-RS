@@ -110,15 +110,6 @@ impl SegmentBuilder {
 
         println!("Inserted data point into {}.", self)
     }
-
-    /// Write `data` to persistent parquet file storage.
-    pub fn save_compressed_data(&self, data: RecordBatch) {
-        let folder_name = self.metadata.join("-");
-        fs::create_dir_all(&folder_name);
-
-        let path = format!("{}/{}.parquet", folder_name, self.first_timestamp);
-        write_batch_to_parquet(data, path);
-    }
 }
 
 /// A single segment that has been saved to a parquet file buffer due to memory constraints.
@@ -145,21 +136,6 @@ impl UncompressedSegment for BufferedSegment {
 
         record_batch_reader.next().unwrap().unwrap()
     }
-}
-
-/// Write `batch` to a parquet file at the location given by `path`.
-fn write_batch_to_parquet(batch: RecordBatch, path: String) {
-    // Write the record batch to the parquet file buffer.
-    let file = File::create(path).unwrap();
-    let props = WriterProperties::builder()
-        .set_dictionary_enabled(false)
-        // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
-        .set_encoding(Encoding::PLAIN)
-        .build();
-    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
-
-    writer.write(&batch).expect("Writing batch.");
-    writer.close().unwrap();
 }
 
 #[cfg(test)]
