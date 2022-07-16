@@ -15,27 +15,26 @@
 
 //! Support for different kinds of stored segments.
 //!
-//! The main SegmentBuilder struct provides support for inserting and storing data in a in-memory
-//! segment. The BufferedSegment provides support for storing uncompressed data in a parquet buffer.
+//! The main SegmentBuilder struct provides support for inserting and storing data in an in-memory
+//! segment. BufferedSegment provides support for storing uncompressed data in a parquet buffer.
+//! Finally, FinishedSegment provides a generalized interface for using the segments in the compressor.
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::{MetaData, Timestamp, INITIAL_BUILDER_CAPACITY};
-use datafusion::arrow::array::{ArrayBuilder, Float32Builder, TimestampMicrosecondBuilder};
+use crate::storage::{write_batch_to_parquet, INITIAL_BUILDER_CAPACITY};
+use datafusion::arrow::array::{
+    Array, ArrayBuilder, Float32Builder, TimestampMicrosecondArray, TimestampMicrosecondBuilder,
+};
 use datafusion::arrow::datatypes::TimeUnit::Microsecond;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use datafusion::arrow::record_batch::{RecordBatch, RecordBatchReader};
-use datafusion::parquet::arrow::{
-    ArrowReader, ArrowWriter, ParquetFileArrowReader, ProjectionMask,
-};
-use datafusion::parquet::basic::Encoding;
-use datafusion::parquet::file::properties::WriterProperties;
+use datafusion::arrow::record_batch::{RecordBatch};
+use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader, ProjectionMask};
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use std::fmt::Formatter;
 use std::fs::File;
 use std::sync::Arc;
 use std::{fmt, fs};
 
-trait UncompressedSegment {
+pub trait UncompressedSegment {
     fn get_data(&mut self) -> RecordBatch;
 }
 
@@ -132,10 +131,26 @@ impl UncompressedSegment for BufferedSegment {
     }
 }
 
-/// Either an in-memory or buffered segment that is finished and has been queued for compression.
-pub struct QueuedSegment {
+impl BufferedSegment {
+    /// Retrieve the data from the segment builder, save it to a parquet file and save the path.
+    pub fn new(key: String, mut segment_builder: SegmentBuilder) -> Self {
+        let folder_path = format!("uncompressed/{}", key);
+        fs::create_dir_all(&folder_path);
+
+        let data = segment_builder.get_data();
+        let timestamps: &TimestampMicrosecondArray = data.column(0).as_any().downcast_ref().unwrap();
+
+        let path = format!("{}/{}.parquet", folder_path, timestamps.value(0));
+        write_batch_to_parquet(data, path.clone());
+
+        Self { path }
+    }
+}
+
+/// Representing either an in-memory or buffered segment that is finished and ready for compression.
+pub struct FinishedSegment {
     pub key: String,
-    pub uncompressed_segment: Box<dyn UncompressedSegment>
+    pub uncompressed_segment: Box<dyn UncompressedSegment>,
 }
 
 #[cfg(test)]

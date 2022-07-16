@@ -20,7 +20,7 @@ mod data_point;
 mod segment;
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::segment::{QueuedSegment, SegmentBuilder};
+use crate::storage::segment::{BufferedSegment, FinishedSegment, SegmentBuilder};
 use paho_mqtt::Message;
 use std::collections::vec_deque::VecDeque;
 use std::collections::HashMap;
@@ -43,7 +43,7 @@ pub struct StorageEngine {
     /// The uncompressed segments while they are being built.
     data: HashMap<String, SegmentBuilder>,
     /// Prioritized queue of finished segments that are ready for compression.
-    compression_queue: VecDeque<QueuedSegment>,
+    compression_queue: VecDeque<FinishedSegment>,
 }
 
 impl StorageEngine {
@@ -93,15 +93,16 @@ impl StorageEngine {
     }
 
     /// If possible, return the oldest finished segment from the compression queue.
-    pub fn get_finished_segment(&mut self) -> Option<QueuedSegment> {
+    pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
         self.compression_queue.pop_front()
     }
 
     /// Write `data` to persistent parquet file storage.
     pub fn save_compressed_data(key: String, first_timestamp: Timestamp, data: RecordBatch) {
-        fs::create_dir_all("compressed");
+        let folder_path = format!("compressed/{}", key);
+        fs::create_dir_all(&folder_path);
 
-        let path = format!("compressed/{}/{}.parquet", key, first_timestamp);
+        let path = format!("{}/{}.parquet", folder_path, first_timestamp);
         write_batch_to_parquet(data, path);
     }
 }
