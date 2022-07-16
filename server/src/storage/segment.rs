@@ -13,8 +13,6 @@
  * limitations under the License.
  */
 
-//! Support for different kinds of stored segments.
-//!
 //! The main SegmentBuilder struct provides support for inserting and storing data in a in-memory
 //! segment. Furthermore, the data can be retrieved as a structured record batch.
 
@@ -42,7 +40,7 @@ pub struct SegmentBuilder {
     values: Float32Builder,
     /// Metadata used to uniquely identify the segment (and related sensor).
     pub metadata: MetaData,
-    /// First timestamp used to uniquely identify the segment from other from the same sensor.
+    /// First timestamp used to distinguish between segments from the same sensor.
     first_timestamp: Timestamp,
 }
 
@@ -74,13 +72,13 @@ impl SegmentBuilder {
         self.timestamps.len()
     }
 
-    /// If at least one of the builders are at capacity, return true.
+    /// If at least one of the builders are at capacity, return `true`.
     pub fn is_full(&self) -> bool {
         let length = self.get_length();
         length == self.timestamps.capacity() || length == self.values.capacity()
     }
 
-    /// Add the timestamp and value from the data point to the segment array builders.
+    /// Add the timestamp and value from `data_point` to the segment array builders.
     pub fn insert_data(&mut self, data_point: &DataPoint) {
         self.timestamps.append_value(data_point.timestamp).unwrap();
         self.values.append_value(data_point.value).unwrap();
@@ -104,13 +102,13 @@ impl SegmentBuilder {
         ).unwrap()
     }
 
-    /// Write `data` to persistent parquet file storage.
-    pub fn save_compressed_data(&self, data: RecordBatch) {
+    /// Write `batch` to persistent parquet file storage.
+    pub fn save_compressed_data(&self, batch: RecordBatch) {
         let folder_name = self.metadata.join("-");
         fs::create_dir_all(&folder_name);
 
         let path = format!("{}/{}.parquet", folder_name, self.first_timestamp);
-        write_batch_to_parquet(data, path);
+        write_batch_to_parquet(batch, path);
     }
 }
 
