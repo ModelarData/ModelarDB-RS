@@ -24,14 +24,16 @@ use datafusion::arrow::array::{ArrayBuilder, Float32Builder, TimestampMicrosecon
 use datafusion::arrow::datatypes::TimeUnit::Microsecond;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::{RecordBatch, RecordBatchReader};
-use datafusion::parquet::arrow::{ArrowReader, ArrowWriter, ParquetFileArrowReader, ProjectionMask};
+use datafusion::parquet::arrow::{
+    ArrowReader, ArrowWriter, ParquetFileArrowReader, ProjectionMask,
+};
 use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
+use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use std::fmt::Formatter;
 use std::fs::File;
 use std::sync::Arc;
 use std::{fmt, fs};
-use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 
 trait UncompressedSegment {
     fn get_data(&mut self) -> RecordBatch;
@@ -45,10 +47,6 @@ pub struct SegmentBuilder {
     timestamps: TimestampMicrosecondBuilder,
     /// Builder consisting of float values.
     values: Float32Builder,
-    /// Metadata used to uniquely identify the segment (and related sensor).
-    pub metadata: MetaData,
-    /// First timestamp used to uniquely identify the segment from other from the same sensor.
-    first_timestamp: Timestamp,
 }
 
 impl fmt::Display for SegmentBuilder {
@@ -80,14 +78,12 @@ impl UncompressedSegment for SegmentBuilder {
 }
 
 impl SegmentBuilder {
-    pub fn new(data_point: &DataPoint) -> Self {
+    pub fn new() -> Self {
         Self {
             // Note that the actual internal capacity might be slightly larger than these values. Apache
             // arrow defines the argument as being the lower bound for how many items the builder can hold.
             timestamps: TimestampMicrosecondBuilder::new(INITIAL_BUILDER_CAPACITY),
             values: Float32Builder::new(INITIAL_BUILDER_CAPACITY),
-            metadata: data_point.metadata.to_vec(),
-            first_timestamp: data_point.timestamp,
         }
     }
 
@@ -116,10 +112,6 @@ impl SegmentBuilder {
 pub struct BufferedSegment {
     /// Path to the file containing the uncompressed data in the segment.
     path: String,
-    /// Metadata used to uniquely identify the segment (and related sensor).
-    pub metadata: MetaData,
-    /// First timestamp used to uniquely identify the segment from other from the same sensor.
-    first_timestamp: Timestamp,
 }
 
 impl UncompressedSegment for BufferedSegment {
@@ -132,10 +124,18 @@ impl UncompressedSegment for BufferedSegment {
         let mask = ProjectionMask::leaves(file_metadata.schema_descr(), [0]);
 
         let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(file_reader));
-        let mut record_batch_reader = arrow_reader.get_record_reader_by_columns(mask, 2048).unwrap();
+        let mut record_batch_reader = arrow_reader
+            .get_record_reader_by_columns(mask, 2048)
+            .unwrap();
 
         record_batch_reader.next().unwrap().unwrap()
     }
+}
+
+/// Either an in-memory or buffered segment that is finished and has been queued for compression.
+pub struct QueuedSegment {
+    pub key: String,
+    pub uncompressed_segment: Box<dyn UncompressedSegment>
 }
 
 #[cfg(test)]
@@ -147,7 +147,7 @@ mod tests {
         let message = Message::new("ModelarDB/test", "[1657878396943245, 30]", 1);
 
         let data_point = DataPoint::from_message(&message).unwrap();
-        let segment_builder = SegmentBuilder::new(&data_point);
+        let segment_builder = SegmentBuilder::new();
 
         (data_point, segment_builder)
     }

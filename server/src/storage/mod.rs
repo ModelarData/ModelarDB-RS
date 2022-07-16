@@ -20,7 +20,7 @@ mod data_point;
 mod segment;
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::segment::SegmentBuilder;
+use crate::storage::segment::{QueuedSegment, SegmentBuilder};
 use paho_mqtt::Message;
 use std::collections::vec_deque::VecDeque;
 use std::collections::HashMap;
@@ -43,7 +43,7 @@ pub struct StorageEngine {
     /// The uncompressed segments while they are being built.
     data: HashMap<String, SegmentBuilder>,
     /// Prioritized queue of finished segments that are ready for compression.
-    compression_queue: VecDeque<SegmentBuilder>,
+    compression_queue: VecDeque<QueuedSegment>,
 }
 
 impl StorageEngine {
@@ -61,7 +61,7 @@ impl StorageEngine {
             Ok(data_point) => {
                 let key = data_point.generate_unique_key();
 
-                println!("Inserting data point {:?} into key '{}'.", data_point, key);
+                println!("Inserting data point {:?} into segment with key '{}'.", data_point, key);
 
                 if let Some(segment) = self.data.get_mut(&*key) {
                     println!("Found existing segment with key '{}'.", key);
@@ -72,12 +72,17 @@ impl StorageEngine {
                         println!("Segment is full, moving it to the compression queue.");
 
                         let finished_segment = self.data.remove(&*key).unwrap();
-                        self.compression_queue.push_back(finished_segment);
+                        let queued_segment = QueuedSegment {
+                            key,
+                            uncompressed_segment: Box::new(finished_segment)
+                        };
+
+                        self.compression_queue.push_back(queued_segment);
                     }
                 } else {
                     println!("Could not find segment with key '{}'. Creating segment.", key);
 
-                    let mut segment = SegmentBuilder::new(&data_point);
+                    let mut segment = SegmentBuilder::new();
                     segment.insert_data(&data_point);
 
                     self.data.insert(key, segment);
@@ -88,15 +93,15 @@ impl StorageEngine {
     }
 
     /// If possible, return the oldest finished segment from the compression queue.
-    pub fn get_finished_segment(&mut self) -> Option<SegmentBuilder> {
+    pub fn get_finished_segment(&mut self) -> Option<QueuedSegment> {
         self.compression_queue.pop_front()
     }
 
     /// Write `data` to persistent parquet file storage.
-    pub fn save_compressed_data(key: String, data: RecordBatch) {
+    pub fn save_compressed_data(key: String, first_timestamp: Timestamp, data: RecordBatch) {
         fs::create_dir_all("compressed");
 
-        let path = format!("{}/{}.parquet", folder_name, key);
+        let path = format!("compressed/{}/{}.parquet", key, first_timestamp);
         write_batch_to_parquet(data, path);
     }
 }
