@@ -176,6 +176,11 @@ mod tests {
     }
 
     #[test]
+    fn test_can_get_size() {
+        // TODO: Implement this test.
+    }
+
+    #[test]
     fn test_can_get_length() {
         let (data_point, mut segment_builder) = get_empty_segment_builder();
 

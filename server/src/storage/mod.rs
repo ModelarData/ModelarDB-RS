@@ -20,7 +20,7 @@ mod data_point;
 mod segment;
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::segment::{FinishedSegment, SegmentBuilder};
+use crate::storage::segment::{BufferedSegment, FinishedSegment, SegmentBuilder, UncompressedSegment};
 use paho_mqtt::Message;
 use std::collections::vec_deque::VecDeque;
 use std::collections::HashMap;
@@ -86,13 +86,8 @@ impl StorageEngine {
                     if segment.is_full() {
                         println!("Segment is full, moving it to the compression queue.");
 
-                        let finished_segment = self.data.remove(&*key).unwrap();
-                        let queued_segment = FinishedSegment {
-                            key,
-                            uncompressed_segment: Box::new(finished_segment)
-                        };
-
-                        self.compression_queue.push_back(queued_segment);
+                        let full_segment = self.data.remove(&*key).unwrap();
+                        self.queue_segment(key, full_segment)
                     }
                 } else {
                     println!("Could not find segment with key '{}'. Creating segment.", key);
@@ -109,6 +104,7 @@ impl StorageEngine {
 
     /// If possible, return the oldest finished segment from the compression queue.
     pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
+        // TODO: If a non-buffered segment is removed from the queue, add the space to the remaining bytes.
         self.compression_queue.pop_front()
     }
 
@@ -119,6 +115,28 @@ impl StorageEngine {
 
         let path = format!("{}/{}.parquet", folder_path, first_timestamp);
         write_batch_to_parquet(data, path);
+    }
+
+    /// Move `segment_builder` to the the compression queue. If necessary, buffer the data first.
+    fn queue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
+        let uncompressed_segment: Box<dyn UncompressedSegment>;
+        let builder_size = segment_builder.get_size();
+
+        // If there is not enough space for the finished segment, buffer the data first.
+        if builder_size > self.remaining_bytes {
+            println!("Not enough memory for the finished segment. Buffering the segment.");
+
+            let buffered = BufferedSegment::new(key.clone(), segment_builder);
+            uncompressed_segment = Box::new(buffered);
+        } else {
+            uncompressed_segment = Box::new(segment_builder);
+
+            // If not buffering the data, remove the size of the finished segment from the remaining bytes.
+            self.remaining_bytes = self.remaining_bytes - builder_size;
+        }
+
+        let queued_segment = FinishedSegment { key, uncompressed_segment };
+        self.compression_queue.push_back(queued_segment);
     }
 }
 
