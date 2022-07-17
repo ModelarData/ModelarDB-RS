@@ -20,7 +20,7 @@ mod data_point;
 mod segment;
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::segment::{BufferedSegment, FinishedSegment, SegmentBuilder};
+use crate::storage::segment::{FinishedSegment, SegmentBuilder};
 use paho_mqtt::Message;
 use std::collections::vec_deque::VecDeque;
 use std::collections::HashMap;
@@ -35,7 +35,11 @@ type Timestamp = i64;
 type Value = f32;
 type MetaData = Vec<String>;
 
+// TODO: This should be dynamic.
+const SENSOR_COUNT: usize = 2;
+
 const INITIAL_BUILDER_CAPACITY: usize = 50;
+const RESERVED_BYTES: usize = 5000;
 
 /// Keeping track of all uncompressed data, either in memory or in a file buffer. The data field should
 /// not be directly modified and is therefore only changed when using "insert_data".
@@ -44,19 +48,30 @@ pub struct StorageEngine {
     data: HashMap<String, SegmentBuilder>,
     /// Prioritized queue of finished segments that are ready for compression.
     compression_queue: VecDeque<FinishedSegment>,
+    /// How many bytes of memory that are left for storing finished uncompressed segments.
+    remaining_bytes: usize,
 }
 
 impl StorageEngine {
     pub fn new() -> Self {
+        // Based on the sensor count and builder capacity, calculate the total bytes needed to store all builders.
+        // Since the builder capacity is only a lower bound, we need to create a builder to get the actual size.
+        let temp_builder = SegmentBuilder::new();
+        let builder_size = temp_builder.get_size();
+
         StorageEngine {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             data: HashMap::new(),
             compression_queue: VecDeque::new(),
+            remaining_bytes: RESERVED_BYTES - (builder_size * SENSOR_COUNT)
         }
     }
 
+    // TODO: Separate functionality into sub-methods to avoid large function.
     /// Format `message` and insert it into the in-memory storage.
     pub fn insert_message(&mut self, message: Message) {
+        println!("Remaining bytes: {}", self.remaining_bytes);
+
         match DataPoint::from_message(&message) {
             Ok(data_point) => {
                 let key = data_point.generate_unique_key();
@@ -72,7 +87,7 @@ impl StorageEngine {
                         println!("Segment is full, moving it to the compression queue.");
 
                         let finished_segment = self.data.remove(&*key).unwrap();
-                        let queued_segment = QueuedSegment {
+                        let queued_segment = FinishedSegment {
                             key,
                             uncompressed_segment: Box::new(finished_segment)
                         };

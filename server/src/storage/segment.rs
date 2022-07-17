@@ -20,7 +20,7 @@
 //! Finally, FinishedSegment provides a generalized interface for using the segments in the compressor.
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::{write_batch_to_parquet, INITIAL_BUILDER_CAPACITY};
+use crate::storage::{write_batch_to_parquet, INITIAL_BUILDER_CAPACITY, Timestamp, Value};
 use datafusion::arrow::array::{
     Array, ArrayBuilder, Float32Builder, TimestampMicrosecondArray, TimestampMicrosecondBuilder,
 };
@@ -32,7 +32,7 @@ use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use std::fmt::Formatter;
 use std::fs::File;
 use std::sync::Arc;
-use std::{fmt, fs};
+use std::{fmt, fs, mem};
 
 pub trait UncompressedSegment {
     fn get_data(&mut self) -> RecordBatch;
@@ -84,6 +84,12 @@ impl SegmentBuilder {
             timestamps: TimestampMicrosecondBuilder::new(INITIAL_BUILDER_CAPACITY),
             values: Float32Builder::new(INITIAL_BUILDER_CAPACITY),
         }
+    }
+
+    /// Return the total size of the builder in bytes. Note that this is independent of the length.
+    pub fn get_size(&self) -> usize {
+        (self.timestamps.capacity() * mem::size_of::<Timestamp>())
+            + (self.values.capacity() * mem::size_of::<Value>())
     }
 
     /// Return how many data points the segment currently contains.
