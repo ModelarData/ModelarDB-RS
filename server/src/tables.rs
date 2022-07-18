@@ -44,8 +44,9 @@ use datafusion::physical_plan::{
     RecordBatchStream, SendableRecordBatchStream, Statistics,
 };
 use datafusion::scalar::ScalarValue::{Int64, TimestampNanosecond};
-
 use datafusion_physical_expr::planner;
+
+use object_store::path::Path;
 
 use crate::catalog::ModelTableMetadata;
 use crate::models;
@@ -54,6 +55,7 @@ use crate::models;
 /* TableProvider */
 pub struct ModelTable {
     object_store_url: ObjectStoreUrl,
+    segment_folder_path: Path,
     model_table_metadata: Arc<ModelTableMetadata>,
     schema: Arc<Schema>,
 }
@@ -79,6 +81,7 @@ impl ModelTable {
 
         Arc::new(ModelTable {
             model_table_metadata: model_table_metadata.clone(),
+	    segment_folder_path: Path::from(model_table_metadata.segment_folder.clone()),
             object_store_url: ObjectStoreUrl::local_filesystem(),
             schema: Arc::new(Schema::new(columns)),
         })
@@ -216,10 +219,10 @@ impl TableProvider for ModelTable {
             .runtime_env
             .object_store(&self.object_store_url)
             .unwrap()
-            .list_file(&self.model_table_metadata.segment_folder)
+            .list(Some(&self.segment_folder_path))
             .await?
-            .map(|file_meta| PartitionedFile {
-                file_meta: file_meta.unwrap(),
+            .map(|object_meta| PartitionedFile {
+                object_meta: object_meta.unwrap(),
                 partition_values: vec![],
                 range: None,
             })

@@ -50,7 +50,7 @@ fn new_aggregate(
     Arc::new(
         AggregateExec::try_new(
             *aggregate_exec.mode(),
-            aggregate_exec.group_expr().to_vec(),
+            aggregate_exec.group_expr().clone(),
             vec![model_aggregate_expr],
             grid_exec.children()[0].clone(), //Removes the GridExec
             aggregate_exec.input_schema(),
