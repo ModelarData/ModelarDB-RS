@@ -126,7 +126,7 @@ pub fn sum(
 
 /// Reconstruct the data points for a time series segment whose values are
 /// represented by a model of type PMC-Mean. Each data point is split into its
-/// three components and append to `tids`, `timestamps`, and `values`.
+/// three components and appended to `tids`, `timestamps`, and `values`.
 pub fn grid(
     gid: TimeSeriesId,
     start_time: Timestamp,

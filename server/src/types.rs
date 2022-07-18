@@ -39,9 +39,9 @@ pub type TimestampArray = datafusion::arrow::array::PrimitiveArray<ArrowTimestam
 // Types used for a single value.
 pub type Value = std::primitive::f32;
 pub type ArrowValue = datafusion::arrow::datatypes::Float32Type;
-#[cfg(test)] // Proptest is a dev-dependencies.
+#[cfg(test)] // Proptest is a development dependency.
 pub mod tests {
-    // proptest::num::f32 is not type.
+    // proptest::num::f32 is not a type.
     pub use proptest::num::f32 as ProptestValue;
 }
 
