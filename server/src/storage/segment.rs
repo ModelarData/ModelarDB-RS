@@ -182,9 +182,11 @@ mod tests {
         (data_point, segment_builder)
     }
 
+    // Tests for SegmentBuilder.
     #[test]
-    fn test_can_get_size() {
+    fn test_can_get_segment_builder_memory_size() {
         // TODO: Implement this test.
+        // TODO: Since this is dependent on the builder size and actual capacity, how do we get this?
     }
 
     #[test]
@@ -229,5 +231,13 @@ mod tests {
         let data = segment_builder.get_data();
         assert_eq!(data.num_columns(), 2);
         assert_eq!(data.num_rows(), 2);
+    }
+
+    // Tests for BufferedSegment.
+    #[test]
+    fn test_can_get_buffered_segment_length() {
+        let buffered_segment = BufferedSegment { path: "".to_string() };
+
+        assert_eq!(buffered_segment.get_memory_size(), 0)
     }
 }

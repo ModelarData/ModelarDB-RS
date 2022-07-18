@@ -165,6 +165,7 @@ mod tests {
     use rand::Rng;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    /// Generate a random data point and insert it into `storage_engine`. Return the data point key.
     fn insert_generated_message(storage_engine: &mut StorageEngine) -> String {
         let value = rand::thread_rng().gen_range(0..100);
         let timestamp = SystemTime::now()
@@ -178,6 +179,18 @@ mod tests {
         storage_engine.insert_message(message.clone());
 
         DataPoint::from_message(&message).unwrap().generate_unique_key()
+    }
+
+    /// Generate `count` data points for the same time series and insert them into `storage_engine`.
+    /// Return the key, which is the same for all generated data points.
+    fn insert_multiple_messages(count: usize, storage_engine: &mut StorageEngine) -> String {
+        let mut key = String::new();
+
+        for _ in 0..count {
+            key = insert_generated_message(storage_engine);
+        }
+
+        key
     }
 
     #[test]
@@ -201,12 +214,8 @@ mod tests {
 
     #[test]
     fn test_can_insert_message_into_existing_segment() {
-        let mut key = String::new();
         let mut storage_engine = StorageEngine::new();
-
-        for _ in 0..2 {
-            key = insert_generated_message(&mut storage_engine);
-        }
+        let key = insert_multiple_messages(2, &mut storage_engine);
 
         assert!(storage_engine.data.contains_key(&key));
         assert_eq!(storage_engine.data.get(&key).unwrap().get_length(), 2);
@@ -214,24 +223,16 @@ mod tests {
 
     #[test]
     fn test_can_get_finished_segment_when_finished() {
-        let mut key = String::new();
         let mut storage_engine = StorageEngine::new();
-
-        for _ in 0..INITIAL_BUILDER_CAPACITY * 2 {
-            key = insert_generated_message(&mut storage_engine);
-        }
+        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY * 2, &mut storage_engine);
 
         assert!(storage_engine.get_finished_segment().is_some());
     }
 
     #[test]
     fn test_can_get_multiple_finished_segments_when_multiple_finished() {
-        let mut key = String::new();
         let mut storage_engine = StorageEngine::new();
-
-        for _ in 0..INITIAL_BUILDER_CAPACITY * 3 {
-            key = insert_generated_message(&mut storage_engine);
-        }
+        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY * 3, &mut storage_engine);
 
         assert!(storage_engine.get_finished_segment().is_some());
         assert!(storage_engine.get_finished_segment().is_some());
@@ -242,5 +243,35 @@ mod tests {
         let mut storage_engine = StorageEngine::new();
 
         assert!(storage_engine.get_finished_segment().is_none());
+    }
+
+    #[test]
+    fn test_segment_buffered_when_out_of_memory() {
+        // TODO: Implement this test. This requires I/O.
+    }
+
+    #[test]
+    fn test_remaining_bytes_decremented_when_queuing_in_memory() {
+        let mut storage_engine = StorageEngine::new();
+        let initial_remaining_bytes = storage_engine.remaining_bytes.clone();
+        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY * 2, &mut storage_engine);
+
+        assert!(initial_remaining_bytes > storage_engine.remaining_bytes);
+    }
+
+    #[test]
+    fn test_remaining_bytes_incremented_when_popping_in_memory() {
+        let mut storage_engine = StorageEngine::new();
+        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY * 2, &mut storage_engine);
+
+        let previous_remaining_bytes = storage_engine.remaining_bytes.clone();
+        storage_engine.get_finished_segment();
+
+        assert!(previous_remaining_bytes < storage_engine.remaining_bytes);
+    }
+
+    #[test]
+    fn test_remaining_bytes_not_incremented_when_popping_buffered() {
+        // TODO: Implement this test. This requires I/O.
     }
 }
