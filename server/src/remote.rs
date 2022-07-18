@@ -22,6 +22,8 @@ use crate::Context;
 
 use std::convert::TryInto;
 
+use tracing::{debug, error, info, warn, Level, event, instrument, span};
+
 use arrow_flight::utils::flight_data_from_arrow_batch;
 use arrow_flight::SchemaAsIpc;
 use datafusion::arrow::ipc::writer::IpcWriteOptions;
@@ -43,7 +45,7 @@ pub fn start_arrow_flight_server(context: Arc<Context>, port: i16) {
         context: context.clone(),
     };
     let flight_service_server = FlightServiceServer::new(handler);
-    eprintln!("Started Arrow Flight on 127.0.0.1:{}", port);
+    info!("Started Arrow Flight on 127.0.0.1:{}", port);
     context.runtime.block_on(async {
         Server::builder()
             .add_service(flight_service_server)
@@ -108,7 +110,6 @@ impl FlightService for FlightServiceHandler {
     ) -> Result<Response<FlightInfo>, Status> {
         Err(Status::unimplemented("Not yet implemented"))
     }
-
     async fn get_schema(
         &self,
         request: Request<FlightDescriptor>,

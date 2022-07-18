@@ -21,6 +21,8 @@ use std::task::{Context, Poll};
 
 use async_trait::async_trait;
 
+use tracing::{debug, error, info, warn, Level, event, instrument, span};
+
 use futures::stream::{Stream, StreamExt};
 
 use datafusion::arrow::array::{

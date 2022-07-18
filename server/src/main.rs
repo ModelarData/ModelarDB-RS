@@ -20,11 +20,11 @@ mod remote;
 mod tables;
 
 
-use std::{fs::File, sync::Arc};
+use std::{fs::File, sync::Arc, fmt};
 
 use tracing::{debug, error, info, warn, Level, event, instrument, span};
 use tracing_subscriber::{filter, prelude::*};
-use tracing_futures::Instrument;
+
 
 use tokio::runtime::Runtime;
 
@@ -35,6 +35,7 @@ use datafusion::execution::options::ParquetReadOptions;
 use crate::catalog::Catalog;
 use crate::optimizer::model_simple_aggregates;
 use crate::tables::ModelTable;
+
 
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
@@ -48,6 +49,8 @@ pub struct Context {
 
 /** Public Functions **/
 fn main() {
+    
+
     // A layer that logs events to a file.
     let file = File::create("debug.log");
     let file = match file  {Ok(file) => file,Err(error) => panic!("Error: {:?}",error),};
@@ -90,12 +93,10 @@ fn main() {
         });
         remote::start_arrow_flight_server(context, 9999);
     } else {
-        let span_load = span!(Level::INFO, "load_folder");
-        let _enter = span_load.enter();
         //The errors are consciously ignored as the program is terminating
         let binary_path = std::env::current_exe().unwrap();
         let binary_name = binary_path.file_name().unwrap();
-        error!(" Usage: {} data_folder ", binary_name.to_str().unwrap());
+        info!(" Usage: {} data_folder ", binary_name.to_str().unwrap());
     }
 }
 
@@ -117,17 +118,17 @@ async fn register_tables(session: &mut SessionContext, catalog: &Catalog) {
             .await
             .is_err()
         {
-            eprintln!("ERROR: unable to initialize table {}", table_metadata.name);
+            error!("ERROR: unable to initialize table {}", table_metadata.name);
         }
     }
 
     //Initializes tables storing time series as models in Apache Parquet files
     for model_table_metadata in &catalog.model_table_metadata {
-        if session
+            if session
             .register_table(model_table_metadata.name.as_str(), ModelTable::new(model_table_metadata))
             .is_err()
         {
-            eprintln!("ERROR: unable to initialize model table {}", model_table_metadata.name);
+            error!("ERROR: unable to initialize model table {}", model_table_metadata.name);
         }
     }
 }

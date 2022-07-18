@@ -19,6 +19,8 @@ use std::{fs::File, path::Path};
 use std::str;
 use std::fs::OpenOptions;
 
+use tracing::{debug, error, info, warn, Level, event, instrument, span};
+
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::array::{Array, ArrayRef, BinaryArray, Int32Array, Int32Builder, StringBuilder};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -34,6 +36,7 @@ pub struct Catalog {
     pub model_table_metadata: Vec<Arc<ModelTableMetadata>>,
 }
 
+#[derive(Debug)]
 pub struct TableMetadata {
     pub name: String,
     pub path: String,
@@ -75,7 +78,6 @@ pub fn new(data_folder: &str) -> Catalog {
         Field::new("model", DataType::Binary, false),
         Field::new("gaps", DataType::Binary, false),
     ]));
-
     if let Ok(data_folder) = read_dir(data_folder) {
         for dir_entry in data_folder {
             if let Ok(dir_entry) = dir_entry {
@@ -86,7 +88,7 @@ pub fn new(data_folder: &str) -> Catalog {
                     let normalized_file_name = file_name.to_ascii_lowercase();
                     if is_dir_entry_a_table(&dir_entry) {
                         table_metadata.push(new_table_metadata(normalized_file_name, path.to_string()));
-                        eprintln!("INFO: initialized table {}", path);
+                        info!("INFO: initialized table {}", path);
                     } else if is_dir_entry_a_model_table(&dir_entry) {
                         if let Ok(mtd) = read_model_table_metadata(
                             normalized_file_name,
@@ -94,23 +96,23 @@ pub fn new(data_folder: &str) -> Catalog {
                             &model_table_segment_group_file_schema,
                         ) {
                             model_table_metadata.push(mtd);
-                            eprintln!("INFO: initialized model table {}", path);
+                            info!("INFO: initialized model table {}", path);
                         } else {
-                            eprintln!("ERROR: unsupported model table {}", path);
+                            error!("ERROR: unsupported model table {}", path);
                         }
                     } else {
-                        eprintln!("ERROR: unsupported file or folder {}", path);
+                        error!("ERROR: unsupported file or folder {}", path);
                     }
                 } else {
-                    eprintln!("ERROR: name of file or folder is not UTF-8");
+                    error!("ERROR: name of file or folder is not UTF-8");
                 }
             } else {
                 let message = dir_entry.unwrap_err().to_string();
-                eprintln!("ERROR: unable to read file or folder {}", &message);
+                error!("ERROR: unable to read file or folder {}", &message);
             }
         }
     } else {
-        eprintln!("ERROR: unable to open data folder {}", &data_folder);
+        error!("ERROR: unable to open data folder {}", &data_folder);
     }
     Catalog {
         table_metadata,
