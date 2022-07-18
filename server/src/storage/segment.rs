@@ -36,6 +36,8 @@ use std::{fmt, fs, mem};
 
 pub trait UncompressedSegment {
     fn get_data(&mut self) -> RecordBatch;
+
+    fn get_memory_size(&self) -> usize;
 }
 
 /// A single segment being built, consisting of a series of timestamps and values. Note that
@@ -74,6 +76,12 @@ impl UncompressedSegment for SegmentBuilder {
             vec![Arc::new(timestamps), Arc::new(values)]
         ).unwrap()
     }
+
+    /// Return the total size of the builder in bytes. Note that this is independent of the length.
+    fn get_memory_size(&self) -> usize {
+        (self.timestamps.capacity() * mem::size_of::<Timestamp>())
+            + (self.values.capacity() * mem::size_of::<Value>())
+    }
 }
 
 impl SegmentBuilder {
@@ -84,12 +92,6 @@ impl SegmentBuilder {
             timestamps: TimestampMicrosecondBuilder::new(INITIAL_BUILDER_CAPACITY),
             values: Float32Builder::new(INITIAL_BUILDER_CAPACITY),
         }
-    }
-
-    /// Return the total size of the builder in bytes. Note that this is independent of the length.
-    pub fn get_size(&self) -> usize {
-        (self.timestamps.capacity() * mem::size_of::<Timestamp>())
-            + (self.values.capacity() * mem::size_of::<Value>())
     }
 
     /// Return how many data points the segment currently contains.
@@ -137,10 +139,15 @@ impl UncompressedSegment for BufferedSegment {
 
         record_batch_reader.next().unwrap().unwrap()
     }
+
+    /// Return 0 since the data is not kept in memory.
+    fn get_memory_size(&self) -> usize {
+        0
+    }
 }
 
 impl BufferedSegment {
-    /// Retrieve the data from the segment builder, save it to a parquet file and save the path.
+    /// Retrieve the data from the segment builder, save it to a parquet file, and save the path.
     pub fn new(key: String, mut segment_builder: SegmentBuilder) -> Self {
         let folder_path = format!("uncompressed/{}", key);
         fs::create_dir_all(&folder_path);

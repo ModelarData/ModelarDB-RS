@@ -57,7 +57,7 @@ impl StorageEngine {
         // Based on the sensor count and builder capacity, calculate the total bytes needed to store all builders.
         // Since the builder capacity is only a lower bound, we need to create a builder to get the actual size.
         let temp_builder = SegmentBuilder::new();
-        let builder_size = temp_builder.get_size();
+        let builder_size = temp_builder.get_memory_size();
 
         StorageEngine {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
@@ -67,11 +67,8 @@ impl StorageEngine {
         }
     }
 
-    // TODO: Separate functionality into sub-methods to avoid large function.
     /// Format `message` and insert it into the in-memory storage.
     pub fn insert_message(&mut self, message: Message) {
-        println!("Remaining bytes: {}", self.remaining_bytes);
-
         match DataPoint::from_message(&message) {
             Ok(data_point) => {
                 let key = data_point.generate_unique_key();
@@ -104,8 +101,14 @@ impl StorageEngine {
 
     /// If possible, return the oldest finished segment from the compression queue.
     pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
-        // TODO: If a non-buffered segment is removed from the queue, add the space to the remaining bytes.
-        self.compression_queue.pop_front()
+        if let Some(finished_segment) = self.compression_queue.pop_front() {
+            // Add the memory size of the removed finished segment back to the remaining bytes.
+            self.remaining_bytes += finished_segment.uncompressed_segment.get_memory_size();
+
+            Some(finished_segment)
+        } else {
+            None
+        }
     }
 
     /// Write `data` to persistent parquet file storage.
@@ -119,8 +122,10 @@ impl StorageEngine {
 
     /// Move `segment_builder` to the the compression queue. If necessary, buffer the data first.
     fn queue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
+        println!("Remaining bytes: {}", self.remaining_bytes);
+
         let uncompressed_segment: Box<dyn UncompressedSegment>;
-        let builder_size = segment_builder.get_size();
+        let builder_size = segment_builder.get_memory_size();
 
         // If there is not enough space for the finished segment, buffer the data first.
         if builder_size > self.remaining_bytes {
@@ -132,7 +137,7 @@ impl StorageEngine {
             uncompressed_segment = Box::new(segment_builder);
 
             // If not buffering the data, remove the size of the finished segment from the remaining bytes.
-            self.remaining_bytes = self.remaining_bytes - builder_size;
+            self.remaining_bytes -= builder_size;
         }
 
         let queued_segment = FinishedSegment { key, uncompressed_segment };
