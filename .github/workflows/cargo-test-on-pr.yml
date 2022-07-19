@@ -13,10 +13,13 @@ jobs:
   cargo_build_and_test:
     name: Cargo Build and Test
 
+    # snmalloc, and thus snmalloc-rs, require Visual Studio 2017 to build on Windows
+    # https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md
+    # https://github.com/actions/virtual-environments/blob/main/images/win/Windows2016-Readme.md
     runs-on: ${{ matrix.operating-system }}
     strategy:
       matrix:
-        operating-system: [ubuntu-latest, macos-latest, windows-latest]
+        operating-system: [ubuntu-latest, macos-latest, windows-2016]
 
     steps:
     - uses: actions/checkout@v3
