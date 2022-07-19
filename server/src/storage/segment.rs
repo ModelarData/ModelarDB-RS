@@ -52,9 +52,9 @@ pub struct SegmentBuilder {
 
 impl fmt::Display for SegmentBuilder {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&*format!("Segment with {} data point(s) (", self.timestamps.len()));
-        f.write_str(&*format!("timestamp capacity: {}, ", self.timestamps.capacity()));
-        f.write_str(&*format!("values capacity: {})", self.values.capacity()));
+        f.write_str(&format!("Segment with {} data point(s) (", self.timestamps.len()));
+        f.write_str(&format!("timestamp capacity: {}, ", self.timestamps.capacity()));
+        f.write_str(&format!("values capacity: {})", self.values.capacity()));
 
         Ok(())
     }
@@ -108,8 +108,8 @@ impl SegmentBuilder {
 
     /// Add the timestamp and value from the data point to the segment array builders.
     pub fn insert_data(&mut self, data_point: &DataPoint) {
-        self.timestamps.append_value(data_point.timestamp).unwrap();
-        self.values.append_value(data_point.value).unwrap();
+        self.timestamps.append_value(data_point.timestamp);
+        self.values.append_value(data_point.value);
 
         println!("Inserted data point into {}.", self)
     }
@@ -173,40 +173,35 @@ mod tests {
     use super::*;
     use paho_mqtt::Message;
 
-    fn get_empty_segment_builder() -> (DataPoint, SegmentBuilder) {
-        let message = Message::new("ModelarDB/test", "[1657878396943245, 30]", 1);
-
-        let data_point = DataPoint::from_message(&message).unwrap();
-        let segment_builder = SegmentBuilder::new();
-
-        (data_point, segment_builder)
-    }
-
     // Tests for SegmentBuilder.
     #[test]
-    fn test_can_get_segment_builder_memory_size() {
+    fn test_get_segment_builder_memory_size() {
         // TODO: Implement this test.
         // TODO: Since this is dependent on the builder size and actual capacity, how do we get this?
     }
 
     #[test]
-    fn test_can_get_length() {
-        let (data_point, mut segment_builder) = get_empty_segment_builder();
+    fn test_get_length() {
+        let data_point = get_data_point();
+        let mut segment_builder = SegmentBuilder::new();
 
         assert_eq!(segment_builder.get_length(), 0);
     }
 
     #[test]
     fn test_can_insert_data_point() {
-        let (data_point, mut segment_builder) = get_empty_segment_builder();
+        let data_point = get_data_point();
+        let mut segment_builder = SegmentBuilder::new();
+
         segment_builder.insert_data(&data_point);
 
         assert_eq!(segment_builder.get_length(), 1);
     }
 
     #[test]
-    fn test_can_check_segment_is_full() {
-        let (data_point, mut segment_builder) = get_empty_segment_builder();
+    fn test_check_segment_is_full() {
+        let data_point = get_data_point();
+        let mut segment_builder = SegmentBuilder::new();
 
         for _ in 0..segment_builder.timestamps.capacity() {
             segment_builder.insert_data(&data_point)
@@ -216,15 +211,18 @@ mod tests {
     }
 
     #[test]
-    fn test_can_check_segment_is_not_full() {
-        let (data_point, mut segment_builder) = get_empty_segment_builder();
+    fn test_check_segment_is_not_full() {
+        let data_point = get_data_point();
+        let mut segment_builder = SegmentBuilder::new();
 
         assert!(!segment_builder.is_full());
     }
 
     #[test]
-    fn test_can_get_data() {
-        let (data_point, mut segment_builder) = get_empty_segment_builder();
+    fn test_get_data_from_segment_builder() {
+        let data_point = get_data_point();
+        let mut segment_builder = SegmentBuilder::new();
+
         segment_builder.insert_data(&data_point);
         segment_builder.insert_data(&data_point);
 
@@ -233,11 +231,26 @@ mod tests {
         assert_eq!(data.num_rows(), 2);
     }
 
+    fn get_data_point() -> DataPoint {
+        let message = Message::new("ModelarDB/test", "[1657878396943245, 30]", 1);
+        DataPoint::from_message(&message).unwrap()
+    }
+
     // Tests for BufferedSegment.
     #[test]
-    fn test_can_get_buffered_segment_length() {
+    fn test_create_buffered_segment_from_segment_builder() {
+        // TODO: Implement this test. This requires I/O.
+    }
+
+    #[test]
+    fn test_get_buffered_segment_memory_size() {
         let buffered_segment = BufferedSegment { path: "".to_string() };
 
         assert_eq!(buffered_segment.get_memory_size(), 0)
+    }
+
+    #[test]
+    fn test_get_data_from_buffered_segment() {
+        // TODO: Implement this test. This requires I/O.
     }
 }

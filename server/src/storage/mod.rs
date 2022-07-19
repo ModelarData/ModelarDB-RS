@@ -48,7 +48,7 @@ pub struct StorageEngine {
     data: HashMap<String, SegmentBuilder>,
     /// Prioritized queue of finished segments that are ready for compression.
     compression_queue: VecDeque<FinishedSegment>,
-    /// How many bytes of memory that are left for storing finished uncompressed segments.
+    /// How many bytes of memory that are reserved for storing uncompressed segments.
     remaining_bytes: usize,
 }
 
@@ -75,7 +75,7 @@ impl StorageEngine {
 
                 println!("Inserting data point {:?} into segment with key '{}'.", data_point, key);
 
-                if let Some(segment) = self.data.get_mut(&*key) {
+                if let Some(segment) = self.data.get_mut(&key) {
                     println!("Found existing segment with key '{}'.", key);
 
                     segment.insert_data(&data_point);
@@ -83,7 +83,7 @@ impl StorageEngine {
                     if segment.is_full() {
                         println!("Segment is full, moving it to the compression queue.");
 
-                        let full_segment = self.data.remove(&*key).unwrap();
+                        let full_segment = self.data.remove(&key).unwrap();
                         self.queue_segment(key, full_segment)
                     }
                 } else {
@@ -122,7 +122,7 @@ impl StorageEngine {
 
     /// Move `segment_builder` to the the compression queue. If necessary, buffer the data first.
     fn queue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
-        println!("Remaining bytes: {}", self.remaining_bytes);
+        println!("Saving the finished segment. Remaining bytes: {}", self.remaining_bytes);
 
         let uncompressed_segment: Box<dyn UncompressedSegment>;
         let builder_size = segment_builder.get_memory_size();
@@ -134,6 +134,7 @@ impl StorageEngine {
             let buffered = BufferedSegment::new(key.clone(), segment_builder);
             uncompressed_segment = Box::new(buffered);
         } else {
+            println!("Saving the finished segment in memory.");
             uncompressed_segment = Box::new(segment_builder);
 
             // If not buffering the data, remove the size of the finished segment from the remaining bytes.
