@@ -134,7 +134,7 @@ fn file(rt: Runtime, mut fsc: FlightServiceClient<Channel>, queries_path: &str) 
 }
 
 fn repl(rt: Runtime, mut fsc: FlightServiceClient<Channel>) -> Result<()> {
-    let mut editor = Editor::<ClientHelper>::new();
+    let mut editor = Editor::<ClientHelper>::new()?;
     let table_names = retrieve_table_names(&rt, &mut fsc)?;
     editor.set_helper(Some(ClientHelper::new(table_names)));
     let history_file_name = ".mmdbc_history";
