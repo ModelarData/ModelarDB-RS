@@ -13,17 +13,19 @@
  * limitations under the License.
  */
 
-//! Support for formatting uncompressed data, storing uncompressed data both
-//! in-memory and in a parquet file data buffer, and storing compressed data.
+//! Converts raw MQTT messages to uncompressed data points and stores uncompressed data points
+//! temporarily in an in-memory buffer.
 
 mod data_point;
 mod segment;
 
-use crate::storage::data_point::DataPoint;
-use crate::storage::segment::SegmentBuilder;
-use paho_mqtt::Message;
 use std::collections::vec_deque::VecDeque;
 use std::collections::HashMap;
+
+use paho_mqtt::Message;
+
+use crate::storage::data_point::DataPoint;
+use crate::storage::segment::SegmentBuilder;
 
 type Timestamp = i64;
 type Value = f32;
@@ -31,8 +33,7 @@ type MetaData = Vec<String>;
 
 const INITIAL_BUILDER_CAPACITY: usize = 50;
 
-/// Keeping track of all uncompressed data, either in memory or in a file buffer. The data field should
-/// not be directly modified and is therefore only changed when using "insert_data".
+/// Keeping track of all uncompressed data, both while being built and when finished.
 pub struct StorageEngine {
     /// The uncompressed segments while they are being built.
     data: HashMap<String, SegmentBuilder>,
@@ -49,7 +50,7 @@ impl StorageEngine {
         }
     }
 
-    /// Format `message` and insert it into the in-memory storage.
+    /// Format `message` and insert it into the in-memory buffer.
     pub fn insert_message(&mut self, message: Message) {
         match DataPoint::from_message(&message) {
             Ok(data_point) => {
@@ -57,7 +58,7 @@ impl StorageEngine {
 
                 println!("Inserting data point {:?} into key '{}'.", data_point, key);
 
-                if let Some(segment) = self.data.get_mut(&*key) {
+                if let Some(segment) = self.data.get_mut(&key) {
                     println!("Found existing segment with key '{}'.", key);
 
                     segment.insert_data(&data_point);
@@ -65,7 +66,7 @@ impl StorageEngine {
                     if segment.is_full() {
                         println!("Segment is full, moving it to the compression queue.");
 
-                        let finished_segment = self.data.remove(&*key).unwrap();
+                        let finished_segment = self.data.remove(&key).unwrap();
                         self.compression_queue.push_back(finished_segment);
                     }
                 } else {
@@ -81,7 +82,8 @@ impl StorageEngine {
         }
     }
 
-    /// If possible, return the oldest finished segment from the compression queue.
+    /// Remove the oldest finished segment from the compression queue and return it. Return `None`
+    /// if the compression queue is empty.
     pub fn get_finished_segment(&mut self) -> Option<SegmentBuilder> {
         self.compression_queue.pop_front()
     }
@@ -92,21 +94,6 @@ mod tests {
     use super::*;
     use rand::Rng;
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn insert_generated_message(storage_engine: &mut StorageEngine) -> String {
-        let value = rand::thread_rng().gen_range(0..100);
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_micros();
-
-        let payload = format!("[{}, {}]", timestamp, value);
-        let message = Message::new("ModelarDB/test", payload, 1);
-
-        storage_engine.insert_message(message.clone());
-
-        DataPoint::from_message(&message).unwrap().generate_unique_key()
-    }
 
     #[test]
     fn test_cannot_insert_invalid_message() {
@@ -163,6 +150,21 @@ mod tests {
 
         assert!(storage_engine.get_finished_segment().is_some());
         assert!(storage_engine.get_finished_segment().is_some());
+    }
+
+    fn insert_generated_message(storage_engine: &mut StorageEngine) -> String {
+        let value = rand::thread_rng().gen_range(0..100);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_micros();
+
+        let payload = format!("[{}, {}]", timestamp, value);
+        let message = Message::new("ModelarDB/test", payload, 1);
+
+        storage_engine.insert_message(message.clone());
+
+        DataPoint::from_message(&message).unwrap().generate_unique_key()
     }
 
     #[test]

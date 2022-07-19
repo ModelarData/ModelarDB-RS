@@ -13,11 +13,14 @@
  * limitations under the License.
  */
 
-//! The main SegmentBuilder struct provides support for inserting and storing data in a in-memory
-//! segment. Furthermore, the data can be retrieved as a structured record batch.
+//! Provides support for inserting and storing data in an in-memory segment. Furthermore, the data
+//! can be retrieved as a structured record batch.
 
-use crate::storage::data_point::DataPoint;
-use crate::storage::{MetaData, Timestamp, INITIAL_BUILDER_CAPACITY};
+use std::fmt::Formatter;
+use std::fs::File;
+use std::sync::Arc;
+use std::{fmt, fs};
+
 use datafusion::arrow::array::{ArrayBuilder, Float32Builder, TimestampMicrosecondBuilder};
 use datafusion::arrow::datatypes::TimeUnit::Microsecond;
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -25,30 +28,29 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
-use std::fmt::Formatter;
-use std::fs::File;
-use std::sync::Arc;
-use std::{fmt, fs};
 
-/// A single segment being built, consisting of a series of timestamps and values. Note that
-/// since array builders are used, the data can only be read once the builders are finished and
-/// can not be further appended to after.
+use crate::storage::data_point::DataPoint;
+use crate::storage::{MetaData, Timestamp, INITIAL_BUILDER_CAPACITY};
+
+/// A single segment being built, consisting of an ordered sequence of timestamps and values. Note
+/// that since array builders are used, the data can only be read once the builders are finished and
+/// cannot be further appended to after.
 pub struct SegmentBuilder {
     /// Builder consisting of timestamps with microsecond precision.
     timestamps: TimestampMicrosecondBuilder,
     /// Builder consisting of float values.
     values: Float32Builder,
     /// Metadata used to uniquely identify the segment (and related sensor).
-    pub metadata: MetaData,
+    metadata: MetaData,
     /// First timestamp used to distinguish between segments from the same sensor.
     first_timestamp: Timestamp,
 }
 
 impl fmt::Display for SegmentBuilder {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&*format!("Segment with {} data point(s) (", self.timestamps.len()));
-        f.write_str(&*format!("timestamp capacity: {}, ", self.timestamps.capacity()));
-        f.write_str(&*format!("values capacity: {})", self.values.capacity()));
+        f.write_str(&format!("Segment with {} data point(s) (", self.timestamps.len()));
+        f.write_str(&format!("timestamp capacity: {}, ", self.timestamps.capacity()));
+        f.write_str(&format!("values capacity: {})", self.values.capacity()));
 
         Ok(())
     }
@@ -58,12 +60,17 @@ impl SegmentBuilder {
     pub fn new(data_point: &DataPoint) -> Self {
         Self {
             // Note that the actual internal capacity might be slightly larger than these values. Apache
-            // arrow defines the argument as being the lower bound for how many items the builder can hold.
+            // Arrow defines the argument as being the lower bound for how many items the builder can hold.
             timestamps: TimestampMicrosecondBuilder::new(INITIAL_BUILDER_CAPACITY),
             values: Float32Builder::new(INITIAL_BUILDER_CAPACITY),
             metadata: data_point.metadata.to_vec(),
             first_timestamp: data_point.timestamp,
         }
+    }
+
+    /// Return `true` if the segment is full, meaning additional data points cannot be appended.
+    pub fn is_full(&self) -> bool {
+        self.get_length() == self.get_capacity()
     }
 
     /// Return how many data points the segment currently contains.
@@ -72,22 +79,21 @@ impl SegmentBuilder {
         self.timestamps.len()
     }
 
-    /// If at least one of the builders are at capacity, return `true`.
-    pub fn is_full(&self) -> bool {
-        let length = self.get_length();
-        length == self.timestamps.capacity() || length == self.values.capacity()
+    /// Return how many data points the segment can contain.
+    fn get_capacity(&self) -> usize {
+        usize::min(self.timestamps.capacity(), self.values.capacity())
     }
 
-    /// Add the timestamp and value from `data_point` to the segment array builders.
+    /// Add the timestamp and value from `data_point` to the segment's array builders.
     pub fn insert_data(&mut self, data_point: &DataPoint) {
-        self.timestamps.append_value(data_point.timestamp).unwrap();
-        self.values.append_value(data_point.value).unwrap();
+        self.timestamps.append_value(data_point.timestamp);
+        self.values.append_value(data_point.value);
 
-        println!("Inserted data point into {}.", self)
+        println!("Inserted data point into {}.", self);
     }
 
     /// Finish the array builders and return the data in a structured record batch.
-    pub fn get_data(&mut self) -> RecordBatch {
+    pub fn get_record_batch(&mut self) -> RecordBatch {
         let timestamps = self.timestamps.finish();
         let values = self.values.finish();
 
@@ -102,7 +108,7 @@ impl SegmentBuilder {
         ).unwrap()
     }
 
-    /// Write `batch` to persistent parquet file storage.
+    /// Write `batch` to a persistent Apache Parquet file on disk.
     pub fn save_compressed_data(&self, batch: RecordBatch) {
         let folder_name = self.metadata.join("-");
         fs::create_dir_all(&folder_name);
@@ -112,7 +118,7 @@ impl SegmentBuilder {
     }
 }
 
-/// Write `batch` to a parquet file at the location given by `path`.
+/// Write `batch` to an Apache Parquet file at the location given by `path`.
 fn write_batch_to_parquet(batch: RecordBatch, path: String) {
     // Write the record batch to the parquet file buffer.
     let file = File::create(path).unwrap();
@@ -131,15 +137,6 @@ fn write_batch_to_parquet(batch: RecordBatch, path: String) {
 mod tests {
     use super::*;
     use paho_mqtt::Message;
-
-    fn get_empty_segment_builder() -> (DataPoint, SegmentBuilder) {
-        let message = Message::new("ModelarDB/test", "[1657878396943245, 30]", 1);
-
-        let data_point = DataPoint::from_message(&message).unwrap();
-        let segment_builder = SegmentBuilder::new(&data_point);
-
-        (data_point, segment_builder)
-    }
 
     #[test]
     fn test_can_get_length() {
@@ -160,7 +157,7 @@ mod tests {
     fn test_can_check_segment_is_full() {
         let (data_point, mut segment_builder) = get_empty_segment_builder();
 
-        for _ in 0..segment_builder.timestamps.capacity() {
+        for _ in 0..segment_builder.get_capacity() {
             segment_builder.insert_data(&data_point)
         }
 
@@ -180,8 +177,17 @@ mod tests {
         segment_builder.insert_data(&data_point);
         segment_builder.insert_data(&data_point);
 
-        let data = segment_builder.get_data();
+        let data = segment_builder.get_record_batch();
         assert_eq!(data.num_columns(), 2);
         assert_eq!(data.num_rows(), 2);
+    }
+
+    fn get_empty_segment_builder() -> (DataPoint, SegmentBuilder) {
+        let message = Message::new("ModelarDB/test", "[1657878396943245, 30]", 1);
+
+        let data_point = DataPoint::from_message(&message).unwrap();
+        let segment_builder = SegmentBuilder::new(&data_point);
+
+        (data_point, segment_builder)
     }
 }

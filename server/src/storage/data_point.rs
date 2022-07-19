@@ -13,11 +13,12 @@
  * limitations under the License.
  */
 
-//! Support for a single internal data point. Note that this struct is mainly
-//! used when transitioning from a raw message into the in-memory representation.
+//! A single data point. Note that this struct is mainly used when converting from a raw MQTT
+//! message to Apache Arrow.
+
+use paho_mqtt::Message;
 
 use crate::storage::{MetaData, Timestamp, Value};
-use paho_mqtt::Message;
 
 #[derive(Debug)]
 pub struct DataPoint {
@@ -28,30 +29,35 @@ pub struct DataPoint {
 
 impl DataPoint {
     /// Given a raw MQTT message, extract the message components and return them as a data point.
+    /// MQTT messages with a payload format of "\[timestamp, value]" are expected.
     pub fn from_message(message: &Message) -> Result<Self, String> {
         let payload = message.payload_str();
 
-        if payload.chars().next().unwrap() != '[' || payload.chars().last().unwrap() != ']' {
-            Err("The message does not have the correct format.".to_string())
+        if payload.is_empty() {
+            Err("The message is empty.".to_string())
         } else {
-            let first_last_off: &str = &payload[1..payload.len() - 1];
-            let timestamp_value: Vec<&str> = first_last_off.split(", ").collect();
-
-            if timestamp_value.len() != 2 {
-                Err("The message can only contain a timestamp and a single value.".to_string())
+            if payload.chars().next().unwrap() != '[' || payload.chars().last().unwrap() != ']' {
+                Err("The message does not have the correct format.".to_string())
             } else {
-                if let Ok(timestamp) = timestamp_value[0].parse::<Timestamp>() {
-                    if let Ok(value) = timestamp_value[1].parse::<Value>() {
-                        Ok(Self {
-                            timestamp,
-                            value,
-                            metadata: vec![message.topic().to_string().replace("/", "-")],
-                        })
-                    } else {
-                        Err("Value could not be parsed.".to_string())
-                    }
+                let first_last_off: &str = &payload[1..payload.len() - 1];
+                let timestamp_value: Vec<&str> = first_last_off.split(", ").collect();
+
+                if timestamp_value.len() != 2 {
+                    Err("The message can only contain a timestamp and a single value.".to_string())
                 } else {
-                    Err("Timestamp could not be parsed.".to_string())
+                    if let Ok(timestamp) = timestamp_value[0].parse::<Timestamp>() {
+                        if let Ok(value) = timestamp_value[1].parse::<Value>() {
+                            Ok(Self {
+                                timestamp,
+                                value,
+                                metadata: vec![message.topic().to_string().replace("/", "-")],
+                            })
+                        } else {
+                            Err("Value could not be parsed.".to_string())
+                        }
+                    } else {
+                        Err("Timestamp could not be parsed.".to_string())
+                    }
                 }
             }
         }
@@ -69,10 +75,6 @@ impl DataPoint {
 mod tests {
     use super::*;
 
-    fn get_message_with_payload(payload: &str) -> Message {
-        Message::new("ModelarDB/test", payload, 1)
-    }
-
     #[test]
     fn test_can_get_data_point_from_valid_message() {
         let message = get_message_with_payload("[1657878396943245, 30]");
@@ -84,6 +86,14 @@ mod tests {
         assert_eq!(data_point.timestamp, 1657878396943245);
         assert_eq!(data_point.value, 30 as f32);
         assert_eq!(data_point.metadata, vec!["ModelarDB-test".to_string()])
+    }
+
+    #[test]
+    fn test_cannot_get_data_point_from_empty_message() {
+        let message = get_message_with_payload("");
+        let result = DataPoint::from_message(&message);
+
+        assert!(result.is_err())
     }
 
     #[test]
@@ -116,5 +126,9 @@ mod tests {
         let result = DataPoint::from_message(&message);
 
         assert!(result.is_err())
+    }
+
+    fn get_message_with_payload(payload: &str) -> Message {
+        Message::new("ModelarDB/test", payload, 1)
     }
 }
