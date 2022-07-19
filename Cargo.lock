@@ -1262,6 +1262,7 @@ dependencies = [
  "object_store",
  "proptest",
  "paho-mqtt",
+ "proptest",
  "rand",
  "snmalloc-rs",
  "tokio",

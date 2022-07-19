@@ -18,7 +18,8 @@
 
 use paho_mqtt::Message;
 
-use crate::storage::{MetaData, Timestamp, Value};
+use crate::storage::MetaData;
+use crate::types::{Timestamp, Value};
 
 #[derive(Debug)]
 pub struct DataPoint {

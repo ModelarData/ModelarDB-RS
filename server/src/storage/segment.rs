@@ -21,25 +21,25 @@ use std::fs::File;
 use std::sync::Arc;
 use std::{fmt, fs};
 
-use datafusion::arrow::array::{ArrayBuilder, Float32Builder, TimestampMicrosecondBuilder};
-use datafusion::arrow::datatypes::TimeUnit::Microsecond;
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::arrow::array::ArrayBuilder;
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::{MetaData, Timestamp, INITIAL_BUILDER_CAPACITY};
+use crate::storage::{INITIAL_BUILDER_CAPACITY, MetaData};
+use crate::types::{ArrowTimestamp, ArrowValue, Timestamp, TimestampBuilder, ValueBuilder};
 
 /// A single segment being built, consisting of an ordered sequence of timestamps and values. Note
 /// that since array builders are used, the data can only be read once the builders are finished and
 /// cannot be further appended to after.
 pub struct SegmentBuilder {
     /// Builder consisting of timestamps with microsecond precision.
-    timestamps: TimestampMicrosecondBuilder,
+    timestamps: TimestampBuilder,
     /// Builder consisting of float values.
-    values: Float32Builder,
+    values: ValueBuilder,
     /// Metadata used to uniquely identify the segment (and related sensor).
     metadata: MetaData,
     /// First timestamp used to distinguish between segments from the same sensor.
@@ -61,8 +61,8 @@ impl SegmentBuilder {
         Self {
             // Note that the actual internal capacity might be slightly larger than these values. Apache
             // Arrow defines the argument as being the lower bound for how many items the builder can hold.
-            timestamps: TimestampMicrosecondBuilder::new(INITIAL_BUILDER_CAPACITY),
-            values: Float32Builder::new(INITIAL_BUILDER_CAPACITY),
+            timestamps: TimestampBuilder::new(INITIAL_BUILDER_CAPACITY),
+            values: ValueBuilder::new(INITIAL_BUILDER_CAPACITY),
             metadata: data_point.metadata.to_vec(),
             first_timestamp: data_point.timestamp,
         }
@@ -98,8 +98,8 @@ impl SegmentBuilder {
         let values = self.values.finish();
 
         let schema = Schema::new(vec![
-            Field::new("timestamps", DataType::Timestamp(Microsecond, None), false),
-            Field::new("values", DataType::Float32, false),
+            Field::new("timestamps", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("values", ArrowValue::DATA_TYPE, false),
         ]);
 
         RecordBatch::try_new(

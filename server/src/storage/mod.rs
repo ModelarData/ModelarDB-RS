@@ -27,8 +27,6 @@ use paho_mqtt::Message;
 use crate::storage::data_point::DataPoint;
 use crate::storage::segment::SegmentBuilder;
 
-type Timestamp = i64;
-type Value = f32;
 type MetaData = Vec<String>;
 
 const INITIAL_BUILDER_CAPACITY: usize = 50;
