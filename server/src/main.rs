@@ -22,7 +22,7 @@ mod tables;
 
 use std::{fs::File, sync::Arc, fmt};
 
-use tracing::{debug, error, info, warn, Level, event, instrument, span};
+use tracing::{debug, error, info, warn, Level, event, instrument, span, Instrument};
 use tracing_subscriber::{filter, prelude::*};
 
 
@@ -96,7 +96,7 @@ fn main() {
         //The errors are consciously ignored as the program is terminating
         let binary_path = std::env::current_exe().unwrap();
         let binary_name = binary_path.file_name().unwrap();
-        info!(" Usage: {} data_folder ", binary_name.to_str().unwrap());
+        error!(" Usage: {} data_folder ", binary_name.to_str().unwrap());
     }
 }
 
@@ -115,6 +115,7 @@ async fn register_tables(session: &mut SessionContext, catalog: &Catalog) {
     for table_metadata in &catalog.table_metadata {
         if session
             .register_parquet(&table_metadata.name, &table_metadata.path, ParquetReadOptions::default())
+            .instrument(tracing::error_span!("register_parquet"))
             .await
             .is_err()
         {

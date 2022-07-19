@@ -150,7 +150,7 @@ impl FlightService for FlightServiceHandler {
         //Extract client query
         let message = request.get_ref();
         let query = from_utf8(&message.ticket).map_err(to_invalid_argument)?;
-        eprintln!("Executing: {}", query);
+        info!("Executing: {}", query);
 
         //Executes client query
         let session = self.context.session.clone();

@@ -10,7 +10,7 @@ datafusion = "9.0.0"
 datafusion-data-access = "9.0.0"
 datafusion-physical-expr = "9.0.0"
 
-tracing = "0.1"
+tracing = {version = "0.1", features = ["max_level_trace", "release_max_level_info"]}
 tracing-subscriber = "0.3"
 tracing-futures = "0.2.5"
 

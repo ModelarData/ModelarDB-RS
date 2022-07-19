@@ -31,6 +31,7 @@ use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use datafusion::parquet::record::RowAccessor;
 
 /** Public Types **/
+#[derive(Debug)]
 pub struct Catalog {
     pub table_metadata: Vec<TableMetadata>,
     pub model_table_metadata: Vec<Arc<ModelTableMetadata>>,
