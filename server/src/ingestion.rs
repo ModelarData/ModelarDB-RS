@@ -15,29 +15,39 @@
 
 //! Support for data ingestion from an MQTT broker.
 //!
-//! To use the ingestor, run the "ingestor.start()" function. This function first creates the client.
+//! To use the ingestor, run the "ingestor.start()" method. This method first creates the client.
 //! Then it uses the created client to connect to the broker and subscribe to the specified topics.
 //! The connection message stream is then looped over to ingest the messages that are published to the topics.
+
+use std::{process, time::Duration};
 
 use futures::{executor::block_on, stream::StreamExt};
 use paho_mqtt as mqtt;
 use paho_mqtt::{AsyncClient, AsyncReceiver, Message};
-use std::{process, time::Duration};
 
 /// A single MQTT client that can subscribe to the specified broker and ingest messages from the
 /// specified topics. Note that after creation, the ingestor needs to be started to ingest messages.
 pub struct Ingestor {
     /// Server URI for the MQTT broker.
-    pub broker: &'static str,
+    broker: &'static str,
     /// ID that is used to uniquely identify the ingestor as a client to the MQTT broker.
-    pub client_id: &'static str,
+    client_id: &'static str,
     /// Specific topics that should be subscribed to. Use "\[*]" to subscribe to all topics.
-    pub topics: &'static [&'static str],
+    topics: &'static [&'static str],
     /// The quality of service for each subscribed-to topic. Should be of same length as `topics` field.
-    pub qos: &'static [i32],
+    qos: &'static [i32],
 }
 
 impl Ingestor {
+    pub fn new(broker: &str, client_id: &str, topics: &[&str], qos: &[i32]) -> Self {
+        Self {
+            broker,
+            client_id,
+            topics,
+            qos,
+        }
+    }
+
     /// Create a broker client, subscribe to the topics and start ingesting messages.
     pub fn start(self) {
         println!("Creating MQTT broker client.");
@@ -69,7 +79,10 @@ impl Ingestor {
     }
 
     /// Make the connection to the broker and subscribe to the specified topics.
-    async fn subscribe_to_broker(&self, client: &mut AsyncClient) -> AsyncReceiver<Option<Message>> {
+    async fn subscribe_to_broker(
+        &self,
+        client: &mut AsyncClient,
+    ) -> AsyncReceiver<Option<Message>> {
         // Get message stream before connecting since messages can arrive as soon as the connection is made.
         let mut stream = client.get_stream(25);
 
@@ -94,7 +107,10 @@ impl Ingestor {
 
     // TODO: Send the messages to the storage engine when they are retrieved.
     /// Ingest the published messages in a loop until connection is lost.
-    async fn ingest_messages(stream: &mut AsyncReceiver<Option<Message>>, client: &mut AsyncClient) {
+    async fn ingest_messages(
+        stream: &mut AsyncReceiver<Option<Message>>,
+        client: &mut AsyncClient,
+    ) {
         // While the message stream resolves to the next item in the stream, ingest the messages.
         while let Some(msg_opt) = stream.next().await {
             if let Some(msg) = msg_opt {
