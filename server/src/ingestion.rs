@@ -15,9 +15,9 @@
 
 //! Support for data ingestion from an MQTT broker.
 //!
-//! To use the ingestor, run the "ingestor.start()" method. This method first creates the client.
-//! Then it uses the created client to connect to the broker and subscribe to the specified topics.
-//! The connection message stream is then looped over to ingest the messages that are published to the topics.
+//! To use the ingestor, run the "ingestor.start()" method. This method first creates the client. Then
+//! it uses the created client to connect to the broker and subscribe to the specified topics. The
+//! connection message stream is then looped over to ingest the messages that are published to the topics.
 
 use std::{process, time::Duration};
 
@@ -25,8 +25,10 @@ use futures::{executor::block_on, stream::StreamExt};
 use paho_mqtt as mqtt;
 use paho_mqtt::{AsyncClient, AsyncReceiver, Message};
 
-/// A single MQTT client that can subscribe to the specified broker and ingest messages from the
-/// specified topics. Note that after creation, the ingestor needs to be started to ingest messages.
+use crate::storage::StorageEngine;
+
+/// A single MQTT client that can subscribe to `broker` and ingest messages from `topics`. Note that
+/// after creation, the ingestor needs to be started to ingest messages.
 pub struct Ingestor {
     /// Server URI for the MQTT broker.
     broker: &'static str,
@@ -34,12 +36,17 @@ pub struct Ingestor {
     client_id: &'static str,
     /// Specific topics that should be subscribed to. Use "\[*]" to subscribe to all topics.
     topics: &'static [&'static str],
-    /// The quality of service for each subscribed-to topic. Should be of same length as `topics` field.
+    /// The quality of service for each subscribed-to topic. Should be same length as `topics` field.
     qos: &'static [i32],
 }
 
 impl Ingestor {
-    pub fn new(broker: &str, client_id: &str, topics: &[&str], qos: &[i32]) -> Self {
+    pub fn new(
+        broker: &'static str,
+        client_id: &'static str,
+        topics: &'static [&'static str],
+        qos: &'static [i32],
+    ) -> Self {
         Self {
             broker,
             client_id,
@@ -48,8 +55,8 @@ impl Ingestor {
         }
     }
 
-    /// Create a broker client, subscribe to the topics and start ingesting messages.
-    pub fn start(self) {
+    /// Create a broker client, subscribe to the topics, and start ingesting messages.
+    pub fn start(self, mut storage_engine: StorageEngine) {
         println!("Creating MQTT broker client.");
         let mut client = self.create_client();
 
@@ -57,7 +64,7 @@ impl Ingestor {
             let mut stream = self.subscribe_to_broker(&mut client).await;
 
             println!("Waiting for messages...");
-            Self::ingest_messages(&mut stream, &mut client).await;
+            Self::ingest_messages(&mut stream, &mut client, &mut storage_engine).await;
 
             Ok::<(), mqtt::Error>(())
         }) {
@@ -65,7 +72,7 @@ impl Ingestor {
         }
     }
 
-    /// Create a broker client with the given broker URI and client ID.
+    /// Create a broker client with the ingestors broker URI and client ID.
     fn create_client(&self) -> AsyncClient {
         let create_options = mqtt::CreateOptionsBuilder::new()
             .server_uri(self.broker)
@@ -105,21 +112,21 @@ impl Ingestor {
         stream
     }
 
-    // TODO: Send the messages to the storage engine when they are retrieved.
     /// Ingest the published messages in a loop until connection is lost.
     async fn ingest_messages(
         stream: &mut AsyncReceiver<Option<Message>>,
         client: &mut AsyncClient,
+        storage_engine: &mut StorageEngine,
     ) {
         // While the message stream resolves to the next item in the stream, ingest the messages.
         while let Some(msg_opt) = stream.next().await {
             if let Some(msg) = msg_opt {
-                println!("{}", msg);
+                storage_engine.insert_message(msg);
             } else {
-                // A "None" means we were disconnected. Try to reconnect...
+                // A "None" means we were disconnected. Try to reconnect.
                 println!("Lost connection. Attempting reconnect.");
                 while let Err(err) = client.reconnect().await {
-                    eprintln!("Error reconnecting: {}", err);
+                    eprintln!("Error reconnecting: {:?}", err);
                     tokio::time::sleep(Duration::from_millis(1000)).await;
                 }
             }
