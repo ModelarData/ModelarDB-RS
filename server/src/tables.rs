@@ -40,12 +40,13 @@ use datafusion::logical_plan::{col, combine_filters, Expr, Operator, ToDFSchema}
 use datafusion::physical_plan::{
     expressions::PhysicalSortExpr, file_format::FileScanConfig, file_format::ParquetExec,
     filter::FilterExec, metrics::BaselineMetrics, metrics::ExecutionPlanMetricsSet,
-    metrics::MetricsSet, DisplayFormatType, ExecutionPlan, Partitioning,
-    RecordBatchStream, SendableRecordBatchStream, Statistics,
+    metrics::MetricsSet, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
+    SendableRecordBatchStream, Statistics,
 };
 use datafusion::scalar::ScalarValue::{Int64, TimestampNanosecond};
-
 use datafusion_physical_expr::planner;
+
+use object_store::path::Path;
 
 use crate::catalog::ModelTableMetadata;
 use crate::models;
@@ -54,6 +55,7 @@ use crate::models;
 /* TableProvider */
 pub struct ModelTable {
     object_store_url: ObjectStoreUrl,
+    segment_folder_path: Path,
     model_table_metadata: Arc<ModelTableMetadata>,
     schema: Arc<Schema>,
 }
@@ -79,6 +81,7 @@ impl ModelTable {
 
         Arc::new(ModelTable {
             model_table_metadata: model_table_metadata.clone(),
+            segment_folder_path: Path::from(model_table_metadata.segment_folder.clone()),
             object_store_url: ObjectStoreUrl::local_filesystem(),
             schema: Arc::new(Schema::new(columns)),
         })
@@ -216,10 +219,10 @@ impl TableProvider for ModelTable {
             .runtime_env
             .object_store(&self.object_store_url)
             .unwrap()
-            .list_file(&self.model_table_metadata.segment_folder)
+            .list(Some(&self.segment_folder_path))
             .await?
-            .map(|file_meta| PartitionedFile {
-                file_meta: file_meta.unwrap(),
+            .map(|object_meta| PartitionedFile {
+                object_meta: object_meta.unwrap(),
                 partition_values: vec![],
                 range: None,
             })
@@ -465,7 +468,10 @@ impl GridStream {
             let start_time = start_times.value(row_index);
             let end_time = end_times.value(row_index);
             let mtid = mtids.value(row_index);
-            let sampling_interval = self.model_table_metadata.sampling_intervals.value(gid as usize);
+            let sampling_interval = self
+                .model_table_metadata
+                .sampling_intervals
+                .value(gid as usize);
             let model = models.value(row_index);
             let gaps = gaps.value(row_index);
             models::grid(

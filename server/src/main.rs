@@ -18,6 +18,7 @@ mod models;
 mod optimizer;
 mod remote;
 mod tables;
+mod types;
 mod storage;
 
 use std::sync::Arc;

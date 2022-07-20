@@ -13,26 +13,27 @@
  * limitations under the License.
  */
 
-//! Support for formatting uncompressed data, storing uncompressed data both
-//! in-memory and in a parquet file data buffer, and storing compressed data.
+//! Converts raw MQTT messages to uncompressed data points, stores uncompressed data points
+//! temporarily in an in-memory buffer that spills to Apache Parquet files, and stores data points
+//! compressed as models in Apache Parquet files.
 
 mod data_point;
 mod segment;
 
-use crate::storage::data_point::DataPoint;
-use crate::storage::segment::{BufferedSegment, FinishedSegment, SegmentBuilder, UncompressedSegment};
-use paho_mqtt::Message;
 use std::collections::vec_deque::VecDeque;
 use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
+
+use paho_mqtt::Message;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
 
-type Timestamp = i64;
-type Value = f32;
+use crate::storage::data_point::DataPoint;
+use crate::storage::segment::{BufferedSegment, FinishedSegment, SegmentBuilder, UncompressedSegment};
+
 type MetaData = Vec<String>;
 
 // TODO: This should be dynamic.
@@ -41,8 +42,7 @@ const SENSOR_COUNT: usize = 2;
 const INITIAL_BUILDER_CAPACITY: usize = 50;
 const RESERVED_BYTES: usize = 5000;
 
-/// Keeping track of all uncompressed data, either in memory or in a file buffer. The data field should
-/// not be directly modified and is therefore only changed when using "insert_data".
+/// Keeping track of all uncompressed data, both while being built and when finished.
 pub struct StorageEngine {
     /// The uncompressed segments while they are being built.
     data: HashMap<String, SegmentBuilder>,
@@ -99,7 +99,8 @@ impl StorageEngine {
         }
     }
 
-    /// If possible, return the oldest finished segment from the compression queue.
+    /// Remove the oldest finished segment from the compression queue and return it. Return `None`
+    /// if the compression queue is empty.
     pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
         if let Some(finished_segment) = self.compression_queue.pop_front() {
             // Add the memory size of the removed finished segment back to the remaining bytes.
@@ -111,13 +112,13 @@ impl StorageEngine {
         }
     }
 
-    /// Write `data` to persistent parquet file storage.
-    pub fn save_compressed_data(key: String, first_timestamp: Timestamp, data: RecordBatch) {
+    /// Write `batch` to a persistent Apache Parquet file on disk.
+    pub fn save_compressed_data(key: String, first_timestamp: Timestamp, batch: RecordBatch) {
         let folder_path = format!("compressed/{}", key);
         fs::create_dir_all(&folder_path);
 
         let path = format!("{}/{}.parquet", folder_path, first_timestamp);
-        write_batch_to_parquet(data, path);
+        write_batch_to_parquet(batch, path);
     }
 
     /// Move `segment_builder` to the the compression queue. If necessary, buffer the data first.
@@ -146,7 +147,7 @@ impl StorageEngine {
     }
 }
 
-/// Write `batch` to a parquet file at the location given by `path`.
+/// Write `batch` to an Apache Parquet file at the location given by `path`.
 fn write_batch_to_parquet(batch: RecordBatch, path: String) {
     let file = File::create(path).unwrap();
     let props = WriterProperties::builder()
@@ -163,36 +164,7 @@ fn write_batch_to_parquet(batch: RecordBatch, path: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::Rng;
     use std::time::{SystemTime, UNIX_EPOCH};
-
-    /// Generate a random data point and insert it into `storage_engine`. Return the data point key.
-    fn insert_generated_message(storage_engine: &mut StorageEngine) -> String {
-        let value = rand::thread_rng().gen_range(0..100);
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_micros();
-
-        let payload = format!("[{}, {}]", timestamp, value);
-        let message = Message::new("ModelarDB/test", payload, 1);
-
-        storage_engine.insert_message(message.clone());
-
-        DataPoint::from_message(&message).unwrap().generate_unique_key()
-    }
-
-    /// Generate `count` data points for the same time series and insert them into `storage_engine`.
-    /// Return the key, which is the same for all generated data points.
-    fn insert_multiple_messages(count: usize, storage_engine: &mut StorageEngine) -> String {
-        let mut key = String::new();
-
-        for _ in 0..count {
-            key = insert_generated_message(storage_engine);
-        }
-
-        key
-    }
 
     #[test]
     fn test_cannot_insert_invalid_message() {
@@ -274,5 +246,32 @@ mod tests {
     #[test]
     fn test_remaining_bytes_not_incremented_when_popping_buffered() {
         // TODO: Implement this test. This requires I/O.
+    }
+
+	/// Generate `count` data points for the same time series and insert them into `storage_engine`.
+    /// Return the key, which is the same for all generated data points.
+    fn insert_multiple_messages(count: usize, storage_engine: &mut StorageEngine) -> String {
+        let mut key = String::new();
+
+        for _ in 0..count {
+            key = insert_generated_message(storage_engine);
+        }
+
+        key
+    }
+
+    /// Generate a random data point and insert it into `storage_engine`. Return the data point key.
+    fn insert_generated_message(storage_engine: &mut StorageEngine) -> String {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_micros();
+
+        let payload = format!("[{}, 30]", timestamp, value);
+        let message = Message::new("ModelarDB/test", payload, 1);
+
+        storage_engine.insert_message(message.clone());
+
+        DataPoint::from_message(&message).unwrap().generate_unique_key()
     }
 }

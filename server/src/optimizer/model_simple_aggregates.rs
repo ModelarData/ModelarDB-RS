@@ -30,12 +30,12 @@ use datafusion::arrow::record_batch::RecordBatch;
 
 use datafusion::error::Result;
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
+use datafusion::physical_plan::aggregates::AggregateExec;
 use datafusion::physical_plan::expressions::format_state_name;
 use datafusion::physical_plan::expressions::{Avg, Count, Max, Min, Sum};
-use datafusion::physical_plan::aggregates::AggregateExec;
+use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::ColumnarValue;
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use datafusion::prelude::SessionConfig;
 use datafusion::scalar::ScalarValue;
@@ -50,7 +50,7 @@ fn new_aggregate(
     Arc::new(
         AggregateExec::try_new(
             *aggregate_exec.mode(),
-            aggregate_exec.group_expr().to_vec(),
+            aggregate_exec.group_expr().clone(),
             vec![model_aggregate_expr],
             grid_exec.children()[0].clone(), //Removes the GridExec
             aggregate_exec.input_schema(),
@@ -79,7 +79,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                     let mae = ModelAggregateExpr::new(
                                         ModelAggregateType::Count,
                                         ge.model_table_metadata.clone(),
-                                        );
+                                    );
                                     return Some(new_aggregate(hae, mae, ge));
                                 }
                             } else if ae[0].as_any().downcast_ref::<Min>().is_some() {
@@ -87,7 +87,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                     let mae = ModelAggregateExpr::new(
                                         ModelAggregateType::Min,
                                         ge.model_table_metadata.clone(),
-                                        );
+                                    );
                                     return Some(new_aggregate(hae, mae, ge));
                                 }
                             } else if ae[0].as_any().downcast_ref::<Max>().is_some() {
@@ -95,7 +95,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                     let mae = ModelAggregateExpr::new(
                                         ModelAggregateType::Max,
                                         ge.model_table_metadata.clone(),
-                                        );
+                                    );
                                     return Some(new_aggregate(hae, mae, ge));
                                 }
                             } else if ae[0].as_any().downcast_ref::<Sum>().is_some() {
@@ -103,7 +103,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                     let mae = ModelAggregateExpr::new(
                                         ModelAggregateType::Sum,
                                         ge.model_table_metadata.clone(),
-                                        );
+                                    );
                                     return Some(new_aggregate(hae, mae, ge));
                                 }
                             } else if ae[0].as_any().downcast_ref::<Avg>().is_some() {
@@ -111,7 +111,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                     let mae = ModelAggregateExpr::new(
                                         ModelAggregateType::Avg,
                                         ge.model_table_metadata.clone(),
-                                        );
+                                    );
                                     return Some(new_aggregate(hae, mae, ge));
                                 }
                             }
@@ -170,7 +170,10 @@ pub struct ModelAggregateExpr {
 }
 
 impl ModelAggregateExpr {
-    fn new(aggregate_type: ModelAggregateType, model_table_metadata: Arc<ModelTableMetadata>) -> Arc<Self> {
+    fn new(
+        aggregate_type: ModelAggregateType,
+        model_table_metadata: Arc<ModelTableMetadata>,
+    ) -> Arc<Self> {
         let data_type = match &aggregate_type {
             ModelAggregateType::Count => DataType::UInt64,
             ModelAggregateType::Min => DataType::Float32,

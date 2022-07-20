@@ -13,41 +13,39 @@
  * limitations under the License.
  */
 
-//! Support for different kinds of stored segments.
-//!
-//! The main SegmentBuilder struct provides support for inserting and storing data in an in-memory
-//! segment. BufferedSegment provides support for storing uncompressed data in a parquet buffer.
-//! Finally, FinishedSegment provides a generalized interface for using the segments in the compressor.
+//! Provides support for inserting and storing data in an in-memory segment. Furthermore, the data
+//! can be retrieved as a structured record batch.
 
-use crate::storage::data_point::DataPoint;
-use crate::storage::{write_batch_to_parquet, INITIAL_BUILDER_CAPACITY, Timestamp, Value};
-use datafusion::arrow::array::{
-    Array, ArrayBuilder, Float32Builder, TimestampMicrosecondArray, TimestampMicrosecondBuilder,
-};
-use datafusion::arrow::datatypes::TimeUnit::Microsecond;
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
-use datafusion::arrow::record_batch::{RecordBatch};
-use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader, ProjectionMask};
-use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use std::fmt::Formatter;
 use std::fs::File;
 use std::sync::Arc;
-use std::{fmt, fs, mem};
+use std::{fmt, fs};
+
+use datafusion::arrow::array::ArrayBuilder;
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
+use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::parquet::arrow::ArrowWriter;
+use datafusion::parquet::basic::Encoding;
+use datafusion::parquet::file::properties::WriterProperties;
+
+use crate::storage::data_point::DataPoint;
+use crate::storage::{INITIAL_BUILDER_CAPACITY, MetaData};
+use crate::types::{ArrowTimestamp, ArrowValue, Timestamp, TimestampBuilder, ValueBuilder};
 
 pub trait UncompressedSegment {
-    fn get_data(&mut self) -> RecordBatch;
+    fn get_record_batch(&mut self) -> RecordBatch;
 
     fn get_memory_size(&self) -> usize;
 }
 
-/// A single segment being built, consisting of a series of timestamps and values. Note that
-/// since array builders are used, the data can only be read once the builders are finished and
-/// can not be further appended to after.
+/// A single segment being built, consisting of an ordered sequence of timestamps and values. Note
+/// that since array builders are used, the data can only be read once the builders are finished and
+/// cannot be further appended to after.
 pub struct SegmentBuilder {
-    /// Builder consisting of timestamps with microsecond precision.
-    timestamps: TimestampMicrosecondBuilder,
+    /// Builder consisting of timestamps with millisecond precision.
+    timestamps: TimestampBuilder,
     /// Builder consisting of float values.
-    values: Float32Builder,
+    values: ValueBuilder,
 }
 
 impl fmt::Display for SegmentBuilder {
@@ -62,13 +60,13 @@ impl fmt::Display for SegmentBuilder {
 
 impl UncompressedSegment for SegmentBuilder {
     /// Finish the array builders and return the data in a structured record batch.
-    fn get_data(&mut self) -> RecordBatch {
+    fn get_record_batch(&mut self) -> RecordBatch {
         let timestamps = self.timestamps.finish();
         let values = self.values.finish();
 
         let schema = Schema::new(vec![
-            Field::new("timestamps", DataType::Timestamp(Microsecond, None), false),
-            Field::new("values", DataType::Float32, false),
+            Field::new("timestamps", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("values", ArrowValue::DATA_TYPE, false),
         ]);
 
         RecordBatch::try_new(
@@ -94,19 +92,23 @@ impl SegmentBuilder {
         }
     }
 
+    /// Return `true` if the segment is full, meaning additional data points cannot be appended.
+    pub fn is_full(&self) -> bool {
+        self.get_length() == self.get_capacity()
+    }
+
     /// Return how many data points the segment currently contains.
     pub fn get_length(&self) -> usize {
         // The length is always the same for both builders.
         self.timestamps.len()
     }
 
-    /// If at least one of the builders are at capacity, return true.
-    pub fn is_full(&self) -> bool {
-        let length = self.get_length();
-        length == self.timestamps.capacity() || length == self.values.capacity()
+    /// Return how many data points the segment can contain.
+    fn get_capacity(&self) -> usize {
+        usize::min(self.timestamps.capacity(), self.values.capacity())
     }
 
-    /// Add the timestamp and value from the data point to the segment array builders.
+    /// Add the timestamp and value from `data_point` to the segment's array builders.
     pub fn insert_data(&mut self, data_point: &DataPoint) {
         self.timestamps.append_value(data_point.timestamp);
         self.values.append_value(data_point.value);
@@ -123,7 +125,7 @@ pub struct BufferedSegment {
 
 impl UncompressedSegment for BufferedSegment {
     /// Retrieve the data from the parquet file buffer and return it in a structured record batch.
-    fn get_data(&mut self) -> RecordBatch {
+    fn get_record_batch(&mut self) -> RecordBatch {
         let file = File::open(&self.path).unwrap();
         let file_reader = SerializedFileReader::new(file).unwrap();
 
@@ -152,7 +154,7 @@ impl BufferedSegment {
         let folder_path = format!("uncompressed/{}", key);
         fs::create_dir_all(&folder_path);
 
-        let data = segment_builder.get_data();
+        let data = segment_builder.get_record_batch();
         let timestamps: &TimestampMicrosecondArray = data.column(0).as_any().downcast_ref().unwrap();
 
         let path = format!("{}/{}.parquet", folder_path, timestamps.value(0));
@@ -203,7 +205,7 @@ mod tests {
         let data_point = get_data_point();
         let mut segment_builder = SegmentBuilder::new();
 
-        for _ in 0..segment_builder.timestamps.capacity() {
+        for _ in 0..segment_builder.get_capacity() {
             segment_builder.insert_data(&data_point)
         }
 
@@ -226,7 +228,7 @@ mod tests {
         segment_builder.insert_data(&data_point);
         segment_builder.insert_data(&data_point);
 
-        let data = segment_builder.get_data();
+        let data = segment_builder.get_record_batch();
         assert_eq!(data.num_columns(), 2);
         assert_eq!(data.num_rows(), 2);
     }

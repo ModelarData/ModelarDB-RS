@@ -6,18 +6,20 @@ edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
-datafusion = "9.0.0"
-datafusion-data-access = "9.0.0"
-datafusion-physical-expr = "9.0.0"
+datafusion = "10.0.0"
+datafusion-physical-expr = "10.0.0"
+object_store = "0.3.0"
 
-tokio = { version = "1.19.2", features = ["rt-multi-thread"] }
+tokio = { version = "1.20.0", features = ["rt-multi-thread"] }
 async-trait = "0.1.56"
 futures = "0.3.21"
 
-arrow-flight = "15.0.0"
+arrow-flight = "18.0.0"
 tonic = "0.7.2"
 
-snmalloc-rs = "0.3.1"
+snmalloc-rs = "0.3.3"
 
 paho-mqtt = {version = "0.11", default-features = false, features = ["bundled"]}
-rand = "0.8"
+
+[dev-dependencies]
+proptest = "1.0.0"
