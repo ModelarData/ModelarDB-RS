@@ -33,6 +33,7 @@ use datafusion::parquet::file::properties::WriterProperties;
 
 use crate::storage::data_point::DataPoint;
 use crate::storage::segment::{BufferedSegment, FinishedSegment, SegmentBuilder, UncompressedSegment};
+use crate::types::Timestamp;
 
 type MetaData = Vec<String>;
 
@@ -67,7 +68,7 @@ impl StorageEngine {
         }
     }
 
-    /// Format `message` and insert it into the in-memory storage.
+    /// Parse `message` and insert it into the in-memory buffer.
     pub fn insert_message(&mut self, message: Message) {
         match DataPoint::from_message(&message) {
             Ok(data_point) => {
@@ -267,7 +268,7 @@ mod tests {
             .unwrap()
             .as_micros();
 
-        let payload = format!("[{}, 30]", timestamp, value);
+        let payload = format!("[{}, 30]", timestamp);
         let message = Message::new("ModelarDB/test", payload, 1);
 
         storage_engine.insert_message(message.clone());

@@ -13,24 +13,26 @@
  * limitations under the License.
  */
 
-//! Provides support for inserting and storing data in an in-memory segment. Furthermore, the data
-//! can be retrieved as a structured record batch.
+//! Support for different kinds of uncompressed segments.
+//!
+//! The SegmentBuilder struct provides support for inserting and storing data in an in-memory segment.
+//! BufferedSegment provides support for storing uncompressed data in a Parquet buffer. FinishedSegment
+//! provides a generalized interface for using the segments in the compressor.
 
 use std::fmt::Formatter;
 use std::fs::File;
 use std::sync::Arc;
-use std::{fmt, fs};
+use std::{fmt, fs, mem};
 
 use datafusion::arrow::array::ArrayBuilder;
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::ArrowWriter;
-use datafusion::parquet::basic::Encoding;
-use datafusion::parquet::file::properties::WriterProperties;
+use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader, ProjectionMask};
+use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::{INITIAL_BUILDER_CAPACITY, MetaData};
-use crate::types::{ArrowTimestamp, ArrowValue, Timestamp, TimestampBuilder, ValueBuilder};
+use crate::storage::{INITIAL_BUILDER_CAPACITY, write_batch_to_parquet};
+use crate::types::{ArrowTimestamp, ArrowValue, Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
 
 pub trait UncompressedSegment {
     fn get_record_batch(&mut self) -> RecordBatch;
@@ -86,9 +88,9 @@ impl SegmentBuilder {
     pub fn new() -> Self {
         Self {
             // Note that the actual internal capacity might be slightly larger than these values. Apache
-            // arrow defines the argument as being the lower bound for how many items the builder can hold.
-            timestamps: TimestampMicrosecondBuilder::new(INITIAL_BUILDER_CAPACITY),
-            values: Float32Builder::new(INITIAL_BUILDER_CAPACITY),
+            // Arrow defines the argument as being the lower bound for how many items the builder can hold.
+            timestamps: TimestampBuilder::new(INITIAL_BUILDER_CAPACITY),
+            values: ValueBuilder::new(INITIAL_BUILDER_CAPACITY),
         }
     }
 
@@ -117,14 +119,14 @@ impl SegmentBuilder {
     }
 }
 
-/// A single segment that has been saved to a parquet file buffer due to memory constraints.
+/// A single segment that has been spilled to a Parquet file buffer due to memory constraints.
 pub struct BufferedSegment {
     /// Path to the file containing the uncompressed data in the segment.
     path: String,
 }
 
 impl UncompressedSegment for BufferedSegment {
-    /// Retrieve the data from the parquet file buffer and return it in a structured record batch.
+    /// Retrieve the data from the Parquet file buffer and return it in a structured record batch.
     fn get_record_batch(&mut self) -> RecordBatch {
         let file = File::open(&self.path).unwrap();
         let file_reader = SerializedFileReader::new(file).unwrap();
@@ -149,13 +151,13 @@ impl UncompressedSegment for BufferedSegment {
 }
 
 impl BufferedSegment {
-    /// Retrieve the data from the segment builder, save it to a parquet file, and save the path.
+    /// Retrieve the data from the segment builder, save it to a Parquet file, and save the path.
     pub fn new(key: String, mut segment_builder: SegmentBuilder) -> Self {
         let folder_path = format!("uncompressed/{}", key);
         fs::create_dir_all(&folder_path);
 
         let data = segment_builder.get_record_batch();
-        let timestamps: &TimestampMicrosecondArray = data.column(0).as_any().downcast_ref().unwrap();
+        let timestamps: &TimestampArray = data.column(0).as_any().downcast_ref().unwrap();
 
         let path = format!("{}/{}.parquet", folder_path, timestamps.value(0));
         write_batch_to_parquet(data, path.clone());
