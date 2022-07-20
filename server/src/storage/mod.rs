@@ -48,7 +48,7 @@ impl StorageEngine {
         }
     }
 
-    /// Format `message` and insert it into the in-memory buffer.
+    /// Parse `message` and insert it into the in-memory buffer.
     pub fn insert_message(&mut self, message: Message) {
         match DataPoint::from_message(&message) {
             Ok(data_point) => {
@@ -90,7 +90,6 @@ impl StorageEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::Rng;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -151,13 +150,12 @@ mod tests {
     }
 
     fn insert_generated_message(storage_engine: &mut StorageEngine) -> String {
-        let value = rand::thread_rng().gen_range(0..100);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_micros();
 
-        let payload = format!("[{}, {}]", timestamp, value);
+        let payload = format!("[{}, 30]", timestamp);
         let message = Message::new("ModelarDB/test", payload, 1);
 
         storage_engine.insert_message(message.clone());
