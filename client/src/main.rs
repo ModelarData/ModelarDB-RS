@@ -48,7 +48,7 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 fn main() {
     let args = env::args();
     if args.len() > 3 {
-        //The errors are consciously ignored as the program is terminating
+        // The errors are consciously ignored as the program is terminating.
         let binary_path = env::current_exe().unwrap();
         let binary_name = binary_path.file_name().unwrap();
         println!(
@@ -63,14 +63,14 @@ fn main() {
         let address = address.unwrap_or_else(|| "127.0.0.1".to_string());
         match connect(&rt, &address, 9999) {
             Ok(fsc) => {
-                //Execute queries
+                // Execute queries.
                 let result = if let Some(query_file) = query_file {
                     file(rt, fsc, &query_file)
                 } else {
                     repl(rt, fsc)
                 };
 
-                //Print error
+                // Print error.
                 match result {
                     Ok(_) => (),
                     Err(message) => eprintln!("{}", message),
@@ -85,16 +85,16 @@ fn main() {
 
 /** Private Functions **/
 fn parse_arguments(mut args: env::Args) -> (Option<String>, Option<String>) {
-    args.next(); //Drop the path of the executable
+    args.next(); // Drop the path of the executable.
     let mut address = None;
     let mut query_file = None;
 
     for arg in args {
         let metadata = metadata(&arg);
         if metadata.is_ok() && metadata.unwrap().is_file() {
-            query_file = Some(arg); //A file is probably the query file
+            query_file = Some(arg); // A file is probably the query file.
         } else {
-            address = Some(arg); //Otherwise, it is probably the address
+            address = Some(arg); // Otherwise, it is probably the address.
         }
     }
     (address, query_file)
@@ -113,7 +113,7 @@ fn file(rt: Runtime, mut fsc: FlightServiceClient<Channel>, queries_path: &str) 
     let lines = io::BufReader::new(file).lines();
 
     for line in lines {
-        //Removes all comments
+        // Removes all comments.
         let input = line?;
         let query = if let Some(comment_start) = input.find("--") {
             input[0..comment_start].to_owned()
@@ -121,20 +121,20 @@ fn file(rt: Runtime, mut fsc: FlightServiceClient<Channel>, queries_path: &str) 
             input
         };
 
-        //Executes the query
+        // Executes the query.
         if !query.is_empty() {
             println!("{}", query);
             if let Err(message) = execute_and_print_query_or_command(&rt, &mut fsc, &query) {
                 eprintln!("{}", message);
             }
-            println!(); //Formatting newline
+            println!(); // Formatting newline.
         }
     }
     Ok(())
 }
 
 fn repl(rt: Runtime, mut fsc: FlightServiceClient<Channel>) -> Result<()> {
-    let mut editor = Editor::<ClientHelper>::new();
+    let mut editor = Editor::<ClientHelper>::new()?;
     let table_names = retrieve_table_names(&rt, &mut fsc)?;
     editor.set_helper(Some(ClientHelper::new(table_names)));
     let history_file_name = ".mmdbc_history";

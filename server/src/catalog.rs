@@ -85,7 +85,7 @@ pub fn new(data_folder: &str) -> Catalog {
                 let dir_entry_path = dir_entry.path();
                 if let Some(path) = dir_entry_path.to_str() {
                     let file_name = dir_entry.file_name().to_str().unwrap().to_string();
-                    //HACK: workaround for datafusion 8.0.0 lowercasing table names in queries
+                    // HACK: workaround for datafusion 8.0.0 lowercasing table names in queries.
                     let normalized_file_name = file_name.to_ascii_lowercase();
                     if is_dir_entry_a_table(&dir_entry) {
                         table_metadata.push(new_table_metadata(normalized_file_name, path.to_string()));
@@ -122,7 +122,7 @@ pub fn new(data_folder: &str) -> Catalog {
 }
 
 /** Private Methods **/
-//TODO: check the files for tables and model tables have the correct schema
+// TODO: check the files for tables and model tables have the correct schema.
 fn is_dir_entry_a_table(dir_entry: &DirEntry) -> bool {
     if let Ok(metadata) = dir_entry.metadata() {
 	if metadata.is_file() {
@@ -179,7 +179,7 @@ fn read_model_table_metadata(
     table_folder: String,
     segment_group_file_schema: &Arc<Schema>,
 ) -> Result<Arc<ModelTableMetadata>, ParquetError> {
-    //Ensure only supported model types are used
+    // Ensure only supported model types are used.
     let model_types_file = table_folder.clone() + "/model_type.parquet";
     let path = Path::new(&model_types_file);
     if let Ok(file) = File::open(&path) {
@@ -198,8 +198,8 @@ fn read_model_table_metadata(
         }
     }
 
-    //Read time series metadata
-    //TODO: read tids and gids so data from time series groups can be correctly decompressed
+    // Read time series metadata.
+    // TODO: read tids and gids so data from time series groups can be correctly decompressed.
     let time_series_file = table_folder.clone() + "/time_series.parquet";
     let path = Path::new(&time_series_file);
     if let Ok(file) = File::open(&path) {

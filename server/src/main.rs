@@ -18,6 +18,8 @@ mod models;
 mod optimizer;
 mod remote;
 mod tables;
+mod types;
+mod storage;
 
 
 use std::{fs::File, sync::Arc, fmt};
@@ -74,18 +76,18 @@ fn main() {
         .init();
     
     let mut args = std::env::args();
-    args.next(); //Skip executable
+    args.next(); // Skip executable.
     if let Some(data_folder) = args.next() {
-        //Build Context
+        // Build Context.
         let catalog = catalog::new(&data_folder);
         let runtime = Runtime::new().unwrap();
         let mut session = create_session_context();
         
 
-        //Register Tables
+        // Register Tables.
         runtime.block_on(register_tables(&mut session, &catalog));
 
-        //Start Interface
+        // Start Interface.
         let context = Arc::new(Context {
             catalog,
             runtime,
@@ -93,7 +95,7 @@ fn main() {
         });
         remote::start_arrow_flight_server(context, 9999);
     } else {
-        //The errors are consciously ignored as the program is terminating
+        // The errors are consciously ignored as the program is terminating.
         let binary_path = std::env::current_exe().unwrap();
         let binary_name = binary_path.file_name().unwrap();
         error!(" Usage: {} data_folder ", binary_name.to_str().unwrap());
@@ -111,7 +113,7 @@ fn create_session_context() -> SessionContext {
 }
 
 async fn register_tables(session: &mut SessionContext, catalog: &Catalog) {
-    //Initializes tables consisting of standard Apache Parquet files
+    // Initializes tables consisting of standard Apache Parquet files.
     for table_metadata in &catalog.table_metadata {
         if session
             .register_parquet(&table_metadata.name, &table_metadata.path, ParquetReadOptions::default())
@@ -123,7 +125,7 @@ async fn register_tables(session: &mut SessionContext, catalog: &Catalog) {
         }
     }
 
-    //Initializes tables storing time series as models in Apache Parquet files
+    // Initializes tables storing time series as models in Apache Parquet files.
     for model_table_metadata in &catalog.model_table_metadata {
             if session
             .register_table(model_table_metadata.name.as_str(), ModelTable::new(model_table_metadata))

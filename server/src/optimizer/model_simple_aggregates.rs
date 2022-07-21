@@ -30,27 +30,27 @@ use datafusion::arrow::record_batch::RecordBatch;
 
 use datafusion::error::Result;
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
+use datafusion::physical_plan::aggregates::AggregateExec;
 use datafusion::physical_plan::expressions::format_state_name;
 use datafusion::physical_plan::expressions::{Avg, Count, Max, Min, Sum};
-use datafusion::physical_plan::aggregates::AggregateExec;
+use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::ColumnarValue;
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use datafusion::prelude::SessionConfig;
 use datafusion::scalar::ScalarValue;
 
-//Helper Functions
+// Helper Functions.
 fn new_aggregate(
     aggregate_exec: &AggregateExec,
     model_aggregate_expr: Arc<ModelAggregateExpr>,
     grid_exec: &GridExec,
 ) -> Arc<AggregateExec> {
-    //Assumes the GridExec only have a single child
+    // Assumes the GridExec only have a single child.
     Arc::new(
         AggregateExec::try_new(
             *aggregate_exec.mode(),
-            aggregate_exec.group_expr().to_vec(),
+            aggregate_exec.group_expr().clone(),
             vec![model_aggregate_expr],
             grid_exec.children()[0].clone(), //Removes the GridExec
             aggregate_exec.input_schema(),
@@ -59,12 +59,12 @@ fn new_aggregate(
     )
 }
 
-//Optimizer Rule
+// Optimizer Rule.
 pub struct ModelSimpleAggregatesPhysicalOptimizerRule {}
 
 impl ModelSimpleAggregatesPhysicalOptimizerRule {
     fn optimize(&self, plan: &Arc<dyn ExecutionPlan>) -> Option<Arc<dyn ExecutionPlan>> {
-        //Matches a simple aggregate performed without filtering out segments
+        // Matches a simple aggregate performed without filtering out segments.
         if let Some(hae) = plan.as_any().downcast_ref::<AggregateExec>() {
             let children = &hae.children();
             if children.len() == 1 {
@@ -73,13 +73,13 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                     if children.len() == 1 {
                         let ae = hae.aggr_expr();
                         if ae.len() == 1 {
-                            //TODO: simplify and factor out shared code using macros or functions
+                            // TODO: simplify and factor out shared code using macros or functions.
                             if ae[0].as_any().downcast_ref::<Count>().is_some() {
                                 if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
                                     let mae = ModelAggregateExpr::new(
                                         ModelAggregateType::Count,
                                         ge.model_table_metadata.clone(),
-                                        );
+                                    );
                                     return Some(new_aggregate(hae, mae, ge));
                                 }
                             } else if ae[0].as_any().downcast_ref::<Min>().is_some() {
@@ -87,7 +87,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                     let mae = ModelAggregateExpr::new(
                                         ModelAggregateType::Min,
                                         ge.model_table_metadata.clone(),
-                                        );
+                                    );
                                     return Some(new_aggregate(hae, mae, ge));
                                 }
                             } else if ae[0].as_any().downcast_ref::<Max>().is_some() {
@@ -95,7 +95,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                     let mae = ModelAggregateExpr::new(
                                         ModelAggregateType::Max,
                                         ge.model_table_metadata.clone(),
-                                        );
+                                    );
                                     return Some(new_aggregate(hae, mae, ge));
                                 }
                             } else if ae[0].as_any().downcast_ref::<Sum>().is_some() {
@@ -103,7 +103,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                     let mae = ModelAggregateExpr::new(
                                         ModelAggregateType::Sum,
                                         ge.model_table_metadata.clone(),
-                                        );
+                                    );
                                     return Some(new_aggregate(hae, mae, ge));
                                 }
                             } else if ae[0].as_any().downcast_ref::<Avg>().is_some() {
@@ -111,7 +111,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
                                     let mae = ModelAggregateExpr::new(
                                         ModelAggregateType::Avg,
                                         ge.model_table_metadata.clone(),
-                                        );
+                                    );
                                     return Some(new_aggregate(hae, mae, ge));
                                 }
                             }
@@ -121,8 +121,8 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
             }
         }
 
-        //Visit the children
-        //TODO: handle plans were multiple children must be updated
+        // Visit the children.
+        // TODO: handle plans were multiple children must be updated.
         for child in plan.children() {
             if let Some(new_child) = self.optimize(&child) {
                 return Some(plan.clone().with_new_children(vec![new_child]).unwrap());
@@ -132,7 +132,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
     }
 }
 
-//TODO: determine if some structs or traits can be removed or parametrized?
+// TODO: determine if some structs or traits can be removed or parametrized?
 impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
     fn optimize(
         &self,
@@ -151,7 +151,7 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
     }
 }
 
-//Aggregate Expressions
+// Aggregate Expressions.
 #[derive(Debug)]
 enum ModelAggregateType {
     Count,
@@ -170,7 +170,10 @@ pub struct ModelAggregateExpr {
 }
 
 impl ModelAggregateExpr {
-    fn new(aggregate_type: ModelAggregateType, model_table_metadata: Arc<ModelTableMetadata>) -> Arc<Self> {
+    fn new(
+        aggregate_type: ModelAggregateType,
+        model_table_metadata: Arc<ModelTableMetadata>,
+    ) -> Arc<Self> {
         let data_type = match &aggregate_type {
             ModelAggregateType::Count => DataType::UInt64,
             ModelAggregateType::Min => DataType::Float32,

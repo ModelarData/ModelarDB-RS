@@ -20,11 +20,11 @@ use datafusion::arrow::array::{
     Float32Builder, Int32Array, Int32Builder, Int64Array, TimestampMillisecondBuilder,
 };
 
-//TODO: can mtid be converted to a model type enum without adding overhead?
+// TODO: can mtid be converted to a model type enum without adding overhead?
 pub fn grid(
-    //TODO: support time series with different number of values and data types?
-    //TODO: translate the gid to the proper tids to support groups.
-    //TODO: can the tid be stored once per batch of data points from a model?
+    // TODO: support time series with different number of values and data types?
+    // TODO: translate the gid to the proper tids to support groups.
+    // TODO: can the tid be stored once per batch of data points from a model?
     gid: i32,
     start_time: i64,
     end_time: i64,
@@ -74,7 +74,7 @@ pub fn grid(
     }
 }
 
-//TODO: refactor count to operate on values instead of arrays for consistency?.
+// TODO: refactor count to operate on values instead of arrays for consistency?
 pub fn count(
     num_rows: usize,
     gids: &Int32Array,
@@ -82,7 +82,7 @@ pub fn count(
     end_times: &Int64Array,
     sampling_intervals: &Int32Array,
 ) -> usize {
-    //Assumes all arrays are the same length and contain less or equal to num_rows elements
+    // Assumes all arrays are the same length and contain less or equal to num_rows elements.
     let mut data_points = 0;
     for row_index in 0..num_rows {
         let tid = gids.value(row_index) as usize;
