@@ -68,7 +68,10 @@ impl StorageEngine {
                         self.compression_queue.push_back(finished_segment);
                     }
                 } else {
-                    println!("Could not find segment with key '{}'. Creating segment.", key);
+                    println!(
+                        "Could not find segment with key '{}'. Creating segment.",
+                        key
+                    );
 
                     let mut segment = SegmentBuilder::new(&data_point);
                     segment.insert_data(&data_point);
@@ -160,7 +163,9 @@ mod tests {
 
         storage_engine.insert_message(message.clone());
 
-        DataPoint::from_message(&message).unwrap().generate_unique_key()
+        DataPoint::from_message(&message)
+            .unwrap()
+            .generate_unique_key()
     }
 
     #[test]

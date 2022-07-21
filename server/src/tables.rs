@@ -21,7 +21,7 @@ use std::task::{Context, Poll};
 
 use async_trait::async_trait;
 
-use tracing::{debug, error, info, warn, Level, event, instrument, span};
+use tracing::{debug, error, event, info, instrument, span, warn, Level};
 
 use futures::stream::{Stream, StreamExt};
 

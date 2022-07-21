@@ -22,7 +22,7 @@ use crate::Context;
 
 use std::convert::TryInto;
 
-use tracing::{debug, error, info, warn, Level, event, instrument, span};
+use tracing::{debug, error, event, info, instrument, span, warn, Level};
 
 use arrow_flight::utils::flight_data_from_arrow_batch;
 use arrow_flight::SchemaAsIpc;
@@ -110,6 +110,7 @@ impl FlightService for FlightServiceHandler {
     ) -> Result<Response<FlightInfo>, Status> {
         Err(Status::unimplemented("Not yet implemented"))
     }
+
     async fn get_schema(
         &self,
         request: Request<FlightDescriptor>,

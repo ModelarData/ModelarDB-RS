@@ -48,4 +48,3 @@ macro_rules! downcast_arrays {
             .unwrap();
     };
 }
-
