@@ -47,8 +47,7 @@ pub struct Context {
 /** Public Functions **/
 fn main() {
     // A layer that logs events to a file.
-    let file = File::create("debug.log");
-    let file = match file {
+    let file = match File::create("debug.log") {
         Ok(file) => file,
         Err(error) => panic!("Error: {:?}", error),
     };
