@@ -35,8 +35,6 @@ use crate::storage::data_point::DataPoint;
 use crate::storage::segment::{BufferedSegment, FinishedSegment, SegmentBuilder, UncompressedSegment};
 use crate::types::Timestamp;
 
-type MetaData = Vec<String>;
-
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
 // being larger due to internal alignment when allocating memory for the builders.
 const INITIAL_BUILDER_CAPACITY: usize = 64;
