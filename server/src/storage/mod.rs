@@ -37,10 +37,11 @@ use crate::types::Timestamp;
 
 type MetaData = Vec<String>;
 
-// TODO: This should be dynamic.
+// Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
+// being larger due to internal alignment when allocating memory for the builders.
+const INITIAL_BUILDER_CAPACITY: usize = 64;
+// TODO: The sensor count should be dynamic and not predefined.
 const SENSOR_COUNT: usize = 2;
-
-const INITIAL_BUILDER_CAPACITY: usize = 50;
 const RESERVED_BYTES: usize = 5000;
 
 /// Keeping track of all uncompressed data, both while being built and when finished.
@@ -55,16 +56,11 @@ pub struct StorageEngine {
 
 impl StorageEngine {
     pub fn new() -> Self {
-        // Based on the sensor count and builder capacity, calculate the total bytes needed to store all builders.
-        // Since the builder capacity is only a lower bound, we need to create a builder to get the actual size.
-        let temp_builder = SegmentBuilder::new();
-        let builder_size = temp_builder.get_memory_size();
-
         StorageEngine {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             data: HashMap::new(),
             compression_queue: VecDeque::new(),
-            remaining_bytes: RESERVED_BYTES - (builder_size * SENSOR_COUNT)
+            remaining_bytes: RESERVED_BYTES - (SegmentBuilder::get_memory_size() * SENSOR_COUNT)
         }
     }
 
@@ -129,7 +125,7 @@ impl StorageEngine {
         let uncompressed_segment: Box<dyn UncompressedSegment>;
         let builder_size = segment_builder.get_memory_size();
 
-        // If there is not enough space for the finished segment, buffer the data first.
+        // If there is not enough space for the finished segment, spill the data to a Parquet file.
         if builder_size > self.remaining_bytes {
             println!("Not enough memory for the finished segment. Buffering the segment.");
 
@@ -139,12 +135,12 @@ impl StorageEngine {
             println!("Saving the finished segment in memory.");
             uncompressed_segment = Box::new(segment_builder);
 
-            // If not buffering the data, remove the size of the finished segment from the remaining bytes.
+            // If not spilling to a file, remove the size of the finished segment from the remaining bytes.
             self.remaining_bytes -= builder_size;
         }
 
-        let queued_segment = FinishedSegment { key, uncompressed_segment };
-        self.compression_queue.push_back(queued_segment);
+        let finished_segment = FinishedSegment { key, uncompressed_segment };
+        self.compression_queue.push_back(finished_segment);
     }
 }
 
@@ -220,11 +216,6 @@ mod tests {
     }
 
     #[test]
-    fn test_segment_buffered_when_out_of_memory() {
-        // TODO: Implement this test. This requires I/O.
-    }
-
-    #[test]
     fn test_remaining_bytes_decremented_when_queuing_in_memory() {
         let mut storage_engine = StorageEngine::new();
         let initial_remaining_bytes = storage_engine.remaining_bytes.clone();
@@ -242,11 +233,6 @@ mod tests {
         storage_engine.get_finished_segment();
 
         assert!(previous_remaining_bytes < storage_engine.remaining_bytes);
-    }
-
-    #[test]
-    fn test_remaining_bytes_not_incremented_when_popping_buffered() {
-        // TODO: Implement this test. This requires I/O.
     }
 
 	/// Generate `count` data points for the same time series and insert them into `storage_engine`.

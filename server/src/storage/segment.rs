@@ -52,9 +52,8 @@ pub struct SegmentBuilder {
 
 impl fmt::Display for SegmentBuilder {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&format!("Segment with {} data point(s) (", self.timestamps.len()));
-        f.write_str(&format!("timestamp capacity: {}, ", self.timestamps.capacity()));
-        f.write_str(&format!("values capacity: {})", self.values.capacity()));
+        f.write_str(&format!("Segment with {} data point(s) ", self.timestamps.len()));
+        f.write_str(&format!("(Capacity: {})", self.get_capacity()));
 
         Ok(())
     }
@@ -77,10 +76,9 @@ impl UncompressedSegment for SegmentBuilder {
         ).unwrap()
     }
 
-    /// Return the total size of the builder in bytes. Note that this is independent of the length.
+    /// Return the constant total size of the uncompressed segment in bytes.
     fn get_memory_size(&self) -> usize {
-        (self.timestamps.capacity() * mem::size_of::<Timestamp>())
-            + (self.values.capacity() * mem::size_of::<Value>())
+        SegmentBuilder::get_memory_size()
     }
 }
 
@@ -92,6 +90,12 @@ impl SegmentBuilder {
             timestamps: TimestampBuilder::new(INITIAL_BUILDER_CAPACITY),
             values: ValueBuilder::new(INITIAL_BUILDER_CAPACITY),
         }
+    }
+
+    /// Return the total size of the builder in bytes. Note that this is constant.
+    pub fn get_memory_size() -> usize {
+        (INITIAL_BUILDER_CAPACITY * mem::size_of::<Timestamp>())
+            + (INITIAL_BUILDER_CAPACITY * mem::size_of::<Value>())
     }
 
     /// Return `true` if the segment is full, meaning additional data points cannot be appended.
@@ -180,8 +184,12 @@ mod tests {
     // Tests for SegmentBuilder.
     #[test]
     fn test_get_segment_builder_memory_size() {
-        // TODO: Implement this test.
-        // TODO: Since this is dependent on the builder size and actual capacity, how do we get this?
+        let mut segment_builder = SegmentBuilder::new();
+
+        let expected = (segment_builder.timestamps.capacity() * mem::size_of::<Timestamp>())
+            + (segment_builder.values.capacity() * mem::size_of::<Value>());
+
+        assert_eq!(SegmentBuilder::get_memory_size(), expected)
     }
 
     #[test]
@@ -242,19 +250,9 @@ mod tests {
 
     // Tests for BufferedSegment.
     #[test]
-    fn test_create_buffered_segment_from_segment_builder() {
-        // TODO: Implement this test. This requires I/O.
-    }
-
-    #[test]
     fn test_get_buffered_segment_memory_size() {
         let buffered_segment = BufferedSegment { path: "".to_string() };
 
         assert_eq!(buffered_segment.get_memory_size(), 0)
-    }
-
-    #[test]
-    fn test_get_data_from_buffered_segment() {
-        // TODO: Implement this test. This requires I/O.
     }
 }
