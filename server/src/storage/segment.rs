@@ -17,7 +17,7 @@
 //!
 //! The SegmentBuilder struct provides support for inserting and storing data in an in-memory segment.
 //! BufferedSegment provides support for storing uncompressed data in a Parquet buffer. FinishedSegment
-//! provides a generalized interface for using the segments in the compressor.
+//! provides a generalized interface for using the segments outside the storage engine.
 
 use std::fmt::Formatter;
 use std::fs::File;
@@ -31,9 +31,13 @@ use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader, Projection
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::{INITIAL_BUILDER_CAPACITY, write_batch_to_parquet};
-use crate::types::{ArrowTimestamp, ArrowValue, Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
+use crate::storage::{write_batch_to_parquet, INITIAL_BUILDER_CAPACITY};
+use crate::types::{
+    ArrowTimestamp, ArrowValue, Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder,
+};
 
+/// Shared functionality between different types of uncompressed segments, such as segment builders
+/// and buffered segments.
 pub trait UncompressedSegment {
     fn get_record_batch(&mut self) -> RecordBatch;
 
@@ -44,49 +48,15 @@ pub trait UncompressedSegment {
 /// that since array builders are used, the data can only be read once the builders are finished and
 /// cannot be further appended to after.
 pub struct SegmentBuilder {
-    /// Builder consisting of timestamps with millisecond precision.
+    /// Builder consisting of timestamps.
     timestamps: TimestampBuilder,
     /// Builder consisting of float values.
     values: ValueBuilder,
 }
 
-impl fmt::Display for SegmentBuilder {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&format!("Segment with {} data point(s) ", self.timestamps.len()));
-        f.write_str(&format!("(Capacity: {})", self.get_capacity()));
-
-        Ok(())
-    }
-}
-
-impl UncompressedSegment for SegmentBuilder {
-    /// Finish the array builders and return the data in a structured record batch.
-    fn get_record_batch(&mut self) -> RecordBatch {
-        let timestamps = self.timestamps.finish();
-        let values = self.values.finish();
-
-        let schema = Schema::new(vec![
-            Field::new("timestamps", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("values", ArrowValue::DATA_TYPE, false),
-        ]);
-
-        RecordBatch::try_new(
-            Arc::new(schema),
-            vec![Arc::new(timestamps), Arc::new(values)]
-        ).unwrap()
-    }
-
-    /// Return the constant total size of the uncompressed segment in bytes.
-    fn get_memory_size(&self) -> usize {
-        SegmentBuilder::get_memory_size()
-    }
-}
-
 impl SegmentBuilder {
     pub fn new() -> Self {
         Self {
-            // Note that the actual internal capacity might be slightly larger than these values. Apache
-            // Arrow defines the argument as being the lower bound for how many items the builder can hold.
             timestamps: TimestampBuilder::new(INITIAL_BUILDER_CAPACITY),
             values: ValueBuilder::new(INITIAL_BUILDER_CAPACITY),
         }
@@ -111,7 +81,8 @@ impl SegmentBuilder {
 
     /// Return how many data points the segment can contain.
     fn get_capacity(&self) -> usize {
-        usize::min(self.timestamps.capacity(), self.values.capacity())
+        // The capacity is always the same for both builders.
+        self.timestamps.capacity()
     }
 
     /// Add the timestamp and value from `data_point` to the segment's array builders.
@@ -123,14 +94,64 @@ impl SegmentBuilder {
     }
 }
 
+impl fmt::Display for SegmentBuilder {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        f.write_str(&format!("Segment with {} data point(s) ", self.get_length()));
+        f.write_str(&format!("(Capacity: {})", self.get_capacity()));
+
+        Ok(())
+    }
+}
+
+impl UncompressedSegment for SegmentBuilder {
+    /// Finish the array builders and return the data in a structured record batch.
+    fn get_record_batch(&mut self) -> RecordBatch {
+        let timestamps = self.timestamps.finish();
+        let values = self.values.finish();
+
+        let schema = Schema::new(vec![
+            Field::new("timestamps", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("values", ArrowValue::DATA_TYPE, false),
+        ]);
+
+        RecordBatch::try_new(
+            Arc::new(schema),
+            vec![Arc::new(timestamps), Arc::new(values)],
+        ).unwrap()
+    }
+
+    /// Return the total size of the uncompressed segment in bytes.
+    fn get_memory_size(&self) -> usize {
+        SegmentBuilder::get_memory_size()
+    }
+}
+
 /// A single segment that has been spilled to a Parquet file buffer due to memory constraints.
 pub struct BufferedSegment {
-    /// Path to the file containing the uncompressed data in the segment.
+    /// Path to the Parquet file containing the uncompressed data in the segment.
     path: String,
 }
 
+impl BufferedSegment {
+    /// Retrieve the data from the segment builder, save it to a Parquet file, and save the path.
+    pub fn new(key: String, mut segment_builder: SegmentBuilder) -> Self {
+        let folder_path = format!("uncompressed/{}", key);
+        fs::create_dir_all(&folder_path);
+
+        let data = segment_builder.get_record_batch();
+
+        // Create a path that uses the first timestamp as the filename.
+        let timestamps: &TimestampArray = data.column(0).as_any().downcast_ref().unwrap();
+        let path = format!("{}/{}.parquet", folder_path, timestamps.value(0));
+
+        write_batch_to_parquet(data, path.clone());
+
+        Self { path }
+    }
+}
+
 impl UncompressedSegment for BufferedSegment {
-    /// Retrieve the data from the Parquet file buffer and return it in a structured record batch.
+    /// Retrieve the data from the Parquet file and return it in a structured record batch.
     fn get_record_batch(&mut self) -> RecordBatch {
         let file = File::open(&self.path).unwrap();
         let file_reader = SerializedFileReader::new(file).unwrap();
@@ -151,22 +172,6 @@ impl UncompressedSegment for BufferedSegment {
     /// Return 0 since the data is not kept in memory.
     fn get_memory_size(&self) -> usize {
         0
-    }
-}
-
-impl BufferedSegment {
-    /// Retrieve the data from the segment builder, save it to a Parquet file, and save the path.
-    pub fn new(key: String, mut segment_builder: SegmentBuilder) -> Self {
-        let folder_path = format!("uncompressed/{}", key);
-        fs::create_dir_all(&folder_path);
-
-        let data = segment_builder.get_record_batch();
-        let timestamps: &TimestampArray = data.column(0).as_any().downcast_ref().unwrap();
-
-        let path = format!("{}/{}.parquet", folder_path, timestamps.value(0));
-        write_batch_to_parquet(data, path.clone());
-
-        Self { path }
     }
 }
 
@@ -251,7 +256,9 @@ mod tests {
     // Tests for BufferedSegment.
     #[test]
     fn test_get_buffered_segment_memory_size() {
-        let buffered_segment = BufferedSegment { path: "".to_string() };
+        let buffered_segment = BufferedSegment {
+            path: "".to_string(),
+        };
 
         assert_eq!(buffered_segment.get_memory_size(), 0)
     }

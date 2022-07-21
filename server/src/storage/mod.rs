@@ -50,13 +50,13 @@ pub struct StorageEngine {
     data: HashMap<String, SegmentBuilder>,
     /// Prioritized queue of finished segments that are ready for compression.
     compression_queue: VecDeque<FinishedSegment>,
-    /// How many bytes of memory that are reserved for storing uncompressed segments.
+    /// How many bytes of memory that are left for storing uncompressed segments.
     remaining_bytes: usize,
 }
 
 impl StorageEngine {
     pub fn new() -> Self {
-        StorageEngine {
+        Self {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             data: HashMap::new(),
             compression_queue: VecDeque::new(),
@@ -123,7 +123,7 @@ impl StorageEngine {
         println!("Saving the finished segment. Remaining bytes: {}", self.remaining_bytes);
 
         let uncompressed_segment: Box<dyn UncompressedSegment>;
-        let builder_size = segment_builder.get_memory_size();
+        let builder_size = SegmentBuilder::get_memory_size();
 
         // If there is not enough space for the finished segment, spill the data to a Parquet file.
         if builder_size > self.remaining_bytes {
@@ -135,7 +135,7 @@ impl StorageEngine {
             println!("Saving the finished segment in memory.");
             uncompressed_segment = Box::new(segment_builder);
 
-            // If not spilling to a file, remove the size of the finished segment from the remaining bytes.
+            // Since it is saved in memory, remove the size of the segment from the remaining bytes.
             self.remaining_bytes -= builder_size;
         }
 
@@ -144,16 +144,16 @@ impl StorageEngine {
     }
 }
 
+// TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
 /// Write `batch` to an Apache Parquet file at the location given by `path`.
 fn write_batch_to_parquet(batch: RecordBatch, path: String) {
     let file = File::create(path).unwrap();
     let props = WriterProperties::builder()
         .set_dictionary_enabled(false)
-        // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
         .set_encoding(Encoding::PLAIN)
         .build();
-    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
 
+    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
     writer.write(&batch).expect("Writing batch.");
     writer.close().unwrap();
 }
@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn test_can_get_finished_segment_when_finished() {
         let mut storage_engine = StorageEngine::new();
-        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY * 2, &mut storage_engine);
+        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY, &mut storage_engine);
 
         assert!(storage_engine.get_finished_segment().is_some());
     }
@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn test_can_get_multiple_finished_segments_when_multiple_finished() {
         let mut storage_engine = StorageEngine::new();
-        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY * 3, &mut storage_engine);
+        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY * 2, &mut storage_engine);
 
         assert!(storage_engine.get_finished_segment().is_some());
         assert!(storage_engine.get_finished_segment().is_some());
@@ -219,7 +219,7 @@ mod tests {
     fn test_remaining_bytes_decremented_when_queuing_in_memory() {
         let mut storage_engine = StorageEngine::new();
         let initial_remaining_bytes = storage_engine.remaining_bytes.clone();
-        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY * 2, &mut storage_engine);
+        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY, &mut storage_engine);
 
         assert!(initial_remaining_bytes > storage_engine.remaining_bytes);
     }
@@ -227,7 +227,7 @@ mod tests {
     #[test]
     fn test_remaining_bytes_incremented_when_popping_in_memory() {
         let mut storage_engine = StorageEngine::new();
-        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY * 2, &mut storage_engine);
+        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY, &mut storage_engine);
 
         let previous_remaining_bytes = storage_engine.remaining_bytes.clone();
         storage_engine.get_finished_segment();
@@ -247,7 +247,7 @@ mod tests {
         key
     }
 
-    /// Generate a random data point and insert it into `storage_engine`. Return the data point key.
+    /// Generate a data point and insert it into `storage_engine`. Return the data point key.
     fn insert_generated_message(storage_engine: &mut StorageEngine) -> String {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)

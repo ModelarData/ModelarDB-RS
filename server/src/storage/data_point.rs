@@ -64,8 +64,7 @@ impl DataPoint {
         }
     }
 
-    // TODO: Currently the only information we have to uniquely identify a sensor is the topic.
-    //       If this changes, change this function.
+    // TODO: Change this when we have more information to identify a time series.
     /// Generate a unique key for a time series based on the information in the message.
     pub fn generate_unique_key(&self) -> String {
         self.metadata.join("-")
