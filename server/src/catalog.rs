@@ -20,13 +20,11 @@ use std::sync::Arc;
 use std::{fs::File, path::Path};
 
 use tracing::{debug, error, event, info, instrument, span, warn, Level};
-
 use datafusion::arrow::array::{
     Array, ArrayRef, BinaryArray, Int32Array, Int32Builder, StringBuilder,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
-
 use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
@@ -101,23 +99,23 @@ pub fn new(data_folder: &str) -> Catalog {
                             &model_table_segment_group_file_schema,
                         ) {
                             model_table_metadata.push(mtd);
-                            info!("INFO: initialized model table {}", path);
+                            info!("initialized model table {}", path);
                         } else {
-                            error!("ERROR: unsupported model table {}", path);
+                            error!("unsupported model table {}", path);
                         }
                     } else {
-                        error!("ERROR: unsupported file or folder {}", path);
+                        error!("unsupported file or folder {}", path);
                     }
                 } else {
-                    error!("ERROR: name of file or folder is not UTF-8");
+                    error!("name of file or folder is not UTF-8");
                 }
             } else {
                 let message = dir_entry.unwrap_err().to_string();
-                error!("ERROR: unable to read file or folder {}", &message);
+                error!("unable to read file or folder {}", &message);
             }
         }
     } else {
-        error!("ERROR: unable to open data folder {}", &data_folder);
+        error!("unable to open data folder {}", &data_folder);
     }
     Catalog {
         table_metadata,

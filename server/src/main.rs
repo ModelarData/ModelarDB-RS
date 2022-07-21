@@ -25,9 +25,7 @@ use std::{fmt, fs::File, sync::Arc};
 
 use tracing::{debug, error, event, info, instrument, span, warn, Instrument, Level};
 use tracing_subscriber::{filter, prelude::*};
-
 use tokio::runtime::Runtime;
-
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::options::ParquetReadOptions;
 use datafusion::execution::runtime_env::RuntimeEnv;
@@ -119,7 +117,7 @@ async fn register_tables(session: &mut SessionContext, catalog: &Catalog) {
             .await
             .is_err()
         {
-            error!("ERROR: unable to initialize table {}", table_metadata.name);
+            error!("unable to initialize table {}", table_metadata.name);
         }
     }
 
@@ -133,7 +131,7 @@ async fn register_tables(session: &mut SessionContext, catalog: &Catalog) {
             .is_err()
         {
             error!(
-                "ERROR: unable to initialize model table {}",
+                "unable to initialize model table {}",
                 model_table_metadata.name
             );
         }
