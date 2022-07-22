@@ -91,7 +91,7 @@ pub fn new(data_folder: &str) -> Catalog {
                     if is_dir_entry_a_table(&dir_entry) {
                         table_metadata
                             .push(new_table_metadata(normalized_file_name, path.to_string()));
-                        info!("Initialized table {}", path);
+                        info!("Initialized table {}.", path);
                     } else if is_dir_entry_a_model_table(&dir_entry) {
                         if let Ok(mtd) = read_model_table_metadata(
                             normalized_file_name,

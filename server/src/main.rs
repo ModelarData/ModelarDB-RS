@@ -82,7 +82,7 @@ fn main() {
         // The errors are consciously ignored as the program is terminating.
         let binary_path = std::env::current_exe().unwrap();
         let binary_name = binary_path.file_name().unwrap();
-        println!(" Usage: {} data_folder", binary_name.to_str().unwrap());
+        println!("Usage: {} data_folder.", binary_name.to_str().unwrap());
     }
 }
 
@@ -109,7 +109,7 @@ async fn register_tables(session: &mut SessionContext, catalog: &Catalog) {
             .await
             .is_err()
         {
-            error!("unable to initialize table {}", table_metadata.name);
+            error!("Unable to initialize table {}.", table_metadata.name);
         }
     }
 
@@ -123,7 +123,7 @@ async fn register_tables(session: &mut SessionContext, catalog: &Catalog) {
             .is_err()
         {
             error!(
-                "unable to initialize model table {}",
+                "Unable to initialize model table {}.",
                 model_table_metadata.name
             );
         }
