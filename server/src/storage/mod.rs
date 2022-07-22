@@ -32,7 +32,7 @@ use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::segment::{BufferedSegment, FinishedSegment, SegmentBuilder, UncompressedSegment};
+use crate::storage::segment::{SpilledSegment, FinishedSegment, SegmentBuilder, UncompressedSegment};
 use crate::types::Timestamp;
 
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
@@ -42,7 +42,7 @@ const INITIAL_BUILDER_CAPACITY: usize = 64;
 const SENSOR_COUNT: usize = 2;
 const RESERVED_BYTES: usize = 5000;
 
-/// Keeping track of all uncompressed data, both while being built and when finished.
+/// Manages all uncompressed data, both while being built and when finished.
 pub struct StorageEngine {
     /// The uncompressed segments while they are being built.
     data: HashMap<String, SegmentBuilder>,
@@ -79,7 +79,7 @@ impl StorageEngine {
                         println!("Segment is full, moving it to the compression queue.");
 
                         let full_segment = self.data.remove(&key).unwrap();
-                        self.queue_segment(key, full_segment)
+                        self.enqueue_segment(key, full_segment)
                     }
                 } else {
                     println!("Could not find segment with key '{}'. Creating segment.", key);
@@ -116,8 +116,8 @@ impl StorageEngine {
         write_batch_to_parquet(batch, path);
     }
 
-    /// Move `segment_builder` to the the compression queue. If necessary, buffer the data first.
-    fn queue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
+    /// Move `segment_builder` to the the compression queue. If necessary, spill the data to Parquet first.
+    fn enqueue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
         println!("Saving the finished segment. Remaining bytes: {}", self.remaining_bytes);
 
         let uncompressed_segment: Box<dyn UncompressedSegment>;
@@ -125,10 +125,10 @@ impl StorageEngine {
 
         // If there is not enough space for the finished segment, spill the data to a Parquet file.
         if builder_size > self.remaining_bytes {
-            println!("Not enough memory for the finished segment. Buffering the segment.");
+            println!("Not enough memory for the finished segment. Spilling the data to a file.");
 
-            let buffered = BufferedSegment::new(key.clone(), segment_builder);
-            uncompressed_segment = Box::new(buffered);
+            let spilled_segment = SpilledSegment::new(key.clone(), segment_builder);
+            uncompressed_segment = Box::new(spilled_segment);
         } else {
             println!("Saving the finished segment in memory.");
             uncompressed_segment = Box::new(segment_builder);

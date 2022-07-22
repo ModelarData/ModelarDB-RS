@@ -13,11 +13,10 @@
  * limitations under the License.
  */
 
-//! Support for different kinds of uncompressed segments.
-//!
-//! The SegmentBuilder struct provides support for inserting and storing data in an in-memory segment.
-//! BufferedSegment provides support for storing uncompressed data in a Parquet buffer. FinishedSegment
-//! provides a generalized interface for using the segments outside the storage engine.
+//! Support for different kinds of uncompressed segments. The SegmentBuilder struct provides support
+//! for inserting and storing data in an in-memory segment. SpilledSegment provides support for
+//! storing uncompressed data in a Parquet files. FinishedSegment provides a generalized interface
+//! for using the segments outside the storage engine.
 
 use std::fmt::Formatter;
 use std::fs::File;
@@ -37,7 +36,7 @@ use crate::types::{
 };
 
 /// Shared functionality between different types of uncompressed segments, such as segment builders
-/// and buffered segments.
+/// and spilled segments.
 pub trait UncompressedSegment {
     fn get_record_batch(&mut self) -> RecordBatch;
 
@@ -126,13 +125,13 @@ impl UncompressedSegment for SegmentBuilder {
     }
 }
 
-/// A single segment that has been spilled to a Parquet file buffer due to memory constraints.
-pub struct BufferedSegment {
+/// A single segment that has been spilled to a Parquet file due to memory constraints.
+pub struct SpilledSegment {
     /// Path to the Parquet file containing the uncompressed data in the segment.
     path: String,
 }
 
-impl BufferedSegment {
+impl SpilledSegment {
     /// Retrieve the data from the segment builder, save it to a Parquet file, and save the path.
     pub fn new(key: String, mut segment_builder: SegmentBuilder) -> Self {
         let folder_path = format!("uncompressed/{}", key);
@@ -150,7 +149,7 @@ impl BufferedSegment {
     }
 }
 
-impl UncompressedSegment for BufferedSegment {
+impl UncompressedSegment for SpilledSegment {
     /// Retrieve the data from the Parquet file and return it in a structured record batch.
     fn get_record_batch(&mut self) -> RecordBatch {
         let file = File::open(&self.path).unwrap();
@@ -175,7 +174,7 @@ impl UncompressedSegment for BufferedSegment {
     }
 }
 
-/// Representing either an in-memory or buffered segment that is finished and ready for compression.
+/// Representing either an in-memory or spilled segment that is finished and ready for compression.
 pub struct FinishedSegment {
     pub key: String,
     pub uncompressed_segment: Box<dyn UncompressedSegment>,
@@ -199,7 +198,6 @@ mod tests {
 
     #[test]
     fn test_get_length() {
-        let data_point = get_data_point();
         let mut segment_builder = SegmentBuilder::new();
 
         assert_eq!(segment_builder.get_length(), 0);
@@ -229,7 +227,6 @@ mod tests {
 
     #[test]
     fn test_check_segment_is_not_full() {
-        let data_point = get_data_point();
         let mut segment_builder = SegmentBuilder::new();
 
         assert!(!segment_builder.is_full());
@@ -253,13 +250,13 @@ mod tests {
         DataPoint::from_message(&message).unwrap()
     }
 
-    // Tests for BufferedSegment.
+    // Tests for SpilledSegment.
     #[test]
-    fn test_get_buffered_segment_memory_size() {
-        let buffered_segment = BufferedSegment {
+    fn test_get_spilled_segment_memory_size() {
+        let spilled_segment = SpilledSegment {
             path: "".to_string(),
         };
 
-        assert_eq!(buffered_segment.get_memory_size(), 0)
+        assert_eq!(spilled_segment.get_memory_size(), 0)
     }
 }
