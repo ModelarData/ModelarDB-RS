@@ -79,7 +79,7 @@ fn main() {
         // The errors are consciously ignored as the program is terminating.
         let binary_path = std::env::current_exe().unwrap();
         let binary_name = binary_path.file_name().unwrap();
-        println!("Usage: {} data_folder.", binary_name.to_str().unwrap());
+        eprintln!("Usage: {} data_folder.", binary_name.to_str().unwrap());
     }
 }
 
