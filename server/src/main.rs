@@ -47,13 +47,11 @@ pub struct Context {
 /** Public Functions **/
 fn main() {
     // A layer that logs events to stdout.
-    let stdout_log = tracing_subscriber::fmt::layer().pretty();
+    let stdout_log = tracing_subscriber::fmt::layer();
 
     tracing_subscriber::registry()
         .with(
             stdout_log
-                // Add an `INFO` filter to the stdout logging layer
-                .with_filter(filter::LevelFilter::INFO)
         )
         .init();
 
