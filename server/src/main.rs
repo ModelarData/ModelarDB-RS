@@ -54,9 +54,6 @@ fn main() {
             stdout_log
                 // Add an `INFO` filter to the stdout logging layer
                 .with_filter(filter::LevelFilter::INFO)
-                // Combine the filtered `stdout_log` layer with the
-                // `debug_log` layer, producing a new `Layered` layer.
-                .and_then(debug_log),
         )
         .init();
 
