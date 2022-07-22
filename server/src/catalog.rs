@@ -19,7 +19,6 @@ use std::str;
 use std::sync::Arc;
 use std::{fs::File, path::Path};
 
-use tracing::{debug, error, event, info, instrument, span, warn, Level};
 use datafusion::arrow::array::{
     Array, ArrayRef, BinaryArray, Int32Array, Int32Builder, StringBuilder,
 };
@@ -29,6 +28,7 @@ use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use datafusion::parquet::record::RowAccessor;
+use tracing::{debug, error, event, info, instrument, span, warn, Level};
 
 /** Public Types **/
 #[derive(Debug)]
@@ -91,7 +91,7 @@ pub fn new(data_folder: &str) -> Catalog {
                     if is_dir_entry_a_table(&dir_entry) {
                         table_metadata
                             .push(new_table_metadata(normalized_file_name, path.to_string()));
-                        info!("INFO: initialized table {}", path);
+                        info!("Initialized table {}", path);
                     } else if is_dir_entry_a_model_table(&dir_entry) {
                         if let Ok(mtd) = read_model_table_metadata(
                             normalized_file_name,
@@ -99,23 +99,23 @@ pub fn new(data_folder: &str) -> Catalog {
                             &model_table_segment_group_file_schema,
                         ) {
                             model_table_metadata.push(mtd);
-                            info!("initialized model table {}", path);
+                            info!("Initialized model table {}.", path);
                         } else {
-                            error!("unsupported model table {}", path);
+                            error!("Unsupported model table {}.", path);
                         }
                     } else {
-                        error!("unsupported file or folder {}", path);
+                        error!("Unsupported file or folder {}.", path);
                     }
                 } else {
-                    error!("name of file or folder is not UTF-8");
+                    error!("Name of file or folder is not UTF-8.");
                 }
             } else {
                 let message = dir_entry.unwrap_err().to_string();
-                error!("unable to read file or folder {}", &message);
+                error!("Unable to read file or folder {}.", &message);
             }
         }
     } else {
-        error!("unable to open data folder {}", &data_folder);
+        error!("Unable to open data folder {}.", &data_folder);
     }
     Catalog {
         table_metadata,

@@ -23,12 +23,12 @@ mod types;
 
 use std::{fmt, fs::File, sync::Arc};
 
-use tracing::{debug, error, event, info, instrument, span, warn, Instrument, Level};
-use tracing_subscriber::{filter, prelude::*};
-use tokio::runtime::Runtime;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::options::ParquetReadOptions;
 use datafusion::execution::runtime_env::RuntimeEnv;
+use tokio::runtime::Runtime;
+use tracing::{debug, error, event, info, instrument, span, warn, Instrument, Level};
+use tracing_subscriber::{filter, prelude::*};
 
 use crate::catalog::Catalog;
 use crate::optimizer::model_simple_aggregates;
@@ -46,13 +46,6 @@ pub struct Context {
 
 /** Public Functions **/
 fn main() {
-    // A layer that logs events to a file.
-    let file = match File::create("debug.log") {
-        Ok(file) => file,
-        Err(error) => panic!("Error: {:?}", error),
-    };
-    let debug_log = tracing_subscriber::fmt::layer().with_writer(Arc::new(file));
-
     // A layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer().pretty();
 
@@ -89,7 +82,7 @@ fn main() {
         // The errors are consciously ignored as the program is terminating.
         let binary_path = std::env::current_exe().unwrap();
         let binary_name = binary_path.file_name().unwrap();
-        error!(" Usage: {} data_folder", binary_name.to_str().unwrap());
+        println!(" Usage: {} data_folder", binary_name.to_str().unwrap());
     }
 }
 

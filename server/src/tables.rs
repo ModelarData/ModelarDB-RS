@@ -20,9 +20,6 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use async_trait::async_trait;
-use tracing::{debug, error, event, info, instrument, span, warn, Level};
-use futures::stream::{Stream, StreamExt};
-use object_store::path::Path;
 use datafusion::arrow::array::{
     ArrayRef, BinaryArray, Float32Array, Int32Array, Int64Array, StringArray, StringBuilder,
     TimestampMillisecondArray,
@@ -45,6 +42,9 @@ use datafusion::physical_plan::{
 };
 use datafusion::scalar::ScalarValue::{Int64, TimestampNanosecond};
 use datafusion_physical_expr::planner;
+use futures::stream::{Stream, StreamExt};
+use object_store::path::Path;
+use tracing::{debug, error, event, info, instrument, span, warn, Level};
 
 use crate::catalog::ModelTableMetadata;
 use crate::models;
