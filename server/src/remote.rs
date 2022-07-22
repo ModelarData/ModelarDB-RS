@@ -30,7 +30,7 @@ use datafusion::arrow::ipc::writer::IpcWriteOptions;
 use futures::Stream;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
-use tracing::{debug, error, event, info, instrument, span, warn, Level};
+use tracing::info;
 
 use crate::Context;
 

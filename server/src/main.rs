@@ -12,6 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 mod catalog;
 mod macros;
 mod models;
@@ -21,14 +22,14 @@ mod storage;
 mod tables;
 mod types;
 
-use std::{fmt, fs::File, sync::Arc};
+use std::sync::Arc;
 
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::options::ParquetReadOptions;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use tokio::runtime::Runtime;
-use tracing::{debug, error, event, info, instrument, span, warn, Instrument, Level};
-use tracing_subscriber::{filter, prelude::*};
+use tracing::{error, Instrument};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::catalog::Catalog;
 use crate::optimizer::model_simple_aggregates;
