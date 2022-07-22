@@ -29,7 +29,7 @@ use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::{INITIAL_BUILDER_CAPACITY, MetaData};
+use crate::storage::{MetaData, INITIAL_BUILDER_CAPACITY};
 use crate::types::{ArrowTimestamp, ArrowValue, Timestamp, TimestampBuilder, ValueBuilder};
 
 /// A single segment being built, consisting of an ordered sequence of timestamps and values. Note
@@ -48,8 +48,14 @@ pub struct SegmentBuilder {
 
 impl fmt::Display for SegmentBuilder {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&format!("Segment with {} data point(s) (", self.timestamps.len()));
-        f.write_str(&format!("timestamp capacity: {}, ", self.timestamps.capacity()));
+        f.write_str(&format!(
+            "Segment with {} data point(s) (",
+            self.timestamps.len()
+        ));
+        f.write_str(&format!(
+            "timestamp capacity: {}, ",
+            self.timestamps.capacity()
+        ));
         f.write_str(&format!("values capacity: {})", self.values.capacity()));
 
         Ok(())
@@ -104,8 +110,9 @@ impl SegmentBuilder {
 
         RecordBatch::try_new(
             Arc::new(schema),
-            vec![Arc::new(timestamps), Arc::new(values)]
-        ).unwrap()
+            vec![Arc::new(timestamps), Arc::new(values)],
+        )
+        .unwrap()
     }
 
     /// Write `batch` to a persistent Apache Parquet file on disk.
