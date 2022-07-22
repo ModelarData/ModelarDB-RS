@@ -17,25 +17,22 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::str::from_utf8;
 use std::sync::Arc;
-
-use crate::Context;
-
 use std::convert::TryInto;
 
 use tracing::{debug, error, event, info, instrument, span, warn, Level};
-
 use arrow_flight::utils::flight_data_from_arrow_batch;
 use arrow_flight::SchemaAsIpc;
 use datafusion::arrow::ipc::writer::IpcWriteOptions;
 use futures::Stream;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
-
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaResult, Ticket,
 };
+
+use crate::Context;
 
 /** Public Functions **/
 pub fn start_arrow_flight_server(context: Arc<Context>, port: i16) {
