@@ -49,12 +49,7 @@ pub struct Context {
 fn main() {
     // A layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();
-
-    tracing_subscriber::registry()
-        .with(
-            stdout_log
-        )
-        .init();
+    tracing_subscriber::registry().with(stdout_log).init();
 
     let mut args = std::env::args();
     args.next(); // Skip executable.
