@@ -12,7 +12,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-use std::fs::OpenOptions;
+
 use std::fs::{read_dir, DirEntry};
 use std::io::Read;
 use std::str;
@@ -28,7 +28,7 @@ use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use datafusion::parquet::record::RowAccessor;
-use tracing::{debug, error, event, info, instrument, span, warn, Level};
+use tracing::{error, info};
 
 /** Public Types **/
 #[derive(Debug)]
