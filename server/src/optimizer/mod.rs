@@ -27,37 +27,35 @@ use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::planner::DefaultPhysicalPlanner;
 use datafusion::physical_plan::{ExecutionPlan, PhysicalPlanner};
 use datafusion::prelude::SessionConfig;
+use tracing::debug;
 
-pub struct PrintOptimizerRule {}
+pub struct LogOptimizerRule {}
 
-impl OptimizerRule for PrintOptimizerRule {
+impl OptimizerRule for LogOptimizerRule {
     fn optimize(
         &self,
-        plan: &LogicalPlan,
+        logical_plan: &LogicalPlan,
         _execution_props: &OptimizerConfig,
     ) -> Result<LogicalPlan> {
-        println!("LOGICAL PLAN[START]\n {:#?} \nLOGICAL PLAN[END]", &plan);
-        Ok(plan.clone())
+        debug!("Logical plan:\n{:#?}\n", &logical_plan);
+        Ok(logical_plan.clone())
     }
 
     fn name(&self) -> &str {
-        "print_logical_query_plan"
+        "log_optimizer_rule "
     }
 }
 
-pub struct PrintQueryPlanner {}
+pub struct LogQueryPlanner {}
 
 #[async_trait]
-impl QueryPlanner for PrintQueryPlanner {
+impl QueryPlanner for LogQueryPlanner {
     async fn create_physical_plan(
         &self,
         logical_plan: &LogicalPlan,
         session_state: &SessionState,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        println!(
-            "QUERY PLANNER[START]\n {:#?} \nQUERY PLANNER[END]",
-            &logical_plan
-        );
+        debug!("Logical plan:\n{:#?}\n", &logical_plan);
         let planner = DefaultPhysicalPlanner::default();
         planner
             .create_physical_plan(logical_plan, session_state)
@@ -65,19 +63,19 @@ impl QueryPlanner for PrintQueryPlanner {
     }
 }
 
-pub struct PrintPhysicalOptimizerRule {}
+pub struct LogPhysicalOptimizerRule {}
 
-impl PhysicalOptimizerRule for PrintPhysicalOptimizerRule {
+impl PhysicalOptimizerRule for LogPhysicalOptimizerRule {
     fn optimize(
         &self,
-        plan: Arc<dyn ExecutionPlan>,
+        execution_plan: Arc<dyn ExecutionPlan>,
         _config: &SessionConfig,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        println!("EXECUTION PLAN[START]\n {:#?} \nEXECUTION PLAN[END]", &plan);
-        Ok(plan.clone())
+        debug!("Execution plan:\n{:#?}\n", &execution_plan);
+        Ok(execution_plan.clone())
     }
 
     fn name(&self) -> &str {
-        "print_physical_query_plan"
+        "log_physical_optimizer_rule"
     }
 }

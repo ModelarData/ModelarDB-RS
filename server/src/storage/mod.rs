@@ -82,7 +82,10 @@ impl StorageEngine {
                         self.enqueue_segment(key, full_segment)
                     }
                 } else {
-                    println!("Could not find segment with key '{}'. Creating segment.", key);
+                    println!(
+                        "Could not find segment with key '{}'. Creating segment.",
+                        key
+                    );
 
                     let mut segment = SegmentBuilder::new();
                     segment.insert_data(&data_point);
@@ -257,6 +260,8 @@ mod tests {
 
         storage_engine.insert_message(message.clone());
 
-        DataPoint::from_message(&message).unwrap().generate_unique_key()
+        DataPoint::from_message(&message)
+            .unwrap()
+            .generate_unique_key()
     }
 }

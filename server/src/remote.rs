@@ -12,28 +12,27 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+use std::convert::TryInto;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::str::from_utf8;
 use std::sync::Arc;
 
-use crate::Context;
-
-use std::convert::TryInto;
-
+use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::utils::flight_data_from_arrow_batch;
 use arrow_flight::SchemaAsIpc;
-use datafusion::arrow::ipc::writer::IpcWriteOptions;
-use futures::Stream;
-use tonic::transport::Server;
-use tonic::{Request, Response, Status, Streaming};
-
-use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaResult, Ticket,
 };
+use datafusion::arrow::ipc::writer::IpcWriteOptions;
+use futures::Stream;
+use tonic::transport::Server;
+use tonic::{Request, Response, Status, Streaming};
+use tracing::info;
+
+use crate::Context;
 
 /** Public Functions **/
 pub fn start_arrow_flight_server(context: Arc<Context>, port: i16) {
@@ -43,7 +42,7 @@ pub fn start_arrow_flight_server(context: Arc<Context>, port: i16) {
         context: context.clone(),
     };
     let flight_service_server = FlightServiceServer::new(handler);
-    eprintln!("Started Arrow Flight on 127.0.0.1:{}", port);
+    info!("Started Arrow Flight on 127.0.0.1:{}.", port);
     context.runtime.block_on(async {
         Server::builder()
             .add_service(flight_service_server)
@@ -149,7 +148,7 @@ impl FlightService for FlightServiceHandler {
         // Extract client query.
         let message = request.get_ref();
         let query = from_utf8(&message.ticket).map_err(to_invalid_argument)?;
-        eprintln!("Executing: {}", query);
+        info!("Executing: {}.", query);
 
         // Executes client query.
         let session = self.context.session.clone();
