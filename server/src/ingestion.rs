@@ -23,6 +23,7 @@ use std::{process, time::Duration};
 use futures::{executor::block_on, stream::StreamExt};
 use paho_mqtt as mqtt;
 use paho_mqtt::{AsyncClient, AsyncReceiver, Message};
+use tracing::{error, info};
 
 use crate::storage::StorageEngine;
 
@@ -61,18 +62,18 @@ impl Ingestor {
 
     /// Create a broker client, subscribe to the topics, and start ingesting messages.
     pub fn start(self, mut storage_engine: StorageEngine) {
-        println!("Creating MQTT broker client with id '{}'.", self.client_id);
+        info!("Creating MQTT broker client with id '{}'.", self.client_id);
         let mut client = self.create_client();
 
         if let Err(err) = block_on(async {
             let mut stream = self.subscribe_to_broker(&mut client).await;
 
-            println!("Waiting for messages...");
+            info!("Waiting for messages...");
             Self::ingest_messages(&mut stream, &mut storage_engine).await;
 
             Ok::<(), mqtt::Error>(())
         }) {
-            eprintln!("{}", err);
+            error!("{}", err);
         }
     }
 
@@ -84,7 +85,7 @@ impl Ingestor {
             .finalize();
 
         mqtt::AsyncClient::new(create_options).unwrap_or_else(|e| {
-            eprintln!("Error creating the client: {:?}", e);
+            error!("Error creating the client: {:?}", e);
             process::exit(1);
         })
     }
@@ -107,10 +108,10 @@ impl Ingestor {
             .will_message(lwt)
             .finalize();
 
-        println!("Connecting to MQTT broker with URI '{}'.", self.broker);
+        info!("Connecting to MQTT broker with URI '{}'.", self.broker);
         client.connect(connect_options).await;
 
-        println!("Subscribing to topics: {:?}", self.topics);
+        info!("Subscribing to topics: {:?}", self.topics);
         client.subscribe_many(self.topics.as_slice(), self.qos.as_slice()).await;
 
         stream
