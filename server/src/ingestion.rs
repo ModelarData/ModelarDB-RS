@@ -41,12 +41,21 @@ pub struct Ingestor {
 
 impl Ingestor {
     /// Create a new ingestor. Note that `topics` and `qos` must be of the same length.
-    pub fn new(broker: String, client_id: String, topics: Vec<String>, qos: Vec<i32>) -> Self {
-        Self {
-            broker,
-            client_id,
-            topics,
-            qos,
+    pub fn try_new(
+        broker: String,
+        client_id: String,
+        topics: Vec<String>,
+        qos: Vec<i32>,
+    ) -> Result<Self, String> {
+        if topics.len() != qos.len() {
+            Err("The number of topics must be the same as the number of QoS specifiers.".to_string())
+        } else {
+            Ok(Self {
+                broker,
+                client_id,
+                topics,
+                qos,
+            })
         }
     }
 
@@ -118,5 +127,34 @@ impl Ingestor {
                 storage_engine.insert_message(msg);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_can_create_ingestor() {
+        let ingestor = Ingestor::try_new(
+            "broker".to_string(),
+            "client".to_string(),
+            vec!["topic_1".to_string(), "topic_2".to_string()],
+            vec![1, 1],
+        );
+
+        assert!(ingestor.is_ok())
+    }
+
+    #[test]
+    fn test_topics_and_qos_cannot_be_different_length() {
+        let ingestor = Ingestor::try_new(
+            "broker".to_string(),
+            "client".to_string(),
+            vec!["topic_1".to_string(), "topic_2".to_string()],
+            vec![1, 1, 1],
+        );
+
+        assert!(ingestor.is_err())
     }
 }
