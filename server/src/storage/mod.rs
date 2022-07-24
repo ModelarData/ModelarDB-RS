@@ -30,6 +30,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
+use tracing::{error, info};
 
 use crate::storage::data_point::DataPoint;
 use crate::storage::segment::{SpilledSegment, FinishedSegment, SegmentBuilder, UncompressedSegment};
@@ -41,6 +42,31 @@ const INITIAL_BUILDER_CAPACITY: usize = 64;
 // TODO: The sensor count should be dynamic and not predefined.
 const SENSOR_COUNT: usize = 2;
 const RESERVED_BYTES: usize = 5000;
+
+// TODO: Maybe remove finished segment and add get_key to uncompressed segment.
+// TODO: Remove the sensor count constant.
+// TODO: Set the initial remaining bytes to be equal to reserved bytes.
+
+// TODO: Before creating a new builder, check if there is enough space for the builder.
+// TODO: If there is, create it and remove the builder size from the remaining bytes.
+// TODO: If there is not, we assume that it is because there is finished uncompressed segments in the queue.
+
+// TODO: We should find the first uncompressed, unbuffered finished segment in the queue and buffer it.
+// TODO: This could be done with a function on the UncompressedSegment trait.
+// TODO: It should return Ok if a unbuffered segment was buffered and Err if trying to buffer an already buffered segment.
+// TODO: If not able to find any unbuffered finished segments, we should panic.
+
+// TODO: When queueing a finished segment, add the builder size to the remaining bytes.
+
+// TODO: Add test for decrementing the remaining bytes when creating a builder.
+// TODO: Add test for buffering unbuffered finished segments if there is not enough space when creating a builder.
+// TODO: Add test for panicking if trying to buffer unbuffered and there are none.
+// TODO: Add test for incrementing the remaining bytes when a builder is finished.
+
+// TODO: Add test for checking that we cannot buffer a buffered finished segment.
+// TODO: Add test for checking that we can buffer a unbuffered finished segment.
+
+// TODO: Maybe split insert message into separate functions to avoid one large function.
 
 /// Manages all uncompressed data, both while being built and when finished.
 pub struct StorageEngine {
@@ -68,24 +94,21 @@ impl StorageEngine {
             Ok(data_point) => {
                 let key = data_point.generate_unique_key();
 
-                println!("Inserting data point {:?} into segment with key '{}'.", data_point, key);
+                info!("Inserting data point {:?} into segment with key '{}'.", data_point, key);
 
                 if let Some(segment) = self.data.get_mut(&key) {
-                    println!("Found existing segment with key '{}'.", key);
+                    info!("Found existing segment with key '{}'.", key);
 
                     segment.insert_data(&data_point);
 
                     if segment.is_full() {
-                        println!("Segment is full, moving it to the compression queue.");
+                        info!("Segment is full, moving it to the compression queue.");
 
                         let full_segment = self.data.remove(&key).unwrap();
                         self.enqueue_segment(key, full_segment)
                     }
                 } else {
-                    println!(
-                        "Could not find segment with key '{}'. Creating segment.",
-                        key
-                    );
+                    info!("Could not find segment with key '{}'. Creating segment.", key);
 
                     let mut segment = SegmentBuilder::new();
                     segment.insert_data(&data_point);
@@ -93,7 +116,7 @@ impl StorageEngine {
                     self.data.insert(key, segment);
                 }
             }
-            Err(e) => eprintln!("Message could not be inserted into storage: {:?}", e),
+            Err(e) => error!("Message could not be inserted into storage: {:?}", e),
         }
     }
 
@@ -121,19 +144,19 @@ impl StorageEngine {
 
     /// Move `segment_builder` to the the compression queue. If necessary, spill the data to Parquet first.
     fn enqueue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
-        println!("Saving the finished segment. Remaining bytes: {}", self.remaining_bytes);
+        info!("Saving the finished segment. Remaining bytes: {}", self.remaining_bytes);
 
         let uncompressed_segment: Box<dyn UncompressedSegment>;
         let builder_size = SegmentBuilder::get_memory_size();
 
         // If there is not enough space for the finished segment, spill the data to a Parquet file.
         if builder_size > self.remaining_bytes {
-            println!("Not enough memory for the finished segment. Spilling the data to a file.");
+            info!("Not enough memory for the finished segment. Spilling the data to a file.");
 
             let spilled_segment = SpilledSegment::new(key.clone(), segment_builder);
             uncompressed_segment = Box::new(spilled_segment);
         } else {
-            println!("Saving the finished segment in memory.");
+            info!("Saving the finished segment in memory.");
             uncompressed_segment = Box::new(segment_builder);
 
             // Since it is saved in memory, remove the size of the segment from the remaining bytes.

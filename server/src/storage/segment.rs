@@ -28,6 +28,7 @@ use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader, ProjectionMask};
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
+use tracing::info;
 
 use crate::storage::data_point::DataPoint;
 use crate::storage::{write_batch_to_parquet, INITIAL_BUILDER_CAPACITY};
@@ -89,7 +90,7 @@ impl SegmentBuilder {
         self.timestamps.append_value(data_point.timestamp);
         self.values.append_value(data_point.value);
 
-        println!("Inserted data point into {}.", self)
+        info!("Inserted data point into {}.", self)
     }
 }
 
