@@ -170,7 +170,9 @@ impl StorageEngine {
                 return ();
             }
         }
-        // TODO: If not able to find any in-memory finished segments, we should panic.
+
+        // If not able to find any in-memory finished segments, we should panic.
+        panic!("Not enough reserved memory to hold all necessary segment builders.")
     }
 }
 
