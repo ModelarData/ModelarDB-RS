@@ -13,20 +13,179 @@
  * limitations under the License.
  */
 
-use std::convert::TryInto;
+//! Implementation of the Swing model type from the [Swing and Slide paper] and
+//! efficient computation of aggregates for models of type Swing as described in
+//! the [ModelarDB paper].
+//!
+//! [Swing and Slide paper]: https://dl.acm.org/doi/10.14778/1687627.1687645
+//! [ModelarDB paper]: https://dl.acm.org/doi/abs/10.14778/3236187.3236215
 
-use datafusion::arrow::array::{Float32Builder, Int32Builder, TimestampMillisecondBuilder};
+use crate::types::{
+    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueBuilder,
+};
 
-/** Public Functions **/
+/// The state the Swing model type needs while fitting a model to a time series
+/// segment.
+struct Swing {
+    /// Maximum relative error for the value of each data point.
+    error_bound: Value,
+    /// Time at which the first value represented by the current model was
+    /// collected.
+    first_timestamp: Timestamp,
+    /// Time at which the last value represented by the current model was
+    /// collected.
+    last_timestamp: Timestamp,
+    /// First value in the segment the current model is fitted to.
+    first_value: f64, // f64 instead of Value to remove casts in fit_value()
+    /// First coefficient for the linear function specifying the upper bound
+    /// for the current model.
+    upper_bound_a: f64,
+    /// Second coefficient for the linear function specifying the upper bound
+    /// for the current model.
+    upper_bound_b: f64,
+    /// First coefficient for the linear function specifying the lower bound for
+    /// the current model.
+    lower_bound_a: f64,
+    /// Second coefficient for the linear function specifying the lower bound
+    /// for the current model.
+    lower_bound_b: f64,
+    /// The number of data points the current model has been fitted to.
+    length: u32,
+}
+
+impl Swing {
+    fn try_new(error_bound: Value) -> Result<Self, String> {
+        if error_bound < 0.0 || error_bound.is_infinite() || error_bound.is_nan() {
+            Err("The error bound cannot be negative, infinite, or NaN".to_string())
+        } else {
+            Ok(Self {
+                error_bound,
+                first_timestamp: 0,
+                last_timestamp: 0,
+                first_value: f64::NAN,
+                upper_bound_a: f64::NAN,
+                upper_bound_b: f64::NAN,
+                lower_bound_a: f64::NAN,
+                lower_bound_b: f64::NAN,
+                length: 0,
+            })
+        }
+    }
+
+    /// Attempt to update the current model of type Swing to also represent
+    /// `value`. Returns `true` if the model can also represent `value`,
+    /// otherwise `false`.
+    fn fit_value(&mut self, timestamp: Timestamp, value: Value) -> bool {
+        // Simplify the calculations by removing a significant number of casts.
+        let value = value as f64;
+        let error_bound = self.error_bound as f64;
+
+        // Calculate the maximum allowed deviation within the error bound. The
+        // error bound in percentage is divided by 100.1 instead of 100.0 to
+        // ensure that the approximate value is below the error bound despite
+        // calculations with floating-point values not being fully accurate.
+        let maximum_deviation = f64::abs(value * (error_bound / 100.1));
+
+        if self.length == 0 {
+            //Line 1 - 2
+            self.first_timestamp = timestamp;
+            self.last_timestamp = timestamp;
+            self.first_value = value;
+            self.length += 1;
+            true
+        } else if !self.first_value.is_finite() || !value.is_finite() {
+            // Extend Swing to handle both types of infinity and NaN.
+            if equal_or_nan(self.first_value, value) {
+                self.last_timestamp = timestamp;
+                self.upper_bound_a = value;
+                self.upper_bound_b = value;
+                self.lower_bound_a = value;
+                self.lower_bound_b = value;
+                self.length += 1;
+                true
+            } else {
+                false
+            }
+        } else if self.length == 1 {
+            // Line 3
+            self.last_timestamp = timestamp;
+            (self.upper_bound_a, self.upper_bound_b) = calculate_a_and_b(
+                self.first_timestamp,
+                self.first_value,
+                timestamp,
+                value + maximum_deviation,
+            );
+
+            (self.lower_bound_a, self.lower_bound_b) = calculate_a_and_b(
+                self.first_timestamp,
+                self.first_value,
+                timestamp,
+                value - maximum_deviation,
+            );
+            self.length += 1;
+            true
+        } else {
+            //Line 6
+            let upper_bound_approximate_value =
+                self.upper_bound_a * timestamp as f64 + self.upper_bound_b;
+            let lower_bound_approximate_value =
+                self.lower_bound_a * timestamp as f64 + self.lower_bound_b;
+
+            if upper_bound_approximate_value + maximum_deviation < value
+                || lower_bound_approximate_value - maximum_deviation > value
+            {
+                false
+            } else {
+                self.last_timestamp = timestamp;
+
+                //Line 16
+                if upper_bound_approximate_value - maximum_deviation > value {
+                    (self.upper_bound_a, self.upper_bound_b) = calculate_a_and_b(
+                        self.first_timestamp,
+                        self.first_value,
+                        timestamp,
+                        value + maximum_deviation,
+                    );
+                }
+
+                //Line 15
+                if lower_bound_approximate_value + maximum_deviation < value {
+                    (self.lower_bound_a, self.lower_bound_b) = calculate_a_and_b(
+                        self.first_timestamp,
+                        self.first_value,
+                        timestamp,
+                        value - maximum_deviation,
+                    );
+                }
+                self.length += 1;
+                true
+            }
+        }
+    }
+
+    /// Return the current model. For a model of type Swing, its coefficients
+    /// are the first and last value of the time series segment the model
+    /// represents.
+    fn get_model(&self) -> (Value, Value) {
+        // TODO: Use the method in the Slide and Swing paper to select the
+        // linear function within the lower and upper that minimizes error
+        let first_value = self.upper_bound_a * self.first_timestamp as f64 + self.upper_bound_b;
+        let last_value = self.upper_bound_a * self.last_timestamp as f64 + self.upper_bound_b;
+        (first_value as Value, last_value as Value)
+    }
+}
+
+/// Compute the minimum value for a time series segment whose values are
+/// represented by a model of type Swing.
 pub fn min(
-    gid: i32,
-    start_time: i64,
-    end_time: i64,
-    sampling_interval: i32,
+    _gid: TimeSeriesId,
+    start_time: Timestamp,
+    end_time: Timestamp,
+    _sampling_interval: i32,
     model: &[u8],
-    gaps: &[u8],
+    _gaps: &[u8],
 ) -> f32 {
-    let (a, b) = decode(model);
+    let (a, b) = decode_model(model);
     if a == 0.0 {
         b as f32
     } else if a > 0.0 {
@@ -36,15 +195,17 @@ pub fn min(
     }
 }
 
+/// Compute the maximum value for a time series segment whose values are
+/// represented by a model of type Swing.
 pub fn max(
-    gid: i32,
-    start_time: i64,
-    end_time: i64,
-    sampling_interval: i32,
+    _gid: TimeSeriesId,
+    start_time: Timestamp,
+    end_time: Timestamp,
+    _sampling_interval: i32,
     model: &[u8],
-    gaps: &[u8],
+    _gaps: &[u8],
 ) -> f32 {
-    let (a, b) = decode(model);
+    let (a, b) = decode_model(model);
     if a == 0.0 {
         b as f32
     } else if a < 0.0 {
@@ -54,15 +215,17 @@ pub fn max(
     }
 }
 
+/// Compute the sum of the values for a time series segment whose values are
+/// represented by a model of type Swing.
 pub fn sum(
-    gid: i32,
-    start_time: i64,
-    end_time: i64,
+    _gid: TimeSeriesId,
+    start_time: Timestamp,
+    end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    gaps: &[u8],
+    _gaps: &[u8],
 ) -> f32 {
-    let (a, b) = decode(model);
+    let (a, b) = decode_model(model);
     let first = a * start_time as f64 + b;
     let last = a * end_time as f64 + b;
     let average = (first + last) / 2.0;
@@ -70,29 +233,34 @@ pub fn sum(
     (average * length as f64) as f32
 }
 
+/// Reconstruct the data points for a time series segment whose values are
+/// represented by a model of type Swing. Each data point is split into its
+/// three components and appended to `tids`, `timestamps`, and `values`.
 pub fn grid(
-    gid: i32,
-    start_time: i64,
-    end_time: i64,
+    gid: TimeSeriesId,
+    start_time: Timestamp,
+    end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    gaps: &[u8],
-    tids: &mut Int32Builder,
-    timestamps: &mut TimestampMillisecondBuilder,
-    values: &mut Float32Builder,
+    _gaps: &[u8],
+    tids: &mut TimeSeriesIdBuilder,
+    timestamps: &mut TimestampBuilder,
+    values: &mut ValueBuilder,
 ) {
-    let (a, b) = decode(model);
+    let (a, b) = decode_model(model);
     let sampling_interval = sampling_interval as usize;
     for timestamp in (start_time..=end_time).step_by(sampling_interval) {
         tids.append_value(gid).unwrap();
         timestamps.append_value(timestamp).unwrap();
-        let value: f32 = (a * timestamp as f64 + b) as f32;
+        let value = (a * timestamp as f64 + b) as Value;
         values.append_value(value).unwrap();
     }
 }
 
-/** Private Functions **/
-fn decode(model: &[u8]) -> (f64, f64) {
+/// Read the coefficients for a model of type Swing from a slice of bytes. The
+/// coefficients are the `a` and `b` values of a linear function `a * t + b`.
+fn decode_model(model: &[u8]) -> (f64, f64) {
+    // TODO: decode the output of Swing::get_model() when compression is done.
     if model.len() == 16 {
         (
             f64::from_be_bytes(model[0..8].try_into().unwrap()),
@@ -108,5 +276,334 @@ fn decode(model: &[u8]) -> (f64, f64) {
             f32::from_be_bytes(model[0..4].try_into().unwrap()) as f64,
             f32::from_be_bytes(model[4..8].try_into().unwrap()) as f64,
         )
+    }
+}
+
+/// Calculate `a` and `b` of a linear function that intersects with the data
+/// points (first_timestamp, first_value) and (final_timestamp, final_value).
+fn calculate_a_and_b(
+    first_timestamp: Timestamp,
+    first_value: f64,
+    final_timestamp: Timestamp,
+    final_value: f64,
+) -> (f64, f64) {
+    // It seems that no values can be assigned to first_value and final_value
+    // so a * timestamp + b = INFINITY and a * timestamp + b = NEG_INFINITY.
+    if first_value.is_finite() && final_value.is_finite() {
+        let a = (final_value - first_value) / (final_timestamp - first_timestamp) as f64;
+        let b = first_value - a * first_timestamp as f64;
+        (a, b)
+    } else {
+        debug_assert!(equal_or_nan(first_value, final_value));
+        (first_value, final_value)
+    }
+}
+
+/// Returns true if `v1` and `v2` are equivalent or both values are NAN.
+fn equal_or_nan(v1: f64, v2: f64) -> bool {
+    v1 == v2 || (v1.is_nan() && v2.is_nan())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::tests::ProptestValue;
+    use proptest::strategy::Strategy;
+    use proptest::{num, prop_assert, prop_assert_eq, prop_assume, proptest};
+
+    // Tests constants chosen to be realistic while minimizing the testing time.
+    const SAMPLING_INTERVAL: Timestamp = 1000;
+    const FIRST_TIMESTAMP: Timestamp = 1658671178037;
+    const FINAL_TIMESTAMP: Timestamp = FIRST_TIMESTAMP + SAMPLING_INTERVAL;
+    const SEGMENT_LENGTH: Timestamp = 5; // Timestamp is used to remove casts.
+
+    // Tests for Swing.
+    proptest! {
+    #[test]
+    fn test_error_bound_can_be_positive(error_bound in ProptestValue::POSITIVE) {
+        assert!(Swing::try_new(error_bound).is_ok())
+    }
+
+    #[test]
+    fn test_error_bound_cannot_be_negative(error_bound in ProptestValue::NEGATIVE) {
+        assert!(Swing::try_new(error_bound).is_err())
+    }
+    }
+
+    #[test]
+    fn test_error_bound_cannot_be_positive_infinity() {
+        assert!(Swing::try_new(Value::INFINITY).is_err())
+    }
+
+    #[test]
+    fn test_error_bound_cannot_be_negative_infinity() {
+        assert!(Swing::try_new(Value::NEG_INFINITY).is_err())
+    }
+
+    #[test]
+    fn test_error_bound_cannot_be_nan() {
+        assert!(Swing::try_new(Value::NAN).is_err())
+    }
+
+    proptest! {
+    #[test]
+    fn test_can_fit_sequence_of_finite_value_with_error_bound_zero(value in ProptestValue::ANY) {
+        can_fit_sequence_of_value_with_error_bound_zero(value)
+    }
+    }
+
+    #[test]
+    fn test_can_fit_sequence_of_positive_infinity_with_error_bound_zero() {
+        can_fit_sequence_of_value_with_error_bound_zero(Value::INFINITY)
+    }
+
+    #[test]
+    fn test_can_fit_sequence_of_negative_infinity_with_error_bound_zero() {
+        can_fit_sequence_of_value_with_error_bound_zero(Value::NEG_INFINITY)
+    }
+
+    #[test]
+    fn test_can_fit_sequence_of_nans_with_error_bound_zero() {
+        can_fit_sequence_of_value_with_error_bound_zero(Value::NAN)
+    }
+
+    fn can_fit_sequence_of_value_with_error_bound_zero(value: Value) {
+        let mut model_type = Swing::try_new(0.0).unwrap();
+        let final_timestamp = FIRST_TIMESTAMP + SEGMENT_LENGTH * SAMPLING_INTERVAL;
+        for timestamp in (FIRST_TIMESTAMP..final_timestamp).step_by(SAMPLING_INTERVAL as usize) {
+            assert!(model_type.fit_value(timestamp, value));
+        }
+
+        let (first_value, final_value) = model_type.get_model();
+        let (a, b) = calculate_a_and_b(
+            FIRST_TIMESTAMP,
+            first_value as f64,
+            final_timestamp,
+            final_value as f64,
+        );
+        if value.is_nan() {
+            assert!(a.is_nan() && b.is_nan());
+        } else {
+            for timestamp in (FIRST_TIMESTAMP..final_timestamp).step_by(SAMPLING_INTERVAL as usize)
+            {
+                let approximate_value = a * timestamp as f64 + b;
+                assert_eq!(approximate_value, value as f64);
+            }
+        }
+    }
+
+    proptest! {
+    #[test]
+    fn test_can_fit_one_value(value in ProptestValue::ANY) {
+        prop_assert!(Swing::try_new(0.0).unwrap().fit_value(FIRST_TIMESTAMP, value));
+    }
+
+    #[test]
+    fn test_can_fit_two_finite_value(first_value in ProptestValue::NORMAL, second_value in ProptestValue::NORMAL) {
+        let mut model_type = Swing::try_new(0.0).unwrap();
+        prop_assert!(model_type.fit_value(FIRST_TIMESTAMP, first_value));
+        prop_assert!(model_type.fit_value(FINAL_TIMESTAMP, second_value));
+    }
+
+    #[test]
+    fn test_cannot_fit_other_value_and_positive_infinity(value in ProptestValue::ANY) {
+        prop_assume!(value != Value::INFINITY);
+        let mut model_type = Swing::try_new(Value::MAX).unwrap();
+        prop_assert!(model_type.fit_value(FIRST_TIMESTAMP, value));
+        prop_assert!(!model_type.fit_value(FINAL_TIMESTAMP, Value::INFINITY));
+    }
+
+    #[test]
+    fn test_cannot_fit_other_value_and_negative_infinity(value in ProptestValue::ANY) {
+        prop_assume!(value != Value::NEG_INFINITY);
+        let mut model_type = Swing::try_new(Value::MAX).unwrap();
+        prop_assert!(model_type.fit_value(FIRST_TIMESTAMP, value));
+        prop_assert!(!model_type.fit_value(FINAL_TIMESTAMP, Value::NEG_INFINITY));
+    }
+
+    #[test]
+    fn test_cannot_fit_other_value_and_nan(value in ProptestValue::ANY) {
+        prop_assume!(!value.is_nan());
+        let mut model_type = Swing::try_new(Value::MAX).unwrap();
+        prop_assert!(model_type.fit_value(FIRST_TIMESTAMP, value));
+        prop_assert!(!model_type.fit_value(FINAL_TIMESTAMP, Value::NAN));
+    }
+
+    #[test]
+    fn test_cannot_fit_positive_infinity_and_other_value(value in ProptestValue::ANY) {
+        prop_assume!(value != Value::INFINITY);
+        let mut model_type = Swing::try_new(Value::MAX).unwrap();
+        prop_assert!(model_type.fit_value(FIRST_TIMESTAMP, Value::INFINITY));
+        prop_assert!(!model_type.fit_value(FINAL_TIMESTAMP, value));
+    }
+
+    #[test]
+    fn test_cannot_fit_negative_infinity_and_other_value(value in ProptestValue::ANY) {
+        prop_assume!(value != Value::NEG_INFINITY);
+        let mut model_type = Swing::try_new(Value::MAX).unwrap();
+        prop_assert!(model_type.fit_value(FIRST_TIMESTAMP, Value::NEG_INFINITY));
+        prop_assert!(!model_type.fit_value(FINAL_TIMESTAMP, value));
+    }
+
+    #[test]
+    fn test_cannot_fit_nan_and_other_value(value in ProptestValue::ANY) {
+        prop_assume!(!value.is_nan());
+        let mut model_type = Swing::try_new(Value::MAX).unwrap();
+        prop_assert!(model_type.fit_value(FIRST_TIMESTAMP, Value::NAN));
+        prop_assert!(!model_type.fit_value(FINAL_TIMESTAMP, value));
+    }
+    }
+
+    #[test]
+    fn test_can_fit_sequence_of_linear_values_with_error_bound_zero() {
+        assert!(fit_sequence_of_values_with_error_bound(
+            &[42.0, 84.0, 126.0, 168.0, 210.0],
+            0.0
+        ))
+    }
+
+    #[test]
+    fn test_cannot_fit_sequence_of_different_values_with_error_bound_zero() {
+        assert!(!fit_sequence_of_values_with_error_bound(
+            &[42.0, 42.0, 42.8, 42.0, 42.0],
+            0.0
+        ))
+    }
+
+    #[test]
+    fn test_can_fit_sequence_of_different_values_with_error_bound_five() {
+        assert!(fit_sequence_of_values_with_error_bound(
+            &[42.0, 42.0, 42.8, 42.0, 42.0],
+            5.0
+        ))
+    }
+
+    fn fit_sequence_of_values_with_error_bound(values: &[Value], error_bound: Value) -> bool {
+        let mut model_type = Swing::try_new(error_bound).unwrap();
+        let mut fit_all_values = true;
+        let mut timestamp = FIRST_TIMESTAMP;
+        for value in values {
+            fit_all_values &= model_type.fit_value(timestamp, *value);
+            timestamp += SAMPLING_INTERVAL;
+        }
+        return fit_all_values;
+    }
+
+    // Tests for min().
+    proptest! {
+    #[test]
+    fn test_min(
+        first_value in num::i32::ANY.prop_map(i32_to_value),
+        final_value in num::i32::ANY.prop_map(i32_to_value)
+    ) {
+        let (a, b) = calculate_a_and_b(FIRST_TIMESTAMP, first_value as f64, FINAL_TIMESTAMP, final_value as f64);
+        let model = [a.to_be_bytes(), b.to_be_bytes()].concat();
+        let min = min(1, FIRST_TIMESTAMP, FINAL_TIMESTAMP, SAMPLING_INTERVAL as i32, &model, &[]);
+        prop_assert_eq!(min, Value::min(first_value, final_value));
+    }
+    }
+
+    // Tests for max().
+    proptest! {
+    #[test]
+    fn test_max(
+        first_value in num::i32::ANY.prop_map(i32_to_value),
+        final_value in num::i32::ANY.prop_map(i32_to_value)
+    ) {
+        let (a, b) = calculate_a_and_b(FIRST_TIMESTAMP, first_value as f64, FINAL_TIMESTAMP, final_value as f64);
+        let model = [a.to_be_bytes(), b.to_be_bytes()].concat();
+        let max = max(1, FIRST_TIMESTAMP, FINAL_TIMESTAMP, SAMPLING_INTERVAL as i32, &model, &[]);
+        prop_assert_eq!(max, Value::max(first_value, final_value));
+    }
+    }
+
+    // Tests for sum().
+    proptest! {
+    #[test]
+    fn test_sum(
+        first_value in num::i32::ANY.prop_map(i32_to_value),
+        final_value in num::i32::ANY.prop_map(i32_to_value)
+    ) {
+	// A segment of length one is used to have a known sum.
+        let (a, b) = calculate_a_and_b(FIRST_TIMESTAMP, first_value as f64, FINAL_TIMESTAMP, final_value as f64);
+        let model = [a.to_be_bytes(), b.to_be_bytes()].concat();
+        let sum = sum(1, FIRST_TIMESTAMP, FIRST_TIMESTAMP, SAMPLING_INTERVAL as i32, &model, &[]);
+        prop_assert_eq!(sum, first_value);
+    }
+    }
+
+    // Tests for grid().
+    proptest! {
+    #[test]
+    fn test_grid(value in num::i32::ANY.prop_map(i32_to_value)) {
+	// The linear function represents a constant value to have a known value.
+        let (a, b) = calculate_a_and_b(FIRST_TIMESTAMP, value as f64, FINAL_TIMESTAMP, value as f64);
+        let model = [a.to_be_bytes(), b.to_be_bytes()].concat();
+	let length = (((FINAL_TIMESTAMP - FIRST_TIMESTAMP) / SAMPLING_INTERVAL) + 1) as usize;
+        let mut tids = TimeSeriesIdBuilder::new(length);
+        let mut timestamps = TimestampBuilder::new(length);
+        let mut values = ValueBuilder::new(length);
+
+        grid(
+            1,
+            FIRST_TIMESTAMP,
+            FINAL_TIMESTAMP,
+            SAMPLING_INTERVAL as i32,
+            &model,
+            &[],
+            &mut tids,
+            &mut timestamps,
+            &mut values,
+        );
+
+        let tids = tids.finish();
+        let timestamps = timestamps.finish();
+        let values = values.finish();
+
+        prop_assert!(
+            tids.len() == length && tids.len() == timestamps.len() && tids.len() == values.len()
+        );
+        prop_assert!(tids.iter().all(|tid_option| tid_option.unwrap() == 1));
+        prop_assert!(timestamps
+            .values()
+            .windows(2)
+            .all(|window| window[1] - window[0] == SAMPLING_INTERVAL));
+        prop_assert!(values
+            .iter()
+            .all(|value_option| equal_or_nan(value_option.unwrap() as f64, value as f64)));
+    }
+    }
+
+    fn i32_to_value(index: i32) -> Value {
+        // TODO: support all values from ProptestValue::ANY for min, max, and
+        // sum. Currently, extreme values (e.g., +-e40) produce wrong results.
+        // Ensure Value is always within a range that a model of type Swing can
+        // aggregate. Within one million the aggregates are always correct.
+        (index % 1_000_000) as Value
+    }
+
+    // Tests for the decode_model().
+    proptest! {
+    #[test]
+    fn test_decode_model(value in num::f64::ANY) {
+    let model = [value.to_be_bytes(), value.to_be_bytes()].concat();
+        let (a, b) = decode_model(&model);
+        prop_assert!(equal_or_nan(a, value));
+        prop_assert!(equal_or_nan(b, value));
+    }
+    }
+
+    // Tests for equal_or_nan().
+    proptest! {
+    #[test]
+    fn test_equal_or_nan_equal(value in num::f64::ANY) {
+        assert!(equal_or_nan(value, value));
+    }
+
+    #[test]
+    fn test_equal_or_nan_not_equal(v1 in num::f64::ANY, v2 in num::f64::ANY) {
+        prop_assume!(v1 != v2 && !v1.is_nan() && !v2.is_nan());
+        prop_assert!(!equal_or_nan(v1, v2));
+    }
     }
 }
