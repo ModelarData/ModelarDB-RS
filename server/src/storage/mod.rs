@@ -41,8 +41,6 @@ use crate::types::Timestamp;
 const INITIAL_BUILDER_CAPACITY: usize = 64;
 const RESERVED_BYTES: usize = 5000;
 
-// TODO: When queueing a finished segment, add the builder size to the remaining bytes.
-
 // TODO: Add test for decrementing the remaining bytes when creating a builder.
 // TODO: Add test for buffering unbuffered finished segments if there is not enough space when creating a builder.
 // TODO: Add test for panicking if trying to buffer unbuffered and there are none.
@@ -98,7 +96,7 @@ impl StorageEngine {
 
                     // If there is not enough space for a new segment, spill a finished segment.
                     if SegmentBuilder::get_memory_size() > self.remaining_bytes {
-                        // TODO: Spill segment.
+                        self.spill_finished_segment();
                     }
 
                     // Create a new segment and remove the size from the reserved remaining memory.
@@ -161,11 +159,18 @@ impl StorageEngine {
     }
 
     /// Spill the first in-memory finished segment in the compression queue.
-    fn spill_finished_segment() {
-        // TODO: We should find the first uncompressed, unbuffered finished segment in the queue and buffer it.
-        // TODO: This could be done with a function on the UncompressedSegment trait.
-        // TODO: It should return Ok if a unbuffered segment was buffered and Err if trying to buffer an already buffered segment.
-        // TODO: If not able to find any unbuffered finished segments, we should panic.
+    fn spill_finished_segment(&mut self) {
+        info!("Not enough memory to create segment. Spilling an already finished segment.");
+
+        // Iterate through the finished segments until a segment can be spilled to Parquet.
+        for segment in self.compression_queue.iter_mut() {
+            if let Ok(()) = segment.uncompressed_segment.spill_segment() {
+                // If the segment has been spilled, add the size of it back to the remaining bytes.
+                self.remaining_bytes += SegmentBuilder::get_memory_size();
+                return ();
+            }
+        }
+        // TODO: If not able to find any in-memory finished segments, we should panic.
     }
 }
 

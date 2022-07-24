@@ -42,6 +42,8 @@ pub trait UncompressedSegment {
     fn get_record_batch(&mut self) -> RecordBatch;
 
     fn get_memory_size(&self) -> usize;
+
+    fn spill_segment(&mut self) -> Result<(), String>;
 }
 
 /// A single segment being built, consisting of an ordered sequence of timestamps and values. Note
@@ -124,6 +126,12 @@ impl UncompressedSegment for SegmentBuilder {
     fn get_memory_size(&self) -> usize {
         SegmentBuilder::get_memory_size()
     }
+
+    /// Spill the in-memory segment to a Parquet file and return Ok when finished.
+    fn spill_segment(&mut self) -> Result<(), String> {
+        // TODO Spill segment.
+        Ok(())
+    }
 }
 
 /// A single segment that has been spilled to a Parquet file due to memory constraints.
@@ -172,6 +180,11 @@ impl UncompressedSegment for SpilledSegment {
     /// Return 0 since the data is not kept in memory.
     fn get_memory_size(&self) -> usize {
         0
+    }
+
+    /// Since the segment has already been spilled, return Err.
+    fn spill_segment(&mut self) -> Result<(), String> {
+        Err(format!("The segment has already been spilled to '{}'.", self.path))
     }
 }
 
