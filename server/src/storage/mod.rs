@@ -41,15 +41,6 @@ use crate::types::Timestamp;
 const INITIAL_BUILDER_CAPACITY: usize = 64;
 const RESERVED_BYTES: usize = 5000;
 
-// TODO: Before creating a new builder, check if there is enough space for the builder.
-// TODO: If there is, create it and remove the builder size from the remaining bytes.
-// TODO: If there is not, we assume that it is because there is finished uncompressed segments in the queue.
-
-// TODO: We should find the first uncompressed, unbuffered finished segment in the queue and buffer it.
-// TODO: This could be done with a function on the UncompressedSegment trait.
-// TODO: It should return Ok if a unbuffered segment was buffered and Err if trying to buffer an already buffered segment.
-// TODO: If not able to find any unbuffered finished segments, we should panic.
-
 // TODO: When queueing a finished segment, add the builder size to the remaining bytes.
 
 // TODO: Add test for decrementing the remaining bytes when creating a builder.
@@ -105,7 +96,14 @@ impl StorageEngine {
                 } else {
                     info!("Could not find segment with key '{}'. Creating segment.", key);
 
+                    // If there is not enough space for a new segment, spill a finished segment.
+                    if SegmentBuilder::get_memory_size() > self.remaining_bytes {
+                        // TODO: Spill segment.
+                    }
+
+                    // Create a new segment and remove the size from the reserved remaining memory.
                     let mut segment = SegmentBuilder::new();
+                    self.remaining_bytes -= SegmentBuilder::get_memory_size();
                     segment.insert_data(&data_point);
 
                     self.data.insert(key, segment);
@@ -160,6 +158,14 @@ impl StorageEngine {
 
         let finished_segment = FinishedSegment { key, uncompressed_segment };
         self.compression_queue.push_back(finished_segment);
+    }
+
+    /// Spill the first in-memory finished segment in the compression queue.
+    fn spill_finished_segment() {
+        // TODO: We should find the first uncompressed, unbuffered finished segment in the queue and buffer it.
+        // TODO: This could be done with a function on the UncompressedSegment trait.
+        // TODO: It should return Ok if a unbuffered segment was buffered and Err if trying to buffer an already buffered segment.
+        // TODO: If not able to find any unbuffered finished segments, we should panic.
     }
 }
 
