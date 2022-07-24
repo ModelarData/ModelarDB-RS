@@ -39,13 +39,7 @@ use crate::types::Timestamp;
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
 // being larger due to internal alignment when allocating memory for the builders.
 const INITIAL_BUILDER_CAPACITY: usize = 64;
-// TODO: The sensor count should be dynamic and not predefined.
-const SENSOR_COUNT: usize = 2;
 const RESERVED_BYTES: usize = 5000;
-
-// TODO: Maybe remove finished segment and add get_key to uncompressed segment.
-// TODO: Remove the sensor count constant.
-// TODO: Set the initial remaining bytes to be equal to reserved bytes.
 
 // TODO: Before creating a new builder, check if there is enough space for the builder.
 // TODO: If there is, create it and remove the builder size from the remaining bytes.
@@ -66,6 +60,7 @@ const RESERVED_BYTES: usize = 5000;
 // TODO: Add test for checking that we cannot buffer a buffered finished segment.
 // TODO: Add test for checking that we can buffer a unbuffered finished segment.
 
+// TODO: Maybe remove finished segment and add get_key to uncompressed segment.
 // TODO: Maybe split insert message into separate functions to avoid one large function.
 
 /// Manages all uncompressed data, both while being built and when finished.
@@ -84,7 +79,7 @@ impl StorageEngine {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             data: HashMap::new(),
             compression_queue: VecDeque::new(),
-            remaining_bytes: RESERVED_BYTES - (SegmentBuilder::get_memory_size() * SENSOR_COUNT)
+            remaining_bytes: RESERVED_BYTES
         }
     }
 
