@@ -39,7 +39,7 @@ use crate::types::Timestamp;
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
 // being larger due to internal alignment when allocating memory for the builders.
 const INITIAL_BUILDER_CAPACITY: usize = 64;
-const RESERVED_BYTES: usize = 500;
+const RESERVED_BYTES: usize = 5000;
 
 // TODO: Add test for decrementing the remaining bytes when creating a builder.
 // TODO: Add test for buffering unbuffered finished segments if there is not enough space when creating a builder.
@@ -100,7 +100,7 @@ impl StorageEngine {
                     }
 
                     // Create a new segment and remove the size from the reserved remaining memory.
-                    let mut segment = SegmentBuilder::new();
+                    let mut segment = SegmentBuilder::new(key.clone());
                     self.remaining_bytes -= SegmentBuilder::get_memory_size();
                     segment.insert_data(&data_point);
 
@@ -113,7 +113,7 @@ impl StorageEngine {
 
     /// Remove the oldest finished segment from the compression queue and return it. Return `None`
     /// if the compression queue is empty.
-    pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
+    pub fn get_finished_segment(&mut self) -> Option<Box<dyn UncompressedSegment>> {
         if let Some(finished_segment) = self.compression_queue.pop_front() {
             // Add the memory size of the removed finished segment back to the remaining bytes.
             self.remaining_bytes += finished_segment.get_memory_size();
@@ -162,7 +162,7 @@ impl StorageEngine {
         // Iterate through the finished segments to find a segment that is in memory.
         for finished in self.compression_queue.iter_mut() {
             if finished.get_memory_size() > 0 {
-                info!("Spilling the segment with key '{}' to a Parquet file.", finished.key);
+                info!("Spilling the segment with key '{}' to a Parquet file.", finished.get_key());
                 return ();
             }
         }

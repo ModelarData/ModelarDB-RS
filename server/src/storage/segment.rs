@@ -42,6 +42,10 @@ pub trait UncompressedSegment {
     fn get_record_batch(&mut self) -> RecordBatch;
 
     fn get_memory_size(&self) -> usize;
+
+    fn spill_segment(&mut self) -> Result<SpilledSegment, String>;
+
+    fn get_key(&self) -> String;
 }
 
 /// A single segment being built, consisting of an ordered sequence of timestamps and values. Note
@@ -52,13 +56,16 @@ pub struct SegmentBuilder {
     timestamps: TimestampBuilder,
     /// Builder consisting of float values.
     values: ValueBuilder,
+    /// Key to uniquely identify a segment.
+    key: String,
 }
 
 impl SegmentBuilder {
-    pub fn new() -> Self {
+    pub fn new(key: String) -> Self {
         Self {
             timestamps: TimestampBuilder::new(INITIAL_BUILDER_CAPACITY),
             values: ValueBuilder::new(INITIAL_BUILDER_CAPACITY),
+            key,
         }
     }
 
@@ -124,12 +131,24 @@ impl UncompressedSegment for SegmentBuilder {
     fn get_memory_size(&self) -> usize {
         SegmentBuilder::get_memory_size()
     }
+
+    /// Spill the in-memory segment to a Parquet file and return Ok when finished.
+    fn spill_segment(&mut self) -> Result<SpilledSegment, String> {
+        // TODO Spill segment.
+        Err("".to_string())
+    }
+
+    fn get_key(&self) -> String {
+        self.key.clone()
+    }
 }
 
 /// A single segment that has been spilled to a Parquet file due to memory constraints.
 pub struct SpilledSegment {
     /// Path to the Parquet file containing the uncompressed data in the segment.
     path: String,
+    /// Key to uniquely identify a segment.
+    key: String,
 }
 
 impl SpilledSegment {
@@ -146,7 +165,10 @@ impl SpilledSegment {
 
         write_batch_to_parquet(data, path.clone());
 
-        Self { path }
+        Self {
+            path,
+            key
+        }
     }
 }
 
@@ -174,6 +196,13 @@ impl UncompressedSegment for SpilledSegment {
         0
     }
 
+    /// Since the segment has already been spilled, return Err.
+    fn spill_segment(&mut self) -> Result<SpilledSegment, String> {
+        Err(format!("The segment has already been spilled to '{}'.", self.path))
+    }
+
+    fn get_key(&self) -> String {
+        self.key.clone()
     }
 }
 
@@ -185,7 +214,7 @@ mod tests {
     // Tests for SegmentBuilder.
     #[test]
     fn test_get_segment_builder_memory_size() {
-        let mut segment_builder = SegmentBuilder::new();
+        let mut segment_builder = SegmentBuilder::new("key".to_string());
 
         let expected = (segment_builder.timestamps.capacity() * mem::size_of::<Timestamp>())
             + (segment_builder.values.capacity() * mem::size_of::<Value>());
@@ -195,7 +224,7 @@ mod tests {
 
     #[test]
     fn test_get_length() {
-        let mut segment_builder = SegmentBuilder::new();
+        let mut segment_builder = SegmentBuilder::new("key".to_string());
 
         assert_eq!(segment_builder.get_length(), 0);
     }
@@ -203,7 +232,7 @@ mod tests {
     #[test]
     fn test_can_insert_data_point() {
         let data_point = get_data_point();
-        let mut segment_builder = SegmentBuilder::new();
+        let mut segment_builder = SegmentBuilder::new(data_point.generate_unique_key());
 
         segment_builder.insert_data(&data_point);
 
@@ -213,7 +242,7 @@ mod tests {
     #[test]
     fn test_check_segment_is_full() {
         let data_point = get_data_point();
-        let mut segment_builder = SegmentBuilder::new();
+        let mut segment_builder = SegmentBuilder::new(data_point.generate_unique_key());
 
         for _ in 0..segment_builder.get_capacity() {
             segment_builder.insert_data(&data_point)
@@ -224,7 +253,7 @@ mod tests {
 
     #[test]
     fn test_check_segment_is_not_full() {
-        let mut segment_builder = SegmentBuilder::new();
+        let mut segment_builder = SegmentBuilder::new("".to_string());
 
         assert!(!segment_builder.is_full());
     }
@@ -232,7 +261,7 @@ mod tests {
     #[test]
     fn test_get_data_from_segment_builder() {
         let data_point = get_data_point();
-        let mut segment_builder = SegmentBuilder::new();
+        let mut segment_builder = SegmentBuilder::new(data_point.generate_unique_key());
 
         segment_builder.insert_data(&data_point);
         segment_builder.insert_data(&data_point);
@@ -252,6 +281,7 @@ mod tests {
     fn test_get_spilled_segment_memory_size() {
         let spilled_segment = SpilledSegment {
             path: "".to_string(),
+            key: "".to_string()
         };
 
         assert_eq!(spilled_segment.get_memory_size(), 0)
