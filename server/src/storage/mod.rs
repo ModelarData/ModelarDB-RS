@@ -39,7 +39,7 @@ use crate::types::Timestamp;
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
 // being larger due to internal alignment when allocating memory for the builders.
 const INITIAL_BUILDER_CAPACITY: usize = 64;
-const RESERVED_BYTES: usize = 5000;
+const RESERVED_BYTES: usize = 500;
 
 // TODO: Add test for decrementing the remaining bytes when creating a builder.
 // TODO: Add test for buffering unbuffered finished segments if there is not enough space when creating a builder.
@@ -158,21 +158,31 @@ impl StorageEngine {
         self.compression_queue.push_back(finished_segment);
     }
 
+    // TODO: This should only be used to find the finished segment.
+    // TODO: Once found, just call a method on the finished segment to spill it.
+    // TODO: This makes it so we no longer have to remove and insert into the queue.
     /// Spill the first in-memory finished segment in the compression queue.
     fn spill_finished_segment(&mut self) {
         info!("Not enough memory to create segment. Spilling an already finished segment.");
 
-        // Iterate through the finished segments until a segment can be spilled to Parquet.
-        for segment in self.compression_queue.iter_mut() {
-            if let Ok(()) = segment.uncompressed_segment.spill_segment() {
-                // If the segment has been spilled, add the size of it back to the remaining bytes.
-                self.remaining_bytes += SegmentBuilder::get_memory_size();
-                return ();
+        let mut segment_index: Option<usize> = None;
+
+        // Iterate through the finished segments to find a segment that is in memory.
+        for (index, segment) in self.compression_queue.iter_mut().enumerate() {
+            if segment.uncompressed_segment.get_memory_size() > 0 {
+                segment_index = Some(index);
+                break;
             }
         }
 
-        // If not able to find any in-memory finished segments, we should panic.
-        panic!("Not enough reserved memory to hold all necessary segment builders.")
+        // If a segment was found, spill it to a Parquet file and replace it in teh queue.
+        if Some(found_index) = segment_index {
+            let segment = self.compression_queue.remove(found_index).unwrap();
+            let spilled_segment = SpilledSegment::new(key.clone(), segment);
+        } else {
+            // If not able to find any in-memory finished segments, we should panic.
+            panic!("Not enough reserved memory to hold all necessary segment builders.")
+        }
     }
 }
 
