@@ -173,23 +173,7 @@ impl UncompressedSegment for SpilledSegment {
     fn get_memory_size(&self) -> usize {
         0
     }
-}
 
-/// Representing either an in-memory or spilled segment that is finished and ready for compression.
-pub struct FinishedSegment {
-    pub key: String,
-    pub uncompressed_segment: Box<dyn UncompressedSegment>,
-}
-
-impl FinishedSegment {
-    /// If in memory, spill the segment to Parquet and return Ok, otherwise return Err.
-    pub fn spill_segment(&mut self) -> Result<(), String> {
-        if self.uncompressed_segment.get_memory_size() > 0 {
-            // TODO: Spill segment.
-            Ok(())
-        } else {
-            Err(format!("The segment has already been spilled to '{}'.", self.path))
-        }
     }
 }
 
