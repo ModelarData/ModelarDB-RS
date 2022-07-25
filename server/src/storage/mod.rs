@@ -102,8 +102,9 @@ impl StorageEngine {
                     // Create a new segment and remove the size from the reserved remaining memory.
                     let mut segment = SegmentBuilder::new(key.clone());
                     self.remaining_bytes -= SegmentBuilder::get_memory_size();
-                    segment.insert_data(&data_point);
+                    info!("Created segment. Remaining bytes: {}.", self.remaining_bytes);
 
+                    segment.insert_data(&data_point);
                     self.data.insert(key, segment);
                 }
             }
@@ -135,8 +136,6 @@ impl StorageEngine {
 
     /// Move `segment_builder` to the the compression queue. If necessary, spill the data to Parquet first.
     fn enqueue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
-        info!("Saving the finished segment. Remaining bytes: {}", self.remaining_bytes);
-
         let builder_size = SegmentBuilder::get_memory_size();
 
         // If there is not enough space for the finished segment, spill the data to a Parquet file.
@@ -145,12 +144,13 @@ impl StorageEngine {
 
             let spilled_segment = SpilledSegment::new(key.clone(), segment_builder);
             self.compression_queue.push_back(Box::new(spilled_segment));
+
+            // Add the size of the segment back to the remaining reserved bytes.
+            self.remaining_bytes += builder_size;
         } else {
             info!("Saving the finished segment in memory.");
-            self.compression_queue.push_back(Box::new(segment_builder));
 
-            // Since it is saved in memory, remove the size of the segment from the remaining bytes.
-            self.remaining_bytes -= builder_size;
+            self.compression_queue.push_back(Box::new(segment_builder));
         }
     }
 
@@ -163,6 +163,12 @@ impl StorageEngine {
         for finished in self.compression_queue.iter_mut() {
             if finished.get_memory_size() > 0 {
                 info!("Spilling the segment with key '{}' to a Parquet file.", finished.get_key());
+
+                // TODO: Spill it.
+
+                // Add the size of the segment back to the remaining reserved bytes.
+                self.remaining_bytes += SegmentBuilder::get_memory_size();
+
                 return ();
             }
         }
