@@ -15,8 +15,7 @@
 
 //! Support for different kinds of uncompressed segments. The SegmentBuilder struct provides support
 //! for inserting and storing data in an in-memory segment. SpilledSegment provides support for
-//! storing uncompressed data in a Parquet files. FinishedSegment provides a generalized interface
-//! for using the segments outside the storage engine.
+//! storing uncompressed data in a Parquet files.
 
 use std::fmt::Formatter;
 use std::fs::File;
@@ -165,10 +164,7 @@ impl SpilledSegment {
 
         write_batch_to_parquet(data, path.clone());
 
-        Self {
-            path,
-            key
-        }
+        Self { path, key }
     }
 }
 
@@ -271,6 +267,14 @@ mod tests {
         assert_eq!(data.num_rows(), 2);
     }
 
+    #[test]
+    fn get_segment_builder_key() {
+        let data_point = get_data_point();
+        let mut segment_builder = SegmentBuilder::new(data_point.generate_unique_key());
+
+        assert_eq!(segment_builder.get_key(), "ModelarDB-test")
+    }
+
     fn get_data_point() -> DataPoint {
         let message = Message::new("ModelarDB/test", "[1657878396943245, 30]", 1);
         DataPoint::from_message(&message).unwrap()
@@ -279,11 +283,22 @@ mod tests {
     // Tests for SpilledSegment.
     #[test]
     fn test_get_spilled_segment_memory_size() {
-        let spilled_segment = SpilledSegment {
-            path: "".to_string(),
-            key: "".to_string()
-        };
+        let spilled_segment = get_empty_spilled_segment();
 
         assert_eq!(spilled_segment.get_memory_size(), 0)
+    }
+
+    #[test]
+    fn test_get_spilled_segment_key() {
+        let spilled_segment = get_empty_spilled_segment();
+
+        assert_eq!(spilled_segment.get_key(), "key")
+    }
+
+    fn get_empty_spilled_segment() -> SpilledSegment {
+        SpilledSegment {
+            path: "path".to_string(),
+            key: "key".to_string()
+        }
     }
 }
