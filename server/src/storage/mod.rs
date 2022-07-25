@@ -158,31 +158,22 @@ impl StorageEngine {
         self.compression_queue.push_back(finished_segment);
     }
 
-    // TODO: This should only be used to find the finished segment.
-    // TODO: Once found, just call a method on the finished segment to spill it.
-    // TODO: This makes it so we no longer have to remove and insert into the queue.
-    /// Spill the first in-memory finished segment in the compression queue.
-    fn spill_finished_segment(&mut self) {
+    /// Spill the first in-memory finished segment in the compression queue and return Ok.
+    /// If the spill failed return Err and if no in-memory finished segments could be found, panic.
+    fn spill_finished_segment(&mut self) -> Result<(), String> {
         info!("Not enough memory to create segment. Spilling an already finished segment.");
 
-        let mut segment_index: Option<usize> = None;
-
         // Iterate through the finished segments to find a segment that is in memory.
-        for (index, segment) in self.compression_queue.iter_mut().enumerate() {
-            if segment.uncompressed_segment.get_memory_size() > 0 {
-                segment_index = Some(index);
-                break;
+        for finished in self.compression_queue.iter_mut() {
+            if finished.uncompressed_segment.get_memory_size() > 0 {
+                info!("Spilling the segment with key '{}' to a Parquet file.", finished.key);
+
+                return finished.spill_segment();
             }
         }
 
-        // If a segment was found, spill it to a Parquet file and replace it in teh queue.
-        if Some(found_index) = segment_index {
-            let segment = self.compression_queue.remove(found_index).unwrap();
-            let spilled_segment = SpilledSegment::new(key.clone(), segment);
-        } else {
-            // If not able to find any in-memory finished segments, we should panic.
-            panic!("Not enough reserved memory to hold all necessary segment builders.")
-        }
+        // If not able to find any in-memory finished segments, we should panic.
+        panic!("Not enough reserved memory to hold all necessary segment builders.");
     }
 }
 

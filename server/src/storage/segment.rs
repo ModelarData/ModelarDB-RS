@@ -181,6 +181,18 @@ pub struct FinishedSegment {
     pub uncompressed_segment: Box<dyn UncompressedSegment>,
 }
 
+impl FinishedSegment {
+    /// If in memory, spill the segment to Parquet and return Ok, otherwise return Err.
+    pub fn spill_segment(&mut self) -> Result<(), String> {
+        if self.uncompressed_segment.get_memory_size() > 0 {
+            // TODO: Spill segment.
+            Ok(())
+        } else {
+            Err(format!("The segment has already been spilled to '{}'.", self.path))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
