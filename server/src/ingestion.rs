@@ -95,13 +95,15 @@ impl Ingestor {
         &self,
         client: &mut AsyncClient,
     ) -> AsyncReceiver<Option<Message>> {
-        // Get the message stream before connecting since messages can arrive as soon as the connection is made.
+        // Get the message stream before connecting since messages can arrive as soon as the connection
+        // is made. A buffer size of 25 is used since it is the standard in paho_mqtt examples.
         let mut stream = client.get_stream(25);
 
         // Define the last will and testament message to notify other clients about disconnect.
         let lwt = mqtt::Message::new("mdb_lwt", "ModelarDB lost connection", mqtt::QOS_1);
 
         let connect_options = mqtt::ConnectOptionsBuilder::new()
+            // An interval of 30 seconds is used since it is the standard in paho_mqtt examples.
             .keep_alive_interval(Duration::from_secs(30))
             .mqtt_version(mqtt::MQTT_VERSION_3_1_1)
             .clean_session(false)
