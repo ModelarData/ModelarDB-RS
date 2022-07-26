@@ -33,7 +33,7 @@ use datafusion::parquet::file::properties::WriterProperties;
 use tracing::{error, info};
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::segment::{SpilledSegment, SegmentBuilder, UncompressedSegment};
+use crate::storage::segment::{SpilledSegment, SegmentBuilder, UncompressedSegment, FinishedSegment};
 use crate::types::Timestamp;
 
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
@@ -42,12 +42,12 @@ const INITIAL_BUILDER_CAPACITY: usize = 64;
 const RESERVED_BYTES: usize = 5000;
 
 // TODO: Add test for decrementing the remaining bytes when creating a builder.
-// TODO: Add test for buffering unbuffered finished segments if there is not enough space when creating a builder.
-// TODO: Add test for panicking if trying to buffer unbuffered and there are none.
-// TODO: Add test for incrementing the remaining bytes when a builder is finished.
+// TODO: Add test for spilling finished segments if there is not enough space when creating a builder (I/O).
+// TODO: Add test for panicking if trying to spill and there are none.
+// TODO: Add test for incrementing the remaining bytes when spilling (I/O).
 
-// TODO: Add test for checking that we cannot buffer a buffered finished segment.
-// TODO: Add test for checking that we can buffer a unbuffered finished segment.
+// TODO: Add test for checking that we cannot spill an already spilled finished segment.
+// TODO: Add test for checking that we can spill an un-spilled finished segment (I/O).
 
 // TODO: Maybe remove finished segment and add get_key to uncompressed segment.
 // TODO: Maybe split insert message into separate functions to avoid one large function.
@@ -57,7 +57,7 @@ pub struct StorageEngine {
     /// The uncompressed segments while they are being built.
     data: HashMap<String, SegmentBuilder>,
     /// Prioritized queue of finished segments that are ready for compression.
-    compression_queue: VecDeque<Box<dyn UncompressedSegment>>,
+    compression_queue: VecDeque<FinishedSegment>,
     /// How many bytes of memory that are left for storing uncompressed segments.
     remaining_bytes: usize,
 }
@@ -100,7 +100,7 @@ impl StorageEngine {
                     }
 
                     // Create a new segment and remove the size from the reserved remaining memory.
-                    let mut segment = SegmentBuilder::new(key.clone());
+                    let mut segment = SegmentBuilder::new();
                     self.remaining_bytes -= SegmentBuilder::get_memory_size();
                     info!("Created segment. Remaining bytes: {}.", self.remaining_bytes);
 
@@ -114,10 +114,10 @@ impl StorageEngine {
 
     /// Remove the oldest finished segment from the compression queue and return it. Return `None`
     /// if the compression queue is empty.
-    pub fn get_finished_segment(&mut self) -> Option<Box<dyn UncompressedSegment>> {
+    pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
         if let Some(finished_segment) = self.compression_queue.pop_front() {
             // Add the memory size of the removed finished segment back to the remaining bytes.
-            self.remaining_bytes += finished_segment.get_memory_size();
+            self.remaining_bytes += finished_segment.uncompressed_segment.get_memory_size();
 
             Some(finished_segment)
         } else {
@@ -136,6 +136,7 @@ impl StorageEngine {
 
     /// Move `segment_builder` to the the compression queue. If necessary, spill the data to Parquet first.
     fn enqueue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
+        let uncompressed_segment: Box<dyn UncompressedSegment>;
         let builder_size = SegmentBuilder::get_memory_size();
 
         // If there is not enough space for the finished segment, spill the data to a Parquet file.
@@ -143,15 +144,18 @@ impl StorageEngine {
             info!("Not enough memory for the finished segment. Spilling the data to a file.");
 
             let spilled_segment = SpilledSegment::new(key.clone(), segment_builder);
-            self.compression_queue.push_back(Box::new(spilled_segment));
+            uncompressed_segment = Box::new(spilled_segment);
 
             // Add the size of the segment back to the remaining reserved bytes.
             self.remaining_bytes += builder_size;
         } else {
             info!("Saving the finished segment in memory.");
 
-            self.compression_queue.push_back(Box::new(segment_builder));
+            uncompressed_segment = Box::new(segment_builder);
         }
+
+        let finished_segment = FinishedSegment { key, uncompressed_segment };
+        self.compression_queue.push_back(finished_segment);
     }
 
     /// Spill the first in-memory finished segment in the compression queue and return Ok.
@@ -161,10 +165,10 @@ impl StorageEngine {
 
         // Iterate through the finished segments to find a segment that is in memory.
         for finished in self.compression_queue.iter_mut() {
-            if finished.get_memory_size() > 0 {
-                info!("Spilling the segment with key '{}' to a Parquet file.", finished.get_key());
+            if finished.uncompressed_segment.get_memory_size() > 0 {
+                info!("Spilling the segment with key '{}' to a Parquet file.", finished.key);
 
-                // TODO: Spill it.
+                finished.spill_segment();
 
                 // Add the size of the segment back to the remaining reserved bytes.
                 self.remaining_bytes += SegmentBuilder::get_memory_size();
@@ -247,15 +251,6 @@ mod tests {
         let mut storage_engine = StorageEngine::new();
 
         assert!(storage_engine.get_finished_segment().is_none());
-    }
-
-    #[test]
-    fn test_remaining_bytes_decremented_when_queuing_in_memory() {
-        let mut storage_engine = StorageEngine::new();
-        let initial_remaining_bytes = storage_engine.remaining_bytes.clone();
-        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY, &mut storage_engine);
-
-        assert!(initial_remaining_bytes > storage_engine.remaining_bytes);
     }
 
     #[test]
