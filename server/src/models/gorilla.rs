@@ -24,7 +24,7 @@ pub fn min(
     model: &[u8],
     gaps: &[u8],
 ) -> f32 {
-    let mut bits = Bits::new(model);
+    let mut bits = BitReader::try_new(model).unwrap();
     let mut stored_leading_zeroes = std::u32::MAX;
     let mut stored_trailing_zeroes: u32 = 0;
     let mut last_value = bits.read_bits(32);
@@ -65,7 +65,7 @@ pub fn max(
     model: &[u8],
     gaps: &[u8],
 ) -> f32 {
-    let mut bits = Bits::new(model);
+    let mut bits = BitReader::try_new(model).unwrap();
     let mut stored_leading_zeroes = std::u32::MAX;
     let mut stored_trailing_zeroes: u32 = 0;
     let mut last_value = bits.read_bits(32);
@@ -106,7 +106,7 @@ pub fn sum(
     model: &[u8],
     gaps: &[u8],
 ) -> f32 {
-    let mut bits = Bits::new(model);
+    let mut bits = BitReader::try_new(model).unwrap();
     let mut stored_leading_zeroes = std::u32::MAX;
     let mut stored_trailing_zeroes: u32 = 0;
     let mut last_value = bits.read_bits(32);
@@ -150,7 +150,7 @@ pub fn grid(
     timestamps: &mut TimestampMillisecondBuilder,
     values: &mut Float32Builder,
 ) {
-    let mut bits = Bits::new(model);
+    let mut bits = BitReader::try_new(model).unwrap();
     let mut stored_leading_zeroes = std::u32::MAX;
     let mut stored_trailing_zeroes: u32 = 0;
     let mut last_value = bits.read_bits(32);
@@ -197,7 +197,7 @@ fn decode(
     model: &[u8],
     values: &mut Float32Builder,
 ) {
-    let mut bits = Bits::new(model);
+    let mut bits = BitReader::try_new(model).unwrap();
     let mut stored_leading_zeroes = std::u32::MAX;
     let mut stored_trailing_zeroes: u32 = 0;
     let mut last_value = bits.read_bits(32);
@@ -229,27 +229,30 @@ fn decode(
     }
 }
 
-//Bits
-//The implementation of this Type is based on code published by Ilkka Rauta
-// under the MIT/Apache2 license. LINK: https://github.com/irauta/bitreader
-struct Bits<'a> {
+// BitReader is implemented based on code published by Ilkka Rauta under both
+// the MIT and Apache2 licenses. LINK: https://github.com/irauta/bitreader
+struct BitReader<'a> {
     bytes: &'a [u8],
     current_bit: u64,
 }
 
-impl<'a> Bits<'a> {
-    pub fn new(bytes: &'a [u8]) -> Bits<'a> {
-        Self {
-            bytes,
-            current_bit: 0,
+impl<'a> BitReader<'a> {
+    fn try_new(bytes: &'a [u8]) -> Result<Self, String> {
+        if bytes.is_empty() {
+            Err("The byte array cannot be empty".to_string())
+        } else {
+            Ok(Self {
+                bytes,
+                current_bit: 0,
+            })
         }
     }
 
-    pub fn read_bit(&mut self) -> bool {
+    fn read_bit(&mut self) -> bool {
         self.read_bits(1) == 1
     }
 
-    pub fn read_bits(&mut self, count: u8) -> u32 {
+    fn read_bits(&mut self, count: u8) -> u32 {
         let mut value: u64 = 0;
         let start = self.current_bit;
         let end = self.current_bit + count as u64;
@@ -262,5 +265,122 @@ impl<'a> Bits<'a> {
         }
         self.current_bit = end;
         value as u32
+    }
+}
+
+struct BitVecBuilder {
+    current_byte: u8,
+    remaining_bits: u8,
+    bytes: Vec<u8>,
+}
+
+impl BitVecBuilder {
+    pub fn new() -> Self {
+        Self {
+            current_byte: 0,
+            remaining_bits: 8,
+            bytes: vec![],
+        }
+    }
+
+    fn finnish(mut self) -> Vec<u8> {
+        if self.remaining_bits != 8 {
+            self.bytes.push(self.current_byte);
+        }
+        self.bytes
+    }
+
+    fn write_bit(&mut self, bit: bool) {
+        self.write_bits(1, bit as u32)
+    }
+
+    fn write_bits(&mut self, number_of_bits: u8, bits: u32) {
+        // Shadows number_of_bits with a mutable copy.
+        let mut number_of_bits = number_of_bits;
+
+        while number_of_bits > 0 {
+            let bits_to_write = if number_of_bits > self.remaining_bits {
+                let shift = number_of_bits - self.remaining_bits;
+                self.current_byte |= ((bits >> shift) & ((1 << self.remaining_bits) - 1)) as u8;
+                self.remaining_bits
+            } else {
+                let shift = self.remaining_bits - number_of_bits;
+                self.current_byte |= (bits << shift) as u8;
+                number_of_bits
+            };
+            number_of_bits -= bits_to_write;
+            self.remaining_bits -= bits_to_write;
+
+            if self.remaining_bits == 0 {
+                self.bytes.push(self.current_byte);
+                self.current_byte = 0; // Simplifies debugging.
+                self.remaining_bits = 8;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::{bool, collection, prop_assert, prop_assume, proptest};
+
+    // The largest byte, a random byte, and the smallest byte for testing.
+    const TEST_BYTES: &[u8] = &[255, 170, 0];
+    const TEST_BITS: &[bool] = &[
+        true, true, true, true, true, true, true, true, true, false, true, false, true, false,
+        true, false, false, false, false, false, false, false, false, false,
+    ];
+
+    // Tests for BitReader.
+    #[test]
+    fn test_empty_bit_reader_error() {
+        assert!(BitReader::try_new(&[]).is_err())
+    }
+
+    #[test]
+    fn test_reading_the_test_bits() {
+        assert!(bytes_and_bits_are_equal(TEST_BYTES, TEST_BITS));
+    }
+
+    // Tests for BitVecBuilder.
+    #[test]
+    fn test_empty_bit_vec_builder() {
+        assert!(BitVecBuilder::new().finnish().is_empty());
+    }
+
+
+    // Tests combining BitReader and BitVecBuilder.
+    #[test]
+    fn test_writing_and_reading_the_test_bits() {
+        let mut bit_vector_builder = BitVecBuilder::new();
+        for bit in TEST_BITS {
+            bit_vector_builder.write_bit(*bit);
+        }
+        assert!(bytes_and_bits_are_equal(
+            &bit_vector_builder.finnish(),
+            TEST_BITS
+        ));
+    }
+
+    proptest! {
+    #[test]
+    fn test_writing_and_reading_random_bits(bits in collection::vec(bool::ANY, 0..50)) {
+	prop_assume!(!bits.is_empty());
+        let mut bit_vector_builder = BitVecBuilder::new();
+        for bit in &bits {
+            bit_vector_builder.write_bit(*bit);
+        }
+	prop_assert!(bytes_and_bits_are_equal(&bit_vector_builder.finnish(), &bits));
+    }
+    }
+
+    fn bytes_and_bits_are_equal(bytes: &[u8], bits: &[bool]) -> bool {
+        let mut bit_reader = BitReader::try_new(bytes).unwrap();
+        let mut contains = true;
+        for bit in bits {
+            contains &= *bit == bit_reader.read_bit();
+        }
+        contains
     }
 }
