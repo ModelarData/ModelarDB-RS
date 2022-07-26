@@ -13,7 +13,86 @@
  * limitations under the License.
  */
 
+//! Implementation of the Gorilla model type which uses the lossless compression
+//! method for floating-point values proposed in the [Gorilla paper]. As this
+//! compression method compresses the values of a time series segment using XOR
+//! and a variable length encoding, aggregates are computed by iterating over
+//! all values in the segment.
+//!
+//! [Gorilla paper]: https://dl.acm.org/doi/10.14778/2824032.2824078
+
 use datafusion::arrow::array::{Float32Builder, Int32Builder, TimestampMillisecondBuilder};
+
+/// The state the Gorilla model type needs while fitting a model to a time
+/// series segment.
+struct Gorilla {
+    last_value: u32,
+    compressed_values: BitVecBuilder,
+    stored_leading_zero_bits: u32,
+    stored_trailing_zero_bits: u32,
+}
+
+impl Gorilla {
+    fn new() -> Self {
+        Self {
+            last_value: 0,
+            compressed_values: BitVecBuilder::new(),
+            stored_leading_zero_bits: u32::MAX,
+            stored_trailing_zero_bits: 0,
+        }
+    }
+
+    fn compress_value(&mut self, value: f32) {
+        let value = value.to_bits();
+        let value_xor_last_value = value ^ self.last_value;
+
+        if self.compressed_values.is_empty() {
+            // Store the first value uncompressed using 32-bits.
+            self.compressed_values.write_bits(value, 32);
+        } else if value_xor_last_value == 0 {
+            // Store repeated values as a single zero bit.
+            self.compressed_values.write_a_zero_bit();
+        } else {
+            // Store changed values as leading zero bits (if necessary) and
+            // significant bits (all bits from the first to the last one bit).
+            let leading_zero_bits = value_xor_last_value.leading_zeros();
+            let trailing_zero_bits = value_xor_last_value.trailing_zeros();
+            self.compressed_values.write_a_one_bit();
+
+            if leading_zero_bits >= self.stored_leading_zero_bits
+                && trailing_zero_bits >= self.stored_trailing_zero_bits
+            {
+                // Store only the significant bits.
+                self.compressed_values.write_a_zero_bit();
+                let significant_bits =
+                    32 - self.stored_leading_zero_bits - self.stored_trailing_zero_bits;
+                self.compressed_values.write_bits(
+                    value_xor_last_value >> self.stored_trailing_zero_bits,
+                    significant_bits as u8,
+                );
+            } else {
+                // Store the leading zero bits before the significant bits
+                self.compressed_values.write_a_one_bit();
+                self.compressed_values.write_bits(leading_zero_bits, 5);
+
+                let significant_bits = 32 - leading_zero_bits - trailing_zero_bits;
+                self.compressed_values.write_bits(significant_bits, 6);
+                self.compressed_values.write_bits(
+                    value_xor_last_value >> trailing_zero_bits,
+                    significant_bits as u8,
+                );
+
+                self.stored_leading_zero_bits = leading_zero_bits;
+                self.stored_trailing_zero_bits = trailing_zero_bits;
+            }
+        }
+        self.last_value = value;
+    }
+
+    fn get_compressed_values(self) -> Vec<u8> {
+        self.compressed_values.finnish()
+    }
+}
 
 /** Public Functions **/
 pub fn min(
@@ -189,8 +268,8 @@ pub fn grid(
 }
 
 /** Private Functions **/
-//TODO: can gorilla::decode be shared without allocating an array for min, max, etc?
-fn decode(
+//TODO: can gorilla::decompress be shared without allocating an array for min, max, etc?
+fn decompress(
     start_time: i64,
     end_time: i64,
     sampling_interval: i32,
@@ -283,18 +362,15 @@ impl BitVecBuilder {
         }
     }
 
-    fn finnish(mut self) -> Vec<u8> {
-        if self.remaining_bits != 8 {
-            self.bytes.push(self.current_byte);
-        }
-        self.bytes
+    fn write_a_zero_bit(&mut self) {
+        self.write_bits(0, 1)
     }
 
-    fn write_bit(&mut self, bit: bool) {
-        self.write_bits(1, bit as u32)
+    fn write_a_one_bit(&mut self) {
+        self.write_bits(1, 1)
     }
 
-    fn write_bits(&mut self, number_of_bits: u8, bits: u32) {
+    fn write_bits(&mut self, bits: u32, number_of_bits: u8) {
         // Shadows number_of_bits with a mutable copy.
         let mut number_of_bits = number_of_bits;
 
@@ -318,11 +394,28 @@ impl BitVecBuilder {
             }
         }
     }
+
+    fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
+
+    fn finnish(mut self) -> Vec<u8> {
+        if self.remaining_bits != 8 {
+            self.bytes.push(self.current_byte);
+        }
+        self.bytes
+    }
+}
+
+/// Returns true if `v1` and `v2` are equivalent or both values are NAN.
+fn equal_or_nan(v1: f32, v2: f32) -> bool {
+    v1 == v2 || (v1.is_nan() && v2.is_nan())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::tests::ProptestValue;
     use proptest::{bool, collection, prop_assert, prop_assume, proptest};
 
     // The largest byte, a random byte, and the smallest byte for testing.
@@ -332,10 +425,39 @@ mod tests {
         true, false, false, false, false, false, false, false, false, false,
     ];
 
+    // Tests for Gorilla.
+    #[test]
+    fn test_empty_sequence() {
+        assert!(Gorilla::new().get_compressed_values().is_empty());
+    }
+
+    proptest! {
+    #[test]
+    fn test_can_compress_sequence_of_different_values(values in collection::vec(ProptestValue::ANY, 0..50)) {
+        prop_assume!(!values.is_empty());
+        let mut model_type = Gorilla::new();
+        for value in &values {
+            model_type.compress_value(*value);
+        }
+
+        let compressed_values = model_type.get_compressed_values();
+        let mut decompressed_values_builder = Float32Builder::new(values.len());
+        decompress(1, values.len() as i64, 1, &compressed_values, &mut decompressed_values_builder);
+        let decompressed_values = decompressed_values_builder.finish();
+
+        let mut contains = true;
+        for pair in values.iter().zip(&decompressed_values) {
+        let (value, decompressed_value) = pair;
+            contains &= equal_or_nan(*value, decompressed_value.unwrap());
+        }
+        prop_assert!(contains);
+    }
+    }
+
     // Tests for BitReader.
     #[test]
     fn test_empty_bit_reader_error() {
-        assert!(BitReader::try_new(&[]).is_err())
+        assert!(BitReader::try_new(&[]).is_err());
     }
 
     #[test]
@@ -349,13 +471,12 @@ mod tests {
         assert!(BitVecBuilder::new().finnish().is_empty());
     }
 
-
     // Tests combining BitReader and BitVecBuilder.
     #[test]
     fn test_writing_and_reading_the_test_bits() {
         let mut bit_vector_builder = BitVecBuilder::new();
         for bit in TEST_BITS {
-            bit_vector_builder.write_bit(*bit);
+            write_bool_as_bit(&mut bit_vector_builder, *bit);
         }
         assert!(bytes_and_bits_are_equal(
             &bit_vector_builder.finnish(),
@@ -366,12 +487,12 @@ mod tests {
     proptest! {
     #[test]
     fn test_writing_and_reading_random_bits(bits in collection::vec(bool::ANY, 0..50)) {
-	prop_assume!(!bits.is_empty());
+        prop_assume!(!bits.is_empty());
         let mut bit_vector_builder = BitVecBuilder::new();
         for bit in &bits {
-            bit_vector_builder.write_bit(*bit);
+            write_bool_as_bit(&mut bit_vector_builder, *bit);
         }
-	prop_assert!(bytes_and_bits_are_equal(&bit_vector_builder.finnish(), &bits));
+        prop_assert!(bytes_and_bits_are_equal(&bit_vector_builder.finnish(), &bits));
     }
     }
 
@@ -382,5 +503,13 @@ mod tests {
             contains &= *bit == bit_reader.read_bit();
         }
         contains
+    }
+
+    fn write_bool_as_bit(bit_vector_builder: &mut BitVecBuilder, bit: bool) {
+        if bit {
+            bit_vector_builder.write_a_one_bit();
+        } else {
+            bit_vector_builder.write_a_zero_bit();
+        }
     }
 }
