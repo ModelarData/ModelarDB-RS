@@ -165,14 +165,13 @@ impl StorageEngine {
 
         // Iterate through the finished segments to find a segment that is in memory.
         for finished in self.compression_queue.iter_mut() {
-            if finished.uncompressed_segment.get_memory_size() > 0 {
-                info!("Spilling the segment with key '{}' to a Parquet file.", finished.key);
+            info!("Spilling the segment with key '{}' to a Parquet file.", finished.key);
 
-                finished.spill_segment();
-
+            if let Ok(path) = finished.spill_to_parquet() {
                 // Add the size of the segment back to the remaining reserved bytes.
                 self.remaining_bytes += SegmentBuilder::get_memory_size();
 
+                info!("Spilled the segment to '{}'. Remaining bytes: {}.", path, self.remaining_bytes);
                 return ();
             }
         }
