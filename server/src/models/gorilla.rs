@@ -24,10 +24,10 @@
 
 use std::mem;
 
-use datafusion::arrow::array::{Float32Builder, Int32Builder, TimestampMillisecondBuilder};
+use datafusion::arrow::compute::kernels::aggregate;
 
 use crate::types::{
-    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueBuilder,
+    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
 
 const VALUE_SIZE_IN_BITS: u8 = 8 * mem::size_of::<Value>() as u8;
@@ -64,41 +64,42 @@ impl Gorilla {
         let value_xor_last_value = value_as_integer ^ last_value_as_integer;
 
         if self.compressed_values.is_empty() {
-            // Store the first value uncompressed using 32-bits.
+            // Store the first value uncompressed using size_of::<Value> bits.
             self.compressed_values
-                .write_bits(value_as_integer, VALUE_SIZE_IN_BITS);
+                .append_bits(value_as_integer, VALUE_SIZE_IN_BITS);
         } else if value_xor_last_value == 0 {
             // Store each repeated value as a single zero bit.
-            self.compressed_values.write_a_zero_bit();
+            self.compressed_values.append_a_zero_bit();
         } else {
             // Store each new value as its leading zero bits (if necessary) and
             // meaningful bits (all bits from the first to the last one bit).
             let leading_zero_bits = value_xor_last_value.leading_zeros() as u8;
             let trailing_zero_bits = value_xor_last_value.trailing_zeros() as u8;
-            self.compressed_values.write_a_one_bit();
+            self.compressed_values.append_a_one_bit();
 
             if leading_zero_bits >= self.last_leading_zero_bits
                 && trailing_zero_bits >= self.last_trailing_zero_bits
             {
                 // Store only the meaningful bits.
-                self.compressed_values.write_a_zero_bit();
+                self.compressed_values.append_a_zero_bit();
                 let meaningful_bits =
                     VALUE_SIZE_IN_BITS - self.last_leading_zero_bits - self.last_trailing_zero_bits;
-                self.compressed_values.write_bits(
+                self.compressed_values.append_bits(
                     value_xor_last_value >> self.last_trailing_zero_bits,
                     meaningful_bits as u8,
                 );
             } else {
                 // Store the leading zero bits before the meaningful bits using
                 // 5 and 6 bits respectively as described in the Gorilla paper.
-                self.compressed_values.write_a_one_bit();
+                self.compressed_values.append_a_one_bit();
                 self.compressed_values
-                    .write_bits(leading_zero_bits as u32, 5);
+                    .append_bits(leading_zero_bits as u32, 5);
 
                 let meaningful_bits = VALUE_SIZE_IN_BITS - leading_zero_bits - trailing_zero_bits;
-                self.compressed_values.write_bits(meaningful_bits as u32, 6);
                 self.compressed_values
-                    .write_bits(value_xor_last_value >> trailing_zero_bits, meaningful_bits);
+                    .append_bits(meaningful_bits as u32, 6);
+                self.compressed_values
+                    .append_bits(value_xor_last_value >> trailing_zero_bits, meaningful_bits);
 
                 self.last_leading_zero_bits = leading_zero_bits;
                 self.last_trailing_zero_bits = trailing_zero_bits;
@@ -107,8 +108,8 @@ impl Gorilla {
         self.last_value = value;
     }
 
-    /// Return the values using Gorilla's compression method for floating-point
-    /// values.
+    /// Return the values compressed using XOR and a variable length binary
+    /// encoding.
     fn get_compressed_values(self) -> Vec<u8> {
         self.compressed_values.finnish()
     }
@@ -123,124 +124,40 @@ pub fn min(
     sampling_interval: i32,
     model: &[u8],
     _gaps: &[u8],
-) -> f32 {
-    let mut bits = BitReader::try_new(model).unwrap();
-    let mut stored_leading_zeroes = std::u32::MAX;
-    let mut stored_trailing_zeroes: u32 = 0;
-    let mut last_value = bits.read_bits(32);
-
-    // First value is stored as a Value.
-    let mut min_value = Value::from_bits(last_value);
-
-    // Then values are stored using XOR and a variable length binary encoding.
-    let length_without_head = (end_time - start_time) / sampling_interval as i64;
-    for _ in 0..length_without_head {
-        if bits.read_bit() {
-            if bits.read_bit() {
-                // New leading and trailing zeros.
-                stored_leading_zeroes = bits.read_bits(5);
-                let mut meaningful_bits = bits.read_bits(6);
-                if meaningful_bits == 0 {
-                    meaningful_bits = 32;
-                }
-                stored_trailing_zeroes = 32 - meaningful_bits - stored_leading_zeroes;
-            }
-
-            let count = 32 - stored_leading_zeroes - stored_trailing_zeroes;
-            let mut value = bits.read_bits(count as u8);
-            value <<= stored_trailing_zeroes;
-            value ^= last_value;
-            last_value = value;
-        }
-        min_value = f32::min(min_value, f32::from_bits(last_value));
-    }
-    min_value
+) -> Value {
+    let decompressed_values =
+        decompress_values_to_array(start_time, end_time, sampling_interval, model);
+    aggregate::min(&decompressed_values).unwrap()
 }
 
 /// Compute the maximum value for a time series segment whose values are
 /// compressed using Gorilla's compression method for floating-point values.
 pub fn max(
-    gid: i32,
-    start_time: i64,
-    end_time: i64,
+    _gid: TimeSeriesId,
+    start_time: Timestamp,
+    end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    gaps: &[u8],
-) -> f32 {
-    let mut bits = BitReader::try_new(model).unwrap();
-    let mut stored_leading_zeroes = std::u32::MAX;
-    let mut stored_trailing_zeroes: u32 = 0;
-    let mut last_value = bits.read_bits(32);
-
-    // First value is stored as a Value.
-    let mut max_value = f32::from_bits(last_value);
-
-    // Then values are stored using XOR and a variable length binary encoding.
-    let length_without_head = (end_time - start_time) / sampling_interval as i64;
-    for _ in 0..length_without_head {
-        if bits.read_bit() {
-            if bits.read_bit() {
-                // New leading and trailing zeros.
-                stored_leading_zeroes = bits.read_bits(5);
-                let mut meaningful_bits = bits.read_bits(6);
-                if meaningful_bits == 0 {
-                    meaningful_bits = 32;
-                }
-                stored_trailing_zeroes = 32 - meaningful_bits - stored_leading_zeroes;
-            }
-
-            let count = 32 - stored_leading_zeroes - stored_trailing_zeroes;
-            let mut value = bits.read_bits(count as u8);
-            value <<= stored_trailing_zeroes;
-            value ^= last_value;
-            last_value = value;
-        }
-        max_value = f32::max(max_value, f32::from_bits(last_value));
-    }
-    max_value
+    _gaps: &[u8],
+) -> Value {
+    let decompressed_values =
+        decompress_values_to_array(start_time, end_time, sampling_interval, model);
+    aggregate::max(&decompressed_values).unwrap()
 }
 
 /// Compute the sum of the values for a time series segment whose values are
 /// compressed using Gorilla's compression method for floating-point values.
 pub fn sum(
-    gid: i32,
-    start_time: i64,
-    end_time: i64,
+    _gid: TimeSeriesId,
+    start_time: Timestamp,
+    end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    gaps: &[u8],
-) -> f32 {
-    let mut bits = BitReader::try_new(model).unwrap();
-    let mut stored_leading_zeroes = std::u32::MAX;
-    let mut stored_trailing_zeroes: u32 = 0;
-    let mut last_value = bits.read_bits(32);
-
-    // First value is stored as a Value.
-    let mut sum = f32::from_bits(last_value);
-
-    // Then values are stored using XOR and a variable length binary encoding.
-    let length_without_head = (end_time - start_time) / sampling_interval as i64;
-    for _ in 0..length_without_head {
-        if bits.read_bit() {
-            if bits.read_bit() {
-                // New leading and trailing zeros.
-                stored_leading_zeroes = bits.read_bits(5);
-                let mut meaningful_bits = bits.read_bits(6);
-                if meaningful_bits == 0 {
-                    meaningful_bits = 32;
-                }
-                stored_trailing_zeroes = 32 - meaningful_bits - stored_leading_zeroes;
-            }
-
-            let count = 32 - stored_leading_zeroes - stored_trailing_zeroes;
-            let mut value = bits.read_bits(count as u8);
-            value <<= stored_trailing_zeroes;
-            value ^= last_value;
-            last_value = value;
-        }
-        sum += f32::from_bits(last_value);
-    }
-    sum
+    _gaps: &[u8],
+) -> Value {
+    let decompressed_values =
+        decompress_values_to_array(start_time, end_time, sampling_interval, model);
+    aggregate::sum(&decompressed_values).unwrap()
 }
 
 /// Reconstruct the data points for a time series segment whose values are
@@ -248,95 +165,84 @@ pub fn sum(
 /// Each data point is split into its three components and appended to `tids`,
 /// `timestamps`, and `values`.
 pub fn grid(
-    gid: i32,
-    start_time: i64,
-    end_time: i64,
+    gid: TimeSeriesId,
+    start_time: Timestamp,
+    end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    gaps: &[u8],
-    tids: &mut Int32Builder,
-    timestamps: &mut TimestampMillisecondBuilder,
-    values: &mut Float32Builder,
+    _gaps: &[u8],
+    tids: &mut TimeSeriesIdBuilder,
+    timestamps: &mut TimestampBuilder,
+    values: &mut ValueBuilder,
 ) {
-    let mut bits = BitReader::try_new(model).unwrap();
-    let mut stored_leading_zeroes = std::u32::MAX;
-    let mut stored_trailing_zeroes: u32 = 0;
-    let mut last_value = bits.read_bits(32);
-
-    // First value is stored as a Value.
-    tids.append_value(gid).unwrap();
-    timestamps.append_value(start_time).unwrap();
-    values.append_value(f32::from_bits(last_value)).unwrap();
-
-    // Then values are stored using XOR and a variable length binary encoding.
-    let second_timestamp = start_time + sampling_interval as i64;
-    let sampling_interval = sampling_interval as usize;
-    for timestamp in (second_timestamp..=end_time).step_by(sampling_interval) {
+    for timestamp in (start_time..=end_time).step_by(sampling_interval as usize) {
         tids.append_value(gid).unwrap();
         timestamps.append_value(timestamp).unwrap();
-
-        if bits.read_bit() {
-            if bits.read_bit() {
-                // New leading and trailing zeros.
-                stored_leading_zeroes = bits.read_bits(5);
-                let mut meaningful_bits = bits.read_bits(6);
-                if meaningful_bits == 0 {
-                    meaningful_bits = 32;
-                }
-                stored_trailing_zeroes = 32 - meaningful_bits - stored_leading_zeroes;
-            }
-
-            let count = 32 - stored_leading_zeroes - stored_trailing_zeroes;
-            let mut value = bits.read_bits(count as u8);
-            value <<= stored_trailing_zeroes;
-            value ^= last_value;
-            last_value = value;
-        }
-        values.append_value(f32::from_bits(last_value)).unwrap();
     }
+    decompress_values(start_time, end_time, sampling_interval, model, values);
 }
 
-fn decompress_values(
-    start_time: i64,
-    end_time: i64,
+/// Decompress values compressed using Gorilla's compression method for
+/// floating-point values and store them in a new `PrimitiveArray<Value>`.
+fn decompress_values_to_array(
+    start_time: Timestamp,
+    end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    values: &mut Float32Builder,
+) -> ValueArray {
+    let length = ((end_time - start_time) / sampling_interval as Timestamp) + 1;
+    let mut value_builder = ValueBuilder::new(length as usize);
+    decompress_values(
+        start_time,
+        end_time,
+        sampling_interval,
+        model,
+        &mut value_builder,
+    );
+    value_builder.finish()
+}
+
+/// Decompress values compressed using Gorilla's compression method for
+/// floating-point values and append them to `values`.
+fn decompress_values(
+    start_time: Timestamp,
+    end_time: Timestamp,
+    sampling_interval: i32,
+    model: &[u8],
+    values: &mut ValueBuilder,
 ) {
     let mut bits = BitReader::try_new(model).unwrap();
-    let mut stored_leading_zeroes = std::u32::MAX;
-    let mut stored_trailing_zeroes: u32 = 0;
-    let mut last_value = bits.read_bits(32);
+    let mut leading_zeroes = u8::MAX;
+    let mut trailing_zeroes: u8 = 0;
+    let mut last_value = bits.read_bits(VALUE_SIZE_IN_BITS);
 
-    // The first value is stored as a Value.
-    values.append_value(f32::from_bits(last_value)).unwrap();
+    // The first value is stored uncompressed using size_of::<Value> bits.
+    values.append_value(Value::from_bits(last_value)).unwrap();
 
     // Then values are stored using XOR and a variable length binary encoding.
-    let length_without_head = (end_time - start_time) / sampling_interval as i64;
-    for _ in 0..length_without_head {
+    let length_without_first_value = (end_time - start_time) / sampling_interval as i64;
+    for _ in 0..length_without_first_value {
         if bits.read_bit() {
             if bits.read_bit() {
                 // New leading and trailing zeros.
-                stored_leading_zeroes = bits.read_bits(5);
-                let mut meaningful_bits = bits.read_bits(6);
-                if meaningful_bits == 0 {
-                    meaningful_bits = 32;
-                }
-                stored_trailing_zeroes = 32 - meaningful_bits - stored_leading_zeroes;
+                leading_zeroes = bits.read_bits(5) as u8;
+                let meaningful_bits = bits.read_bits(6) as u8;
+                trailing_zeroes = VALUE_SIZE_IN_BITS - meaningful_bits - leading_zeroes;
             }
 
-            let count = 32 - stored_leading_zeroes - stored_trailing_zeroes;
-            let mut value = bits.read_bits(count as u8);
-            value <<= stored_trailing_zeroes;
+            let meaningful_bits = VALUE_SIZE_IN_BITS - leading_zeroes - trailing_zeroes;
+            let mut value = bits.read_bits(meaningful_bits);
+            value <<= trailing_zeroes;
             value ^= last_value;
             last_value = value;
         }
-        values.append_value(f32::from_bits(last_value)).unwrap();
+        values.append_value(Value::from_bits(last_value)).unwrap();
     }
 }
 
 // BitReader is implemented based on code published by Ilkka Rauta under both
-// the MIT and Apache2 licenses. LINK: https://github.com/irauta/bitreader
+// the MIT and Apache2 licenses. LINK: https://github.com/irauta/bitreader.
+/// Read one or multiple bits from a `[u8]`.
 struct BitReader<'a> {
     bytes: &'a [u8],
     current_bit: u64,
@@ -354,14 +260,16 @@ impl<'a> BitReader<'a> {
         }
     }
 
+    /// Read the next bit from `bytes`.
     fn read_bit(&mut self) -> bool {
         self.read_bits(1) == 1
     }
 
-    fn read_bits(&mut self, count: u8) -> u32 {
+    /// Read the next `number_of_bits` bits from `bytes`.
+    fn read_bits(&mut self, number_of_bits: u8) -> u32 {
         let mut value: u64 = 0;
         let start = self.current_bit;
-        let end = self.current_bit + count as u64;
+        let end = self.current_bit + number_of_bits as u64;
         for bit in start..end {
             let current_byte = (bit / 8) as usize;
             let byte = self.bytes[current_byte];
@@ -374,6 +282,7 @@ impl<'a> BitReader<'a> {
     }
 }
 
+/// Append one or multiple bits to a `vec<u8>`.
 struct BitVecBuilder {
     current_byte: u8,
     remaining_bits: u8,
@@ -389,16 +298,18 @@ impl BitVecBuilder {
         }
     }
 
-    fn write_a_zero_bit(&mut self) {
-        self.write_bits(0, 1)
+    /// Append a zero bit to `bytes`.
+    fn append_a_zero_bit(&mut self) {
+        self.append_bits(0, 1)
     }
 
-    fn write_a_one_bit(&mut self) {
-        self.write_bits(1, 1)
+    /// Append a one bit to `bytes`.
+    fn append_a_one_bit(&mut self) {
+        self.append_bits(1, 1)
     }
 
-    fn write_bits(&mut self, bits: u32, number_of_bits: u8) {
-        // Shadows number_of_bits with a mutable copy.
+    /// Append `number_of_bits` from `bits` to `bytes`.
+    fn append_bits(&mut self, bits: u32, number_of_bits: u8) {
         let mut number_of_bits = number_of_bits;
 
         while number_of_bits > 0 {
@@ -416,7 +327,7 @@ impl BitVecBuilder {
 
             if self.remaining_bits == 0 {
                 self.bytes.push(self.current_byte);
-                self.current_byte = 0; // Simplifies debugging.
+                self.current_byte = 0;
                 self.remaining_bits = 8;
             }
         }
@@ -434,16 +345,11 @@ impl BitVecBuilder {
     }
 }
 
-/// Returns true if `v1` and `v2` are equivalent or both values are NAN.
-fn equal_or_nan(v1: f32, v2: f32) -> bool {
-    v1 == v2 || (v1.is_nan() && v2.is_nan())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::types::tests::ProptestValue;
-    use proptest::{bool, collection, prop_assert, prop_assert_eq, prop_assume, proptest};
+    use proptest::{bool, collection, prop_assert, prop_assume, proptest};
 
     // The largest byte, a random byte, and the smallest byte for testing.
     const TEST_BYTES: &[u8] = &[255, 170, 0];
@@ -463,9 +369,9 @@ mod tests {
     #[test]
     fn test_min(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
-        let expected_min = values.iter().fold(Value::NAN, |acc, &value| acc.min(value));
         let compressed_values = compress_values_using_gorilla(&values);
         let min = min(1, 1, values.len() as i64, 1, &compressed_values, &[]);
+        let expected_min = aggregate::min(&ValueArray::from_iter_values(values)).unwrap();
         prop_assert!(equal_or_nan(expected_min, min));
     }
     }
@@ -475,9 +381,9 @@ mod tests {
     #[test]
     fn test_max(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
-        let expected_max = values.iter().fold(Value::NAN, |acc, &value| acc.max(value));
         let compressed_values = compress_values_using_gorilla(&values);
         let max = max(1, 1, values.len() as i64, 1, &compressed_values, &[]);
+        let expected_max = aggregate::max(&ValueArray::from_iter_values(values)).unwrap();
         prop_assert!(equal_or_nan(expected_max, max));
     }
     }
@@ -487,9 +393,9 @@ mod tests {
     #[test]
     fn test_sum(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
-        let expected_sum = values.iter().fold(0.0, |acc, &value| acc + value);
         let compressed_values = compress_values_using_gorilla(&values);
         let sum = sum(1, 1, values.len() as i64, 1, &compressed_values, &[]);
+        let expected_sum = aggregate::sum(&ValueArray::from_iter_values(values)).unwrap();
         prop_assert!(equal_or_nan(expected_sum, sum));
     }
     }
@@ -521,13 +427,13 @@ mod tests {
         let values_array = values_builder.finish();
 
         prop_assert!(
-        tids_array.len() == values.len()
-        && tids_array.len() == timestamps_array.len()
-        && tids_array.len() == values_array.len()
+            tids_array.len() == values.len()
+            && tids_array.len() == timestamps_array.len()
+            && tids_array.len() == values_array.len()
         );
         prop_assert!(tids_array.iter().all(|tid_option| tid_option.unwrap() == 1));
         prop_assert!(timestamps_array.values().windows(2).all(|window| window[1] - window[0] == 1));
-        prop_assert!(array_value_equal(values_array.values(), &values));
+        prop_assert!(slice_of_value_equal(values_array.values(), &values));
     }
     }
 
@@ -538,9 +444,15 @@ mod tests {
         prop_assume!(!values.is_empty());
         let compressed_values = compress_values_using_gorilla(&values);
         let mut decompressed_values_builder = ValueBuilder::new(values.len());
-        decompress_values(1, values.len() as i64, 1, &compressed_values, &mut decompressed_values_builder);
+        decompress_values(
+            1,
+            values.len() as i64,
+            1,
+            &compressed_values,
+            &mut decompressed_values_builder
+        );
         let decompressed_values = decompressed_values_builder.finish();
-        prop_assert!(array_value_equal(decompressed_values.values(), &values));
+        prop_assert!(slice_of_value_equal(decompressed_values.values(), &values));
     }
     }
 
@@ -552,13 +464,17 @@ mod tests {
         model_type.get_compressed_values()
     }
 
-    fn array_value_equal(values_one: &[Value], values_two: &[Value]) -> bool {
+    fn slice_of_value_equal(values_one: &[Value], values_two: &[Value]) -> bool {
         let mut equal = true;
         for values in values_one.iter().zip(values_two) {
             let (value_one, value_two) = values;
             equal &= equal_or_nan(*value_one, *value_two);
         }
         equal
+    }
+
+    fn equal_or_nan(v1: Value, v2: Value) -> bool {
+        v1 == v2 || (v1.is_nan() && v2.is_nan())
     }
 
     // Tests for BitReader.
@@ -614,9 +530,9 @@ mod tests {
 
     fn write_bool_as_bit(bit_vector_builder: &mut BitVecBuilder, bit: bool) {
         if bit {
-            bit_vector_builder.write_a_one_bit();
+            bit_vector_builder.append_a_one_bit();
         } else {
-            bit_vector_builder.write_a_zero_bit();
+            bit_vector_builder.append_a_zero_bit();
         }
     }
 }
