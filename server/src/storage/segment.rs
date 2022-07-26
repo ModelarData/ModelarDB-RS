@@ -42,7 +42,7 @@ pub trait UncompressedSegment {
 
     fn get_memory_size(&self) -> usize;
 
-    fn spill_to_parquet(&mut self) -> Result<SpilledSegment, String>;
+    fn spill_to_parquet(&mut self, key: String) -> Result<SpilledSegment, String>;
 }
 
 /// A single segment being built, consisting of an ordered sequence of timestamps and values. Note
@@ -127,9 +127,9 @@ impl UncompressedSegment for SegmentBuilder {
     }
 
     /// Spill the in-memory segment to a Parquet file and return Ok when finished.
-    fn spill_to_parquet(&mut self) -> Result<SpilledSegment, String> {
-        // TODO Spill segment.
-        Err("".to_string())
+    fn spill_to_parquet(&mut self, key: String) -> Result<SpilledSegment, String> {
+        let batch = self.get_record_batch();
+        Ok(SpilledSegment::new(key.clone(), batch))
     }
 }
 
@@ -140,18 +140,16 @@ pub struct SpilledSegment {
 }
 
 impl SpilledSegment {
-    /// Retrieve the data from the segment builder, save it to a Parquet file, and save the path.
-    pub fn new(key: String, mut segment_builder: SegmentBuilder) -> Self {
+    /// Save the data in `batch` to a Parquet file, and return a spilled segment with the path.
+    pub fn new(key: String, batch: RecordBatch) -> Self {
         let folder_path = format!("uncompressed/{}", key);
         fs::create_dir_all(&folder_path);
 
-        let data = segment_builder.get_record_batch();
-
         // Create a path that uses the first timestamp as the filename.
-        let timestamps: &TimestampArray = data.column(0).as_any().downcast_ref().unwrap();
+        let timestamps: &TimestampArray = batch.column(0).as_any().downcast_ref().unwrap();
         let path = format!("{}/{}.parquet", folder_path, timestamps.value(0));
 
-        write_batch_to_parquet(data, path.clone());
+        write_batch_to_parquet(batch, path.clone());
 
         Self { path }
     }
@@ -182,7 +180,7 @@ impl UncompressedSegment for SpilledSegment {
     }
 
     /// Since the segment has already been spilled, return Err.
-    fn spill_to_parquet(&mut self) -> Result<SpilledSegment, String> {
+    fn spill_to_parquet(&mut self, __key: String) -> Result<SpilledSegment, String> {
         Err(format!("The segment has already been spilled to '{}'.", self.path))
     }
 }
@@ -196,9 +194,10 @@ pub struct FinishedSegment {
 impl FinishedSegment {
     /// If in memory, spill the segment to Parquet and return the path, otherwise return Err.
     pub fn spill_to_parquet(&mut self) -> Result<String, String> {
-        let spilled_segment = self.uncompressed_segment.spill_to_parquet()?;
-        let path = spilled_segment.path.clone();
-        self.uncompressed_segment = Box::new(spilled_segment);
+        let spilled = self.uncompressed_segment.spill_to_parquet(self.key.clone())?;
+
+        let path = spilled.path.clone();
+        self.uncompressed_segment = Box::new(spilled);
 
         Ok(path)
     }

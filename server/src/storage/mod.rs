@@ -135,7 +135,7 @@ impl StorageEngine {
     }
 
     /// Move `segment_builder` to the the compression queue. If necessary, spill the data to Parquet first.
-    fn enqueue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
+    fn enqueue_segment(&mut self, key: String, mut segment_builder: SegmentBuilder) {
         let uncompressed_segment: Box<dyn UncompressedSegment>;
         let builder_size = SegmentBuilder::get_memory_size();
 
@@ -143,7 +143,7 @@ impl StorageEngine {
         if builder_size > self.remaining_bytes {
             info!("Not enough memory for the finished segment. Spilling the data to a file.");
 
-            let spilled_segment = SpilledSegment::new(key.clone(), segment_builder);
+            let spilled_segment = segment_builder.spill_to_parquet(key.clone()).unwrap();
             uncompressed_segment = Box::new(spilled_segment);
 
             // Add the size of the segment back to the remaining reserved bytes.
@@ -158,14 +158,14 @@ impl StorageEngine {
         self.compression_queue.push_back(finished_segment);
     }
 
-    /// Spill the first in-memory finished segment in the compression queue and return Ok.
-    /// If the spill failed return Err and if no in-memory finished segments could be found, panic.
+    /// Spill the first in-memory finished segment in the compression queue. If no in-memory
+    /// finished segments could be found, panic.
     fn spill_finished_segment(&mut self) {
         info!("Not enough memory to create segment. Spilling an already finished segment.");
 
         // Iterate through the finished segments to find a segment that is in memory.
         for finished in self.compression_queue.iter_mut() {
-            info!("Spilling the segment with key '{}' to a Parquet file.", finished.key);
+            info!("Spilling a segment with key '{}' to a Parquet file.", finished.key);
 
             if let Ok(path) = finished.spill_to_parquet() {
                 // Add the size of the segment back to the remaining reserved bytes.
