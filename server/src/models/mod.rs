@@ -22,13 +22,25 @@ mod gorilla;
 mod pmcmean;
 mod swing;
 
-use std::cmp::{PartialOrd, Ordering};
+use std::cmp::{Ordering, PartialOrd};
 
 use datafusion::arrow::array::{
     Float32Builder, Int32Array, Int32Builder, Int64Array, TimestampMillisecondBuilder,
 };
+use crate::types::{
+    TimeSeriesId, TimeSeriesIdBuilder, TimeSeriesIdArray, Timestamp, TimestampBuilder, TimestampArray, Value, ValueBuilder, ValueArray,
+};
 
 use crate::errors::MiniModelarDBError;
+
+// TODO: replace Int64Array with TimestampArray when refactoring query engine.
+
+/// Unique ids for each model type. Constant values are used instead of an enum
+/// so the stored model type ids can be used in match expressions without being
+/// converted to an enum first.
+const PMC_MEAN_ID: u8 = 2;
+const SWING_ID: u8 = 3;
+const GORILLA_ID: u8 = 4;
 
 /// General error bound that is guaranteed to not be negative, infinite, or NaN.
 /// For `PMCMean` and `Swing` the error bound is interpreted as a relative per
@@ -36,7 +48,6 @@ use crate::errors::MiniModelarDBError;
 struct ErrorBound(f32);
 
 impl ErrorBound {
-
     /// Return `Self` if `error_bound` is a positive finite value, otherwise
     /// `CompressionError`.
     fn try_new(error_bound: f32) -> Result<Self, MiniModelarDBError> {
@@ -62,27 +73,21 @@ impl PartialOrd<ErrorBound> for f32 {
     }
 }
 
-
-
-// TODO: can mtid be converted to a model type enum without adding overhead?
 pub fn grid(
-    // TODO: support time series with different number of values and data types?
-    // TODO: translate the gid to the proper tids to support groups.
-    // TODO: can the tid be stored once per batch of data points from a model?
-    gid: i32,
-    start_time: i64,
-    end_time: i64,
+    tid: TimeSeriesId,
+    start_time: Timestamp,
+    end_time: Timestamp,
     mtid: i32,
     sampling_interval: i32,
     model: &[u8],
     gaps: &[u8],
-    tids: &mut Int32Builder,
-    timestamps: &mut TimestampMillisecondBuilder,
-    values: &mut Float32Builder,
+    tids: &mut TimeSeriesIdBuilder,
+    timestamps: &mut TimestampBuilder,
+    values: &mut ValueBuilder,
 ) {
-    match mtid {
-        2 => pmcmean::grid(
-            gid,
+    match mtid as u8 {
+        PMC_MEAN_ID => pmcmean::grid(
+            tid,
             start_time,
             end_time,
             sampling_interval,
@@ -92,8 +97,8 @@ pub fn grid(
             timestamps,
             values,
         ),
-        3 => swing::grid(
-            gid,
+        SWING_ID => swing::grid(
+            tid,
             start_time,
             end_time,
             sampling_interval,
@@ -103,8 +108,8 @@ pub fn grid(
             timestamps,
             values,
         ),
-        4 => gorilla::grid(
-            gid,
+        GORILLA_ID => gorilla::grid(
+            tid,
             start_time,
             end_time,
             sampling_interval,
@@ -114,22 +119,21 @@ pub fn grid(
             timestamps,
             values,
         ),
-        _ => panic!("unknown model type"),
+        _ => panic!("Internal error due to unknown model type"),
     }
 }
 
-// TODO: refactor count to operate on values instead of arrays for consistency?
+/// Assumes all arrays are the same length and contain less or equal to num_rows elements.
 pub fn count(
     num_rows: usize,
-    gids: &Int32Array,
-    start_times: &Int64Array,
-    end_times: &Int64Array,
+    tids: &TimeSeriesIdArray,
+    start_times: &Int64Array ,
+    end_times: &Int64Array ,
     sampling_intervals: &Int32Array,
 ) -> usize {
-    // Assumes all arrays are the same length and contain less or equal to num_rows elements.
     let mut data_points = 0;
     for row_index in 0..num_rows {
-        let tid = gids.value(row_index) as usize;
+        let tid = tids.value(row_index) as usize;
         let sampling_interval = sampling_intervals.value(tid) as i64;
         data_points +=
             ((end_times.value(row_index) - start_times.value(row_index)) / sampling_interval) + 1;
@@ -138,69 +142,70 @@ pub fn count(
 }
 
 pub fn min(
-    gid: i32,
-    start_time: i64,
-    end_time: i64,
+    tid: TimeSeriesId,
+    start_time: Timestamp,
+    end_time: Timestamp,
     mtid: i32,
     sampling_interval: i32,
     model: &[u8],
     gaps: &[u8],
-) -> f32 {
-    match mtid {
-        2 => pmcmean::min_max(gid, start_time, end_time, sampling_interval, model, gaps),
-        3 => swing::min(gid, start_time, end_time, sampling_interval, model, gaps),
-        4 => gorilla::min(gid, start_time, end_time, sampling_interval, model, gaps),
-        _ => panic!("unknown model type"),
+) -> Value {
+    match mtid as u8 {
+        PMC_MEAN_ID => pmcmean::min_max(tid, start_time, end_time, sampling_interval, model, gaps),
+        SWING_ID => swing::min(tid, start_time, end_time, sampling_interval, model, gaps),
+        GORILLA_ID => gorilla::min(tid, start_time, end_time, sampling_interval, model, gaps),
+        _ => panic!("Internal error due to unknown model type"),
     }
 }
 
 pub fn max(
-    gid: i32,
-    start_time: i64,
-    end_time: i64,
+    tid: TimeSeriesId,
+    start_time: Timestamp,
+    end_time: Timestamp,
     mtid: i32,
     sampling_interval: i32,
     model: &[u8],
     gaps: &[u8],
-) -> f32 {
-    match mtid {
-        2 => pmcmean::min_max(gid, start_time, end_time, sampling_interval, model, gaps),
-        3 => swing::max(gid, start_time, end_time, sampling_interval, model, gaps),
-        4 => gorilla::max(gid, start_time, end_time, sampling_interval, model, gaps),
-        _ => panic!("unknown model type"),
+) -> Value {
+    match mtid as u8 {
+        PMC_MEAN_ID => pmcmean::min_max(tid, start_time, end_time, sampling_interval, model, gaps),
+        SWING_ID => swing::max(tid, start_time, end_time, sampling_interval, model, gaps),
+        GORILLA_ID => gorilla::max(tid, start_time, end_time, sampling_interval, model, gaps),
+        _ => panic!("Internal error due to unknown model type"),
     }
 }
 
 pub fn sum(
-    gid: i32,
-    start_time: i64,
-    end_time: i64,
+    tid: TimeSeriesId,
+    start_time: Timestamp,
+    end_time: Timestamp,
     mtid: i32,
     sampling_interval: i32,
     model: &[u8],
     gaps: &[u8],
-) -> f32 {
-    match mtid {
-        2 => pmcmean::sum(gid, start_time, end_time, sampling_interval, model, gaps),
-        3 => swing::sum(gid, start_time, end_time, sampling_interval, model, gaps),
-        4 => gorilla::sum(gid, start_time, end_time, sampling_interval, model, gaps),
-        _ => panic!("unknown model type"),
+) -> Value {
+    match mtid as u8 {
+        PMC_MEAN_ID => pmcmean::sum(tid, start_time, end_time, sampling_interval, model, gaps),
+        SWING_ID => swing::sum(tid, start_time, end_time, sampling_interval, model, gaps),
+        GORILLA_ID => gorilla::sum(tid, start_time, end_time, sampling_interval, model, gaps),
+        _ => panic!("Internal error due to unknown model type"),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::tests::ProptestValue;
-    use proptest::{prop_assert, prop_assume, proptest};
+    use proptest::num;
+    use proptest::proptest;
+
     proptest! {
     #[test]
-    fn test_error_bound_can_be_positive(error_bound in ProptestValue::POSITIVE) {
+    fn test_error_bound_can_be_positive(error_bound in num::f32::POSITIVE) {
         assert!(ErrorBound::try_new(error_bound).is_ok())
     }
 
     #[test]
-    fn test_error_bound_cannot_be_negative(error_bound in ProptestValue::NEGATIVE) {
+    fn test_error_bound_cannot_be_negative(error_bound in num::f32::NEGATIVE) {
         assert!(ErrorBound::try_new(error_bound).is_err())
     }
     }

@@ -203,14 +203,14 @@ pub fn min(
     _sampling_interval: i32,
     model: &[u8],
     _gaps: &[u8],
-) -> f32 {
+) -> Value {
     let (slope, intercept) = decode_model(model);
     if slope == 0.0 {
-        intercept as f32
+        intercept as Value
     } else if slope > 0.0 {
-        (slope * start_time as f64 + intercept) as f32
+        (slope * start_time as f64 + intercept) as Value
     } else {
-        (slope * end_time as f64 + intercept) as f32
+        (slope * end_time as f64 + intercept) as Value
     }
 }
 
@@ -223,14 +223,14 @@ pub fn max(
     _sampling_interval: i32,
     model: &[u8],
     _gaps: &[u8],
-) -> f32 {
+) -> Value {
     let (slope, intercept) = decode_model(model);
     if slope == 0.0 {
-        intercept as f32
+        intercept as Value
     } else if slope < 0.0 {
-        (slope * start_time as f64 + intercept) as f32
+        (slope * start_time as f64 + intercept) as Value
     } else {
-        (slope * end_time as f64 + intercept) as f32
+        (slope * end_time as f64 + intercept) as Value
     }
 }
 
@@ -243,13 +243,13 @@ pub fn sum(
     sampling_interval: i32,
     model: &[u8],
     _gaps: &[u8],
-) -> f32 {
+) -> Value {
     let (slope, intercept) = decode_model(model);
     let first = slope * start_time as f64 + intercept;
     let last = slope * end_time as f64 + intercept;
     let average = (first + last) / 2.0;
     let length = ((end_time - start_time) / sampling_interval as i64) + 1;
-    (average * length as f64) as f32
+    (average * length as f64) as Value
 }
 
 /// Reconstruct the data points for a time series segment whose values are
