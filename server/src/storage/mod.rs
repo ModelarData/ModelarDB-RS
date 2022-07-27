@@ -25,23 +25,21 @@ use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 
-use paho_mqtt::Message;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
+use paho_mqtt::Message;
 use tracing::{error, info};
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::segment::{SpilledSegment, SegmentBuilder, UncompressedSegment, FinishedSegment};
+use crate::storage::segment::{FinishedSegment, SegmentBuilder, UncompressedSegment};
 use crate::types::Timestamp;
 
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
 // being larger due to internal alignment when allocating memory for the builders.
 const INITIAL_BUILDER_CAPACITY: usize = 64;
 const RESERVED_BYTES: usize = 5000;
-
-// TODO: Maybe split insert message into separate functions to avoid one large function.
 
 /// Manages all uncompressed data, both while being built and when finished.
 pub struct StorageEngine {
@@ -59,7 +57,7 @@ impl StorageEngine {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             data: HashMap::new(),
             compression_queue: VecDeque::new(),
-            remaining_bytes: RESERVED_BYTES
+            remaining_bytes: RESERVED_BYTES,
         }
     }
 
@@ -145,7 +143,10 @@ impl StorageEngine {
             uncompressed_segment = Box::new(segment_builder);
         }
 
-        let finished_segment = FinishedSegment { key, uncompressed_segment };
+        let finished_segment = FinishedSegment {
+            key,
+            uncompressed_segment,
+        };
         self.compression_queue.push_back(finished_segment);
     }
 
@@ -162,7 +163,10 @@ impl StorageEngine {
                 // Add the size of the segment back to the remaining reserved bytes.
                 self.remaining_bytes += SegmentBuilder::get_memory_size();
 
-                info!("Spilled the segment to '{}'. Remaining bytes: {}.", path, self.remaining_bytes);
+                info!(
+                    "Spilled the segment to '{}'. Remaining bytes: {}.",
+                    path, self.remaining_bytes
+                );
                 return ();
             }
         }
@@ -275,7 +279,7 @@ mod tests {
         }
     }
 
-	/// Generate `count` data points for the same time series and insert them into `storage_engine`.
+    /// Generate `count` data points for the same time series and insert them into `storage_engine`.
     /// Return the key, which is the same for all generated data points.
     fn insert_multiple_messages(count: usize, storage_engine: &mut StorageEngine) -> String {
         let mut key = String::new();

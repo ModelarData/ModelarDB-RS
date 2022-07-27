@@ -194,7 +194,9 @@ pub struct FinishedSegment {
 impl FinishedSegment {
     /// If in memory, spill the segment to Parquet and return the path, otherwise return Err.
     pub fn spill_to_parquet(&mut self) -> Result<String, String> {
-        let spilled = self.uncompressed_segment.spill_to_parquet(self.key.clone())?;
+        let spilled = self
+            .uncompressed_segment
+            .spill_to_parquet(self.key.clone())?;
 
         let path = spilled.path.clone();
         self.uncompressed_segment = Box::new(spilled);
