@@ -57,7 +57,8 @@ impl Gorilla {
         }
     }
 
-    /// Compress `value` using XOR and a variable length binary encoding.
+    /// Compress `value` using XOR and a variable length binary encoding and
+    /// append the compressed value to an internal buffer in `Gorilla`.
     fn compress_value(&mut self, value: Value) {
         let value_as_integer = value.to_bits();
         let last_value_as_integer = self.last_value.to_bits();
@@ -111,7 +112,7 @@ impl Gorilla {
     /// Return the values compressed using XOR and a variable length binary
     /// encoding.
     fn get_compressed_values(self) -> Vec<u8> {
-        self.compressed_values.finnish()
+        self.compressed_values.finish()
     }
 }
 
@@ -183,7 +184,7 @@ pub fn grid(
 }
 
 /// Decompress values compressed using Gorilla's compression method for
-/// floating-point values and store them in a new `PrimitiveArray<Value>`.
+/// floating-point values and store them in a new Apache Arrow array.
 fn decompress_values_to_array(
     start_time: Timestamp,
     end_time: Timestamp,
@@ -240,12 +241,15 @@ fn decompress_values(
     }
 }
 
-// BitReader is implemented based on code published by Ilkka Rauta under both
-// the MIT and Apache2 licenses. LINK: https://github.com/irauta/bitreader.
-/// Read one or multiple bits from a `[u8]`.
+/// Read one or multiple bits from a `[u8]`. `BitReader` is implemented based on
+/// [code published by Ilkka Rauta] dual-licensed under MIT and Apache2.
+///
+/// [code published by Ilkka Rauta]: https://github.com/irauta/bitreader
 struct BitReader<'a> {
+    /// Next bit to read from `self.bytes`.
+    next_bit: u64,
+    /// Bits packed into one or more `u8`s.
     bytes: &'a [u8],
-    current_bit: u64,
 }
 
 impl<'a> BitReader<'a> {
@@ -253,39 +257,39 @@ impl<'a> BitReader<'a> {
         if bytes.is_empty() {
             Err("The byte array cannot be empty".to_string())
         } else {
-            Ok(Self {
-                bytes,
-                current_bit: 0,
-            })
+            Ok(Self { next_bit: 0, bytes })
         }
     }
 
-    /// Read the next bit from `bytes`.
+    /// Read the next bit from the `BitReader`.
     fn read_bit(&mut self) -> bool {
         self.read_bits(1) == 1
     }
 
-    /// Read the next `number_of_bits` bits from `bytes`.
+    /// Read the next `number_of_bits` bits from the `BitReader`.
     fn read_bits(&mut self, number_of_bits: u8) -> u32 {
         let mut value: u64 = 0;
-        let start = self.current_bit;
-        let end = self.current_bit + number_of_bits as u64;
-        for bit in start..end {
+        let start_bit = self.next_bit;
+        let end_bit = self.next_bit + number_of_bits as u64;
+        for bit in start_bit..end_bit {
             let current_byte = (bit / 8) as usize;
             let byte = self.bytes[current_byte];
             let shift = 7 - (bit % 8);
             let bit: u64 = (byte >> shift) as u64 & 1;
             value = (value << 1) | bit;
         }
-        self.current_bit = end;
+        self.next_bit = end_bit;
         value as u32
     }
 }
 
 /// Append one or multiple bits to a `vec<u8>`.
 struct BitVecBuilder {
+    /// `u8` currently used for storing the bits.
     current_byte: u8,
+    /// Bits remaining in `current_byte`.
     remaining_bits: u8,
+    /// Bits packed into one or more `u8`s.
     bytes: Vec<u8>,
 }
 
@@ -298,17 +302,17 @@ impl BitVecBuilder {
         }
     }
 
-    /// Append a zero bit to `bytes`.
+    /// Append a zero bit to the `BitVecBuilder`.
     fn append_a_zero_bit(&mut self) {
         self.append_bits(0, 1)
     }
 
-    /// Append a one bit to `bytes`.
+    /// Append a one bit to the `BitVecBuilder`.
     fn append_a_one_bit(&mut self) {
         self.append_bits(1, 1)
     }
 
-    /// Append `number_of_bits` from `bits` to `bytes`.
+    /// Append `number_of_bits` from `bits` to the `BitVecBuilder`.
     fn append_bits(&mut self, bits: u32, number_of_bits: u8) {
         let mut number_of_bits = number_of_bits;
 
@@ -333,11 +337,15 @@ impl BitVecBuilder {
         }
     }
 
+    /// Return `true` if no bits have been appended to the `BitVecBuilder`,
+    /// otherwise `false`.
     fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
 
-    fn finnish(mut self) -> Vec<u8> {
+    /// Consume the `BitVecBuilder` and return the appended bits packed into a
+    /// `Vec<u8>`.
+    fn finish(mut self) -> Vec<u8> {
         if self.remaining_bits != 8 {
             self.bytes.push(self.current_byte);
         }
@@ -349,7 +357,7 @@ impl BitVecBuilder {
 mod tests {
     use super::*;
     use crate::types::tests::ProptestValue;
-    use proptest::{bool, collection, prop_assert, prop_assume, proptest};
+    use proptest::{bool, collection, prop_assert, prop_assert_eq, prop_assume, proptest};
 
     // The largest byte, a random byte, and the smallest byte for testing.
     const TEST_BYTES: &[u8] = &[255, 170, 0];
@@ -362,6 +370,60 @@ mod tests {
     #[test]
     fn test_empty_sequence() {
         assert!(Gorilla::new().get_compressed_values().is_empty());
+    }
+
+    proptest! {
+    #[test]
+    fn test_append_single_value(value in ProptestValue::ANY) {
+        let mut model_type = Gorilla::new();
+        model_type.compress_value(value);
+        prop_assert!(equal_or_nan(value, model_type.last_value));
+        prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
+        prop_assert_eq!(model_type.last_trailing_zero_bits, 0);
+        prop_assert_eq!(model_type.compressed_values.current_byte, 0);
+        prop_assert_eq!(model_type.compressed_values.remaining_bits, 8);
+        prop_assert_eq!(model_type.compressed_values.bytes.len(), 4);
+    }
+
+    #[test]
+    fn test_append_repeated_values(value in ProptestValue::ANY) {
+        let mut model_type = Gorilla::new();
+        model_type.compress_value(value);
+        model_type.compress_value(value);
+        prop_assert!(equal_or_nan(value, model_type.last_value));
+        prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
+        prop_assert_eq!(model_type.last_trailing_zero_bits, 0);
+        prop_assert_eq!(model_type.compressed_values.current_byte, 0);
+        prop_assert_eq!(model_type.compressed_values.remaining_bits, 7);
+        prop_assert_eq!(model_type.compressed_values.bytes.len(), 4);
+    }
+    }
+
+    #[test]
+    fn test_append_different_values_with_leading_zero_bits() {
+        let mut model_type = Gorilla::new();
+        model_type.compress_value(37.0);
+        model_type.compress_value(73.0);
+        assert!(equal_or_nan(73.0, model_type.last_value));
+        assert_eq!(model_type.last_leading_zero_bits, 8);
+        assert_eq!(model_type.last_trailing_zero_bits, 17);
+        assert_eq!(model_type.compressed_values.current_byte, 48);
+        assert_eq!(model_type.compressed_values.remaining_bits, 4);
+        assert_eq!(model_type.compressed_values.bytes.len(), 6);
+    }
+
+    #[test]
+    fn test_append_different_values_without_leading_zero_bits() {
+        let mut model_type = Gorilla::new();
+        model_type.compress_value(37.0);
+        model_type.compress_value(71.0);
+        model_type.compress_value(73.0);
+        assert!(equal_or_nan(73.0, model_type.last_value));
+        assert_eq!(model_type.last_leading_zero_bits, 8);
+        assert_eq!(model_type.last_trailing_zero_bits, 17);
+        assert_eq!(model_type.compressed_values.current_byte, 112);
+        assert_eq!(model_type.compressed_values.remaining_bits, 3);
+        assert_eq!(model_type.compressed_values.bytes.len(), 7);
     }
 
     // Tests for min().
@@ -479,7 +541,7 @@ mod tests {
 
     // Tests for BitReader.
     #[test]
-    fn test_empty_bit_reader_error() {
+    fn test_bit_reader_cannot_be_empty() {
         assert!(BitReader::try_new(&[]).is_err());
     }
 
@@ -491,7 +553,7 @@ mod tests {
     // Tests for BitVecBuilder.
     #[test]
     fn test_empty_bit_vec_builder() {
-        assert!(BitVecBuilder::new().finnish().is_empty());
+        assert!(BitVecBuilder::new().finish().is_empty());
     }
 
     // Tests combining BitReader and BitVecBuilder.
@@ -502,7 +564,7 @@ mod tests {
             write_bool_as_bit(&mut bit_vector_builder, *bit);
         }
         assert!(bytes_and_bits_are_equal(
-            &bit_vector_builder.finnish(),
+            &bit_vector_builder.finish(),
             TEST_BITS
         ));
     }
@@ -515,7 +577,7 @@ mod tests {
         for bit in &bits {
             write_bool_as_bit(&mut bit_vector_builder, *bit);
         }
-        prop_assert!(bytes_and_bits_are_equal(&bit_vector_builder.finnish(), &bits));
+        prop_assert!(bytes_and_bits_are_equal(&bit_vector_builder.finish(), &bits));
     }
     }
 
