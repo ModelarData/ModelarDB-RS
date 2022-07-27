@@ -115,7 +115,7 @@ pub fn sum(
     sampling_interval: i32,
     model: &[u8],
 ) -> Value {
-    let length = ((end_time - start_time) / sampling_interval as i64) + 1;
+    let length = models::length(start_time, end_time, sampling_interval);
     length as Value * decode_model(model)
 }
 

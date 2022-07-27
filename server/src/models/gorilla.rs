@@ -26,6 +26,7 @@ use std::mem;
 
 use datafusion::arrow::compute::kernels::aggregate;
 
+use crate::models;
 use crate::types::{
     TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
@@ -184,7 +185,7 @@ fn decompress_values_to_array(
     sampling_interval: i32,
     model: &[u8],
 ) -> ValueArray {
-    let length = ((end_time - start_time) / sampling_interval as Timestamp) + 1;
+    let length = models::length(start_time, end_time, sampling_interval);
     let mut value_builder = ValueBuilder::new(length as usize);
     decompress_values(
         start_time,
@@ -214,7 +215,7 @@ fn decompress_values(
     values.append_value(Value::from_bits(last_value)).unwrap();
 
     // Then values are stored using XOR and a variable length binary encoding.
-    let length_without_first_value = (end_time - start_time) / sampling_interval as i64;
+    let length_without_first_value = models::length(start_time, end_time, sampling_interval) - 1;
     for _ in 0..length_without_first_value {
         if bits.read_bit() {
             if bits.read_bit() {

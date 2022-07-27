@@ -233,7 +233,7 @@ pub fn sum(
     let first = slope * start_time as f64 + intercept;
     let last = slope * end_time as f64 + intercept;
     let average = (first + last) / 2.0;
-    let length = ((end_time - start_time) / sampling_interval as i64) + 1;
+    let length = models::length(start_time, end_time, sampling_interval);
     (average * length as f64) as Value
 }
 

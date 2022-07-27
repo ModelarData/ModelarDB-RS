@@ -14,9 +14,9 @@
  */
 
 //! Implementation of the model types used for compressing time series segments
-//! as models and functions for efficient computation of aggregates for models
-//! of type PMC-Mean and Swing. The module itself contains functionality used by
-//! multiple of the model types.
+//! as models and functions for efficiently computing aggregates from models of
+//! each type. The module itself contains functionality used by multiple of the
+//! model types.
 
 mod gorilla;
 mod pmcmean;
@@ -41,7 +41,7 @@ const GORILLA_ID: u8 = 4;
 
 /// General error bound that is guaranteed to not be negative, infinite, or NAN.
 /// For `PMCMean` and `Swing` the error bound is interpreted as a relative per
-/// value error bound in percentage. `Gorilla` is lossless.
+/// value error bound in percentage, while `Gorilla` uses lossless compression.
 struct ErrorBound(f32);
 
 impl ErrorBound {
@@ -70,9 +70,12 @@ impl PartialOrd<ErrorBound> for f32 {
     }
 }
 
+// TODO: rename `count` so it matches `length` when refactoring query engine.
 // TODO: replace Int64Array with TimestampArray when refactoring query engine.
 // TODO: remove unused function parameters when refactoring query engine.
-/// Assumes all arrays are the same length and contain less or equal to num_rows elements.
+/// Compute the number of data points in a batch of time series segments.
+/// `tids`, `start_times`, `end_times`, and `sampling_intervals` must all
+/// contain at least `num_rows` elements.
 pub fn count(
     num_rows: usize,
     tids: &TimeSeriesIdArray,
@@ -83,11 +86,19 @@ pub fn count(
     let mut data_points = 0;
     for row_index in 0..num_rows {
         let tid = tids.value(row_index) as usize;
-        let sampling_interval = sampling_intervals.value(tid) as i64;
-        data_points +=
-            ((end_times.value(row_index) - start_times.value(row_index)) / sampling_interval) + 1;
+        let sampling_interval = sampling_intervals.value(tid);
+        data_points += length(
+            start_times.value(row_index),
+            end_times.value(row_index),
+            sampling_interval,
+        );
     }
     data_points as usize
+}
+
+/// Compute the number of data points in a time series segment.
+pub fn length(start_time: Timestamp, end_time: Timestamp, sampling_interval: i32) -> i64 {
+    ((end_time - start_time) / sampling_interval as i64) + 1
 }
 
 /// Compute the minimum value for a time series segment whose values are
@@ -105,7 +116,7 @@ pub fn min(
         PMC_MEAN_ID => pmcmean::min(model),
         SWING_ID => swing::min(start_time, end_time, model),
         GORILLA_ID => gorilla::min(start_time, end_time, sampling_interval, model),
-        _ => panic!("Internal error due to unknown model type"),
+        _ => panic!("Internal error due to an unknown model type"),
     }
 }
 
@@ -124,7 +135,7 @@ pub fn max(
         PMC_MEAN_ID => pmcmean::max(model),
         SWING_ID => swing::max(start_time, end_time, model),
         GORILLA_ID => gorilla::max(start_time, end_time, sampling_interval, model),
-        _ => panic!("Internal error due to unknown model type"),
+        _ => panic!("Internal error due to an unknown model type"),
     }
 }
 
@@ -143,7 +154,7 @@ pub fn sum(
         PMC_MEAN_ID => pmcmean::sum(start_time, end_time, sampling_interval, model),
         SWING_ID => swing::sum(start_time, end_time, sampling_interval, model),
         GORILLA_ID => gorilla::sum(start_time, end_time, sampling_interval, model),
-        _ => panic!("Internal error due to unknown model type"),
+        _ => panic!("Internal error due to an unknown model type"),
     }
 }
 
@@ -193,7 +204,7 @@ pub fn grid(
             timestamps,
             values,
         ),
-        _ => panic!("Internal error due to unknown model type"),
+        _ => panic!("Internal error due to an unknown model type"),
     }
 }
 
@@ -234,6 +245,17 @@ mod tests {
     #[test]
     fn test_error_bound_cannot_be_nan() {
         assert!(ErrorBound::try_new(f32::NAN).is_err())
+    }
+
+    // Tests for length().
+    #[test]
+    fn test_length_of_segment_with_one_data_point() {
+	assert_eq!(1, length(1658671178037, 1658671178037, 1000));
+    }
+
+    #[test]
+    fn test_length_of_segment_with_ten_data_point() {
+	assert_eq!(10, length(1658671178037, 1658671187037, 1000));
     }
 
     // Tests for equal_or_nan().
