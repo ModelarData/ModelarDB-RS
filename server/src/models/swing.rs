@@ -23,6 +23,7 @@
 //! [Swing and Slide paper]: https://dl.acm.org/doi/10.14778/1687627.1687645
 //! [ModelarDB paper]: https://dl.acm.org/doi/abs/10.14778/3236187.3236215
 
+use crate::models;
 use crate::models::ErrorBound;
 use crate::types::{
     TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueBuilder,
@@ -59,17 +60,17 @@ struct Swing {
 
 impl Swing {
     fn new(error_bound: ErrorBound) -> Self {
-	Self {
-	    error_bound,
-	    first_timestamp: 0,
-	    last_timestamp: 0,
-	    first_value: f64::NAN,
-	    upper_bound_slope: f64::NAN,
-	    upper_bound_intercept: f64::NAN,
-	    lower_bound_slope: f64::NAN,
-	    lower_bound_intercept: f64::NAN,
-	    length: 0,
-	}
+        Self {
+            error_bound,
+            first_timestamp: 0,
+            last_timestamp: 0,
+            first_value: f64::NAN,
+            upper_bound_slope: f64::NAN,
+            upper_bound_intercept: f64::NAN,
+            lower_bound_slope: f64::NAN,
+            lower_bound_intercept: f64::NAN,
+            length: 0,
+        }
     }
 
     /// Attempt to update the current model of type Swing to also represent the
@@ -107,8 +108,8 @@ impl Swing {
             self.length += 1;
             true
         } else if !self.first_value.is_finite() || !value.is_finite() {
-            // Extend Swing to handle both types of infinity and NaN.
-            if equal_or_nan(self.first_value, value) {
+            // Extend Swing to handle both types of infinity and NAN.
+            if models::equal_or_nan(self.first_value, value) {
                 self.last_timestamp = timestamp;
                 self.upper_bound_slope = value;
                 self.upper_bound_intercept = value;
@@ -196,14 +197,7 @@ impl Swing {
 
 /// Compute the minimum value for a time series segment whose values are
 /// represented by a model of type Swing.
-pub fn min(
-    _gid: TimeSeriesId,
-    start_time: Timestamp,
-    end_time: Timestamp,
-    _sampling_interval: i32,
-    model: &[u8],
-    _gaps: &[u8],
-) -> Value {
+pub fn min(start_time: Timestamp, end_time: Timestamp, model: &[u8]) -> Value {
     let (slope, intercept) = decode_model(model);
     if slope == 0.0 {
         intercept as Value
@@ -216,14 +210,7 @@ pub fn min(
 
 /// Compute the maximum value for a time series segment whose values are
 /// represented by a model of type Swing.
-pub fn max(
-    _gid: TimeSeriesId,
-    start_time: Timestamp,
-    end_time: Timestamp,
-    _sampling_interval: i32,
-    model: &[u8],
-    _gaps: &[u8],
-) -> Value {
+pub fn max(start_time: Timestamp, end_time: Timestamp, model: &[u8]) -> Value {
     let (slope, intercept) = decode_model(model);
     if slope == 0.0 {
         intercept as Value
@@ -237,12 +224,10 @@ pub fn max(
 /// Compute the sum of the values for a time series segment whose values are
 /// represented by a model of type Swing.
 pub fn sum(
-    _gid: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    _gaps: &[u8],
 ) -> Value {
     let (slope, intercept) = decode_model(model);
     let first = slope * start_time as f64 + intercept;
@@ -256,12 +241,11 @@ pub fn sum(
 /// represented by a model of type Swing. Each data point is split into its
 /// three components and appended to `tids`, `timestamps`, and `values`.
 pub fn grid(
-    gid: TimeSeriesId,
+    tid: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    _gaps: &[u8],
     tids: &mut TimeSeriesIdBuilder,
     timestamps: &mut TimestampBuilder,
     values: &mut ValueBuilder,
@@ -269,7 +253,7 @@ pub fn grid(
     let (slope, intercept) = decode_model(model);
     let sampling_interval = sampling_interval as usize;
     for timestamp in (start_time..=end_time).step_by(sampling_interval) {
-        tids.append_value(gid).unwrap();
+        tids.append_value(tid).unwrap();
         timestamps.append_value(timestamp).unwrap();
         let value = (slope * timestamp as f64 + intercept) as Value;
         values.append_value(value).unwrap();
@@ -315,14 +299,9 @@ fn compute_slope_and_intercept(
         let intercept = first_value - slope * first_timestamp as f64;
         (slope, intercept)
     } else {
-        debug_assert!(equal_or_nan(first_value, final_value));
+        debug_assert!(models::equal_or_nan(first_value, final_value));
         (first_value, final_value)
     }
-}
-
-/// Returns true if `v1` and `v2` are equivalent or both values are NAN.
-fn equal_or_nan(v1: f64, v2: f64) -> bool {
-    v1 == v2 || (v1.is_nan() && v2.is_nan())
 }
 
 #[cfg(test)]
@@ -339,7 +318,7 @@ mod tests {
     const SEGMENT_LENGTH: Timestamp = 5; // Timestamp is used to remove casts.
 
     // Tests for Swing.
-        proptest! {
+    proptest! {
     #[test]
     fn test_can_fit_sequence_of_finite_value_with_error_bound_zero(value in ProptestValue::ANY) {
         can_fit_sequence_of_value_with_error_bound_zero(value)
@@ -391,7 +370,7 @@ mod tests {
     #[test]
     fn test_can_fit_one_value(value in ProptestValue::ANY) {
         let error_bound_zero = ErrorBound::try_new(0.0).unwrap();
-	prop_assert!(Swing::new(error_bound_zero).fit_data_point(FIRST_TIMESTAMP, value));
+        prop_assert!(Swing::new(error_bound_zero).fit_data_point(FIRST_TIMESTAMP, value));
     }
 
     #[test]
@@ -510,7 +489,7 @@ mod tests {
             final_value as f64,
         );
         let model = [slope.to_be_bytes(), intercept.to_be_bytes()].concat();
-        let min = min(1, FIRST_TIMESTAMP, FINAL_TIMESTAMP, SAMPLING_INTERVAL as i32, &model, &[]);
+        let min = min(FIRST_TIMESTAMP, FINAL_TIMESTAMP, &model);
         prop_assert_eq!(min, Value::min(first_value, final_value));
     }
     }
@@ -529,7 +508,7 @@ mod tests {
             final_value as f64,
         );
         let model = [slope.to_be_bytes(), intercept.to_be_bytes()].concat();
-        let max = max(1, FIRST_TIMESTAMP, FINAL_TIMESTAMP, SAMPLING_INTERVAL as i32, &model, &[]);
+        let max = max(FIRST_TIMESTAMP, FINAL_TIMESTAMP, &model);
         prop_assert_eq!(max, Value::max(first_value, final_value));
     }
     }
@@ -549,7 +528,7 @@ mod tests {
             final_value as f64,
         );
         let model = [slope.to_be_bytes(), intercept.to_be_bytes()].concat();
-        let sum = sum(1, FIRST_TIMESTAMP, FIRST_TIMESTAMP, SAMPLING_INTERVAL as i32, &model, &[]);
+        let sum = sum( FIRST_TIMESTAMP, FIRST_TIMESTAMP, SAMPLING_INTERVAL as i32, &model);
         prop_assert_eq!(sum, first_value);
     }
     }
@@ -577,7 +556,6 @@ mod tests {
             FINAL_TIMESTAMP,
             SAMPLING_INTERVAL as i32,
             &model,
-            &[],
             &mut tids,
             &mut timestamps,
             &mut values,
@@ -597,7 +575,7 @@ mod tests {
             .all(|window| window[1] - window[0] == SAMPLING_INTERVAL));
         prop_assert!(values
             .iter()
-            .all(|value_option| equal_or_nan(value_option.unwrap() as f64, value as f64)));
+            .all(|value_option| models::equal_or_nan(value_option.unwrap() as f64, value as f64)));
     }
     }
 
@@ -615,22 +593,8 @@ mod tests {
     fn test_decode_model(value in num::f64::ANY) {
     let model = [value.to_be_bytes(), value.to_be_bytes()].concat();
         let (slope, intercept) = decode_model(&model);
-        prop_assert!(equal_or_nan(slope, value));
-        prop_assert!(equal_or_nan(intercept, value));
-    }
-    }
-
-    // Tests for equal_or_nan().
-    proptest! {
-    #[test]
-    fn test_equal_or_nan_equal(value in num::f64::ANY) {
-        assert!(equal_or_nan(value, value));
-    }
-
-    #[test]
-    fn test_equal_or_nan_not_equal(v1 in num::f64::ANY, v2 in num::f64::ANY) {
-        prop_assume!(v1 != v2 && !v1.is_nan() && !v2.is_nan());
-        prop_assert!(!equal_or_nan(v1, v2));
+        prop_assert!(models::equal_or_nan(slope, value));
+        prop_assert!(models::equal_or_nan(intercept, value));
     }
     }
 }

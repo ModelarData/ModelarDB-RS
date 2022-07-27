@@ -20,6 +20,7 @@
 //! [Poor Man’s Compression paper]: https://ieeexplore.ieee.org/document/1260811
 //! [ModelarDB paper]: https://dl.acm.org/doi/abs/10.14778/3236187.3236215
 
+use crate::models;
 use crate::models::ErrorBound;
 use crate::types::{
     TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueBuilder,
@@ -84,38 +85,35 @@ impl PMCMean {
     fn is_value_within_error_bound(&self, real_value: Value, approximate_value: Value) -> bool {
         // Needed because result becomes NAN and approximate_value is rejected
         // if approximate_value and real_value are zero, and because NAN != NAN.
-        if equal_or_nan(real_value, approximate_value) {
-            true
-        } else {
-            let difference = real_value - approximate_value;
-            let result = Value::abs(difference / real_value);
-            (result * 100.0) <= self.error_bound
-        }
+	if models::equal_or_nan(real_value as f64, approximate_value as f64) {
+	    true
+	} else {
+	    let difference = real_value - approximate_value;
+	    let result = Value::abs(difference / real_value);
+	    (result * 100.0) <= self.error_bound
+	}
     }
 }
 
-/// Compute the minimum and maximum value for a time series segment whose values
-/// are represented by a model of type PMC-Mean.
-pub fn min_max(
-    _gid: TimeSeriesId,
-    _start_time: Timestamp,
-    _end_time: Timestamp,
-    _sampling_interval: i32,
-    model: &[u8],
-    _gaps: &[u8],
-) -> Value {
+/// Compute the minimum value for a time series segment whose values are
+/// represented by a model of type PMC-Mean.
+pub fn min(model: &[u8]) -> Value {
+    decode_model(model)
+}
+
+/// Compute the maximum value for a time series segment whose values are
+/// represented by a model of type PMC-Mean.
+pub fn max(model: &[u8]) -> Value {
     decode_model(model)
 }
 
 /// Compute the sum of the values for a time series segment whose values are
 /// represented by a model of type PMC-Mean.
 pub fn sum(
-    _gid: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    _gaps: &[u8],
 ) -> Value {
     let length = ((end_time - start_time) / sampling_interval as i64) + 1;
     length as Value * decode_model(model)
@@ -125,12 +123,11 @@ pub fn sum(
 /// represented by a model of type PMC-Mean. Each data point is split into its
 /// three components and appended to `tids`, `timestamps`, and `values`.
 pub fn grid(
-    gid: TimeSeriesId,
+    tid: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    _gaps: &[u8],
     tids: &mut TimeSeriesIdBuilder,
     timestamps: &mut TimestampBuilder,
     values: &mut ValueBuilder,
@@ -138,7 +135,7 @@ pub fn grid(
     let value = decode_model(model);
     let sampling_interval = sampling_interval as usize;
     for timestamp in (start_time..=end_time).step_by(sampling_interval) {
-        tids.append_value(gid).unwrap();
+        tids.append_value(tid).unwrap();
         timestamps.append_value(timestamp).unwrap();
         values.append_value(value).unwrap();
     }
@@ -151,11 +148,6 @@ fn decode_model(model: &[u8]) -> Value {
     Value::from_be_bytes(model.try_into().unwrap())
 }
 
-/// Returns true if `v1` and `v2` are equivalent or both values are NAN.
-fn equal_or_nan(v1: Value, v2: Value) -> bool {
-    v1 == v2 || (v1.is_nan() && v2.is_nan())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -163,6 +155,13 @@ mod tests {
     use proptest::{prop_assert, prop_assume, proptest};
 
     // Tests for PMCMean.
+    proptest! {
+    #[test]
+    fn test_can_fit_sequence_of_finite_value_with_error_bound_zero(value in ProptestValue::ANY) {
+        can_fit_sequence_of_value_with_error_bound_zero(value)
+    }
+    }
+
     #[test]
     fn test_can_fit_sequence_of_positive_infinity_with_error_bound_zero() {
         can_fit_sequence_of_value_with_error_bound_zero(Value::INFINITY)
@@ -279,13 +278,23 @@ mod tests {
         return fit_all_values;
     }
 
-    // Tests for min_max().
+    // Tests for min().
     proptest! {
     #[test]
-    fn test_min_max(value in ProptestValue::ANY) {
+    fn test_min(value in ProptestValue::ANY) {
         let model = value.to_be_bytes();
-        let min_max = min_max(1, 1657734000, 1657734540, 60, &model, &[]);
-        prop_assert!(equal_or_nan(min_max, value));
+        let min = min(&model);
+        prop_assert!(models::equal_or_nan(min as f64, value as f64));
+    }
+    }
+
+    // Tests for max().
+    proptest! {
+    #[test]
+    fn test_max(value in ProptestValue::ANY) {
+        let model = value.to_be_bytes();
+        let max = max(&model);
+        prop_assert!(models::equal_or_nan(max as f64, value as f64));
     }
     }
 
@@ -294,8 +303,8 @@ mod tests {
     #[test]
     fn test_sum(value in ProptestValue::ANY) {
         let model = value.to_be_bytes();
-        let sum = sum(1, 1657734000, 1657734540, 60, &model, &[]);
-        prop_assert!(equal_or_nan(sum, 10.0 * value));
+        let sum = sum(1657734000, 1657734540, 60, &model);
+        prop_assert!(models::equal_or_nan(sum as f64, (10.0 * value) as f64));
     }
     }
 
@@ -315,7 +324,6 @@ mod tests {
             1657734540,
             sampling_interval as i32,
             &model,
-            &[],
             &mut tids,
             &mut timestamps,
             &mut values,
@@ -335,7 +343,7 @@ mod tests {
             .all(|window| window[1] - window[0] == sampling_interval));
         prop_assert!(values
             .iter()
-            .all(|value_option| equal_or_nan(value_option.unwrap(), value)));
+            .all(|value_option| models::equal_or_nan(value_option.unwrap() as f64, value as f64)));
     }
     }
 
@@ -344,21 +352,7 @@ mod tests {
     #[test]
     fn test_decode_model(value in ProptestValue::ANY) {
         let decoded = decode_model(&value.to_be_bytes());
-        prop_assert!(equal_or_nan(decoded, value));
-    }
-    }
-
-    // Tests for equal_or_nan().
-    proptest! {
-    #[test]
-    fn test_equal_or_nan_equal(value in ProptestValue::ANY) {
-        assert!(equal_or_nan(value, value));
-    }
-
-    #[test]
-    fn test_equal_or_nan_not_equal(v1 in ProptestValue::ANY, v2 in ProptestValue::ANY) {
-        prop_assume!(v1 != v2 && !v1.is_nan() && !v2.is_nan());
-        prop_assert!(!equal_or_nan(v1, v2));
+        prop_assert!(models::equal_or_nan(decoded as f64, value as f64));
     }
     }
 }
