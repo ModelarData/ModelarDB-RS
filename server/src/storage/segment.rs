@@ -174,7 +174,7 @@ impl UncompressedSegment for SpilledSegment {
         record_batch_reader.next().unwrap().unwrap()
     }
 
-    /// Return 0 since the data is not kept in memory.
+    /// Since the data is not kept in memory, return 0.
     fn get_memory_size(&self) -> usize {
         0
     }

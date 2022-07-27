@@ -123,7 +123,7 @@ impl StorageEngine {
         write_batch_to_parquet(batch, path);
     }
 
-    /// Move `segment_builder` to the the compression queue.
+    /// Move `segment_builder` to the compression queue.
     fn enqueue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
         let finished_segment = FinishedSegment {
             key,
