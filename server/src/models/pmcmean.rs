@@ -20,6 +20,7 @@
 //! [Poor Man’s Compression paper]: https://ieeexplore.ieee.org/document/1260811
 //! [ModelarDB paper]: https://dl.acm.org/doi/abs/10.14778/3236187.3236215
 
+use crate::models::ErrorBound;
 use crate::types::{
     TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueBuilder,
 };
@@ -28,7 +29,7 @@ use crate::types::{
 /// series segment.
 struct PMCMean {
     /// Maximum relative error for the value of each data point.
-    error_bound: Value,
+    error_bound: ErrorBound,
     /// Minimum value in the segment the current model is fitted to.
     min_value: Value,
     /// Maximum value in the segment the current model is fitted to.
@@ -40,17 +41,13 @@ struct PMCMean {
 }
 
 impl PMCMean {
-    fn try_new(error_bound: Value) -> Result<Self, String> {
-        if error_bound < 0.0 || error_bound.is_infinite() || error_bound.is_nan() {
-            Err("The error bound cannot be negative, infinite, or NaN".to_string())
-        } else {
-            Ok(Self {
-                error_bound,
-                min_value: Value::NAN,
-                max_value: Value::NAN,
-                sum_of_values: 0.0,
-                length: 0,
-            })
+    fn new(error_bound: ErrorBound) -> Self {
+        Self {
+            error_bound,
+            min_value: Value::NAN,
+            max_value: Value::NAN,
+            sum_of_values: 0.0,
+            length: 0,
         }
     }
 
@@ -166,33 +163,6 @@ mod tests {
     use proptest::{prop_assert, prop_assume, proptest};
 
     // Tests for PMCMean.
-    proptest! {
-    #[test]
-    fn test_error_bound_can_be_positive(error_bound in ProptestValue::POSITIVE) {
-        assert!(PMCMean::try_new(error_bound).is_ok())
-    }
-
-    #[test]
-    fn test_error_bound_cannot_be_negative(error_bound in ProptestValue::NEGATIVE) {
-        assert!(PMCMean::try_new(error_bound).is_err())
-    }
-    }
-
-    #[test]
-    fn test_error_bound_cannot_be_positive_infinity() {
-        assert!(PMCMean::try_new(Value::INFINITY).is_err())
-    }
-
-    #[test]
-    fn test_error_bound_cannot_be_negative_infinity() {
-        assert!(PMCMean::try_new(Value::NEG_INFINITY).is_err())
-    }
-
-    #[test]
-    fn test_error_bound_cannot_be_nan() {
-        assert!(PMCMean::try_new(Value::NAN).is_err())
-    }
-
     #[test]
     fn test_can_fit_sequence_of_positive_infinity_with_error_bound_zero() {
         can_fit_sequence_of_value_with_error_bound_zero(Value::INFINITY)
@@ -209,7 +179,8 @@ mod tests {
     }
 
     fn can_fit_sequence_of_value_with_error_bound_zero(value: Value) {
-        let mut model_type = PMCMean::try_new(0.0).unwrap();
+        let error_bound_zero = ErrorBound::try_new(0.0).unwrap();
+        let mut model_type = PMCMean::new(error_bound_zero);
         for _ in 0..5 {
             assert!(model_type.fit_value(value));
         }
@@ -224,13 +195,15 @@ mod tests {
     proptest! {
     #[test]
     fn test_can_fit_one_value(value in ProptestValue::ANY) {
-        prop_assert!(PMCMean::try_new(0.0).unwrap().fit_value(value));
+        let error_bound_zero = ErrorBound::try_new(0.0).unwrap();
+        prop_assert!(PMCMean::new(error_bound_zero).fit_value(value));
     }
 
     #[test]
     fn test_cannot_fit_other_value_and_positive_infinity(value in ProptestValue::ANY) {
         prop_assume!(value != Value::INFINITY);
-        let mut model_type = PMCMean::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(f32::MAX).unwrap();
+        let mut model_type = PMCMean::new(error_bound_max);
         prop_assert!(model_type.fit_value(value));
         prop_assert!(!model_type.fit_value(Value::INFINITY));
     }
@@ -238,7 +211,8 @@ mod tests {
     #[test]
     fn test_cannot_fit_other_value_and_negative_infinity(value in ProptestValue::ANY) {
         prop_assume!(value != Value::NEG_INFINITY);
-        let mut model_type = PMCMean::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(f32::MAX).unwrap();
+        let mut model_type = PMCMean::new(error_bound_max);
         prop_assert!(model_type.fit_value(value));
         prop_assert!(!model_type.fit_value(Value::NEG_INFINITY));
     }
@@ -246,7 +220,8 @@ mod tests {
     #[test]
     fn test_cannot_fit_other_value_and_nan(value in ProptestValue::ANY) {
         prop_assume!(!value.is_nan());
-        let mut model_type = PMCMean::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(f32::MAX).unwrap();
+        let mut model_type = PMCMean::new(error_bound_max);
         prop_assert!(model_type.fit_value(value));
         prop_assert!(!model_type.fit_value(Value::NAN));
     }
@@ -254,7 +229,8 @@ mod tests {
     #[test]
     fn test_cannot_fit_positive_infinity_and_other_value(value in ProptestValue::ANY) {
         prop_assume!(value != Value::INFINITY);
-        let mut model_type = PMCMean::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(f32::MAX).unwrap();
+        let mut model_type = PMCMean::new(error_bound_max);
         prop_assert!(model_type.fit_value(Value::INFINITY));
         prop_assert!(!model_type.fit_value(value));
     }
@@ -262,7 +238,8 @@ mod tests {
     #[test]
     fn test_cannot_fit_negative_infinity_and_other_value(value in ProptestValue::ANY) {
         prop_assume!(value != Value::NEG_INFINITY);
-        let mut model_type = PMCMean::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(f32::MAX).unwrap();
+        let mut model_type = PMCMean::new(error_bound_max);
         prop_assert!(model_type.fit_value(Value::NEG_INFINITY));
         prop_assert!(!model_type.fit_value(value));
     }
@@ -270,7 +247,8 @@ mod tests {
     #[test]
     fn test_cannot_fit_nan_and_other_value(value in ProptestValue::ANY) {
         prop_assume!(!value.is_nan());
-        let mut model_type = PMCMean::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(f32::MAX).unwrap();
+        let mut model_type = PMCMean::new(error_bound_max);
         prop_assert!(model_type.fit_value(Value::NAN));
         prop_assert!(!model_type.fit_value(value));
     }
@@ -278,16 +256,22 @@ mod tests {
 
     #[test]
     fn test_cannot_fit_sequence_of_different_values_with_error_bound_zero() {
-        assert!(!fit_sequence_of_different_values_with_error_bound(0.0))
+        let error_bound_zero = ErrorBound::try_new(0.0).unwrap();
+        assert!(!fit_sequence_of_different_values_with_error_bound(
+            error_bound_zero
+        ))
     }
 
     #[test]
     fn test_can_fit_sequence_of_different_values_with_error_bound_five() {
-        assert!(fit_sequence_of_different_values_with_error_bound(5.0))
+        let error_bound_five = ErrorBound::try_new(5.0).unwrap();
+        assert!(fit_sequence_of_different_values_with_error_bound(
+            error_bound_five
+        ))
     }
 
-    fn fit_sequence_of_different_values_with_error_bound(error_bound: Value) -> bool {
-        let mut model_type = PMCMean::try_new(error_bound).unwrap();
+    fn fit_sequence_of_different_values_with_error_bound(error_bound: ErrorBound) -> bool {
+        let mut model_type = PMCMean::new(error_bound);
         let mut fit_all_values = true;
         for value in [42.0, 42.0, 42.8, 42.0, 42.0] {
             fit_all_values &= model_type.fit_value(value);

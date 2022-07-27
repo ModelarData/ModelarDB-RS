@@ -14,6 +14,7 @@
  */
 
 mod catalog;
+mod errors;
 mod macros;
 mod models;
 mod optimizer;

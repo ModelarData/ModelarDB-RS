@@ -12,13 +12,57 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+//! Implementation of the model types used for compressing time series segments
+//! as models and functions for efficient computation of aggregates for models
+//! of type PMC-Mean and Swing. The module itself contains functionality used by
+//! multiple of the model types.
+
 mod gorilla;
 mod pmcmean;
 mod swing;
 
+use std::cmp::{PartialOrd, Ordering};
+
 use datafusion::arrow::array::{
     Float32Builder, Int32Array, Int32Builder, Int64Array, TimestampMillisecondBuilder,
 };
+
+use crate::errors::MiniModelarDBError;
+
+/// General error bound that is guaranteed to not be negative, infinite, or NaN.
+/// For `PMCMean` and `Swing` the error bound is interpreted as a relative per
+/// value error bound in percentage. `Gorilla` is lossless.
+struct ErrorBound(f32);
+
+impl ErrorBound {
+
+    /// Return `Self` if `error_bound` is a positive finite value, otherwise
+    /// `CompressionError`.
+    fn try_new(error_bound: f32) -> Result<Self, MiniModelarDBError> {
+        if error_bound < 0.0 || error_bound.is_infinite() || error_bound.is_nan() {
+            Err(MiniModelarDBError::CompressionError(
+                "Error bound cannot be negative, infinite, or NaN".to_owned(),
+            ))
+        } else {
+            Ok(Self(error_bound))
+        }
+    }
+}
+
+impl PartialEq<ErrorBound> for f32 {
+    fn eq(&self, other: &ErrorBound) -> bool {
+        self.eq(&other.0)
+    }
+}
+
+impl PartialOrd<ErrorBound> for f32 {
+    fn partial_cmp(&self, other: &ErrorBound) -> Option<Ordering> {
+        self.partial_cmp(&other.0)
+    }
+}
+
+
 
 // TODO: can mtid be converted to a model type enum without adding overhead?
 pub fn grid(
@@ -141,5 +185,38 @@ pub fn sum(
         3 => swing::sum(gid, start_time, end_time, sampling_interval, model, gaps),
         4 => gorilla::sum(gid, start_time, end_time, sampling_interval, model, gaps),
         _ => panic!("unknown model type"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::tests::ProptestValue;
+    use proptest::{prop_assert, prop_assume, proptest};
+    proptest! {
+    #[test]
+    fn test_error_bound_can_be_positive(error_bound in ProptestValue::POSITIVE) {
+        assert!(ErrorBound::try_new(error_bound).is_ok())
+    }
+
+    #[test]
+    fn test_error_bound_cannot_be_negative(error_bound in ProptestValue::NEGATIVE) {
+        assert!(ErrorBound::try_new(error_bound).is_err())
+    }
+    }
+
+    #[test]
+    fn test_error_bound_cannot_be_positive_infinity() {
+        assert!(ErrorBound::try_new(f32::INFINITY).is_err())
+    }
+
+    #[test]
+    fn test_error_bound_cannot_be_negative_infinity() {
+        assert!(ErrorBound::try_new(f32::NEG_INFINITY).is_err())
+    }
+
+    #[test]
+    fn test_error_bound_cannot_be_nan() {
+        assert!(ErrorBound::try_new(f32::NAN).is_err())
     }
 }

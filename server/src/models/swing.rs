@@ -23,6 +23,7 @@
 //! [Swing and Slide paper]: https://dl.acm.org/doi/10.14778/1687627.1687645
 //! [ModelarDB paper]: https://dl.acm.org/doi/abs/10.14778/3236187.3236215
 
+use crate::models::ErrorBound;
 use crate::types::{
     TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueBuilder,
 };
@@ -31,7 +32,7 @@ use crate::types::{
 /// segment.
 struct Swing {
     /// Maximum relative error for the value of each data point.
-    error_bound: Value,
+    error_bound: ErrorBound,
     /// Time at which the first value represented by the current model was
     /// collected.
     first_timestamp: Timestamp,
@@ -57,22 +58,18 @@ struct Swing {
 }
 
 impl Swing {
-    fn try_new(error_bound: Value) -> Result<Self, String> {
-        if error_bound < 0.0 || error_bound.is_infinite() || error_bound.is_nan() {
-            Err("The error bound cannot be negative, infinite, or NaN".to_string())
-        } else {
-            Ok(Self {
-                error_bound,
-                first_timestamp: 0,
-                last_timestamp: 0,
-                first_value: f64::NAN,
-                upper_bound_slope: f64::NAN,
-                upper_bound_intercept: f64::NAN,
-                lower_bound_slope: f64::NAN,
-                lower_bound_intercept: f64::NAN,
-                length: 0,
-            })
-        }
+    fn new(error_bound: ErrorBound) -> Self {
+	Self {
+	    error_bound,
+	    first_timestamp: 0,
+	    last_timestamp: 0,
+	    first_value: f64::NAN,
+	    upper_bound_slope: f64::NAN,
+	    upper_bound_intercept: f64::NAN,
+	    lower_bound_slope: f64::NAN,
+	    lower_bound_intercept: f64::NAN,
+	    length: 0,
+	}
     }
 
     /// Attempt to update the current model of type Swing to also represent the
@@ -94,7 +91,7 @@ impl Swing {
     fn fit_data_point(&mut self, timestamp: Timestamp, value: Value) -> bool {
         // Simplify the calculations by removing a significant number of casts.
         let value = value as f64;
-        let error_bound = self.error_bound as f64;
+        let error_bound = self.error_bound.0 as f64;
 
         // Compute the maximum allowed deviation within the error bound. The
         // error bound in percentage is divided by 100.1 instead of 100.0 to
@@ -342,34 +339,7 @@ mod tests {
     const SEGMENT_LENGTH: Timestamp = 5; // Timestamp is used to remove casts.
 
     // Tests for Swing.
-    proptest! {
-    #[test]
-    fn test_error_bound_can_be_positive(error_bound in ProptestValue::POSITIVE) {
-        assert!(Swing::try_new(error_bound).is_ok())
-    }
-
-    #[test]
-    fn test_error_bound_cannot_be_negative(error_bound in ProptestValue::NEGATIVE) {
-        assert!(Swing::try_new(error_bound).is_err())
-    }
-    }
-
-    #[test]
-    fn test_error_bound_cannot_be_positive_infinity() {
-        assert!(Swing::try_new(Value::INFINITY).is_err())
-    }
-
-    #[test]
-    fn test_error_bound_cannot_be_negative_infinity() {
-        assert!(Swing::try_new(Value::NEG_INFINITY).is_err())
-    }
-
-    #[test]
-    fn test_error_bound_cannot_be_nan() {
-        assert!(Swing::try_new(Value::NAN).is_err())
-    }
-
-    proptest! {
+        proptest! {
     #[test]
     fn test_can_fit_sequence_of_finite_value_with_error_bound_zero(value in ProptestValue::ANY) {
         can_fit_sequence_of_value_with_error_bound_zero(value)
@@ -392,7 +362,8 @@ mod tests {
     }
 
     fn can_fit_sequence_of_value_with_error_bound_zero(value: Value) {
-        let mut model_type = Swing::try_new(0.0).unwrap();
+        let error_bound_zero = ErrorBound::try_new(0.0).unwrap();
+        let mut model_type = Swing::new(error_bound_zero);
         let final_timestamp = FIRST_TIMESTAMP + SEGMENT_LENGTH * SAMPLING_INTERVAL;
         for timestamp in (FIRST_TIMESTAMP..final_timestamp).step_by(SAMPLING_INTERVAL as usize) {
             assert!(model_type.fit_data_point(timestamp, value));
@@ -419,7 +390,8 @@ mod tests {
     proptest! {
     #[test]
     fn test_can_fit_one_value(value in ProptestValue::ANY) {
-        prop_assert!(Swing::try_new(0.0).unwrap().fit_data_point(FIRST_TIMESTAMP, value));
+        let error_bound_zero = ErrorBound::try_new(0.0).unwrap();
+	prop_assert!(Swing::new(error_bound_zero).fit_data_point(FIRST_TIMESTAMP, value));
     }
 
     #[test]
@@ -427,7 +399,8 @@ mod tests {
         first_value in ProptestValue::NORMAL,
         second_value in ProptestValue::NORMAL
     ) {
-        let mut model_type = Swing::try_new(0.0).unwrap();
+        let error_bound_zero = ErrorBound::try_new(0.0).unwrap();
+        let mut model_type = Swing::new(error_bound_zero);
         prop_assert!(model_type.fit_data_point(FIRST_TIMESTAMP, first_value));
         prop_assert!(model_type.fit_data_point(FINAL_TIMESTAMP, second_value));
     }
@@ -435,7 +408,8 @@ mod tests {
     #[test]
     fn test_cannot_fit_other_value_and_positive_infinity(value in ProptestValue::ANY) {
         prop_assume!(value != Value::INFINITY);
-        let mut model_type = Swing::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
+        let mut model_type = Swing::new(error_bound_max);
         prop_assert!(model_type.fit_data_point(FIRST_TIMESTAMP, value));
         prop_assert!(!model_type.fit_data_point(FINAL_TIMESTAMP, Value::INFINITY));
     }
@@ -443,7 +417,8 @@ mod tests {
     #[test]
     fn test_cannot_fit_other_value_and_negative_infinity(value in ProptestValue::ANY) {
         prop_assume!(value != Value::NEG_INFINITY);
-        let mut model_type = Swing::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
+        let mut model_type = Swing::new(error_bound_max);
         prop_assert!(model_type.fit_data_point(FIRST_TIMESTAMP, value));
         prop_assert!(!model_type.fit_data_point(FINAL_TIMESTAMP, Value::NEG_INFINITY));
     }
@@ -451,7 +426,8 @@ mod tests {
     #[test]
     fn test_cannot_fit_other_value_and_nan(value in ProptestValue::ANY) {
         prop_assume!(!value.is_nan());
-        let mut model_type = Swing::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
+        let mut model_type = Swing::new(error_bound_max);
         prop_assert!(model_type.fit_data_point(FIRST_TIMESTAMP, value));
         prop_assert!(!model_type.fit_data_point(FINAL_TIMESTAMP, Value::NAN));
     }
@@ -459,7 +435,8 @@ mod tests {
     #[test]
     fn test_cannot_fit_positive_infinity_and_other_value(value in ProptestValue::ANY) {
         prop_assume!(value != Value::INFINITY);
-        let mut model_type = Swing::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
+        let mut model_type = Swing::new(error_bound_max);
         prop_assert!(model_type.fit_data_point(FIRST_TIMESTAMP, Value::INFINITY));
         prop_assert!(!model_type.fit_data_point(FINAL_TIMESTAMP, value));
     }
@@ -467,7 +444,8 @@ mod tests {
     #[test]
     fn test_cannot_fit_negative_infinity_and_other_value(value in ProptestValue::ANY) {
         prop_assume!(value != Value::NEG_INFINITY);
-        let mut model_type = Swing::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
+        let mut model_type = Swing::new(error_bound_max);
         prop_assert!(model_type.fit_data_point(FIRST_TIMESTAMP, Value::NEG_INFINITY));
         prop_assert!(!model_type.fit_data_point(FINAL_TIMESTAMP, value));
     }
@@ -475,7 +453,8 @@ mod tests {
     #[test]
     fn test_cannot_fit_nan_and_other_value(value in ProptestValue::ANY) {
         prop_assume!(!value.is_nan());
-        let mut model_type = Swing::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
+        let mut model_type = Swing::new(error_bound_max);
         prop_assert!(model_type.fit_data_point(FIRST_TIMESTAMP, Value::NAN));
         prop_assert!(!model_type.fit_data_point(FINAL_TIMESTAMP, value));
     }
@@ -506,7 +485,8 @@ mod tests {
     }
 
     fn fit_sequence_of_values_with_error_bound(values: &[Value], error_bound: Value) -> bool {
-        let mut model_type = Swing::try_new(error_bound).unwrap();
+        let error_bound = ErrorBound::try_new(error_bound).unwrap();
+        let mut model_type = Swing::new(error_bound);
         let mut fit_all_values = true;
         let mut timestamp = FIRST_TIMESTAMP;
         for value in values {
