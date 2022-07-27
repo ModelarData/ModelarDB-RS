@@ -282,4 +282,13 @@ mod tests {
 
         assert_eq!(spilled_segment.get_memory_size(), 0)
     }
+
+    #[test]
+    fn test_cannot_spill_already_spilled_segment() {
+        let mut spilled_segment = SpilledSegment {
+            path: "path".to_string(),
+        };
+
+        assert!(spilled_segment.spill_to_parquet("key".to_string()).is_err())
+    }
 }

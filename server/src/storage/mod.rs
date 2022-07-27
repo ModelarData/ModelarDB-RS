@@ -41,15 +41,6 @@ use crate::types::Timestamp;
 const INITIAL_BUILDER_CAPACITY: usize = 64;
 const RESERVED_BYTES: usize = 5000;
 
-// TODO: Add test for decrementing the remaining bytes when creating a builder.
-// TODO: Add test for spilling finished segments if there is not enough space when creating a builder (I/O).
-// TODO: Add test for panicking if trying to spill and there are none.
-// TODO: Add test for incrementing the remaining bytes when spilling (I/O).
-
-// TODO: Add test for checking that we cannot spill an already spilled finished segment.
-// TODO: Add test for checking that we can spill an un-spilled finished segment (I/O).
-
-// TODO: Maybe remove finished segment and add get_key to uncompressed segment.
 // TODO: Maybe split insert message into separate functions to avoid one large function.
 
 /// Manages all uncompressed data, both while being built and when finished.
@@ -213,7 +204,7 @@ mod tests {
     #[test]
     fn test_can_insert_message_into_new_segment() {
         let mut storage_engine = StorageEngine::new();
-        let key = insert_generated_message(&mut storage_engine);
+        let key = insert_generated_message(&mut storage_engine, "ModelarDB/test".to_string());
 
         assert!(storage_engine.data.contains_key(&key));
         assert_eq!(storage_engine.data.get(&key).unwrap().get_length(), 1);
@@ -253,6 +244,16 @@ mod tests {
     }
 
     #[test]
+    fn test_remaining_bytes_decremented_when_creating_new_segment() {
+        let mut storage_engine = StorageEngine::new();
+        let initial_remaining_bytes = storage_engine.remaining_bytes;
+
+        insert_generated_message(&mut storage_engine, "ModelarDB/test".to_string());
+
+        assert!(initial_remaining_bytes > storage_engine.remaining_bytes);
+    }
+
+    #[test]
     fn test_remaining_bytes_incremented_when_popping_in_memory() {
         let mut storage_engine = StorageEngine::new();
         let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY, &mut storage_engine);
@@ -263,27 +264,38 @@ mod tests {
         assert!(previous_remaining_bytes < storage_engine.remaining_bytes);
     }
 
+    #[test]
+    #[should_panic(expected = "Not enough reserved memory to hold all necessary segment builders.")]
+    fn test_panic_if_not_enough_reserved_memory() {
+        let mut storage_engine = StorageEngine::new();
+
+        // If there is enough reserved memory to hold n builders, we need to create n + 1 to panic.
+        for i in 0..(storage_engine.remaining_bytes / SegmentBuilder::get_memory_size()) + 1 {
+            insert_generated_message(&mut storage_engine, i.to_string());
+        }
+    }
+
 	/// Generate `count` data points for the same time series and insert them into `storage_engine`.
     /// Return the key, which is the same for all generated data points.
     fn insert_multiple_messages(count: usize, storage_engine: &mut StorageEngine) -> String {
         let mut key = String::new();
 
         for _ in 0..count {
-            key = insert_generated_message(storage_engine);
+            key = insert_generated_message(storage_engine, "ModelarDB/test".to_string());
         }
 
         key
     }
 
     /// Generate a data point and insert it into `storage_engine`. Return the data point key.
-    fn insert_generated_message(storage_engine: &mut StorageEngine) -> String {
+    fn insert_generated_message(storage_engine: &mut StorageEngine, topic: String) -> String {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_micros();
 
         let payload = format!("[{}, 30]", timestamp);
-        let message = Message::new("ModelarDB/test", payload, 1);
+        let message = Message::new(topic, payload, 1);
 
         storage_engine.insert_message(message.clone());
 
