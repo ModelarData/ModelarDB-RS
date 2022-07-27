@@ -33,7 +33,7 @@ use paho_mqtt::Message;
 use tracing::{error, info};
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::segment::{FinishedSegment, SegmentBuilder, UncompressedSegment};
+use crate::storage::segment::{FinishedSegment, SegmentBuilder};
 use crate::types::Timestamp;
 
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
@@ -123,30 +123,13 @@ impl StorageEngine {
         write_batch_to_parquet(batch, path);
     }
 
-    /// Move `segment_builder` to the the compression queue. If necessary, spill the data to Parquet first.
-    fn enqueue_segment(&mut self, key: String, mut segment_builder: SegmentBuilder) {
-        let uncompressed_segment: Box<dyn UncompressedSegment>;
-        let builder_size = SegmentBuilder::get_memory_size();
-
-        // If there is not enough space for the finished segment, spill the data to a Parquet file.
-        if builder_size > self.remaining_bytes {
-            info!("Not enough memory for the finished segment. Spilling the data to a file.");
-
-            let spilled_segment = segment_builder.spill_to_parquet(key.clone()).unwrap();
-            uncompressed_segment = Box::new(spilled_segment);
-
-            // Add the size of the segment back to the remaining reserved bytes.
-            self.remaining_bytes += builder_size;
-        } else {
-            info!("Saving the finished segment in memory.");
-
-            uncompressed_segment = Box::new(segment_builder);
-        }
-
+    /// Move `segment_builder` to the the compression queue.
+    fn enqueue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
         let finished_segment = FinishedSegment {
             key,
-            uncompressed_segment,
+            uncompressed_segment: Box::new(segment_builder),
         };
+
         self.compression_queue.push_back(finished_segment);
     }
 
@@ -157,8 +140,6 @@ impl StorageEngine {
 
         // Iterate through the finished segments to find a segment that is in memory.
         for finished in self.compression_queue.iter_mut() {
-            info!("Spilling a segment with key '{}' to a Parquet file.", finished.key);
-
             if let Ok(path) = finished.spill_to_parquet() {
                 // Add the size of the segment back to the remaining reserved bytes.
                 self.remaining_bytes += SegmentBuilder::get_memory_size();
