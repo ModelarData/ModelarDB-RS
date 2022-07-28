@@ -19,6 +19,7 @@
 
 use std::fmt::Formatter;
 use std::fs::File;
+use std::io::ErrorKind::Other;
 use std::sync::Arc;
 use std::{fmt, fs, mem};
 
@@ -42,7 +43,9 @@ pub trait UncompressedSegment {
 
     fn get_memory_size(&self) -> usize;
 
-    fn spill_to_parquet(&mut self, key: String) -> Result<SpilledSegment, String>;
+    // Since both segment builders and spilled segments are present in the compression queue, both
+    // structs need to implement spilling to parquet, with already spilled segments returning Err.
+    fn spill_to_parquet(&mut self, key: String) -> Result<SpilledSegment, std::io::Error>;
 }
 
 /// A single segment being built, consisting of an ordered sequence of timestamps and values. Note
@@ -127,7 +130,7 @@ impl UncompressedSegment for SegmentBuilder {
     }
 
     /// Spill the in-memory segment to a Parquet file and return Ok when finished.
-    fn spill_to_parquet(&mut self, key: String) -> Result<SpilledSegment, String> {
+    fn spill_to_parquet(&mut self, key: String) -> Result<SpilledSegment, std::io::Error> {
         let batch = self.get_record_batch();
         Ok(SpilledSegment::new(key.clone(), batch))
     }
@@ -140,7 +143,7 @@ pub struct SpilledSegment {
 }
 
 impl SpilledSegment {
-    /// Save the data in `batch` to a Parquet file, and return a spilled segment with the path.
+    /// Spill the data in `batch` to a Parquet file, and return a spilled segment with the path.
     pub fn new(key: String, batch: RecordBatch) -> Self {
         let folder_path = format!("uncompressed/{}", key);
         fs::create_dir_all(&folder_path);
@@ -180,8 +183,11 @@ impl UncompressedSegment for SpilledSegment {
     }
 
     /// Since the segment has already been spilled, return Err.
-    fn spill_to_parquet(&mut self, __key: String) -> Result<SpilledSegment, String> {
-        Err(format!("The segment has already been spilled to '{}'.", self.path))
+    fn spill_to_parquet(&mut self, __key: String) -> Result<SpilledSegment, std::io::Error> {
+        Err(std::io::Error::new(
+            Other,
+            format!("The segment has already been spilled to '{}'.", &self.path),
+        ))
     }
 }
 
@@ -193,7 +199,7 @@ pub struct FinishedSegment {
 
 impl FinishedSegment {
     /// If in memory, spill the segment to Parquet and return the path, otherwise return Err.
-    pub fn spill_to_parquet(&mut self) -> Result<String, String> {
+    pub fn spill_to_parquet(&mut self) -> Result<String, std::io::Error> {
         let spilled = self
             .uncompressed_segment
             .spill_to_parquet(self.key.clone())?;

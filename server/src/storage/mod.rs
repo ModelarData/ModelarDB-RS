@@ -39,7 +39,7 @@ use crate::types::Timestamp;
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
 // being larger due to internal alignment when allocating memory for the builders.
 const INITIAL_BUILDER_CAPACITY: usize = 64;
-const RESERVED_BYTES: usize = 5000;
+const RESERVED_MEMORY_IN_BYTES: usize = 5000;
 
 /// Manages all uncompressed data, both while being built and when finished.
 pub struct StorageEngine {
@@ -48,7 +48,7 @@ pub struct StorageEngine {
     /// Prioritized queue of finished segments that are ready for compression.
     compression_queue: VecDeque<FinishedSegment>,
     /// How many bytes of memory that are left for storing uncompressed segments.
-    remaining_bytes: usize,
+    remaining_memory_in_bytes: usize,
 }
 
 impl StorageEngine {
@@ -57,7 +57,7 @@ impl StorageEngine {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             data: HashMap::new(),
             compression_queue: VecDeque::new(),
-            remaining_bytes: RESERVED_BYTES,
+            remaining_memory_in_bytes: RESERVED_MEMORY_IN_BYTES,
         }
     }
 
@@ -83,15 +83,15 @@ impl StorageEngine {
                 } else {
                     info!("Could not find segment with key '{}'. Creating segment.", key);
 
-                    // If there is not enough space for a new segment, spill a finished segment.
-                    if SegmentBuilder::get_memory_size() > self.remaining_bytes {
+                    // If there is not enough memory for a new segment, spill a finished segment.
+                    if SegmentBuilder::get_memory_size() > self.remaining_memory_in_bytes {
                         self.spill_finished_segment();
                     }
 
-                    // Create a new segment and remove the size from the reserved remaining memory.
+                    // Create a new segment and reduce the remaining amount of reserved memory by its size.
                     let mut segment = SegmentBuilder::new();
-                    self.remaining_bytes -= SegmentBuilder::get_memory_size();
-                    info!("Created segment. Remaining bytes: {}.", self.remaining_bytes);
+                    self.remaining_memory_in_bytes -= SegmentBuilder::get_memory_size();
+                    info!("Created segment. Remaining bytes: {}.", self.remaining_memory_in_bytes);
 
                     segment.insert_data(&data_point);
                     self.data.insert(key, segment);
@@ -106,7 +106,8 @@ impl StorageEngine {
     pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
         if let Some(finished_segment) = self.compression_queue.pop_front() {
             // Add the memory size of the removed finished segment back to the remaining bytes.
-            self.remaining_bytes += finished_segment.uncompressed_segment.get_memory_size();
+            self.remaining_memory_in_bytes +=
+                finished_segment.uncompressed_segment.get_memory_size();
 
             Some(finished_segment)
         } else {
@@ -142,11 +143,11 @@ impl StorageEngine {
         for finished in self.compression_queue.iter_mut() {
             if let Ok(path) = finished.spill_to_parquet() {
                 // Add the size of the segment back to the remaining reserved bytes.
-                self.remaining_bytes += SegmentBuilder::get_memory_size();
+                self.remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
 
                 info!(
                     "Spilled the segment to '{}'. Remaining bytes: {}.",
-                    path, self.remaining_bytes
+                    path, self.remaining_memory_in_bytes
                 );
                 return ();
             }
@@ -229,33 +230,35 @@ mod tests {
     }
 
     #[test]
-    fn test_remaining_bytes_decremented_when_creating_new_segment() {
+    fn test_remaining_memory_decremented_when_creating_new_segment() {
         let mut storage_engine = StorageEngine::new();
-        let initial_remaining_bytes = storage_engine.remaining_bytes;
+        let initial_remaining_memory = storage_engine.remaining_memory_in_bytes;
 
         insert_generated_message(&mut storage_engine, "ModelarDB/test".to_string());
 
-        assert!(initial_remaining_bytes > storage_engine.remaining_bytes);
+        assert!(initial_remaining_memory > storage_engine.remaining_memory_in_bytes);
     }
 
     #[test]
-    fn test_remaining_bytes_incremented_when_popping_in_memory() {
+    fn test_remaining_memory_incremented_when_popping_in_memory() {
         let mut storage_engine = StorageEngine::new();
         let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY, &mut storage_engine);
 
-        let previous_remaining_bytes = storage_engine.remaining_bytes.clone();
+        let previous_remaining_memory = storage_engine.remaining_memory_in_bytes.clone();
         storage_engine.get_finished_segment();
 
-        assert!(previous_remaining_bytes < storage_engine.remaining_bytes);
+        assert!(previous_remaining_memory < storage_engine.remaining_memory_in_bytes);
     }
 
     #[test]
     #[should_panic(expected = "Not enough reserved memory to hold all necessary segment builders.")]
     fn test_panic_if_not_enough_reserved_memory() {
         let mut storage_engine = StorageEngine::new();
+        let reserved_memory = storage_engine.remaining_memory_in_bytes;
 
         // If there is enough reserved memory to hold n builders, we need to create n + 1 to panic.
-        for i in 0..(storage_engine.remaining_bytes / SegmentBuilder::get_memory_size()) + 1 {
+        for i in 0..(reserved_memory / SegmentBuilder::get_memory_size()) + 1
+        {
             insert_generated_message(&mut storage_engine, i.to_string());
         }
     }
