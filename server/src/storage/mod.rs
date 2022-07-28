@@ -25,22 +25,21 @@ use std::collections::HashMap;
 use std::fs;
 use std::fs::File;
 
-use paho_mqtt::Message;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
+use paho_mqtt::Message;
+use tracing::{error, info, info_span};
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::segment::{SpilledSegment, FinishedSegment, SegmentBuilder, UncompressedSegment};
+use crate::storage::segment::{FinishedSegment, SegmentBuilder};
 use crate::types::Timestamp;
 
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
 // being larger due to internal alignment when allocating memory for the builders.
 const INITIAL_BUILDER_CAPACITY: usize = 64;
-// TODO: The sensor count should be dynamic and not predefined.
-const SENSOR_COUNT: usize = 2;
-const RESERVED_BYTES: usize = 5000;
+const RESERVED_MEMORY_IN_BYTES: usize = 5000;
 
 /// Manages all uncompressed data, both while being built and when finished.
 pub struct StorageEngine {
@@ -49,7 +48,7 @@ pub struct StorageEngine {
     /// Prioritized queue of finished segments that are ready for compression.
     compression_queue: VecDeque<FinishedSegment>,
     /// How many bytes of memory that are left for storing uncompressed segments.
-    remaining_bytes: usize,
+    remaining_memory_in_bytes: usize,
 }
 
 impl StorageEngine {
@@ -58,7 +57,7 @@ impl StorageEngine {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             data: HashMap::new(),
             compression_queue: VecDeque::new(),
-            remaining_bytes: RESERVED_BYTES - (SegmentBuilder::get_memory_size() * SENSOR_COUNT)
+            remaining_memory_in_bytes: RESERVED_MEMORY_IN_BYTES,
         }
     }
 
@@ -67,33 +66,39 @@ impl StorageEngine {
         match DataPoint::from_message(&message) {
             Ok(data_point) => {
                 let key = data_point.generate_unique_key();
+                let _span = info_span!("insert_message", key = key.clone()).entered();
 
-                println!("Inserting data point {:?} into segment with key '{}'.", data_point, key);
+                info!("Inserting data point '{}' into segment.", data_point);
 
                 if let Some(segment) = self.data.get_mut(&key) {
-                    println!("Found existing segment with key '{}'.", key);
+                    info!("Found existing segment.");
 
                     segment.insert_data(&data_point);
 
                     if segment.is_full() {
-                        println!("Segment is full, moving it to the compression queue.");
+                        info!("Segment is full, moving it to the compression queue.");
 
                         let full_segment = self.data.remove(&key).unwrap();
                         self.enqueue_segment(key, full_segment)
                     }
                 } else {
-                    println!(
-                        "Could not find segment with key '{}'. Creating segment.",
-                        key
-                    );
+                    info!("Could not find segment. Creating segment.");
 
+                    // If there is not enough memory for a new segment, spill a finished segment.
+                    if SegmentBuilder::get_memory_size() > self.remaining_memory_in_bytes {
+                        self.spill_finished_segment();
+                    }
+
+                    // Create a new segment and reduce the remaining amount of reserved memory by its size.
                     let mut segment = SegmentBuilder::new();
-                    segment.insert_data(&data_point);
+                    self.remaining_memory_in_bytes -= SegmentBuilder::get_memory_size();
+                    info!("Created segment. Remaining bytes: {}.", self.remaining_memory_in_bytes);
 
+                    segment.insert_data(&data_point);
                     self.data.insert(key, segment);
                 }
             }
-            Err(e) => eprintln!("Message could not be inserted into storage: {:?}", e),
+            Err(e) => error!("Message could not be inserted into storage: {:?}", e),
         }
     }
 
@@ -102,7 +107,8 @@ impl StorageEngine {
     pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
         if let Some(finished_segment) = self.compression_queue.pop_front() {
             // Add the memory size of the removed finished segment back to the remaining bytes.
-            self.remaining_bytes += finished_segment.uncompressed_segment.get_memory_size();
+            self.remaining_memory_in_bytes +=
+                finished_segment.uncompressed_segment.get_memory_size();
 
             Some(finished_segment)
         } else {
@@ -119,29 +125,37 @@ impl StorageEngine {
         write_batch_to_parquet(batch, path);
     }
 
-    /// Move `segment_builder` to the the compression queue. If necessary, spill the data to Parquet first.
+    /// Move `segment_builder` to the compression queue.
     fn enqueue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
-        println!("Saving the finished segment. Remaining bytes: {}", self.remaining_bytes);
+        let finished_segment = FinishedSegment {
+            key,
+            uncompressed_segment: Box::new(segment_builder),
+        };
 
-        let uncompressed_segment: Box<dyn UncompressedSegment>;
-        let builder_size = SegmentBuilder::get_memory_size();
+        self.compression_queue.push_back(finished_segment);
+    }
 
-        // If there is not enough space for the finished segment, spill the data to a Parquet file.
-        if builder_size > self.remaining_bytes {
-            println!("Not enough memory for the finished segment. Spilling the data to a file.");
+    /// Spill the first in-memory finished segment in the compression queue. If no in-memory
+    /// finished segments could be found, panic.
+    fn spill_finished_segment(&mut self) {
+        info!("Not enough memory to create segment. Spilling an already finished segment.");
 
-            let spilled_segment = SpilledSegment::new(key.clone(), segment_builder);
-            uncompressed_segment = Box::new(spilled_segment);
-        } else {
-            println!("Saving the finished segment in memory.");
-            uncompressed_segment = Box::new(segment_builder);
+        // Iterate through the finished segments to find a segment that is in memory.
+        for finished in self.compression_queue.iter_mut() {
+            if let Ok(path) = finished.spill_to_parquet() {
+                // Add the size of the segment back to the remaining reserved bytes.
+                self.remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
 
-            // Since it is saved in memory, remove the size of the segment from the remaining bytes.
-            self.remaining_bytes -= builder_size;
+                info!(
+                    "Spilled the segment to '{}'. Remaining bytes: {}.",
+                    path, self.remaining_memory_in_bytes
+                );
+                return ();
+            }
         }
 
-        let finished_segment = FinishedSegment { key, uncompressed_segment };
-        self.compression_queue.push_back(finished_segment);
+        // If not able to find any in-memory finished segments, we should panic.
+        panic!("Not enough reserved memory to hold all necessary segment builders.");
     }
 }
 
@@ -177,7 +191,7 @@ mod tests {
     #[test]
     fn test_can_insert_message_into_new_segment() {
         let mut storage_engine = StorageEngine::new();
-        let key = insert_generated_message(&mut storage_engine);
+        let key = insert_generated_message(&mut storage_engine, "ModelarDB/test".to_string());
 
         assert!(storage_engine.data.contains_key(&key));
         assert_eq!(storage_engine.data.get(&key).unwrap().get_length(), 1);
@@ -217,46 +231,60 @@ mod tests {
     }
 
     #[test]
-    fn test_remaining_bytes_decremented_when_queuing_in_memory() {
+    fn test_remaining_memory_decremented_when_creating_new_segment() {
         let mut storage_engine = StorageEngine::new();
-        let initial_remaining_bytes = storage_engine.remaining_bytes.clone();
-        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY, &mut storage_engine);
+        let initial_remaining_memory = storage_engine.remaining_memory_in_bytes;
 
-        assert!(initial_remaining_bytes > storage_engine.remaining_bytes);
+        insert_generated_message(&mut storage_engine, "ModelarDB/test".to_string());
+
+        assert!(initial_remaining_memory > storage_engine.remaining_memory_in_bytes);
     }
 
     #[test]
-    fn test_remaining_bytes_incremented_when_popping_in_memory() {
+    fn test_remaining_memory_incremented_when_popping_in_memory() {
         let mut storage_engine = StorageEngine::new();
         let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY, &mut storage_engine);
 
-        let previous_remaining_bytes = storage_engine.remaining_bytes.clone();
+        let previous_remaining_memory = storage_engine.remaining_memory_in_bytes.clone();
         storage_engine.get_finished_segment();
 
-        assert!(previous_remaining_bytes < storage_engine.remaining_bytes);
+        assert!(previous_remaining_memory < storage_engine.remaining_memory_in_bytes);
     }
 
-	/// Generate `count` data points for the same time series and insert them into `storage_engine`.
+    #[test]
+    #[should_panic(expected = "Not enough reserved memory to hold all necessary segment builders.")]
+    fn test_panic_if_not_enough_reserved_memory() {
+        let mut storage_engine = StorageEngine::new();
+        let reserved_memory = storage_engine.remaining_memory_in_bytes;
+
+        // If there is enough reserved memory to hold n builders, we need to create n + 1 to panic.
+        for i in 0..(reserved_memory / SegmentBuilder::get_memory_size()) + 1
+        {
+            insert_generated_message(&mut storage_engine, i.to_string());
+        }
+    }
+
+    /// Generate `count` data points for the same time series and insert them into `storage_engine`.
     /// Return the key, which is the same for all generated data points.
     fn insert_multiple_messages(count: usize, storage_engine: &mut StorageEngine) -> String {
         let mut key = String::new();
 
         for _ in 0..count {
-            key = insert_generated_message(storage_engine);
+            key = insert_generated_message(storage_engine, "ModelarDB/test".to_string());
         }
 
         key
     }
 
     /// Generate a data point and insert it into `storage_engine`. Return the data point key.
-    fn insert_generated_message(storage_engine: &mut StorageEngine) -> String {
+    fn insert_generated_message(storage_engine: &mut StorageEngine, topic: String) -> String {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_micros();
 
         let payload = format!("[{}, 30]", timestamp);
-        let message = Message::new("ModelarDB/test", payload, 1);
+        let message = Message::new(topic, payload, 1);
 
         storage_engine.insert_message(message.clone());
 
