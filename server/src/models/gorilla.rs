@@ -158,20 +158,20 @@ pub fn sum(
 
 /// Reconstruct the data points for a time series segment whose values are
 /// compressed using Gorilla's compression method for floating-point values.
-/// Each data point is split into its three components and appended to `tids`,
-/// `timestamps`, and `values`.
+/// Each data point is split into its three components and appended to
+/// `time_series_ids`, `timestamps`, and `values`.
 pub fn grid(
-    tid: TimeSeriesId,
+    time_series_id: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    tids: &mut TimeSeriesIdBuilder,
+    time_series_ids: &mut TimeSeriesIdBuilder,
     timestamps: &mut TimestampBuilder,
     values: &mut ValueBuilder,
 ) {
     for timestamp in (start_time..=end_time).step_by(sampling_interval as usize) {
-        tids.append_value(tid).unwrap();
+        time_series_ids.append_value(time_series_id).unwrap();
         timestamps.append_value(timestamp).unwrap();
     }
     decompress_values(start_time, end_time, sampling_interval, model, values);
@@ -463,7 +463,7 @@ mod tests {
     fn test_grid(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let compressed_values = compress_values_using_gorilla(&values);
-        let mut tids_builder = TimeSeriesIdBuilder::new(10);
+        let mut time_series_ids_builder = TimeSeriesIdBuilder::new(10);
         let mut timestamps_builder = TimestampBuilder::new(10);
         let mut values_builder = ValueBuilder::new(10);
 
@@ -473,21 +473,23 @@ mod tests {
             values.len() as i64,
             1,
             &compressed_values,
-            &mut tids_builder,
+            &mut time_series_ids_builder,
             &mut timestamps_builder,
             &mut values_builder
         );
 
-        let tids_array = tids_builder.finish();
+        let time_series_ids_array = time_series_ids_builder.finish();
         let timestamps_array = timestamps_builder.finish();
         let values_array = values_builder.finish();
 
         prop_assert!(
-            tids_array.len() == values.len()
-            && tids_array.len() == timestamps_array.len()
-            && tids_array.len() == values_array.len()
+            time_series_ids_array.len() == values.len()
+            && time_series_ids_array.len() == timestamps_array.len()
+            && time_series_ids_array.len() == values_array.len()
         );
-        prop_assert!(tids_array.iter().all(|tid_option| tid_option.unwrap() == 1));
+        prop_assert!(time_series_ids_array
+             .iter()
+             .all(|time_series_id_option| time_series_id_option.unwrap() == 1));
         prop_assert!(timestamps_array.values().windows(2).all(|window| window[1] - window[0] == 1));
         prop_assert!(slice_of_value_equal(values_array.values(), &values));
     }

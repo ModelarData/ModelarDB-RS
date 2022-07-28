@@ -85,13 +85,13 @@ impl PMCMean {
     fn is_value_within_error_bound(&self, real_value: Value, approximate_value: Value) -> bool {
         // Needed because result becomes NAN and approximate_value is rejected
         // if approximate_value and real_value are zero, and because NAN != NAN.
-	if models::equal_or_nan(real_value as f64, approximate_value as f64) {
-	    true
-	} else {
-	    let difference = real_value - approximate_value;
-	    let result = Value::abs(difference / real_value);
-	    (result * 100.0) <= self.error_bound
-	}
+        if models::equal_or_nan(real_value as f64, approximate_value as f64) {
+            true
+        } else {
+            let difference = real_value - approximate_value;
+            let result = Value::abs(difference / real_value);
+            (result * 100.0) <= self.error_bound
+        }
     }
 }
 
@@ -121,21 +121,22 @@ pub fn sum(
 
 /// Reconstruct the data points for a time series segment whose values are
 /// represented by a model of type PMC-Mean. Each data point is split into its
-/// three components and appended to `tids`, `timestamps`, and `values`.
+/// three components and appended to `time_series_ids`, `timestamps`, and
+/// `values`.
 pub fn grid(
-    tid: TimeSeriesId,
+    time_series_id: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    tids: &mut TimeSeriesIdBuilder,
+    time_series_ids: &mut TimeSeriesIdBuilder,
     timestamps: &mut TimestampBuilder,
     values: &mut ValueBuilder,
 ) {
     let value = decode_model(model);
     let sampling_interval = sampling_interval as usize;
     for timestamp in (start_time..=end_time).step_by(sampling_interval) {
-        tids.append_value(tid).unwrap();
+        time_series_ids.append_value(time_series_id).unwrap();
         timestamps.append_value(timestamp).unwrap();
         values.append_value(value).unwrap();
     }
@@ -314,7 +315,7 @@ mod tests {
     fn test_grid(value in ProptestValue::ANY) {
         let model = value.to_be_bytes();
         let sampling_interval: i64 = 60;
-        let mut tids = TimeSeriesIdBuilder::new(10);
+        let mut time_series_ids = TimeSeriesIdBuilder::new(10);
         let mut timestamps = TimestampBuilder::new(10);
         let mut values = ValueBuilder::new(10);
 
@@ -324,19 +325,23 @@ mod tests {
             1657734540,
             sampling_interval as i32,
             &model,
-            &mut tids,
+            &mut time_series_ids,
             &mut timestamps,
             &mut values,
         );
 
-        let tids = tids.finish();
+        let time_series_ids = time_series_ids.finish();
         let timestamps = timestamps.finish();
         let values = values.finish();
 
         prop_assert!(
-            tids.len() == 10 && tids.len() == timestamps.len() && tids.len() == values.len()
+            time_series_ids.len() == 10
+            && time_series_ids.len() == timestamps.len()
+            && time_series_ids.len() == values.len()
         );
-        prop_assert!(tids.iter().all(|tid_option| tid_option.unwrap() == 1));
+        prop_assert!(time_series_ids
+             .iter()
+             .all(|time_series_id_option| time_series_id_option.unwrap() == 1));
         prop_assert!(timestamps
             .values()
             .windows(2)

@@ -34,7 +34,7 @@ use crate::types::{
 
 /// Unique ids for each model type. Constant values are used instead of an enum
 /// so the stored model type ids can be used in match expressions without being
-/// converted to an enum first. Zero and one is not used for compatibility with
+/// converted to an enum first. Zero and one are not used for compatibility with
 /// the legacy JVM-based version of [ModelarDB].
 ///
 /// [ModelarDB]: https://github.com/ModelarData/ModelarDB

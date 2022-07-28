@@ -239,21 +239,22 @@ pub fn sum(
 
 /// Reconstruct the data points for a time series segment whose values are
 /// represented by a model of type Swing. Each data point is split into its
-/// three components and appended to `tids`, `timestamps`, and `values`.
+/// three components and appended to `time_series_ids`, `timestamps`, and
+/// `values`.
 pub fn grid(
-    tid: TimeSeriesId,
+    time_series_id: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    tids: &mut TimeSeriesIdBuilder,
+    time_series_ids: &mut TimeSeriesIdBuilder,
     timestamps: &mut TimestampBuilder,
     values: &mut ValueBuilder,
 ) {
     let (slope, intercept) = decode_model(model);
     let sampling_interval = sampling_interval as usize;
     for timestamp in (start_time..=end_time).step_by(sampling_interval) {
-        tids.append_value(tid).unwrap();
+        time_series_ids.append_value(time_series_id).unwrap();
         timestamps.append_value(timestamp).unwrap();
         let value = (slope * timestamp as f64 + intercept) as Value;
         values.append_value(value).unwrap();
@@ -546,7 +547,7 @@ mod tests {
         );
         let model = [slope.to_be_bytes(), intercept.to_be_bytes()].concat();
         let length = (((FINAL_TIMESTAMP - FIRST_TIMESTAMP) / SAMPLING_INTERVAL) + 1) as usize;
-        let mut tids = TimeSeriesIdBuilder::new(length);
+        let mut time_series_ids = TimeSeriesIdBuilder::new(length);
         let mut timestamps = TimestampBuilder::new(length);
         let mut values = ValueBuilder::new(length);
 
@@ -556,19 +557,23 @@ mod tests {
             FINAL_TIMESTAMP,
             SAMPLING_INTERVAL as i32,
             &model,
-            &mut tids,
+            &mut time_series_ids,
             &mut timestamps,
             &mut values,
         );
 
-        let tids = tids.finish();
+        let time_series_ids = time_series_ids.finish();
         let timestamps = timestamps.finish();
         let values = values.finish();
 
         prop_assert!(
-            tids.len() == length && tids.len() == timestamps.len() && tids.len() == values.len()
+            time_series_ids.len() == length
+            && time_series_ids.len() == timestamps.len()
+            && time_series_ids.len() == values.len()
         );
-        prop_assert!(tids.iter().all(|tid_option| tid_option.unwrap() == 1));
+        prop_assert!(time_series_ids
+             .iter()
+             .all(|time_series_id_option| time_series_id_option.unwrap() == 1));
         prop_assert!(timestamps
             .values()
             .windows(2)
