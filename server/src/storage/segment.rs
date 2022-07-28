@@ -94,16 +94,13 @@ impl SegmentBuilder {
         self.timestamps.append_value(data_point.timestamp);
         self.values.append_value(data_point.value);
 
-        info!("Inserted data point into {}.", self)
+        info!("Inserted data point into segment with {}.", self)
     }
 }
 
 impl fmt::Display for SegmentBuilder {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        f.write_str(&format!("Segment with {} data point(s) ", self.get_length()));
-        f.write_str(&format!("(Capacity: {})", self.get_capacity()));
-
-        Ok(())
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{} data point(s) (Capacity: {})", self.get_length(), self.get_capacity())
     }
 }
 

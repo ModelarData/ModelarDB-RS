@@ -16,11 +16,12 @@
 //! A single data point. Note that this struct is mainly used when converting from a raw MQTT
 //! message to Apache Arrow.
 
+use std::fmt;
+use std::fmt::Formatter;
 use paho_mqtt::Message;
 
 use crate::types::{Timestamp, Value};
 
-#[derive(Debug)]
 pub struct DataPoint {
     pub timestamp: Timestamp,
     pub value: Value,
@@ -67,6 +68,12 @@ impl DataPoint {
     /// Generate a unique key for a time series based on the information in the message.
     pub fn generate_unique_key(&self) -> String {
         self.metadata.join("-")
+    }
+}
+
+impl fmt::Display for DataPoint {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "(Timestamp: {}, Value: {})", self.timestamp, self.value)
     }
 }
 

@@ -30,7 +30,7 @@ use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
 use paho_mqtt::Message;
-use tracing::{error, info};
+use tracing::{error, info, info_span};
 
 use crate::storage::data_point::DataPoint;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder};
@@ -66,11 +66,12 @@ impl StorageEngine {
         match DataPoint::from_message(&message) {
             Ok(data_point) => {
                 let key = data_point.generate_unique_key();
+                let _span = info_span!("insert_message", key = key.clone()).entered();
 
-                info!("Inserting data point {:?} into segment with key '{}'.", data_point, key);
+                info!("Inserting data point '{}' into segment.", data_point);
 
                 if let Some(segment) = self.data.get_mut(&key) {
-                    info!("Found existing segment with key '{}'.", key);
+                    info!("Found existing segment.");
 
                     segment.insert_data(&data_point);
 
@@ -81,7 +82,7 @@ impl StorageEngine {
                         self.enqueue_segment(key, full_segment)
                     }
                 } else {
-                    info!("Could not find segment with key '{}'. Creating segment.", key);
+                    info!("Could not find segment. Creating segment.");
 
                     // If there is not enough memory for a new segment, spill a finished segment.
                     if SegmentBuilder::get_memory_size() > self.remaining_memory_in_bytes {
