@@ -15,7 +15,7 @@
 
 //! Implementation of the model types used for compressing time series segments
 //! as models and functions for efficiently computing aggregates from models of
-//! each type. The module itself contains functionality used by multiple of the
+//! each type. The module itself contains general functionality used by the
 //! model types.
 
 mod gorilla;
@@ -34,7 +34,10 @@ use crate::types::{
 
 /// Unique ids for each model type. Constant values are used instead of an enum
 /// so the stored model type ids can be used in match expressions without being
-/// converted to an enum first.
+/// converted to an enum first. Zero and one is not used for compatibility with
+/// the legacy JVM-based version of [ModelarDB].
+///
+/// [ModelarDB]: https://github.com/ModelarData/ModelarDB
 const PMC_MEAN_ID: u8 = 2;
 const SWING_ID: u8 = 3;
 const GORILLA_ID: u8 = 4;
@@ -45,12 +48,12 @@ const GORILLA_ID: u8 = 4;
 struct ErrorBound(f32);
 
 impl ErrorBound {
-    /// Return `Self` if `error_bound` is a positive finite value, otherwise
-    /// `CompressionError`.
+    /// Return `ErrorBound` if `error_bound` is a positive finite value,
+    /// otherwise `CompressionError`.
     fn try_new(error_bound: f32) -> Result<Self, MiniModelarDBError> {
         if error_bound < 0.0 || error_bound.is_infinite() || error_bound.is_nan() {
             Err(MiniModelarDBError::CompressionError(
-                "Error bound cannot be negative, infinite, or NAN".to_owned(),
+                "Error bound cannot be negative, infinite, or NAN.".to_owned(),
             ))
         } else {
             Ok(Self(error_bound))
@@ -58,35 +61,37 @@ impl ErrorBound {
     }
 }
 
+/// Enable equal and not equal for `ErrorBound` and `f32`.
 impl PartialEq<ErrorBound> for f32 {
     fn eq(&self, other: &ErrorBound) -> bool {
         self.eq(&other.0)
     }
 }
 
+/// Enable less than and greater than for `ErrorBound` and `f32`.
 impl PartialOrd<ErrorBound> for f32 {
     fn partial_cmp(&self, other: &ErrorBound) -> Option<Ordering> {
         self.partial_cmp(&other.0)
     }
 }
 
-// TODO: rename `count` so it matches `length` when refactoring query engine.
+// TODO: rename `count` and return `Result` when refactoring query engine.
 // TODO: replace Int64Array with TimestampArray when refactoring query engine.
 // TODO: remove unused function parameters when refactoring query engine.
 /// Compute the number of data points in a batch of time series segments.
-/// `tids`, `start_times`, `end_times`, and `sampling_intervals` must all
-/// contain at least `num_rows` elements.
+/// `time_series_ids`, `start_times`, `end_times`, and `sampling_intervals` must
+/// all contain at least `num_rows` elements.
 pub fn count(
     num_rows: usize,
-    tids: &TimeSeriesIdArray,
+    time_series_ids: &TimeSeriesIdArray,
     start_times: &Int64Array,
     end_times: &Int64Array,
     sampling_intervals: &Int32Array,
 ) -> usize {
     let mut data_points = 0;
     for row_index in 0..num_rows {
-        let tid = tids.value(row_index) as usize;
-        let sampling_interval = sampling_intervals.value(tid);
+        let time_series_id = time_series_ids.value(row_index) as usize;
+        let sampling_interval = sampling_intervals.value(time_series_id);
         data_points += length(
             start_times.value(row_index),
             end_times.value(row_index),
@@ -104,107 +109,107 @@ pub fn length(start_time: Timestamp, end_time: Timestamp, sampling_interval: i32
 /// Compute the minimum value for a time series segment whose values are
 /// represented by a model.
 pub fn min(
-    _tid: TimeSeriesId,
+    _time_series_id: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
-    mtid: i32,
+    model_type_id: i32,
     sampling_interval: i32,
     model: &[u8],
     _gaps: &[u8],
 ) -> Value {
-    match mtid as u8 {
+    match model_type_id as u8 {
         PMC_MEAN_ID => pmcmean::min(model),
         SWING_ID => swing::min(start_time, end_time, model),
         GORILLA_ID => gorilla::min(start_time, end_time, sampling_interval, model),
-        _ => panic!("Internal error due to an unknown model type"),
+        _ => panic!("Unknown model type."),
     }
 }
 
 /// Compute the maximum value for a time series segment whose values are
 /// represented by a model.
 pub fn max(
-    _tid: TimeSeriesId,
+    _time_series_id: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
-    mtid: i32,
+    model_type_id: i32,
     sampling_interval: i32,
     model: &[u8],
     _gaps: &[u8],
 ) -> Value {
-    match mtid as u8 {
+    match model_type_id as u8 {
         PMC_MEAN_ID => pmcmean::max(model),
         SWING_ID => swing::max(start_time, end_time, model),
         GORILLA_ID => gorilla::max(start_time, end_time, sampling_interval, model),
-        _ => panic!("Internal error due to an unknown model type"),
+        _ => panic!("Unknown model type."),
     }
 }
 
 /// Compute the sum of the values for a time series segment whose values are
 /// represented by a model.
 pub fn sum(
-    _tid: TimeSeriesId,
+    _time_series_id: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
-    mtid: i32,
+    model_type_id: i32,
     sampling_interval: i32,
     model: &[u8],
     _gaps: &[u8],
 ) -> Value {
-    match mtid as u8 {
+    match model_type_id as u8 {
         PMC_MEAN_ID => pmcmean::sum(start_time, end_time, sampling_interval, model),
         SWING_ID => swing::sum(start_time, end_time, sampling_interval, model),
         GORILLA_ID => gorilla::sum(start_time, end_time, sampling_interval, model),
-        _ => panic!("Internal error due to an unknown model type"),
+        _ => panic!("Unknown model type."),
     }
 }
 
 /// Reconstruct the data points for a time series segment whose values are
 /// represented by a model. Each data point is split into its three components
-/// and appended to `tids`, `timestamps`, and `values`.
+/// and appended to `time_series_ids`, `timestamps`, and `values`.
 pub fn grid(
-    tid: TimeSeriesId,
+    time_series_id: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
-    mtid: i32,
+    model_type_id: i32,
     sampling_interval: i32,
     model: &[u8],
     _gaps: &[u8],
-    tids: &mut TimeSeriesIdBuilder,
+    time_series_ids: &mut TimeSeriesIdBuilder,
     timestamps: &mut TimestampBuilder,
     values: &mut ValueBuilder,
 ) {
-    match mtid as u8 {
+    match model_type_id as u8 {
         PMC_MEAN_ID => pmcmean::grid(
-            tid,
+            time_series_id,
             start_time,
             end_time,
             sampling_interval,
             model,
-            tids,
+            time_series_ids,
             timestamps,
             values,
         ),
         SWING_ID => swing::grid(
-            tid,
+            time_series_id,
             start_time,
             end_time,
             sampling_interval,
             model,
-            tids,
+            time_series_ids,
             timestamps,
             values,
         ),
         GORILLA_ID => gorilla::grid(
-            tid,
+            time_series_id,
             start_time,
             end_time,
             sampling_interval,
             model,
-            tids,
+            time_series_ids,
             timestamps,
             values,
         ),
-        _ => panic!("Internal error due to an unknown model type"),
+        _ => panic!("Unknown model type."),
     }
 }
 
@@ -250,12 +255,12 @@ mod tests {
     // Tests for length().
     #[test]
     fn test_length_of_segment_with_one_data_point() {
-	assert_eq!(1, length(1658671178037, 1658671178037, 1000));
+        assert_eq!(1, length(1658671178037, 1658671178037, 1000));
     }
 
     #[test]
-    fn test_length_of_segment_with_ten_data_point() {
-	assert_eq!(10, length(1658671178037, 1658671187037, 1000));
+    fn test_length_of_segment_with_ten_data_points() {
+        assert_eq!(10, length(1658671178037, 1658671187037, 1000));
     }
 
     // Tests for equal_or_nan().

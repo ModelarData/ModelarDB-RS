@@ -16,9 +16,9 @@
 //! The error types used throughout the system. Their design is based on [Rust
 //! by Example], [Apache Arrow],  and [Apache Arrow DataFusion].
 //!
-//! [Rust by Example] https://doc.rust-lang.org/rust-by-example/error/multiple_error_types/define_error_type.html
-//! [Apache Arrow] https://github.com/apache/arrow-rs/blob/master/arrow/src/error.rs
-//! [Apache Arrow DataFusion] https://github.com/apache/arrow-datafusion/blob/master/datafusion/common/src/error.rs
+//! [Rust by Example]: https://doc.rust-lang.org/rust-by-example/error/multiple_error_types/define_error_type.html
+//! [Apache Arrow]: https://github.com/apache/arrow-rs/blob/master/arrow/src/error.rs
+//! [Apache Arrow DataFusion]: https://github.com/apache/arrow-datafusion/blob/master/datafusion/common/src/error.rs
 
 use std::error::Error;
 use std::fmt::{Display, Formatter};

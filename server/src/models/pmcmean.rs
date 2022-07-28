@@ -80,8 +80,8 @@ impl PMCMean {
         (self.sum_of_values / self.length as f64) as Value
     }
 
-    /// Determine if `approximate_value` is within the relative
-    /// `self.error_bound` of `real_value`.
+    /// Determine if `approximate_value` is within `PMCMean`'s relative error
+    /// bound of `real_value`.
     fn is_value_within_error_bound(&self, real_value: Value, approximate_value: Value) -> bool {
         // Needed because result becomes NAN and approximate_value is rejected
         // if approximate_value and real_value are zero, and because NAN != NAN.

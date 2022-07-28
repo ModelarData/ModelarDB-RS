@@ -249,7 +249,7 @@ struct BitReader<'a> {
 impl<'a> BitReader<'a> {
     fn try_new(bytes: &'a [u8]) -> Result<Self, String> {
         if bytes.is_empty() {
-            Err("The byte array cannot be empty".to_string())
+            Err("The byte array cannot be empty".to_owned())
         } else {
             Ok(Self { next_bit: 0, bytes })
         }
