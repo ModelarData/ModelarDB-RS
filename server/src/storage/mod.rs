@@ -49,8 +49,7 @@ use crate::types::Timestamp;
 // TODO: If there is none left in the queue, we have to save the given compressed segment directly (maybe just create compressed time series and save immediately).
 // TODO: If there is eventually enough space save the compressed segment in a compressed time series after.
 
-// TODO: Switch folder structure to key/uncompressed – key/compressed.
-// TODO: Add a max compressed file size constant. If a compressed time series reaches this size it should be saved to a file instead of appended to further.
+// TODO: If a compressed time series reaches this size it should be saved to a file instead of appended to further.
 
 // TODO: Look into moving handling of uncompressed and compressed data into separate structs.
 
@@ -147,7 +146,7 @@ impl StorageEngine {
 
     /// Write `batch` to a persistent Apache Parquet file on disk.
     pub fn save_compressed_data(key: String, first_timestamp: Timestamp, batch: RecordBatch) {
-        let folder_path = format!("compressed/{}", key);
+        let folder_path = format!("storage/{}/compressed", key);
         fs::create_dir_all(&folder_path);
 
         let path = format!("{}/{}.parquet", folder_path, first_timestamp);

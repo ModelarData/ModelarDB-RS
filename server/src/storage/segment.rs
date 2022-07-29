@@ -142,7 +142,7 @@ pub struct SpilledSegment {
 impl SpilledSegment {
     /// Spill the data in `batch` to a Parquet file, and return a spilled segment with the path.
     pub fn new(key: String, batch: RecordBatch) -> Self {
-        let folder_path = format!("uncompressed/{}", key);
+        let folder_path = format!("storage/{}/uncompressed", key);
         fs::create_dir_all(&folder_path);
 
         // Create a path that uses the first timestamp as the filename.
