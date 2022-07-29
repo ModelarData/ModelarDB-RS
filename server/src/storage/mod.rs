@@ -36,6 +36,38 @@ use crate::storage::data_point::DataPoint;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder};
 use crate::types::Timestamp;
 
+// TODO: Add new constant that defines how much memory is used for compressed vs. uncompressed (maybe make this dynamic?).
+// TODO: Add a new field to the StorageEngine that can hold compressed data.
+// TODO: Rename the current data field to "uncompressed_data".
+
+// TODO: To ensure that data is saved in the correct order we should have a queue for the compressed data.
+// TODO: It should be a queue of CompressedTimeSeries structs.
+
+// TODO: The struct should have a compressed_segments field with a list of segments that is appended to.
+// TODO: To make it easier to save maybe also save the path when first creating it (key and first timestamp).
+// TODO: To make it possible to update the remaining bytes when saving to a file it should have the continuously updated total size.
+
+// TODO: It should have a method to append to this field that checks the given batch to ensure it has the correct schema.
+// TODO: It should have a method that can save the compressed segments to a single file.
+
+// TODO: When the "save_compressed_data" method on the SE is called it should check if there already is a compressed time series.
+// TODO: If there is, append to the compressed time series.
+// TODO: If there is not, create a new and add it to the compressed data queue.
+
+// TODO: Since the size of compressed segments is not constant we need to have a private function in the struct to calculate the size in bytes.
+// TODO: This size should be returned to the storage engine so the remaining bytes can be updated. Maybe do this before saving.
+// TODO: If there is not enough space for the compressed segment. Pop the first first compressed time series and add the size back.
+// TODO: Since the incoming segment can be very large we might need to save multiple time series to disk.
+// TODO: If there is none left in the queue, we have to save the given compressed segment directly (maybe just create compressed time series and save immediately).
+// TODO: If there is eventually enough space save the compressed segment in a compressed time series after.
+
+// TODO: Look into using prioritized queue.
+// TODO: To ensure we can do lookup with the key, we need a hashmap, maybe a prioritized hashmap??
+// TODO: Maybe use both a hashmap for storage and a queue for choosing which time series should be saved.
+
+// TODO: Switch folder structure to key/uncompressed – key/compressed.
+// TODO: Add a max compressed file size constant. If a compressed time series reaches this size it should be saved to a file instead of appended to further.
+
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
 // being larger due to internal alignment when allocating memory for the builders.
 const INITIAL_BUILDER_CAPACITY: usize = 64;
@@ -191,7 +223,7 @@ mod tests {
     #[test]
     fn test_can_insert_message_into_new_segment() {
         let mut storage_engine = StorageEngine::new();
-        let key = insert_generated_message(&mut storage_engine, "ModelarDB/test".to_string());
+        let key = insert_generated_message(&mut storage_engine, "ModelarDB/test".to_owned());
 
         assert!(storage_engine.data.contains_key(&key));
         assert_eq!(storage_engine.data.get(&key).unwrap().get_length(), 1);
@@ -235,7 +267,7 @@ mod tests {
         let mut storage_engine = StorageEngine::new();
         let initial_remaining_memory = storage_engine.remaining_memory_in_bytes;
 
-        insert_generated_message(&mut storage_engine, "ModelarDB/test".to_string());
+        insert_generated_message(&mut storage_engine, "ModelarDB/test".to_owned());
 
         assert!(initial_remaining_memory > storage_engine.remaining_memory_in_bytes);
     }
@@ -270,7 +302,7 @@ mod tests {
         let mut key = String::new();
 
         for _ in 0..count {
-            key = insert_generated_message(storage_engine, "ModelarDB/test".to_string());
+            key = insert_generated_message(storage_engine, "ModelarDB/test".to_owned());
         }
 
         key
