@@ -35,7 +35,7 @@ impl CompressedTimeSeries {
         Ok(())
     }
 
-    /// If the compressed segments can be successfully saved to Parquet, return Ok, otherwise return Err.
+    /// If the compressed segments is successfully saved to Parquet, return Ok, otherwise return Err.
     pub fn save_time_series(key: String) -> Result<(), std::io::Error> {
         // TODO: Create the folder structure if it does not already exist.
         // TODO: Combine the segments into a single record batch.
