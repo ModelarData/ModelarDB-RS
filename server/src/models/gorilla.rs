@@ -26,6 +26,7 @@ use std::mem;
 
 use datafusion::arrow::compute::kernels::aggregate;
 
+use crate::models;
 use crate::types::{
     TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
@@ -119,12 +120,10 @@ impl Gorilla {
 /// Compute the minimum value for a time series segment whose values are
 /// compressed using Gorilla's compression method for floating-point values.
 pub fn min(
-    _gid: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    _gaps: &[u8],
 ) -> Value {
     let decompressed_values =
         decompress_values_to_array(start_time, end_time, sampling_interval, model);
@@ -134,12 +133,10 @@ pub fn min(
 /// Compute the maximum value for a time series segment whose values are
 /// compressed using Gorilla's compression method for floating-point values.
 pub fn max(
-    _gid: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    _gaps: &[u8],
 ) -> Value {
     let decompressed_values =
         decompress_values_to_array(start_time, end_time, sampling_interval, model);
@@ -149,12 +146,10 @@ pub fn max(
 /// Compute the sum of the values for a time series segment whose values are
 /// compressed using Gorilla's compression method for floating-point values.
 pub fn sum(
-    _gid: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    _gaps: &[u8],
 ) -> Value {
     let decompressed_values =
         decompress_values_to_array(start_time, end_time, sampling_interval, model);
@@ -163,21 +158,20 @@ pub fn sum(
 
 /// Reconstruct the data points for a time series segment whose values are
 /// compressed using Gorilla's compression method for floating-point values.
-/// Each data point is split into its three components and appended to `tids`,
-/// `timestamps`, and `values`.
+/// Each data point is split into its three components and appended to
+/// `time_series_ids`, `timestamps`, and `values`.
 pub fn grid(
-    gid: TimeSeriesId,
+    time_series_id: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
     sampling_interval: i32,
     model: &[u8],
-    _gaps: &[u8],
-    tids: &mut TimeSeriesIdBuilder,
+    time_series_ids: &mut TimeSeriesIdBuilder,
     timestamps: &mut TimestampBuilder,
     values: &mut ValueBuilder,
 ) {
     for timestamp in (start_time..=end_time).step_by(sampling_interval as usize) {
-        tids.append_value(gid).unwrap();
+        time_series_ids.append_value(time_series_id).unwrap();
         timestamps.append_value(timestamp).unwrap();
     }
     decompress_values(start_time, end_time, sampling_interval, model, values);
@@ -191,7 +185,7 @@ fn decompress_values_to_array(
     sampling_interval: i32,
     model: &[u8],
 ) -> ValueArray {
-    let length = ((end_time - start_time) / sampling_interval as Timestamp) + 1;
+    let length = models::length(start_time, end_time, sampling_interval);
     let mut value_builder = ValueBuilder::new(length as usize);
     decompress_values(
         start_time,
@@ -221,7 +215,7 @@ fn decompress_values(
     values.append_value(Value::from_bits(last_value)).unwrap();
 
     // Then values are stored using XOR and a variable length binary encoding.
-    let length_without_first_value = (end_time - start_time) / sampling_interval as i64;
+    let length_without_first_value = models::length(start_time, end_time, sampling_interval) - 1;
     for _ in 0..length_without_first_value {
         if bits.read_bit() {
             if bits.read_bit() {
@@ -255,7 +249,7 @@ struct BitReader<'a> {
 impl<'a> BitReader<'a> {
     fn try_new(bytes: &'a [u8]) -> Result<Self, String> {
         if bytes.is_empty() {
-            Err("The byte array cannot be empty".to_string())
+            Err("The byte array cannot be empty".to_owned())
         } else {
             Ok(Self { next_bit: 0, bytes })
         }
@@ -356,6 +350,7 @@ impl BitVecBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models;
     use crate::types::tests::ProptestValue;
     use proptest::{bool, collection, prop_assert, prop_assert_eq, prop_assume, proptest};
 
@@ -377,7 +372,7 @@ mod tests {
     fn test_append_single_value(value in ProptestValue::ANY) {
         let mut model_type = Gorilla::new();
         model_type.compress_value(value);
-        prop_assert!(equal_or_nan(value, model_type.last_value));
+        prop_assert!(models::equal_or_nan(value as f64, model_type.last_value as f64));
         prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
         prop_assert_eq!(model_type.last_trailing_zero_bits, 0);
         prop_assert_eq!(model_type.compressed_values.current_byte, 0);
@@ -390,7 +385,7 @@ mod tests {
         let mut model_type = Gorilla::new();
         model_type.compress_value(value);
         model_type.compress_value(value);
-        prop_assert!(equal_or_nan(value, model_type.last_value));
+        prop_assert!(models::equal_or_nan(value as f64, model_type.last_value as f64));
         prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
         prop_assert_eq!(model_type.last_trailing_zero_bits, 0);
         prop_assert_eq!(model_type.compressed_values.current_byte, 0);
@@ -404,7 +399,7 @@ mod tests {
         let mut model_type = Gorilla::new();
         model_type.compress_value(37.0);
         model_type.compress_value(73.0);
-        assert!(equal_or_nan(73.0, model_type.last_value));
+        assert!(models::equal_or_nan(73.0, model_type.last_value as f64));
         assert_eq!(model_type.last_leading_zero_bits, 8);
         assert_eq!(model_type.last_trailing_zero_bits, 17);
         assert_eq!(model_type.compressed_values.current_byte, 48);
@@ -418,7 +413,7 @@ mod tests {
         model_type.compress_value(37.0);
         model_type.compress_value(71.0);
         model_type.compress_value(73.0);
-        assert!(equal_or_nan(73.0, model_type.last_value));
+        assert!(models::equal_or_nan(73.0, model_type.last_value as f64));
         assert_eq!(model_type.last_leading_zero_bits, 8);
         assert_eq!(model_type.last_trailing_zero_bits, 17);
         assert_eq!(model_type.compressed_values.current_byte, 112);
@@ -432,9 +427,9 @@ mod tests {
     fn test_min(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let compressed_values = compress_values_using_gorilla(&values);
-        let min = min(1, 1, values.len() as i64, 1, &compressed_values, &[]);
+        let min = min(1, values.len() as i64, 1, &compressed_values);
         let expected_min = aggregate::min(&ValueArray::from_iter_values(values)).unwrap();
-        prop_assert!(equal_or_nan(expected_min, min));
+        prop_assert!(models::equal_or_nan(expected_min as f64, min as f64));
     }
     }
 
@@ -444,9 +439,9 @@ mod tests {
     fn test_max(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let compressed_values = compress_values_using_gorilla(&values);
-        let max = max(1, 1, values.len() as i64, 1, &compressed_values, &[]);
+        let max = max(1, values.len() as i64, 1, &compressed_values);
         let expected_max = aggregate::max(&ValueArray::from_iter_values(values)).unwrap();
-        prop_assert!(equal_or_nan(expected_max, max));
+        prop_assert!(models::equal_or_nan(expected_max as f64, max as f64));
     }
     }
 
@@ -456,9 +451,9 @@ mod tests {
     fn test_sum(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let compressed_values = compress_values_using_gorilla(&values);
-        let sum = sum(1, 1, values.len() as i64, 1, &compressed_values, &[]);
+        let sum = sum(1, values.len() as i64, 1, &compressed_values);
         let expected_sum = aggregate::sum(&ValueArray::from_iter_values(values)).unwrap();
-        prop_assert!(equal_or_nan(expected_sum, sum));
+        prop_assert!(models::equal_or_nan(expected_sum as f64, sum as f64));
     }
     }
 
@@ -468,7 +463,7 @@ mod tests {
     fn test_grid(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let compressed_values = compress_values_using_gorilla(&values);
-        let mut tids_builder = TimeSeriesIdBuilder::new(10);
+        let mut time_series_ids_builder = TimeSeriesIdBuilder::new(10);
         let mut timestamps_builder = TimestampBuilder::new(10);
         let mut values_builder = ValueBuilder::new(10);
 
@@ -478,22 +473,23 @@ mod tests {
             values.len() as i64,
             1,
             &compressed_values,
-            &[],
-            &mut tids_builder,
+            &mut time_series_ids_builder,
             &mut timestamps_builder,
             &mut values_builder
         );
 
-        let tids_array = tids_builder.finish();
+        let time_series_ids_array = time_series_ids_builder.finish();
         let timestamps_array = timestamps_builder.finish();
         let values_array = values_builder.finish();
 
         prop_assert!(
-            tids_array.len() == values.len()
-            && tids_array.len() == timestamps_array.len()
-            && tids_array.len() == values_array.len()
+            time_series_ids_array.len() == values.len()
+            && time_series_ids_array.len() == timestamps_array.len()
+            && time_series_ids_array.len() == values_array.len()
         );
-        prop_assert!(tids_array.iter().all(|tid_option| tid_option.unwrap() == 1));
+        prop_assert!(time_series_ids_array
+             .iter()
+             .all(|time_series_id_option| time_series_id_option.unwrap() == 1));
         prop_assert!(timestamps_array.values().windows(2).all(|window| window[1] - window[0] == 1));
         prop_assert!(slice_of_value_equal(values_array.values(), &values));
     }
@@ -530,13 +526,9 @@ mod tests {
         let mut equal = true;
         for values in values_one.iter().zip(values_two) {
             let (value_one, value_two) = values;
-            equal &= equal_or_nan(*value_one, *value_two);
+            equal &= models::equal_or_nan(*value_one as f64, *value_two as f64);
         }
         equal
-    }
-
-    fn equal_or_nan(v1: Value, v2: Value) -> bool {
-        v1 == v2 || (v1.is_nan() && v2.is_nan())
     }
 
     // Tests for BitReader.
