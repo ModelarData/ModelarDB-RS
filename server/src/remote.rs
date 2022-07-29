@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Implementation of a request handler for Apache Arrow Flight as
+//! Implementation of a request handler for Apache Arrow Flight in the form of
 //! `FlightServiceHandler`. An Apache Arrow Flight server that process requests
 //! using `FlightServiceHandler` can be started `start_arrow_flight_server()`.
 
@@ -39,8 +39,8 @@ use tracing::{error, info};
 
 use crate::Context;
 
-/// Start an Apache Arrow Flight server on 0.0.0.0:`port` with `context`
-/// provided to the methods processing each request in `FlightServiceHandler`.
+/// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
+/// the methods that process the requests through `FlightServiceHandler`.
 pub fn start_arrow_flight_server(context: Arc<Context>, port: i16) -> Result<(), Box<dyn Error>> {
     let localhost_with_port = "0.0.0.0:".to_string() + &port.to_string();
     let localhost_with_port: SocketAddr = localhost_with_port.parse()?;
@@ -66,9 +66,10 @@ pub fn start_arrow_flight_server(context: Arc<Context>, port: i16) -> Result<(),
 ///
 /// [Apache Arrow Flight examples]: https://github.com/apache/arrow-rs/blob/master/arrow-flight/examples
 struct FlightServiceHandler {
-    /// Shared access to the catalog, asynchronous runtime, and query engine.
+    /// Singleton that provides access to the catalog, asynchronous runtime, and
+    /// query engine.
     context: Arc<Context>,
-    /// Pre-allocated argument for `utils::flight_data_to_arrow_batch`.
+    /// Pre-allocated static argument for `utils::flight_data_to_arrow_batch`.
     dictionaries_by_id: HashMap<i64, ArrayRef>,
 }
 
@@ -151,7 +152,7 @@ impl FlightService for FlightServiceHandler {
         let table_name = flight_descriptor
             .path
             .get(0)
-            .ok_or_else(|| Status::invalid_argument("No table was provided."))?;
+            .ok_or_else(|| Status::invalid_argument("No table name was provided."))?;
         let schema = self.get_table_schema_from_default_catalog(table_name)?;
 
         let options = IpcWriteOptions::default();
@@ -174,7 +175,7 @@ impl FlightService for FlightServiceHandler {
             .map_err(|error| Status::invalid_argument(format!("{}", error)))?;
 
         // Execute the query.
-        info!("Executing query: {}.", query);
+        info!("Executing the query: {}.", query);
         let session = self.context.session.clone();
         let data_frame = session
             .sql(query)
@@ -205,14 +206,14 @@ impl FlightService for FlightServiceHandler {
             .collect();
         result_set.append(&mut record_batches_as_flight_datas);
 
-        // Transmit the complete result.
-        let output = stream::iter(record_batches_as_flight_datas);
+        // Transmit the entire result.
+        let output = stream::iter(result_set);
         Ok(Response::new(Box::pin(output)))
     }
 
     /// Insert data points into a table. The name of the table must be provided
-    /// in `FlightDescriptor.path` and the schema of the data points must match
-    /// the schema of the table.
+    /// as the first element of `FlightDescriptor.path` and the schema of the
+    /// data points must match the schema of the table.
     async fn do_put(
         &self,
         request: Request<Streaming<FlightData>>,
@@ -239,10 +240,16 @@ impl FlightService for FlightServiceHandler {
         // Extract the schema.
         let schema_or_status = self.get_table_schema_from_default_catalog(&table_name);
         let schema = if let Ok(schema) = schema_or_status {
-            info!("Received RecordBatch for existing table {}.", table_name);
+            info!(
+                "Received a RecordBatch with a schema for the table {}.",
+                table_name
+            );
             schema
         } else {
-            error!("Received RecordBatch for missing table {}.", table_name);
+            error!(
+                "Received a RecordBatch with a schema for the missing table {}.",
+                table_name
+            );
             schema_or_status?
         };
 
@@ -257,7 +264,7 @@ impl FlightService for FlightServiceHandler {
             )
             .map_err(|error| Status::invalid_argument(format!("{}", error)))?;
             info!(
-                "Received RecordBatch with {} data points for table {}.",
+                "Received a RecordBatch with {} data points for the table {}.",
                 record_batch.num_rows(),
                 table_name
             );
