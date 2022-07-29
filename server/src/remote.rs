@@ -12,6 +12,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+//! Implementation of a request handler for Apache Arrow Flight as
+//! `FlightServiceHandler`. An Apache Arrow Flight server that process requests
+//! using `FlightServiceHandler` can be started `start_arrow_flight_server()`.
+
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::error::Error;
@@ -21,13 +26,13 @@ use std::str;
 use std::sync::Arc;
 
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
-use arrow_flight::utils::{flight_data_from_arrow_batch, flight_data_to_arrow_batch};
+use arrow_flight::utils;
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
 use datafusion::arrow::{array::ArrayRef, datatypes::SchemaRef, ipc::writer::IpcWriteOptions};
-use futures::{Stream, StreamExt};
+use futures::{stream, Stream, StreamExt};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{error, info};
@@ -35,7 +40,7 @@ use tracing::{error, info};
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` with `context`
-/// provided to the methods processing each request through the handler.
+/// provided to the methods processing each request in `FlightServiceHandler`.
 pub fn start_arrow_flight_server(context: Arc<Context>, port: i16) -> Result<(), Box<dyn Error>> {
     let localhost_with_port = "0.0.0.0:".to_string() + &port.to_string();
     let localhost_with_port: SocketAddr = localhost_with_port.parse()?;
@@ -56,12 +61,14 @@ pub fn start_arrow_flight_server(context: Arc<Context>, port: i16) -> Result<(),
         .map_err(|e| e.into())
 }
 
-/// Handler for Apache Arrow Flight requests. The type is based on the [Apache
-/// Arrow Flight examples] published under the Apache2 license.
+/// Handler for processing Apache Arrow Flight requests. `FlightServiceHandler`
+/// is based on the [Apache Arrow Flight examples] published under Apache2.
 ///
 /// [Apache Arrow Flight examples]: https://github.com/apache/arrow-rs/blob/master/arrow-flight/examples
 struct FlightServiceHandler {
+    /// Shared access to the catalog, asynchronous runtime, and query engine.
     context: Arc<Context>,
+    /// Pre-allocated argument for `utils::flight_data_to_arrow_batch`.
     dictionaries_by_id: HashMap<i64, ArrayRef>,
 }
 
@@ -71,21 +78,20 @@ impl FlightServiceHandler {
     /// is returned.
     fn get_table_schema_from_default_catalog(&self, table_name: &str) -> Result<SchemaRef, Status> {
         let session = self.context.session.clone();
-        if let Some(catalog) = session.catalog("datafusion") {
-            // default catalog.
-            if let Some(schema) = catalog.schema("public") {
-                // default schema.
-                if let Some(table) = schema.table(table_name) {
-                    Ok(table.schema())
-                } else {
-                    Err(Status::not_found("table does not exist"))
-                }
-            } else {
-                Err(Status::internal("schema does not exist"))
-            }
-        } else {
-            Err(Status::internal("catalog does not exist"))
-        }
+
+        let catalog = session
+            .catalog("datafusion")
+            .ok_or_else(|| Status::internal("Default catalog does not exist."))?;
+
+        let schema = catalog
+            .schema("public")
+            .ok_or_else(|| Status::internal("Default schema does not exist."))?;
+
+        let table = schema
+            .table(table_name)
+            .ok_or_else(|| Status::not_found("Table does not exist."))?;
+
+        Ok(table.schema())
     }
 }
 
@@ -106,128 +112,131 @@ impl FlightService for FlightServiceHandler {
     type DoExchangeStream =
         Pin<Box<dyn Stream<Item = Result<FlightData, Status>> + Send + Sync + 'static>>;
 
+    /// Not implemented.
     async fn handshake(
         &self,
         _request: Request<Streaming<HandshakeRequest>>,
     ) -> Result<Response<Self::HandshakeStream>, Status> {
-        Err(Status::unimplemented("Not yet implemented"))
+        Err(Status::unimplemented("Not implemented."))
     }
 
+    /// Provide the name of all tables in the catalog.
     async fn list_flights(
         &self,
         _request: Request<Criteria>,
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
         let table_names = self.context.catalog.table_names();
-        let fd = FlightDescriptor::new_path(table_names);
-        let fi = FlightInfo::new(IpcMessage(vec![]), Some(fd), vec![], -1, -1);
-        let output = futures::stream::once(async { Ok(fi) });
+        let flight_descriptor = FlightDescriptor::new_path(table_names);
+        let flight_info =
+            FlightInfo::new(IpcMessage(vec![]), Some(flight_descriptor), vec![], -1, -1);
+        let output = stream::once(async { Ok(flight_info) });
         Ok(Response::new(Box::pin(output)))
     }
 
+    /// Not implemented.
     async fn get_flight_info(
         &self,
         _request: Request<FlightDescriptor>,
     ) -> Result<Response<FlightInfo>, Status> {
-        Err(Status::unimplemented("Not yet implemented"))
+        Err(Status::unimplemented("Not implemented."))
     }
 
+    /// Provide the schema of a table in the catalog. The name of the table must
+    /// be provided as the first element in `FlightDescriptor.path`.
     async fn get_schema(
         &self,
         request: Request<FlightDescriptor>,
     ) -> Result<Response<SchemaResult>, Status> {
-        if let Some(table_name) = request.into_inner().path.get(0) {
-            let session = self.context.session.clone();
-            if let Some(catalog) = session.catalog("datafusion") {
-                // default catalog.
-                if let Some(schema) = catalog.schema("public") {
-                    // default schema.
-                    if let Some(table) = schema.table(table_name) {
-                        let schema = &*table.schema();
-                        let options = IpcWriteOptions::default();
-                        let schema_as_ipc = SchemaAsIpc::new(schema, &options);
-                        if let Ok(sr) = schema_as_ipc.try_into() {
-                            Ok(Response::new(sr))
-                        } else {
-                            Err(Status::internal("unable to serialize schema"))
-                        }
-                    } else {
-                        Err(Status::not_found("table does not exist"))
-                    }
-                } else {
-                    Err(Status::internal("schema does not exist"))
-                }
-            } else {
-                Err(Status::internal("catalog does not exist"))
-            }
-        } else {
-            Err(Status::invalid_argument("no table was provided"))
-        }
+        let flight_descriptor = request.into_inner();
+        let table_name = flight_descriptor
+            .path
+            .get(0)
+            .ok_or_else(|| Status::invalid_argument("No table was provided."))?;
+        let schema = self.get_table_schema_from_default_catalog(table_name)?;
+
+        let options = IpcWriteOptions::default();
+        let schema_as_ipc = SchemaAsIpc::new(&*schema, &options);
+        let serialized_schema = schema_as_ipc
+            .try_into()
+            .map_err(|error| Status::internal(format!("{}", error)))?;
+        Ok(Response::new(serialized_schema))
     }
 
+    /// Execute a SQL query provided in UTF-8 and return the entire result.
     async fn do_get(
         &self,
         request: Request<Ticket>,
     ) -> Result<Response<Self::DoGetStream>, Status> {
-        // Extract client query.
-        let message = request.get_ref();
-        let query = str::from_utf8(&message.ticket).map_err(error_to_invalid_argument)?;
-        info!("Executing: {}.", query);
+        let ticket = request.into_inner();
 
-        // Executes client query.
+        // Extract the query.
+        let query = str::from_utf8(&ticket.ticket)
+            .map_err(|error| Status::invalid_argument(format!("{}", error)))?;
+
+        // Execute the query.
+        info!("Executing query: {}.", query);
         let session = self.context.session.clone();
-        let df = session
+        let data_frame = session
             .sql(query)
             .await
-            .map_err(error_to_invalid_argument)?;
-        let results = df.collect().await.map_err(error_to_invalid_argument)?;
+            .map_err(|error| Status::invalid_argument(format!("{}", error)))?;
+        let record_batches = data_frame
+            .collect()
+            .await
+            .map_err(|error| Status::invalid_argument(format!("{}", error)))?;
 
-        // Transmits schema.
+        // Serialize the schema.
         let options = IpcWriteOptions::default();
-        let schema_flight_data = SchemaAsIpc::new(&df.schema().clone().into(), &options).into();
-        let mut flights: Vec<Result<FlightData, Status>> = vec![Ok(schema_flight_data)];
+        let schema_as_flight_data =
+            SchemaAsIpc::new(&data_frame.schema().clone().into(), &options).into();
+        let mut result_set: Vec<Result<FlightData, Status>> = vec![Ok(schema_as_flight_data)];
 
-        //Transmits result set
-        let mut batches: Vec<Result<FlightData, Status>> = results
+        // Serialize the data points.
+        let mut record_batches_as_flight_datas: Vec<Result<FlightData, Status>> = record_batches
             .iter()
             .flat_map(|result| {
                 let (flight_dictionaries, flight_batch) =
-                    flight_data_from_arrow_batch(result, &options);
+                    utils::flight_data_from_arrow_batch(result, &options);
                 flight_dictionaries
                     .into_iter()
                     .chain(std::iter::once(flight_batch))
                     .map(Ok)
             })
             .collect();
-        flights.append(&mut batches);
-        let output = futures::stream::iter(flights);
+        result_set.append(&mut record_batches_as_flight_datas);
+
+        // Transmit the complete result.
+        let output = stream::iter(record_batches_as_flight_datas);
         Ok(Response::new(Box::pin(output)))
     }
 
-    // TODO:check schema when converting? https://docs.rs/arrow-flight/latest/arrow_flight/utils/index.html
-    // TODO: add do_get span and do_put span, but be careful of futures.
+    /// Insert data points into a table. The name of the table must be provided
+    /// in `FlightDescriptor.path` and the schema of the data points must match
+    /// the schema of the table.
     async fn do_put(
         &self,
         request: Request<Streaming<FlightData>>,
     ) -> Result<Response<Self::DoPutStream>, Status> {
         let mut request = request.into_inner();
 
-        // A `FlightDescriptor` is transferred in the first `FlightData`.
+        // Extract the table name.
         let flight_data = request
             .next()
             .await
-            .ok_or_else(|| none_to_invalid_argument("Missing FlightData."))??;
+            .ok_or_else(|| Status::invalid_argument("Missing FlightData."))??;
 
         debug_assert_eq!(flight_data.data_body.len(), 0);
 
         let flight_descriptor = flight_data
             .flight_descriptor
-            .ok_or_else(|| none_to_invalid_argument("Missing FlightDescriptor."))?;
+            .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
 
         let table_name = flight_descriptor
             .path
             .get(0)
-            .ok_or_else(|| none_to_invalid_argument("No table name in FlightDescriptor.path."))?;
+            .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))?;
 
+        // Extract the schema.
         let schema_or_status = self.get_table_schema_from_default_catalog(&table_name);
         let schema = if let Ok(schema) = schema_or_status {
             info!("Received RecordBatch for existing table {}.", table_name);
@@ -237,52 +246,49 @@ impl FlightService for FlightServiceHandler {
             schema_or_status?
         };
 
-        // Rows are transferred in the remaining `FlightData`.
+        // Log that the data points were received.
         while let Some(flight_data) = request.next().await {
             let flight_data = flight_data?;
             debug_assert_eq!(flight_data.flight_descriptor, None);
-            let record_batch =
-                flight_data_to_arrow_batch(&flight_data, schema.clone(), &self.dictionaries_by_id)
-                    .map_err(error_to_invalid_argument)?;
+            let record_batch = utils::flight_data_to_arrow_batch(
+                &flight_data,
+                schema.clone(),
+                &self.dictionaries_by_id,
+            )
+            .map_err(|error| Status::invalid_argument(format!("{}", error)))?;
             info!(
-                "Received RecordBatch with {} rows for table {}.",
+                "Received RecordBatch with {} data points for table {}.",
                 record_batch.num_rows(),
                 table_name
             );
+            // TODO: forward the data points to the StorageEngine.
         }
-        Ok(Response::new(Box::pin(futures::stream::empty())))
+
+        // Confirm the data points were received.
+        Ok(Response::new(Box::pin(stream::empty())))
     }
 
+    /// Not implemented.
     async fn do_exchange(
         &self,
         _request: Request<Streaming<FlightData>>,
     ) -> Result<Response<Self::DoExchangeStream>, Status> {
-        Err(Status::unimplemented("Not yet implemented"))
+        Err(Status::unimplemented("Not implemented"))
     }
 
+    /// Not implemented.
     async fn do_action(
         &self,
         _request: Request<Action>,
     ) -> Result<Response<Self::DoActionStream>, Status> {
-        Err(Status::unimplemented("Not yet implemented"))
+        Err(Status::unimplemented("Not implemented"))
     }
 
+    /// Not implemented.
     async fn list_actions(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::ListActionsStream>, Status> {
-        Err(Status::unimplemented("Not yet implemented"))
+        Err(Status::unimplemented("Not implemented"))
     }
-}
-
-/// Convert `error` to a `Status` indicating that one of the arguments provided
-/// by the Apache Arrow Flight client was invalid.
-fn error_to_invalid_argument(error: impl Error) -> Status {
-    Status::invalid_argument(format!("{}", error))
-}
-
-/// Convert `none` to a `Status` indicating that one of the arguments provided
-/// by the Apache Arrow Flight client was invalid.
-fn none_to_invalid_argument(message: &str) -> Status {
-    Status::invalid_argument(message)
 }
