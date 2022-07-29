@@ -38,19 +38,6 @@ use crate::storage::segment::{FinishedSegment, SegmentBuilder};
 use crate::storage::time_series::CompressedTimeSeries;
 use crate::types::Timestamp;
 
-// TODO: When the "save_compressed_data" method on the SE is called it should check if there already is a compressed time series.
-// TODO: If there is, append to the compressed time series.
-// TODO: If there is not, create a new and add it to the compressed data queue.
-
-// TODO: Since the size of compressed segments is not constant we need to have a private function in the struct to calculate the size in bytes.
-// TODO: This size should be returned to the storage engine so the remaining bytes can be updated. Maybe do this before saving.
-// TODO: If there is not enough space for the compressed segment. Pop the first first compressed time series and add the size back.
-// TODO: Since the incoming segment can be very large we might need to save multiple time series to disk.
-// TODO: If there is none left in the queue, we have to save the given compressed segment directly (maybe just create compressed time series and save immediately).
-// TODO: If there is eventually enough space save the compressed segment in a compressed time series after.
-
-// TODO: If a compressed time series reaches this size it should be saved to a file instead of appended to further.
-
 // TODO: Look into moving handling of uncompressed and compressed data into separate structs.
 
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
@@ -144,13 +131,18 @@ impl StorageEngine {
         }
     }
 
-    /// Write `batch` to a persistent Apache Parquet file on disk.
-    pub fn save_compressed_data(key: String, first_timestamp: Timestamp, batch: RecordBatch) {
-        let folder_path = format!("storage/{}/compressed", key);
-        fs::create_dir_all(&folder_path);
+    // TODO: Add log messages to this function. Maybe use a span.
+    /// Insert `batch` into the in-memory compressed time series buffer.
+    pub fn insert_compressed_data(key: Strin, batch: RecordBatch) {
+        // TODO: Check if there already is a compressed time series with that key.
+        // TODO: If there is, append to the compressed time series.
+        // TODO: If there is not, create a new and add it to the compressed data queue.
+        // TODO: Appending should return the size of the compressed segment.
 
-        let path = format!("{}/{}.parquet", folder_path, first_timestamp);
-        write_batch_to_parquet(batch, path);
+        // TODO: If there is not enough space for the compressed segment. Pop the first first compressed time series and add the size back.
+        // TODO: Since the incoming segment can be very large we might need to save multiple time series to disk.
+        // TODO: If there is none left in the queue, we have to save the given compressed segment directly (maybe just create compressed time series and save immediately).
+        // TODO: Update the remaining bytes.
     }
 
     /// Move `segment_builder` to the compression queue.
@@ -200,6 +192,14 @@ fn write_batch_to_parquet(batch: RecordBatch, path: String) {
     writer.write(&batch).expect("Writing batch.");
     writer.close().unwrap();
 }
+
+// TODO: Add a test for inserting a compressed segment into a new compressed time series.
+// TODO: Add a test for inserting a compressed segment into an existing compressed time series.
+// TODO: Add a test for updating the remaining bytes when inserting.
+// TODO: Add a test for updating the remaining bytes when saving a compressed time series to disk (I/O).
+// TODO: Add a test for saving the first compressed time series when out of memory (I/O).
+// TODO: Add a test for saving multiple when out of memory if incoming batch is large enough (I/O).
+// TODO: Add a test for saving directly if there is no compressed time series in the queue to save (I/O).
 
 #[cfg(test)]
 mod tests {
