@@ -17,7 +17,7 @@ use std::convert::TryInto;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
-use std::str::from_utf8;
+use std::str;
 use std::sync::Arc;
 
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
@@ -34,34 +34,26 @@ use tracing::{error, info};
 
 use crate::Context;
 
-pub fn start_arrow_flight_server(context: Arc<Context>, port: i16) {
-    let localhost_with_port = "127.0.0.1:".to_string() + &port.to_string();
-    let localhost_with_port: SocketAddr = localhost_with_port.parse().unwrap();
+/// Start an Apache Arrow Flight server on 0.0.0.0:`port` with `context`
+/// provided to the methods processing each request through the handler.
+pub fn start_arrow_flight_server(context: Arc<Context>, port: i16) -> Result<(), Box<dyn Error>> {
+    let localhost_with_port = "0.0.0.0:".to_string() + &port.to_string();
+    let localhost_with_port: SocketAddr = localhost_with_port.parse()?;
     let handler = FlightServiceHandler {
         context: context.clone(),
         dictionaries_by_id: HashMap::new(),
     };
     let flight_service_server = FlightServiceServer::new(handler);
-    info!("Started Arrow Flight on 127.0.0.1:{}.", port);
-    context.runtime.block_on(async {
-        Server::builder()
-            .add_service(flight_service_server)
-            .serve(localhost_with_port)
-            .await
-            .unwrap()
-    });
-}
-
-/// Convert `error` to a `Status` indicating that one of the arguments
-/// provided by the Apache Arrow Flight client was invalid.
-fn error_to_invalid_argument(error: impl Error) -> Status {
-    Status::invalid_argument(format!("{}", error))
-}
-
-/// Convert `none` to a `Status` indicating that one of the arguments
-/// provided by the Apache Arrow Flight client was invalid.
-fn none_to_invalid_argument(message: &str) -> Status {
-    Status::invalid_argument(message)
+    info!("Starting Apache Arrow Flight on {}.", localhost_with_port);
+    context
+        .runtime
+        .block_on(async {
+            Server::builder()
+                .add_service(flight_service_server)
+                .serve(localhost_with_port)
+                .await
+        })
+        .map_err(|e| e.into())
 }
 
 /// Handler for Apache Arrow Flight requests. The type is based on the [Apache
@@ -178,7 +170,7 @@ impl FlightService for FlightServiceHandler {
     ) -> Result<Response<Self::DoGetStream>, Status> {
         // Extract client query.
         let message = request.get_ref();
-        let query = from_utf8(&message.ticket).map_err(error_to_invalid_argument)?;
+        let query = str::from_utf8(&message.ticket).map_err(error_to_invalid_argument)?;
         info!("Executing: {}.", query);
 
         // Executes client query.
@@ -281,4 +273,16 @@ impl FlightService for FlightServiceHandler {
     ) -> Result<Response<Self::ListActionsStream>, Status> {
         Err(Status::unimplemented("Not yet implemented"))
     }
+}
+
+/// Convert `error` to a `Status` indicating that one of the arguments provided
+/// by the Apache Arrow Flight client was invalid.
+fn error_to_invalid_argument(error: impl Error) -> Status {
+    Status::invalid_argument(format!("{}", error))
+}
+
+/// Convert `none` to a `Status` indicating that one of the arguments provided
+/// by the Apache Arrow Flight client was invalid.
+fn none_to_invalid_argument(message: &str) -> Status {
+    Status::invalid_argument(message)
 }
