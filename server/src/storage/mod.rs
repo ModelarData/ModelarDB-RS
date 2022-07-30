@@ -39,6 +39,7 @@ use crate::storage::time_series::CompressedTimeSeries;
 use crate::types::Timestamp;
 
 // TODO: Look into moving handling of uncompressed and compressed data into separate structs.
+// TODO: Look into custom errors for all errors in storage engine.
 
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
 // being larger due to internal alignment when allocating memory for the builders.
@@ -133,15 +134,30 @@ impl StorageEngine {
 
     // TODO: Add log messages to this function. Maybe use a span.
     /// Insert `batch` into the in-memory compressed time series buffer.
-    pub fn insert_compressed_data(key: Strin, batch: RecordBatch) {
-        // TODO: Check if there already is a compressed time series with that key.
-        // TODO: If there is, append to the compressed time series.
-        // TODO: If there is not, create a new and add it to the compressed data queue.
-        // TODO: Appending should return the size of the compressed segment.
+    pub fn insert_compressed_data(&mut self, key: String, batch: RecordBatch) {
+        let _span = info_span!("insert_compressed_segment", key = key.clone()).entered();
+        info!("Inserting batch with {} rows into compressed time series.", batch.num_rows());
 
-        // TODO: If there is not enough space for the compressed segment. Pop the first first compressed time series and add the size back.
-        // TODO: Since the incoming segment can be very large we might need to save multiple time series to disk.
-        // TODO: If there is none left in the queue, we have to save the given compressed segment directly (maybe just create compressed time series and save immediately).
+        let mut compressed_segment_size;
+
+        if let Some(compressed_time_series) = self.compressed_data.get_mut(&key) {
+            // TODO: If there is, append to the compressed time series.
+            info!("Found existing compressed time series.");
+
+            compressed_segment_size = 10;
+        } else {
+            // TODO: If there is not, create a new and add it to the compressed data queue.
+            info!("Could not find compressed time series. Creating compressed time series.");
+
+            compressed_segment_size = 20;
+        }
+
+        // If there is not enough memory for the compressed segment, save compressed data to disk.
+        if compressed_segment_size > self.compressed_remaining_memory_in_bytes {
+            // TODO: If enough memory could not be made available, save the compressed segment directly to disk.
+            // TODO: Changed compressed_segment_size to reflect that space is no longer needed.
+        }
+
         // TODO: Update the remaining bytes.
     }
 
@@ -176,6 +192,17 @@ impl StorageEngine {
 
         // If not able to find any in-memory finished segments, we should panic.
         panic!("Not enough reserved memory to hold all necessary segment builders.");
+    }
+
+    /// Save compressed time series to disk until `needed_bytes` bytes of memory has been freed.
+    /// If `needed_bytes` bytes of memory could not be freed, return Err.
+    fn save_compressed_data(&mut self, needed_bytes: usize) -> Result<(), String> {
+        info!("Not enough memory to store compressed segment in memory. Saving compressed data.");
+        // TODO: Pop the first first compressed time series and add the size back.
+        // TODO: Update the remaining bytes for each compressed time series.
+        // TODO: Since the incoming segment can be very large we might need to save multiple time series to disk.
+        // TODO: Add a log message for each compressed time series that is saved.
+        Err("There are no compressed time series that can be saved to disk.".to_owned())
     }
 }
 
