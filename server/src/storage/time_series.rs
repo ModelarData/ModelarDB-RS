@@ -33,6 +33,13 @@ pub struct CompressedTimeSeries {
 
 // TODO: Since the size of compressed segments is not constant we need to have a private function in the struct to calculate the size in bytes.
 impl CompressedTimeSeries {
+    pub fn new() -> Self {
+        Self {
+            compressed_segments: Vec::new(),
+            size_in_bytes: 0,
+        }
+    }
+
     // TODO: Should return a compression error instead.
     /// If `segment` has the correct schema, append it to the compressed data and return the size
     /// of the segment in bytes, otherwise return `CompressionError`.
@@ -44,7 +51,7 @@ impl CompressedTimeSeries {
 
     // TODO: Should return error if there are not any segments to save.
     /// If the compressed segments are successfully saved to Parquet, return Ok, otherwise return Err.
-    pub fn save_time_series(key: String) -> Result<(), std::io::Error> {
+    pub fn save_to_parquet(key: String) -> Result<(), std::io::Error> {
         // TODO: Create the folder structure if it does not already exist.
         // TODO: Combine the segments into a single record batch.
         // TODO: Save the batch to a Parquet file.

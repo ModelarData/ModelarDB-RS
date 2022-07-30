@@ -132,7 +132,6 @@ impl StorageEngine {
         }
     }
 
-    // TODO: Add log messages to this function. Maybe use a span.
     /// Insert `batch` into the in-memory compressed time series buffer.
     pub fn insert_compressed_data(&mut self, key: String, batch: RecordBatch) {
         let _span = info_span!("insert_compressed_segment", key = key.clone()).entered();
@@ -140,25 +139,34 @@ impl StorageEngine {
 
         let mut compressed_segment_size;
 
-        if let Some(compressed_time_series) = self.compressed_data.get_mut(&key) {
-            // TODO: If there is, append to the compressed time series.
+        if let Some(time_series) = self.compressed_data.get_mut(&key) {
             info!("Found existing compressed time series.");
 
-            compressed_segment_size = 10;
+            compressed_segment_size = time_series.append_segment(batch)?;
         } else {
-            // TODO: If there is not, create a new and add it to the compressed data queue.
             info!("Could not find compressed time series. Creating compressed time series.");
 
-            compressed_segment_size = 20;
+            let mut time_series = CompressedTimeSeries::new();
+            time_series.append_segment(batch)?;
+
+            compressed_segment_size = compressed_segment_size = 20;
         }
 
         // If there is not enough memory for the compressed segment, save compressed data to disk.
         if compressed_segment_size > self.compressed_remaining_memory_in_bytes {
-            // TODO: If enough memory could not be made available, save the compressed segment directly to disk.
-            // TODO: Changed compressed_segment_size to reflect that space is no longer needed.
+            // If enough memory could not be made available, save the compressed segment directly to disk.
+            if let Err(e) = self.save_compressed_data(compressed_segment_size) {
+                error!(e);
+
+                let time_series = self.compressed_data.get_mut(&key).unwrap();
+                time_series.save_to_parquet(key.clone());
+
+                // Set to 0 to reflect that memory is no longer used to store the compressed segment.
+                compressed_segment_size = 0;
+            }
         }
 
-        // TODO: Update the remaining bytes.
+        self.compressed_remaining_memory_in_bytes -= compressed_segment_size;
     }
 
     /// Move `segment_builder` to the compression queue.
