@@ -23,7 +23,6 @@ mod time_series;
 
 use std::collections::vec_deque::VecDeque;
 use std::collections::HashMap;
-use std::fs;
 use std::fs::File;
 
 use datafusion::arrow::record_batch::RecordBatch;
@@ -36,10 +35,11 @@ use tracing::{error, info, info_span};
 use crate::storage::data_point::DataPoint;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder};
 use crate::storage::time_series::CompressedTimeSeries;
-use crate::types::Timestamp;
 
 // TODO: Look into moving handling of uncompressed and compressed data into separate structs.
 // TODO: Look into custom errors for all errors in storage engine.
+// TODO: How should error returns from "save_to_parquet" be handled?
+// TODO: How should error returns from "append_segment" be handled?
 
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
 // being larger due to internal alignment when allocating memory for the builders.
@@ -132,6 +132,7 @@ impl StorageEngine {
         }
     }
 
+    // TODO: Check if the max compressed file size is reached and save if so.
     /// Insert `batch` into the in-memory compressed time series buffer.
     pub fn insert_compressed_data(&mut self, key: String, batch: RecordBatch) {
         let _span = info_span!("insert_compressed_segment", key = key.clone()).entered();
@@ -142,14 +143,15 @@ impl StorageEngine {
         if let Some(time_series) = self.compressed_data.get_mut(&key) {
             info!("Found existing compressed time series.");
 
-            compressed_segment_size = time_series.append_segment(batch)?;
+            compressed_segment_size = time_series.append_segment(batch).unwrap();
         } else {
             info!("Could not find compressed time series. Creating compressed time series.");
 
             let mut time_series = CompressedTimeSeries::new();
-            time_series.append_segment(batch)?;
+            compressed_segment_size = time_series.append_segment(batch).unwrap();
 
-            compressed_segment_size = compressed_segment_size = 20;
+            self.compressed_data.insert(key.clone(), time_series);
+            self.compression_queue.push_back(key.clone());
         }
 
         // If there is not enough memory for the compressed segment, save compressed data to disk.
@@ -158,7 +160,7 @@ impl StorageEngine {
             if let Err(e) = self.save_compressed_data(compressed_segment_size) {
                 error!(e);
 
-                let time_series = self.compressed_data.get_mut(&key).unwrap();
+                let mut time_series = self.compressed_data.remove(&key).unwrap();
                 time_series.save_to_parquet(key.clone());
 
                 // Set to 0 to reflect that memory is no longer used to store the compressed segment.
@@ -202,15 +204,29 @@ impl StorageEngine {
         panic!("Not enough reserved memory to hold all necessary segment builders.");
     }
 
+    // TODO: Currently there is a bug where we could pop and save the time series we are making space for.
     /// Save compressed time series to disk until `needed_bytes` bytes of memory has been freed.
     /// If `needed_bytes` bytes of memory could not be freed, return Err.
     fn save_compressed_data(&mut self, needed_bytes: usize) -> Result<(), String> {
         info!("Not enough memory to store compressed segment in memory. Saving compressed data.");
-        // TODO: Pop the first first compressed time series and add the size back.
-        // TODO: Update the remaining bytes for each compressed time series.
-        // TODO: Since the incoming segment can be very large we might need to save multiple time series to disk.
-        // TODO: Add a log message for each compressed time series that is saved.
-        Err("There are no compressed time series that can be saved to disk.".to_owned())
+        let mut remaining_needed_bytes: isize = needed_bytes as isize;
+
+        while remaining_needed_bytes > 0 {
+            if let Some(key) = self.compression_queue.pop_front() {
+                info!("Saving compressed time series with key '{}' to disk.", key);
+
+                let mut time_series = self.compressed_data.remove(&key).unwrap();
+                let time_series_size = time_series.size_in_bytes.clone();
+                time_series.save_to_parquet(key.clone());
+
+                self.compressed_remaining_memory_in_bytes += time_series_size;
+                remaining_needed_bytes -= time_series_size as isize;
+            } else {
+                return Err("There are no compressed time series that can be saved to disk.".to_owned());
+            }
+        }
+
+        Ok(())
     }
 }
 
@@ -235,6 +251,7 @@ fn write_batch_to_parquet(batch: RecordBatch, path: String) {
 // TODO: Add a test for saving the first compressed time series when out of memory (I/O).
 // TODO: Add a test for saving multiple when out of memory if incoming batch is large enough (I/O).
 // TODO: Add a test for saving directly if there is no compressed time series in the queue to save (I/O).
+// TODO: Add a test for saving compressed time series when the max size is reached (I/O).
 
 #[cfg(test)]
 mod tests {

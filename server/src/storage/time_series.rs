@@ -15,12 +15,9 @@
 
 /// Support for managing multiple compressed segments from the same time series.
 
-use std::fs;
-
 use datafusion::arrow::record_batch::RecordBatch;
 
 use crate::errors::MiniModelarDBError;
-use crate::storage::write_batch_to_parquet;
 
 /// A single compressed time series, containing one or more compressed segments in order and providing
 /// functionality for appending more segments and saving all segments to a single Parquet file.
@@ -28,7 +25,7 @@ pub struct CompressedTimeSeries {
     /// Compressed segments that make up the sequential compressed data of the time series.
     compressed_segments: Vec<RecordBatch>,
     /// Continuously updated total sum of the size of the compressed segments.
-    size_in_bytes: usize,
+    pub size_in_bytes: usize,
 }
 
 // TODO: Since the size of compressed segments is not constant we need to have a private function in the struct to calculate the size in bytes.
@@ -43,7 +40,7 @@ impl CompressedTimeSeries {
     // TODO: Should return a compression error instead.
     /// If `segment` has the correct schema, append it to the compressed data and return the size
     /// of the segment in bytes, otherwise return `CompressionError`.
-    pub fn append_segment(segment: RecordBatch) -> Result<usize, MiniModelarDBError> {
+    pub fn append_segment(&mut self, segment: RecordBatch) -> Result<usize, MiniModelarDBError> {
         // TODO: Check that the segment has the correct schema.
         // TODO: If so, append it to the compressed segments.
         Ok(0)
@@ -51,16 +48,10 @@ impl CompressedTimeSeries {
 
     // TODO: Should return error if there are not any segments to save.
     /// If the compressed segments are successfully saved to Parquet, return Ok, otherwise return Err.
-    pub fn save_to_parquet(key: String) -> Result<(), std::io::Error> {
+    pub fn save_to_parquet(&mut self, key: String) -> Result<(), std::io::Error> {
         // TODO: Create the folder structure if it does not already exist.
         // TODO: Combine the segments into a single record batch.
         // TODO: Save the batch to a Parquet file.
-        let folder_path = format!("storage/{}/compressed", key);
-        fs::create_dir_all(&folder_path);
-
-        let path = format!("{}/{}.parquet", folder_path, first_timestamp);
-        write_batch_to_parquet(batch, path);
-
         Ok(())
     }
 
