@@ -38,8 +38,8 @@ impl CompressedTimeSeries {
     }
 
     // TODO: Should return a compression error instead.
-    /// If `segment` has the correct schema, append it to the compressed data and return the size
-    /// of the segment in bytes, otherwise return `CompressionError`.
+    /// If `segment` has the correct schema, append it to the compressed data and return Ok,
+    /// otherwise return `CompressionError`.
     pub fn append_segment(&mut self, segment: RecordBatch) -> Result<usize, MiniModelarDBError> {
         // TODO: Check that the segment has the correct schema.
         // TODO: If so, append it to the compressed segments.
