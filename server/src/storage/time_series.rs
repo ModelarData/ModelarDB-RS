@@ -15,6 +15,7 @@
 
 /// Support for managing multiple compressed segments from the same time series.
 
+use datafusion::arrow::array::Array;
 use datafusion::arrow::record_batch::RecordBatch;
 
 use crate::errors::MiniModelarDBError;
@@ -28,7 +29,6 @@ pub struct CompressedTimeSeries {
     pub size_in_bytes: usize,
 }
 
-// TODO: Since the size of compressed segments is not constant we need to have a private function in the struct to calculate the size in bytes.
 impl CompressedTimeSeries {
     pub fn new() -> Self {
         Self {
@@ -37,13 +37,15 @@ impl CompressedTimeSeries {
         }
     }
 
-    // TODO: Should return a compression error instead.
     /// If `segment` has the correct schema, append it to the compressed data and return Ok,
     /// otherwise return `CompressionError`.
     pub fn append_segment(&mut self, segment: RecordBatch) -> Result<usize, MiniModelarDBError> {
         // TODO: Check that the segment has the correct schema.
         // TODO: If so, append it to the compressed segments.
-        Ok(0)
+        let segment_size = CompressedTimeSeries::get_size_of_segment(segment);
+        self.size_in_bytes += segment_size;
+
+        Ok(segment_size)
     }
 
     // TODO: Should return error if there are not any segments to save.
@@ -57,13 +59,47 @@ impl CompressedTimeSeries {
 
     /// Return the size in bytes of `segment`.
     fn get_size_of_segment(segment: RecordBatch) -> usize {
-        0
+        let mut total_size: usize = 0;
+
+        for column in segment.columns() {
+            total_size += column.data().get_array_memory_size()
+        }
+
+        total_size
     }
 }
 
-// TODO: Add a test for appending a segment with the correct schema.
-// TODO: Add a test for appending a segment with the wrong schema.
-// TODO: Add a test for getting the size of a record batch.
-// TODO: Add a test for updating the size of the compressed time series when appending.
-// TODO: Add a test for saving a compressed time series to disk (I/O).
-// TODO: Add a test for trying to save a compressed time series with no segments to disk.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_can_append_segment_with_valid_schema() {
+
+    }
+
+    #[test]
+    fn test_cannot_append_segment_with_invalid_schema() {
+
+    }
+
+    #[test]
+    fn test_compressed_time_series_size_updated_when_appending() {
+
+    }
+
+    #[test]
+    fn test_can_save_compressed_segments_to_parquet() {
+        // TODO: This requires I/O.
+    }
+
+    #[test]
+    fn test_cannot_save_empty_compressed_segments_to_parquet() {
+
+    }
+
+    #[test]
+    fn test_get_size_of_segment() {
+
+    }
+}
