@@ -30,19 +30,19 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 2. Install [CMake](https://cmake.org/) and follow the _"How to Install For Command Line Use"_ menu item.
 
 #### Windows
-1. Install a supported version of [Visual Studio](https://visualstudio.microsoft.com/vs/older-downloads/) with Visual C++:
--- Visual Studio 2017 ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
--- Visual Studio 2019 ([Supported](https://github.com/microsoft/snmalloc/issues/525#issuecomment-1128901104))
+1. Install a supported version of [Visual Studio](https://visualstudio.microsoft.com/vs/older-downloads/) with Visual C++:\
+-- Visual Studio 2017 ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))\
+-- Visual Studio 2019 ([Supported](https://github.com/microsoft/snmalloc/issues/525#issuecomment-1128901104))\
 -- Visual Studio 2022 (Unsupported)
-2. Install [CMake](https://cmake.org/) and select one of the following options during installation:
--- _Add CMake to the system PATH for all users_
+2. Install [CMake](https://cmake.org/) and select one of the following options during installation:\
+-- _Add CMake to the system PATH for all users_\
 -- _Add CMake to the system PATH for current user_
 
 ### All
 3. Install the latest stable [Rust Toolchain](https://rustup.rs/).
-4. Compile the system and run tests using Cargo:
--- Debug Build: `cargo build`
--- Release Build: `cargo build --release`
+4. Compile the system and run tests using Cargo:\
+-- Debug Build: `cargo build`\
+-- Release Build: `cargo build --release`\
 -- Run Tests: `cargo test`
 
 ## Development
