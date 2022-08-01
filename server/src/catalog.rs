@@ -13,6 +13,10 @@
  * limitations under the License.
  */
 
+//! Metadata for the tables and model tables in the data folder. Tables can
+//! store arbitrary data, while model tables can only store time series as
+//! models.
+
 use std::fs::{read_dir, DirEntry};
 use std::io::Read;
 use std::str;
@@ -30,30 +34,45 @@ use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use datafusion::parquet::record::RowAccessor;
 use tracing::{error, info};
 
-/** Public Types **/
+/// Metadata for the tables and model tables in the data folder.
 #[derive(Debug)]
 pub struct Catalog {
     pub table_metadata: Vec<TableMetadata>,
     pub model_table_metadata: Vec<Arc<ModelTableMetadata>>,
 }
 
+/// Metadata for a table.
 #[derive(Debug)]
 pub struct TableMetadata {
+    /// Name of the table.
     pub name: String,
+    /// Location of the table's file or folder in an `ObjectStore`.
     pub path: String,
 }
 
+/// Metadata for a model table.
 #[derive(Debug)]
 pub struct ModelTableMetadata {
+    /// Name of the model table.
     pub name: String,
+    /// Location of the table's segment folder in an `ObjectStore`.
     pub segment_folder: String,
+    /// Schema of the Apache Parquet files used by the [JVM-based version of
+    /// ModelarDB] for storing segments.
+    ///
+    /// [JVM-based version of ModelarDB]: https://github.com/modelardata/ModelarDB
     pub segment_group_file_schema: Arc<Schema>,
+    /// Cache that maps from time series id to sampling interval for all time
+    /// series in the table.
     pub sampling_intervals: Int32Array,
+    /// Cache that maps from time series id to members for all time series in
+    /// the table. Each `Array` in `denormalized_dimensions` is a level in a
+    /// dimension.
     pub denormalized_dimensions: Vec<ArrayRef>,
 }
 
-/** Public Methods **/
 impl Catalog {
+    /// Return the name of all tables and model tables in the `Catalog`.
     pub fn table_names(&self) -> Vec<String> {
         let mut table_names: Vec<String> = vec![];
         for table_metadata in &self.table_metadata {
@@ -67,7 +86,8 @@ impl Catalog {
     }
 }
 
-/** Public Functions **/
+/// Scan `data_folder` for tables and model tables and construct a `Catalog`
+/// that contains the metadata necessary to query these tables.
 pub fn new(data_folder: &str) -> Catalog {
     let mut table_metadata = vec![];
     let mut model_table_metadata = vec![];
@@ -123,9 +143,9 @@ pub fn new(data_folder: &str) -> Catalog {
     }
 }
 
-/** Private Methods **/
-// TODO: check the files for tables and model tables have the correct schema.
+/// Return `true` if `dir_entry` is a table, otherwise `false`.
 fn is_dir_entry_a_table(dir_entry: &DirEntry) -> bool {
+    // TODO: check the files for tables and model tables have the correct schema.
     if let Ok(metadata) = dir_entry.metadata() {
         if metadata.is_file() {
             is_dir_entry_a_parquet_file(dir_entry)
@@ -144,6 +164,7 @@ fn is_dir_entry_a_table(dir_entry: &DirEntry) -> bool {
     }
 }
 
+/// Return `true` if `dir_entry` is an Apache Parquet file, otherwise `false`.
 fn is_dir_entry_a_parquet_file(dir_entry: &DirEntry) -> bool {
     // Write permissions are required on Microsoft Windows.
     let mut file = OpenOptions::new()
@@ -165,6 +186,7 @@ fn new_table_metadata(file_name: String, path: String) -> TableMetadata {
     TableMetadata { name, path }
 }
 
+/// Return `true` if `dir_entry` is a model table, otherwise `false`.
 fn is_dir_entry_a_model_table(dir_entry: &DirEntry) -> bool {
     if let Ok(metadata) = dir_entry.metadata() {
         if metadata.is_dir() {
@@ -181,6 +203,8 @@ fn is_dir_entry_a_model_table(dir_entry: &DirEntry) -> bool {
     false
 }
 
+/// Read and check the metadata for a model table. Return `ParquetError` if the
+/// metadata cannot be read or if the model table uses unsupported model types.
 fn read_model_table_metadata(
     table_name: String,
     table_folder: String,
@@ -240,6 +264,8 @@ fn read_model_table_metadata(
     }
 }
 
+/// Read the array at `column_index` from `rows`, cast it to `Int32Array`, and
+/// increase the index of all values in the array with one.
 fn extract_and_shift_int32_column(
     rows: &RecordBatch,
     column_index: usize,
@@ -256,6 +282,9 @@ fn extract_and_shift_int32_column(
     Ok(shifted_column.finish())
 }
 
+/// Read the arrays from `first_column_index` to `rows.num_columns()` from
+/// `rows`, cast them to `BinaryArray`, and increase the index of all values in
+/// the arrays with one.
 fn extract_and_shift_denormalized_dimensions(
     rows: &RecordBatch,
     first_column_index: usize,
@@ -269,6 +298,8 @@ fn extract_and_shift_denormalized_dimensions(
     Ok(denormalized_dimensions)
 }
 
+/// Read the array at `column_index` from `rows`, cast it to `BinaryArray`, and
+/// increase the index of all values in the array with one.
 fn extract_and_shift_text_column(
     rows: &RecordBatch,
     column_index: usize,
