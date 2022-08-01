@@ -37,15 +37,14 @@ impl CompressedTimeSeries {
         }
     }
 
-    /// If `segment` has the correct schema, append it to the compressed data and return Ok,
-    /// otherwise return `CompressionError`.
-    pub fn append_segment(&mut self, segment: RecordBatch) -> Result<usize, MiniModelarDBError> {
-        // TODO: Check that the segment has the correct schema.
-        // TODO: If so, append it to the compressed segments.
+    /// Append `segment` to the compressed data in the time series and return the size `segment` in bytes.
+    pub fn append_segment(&mut self, segment: RecordBatch) -> usize {
+        // TODO: Append it to the compressed segments.
+        // TODO: Maybe add a debug assert for the internal check of the schema.
         let segment_size = CompressedTimeSeries::get_size_of_segment(segment);
         self.size_in_bytes += segment_size;
 
-        Ok(segment_size)
+        segment_size
     }
 
     // TODO: Should return error if there are not any segments to save.
@@ -74,12 +73,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_can_append_segment_with_valid_schema() {
+    fn test_can_append_valid_compressed_segment() {
 
     }
 
     #[test]
-    fn test_cannot_append_segment_with_invalid_schema() {
+    fn test_cannot_append_invalid_compressed_segment() {
 
     }
 

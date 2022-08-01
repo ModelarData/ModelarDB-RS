@@ -39,7 +39,6 @@ use crate::storage::time_series::CompressedTimeSeries;
 // TODO: Look into moving handling of uncompressed and compressed data into separate structs.
 // TODO: Look into custom errors for all errors in storage engine.
 // TODO: How should error returns from "save_to_parquet" be handled?
-// TODO: How should error returns from "append_segment" be handled?
 
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
 // being larger due to internal alignment when allocating memory for the builders.
@@ -77,45 +76,44 @@ impl StorageEngine {
         }
     }
 
-    /// Parse `message` and insert it into the in-memory buffer.
-    pub fn insert_message(&mut self, message: Message) {
-        match DataPoint::from_message(&message) {
-            Ok(data_point) => {
-                let key = data_point.generate_unique_key();
-                let _span = info_span!("insert_message", key = key.clone()).entered();
+    /// Parse `message` and insert it into the in-memory buffer. Return Ok if the message was
+    /// successfully inserted, otherwise return Err.
+    pub fn insert_message(&mut self, message: Message) -> Result<(), String> {
+        let data_point = DataPoint::from_message(&message)?;
+        let key = data_point.generate_unique_key();
+        let _span = info_span!("insert_message", key = key.clone()).entered();
 
-                info!("Inserting data point '{}' into segment.", data_point);
+        info!("Inserting data point '{}' into segment.", data_point);
 
-                if let Some(segment) = self.uncompressed_data.get_mut(&key) {
-                    info!("Found existing segment.");
+        if let Some(segment) = self.uncompressed_data.get_mut(&key) {
+            info!("Found existing segment.");
 
-                    segment.insert_data(&data_point);
+            segment.insert_data(&data_point);
 
-                    if segment.is_full() {
-                        info!("Segment is full, moving it to the compression queue.");
+            if segment.is_full() {
+                info!("Segment is full, moving it to the compression queue.");
 
-                        let full_segment = self.uncompressed_data.remove(&key).unwrap();
-                        self.enqueue_segment(key, full_segment)
-                    }
-                } else {
-                    info!("Could not find segment. Creating segment.");
-
-                    // If there is not enough memory for a new segment, spill a finished segment.
-                    if SegmentBuilder::get_memory_size() > self.uncompressed_remaining_memory_in_bytes {
-                        self.spill_finished_segment();
-                    }
-
-                    // Create a new segment and reduce the remaining amount of reserved memory by its size.
-                    let mut segment = SegmentBuilder::new();
-                    self.uncompressed_remaining_memory_in_bytes -= SegmentBuilder::get_memory_size();
-                    info!("Created segment. Remaining bytes: {}.", self.uncompressed_remaining_memory_in_bytes);
-
-                    segment.insert_data(&data_point);
-                    self.uncompressed_data.insert(key, segment);
-                }
+                let full_segment = self.uncompressed_data.remove(&key).unwrap();
+                self.enqueue_segment(key, full_segment)
             }
-            Err(e) => error!("Message could not be inserted into storage: {:?}", e),
+        } else {
+            info!("Could not find segment. Creating segment.");
+
+            // If there is not enough memory for a new segment, spill a finished segment.
+            if SegmentBuilder::get_memory_size() > self.uncompressed_remaining_memory_in_bytes {
+                self.spill_finished_segment();
+            }
+
+            // Create a new segment and reduce the remaining amount of reserved memory by its size.
+            let mut segment = SegmentBuilder::new();
+            self.uncompressed_remaining_memory_in_bytes -= SegmentBuilder::get_memory_size();
+            info!("Created segment. Remaining bytes: {}.", self.uncompressed_remaining_memory_in_bytes);
+
+            segment.insert_data(&data_point);
+            self.uncompressed_data.insert(key, segment);
         }
+
+        Ok(())
     }
 
     /// Remove the oldest finished segment from the compression queue and return it. Return `None`
@@ -228,19 +226,12 @@ fn write_batch_to_parquet(batch: RecordBatch, path: String) {
     writer.close().unwrap();
 }
 
-// TODO: Add a test for inserting a compressed segment into a new compressed time series.
-// TODO: Add a test for inserting a compressed segment into an existing compressed time series.
-// TODO: Add a test for updating the remaining bytes when inserting.
-// TODO: Add a test for updating the remaining bytes when saving a compressed time series to disk (I/O).
-// TODO: Add a test for saving the first compressed time series when out of memory (I/O).
-// TODO: Add a test for saving multiple when out of memory if incoming batch is large enough (I/O).
-// TODO: Add a test for saving compressed time series when the max size is reached (I/O).
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    // Tests for uncompressed data.
     #[test]
     fn test_cannot_insert_invalid_message() {
         let mut storage_engine = StorageEngine::new();
@@ -354,5 +345,31 @@ mod tests {
         DataPoint::from_message(&message)
             .unwrap()
             .generate_unique_key()
+    }
+
+    // TODO: Add a test for updating the remaining bytes when saving a compressed time series to disk (I/O).
+    // TODO: Add a test for saving the first compressed time series when out of memory (I/O).
+    // TODO: Add a test for saving multiple when out of memory if incoming batch is large enough (I/O).
+    // TODO: Add a test for saving compressed time series when the max size is reached (I/O).
+
+    // Tests for compressed data.
+    #[test]
+    fn test_cannot_insert_valid_compressed_segment() {
+
+    }
+
+    #[test]
+    fn test_can_insert_compressed_segment_into_new_time_series() {
+
+    }
+
+    #[test]
+    fn test_can_insert_compressed_segment_into_existing_time_series() {
+
+    }
+
+    #[test]
+    fn test_remaining_bytes_decremented_when_inserting() {
+
     }
 }
