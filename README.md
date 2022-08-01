@@ -18,6 +18,33 @@ MiniModelarDB intentionally does not gather usage data. So, all users are highly
 encouraged to post comments, suggestions, and bugs as GitHub issues, especially
 if a limitation of MiniModelarDB prevents it from being used in a particular domain.
 
+## Installation
+#### Linux
+The following commands are for Ubuntu Server. However, equivalent commands should work for other Linux distributions.
+
+1. Install [build-essential](https://packages.ubuntu.com/jammy/build-essential): `sudo apt install build-essential`
+2. Install [CMake](https://cmake.org/): `sudo apt install cmake`
+
+#### macOS
+1. Install the Xcode Command Line Developer Tools: `xcode-select --install`
+2. Install [CMake](https://cmake.org/) and follow the _"How to Install For Command Line Use"_ menu item.
+
+#### Windows
+1. Install a supported version of [Visual Studio](https://visualstudio.microsoft.com/vs/older-downloads/) with Visual C++:
+-- Visual Studio 2017 ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
+-- Visual Studio 2019 ([Supported](https://github.com/microsoft/snmalloc/issues/525#issuecomment-1128901104))
+-- Visual Studio 2022 (Unsupported)
+2. Install [CMake](https://cmake.org/) and select one of the following options during installation:
+-- _Add CMake to the system PATH for all users_
+-- _Add CMake to the system PATH for current user_
+
+### All
+3. Install the latest stable [Rust Toolchain](https://rustup.rs/).
+4. Compile the system and run tests using Cargo:
+-- Debug Build: `cargo build`
+-- Release Build: `cargo build --release`
+-- Run Tests: `cargo test`
+
 ## Development
 All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md) 
 using [rustfmt](https://github.com/rust-lang/rustfmt). Subjects not covered in the style guide, or requirements specific to this repository, are covered here.
