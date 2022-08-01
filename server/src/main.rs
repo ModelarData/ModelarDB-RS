@@ -95,7 +95,7 @@ async fn register_tables(session: &mut SessionContext, catalog: &Catalog) {
         if session
             .register_parquet(
                 &table_metadata.name,
-                &table_metadata.path,
+                table_metadata.folder.as_ref(),
                 ParquetReadOptions::default(),
             )
             .instrument(tracing::error_span!("register_parquet"))

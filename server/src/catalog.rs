@@ -33,6 +33,7 @@ use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use datafusion::parquet::record::RowAccessor;
 use tracing::{error, info};
+use object_store::path::Path as ObjectStorePath;
 
 /// Metadata for a table.
 #[derive(Debug)]
@@ -40,7 +41,7 @@ pub struct TableMetadata {
     /// Name of the table.
     pub name: String,
     /// Location of the table's file or folder in an `ObjectStore`.
-    pub path: String,
+    pub folder: ObjectStorePath,
 }
 
 /// Metadata for a model table.
@@ -49,7 +50,7 @@ pub struct ModelTableMetadata {
     /// Name of the model table.
     pub name: String,
     /// Location of the table's segment folder in an `ObjectStore`.
-    pub segment_folder: String,
+    pub segment_folder: ObjectStorePath,
     /// Schema of the Apache Parquet files used by the [JVM-based version of
     /// ModelarDB] for storing segments.
     ///
@@ -183,7 +184,8 @@ impl Catalog {
             file_name
         };
 
-        TableMetadata { name, path }
+	let folder = ObjectStorePath::parse(path).unwrap();
+        TableMetadata { name, folder }
     }
 
     /// Return `true` if `dir_entry` is a model table, otherwise `false`.
@@ -250,8 +252,8 @@ impl Catalog {
             let denormalized_dimensions = Self::extract_and_shift_denormalized_dimensions(&rows, 4)?;
 
             Ok(Arc::new(ModelTableMetadata {
-                name: table_name,
-                segment_folder: table_folder + "/segment",
+                name: table_name, // TODO: replace replace() with conversion from local path to object store path?
+                segment_folder: ObjectStorePath::parse(table_folder.replace("\\", "/") + "/segment").unwrap(),
                 segment_group_file_schema: segment_group_file_schema.clone(),
                 sampling_intervals,
                 denormalized_dimensions,
