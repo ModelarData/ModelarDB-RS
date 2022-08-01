@@ -42,7 +42,7 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
 /** Public Types **/
 pub struct Context {
-    catalog: catalog::Catalog,
+    catalog: Catalog,
     runtime: Runtime,
     session: SessionContext,
 }
@@ -57,7 +57,7 @@ fn main() {
     args.next(); // Skip executable.
     if let Some(data_folder) = args.next() {
         // Build Context.
-        let catalog = catalog::new(&data_folder);
+        let catalog = Catalog::new(&data_folder);
         let runtime = Runtime::new().unwrap();
         let mut session = create_session_context();
 
