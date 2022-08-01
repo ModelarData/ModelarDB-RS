@@ -30,7 +30,7 @@ use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::file::properties::WriterProperties;
 use paho_mqtt::Message;
-use tracing::{error, info, info_span};
+use tracing::{info, info_span};
 
 use crate::storage::data_point::DataPoint;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder};
@@ -136,19 +136,19 @@ impl StorageEngine {
         let _span = info_span!("insert_compressed_segment", key = key.clone()).entered();
         info!("Inserting batch with {} rows into compressed time series.", batch.num_rows());
 
-        let mut compressed_segment_size;
+        let compressed_segment_size;
 
         // Since the compressed segment is already in memory, insert the segment in to the structure
         // first and check if the reserved memory limit is exceeded after.
         if let Some(time_series) = self.compressed_data.get_mut(&key) {
             info!("Found existing compressed time series.");
 
-            compressed_segment_size = time_series.append_segment(batch).unwrap();
+            compressed_segment_size = time_series.append_segment(batch);
         } else {
             info!("Could not find compressed time series. Creating compressed time series.");
 
             let mut time_series = CompressedTimeSeries::new();
-            compressed_segment_size = time_series.append_segment(batch).unwrap();
+            compressed_segment_size = time_series.append_segment(batch);
 
             self.compressed_data.insert(key.clone(), time_series);
             self.compression_queue.push_back(key.clone());
