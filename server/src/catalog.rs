@@ -18,7 +18,7 @@
 //! models.
 
 use std::fs::{read_dir, DirEntry};
-use std::io::Read;
+use std::io::{Error, ErrorKind, Read};
 use std::str;
 use std::sync::Arc;
 use std::{fs::File, fs::OpenOptions, path::Path};
@@ -26,7 +26,7 @@ use std::{fs::File, fs::OpenOptions, path::Path};
 use datafusion::arrow::array::{
     Array, ArrayRef, BinaryArray, Int32Array, Int32Builder, StringBuilder,
 };
-use datafusion::arrow::datatypes::{DataType, Field, Schema};
+use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader};
 use datafusion::parquet::errors::ParquetError;
@@ -45,10 +45,10 @@ pub struct Catalog {
 impl Catalog {
     /// Scan `data_folder` for tables and model tables and construct a `Catalog`
     /// that contains the metadata necessary to query these tables.
-    pub fn new(data_folder: &str) -> Self {
+    pub fn new(data_folder: &str) -> Result<Self, Error> {
         let mut table_metadata = vec![];
         let mut model_table_metadata = vec![];
-        let model_table_segment_group_file_schema = Arc::new(Schema::new(vec![
+        let model_table_legacy_segment_file_schema = Arc::new(Schema::new(vec![
             Field::new("gid", DataType::Int32, false),
             Field::new("start_time", DataType::Int64, false),
             Field::new("end_time", DataType::Int64, false),
@@ -61,47 +61,33 @@ impl Catalog {
             warn!("The data folder contains a model table, please use the parent directory.");
         }
 
-        if let Ok(data_folder) = read_dir(data_folder) {
-            for dir_entry in data_folder {
-                if let Ok(dir_entry) = dir_entry {
-                    let dir_entry_path = dir_entry.path();
-                    if let Some(path) = dir_entry_path.to_str() {
-                        let file_name = dir_entry.file_name().to_str().unwrap().to_string();
-                        // HACK: workaround for datafusion 8.0.0 lowercasing table names in queries.
-                        let normalized_file_name = file_name.to_ascii_lowercase();
-                        if Self::is_dir_entry_a_table(&dir_entry) {
-                            table_metadata
-                                .push(TableMetadata::new(normalized_file_name, path.to_string()));
-                            info!("Initialized table {}.", path);
-                        } else if Self::is_path_a_model_table(&dir_entry.path()) {
-                            if let Ok(mtd) = ModelTableMetadata::try_new(
-                                normalized_file_name,
-                                path.to_string(),
-                                &model_table_segment_group_file_schema,
-                            ) {
-                                model_table_metadata.push(mtd);
-                                info!("Initialized model table {}.", path);
-                            } else {
-                                error!("Unsupported model table {}.", path);
-                            }
-                        } else {
-                            error!("Unsupported file or folder {}.", path);
-                        }
-                    } else {
-                        error!("Name of file or folder is not UTF-8.");
-                    }
-                } else {
-                    let message = dir_entry.unwrap_err().to_string();
-                    error!("Unable to read file or folder {}.", &message);
+        for maybe_dir_entry in read_dir(data_folder)? {
+            // The check if maybe_dir_entry is an error is not performed in
+            // try_adding_metadata_for_table_or_model_table as it does not seem
+            // possible to return an error without moving it out of a reference.
+            if let Ok(ref dir_entry) = maybe_dir_entry {
+                let maybe_table_initialization_error =
+                    Self::try_adding_metadata_for_table_or_model_table(
+                        dir_entry,
+                        &mut table_metadata,
+                        &mut model_table_metadata,
+                        &model_table_legacy_segment_file_schema,
+                    );
+
+                if maybe_table_initialization_error.is_err() {
+                    let reason = maybe_dir_entry.unwrap_err().to_string();
+                    error!("Unable to initialize table or model table {}.", &reason);
                 }
+            } else {
+                let reason = maybe_dir_entry.unwrap_err();
+                error!("Unable to read file or folder {}.", reason);
             }
-        } else {
-            error!("Unable to open data folder {}.", &data_folder);
         }
-        Catalog {
+
+        Ok(Catalog {
             table_metadata,
             model_table_metadata,
-        }
+        })
     }
 
     /// Return the name of all tables and model tables in the `Catalog`.
@@ -115,6 +101,50 @@ impl Catalog {
             table_names.push(model_table_metadata.name.clone());
         }
         table_names
+    }
+
+    /// Determine if `dir_entry` is a table, a model table, or neither. If
+    /// `dir_entry` is a table the metadata required for the table is added to
+    /// `table_metadata`, and if `dir_entry` is a model table the metadata
+    /// required for the model table is added to `model_table_metadata`.
+    fn try_adding_metadata_for_table_or_model_table(
+        dir_entry: &DirEntry,
+        table_metadata: &mut Vec<TableMetadata>,
+        model_table_metadata: &mut Vec<Arc<ModelTableMetadata>>,
+        model_table_legacy_segment_file_schema: &SchemaRef,
+    ) -> Result<(), Error> {
+        // The extra let binding is required to crate a longer lived value.
+        let path = dir_entry.path();
+        let path = path.to_str().ok_or_else(|| {
+            Error::new(ErrorKind::InvalidInput, "File or folder path is not UTF-8.")
+        })?;
+
+        // The extra let binding is required to crate a longer lived value.
+        let file_name = dir_entry.file_name();
+        let file_name = file_name.to_str().ok_or_else(|| {
+            Error::new(ErrorKind::InvalidInput, "File or folder name is not UTF-8.")
+        })?;
+
+        // HACK: workaround for DataFusion converting table names to lowercase.
+        let normalized_file_name = file_name.to_ascii_lowercase();
+
+        // Check if the file or folder is a table, a model table, or neither.
+        if Self::is_dir_entry_a_table(&dir_entry) {
+            // Initialize table.
+            table_metadata.push(TableMetadata::new(normalized_file_name, path.to_string()));
+            info!("Found table {}.", path);
+        } else if Self::is_path_a_model_table(&dir_entry.path()) {
+            // Initialize model table.
+            model_table_metadata.push(ModelTableMetadata::try_new(
+                normalized_file_name,
+                path.to_string(),
+                &model_table_legacy_segment_file_schema,
+            )?);
+            info!("Found model table {}.", path);
+        } else {
+            error!("File or folder is not a table or model table {}.", path);
+        }
+        Ok(())
     }
 
     /// Return `true` if `dir_entry` is a table, otherwise `false`.
@@ -202,11 +232,12 @@ pub struct ModelTableMetadata {
     pub name: String,
     /// Location of the table's segment folder in an `ObjectStore`.
     pub segment_folder: ObjectStorePath,
+    // TODO: remove segment_group_file_schema when refactoring query engine.
     /// Schema of the Apache Parquet files used by the [JVM-based version of
     /// ModelarDB] for storing segments.
     ///
     /// [JVM-based version of ModelarDB]: https://github.com/modelardata/ModelarDB
-    pub segment_group_file_schema: Arc<Schema>,
+    pub segment_group_file_schema: SchemaRef,
     /// Cache that maps from time series id to sampling interval for all time
     /// series in the table.
     pub sampling_intervals: Int32Array,
@@ -222,7 +253,7 @@ impl ModelTableMetadata {
     fn try_new(
         table_name: String,
         table_folder: String,
-        segment_group_file_schema: &Arc<Schema>,
+        segment_group_file_schema: &SchemaRef,
     ) -> Result<Arc<Self>, ParquetError> {
         // Ensure only supported model types are used.
         let model_types_file = table_folder.clone() + "/model_type.parquet";

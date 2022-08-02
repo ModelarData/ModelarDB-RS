@@ -57,7 +57,7 @@ fn main() {
     args.next(); // Skip executable.
     if let Some(data_folder) = args.next() {
         // Build Context.
-        let catalog = Catalog::new(&data_folder);
+        let catalog = Catalog::new(&data_folder).unwrap(); //TODO
         let runtime = Runtime::new().unwrap();
         let mut session = create_session_context();
 
