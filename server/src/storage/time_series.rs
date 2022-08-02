@@ -19,8 +19,7 @@ use std::fs;
 use std::io::ErrorKind::Other;
 use std::sync::Arc;
 
-use datafusion::arrow::datatypes::DataType::{Float32, List, UInt8};
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 
 use crate::storage::write_batch_to_parquet;
@@ -99,19 +98,15 @@ impl CompressedTimeSeries {
 
     /// Return the record batch schema used for compressed segments.
     fn get_compressed_segment_schema() -> Schema {
-        // TODO: Find a way to change the name and nullable of these fields.
-        let timestamps_field = Field::new("item", UInt8, true);
-        let values_field = Field::new("item", UInt8, true);
-
         Schema::new(vec![
-            Field::new("model_type_id", UInt8, false),
-            Field::new("timestamps", List(Box::new(timestamps_field)), false),
+            Field::new("model_type_id", DataType::UInt8, false),
+            Field::new("timestamps", DataType::Binary, false),
             Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
             Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("values", List(Box::new(values_field)), false),
+            Field::new("values", DataType::Binary, false),
             Field::new("min_value", ArrowValue::DATA_TYPE, false),
             Field::new("max_value", ArrowValue::DATA_TYPE, false),
-            Field::new("error", Float32, false),
+            Field::new("error", DataType::Float32, false),
         ])
     }
 }
@@ -120,7 +115,7 @@ impl CompressedTimeSeries {
 mod tests {
     use std::sync::Arc;
 
-    use datafusion::arrow::array::{Float32Array, ListArray, UInt8Array};
+    use datafusion::arrow::array::{BinaryArray, Float32Array, ListArray, UInt8Array};
     use datafusion::arrow::datatypes::DataType::UInt8;
     use datafusion::arrow::datatypes::{Field, Schema, UInt8Type};
     use datafusion::arrow::record_batch::RecordBatch;
@@ -169,26 +164,19 @@ mod tests {
     fn test_get_size_of_segment() {
         let segment = get_compressed_segment_record_batch();
 
-        assert_eq!(CompressedTimeSeries::get_size_of_segment(&segment), 2464);
+        assert_eq!(CompressedTimeSeries::get_size_of_segment(&segment), 2032);
     }
 
     /// Return a generated compressed segment with three model segments.
     fn get_compressed_segment_record_batch() -> RecordBatch {
         let model_type_id = UInt8Array::from(vec![2, 3, 3]);
+        let timestamps = BinaryArray::from_vec(vec![b"000", b"001", b"010"]);
         let start_time = TimestampArray::from(vec![1, 2, 3]);
         let end_time = TimestampArray::from(vec![2, 3, 4]);
+        let values = BinaryArray::from_vec(vec![b"1111", b"1000", b"0000"]);
         let min_value = ValueArray::from(vec![5.2, 10.3, 30.2]);
         let max_value = ValueArray::from(vec![20.2, 12.2, 34.2]);
         let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
-
-        let data = vec![
-            Some(vec![]),
-            Some(vec![Some(3), Some(5), Some(5), Some(19)]),
-            Some(vec![Some(6)]),
-        ];
-
-        let timestamps = ListArray::from_iter_primitive::<UInt8Type, _, _>(data.clone());
-        let values = ListArray::from_iter_primitive::<UInt8Type, _, _>(data);
 
         let schema = CompressedTimeSeries::get_compressed_segment_schema();
 
