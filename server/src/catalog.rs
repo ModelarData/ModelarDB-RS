@@ -32,8 +32,8 @@ use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use datafusion::parquet::record::RowAccessor;
-use tracing::{error, info, warn};
 use object_store::path::Path as ObjectStorePath;
+use tracing::{error, info, warn};
 
 /// Metadata for the tables and model tables in the data folder.
 #[derive(Debug)]
@@ -57,9 +57,9 @@ impl Catalog {
             Field::new("gaps", DataType::Binary, false),
         ]));
 
-	if Self::is_path_a_model_table(Path::new(data_folder)) {
-	    warn!("The data folder contains a model table, please use the parent directory.");
-	}
+        if Self::is_path_a_model_table(Path::new(data_folder)) {
+            warn!("The data folder contains a model table, please use the parent directory.");
+        }
 
         if let Ok(data_folder) = read_dir(data_folder) {
             for dir_entry in data_folder {
@@ -119,37 +119,38 @@ impl Catalog {
 
     /// Return `true` if `dir_entry` is a table, otherwise `false`.
     fn is_dir_entry_a_table(dir_entry: &DirEntry) -> bool {
-	if let Ok(metadata) = dir_entry.metadata() {
-	    if metadata.is_file() {
-		Self::is_dir_entry_a_parquet_file(dir_entry)
-	    } else if metadata.is_dir() {
-		if let Ok(mut data_folder) = read_dir(dir_entry.path()) {
-		    data_folder.all(|result| {
-			result.is_ok() && Self::is_dir_entry_a_parquet_file(&result.unwrap())
-		    })
-		} else {
-		    false
-		}
-	    } else {
-		false
-	    }
-	} else {
-	    false
-	}
+        if let Ok(metadata) = dir_entry.metadata() {
+            if metadata.is_file() {
+                Self::is_dir_entry_a_parquet_file(dir_entry)
+            } else if metadata.is_dir() {
+                if let Ok(mut data_folder) = read_dir(dir_entry.path()) {
+                    data_folder.all(|result| {
+                        result.is_ok() && Self::is_dir_entry_a_parquet_file(&result.unwrap())
+                    })
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        } else {
+            false
+        }
     }
 
     /// Return `true` if `dir_entry` is an Apache Parquet file, otherwise `false`.
     fn is_dir_entry_a_parquet_file(dir_entry: &DirEntry) -> bool {
-	// OpenOptions is dropped while borrowed if it is crated in the if.
-	let mut file_builder = OpenOptions::new();
+        // OpenOptions is dropped while borrowed if it is crated in the if.
+        let mut file_builder = OpenOptions::new();
 
-	// Write permission is only required on Microsoft Windows.
-	let mut file = if cfg!(windows) {
-	    file_builder.write(true)
-	} else {
-	    file_builder.read(true)
-	}
-	.open(dir_entry.path()).unwrap();
+        // Write permission is only required on Microsoft Windows.
+        let mut file = if cfg!(windows) {
+            file_builder.write(true)
+        } else {
+            file_builder.read(true)
+        }
+        .open(dir_entry.path())
+        .unwrap();
 
         let mut magic_bytes = vec![0u8; 4];
         let _ = file.read_exact(&mut magic_bytes);
@@ -158,17 +159,17 @@ impl Catalog {
 
     /// Return `true` if `path_to_folder` is a model table, otherwise `false`.
     fn is_path_a_model_table(path_to_folder: &Path) -> bool {
-	if path_to_folder.exists() && path_to_folder.is_dir() {
-	    return ["model_type.parquet", "time_series.parquet", "segment"]
-		.iter()
-		.map(|required_file_name| {
-		    let mut path_buf = path_to_folder.to_path_buf();
-		    path_buf.push(required_file_name);
-		    Path::new(&path_buf).exists()
-		})
-		.all(|exists| exists);
-	}
-	false
+        if path_to_folder.exists() && path_to_folder.is_dir() {
+            return ["model_type.parquet", "time_series.parquet", "segment"]
+                .iter()
+                .map(|required_file_name| {
+                    let mut path_buf = path_to_folder.to_path_buf();
+                    path_buf.push(required_file_name);
+                    Path::new(&path_buf).exists()
+                })
+                .all(|exists| exists);
+        }
+        false
     }
 }
 
@@ -183,14 +184,14 @@ pub struct TableMetadata {
 
 impl TableMetadata {
     fn new(file_name: String, path: String) -> Self {
-	let name = if let Some(index) = file_name.find('.') {
-	    file_name[0..index].to_string()
-	} else {
-	    file_name
-	};
+        let name = if let Some(index) = file_name.find('.') {
+            file_name[0..index].to_string()
+        } else {
+            file_name
+        };
 
-	let folder = ObjectStorePath::parse(path).unwrap();
-	Self { name, folder }
+        let folder = ObjectStorePath::parse(path).unwrap();
+        Self { name, folder }
     }
 }
 
@@ -219,62 +220,66 @@ impl ModelTableMetadata {
     /// Read and check the metadata for a model table. Return `ParquetError` if the
     /// metadata cannot be read or if the model table uses unsupported model types.
     fn try_new(
-	table_name: String,
-	table_folder: String,
-	segment_group_file_schema: &Arc<Schema>,
+        table_name: String,
+        table_folder: String,
+        segment_group_file_schema: &Arc<Schema>,
     ) -> Result<Arc<Self>, ParquetError> {
-	// Ensure only supported model types are used.
-	let model_types_file = table_folder.clone() + "/model_type.parquet";
-	let path = Path::new(&model_types_file);
-	if let Ok(file) = File::open(&path) {
-	    let reader = SerializedFileReader::new(file)?;
-	    let rows = reader.get_row_iter(None)?;
-	    for row in rows {
-		let mtid = row.get_int(0)?;
-		let name = row.get_bytes(1)?.as_utf8()?;
-		match (mtid, name) {
-		    (1, "dk.aau.modelardb.core.models.UncompressedModelType") => (),
-		    (2, "dk.aau.modelardb.core.models.PMC_MeanModelType") => (),
-		    (3, "dk.aau.modelardb.core.models.SwingFilterModelType") => (),
-		    (4, "dk.aau.modelardb.core.models.FacebookGorillaModelType") => (),
-		    _ => return Err(ParquetError::General("unsupported model type".to_string())),
-		}
-	    }
-	}
+        // Ensure only supported model types are used.
+        let model_types_file = table_folder.clone() + "/model_type.parquet";
+        let path = Path::new(&model_types_file);
+        if let Ok(file) = File::open(&path) {
+            let reader = SerializedFileReader::new(file)?;
+            let rows = reader.get_row_iter(None)?;
+            for row in rows {
+                let mtid = row.get_int(0)?;
+                let name = row.get_bytes(1)?.as_utf8()?;
+                match (mtid, name) {
+                    (1, "dk.aau.modelardb.core.models.UncompressedModelType") => (),
+                    (2, "dk.aau.modelardb.core.models.PMC_MeanModelType") => (),
+                    (3, "dk.aau.modelardb.core.models.SwingFilterModelType") => (),
+                    (4, "dk.aau.modelardb.core.models.FacebookGorillaModelType") => (),
+                    _ => return Err(ParquetError::General("unsupported model type".to_string())),
+                }
+            }
+        }
 
-	// Read time series metadata.
-	// TODO: read tids and gids so data from time series groups can be correctly decompressed.
-	let time_series_file = table_folder.clone() + "/time_series.parquet";
-	let path = Path::new(&time_series_file);
-	if let Ok(file) = File::open(&path) {
-	    let reader = SerializedFileReader::new(file)?;
-	    let parquet_metadata = reader.metadata();
-	    let row_count = parquet_metadata
-		.row_groups()
-		.iter()
-		.map(|rg| rg.num_rows())
-		.sum::<i64>() as usize;
+        // Read time series metadata.
+        // TODO: read tids and gids so data from time series groups can be correctly decompressed.
+        let time_series_file = table_folder.clone() + "/time_series.parquet";
+        let path = Path::new(&time_series_file);
+        if let Ok(file) = File::open(&path) {
+            let reader = SerializedFileReader::new(file)?;
+            let parquet_metadata = reader.metadata();
+            let row_count = parquet_metadata
+                .row_groups()
+                .iter()
+                .map(|rg| rg.num_rows())
+                .sum::<i64>() as usize;
 
-	    let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(reader));
-	    let mut record_batch_reader = arrow_reader.get_record_reader(row_count)?;
-	    let rows = record_batch_reader.next().unwrap()?; //TODO: handle empty Parquet files
+            let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(reader));
+            let mut record_batch_reader = arrow_reader.get_record_reader(row_count)?;
+            let rows = record_batch_reader.next().unwrap()?; //TODO: handle empty Parquet files
 
-	    let sampling_intervals = Self::extract_and_shift_int32_column(&rows, 2)?;
-	    let denormalized_dimensions = Self::extract_and_shift_denormalized_dimensions(&rows, 4)?;
+            let sampling_intervals = Self::extract_and_shift_int32_column(&rows, 2)?;
+            let denormalized_dimensions =
+                Self::extract_and_shift_denormalized_dimensions(&rows, 4)?;
 
-	    Ok(Arc::new(Self {
-		name: table_name, // TODO: replace replace() with conversion from local path to object store path?
-		segment_folder: ObjectStorePath::parse(table_folder.replace("\\", "/") + "/segment").unwrap(),
-		segment_group_file_schema: segment_group_file_schema.clone(),
-		sampling_intervals,
-		denormalized_dimensions,
-	    }))
-	} else {
-	    Err(ParquetError::General(format!(
-		"unable to read metadata for {}",
-		table_name
-	    )))
-	}
+            Ok(Arc::new(Self {
+                name: table_name, // TODO: replace replace() with conversion from local path to object store path?
+                segment_folder: ObjectStorePath::parse(
+                    table_folder.replace("\\", "/") + "/segment",
+                )
+                .unwrap(),
+                segment_group_file_schema: segment_group_file_schema.clone(),
+                sampling_intervals,
+                denormalized_dimensions,
+            }))
+        } else {
+            Err(ParquetError::General(format!(
+                "unable to read metadata for {}",
+                table_name
+            )))
+        }
     }
 
     /// Read the array at `column_index` from `rows`, cast it to `Int32Array`, and
