@@ -171,14 +171,20 @@ impl Catalog {
 
     /// Return `true` if `dir_entry` is an Apache Parquet file, otherwise `false`.
     fn is_dir_entry_a_parquet_file(dir_entry: &DirEntry) -> bool {
-        // Write permissions are required on Microsoft Windows.
-        let mut file = OpenOptions::new()
-            .write(true)
-            .open(dir_entry.path())
-            .unwrap();
+	// OpenOptions is dropped while borrowed if it is crated in the if.
+	let mut file_builder = OpenOptions::new();
+
+	// Write permission is only required on Microsoft Windows.
+	let mut file = if cfg!(windows) {
+	    file_builder.write(true)
+	} else {
+	    file_builder.read(true)
+	}
+	.open(dir_entry.path()).unwrap();
+
         let mut magic_bytes = vec![0u8; 4];
         let _ = file.read_exact(&mut magic_bytes);
-        magic_bytes == [80, 65, 82, 49] //Magic bytes PAR1
+        magic_bytes == [80, 65, 82, 49] // Magic bytes PAR1.
     }
 
     fn new_table_metadata(file_name: String, path: String) -> TableMetadata {
