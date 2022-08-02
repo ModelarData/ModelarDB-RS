@@ -19,7 +19,6 @@ use std::fs;
 use std::io::ErrorKind::Other;
 use std::sync::Arc;
 
-use datafusion::arrow::array::{Array, UInt8Array};
 use datafusion::arrow::datatypes::DataType::{Float32, List, UInt8};
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -48,6 +47,11 @@ impl CompressedTimeSeries {
     /// Append `segment` to the compressed data in the time series and return the size `segment` in bytes.
     pub fn append_segment(&mut self, segment: RecordBatch) -> usize {
         let segment_size = CompressedTimeSeries::get_size_of_segment(&segment);
+
+        debug_assert!(
+            segment.schema() == Arc::new(CompressedTimeSeries::get_compressed_segment_schema()),
+            "Schema of record batch does not match compressed segment schema."
+        );
 
         self.compressed_segments.push(segment);
         self.size_in_bytes += segment_size;
@@ -86,7 +90,8 @@ impl CompressedTimeSeries {
         let mut total_size: usize = 0;
 
         for column in segment.columns() {
-            total_size += column.data().get_array_memory_size()
+            // TODO: How is this calculated internally?
+            total_size += column.get_array_memory_size()
         }
 
         total_size
@@ -94,15 +99,16 @@ impl CompressedTimeSeries {
 
     /// Return the record batch schema used for compressed segments.
     fn get_compressed_segment_schema() -> Schema {
-        let timestamp_field = Field::new("timestamp", UInt8, false);
-        let value_field = Field::new("value", UInt8, false);
+        // TODO: Find a way to change the name and nullable of these fields.
+        let timestamps_field = Field::new("item", UInt8, true);
+        let values_field = Field::new("item", UInt8, true);
 
         Schema::new(vec![
             Field::new("model_type_id", UInt8, false),
-            Field::new("timestamps", List(Box::new(timestamp_field)), false),
+            Field::new("timestamps", List(Box::new(timestamps_field)), false),
             Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
             Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("values", List(Box::new(value_field)), false),
+            Field::new("values", List(Box::new(values_field)), false),
             Field::new("min_value", ArrowValue::DATA_TYPE, false),
             Field::new("max_value", ArrowValue::DATA_TYPE, false),
             Field::new("error", Float32, false),
@@ -112,25 +118,93 @@ impl CompressedTimeSeries {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
+
+    use datafusion::arrow::array::{Float32Array, ListArray, UInt8Array};
+    use datafusion::arrow::datatypes::DataType::UInt8;
+    use datafusion::arrow::datatypes::{Field, Schema, UInt8Type};
+    use datafusion::arrow::record_batch::RecordBatch;
+
+    use crate::storage::time_series::CompressedTimeSeries;
+    use crate::types::{TimestampArray, ValueArray};
 
     #[test]
-    fn test_can_append_valid_compressed_segment() {}
+    fn test_can_append_valid_compressed_segment() {
+        let mut time_series = CompressedTimeSeries::new();
+        time_series.append_segment(get_compressed_segment_record_batch());
 
-    #[test]
-    fn test_cannot_append_invalid_compressed_segment() {}
-
-    #[test]
-    fn test_compressed_time_series_size_updated_when_appending() {}
-
-    #[test]
-    fn test_can_save_compressed_segments_to_parquet() {
-        // TODO: This requires I/O.
+        assert_eq!(time_series.compressed_segments.len(), 1)
     }
 
     #[test]
-    fn test_cannot_save_empty_compressed_segments_to_parquet() {}
+    #[should_panic(expected = "Schema of record batch does not match compressed segment schema.")]
+    fn test_cannot_append_invalid_compressed_segment() {
+        let schema = Schema::new(vec![Field::new("model_type_id", UInt8, false)]);
+
+        let model_type_id = UInt8Array::from(vec![2, 3, 3]);
+        let invalid =
+            RecordBatch::try_new(Arc::new(schema), vec![Arc::new(model_type_id)]).unwrap();
+
+        let mut time_series = CompressedTimeSeries::new();
+        time_series.append_segment(invalid);
+    }
 
     #[test]
-    fn test_get_size_of_segment() {}
+    fn test_compressed_time_series_size_updated_when_appending() {
+        let mut time_series = CompressedTimeSeries::new();
+        time_series.append_segment(get_compressed_segment_record_batch());
+
+        assert!(time_series.size_in_bytes > 0);
+    }
+
+    #[test]
+    fn test_cannot_save_empty_compressed_segments_to_parquet() {
+        let mut empty_time_series = CompressedTimeSeries::new();
+        let result = empty_time_series.save_to_parquet("key".to_owned());
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_size_of_segment() {
+        let segment = get_compressed_segment_record_batch();
+
+        assert_eq!(CompressedTimeSeries::get_size_of_segment(&segment), 2464);
+    }
+
+    /// Return a generated compressed segment with three model segments.
+    fn get_compressed_segment_record_batch() -> RecordBatch {
+        let model_type_id = UInt8Array::from(vec![2, 3, 3]);
+        let start_time = TimestampArray::from(vec![1, 2, 3]);
+        let end_time = TimestampArray::from(vec![2, 3, 4]);
+        let min_value = ValueArray::from(vec![5.2, 10.3, 30.2]);
+        let max_value = ValueArray::from(vec![20.2, 12.2, 34.2]);
+        let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
+
+        let data = vec![
+            Some(vec![]),
+            Some(vec![Some(3), Some(5), Some(5), Some(19)]),
+            Some(vec![Some(6)]),
+        ];
+
+        let timestamps = ListArray::from_iter_primitive::<UInt8Type, _, _>(data.clone());
+        let values = ListArray::from_iter_primitive::<UInt8Type, _, _>(data);
+
+        let schema = CompressedTimeSeries::get_compressed_segment_schema();
+
+        RecordBatch::try_new(
+            Arc::new(schema),
+            vec![
+                Arc::new(model_type_id),
+                Arc::new(timestamps),
+                Arc::new(start_time),
+                Arc::new(end_time),
+                Arc::new(values),
+                Arc::new(min_value),
+                Arc::new(max_value),
+                Arc::new(error),
+            ],
+        )
+        .unwrap()
+    }
 }

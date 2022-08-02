@@ -347,11 +347,6 @@ mod tests {
             .generate_unique_key()
     }
 
-    // TODO: Add a test for updating the remaining bytes when saving a compressed time series to disk (I/O).
-    // TODO: Add a test for saving the first compressed time series when out of memory (I/O).
-    // TODO: Add a test for saving multiple when out of memory if incoming batch is large enough (I/O).
-    // TODO: Add a test for saving compressed time series when the max size is reached (I/O).
-
     // Tests for compressed data.
     #[test]
     fn test_cannot_insert_valid_compressed_segment() {
