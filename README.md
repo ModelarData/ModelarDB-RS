@@ -33,17 +33,20 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 1. Install a supported version of [Visual Studio](https://visualstudio.microsoft.com/vs/older-downloads/) with Visual C++:
    * Visual Studio 2017 ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
    * Visual Studio 2019 ([Supported](https://github.com/microsoft/snmalloc/issues/525#issuecomment-1128901104))
-   * Visual Studio 2022 (Unsupported)
+   * Note that Visual Studio 2022 is **not** supported.
 2. Install [CMake](https://cmake.org/) and select one of the following options during installation:
    * _Add CMake to the system PATH for all users_
    * _Add CMake to the system PATH for current user_
 
 ### All
 3. Install the latest stable [Rust Toolchain](https://rustup.rs/).
-4. Compile the system and run tests using Cargo:
+4. Build, test, and run the system using Cargo:
    * Debug Build: `cargo build`
    * Release Build: `cargo build --release`
    * Run Tests: `cargo test`
+   * Run Server: `cargo run --bin mmdbd absolute_path_to_data_folder`
+   * Run Client: `cargo run --bin mmdb [server_address] [query_file]`
+5. Move `mmdbd` and `mmdb` from the `target` directory to any directory.
 
 ## Development
 All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md)
