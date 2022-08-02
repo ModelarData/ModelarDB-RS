@@ -15,6 +15,7 @@
 
 mod catalog;
 mod errors;
+mod ingestion;
 mod macros;
 mod models;
 mod optimizer;
@@ -22,15 +23,15 @@ mod remote;
 mod storage;
 mod tables;
 mod types;
-mod ingestion;
 
 use std::sync::Arc;
 
+use datafusion::common::DataFusionError;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::options::ParquetReadOptions;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use tokio::runtime::Runtime;
-use tracing::{error, Instrument};
+use tracing::error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::catalog::Catalog;
@@ -48,7 +49,7 @@ pub struct Context {
 }
 
 /** Public Functions **/
-fn main() {
+fn main() -> Result<(), String> {
     // A layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();
     tracing_subscriber::registry().with(stdout_log).init();
@@ -57,7 +58,12 @@ fn main() {
     args.next(); // Skip executable.
     if let Some(data_folder) = args.next() {
         // Build Context.
-        let catalog = Catalog::new(&data_folder).unwrap(); //TODO
+        let catalog = Catalog::try_new(&data_folder).map_err(|error| {
+            format!(
+                "Unable to read data folder {} due to {}",
+                &data_folder, &error
+            )
+        })?;
         let runtime = Runtime::new().unwrap();
         let mut session = create_session_context();
 
@@ -77,6 +83,7 @@ fn main() {
         let binary_name = binary_path.file_name().unwrap();
         eprintln!("Usage: {} data_folder.", binary_name.to_str().unwrap());
     }
+    Ok(())
 }
 
 /** Private Functions **/
@@ -92,33 +99,33 @@ fn create_session_context() -> SessionContext {
 async fn register_tables(session: &mut SessionContext, catalog: &Catalog) {
     // Initializes tables consisting of standard Apache Parquet files.
     for table_metadata in &catalog.table_metadata {
-        if session
+        let result = session
             .register_parquet(
                 &table_metadata.name,
                 table_metadata.folder.as_ref(),
                 ParquetReadOptions::default(),
             )
-            .instrument(tracing::error_span!("register_parquet"))
-            .await
-            .is_err()
-        {
-            error!("Unable to initialize table {}.", table_metadata.name);
-        }
+            .await;
+        print_error("table", &table_metadata.name, result);
     }
 
     // Initializes tables storing time series as models in Apache Parquet files.
     for model_table_metadata in &catalog.model_table_metadata {
-        if session
-            .register_table(
-                model_table_metadata.name.as_str(),
-                ModelTable::new(model_table_metadata),
-            )
-            .is_err()
-        {
-            error!(
-                "Unable to initialize model table {}.",
-                model_table_metadata.name
-            );
-        }
+        let result = session.register_table(
+            model_table_metadata.name.as_str(),
+            ModelTable::new(model_table_metadata),
+        );
+        print_error("model table", &model_table_metadata.name, result);
+    }
+}
+
+fn print_error<T>(table_type: &str, name: &str, result: Result<T, DataFusionError>) {
+    if result.is_err() {
+        error!(
+            "Unable to initialize {} {} due to {}.",
+            table_type,
+            name,
+            result.err().unwrap(),
+        );
     }
 }

@@ -45,7 +45,7 @@ pub struct Catalog {
 impl Catalog {
     /// Scan `data_folder` for tables and model tables and construct a `Catalog`
     /// that contains the metadata necessary to query these tables.
-    pub fn new(data_folder: &str) -> Result<Self, Error> {
+    pub fn try_new(data_folder: &str) -> Result<Self, Error> {
         let mut table_metadata = vec![];
         let mut model_table_metadata = vec![];
         let model_table_legacy_segment_file_schema = Arc::new(Schema::new(vec![
