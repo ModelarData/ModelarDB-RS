@@ -32,7 +32,7 @@ use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use datafusion::parquet::record::RowAccessor;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use object_store::path::Path as ObjectStorePath;
 
 /// Metadata for a table.
@@ -87,6 +87,10 @@ impl Catalog {
             Field::new("gaps", DataType::Binary, false),
         ]));
 
+	if Self::is_path_a_model_table(Path::new(data_folder)) {
+	    warn!("The data folder contains a model table, please use the parent directory.");
+	}
+
         if let Ok(data_folder) = read_dir(data_folder) {
             for dir_entry in data_folder {
                 if let Ok(dir_entry) = dir_entry {
@@ -99,7 +103,7 @@ impl Catalog {
                             table_metadata
                                 .push(Self::new_table_metadata(normalized_file_name, path.to_string()));
                             info!("Initialized table {}.", path);
-                        } else if Self::is_dir_entry_a_model_table(&dir_entry) {
+                        } else if Self::is_path_a_model_table(&dir_entry.path()) {
                             if let Ok(mtd) = Self::read_model_table_metadata(
                                 normalized_file_name,
                                 path.to_string(),
@@ -188,21 +192,19 @@ impl Catalog {
         TableMetadata { name, folder }
     }
 
-    /// Return `true` if `dir_entry` is a model table, otherwise `false`.
-    fn is_dir_entry_a_model_table(dir_entry: &DirEntry) -> bool {
-        if let Ok(metadata) = dir_entry.metadata() {
-            if metadata.is_dir() {
-                return ["model_type.parquet", "time_series.parquet", "segment"]
-                    .iter()
-                    .map(|required_file_name| {
-                        let mut path = dir_entry.path();
-                        path.push(required_file_name);
-                        Path::new(&path).exists()
-                    })
-                    .all(|exists| exists);
-            }
-        }
-        false
+    /// Return `true` if `path_to_folder` is a model table, otherwise `false`.
+    fn is_path_a_model_table(path_to_folder: &Path) -> bool {
+	if path_to_folder.exists() && path_to_folder.is_dir() {
+	    return ["model_type.parquet", "time_series.parquet", "segment"]
+		.iter()
+		.map(|required_file_name| {
+		    let mut path_buf = path_to_folder.to_path_buf();
+		    path_buf.push(required_file_name);
+		    Path::new(&path_buf).exists()
+		})
+		.all(|exists| exists);
+	}
+	false
     }
 
     /// Read and check the metadata for a model table. Return `ParquetError` if the
