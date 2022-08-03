@@ -266,7 +266,7 @@ impl ModelTableMetadata {
         let path = Path::new(&time_series_file);
         if let Ok(file) = File::open(&path) {
             let rows = Self::read_entire_parquet_file(&folder_name, file)?;
-            let sampling_intervals = Self::extract_and_shift_int32_column(&rows, 2)?;
+            let sampling_intervals = Self::extract_and_shift_int32_array(&rows, 2)?;
             let denormalized_dimensions =
                 Self::extract_and_shift_denormalized_dimensions(&rows, 4)?;
 
@@ -341,7 +341,7 @@ impl ModelTableMetadata {
 
     /// Read the array at `column_index` from `rows`, cast it to `Int32Array`,
     /// and increase the index of all values in the array with one.
-    fn extract_and_shift_int32_column(
+    fn extract_and_shift_int32_array(
         rows: &RecordBatch,
         column_index: usize,
     ) -> Result<Int32Array, ParquetError> {
@@ -370,7 +370,7 @@ impl ModelTableMetadata {
     ) -> Result<Vec<ArrayRef>, ParquetError> {
         let mut denormalized_dimensions: Vec<ArrayRef> = vec![];
         for level_column_index in first_column_index..rows.num_columns() {
-            let level = Self::extract_and_shift_text_column(rows, level_column_index)?;
+            let level = Self::extract_and_shift_string_array(rows, level_column_index)?;
             denormalized_dimensions.push(level);
         }
         Ok(denormalized_dimensions)
@@ -378,7 +378,7 @@ impl ModelTableMetadata {
 
     /// Read the array at `column_index` from `rows`, cast it to `BinaryArray`,
     /// and increase the index of all values in the array with one.
-    fn extract_and_shift_text_column(
+    fn extract_and_shift_string_array(
         rows: &RecordBatch,
         column_index: usize,
     ) -> Result<ArrayRef, ParquetError> {
@@ -403,5 +403,156 @@ impl ModelTableMetadata {
             shifted_column.append_value(member_as_str)?;
         }
         Ok(Arc::new(shifted_column.finish()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use datafusion::arrow::array::StringArray;
+    use proptest::num;
+    use proptest::string;
+    use proptest::{prop_assert, prop_assert_eq, proptest};
+
+    // Tests for Catalog.
+    #[test]
+    fn test_empty_catalog_table_and_model_table_names() {
+        let catalog = Catalog {
+            table_metadata: vec![],
+            model_table_metadata: vec![],
+        };
+        assert!(catalog.table_and_model_table_names().is_empty())
+    }
+
+    #[test]
+    fn test_catalog_table_and_model_table_names() {
+        let mut catalog = Catalog {
+            table_metadata: vec![],
+            model_table_metadata: vec![],
+        };
+
+        catalog.table_metadata.push(TableMetadata {
+            name: "table".to_owned(),
+            path: "".to_owned(),
+        });
+
+        catalog
+            .model_table_metadata
+            .push(Arc::new(ModelTableMetadata {
+                name: "model_table".to_owned(),
+                segment_path: ObjectStorePath::parse("").unwrap(),
+                segment_file_legacy_schema: Arc::new(Schema::new(vec![])),
+                sampling_intervals: Int32Array::builder(0).finish(),
+                denormalized_dimensions: vec![],
+            }));
+
+        assert_eq!(
+            vec!("table", "model_table"),
+            catalog.table_and_model_table_names()
+        )
+    }
+
+    // Tests for TableMetadata.
+    #[test]
+    fn test_table_metadata_zero_suffixes() {
+        let table_metadata = TableMetadata::new("folder".to_owned(), "/path/to/folder".to_owned());
+        assert_eq!("folder", table_metadata.name);
+    }
+
+    #[test]
+    fn test_table_metadata_single_suffix() {
+        let table_metadata =
+            TableMetadata::new("file.parquet".to_owned(), "/path/to/folder".to_owned());
+        assert_eq!("file", table_metadata.name);
+    }
+
+    #[test]
+    fn test_table_metadata_multiple_suffixes() {
+        let table_metadata = TableMetadata::new(
+            "file.snappy.parquet".to_owned(),
+            "/path/to/folder".to_owned(),
+        );
+        assert_eq!("file", table_metadata.name);
+    }
+
+    // Tests for ModelTableMetadata.
+    #[test]
+    fn test_extract_and_shift_empty_int32_array() {
+        let array = Int32Array::from(vec![] as Vec<i32>);
+        assert_eq!(0, array.len());
+        let record_batch = create_record_batch_with_int32_array(array);
+        let maybe_shifted_array =
+            ModelTableMetadata::extract_and_shift_int32_array(&record_batch, 0);
+        assert!(maybe_shifted_array.is_ok());
+        let shifted_array = maybe_shifted_array.unwrap();
+        assert_eq!(1, shifted_array.len());
+        assert_eq!(-1, shifted_array.value(0));
+    }
+
+    proptest! {
+    #[test]
+    fn test_extract_and_shift_int32_array_with_value(value in num::i32::ANY) {
+        let array = Int32Array::from(vec![value]);
+        assert_eq!(1, array.len());
+        let record_batch = create_record_batch_with_int32_array(array);
+        let maybe_shifted_array =
+            ModelTableMetadata::extract_and_shift_int32_array(&record_batch, 0);
+        prop_assert!(maybe_shifted_array.is_ok());
+        let shifted_array = maybe_shifted_array.unwrap();
+        prop_assert_eq!(2, shifted_array.len());
+        assert_eq!(-1, shifted_array.value(0));
+        prop_assert_eq!(value, shifted_array.value(1));
+    }
+    }
+
+    fn create_record_batch_with_int32_array(array: Int32Array) -> RecordBatch {
+        let schema = Schema::new(vec![Field::new("array", DataType::Int32, false)]);
+        RecordBatch::try_new(Arc::new(schema), vec![Arc::new(array)]).unwrap()
+    }
+
+    #[test]
+    fn test_extract_and_shift_empty_text_array() {
+        let array = BinaryArray::from_vec(vec![]);
+        assert_eq!(0, array.len());
+        let record_batch = create_record_batch_with_string_array(array);
+        let maybe_shifted_array =
+            ModelTableMetadata::extract_and_shift_string_array(&record_batch, 0);
+        assert!(maybe_shifted_array.is_ok());
+        // The extra let binding is required to crate a longer lived value.
+        let shifted_array = maybe_shifted_array.unwrap();
+        let shifted_array = shifted_array
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        assert_eq!(1, shifted_array.len());
+        assert_eq!("array", shifted_array.value(0));
+    }
+
+    proptest! {
+    #[test]
+    fn test_extract_and_shift_text_array_with_value(
+        value in string::string_regex("[a-zA-Z]+").unwrap()
+    ) {
+        let array = BinaryArray::from_vec(vec![value.as_bytes()]);
+        assert_eq!(1, array.len());
+        let record_batch = create_record_batch_with_string_array(array);
+        let maybe_shifted_array =
+            ModelTableMetadata::extract_and_shift_string_array(&record_batch, 0);
+        prop_assert!(maybe_shifted_array.is_ok());
+        // The extra let binding is required to crate a longer lived value.
+        let shifted_array = maybe_shifted_array.unwrap();
+        let shifted_array = shifted_array
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap();
+        prop_assert_eq!(2, shifted_array.len());
+        assert_eq!("array", shifted_array.value(0));
+        prop_assert_eq!(value, shifted_array.value(1));
+    }
+    }
+
+    fn create_record_batch_with_string_array(array: BinaryArray) -> RecordBatch {
+        let schema = Schema::new(vec![Field::new("array", DataType::Binary, false)]);
+        RecordBatch::try_new(Arc::new(schema), vec![Arc::new(array)]).unwrap()
     }
 }
