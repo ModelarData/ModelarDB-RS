@@ -115,18 +115,17 @@ impl CompressedTimeSeries {
 mod tests {
     use std::sync::Arc;
 
-    use datafusion::arrow::array::{BinaryArray, Float32Array, ListArray, UInt8Array};
+    use datafusion::arrow::array::UInt8Array;
     use datafusion::arrow::datatypes::DataType::UInt8;
-    use datafusion::arrow::datatypes::{Field, Schema, UInt8Type};
+    use datafusion::arrow::datatypes::{Field, Schema};
     use datafusion::arrow::record_batch::RecordBatch;
 
-    use crate::storage::time_series::CompressedTimeSeries;
-    use crate::types::{TimestampArray, ValueArray};
+    use crate::storage::time_series::{test_util, CompressedTimeSeries};
 
     #[test]
     fn test_can_append_valid_compressed_segment() {
         let mut time_series = CompressedTimeSeries::new();
-        time_series.append_segment(get_compressed_segment_record_batch());
+        time_series.append_segment(test_util::get_compressed_segment_record_batch());
 
         assert_eq!(time_series.compressed_segments.len(), 1)
     }
@@ -134,11 +133,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Schema of record batch does not match compressed segment schema.")]
     fn test_cannot_append_invalid_compressed_segment() {
-        let schema = Schema::new(vec![Field::new("model_type_id", UInt8, false)]);
-
-        let model_type_id = UInt8Array::from(vec![2, 3, 3]);
-        let invalid =
-            RecordBatch::try_new(Arc::new(schema), vec![Arc::new(model_type_id)]).unwrap();
+        let invalid = test_util::get_invalid_compressed_segment_record_batch();
 
         let mut time_series = CompressedTimeSeries::new();
         time_series.append_segment(invalid);
@@ -147,7 +142,7 @@ mod tests {
     #[test]
     fn test_compressed_time_series_size_updated_when_appending() {
         let mut time_series = CompressedTimeSeries::new();
-        time_series.append_segment(get_compressed_segment_record_batch());
+        time_series.append_segment(test_util::get_compressed_segment_record_batch());
 
         assert!(time_series.size_in_bytes > 0);
     }
@@ -162,13 +157,34 @@ mod tests {
 
     #[test]
     fn test_get_size_of_segment() {
-        let segment = get_compressed_segment_record_batch();
+        let segment = test_util::get_compressed_segment_record_batch();
 
         assert_eq!(CompressedTimeSeries::get_size_of_segment(&segment), 2032);
     }
+}
+
+#[cfg(test)]
+pub mod test_util {
+    use std::sync::Arc;
+
+    use datafusion::arrow::array::{BinaryArray, Float32Array, UInt8Array};
+    use datafusion::arrow::datatypes::DataType::UInt8;
+    use datafusion::arrow::datatypes::{Field, Schema};
+    use datafusion::arrow::record_batch::RecordBatch;
+
+    use crate::storage::time_series::CompressedTimeSeries;
+    use crate::types::{TimestampArray, ValueArray};
+
+    pub fn get_invalid_compressed_segment_record_batch() -> RecordBatch {
+        let model_type_id = UInt8Array::from(vec![2, 3, 3]);
+
+        let schema = Schema::new(vec![Field::new("model_type_id", UInt8, false)]);
+
+        RecordBatch::try_new(Arc::new(schema), vec![Arc::new(model_type_id)]).unwrap()
+    }
 
     /// Return a generated compressed segment with three model segments.
-    fn get_compressed_segment_record_batch() -> RecordBatch {
+    pub fn get_compressed_segment_record_batch() -> RecordBatch {
         let model_type_id = UInt8Array::from(vec![2, 3, 3]);
         let timestamps = BinaryArray::from_vec(vec![b"000", b"001", b"010"]);
         let start_time = TimestampArray::from(vec![1, 2, 3]);

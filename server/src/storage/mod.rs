@@ -45,7 +45,7 @@ use crate::storage::time_series::CompressedTimeSeries;
 const INITIAL_BUILDER_CAPACITY: usize = 64;
 const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
 const COMPRESSED_RESERVED_MEMORY_IN_BYTES: isize = 5000;
-const MAX_COMPRESSED_FILE_SIZE_IN_BYTES: usize = 10240;
+const MAX_COMPRESSED_FILE_SIZE_IN_BYTES: usize = 1024;
 
 /// Manages all uncompressed data, both while being built and when finished.
 pub struct StorageEngine {
@@ -107,7 +107,11 @@ impl StorageEngine {
             // Create a new segment and reduce the remaining amount of reserved memory by its size.
             let mut segment = SegmentBuilder::new();
             self.uncompressed_remaining_memory_in_bytes -= SegmentBuilder::get_memory_size();
-            info!("Created segment. Remaining bytes: {}.", self.uncompressed_remaining_memory_in_bytes);
+
+            info!(
+                "Created segment. Remaining bytes: {}.",
+                self.uncompressed_remaining_memory_in_bytes
+            );
 
             segment.insert_data(&data_point);
             self.uncompressed_data.insert(key, segment);
@@ -231,6 +235,8 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    use crate::storage::time_series::test_util;
+
     // Tests for uncompressed data.
     #[test]
     fn test_cannot_insert_invalid_message() {
@@ -312,8 +318,7 @@ mod tests {
         let reserved_memory = storage_engine.uncompressed_remaining_memory_in_bytes;
 
         // If there is enough reserved memory to hold n builders, we need to create n + 1 to panic.
-        for i in 0..(reserved_memory / SegmentBuilder::get_memory_size()) + 1
-        {
+        for i in 0..(reserved_memory / SegmentBuilder::get_memory_size()) + 1 {
             insert_generated_message(&mut storage_engine, i.to_string());
         }
     }
@@ -349,22 +354,47 @@ mod tests {
 
     // Tests for compressed data.
     #[test]
-    fn test_cannot_insert_valid_compressed_segment() {
+    #[should_panic(expected = "Schema of record batch does not match compressed segment schema.")]
+    fn test_cannot_insert_invalid_compressed_segment() {
+        let invalid = test_util::get_invalid_compressed_segment_record_batch();
+        let mut storage_engine = StorageEngine::new();
 
+        storage_engine.insert_compressed_data("key".to_owned(), invalid);
     }
 
     #[test]
     fn test_can_insert_compressed_segment_into_new_time_series() {
+        let segment = test_util::get_compressed_segment_record_batch();
+        let mut storage_engine = StorageEngine::new();
 
+        storage_engine.insert_compressed_data("key".to_owned(), segment);
+
+        assert!(storage_engine.compressed_data.contains_key("key"));
+        assert_eq!(storage_engine.compression_queue.pop_front().unwrap(), "key");
+
+        assert!(storage_engine.compressed_data.get("key").unwrap().size_in_bytes > 0);
     }
 
     #[test]
     fn test_can_insert_compressed_segment_into_existing_time_series() {
+        let segment = test_util::get_compressed_segment_record_batch();
+        let mut storage_engine = StorageEngine::new();
 
+        storage_engine.insert_compressed_data("key".to_owned(), segment.clone());
+        let previous_size = storage_engine.compressed_data.get("key").unwrap().size_in_bytes;
+        storage_engine.insert_compressed_data("key".to_owned(), segment);
+
+        assert!(storage_engine.compressed_data.get("key").unwrap().size_in_bytes > previous_size);
     }
 
     #[test]
     fn test_remaining_bytes_decremented_when_inserting() {
+        let segment = test_util::get_compressed_segment_record_batch();
+        let mut storage_engine = StorageEngine::new();
+        let initial_remaining_memory = storage_engine.compressed_remaining_memory_in_bytes;
 
+        storage_engine.insert_compressed_data("key".to_owned(), segment);
+
+        assert!(storage_engine.compressed_remaining_memory_in_bytes < initial_remaining_memory);
     }
 }
