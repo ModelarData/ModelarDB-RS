@@ -30,6 +30,7 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader};
 use datafusion::parquet::errors::ParquetError;
+use datafusion::parquet::file::metadata::ParquetMetaData;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use datafusion::parquet::record::RowAccessor;
 use object_store::path::Path as ObjectStorePath;
@@ -66,17 +67,19 @@ impl Catalog {
             // try_adding_metadata_for_table_or_model_table as it does not seem
             // possible to return an error without moving it out of a reference.
             if let Ok(ref dir_entry) = maybe_dir_entry {
-                let maybe_table_initialization_error =
+                if let Err(table_initialization_error) =
                     Self::try_adding_metadata_for_table_or_model_table(
                         dir_entry,
                         &mut table_metadata,
                         &mut model_table_metadata,
                         &model_table_legacy_segment_file_schema,
+                    )
+                {
+                    error!(
+                        "Cannot read metadata from {} due to {}.",
+                        dir_entry.path().to_string_lossy(),
+                        table_initialization_error,
                     );
-
-                if maybe_table_initialization_error.is_err() {
-                    let reason = maybe_dir_entry.unwrap_err().to_string();
-                    error!("Unable to initialize table or model table {}.", &reason);
                 }
             } else {
                 let reason = maybe_dir_entry.unwrap_err();
@@ -147,7 +150,7 @@ impl Catalog {
         Ok(())
     }
 
-    /// Return `true` if `dir_entry` is a table, otherwise `false`.
+    /// Return `true` if `dir_entry` is a readable table, otherwise `false`.
     fn is_dir_entry_a_table(dir_entry: &DirEntry) -> bool {
         if let Ok(metadata) = dir_entry.metadata() {
             if metadata.is_file() {
@@ -168,23 +171,26 @@ impl Catalog {
         }
     }
 
-    /// Return `true` if `dir_entry` is an Apache Parquet file, otherwise `false`.
+    /// Return `true` if `dir_entry` is an readable Apache Parquet file, otherwise `false`.
     fn is_dir_entry_a_parquet_file(dir_entry: &DirEntry) -> bool {
         // OpenOptions is dropped while borrowed if it is crated in the if.
         let mut file_builder = OpenOptions::new();
 
         // Write permission is only required on Microsoft Windows.
-        let mut file = if cfg!(windows) {
+        let maybe_file = if cfg!(windows) {
             file_builder.write(true)
         } else {
             file_builder.read(true)
         }
-        .open(dir_entry.path())
-        .unwrap();
+        .open(dir_entry.path());
 
-        let mut magic_bytes = vec![0u8; 4];
-        let _ = file.read_exact(&mut magic_bytes);
-        magic_bytes == [80, 65, 82, 49] // Magic bytes PAR1.
+        if let Ok(mut file) = maybe_file {
+            let mut magic_bytes = vec![0u8; 4];
+            let _ = file.read_exact(&mut magic_bytes);
+            magic_bytes == [80, 65, 82, 49] // Magic bytes PAR1.
+        } else {
+            false
+        }
     }
 
     /// Return `true` if `path_to_folder` is a model table, otherwise `false`.
@@ -247,14 +253,80 @@ pub struct ModelTableMetadata {
 }
 
 impl ModelTableMetadata {
-    /// Read and check the metadata for a model table. Return `ParquetError` if the
-    /// metadata cannot be read or if the model table uses unsupported model types.
+    // TODO: rewrite after implementing the compression component.
+    /// Read and check the metadata for a model table produced by the [JVM-based
+    /// version of ModelarDB]. Return `ParquetError` if the metadata cannot be
+    /// read or if the model table uses unsupported model types.
+    ///
+    /// [JVM-based version of ModelarDB]: https://github.com/modelardata/ModelarDB
     fn try_new(
         table_name: String,
         table_folder: String,
         segment_group_file_schema: &SchemaRef,
     ) -> Result<Arc<Self>, ParquetError> {
+        // Pre-compute the path to the segment folder in the object store.
+        let segment_folder = Self::table_folder_to_segment_folder_object_store_path(&table_folder)?;
+
         // Ensure only supported model types are used.
+        Self::check_model_type_metdata(&table_folder)?;
+
+        // Read time series metadata.
+        let time_series_file = table_folder.clone() + "/time_series.parquet";
+        let path = Path::new(&time_series_file);
+        if let Ok(file) = File::open(&path) {
+            let rows = Self::read_entire_parquet_file(&table_name, file)?;
+            let sampling_intervals = Self::extract_and_shift_int32_column(&rows, 2)?;
+            let denormalized_dimensions =
+                Self::extract_and_shift_denormalized_dimensions(&rows, 4)?;
+
+            Ok(Arc::new(Self {
+                name: table_name,
+                segment_folder,
+                segment_group_file_schema: segment_group_file_schema.clone(),
+                sampling_intervals,
+                denormalized_dimensions,
+            }))
+        } else {
+            Err(ParquetError::General(format!(
+                "Unable to read metadata for {}.",
+                table_name
+            )))
+        }
+    }
+
+    /// Create a `ObjectStorePath` to the segment folder in `table_folder`.
+    fn table_folder_to_segment_folder_object_store_path(
+        table_folder: &str,
+    ) -> Result<ObjectStorePath, ParquetError> {
+        // TODO: replace replace() with conversion from local path to object store path?
+        ObjectStorePath::parse(table_folder.replace("\\", "/") + "/segment")
+            .map_err(|error| ParquetError::General(error.to_string()))
+    }
+
+    /// Read all rows in the Apache Parquet `file` for the model table with
+    /// `table_name`.
+    fn read_entire_parquet_file(
+        table_name: &String,
+        file: File,
+    ) -> Result<RecordBatch, ParquetError> {
+        let reader = SerializedFileReader::new(file)?;
+        let parquet_metadata = reader.metadata();
+        let row_count = parquet_metadata
+            .row_groups()
+            .iter()
+            .map(|rg| rg.num_rows())
+            .sum::<i64>() as usize;
+
+        let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(reader));
+        let mut record_batch_reader = arrow_reader.get_record_reader(row_count)?;
+        let rows = record_batch_reader.next().ok_or_else(|| {
+            ParquetError::General(format!("No metadata exists for {}.", *table_name))
+        })??;
+        Ok(rows)
+    }
+
+    /// Check that the model table only use supported model types.
+    fn check_model_type_metdata(table_folder: &String) -> Result<(), ParquetError> {
         let model_types_file = table_folder.clone() + "/model_type.parquet";
         let path = Path::new(&model_types_file);
         if let Ok(file) = File::open(&path) {
@@ -272,44 +344,7 @@ impl ModelTableMetadata {
                 }
             }
         }
-
-        // Read time series metadata.
-        // TODO: read tids and gids so data from time series groups can be correctly decompressed.
-        let time_series_file = table_folder.clone() + "/time_series.parquet";
-        let path = Path::new(&time_series_file);
-        if let Ok(file) = File::open(&path) {
-            let reader = SerializedFileReader::new(file)?;
-            let parquet_metadata = reader.metadata();
-            let row_count = parquet_metadata
-                .row_groups()
-                .iter()
-                .map(|rg| rg.num_rows())
-                .sum::<i64>() as usize;
-
-            let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(reader));
-            let mut record_batch_reader = arrow_reader.get_record_reader(row_count)?;
-            let rows = record_batch_reader.next().unwrap()?; //TODO: handle empty Parquet files
-
-            let sampling_intervals = Self::extract_and_shift_int32_column(&rows, 2)?;
-            let denormalized_dimensions =
-                Self::extract_and_shift_denormalized_dimensions(&rows, 4)?;
-
-            Ok(Arc::new(Self {
-                name: table_name, // TODO: replace replace() with conversion from local path to object store path?
-                segment_folder: ObjectStorePath::parse(
-                    table_folder.replace("\\", "/") + "/segment",
-                )
-                .unwrap(),
-                segment_group_file_schema: segment_group_file_schema.clone(),
-                sampling_intervals,
-                denormalized_dimensions,
-            }))
-        } else {
-            Err(ParquetError::General(format!(
-                "unable to read metadata for {}",
-                table_name
-            )))
-        }
+        Ok(())
     }
 
     /// Read the array at `column_index` from `rows`, cast it to `Int32Array`, and
@@ -322,10 +357,12 @@ impl ModelTableMetadata {
             .column(column_index)
             .as_any()
             .downcast_ref::<Int32Array>()
-            .unwrap()
+            .ok_or_else(|| ParquetError::ArrowError("Unable to read ids".to_owned()))?
             .values();
+
+        // -1 is stored at index 0 as ids starting at 1 is used for lookup.
         let mut shifted_column = Int32Builder::new(column.len() + 1);
-        shifted_column.append_value(-1)?; //-1 is stored at index 0 as ids starting at 1 is used for lookup
+        shifted_column.append_value(-1)?;
         shifted_column.append_slice(column)?;
         Ok(shifted_column.finish())
     }
@@ -339,7 +376,6 @@ impl ModelTableMetadata {
     ) -> Result<Vec<ArrayRef>, ParquetError> {
         let mut denormalized_dimensions: Vec<ArrayRef> = vec![];
         for level_column_index in first_column_index..rows.num_columns() {
-            //TODO: support dimensions with levels that are not strings?
             let level = Self::extract_and_shift_text_column(rows, level_column_index)?;
             denormalized_dimensions.push(level);
         }
@@ -352,18 +388,24 @@ impl ModelTableMetadata {
         rows: &RecordBatch,
         column_index: usize,
     ) -> Result<ArrayRef, ParquetError> {
+        let error_message = "Unable to read tags";
+
         let schema = rows.schema();
         let name = schema.field(column_index).name();
         let column = rows
             .column(column_index)
             .as_any()
             .downcast_ref::<BinaryArray>()
-            .unwrap();
+            .ok_or_else(|| ParquetError::ArrowError(error_message.to_owned()))?;
+
+        // The level's name is at index 0 as ids from 1 is used for lookup.
         let mut shifted_column =
             StringBuilder::with_capacity(column.len(), column.get_buffer_memory_size());
-        shifted_column.append_value(name)?; //The level's name is stored at index 0 as ids starting at 1 is used for lookup
-        for member_as_bytes in column {
-            let member_as_str = str::from_utf8(member_as_bytes.unwrap())?;
+        shifted_column.append_value(name)?;
+        for maybe_member_as_bytes in column {
+            let member_as_bytes = maybe_member_as_bytes
+                .ok_or_else(|| ParquetError::ArrowError(error_message.to_owned()))?;
+            let member_as_str = str::from_utf8(member_as_bytes)?;
             shifted_column.append_value(member_as_str)?;
         }
         Ok(Arc::new(shifted_column.finish()))
