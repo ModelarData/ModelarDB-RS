@@ -62,7 +62,7 @@ impl CompressedTimeSeries {
         if self.compressed_segments.is_empty() {
             Err(std::io::Error::new(
                 Other,
-                "The time series does not contain any compressed data.",
+                "The compressed time series does not contain any compressed data.",
             ))
         } else {
             // Combine the segments into a single record batch.

@@ -56,7 +56,7 @@ pub struct StorageEngine {
     /// The compressed segments before they are saved to persistent storage.
     compressed_data: HashMap<String, CompressedTimeSeries>,
     /// Prioritized queue of time series keys referring to data that can be saved to persistent storage.
-    compression_queue: VecDeque<String>,
+    compressed_queue: VecDeque<String>,
     /// How many bytes of memory that are left for storing compressed segments.
     compressed_remaining_memory_in_bytes: isize,
 }
@@ -68,7 +68,7 @@ impl StorageEngine {
             uncompressed_data: HashMap::new(),
             finished_queue: VecDeque::new(),
             compressed_data: HashMap::new(),
-            compression_queue: VecDeque::new(),
+            compressed_queue: VecDeque::new(),
             uncompressed_remaining_memory_in_bytes: UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
             compressed_remaining_memory_in_bytes: COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         }
@@ -89,7 +89,7 @@ impl StorageEngine {
             segment.insert_data(&data_point);
 
             if segment.is_full() {
-                info!("Segment is full, moving it to the compression queue.");
+                info!("Segment is full, moving it to the queue of finished segments.");
 
                 let full_segment = self.uncompressed_data.remove(&key).unwrap();
                 self.enqueue_segment(key, full_segment)
@@ -118,8 +118,8 @@ impl StorageEngine {
         Ok(())
     }
 
-    /// Remove the oldest finished segment from the finished queue and return it. Return `None`
-    /// if the finished queue is empty.
+    /// Remove the oldest finished segment from the queue and return it. Return `None` if the queue
+    /// of finished segments is empty.
     pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
         if let Some(finished_segment) = self.finished_queue.pop_front() {
             // Add the memory size of the removed finished segment back to the remaining bytes.
@@ -132,10 +132,10 @@ impl StorageEngine {
         }
     }
 
-    /// Insert `batch` into the in-memory compressed time series buffer.
-    pub fn insert_compressed_data(&mut self, key: String, batch: RecordBatch) {
+    /// Insert `segment` into the in-memory compressed time series buffer.
+    pub fn insert_compressed_data(&mut self, key: String, segment: RecordBatch) {
         let _span = info_span!("insert_compressed_segment", key = key.clone()).entered();
-        info!("Inserting batch with {} rows into compressed time series.", batch.num_rows());
+        info!("Inserting batch with {} rows into compressed time series.", segment.num_rows());
 
         let compressed_segment_size;
 
@@ -144,15 +144,15 @@ impl StorageEngine {
         if let Some(time_series) = self.compressed_data.get_mut(&key) {
             info!("Found existing compressed time series.");
 
-            compressed_segment_size = time_series.append_segment(batch);
+            compressed_segment_size = time_series.append_segment(segment);
         } else {
             info!("Could not find compressed time series. Creating compressed time series.");
 
             let mut time_series = CompressedTimeSeries::new();
-            compressed_segment_size = time_series.append_segment(batch);
+            compressed_segment_size = time_series.append_segment(segment);
 
             self.compressed_data.insert(key.clone(), time_series);
-            self.compression_queue.push_back(key.clone());
+            self.compressed_queue.push_back(key.clone());
         }
 
         self.compressed_remaining_memory_in_bytes -= compressed_segment_size as isize;
@@ -173,8 +173,8 @@ impl StorageEngine {
         self.finished_queue.push_back(finished_segment);
     }
 
-    /// Spill the first in-memory finished segment in the finished queue. If no in-memory
-    /// finished segments could be found, panic.
+    /// Spill the first in-memory finished segment in the queue of finished segments. If no
+    /// in-memory finished segments could be found, panic.
     fn spill_finished_segment(&mut self) {
         info!("Not enough memory to create segment. Spilling an already finished segment.");
 
@@ -201,7 +201,7 @@ impl StorageEngine {
         info!("Out of memory to store compressed data. Saving compressed data to disk.");
 
         while self.compressed_remaining_memory_in_bytes < 0 {
-            let key = self.compression_queue.pop_front().unwrap();
+            let key = self.compressed_queue.pop_front().unwrap();
             info!("Saving compressed time series with key '{}' to disk.", key);
 
             let mut time_series = self.compressed_data.remove(&key).unwrap();
@@ -372,7 +372,7 @@ mod tests {
         storage_engine.insert_compressed_data("key".to_owned(), segment);
 
         assert!(storage_engine.compressed_data.contains_key("key"));
-        assert_eq!(storage_engine.compression_queue.pop_front().unwrap(), "key");
+        assert_eq!(storage_engine.compressed_queue.pop_front().unwrap(), "key");
         assert!(storage_engine.compressed_data.get("key").unwrap().size_in_bytes > 0);
     }
 
