@@ -58,7 +58,7 @@ fn main() -> Result<(), String> {
     args.next(); // Skip executable.
     if let Some(data_folder) = args.next() {
         // Build Context.
-        let catalog = Catalog::try_new(&data_folder).map_err(|error| {
+        let mut catalog = Catalog::try_new(&data_folder).map_err(|error| {
             format!(
                 "Unable to read data folder {} due to {}",
                 &data_folder, &error
@@ -68,7 +68,7 @@ fn main() -> Result<(), String> {
         let mut session = create_session_context();
 
         // Register Tables.
-        runtime.block_on(register_tables(&mut session, &catalog));
+        register_tables(&runtime, &mut session, &mut catalog);
 
         // Start Interface.
         let context = Arc::new(Context {
@@ -96,30 +96,32 @@ fn create_session_context() -> SessionContext {
     SessionContext::with_state(state)
 }
 
-async fn register_tables(session: &mut SessionContext, catalog: &Catalog) {
+fn register_tables(runtime: &Runtime, session: &mut SessionContext, catalog: &mut Catalog) {
     // Initializes tables consisting of standard Apache Parquet files.
-    for table_metadata in &catalog.table_metadata {
-        let result = session
-            .register_parquet(
-                &table_metadata.name,
-                table_metadata.folder.as_ref(),
-                ParquetReadOptions::default(),
-            )
-            .await;
-        print_error("table", &table_metadata.name, result);
-    }
+    catalog.table_metadata.retain(|table_metadata| {
+        let result = runtime.block_on(session.register_parquet(
+            &table_metadata.name,
+            &table_metadata.folder,
+            ParquetReadOptions::default(),
+        ));
+        check_if_ok_otherwse_log_error("table", &table_metadata.name, result)
+    });
 
     // Initializes tables storing time series as models in Apache Parquet files.
-    for model_table_metadata in &catalog.model_table_metadata {
+    catalog.model_table_metadata.retain(|model_table_metadata| {
         let result = session.register_table(
             model_table_metadata.name.as_str(),
             ModelTable::new(model_table_metadata),
         );
-        print_error("model table", &model_table_metadata.name, result);
-    }
+        check_if_ok_otherwse_log_error("model table", &model_table_metadata.name, result)
+    });
 }
 
-fn print_error<T>(table_type: &str, name: &str, result: Result<T, DataFusionError>) {
+fn check_if_ok_otherwse_log_error<T>(
+    table_type: &str,
+    name: &str,
+    result: Result<T, DataFusionError>,
+) -> bool {
     if result.is_err() {
         error!(
             "Unable to initialize {} {} due to {}.",
@@ -127,5 +129,8 @@ fn print_error<T>(table_type: &str, name: &str, result: Result<T, DataFusionErro
             name,
             result.err().unwrap(),
         );
+        false
+    } else {
+        true
     }
 }

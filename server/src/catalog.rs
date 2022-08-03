@@ -209,7 +209,7 @@ pub struct TableMetadata {
     /// Name of the table.
     pub name: String,
     /// Location of the table's file or folder in an `ObjectStore`.
-    pub folder: ObjectStorePath,
+    pub folder: String, // Not ObjectStorePath as register_parquet expects &str
 }
 
 impl TableMetadata {
@@ -220,8 +220,7 @@ impl TableMetadata {
             file_name
         };
 
-        let folder = ObjectStorePath::parse(path).unwrap();
-        Self { name, folder }
+        Self { name, folder: path }
     }
 }
 
