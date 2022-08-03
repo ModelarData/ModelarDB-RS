@@ -36,7 +36,6 @@ use object_store::path::Path as ObjectStorePath;
 use tracing::{error, info, warn};
 
 /// Metadata for the tables and model tables in the data folder.
-#[derive(Debug)]
 pub struct Catalog {
     pub table_metadata: Vec<TableMetadata>,
     pub model_table_metadata: Vec<Arc<ModelTableMetadata>>,
@@ -66,23 +65,21 @@ impl Catalog {
             // try_adding_metadata_for_table_or_model_table as it does not seem
             // possible to return an error without moving it out of a reference.
             if let Ok(ref dir_entry) = maybe_dir_entry {
-                if let Err(table_initialization_error) =
-                    Self::try_adding_metadata_for_table_or_model_table(
-                        dir_entry,
-                        &mut table_metadata,
-                        &mut model_table_metadata,
-                        &model_table_legacy_segment_file_schema,
-                    )
-                {
+                if let Err(maybe_error) = Self::try_adding_table_or_model_table_metadata(
+                    dir_entry,
+                    &mut table_metadata,
+                    &mut model_table_metadata,
+                    &model_table_legacy_segment_file_schema,
+                ) {
                     error!(
                         "Cannot read metadata from {} due to {}.",
                         dir_entry.path().to_string_lossy(),
-                        table_initialization_error,
+                        maybe_error,
                     );
                 }
             } else {
                 let reason = maybe_dir_entry.unwrap_err();
-                error!("Unable to read file or folder {}.", reason);
+                error!("Unable to read file or folder due to {}.", reason);
             }
         }
 
@@ -93,7 +90,7 @@ impl Catalog {
     }
 
     /// Return the name of all tables and model tables in the `Catalog`.
-    pub fn table_names(&self) -> Vec<String> {
+    pub fn table_and_model_table_names(&self) -> Vec<String> {
         let mut table_names: Vec<String> = vec![];
         for table_metadata in &self.table_metadata {
             table_names.push(table_metadata.name.clone());
@@ -106,10 +103,10 @@ impl Catalog {
     }
 
     /// Determine if `dir_entry` is a table, a model table, or neither. If
-    /// `dir_entry` is a table the metadata required for the table is added to
-    /// `table_metadata`, and if `dir_entry` is a model table the metadata
-    /// required for the model table is added to `model_table_metadata`.
-    fn try_adding_metadata_for_table_or_model_table(
+    /// `dir_entry` is a table the metadata required to query the table is added
+    /// to `table_metadata`, and if `dir_entry` is a model table the metadata
+    /// required to query the model table is added to `model_table_metadata`.
+    fn try_adding_table_or_model_table_metadata(
         dir_entry: &DirEntry,
         table_metadata: &mut Vec<TableMetadata>,
         model_table_metadata: &mut Vec<Arc<ModelTableMetadata>>,
@@ -128,17 +125,18 @@ impl Catalog {
         })?;
 
         // HACK: workaround for DataFusion converting table names to lowercase.
-        let normalized_file_name = file_name.to_ascii_lowercase();
+        let normalized_file_or_folder_name = file_name.to_ascii_lowercase();
 
         // Check if the file or folder is a table, a model table, or neither.
         if Self::is_dir_entry_a_table(&dir_entry) {
-            // Initialize table.
-            table_metadata.push(TableMetadata::new(normalized_file_name, path.to_string()));
+            table_metadata.push(TableMetadata::new(
+                normalized_file_or_folder_name,
+                path.to_string(),
+            ));
             info!("Found table {}.", path);
         } else if Self::is_path_a_model_table(&dir_entry.path()) {
-            // Initialize model table.
             model_table_metadata.push(ModelTableMetadata::try_new(
-                normalized_file_name,
+                normalized_file_or_folder_name, // A folder for model tables.
                 path.to_string(),
                 &model_table_legacy_segment_file_schema,
             )?);
@@ -198,40 +196,45 @@ impl Catalog {
     }
 }
 
-/// Metadata for a table.
+/// Metadata required to query a table.
 #[derive(Debug)]
 pub struct TableMetadata {
     /// Name of the table.
     pub name: String,
     /// Location of the table's file or folder in an `ObjectStore`.
-    pub folder: String, // Not ObjectStorePath as register_parquet expects &str
+    pub path: String, // Not ObjectStorePath as register_parquet needs a start /
 }
 
 impl TableMetadata {
-    fn new(file_name: String, path: String) -> Self {
-        let name = if let Some(index) = file_name.find('.') {
-            file_name[0..index].to_string()
+    fn new(file_or_folder_name: String, file_or_folder_path: String) -> Self {
+        // The full extension is removed manually as file_prefix is not stable.
+        let name = if let Some(index) = file_or_folder_name.find('.') {
+            file_or_folder_name[0..index].to_string()
         } else {
-            file_name
+            file_or_folder_name
         };
 
-        Self { name, folder: path }
+        Self {
+            name,
+            path: file_or_folder_path,
+        }
     }
 }
 
-/// Metadata for a model table.
+// TODO: update after implementing the compression component.
+/// Metadata required to query a model table.
 #[derive(Debug)]
 pub struct ModelTableMetadata {
     /// Name of the model table.
     pub name: String,
-    /// Location of the table's segment folder in an `ObjectStore`.
-    pub segment_folder: ObjectStorePath,
-    // TODO: remove segment_group_file_schema when refactoring query engine.
+    /// Location of the model table's segment folder in an `ObjectStore`.
+    pub segment_path: ObjectStorePath,
+    // TODO: remove segment_file_legacy_schema when refactoring query engine.
     /// Schema of the Apache Parquet files used by the [JVM-based version of
     /// ModelarDB] for storing segments.
     ///
     /// [JVM-based version of ModelarDB]: https://github.com/modelardata/ModelarDB
-    pub segment_group_file_schema: SchemaRef,
+    pub segment_file_legacy_schema: SchemaRef,
     /// Cache that maps from time series id to sampling interval for all time
     /// series in the table.
     pub sampling_intervals: Int32Array,
@@ -242,52 +245,51 @@ pub struct ModelTableMetadata {
 }
 
 impl ModelTableMetadata {
-    // TODO: rewrite after implementing the compression component.
     /// Read and check the metadata for a model table produced by the [JVM-based
     /// version of ModelarDB]. Return `ParquetError` if the metadata cannot be
     /// read or if the model table uses unsupported model types.
     ///
     /// [JVM-based version of ModelarDB]: https://github.com/modelardata/ModelarDB
     fn try_new(
-        table_name: String,
-        table_folder: String,
-        segment_group_file_schema: &SchemaRef,
+        folder_name: String,
+        folder_path: String,
+        segment_file_legacy_schema: &SchemaRef,
     ) -> Result<Arc<Self>, ParquetError> {
         // Pre-compute the path to the segment folder in the object store.
-        let segment_folder = Self::table_folder_to_segment_folder_object_store_path(&table_folder)?;
+        let segment_path = Self::create_object_store_path_to_segment_folder(&folder_path)?;
 
         // Ensure only supported model types are used.
-        Self::check_model_type_metdata(&table_folder)?;
+        Self::check_model_type_metdata(&folder_path)?;
 
         // Read time series metadata.
-        let time_series_file = table_folder.clone() + "/time_series.parquet";
+        let time_series_file = folder_path.clone() + "/time_series.parquet";
         let path = Path::new(&time_series_file);
         if let Ok(file) = File::open(&path) {
-            let rows = Self::read_entire_parquet_file(&table_name, file)?;
+            let rows = Self::read_entire_parquet_file(&folder_name, file)?;
             let sampling_intervals = Self::extract_and_shift_int32_column(&rows, 2)?;
             let denormalized_dimensions =
                 Self::extract_and_shift_denormalized_dimensions(&rows, 4)?;
 
             Ok(Arc::new(Self {
-                name: table_name,
-                segment_folder,
-                segment_group_file_schema: segment_group_file_schema.clone(),
+                name: folder_name,
+                segment_path,
+                segment_file_legacy_schema: segment_file_legacy_schema.clone(),
                 sampling_intervals,
                 denormalized_dimensions,
             }))
         } else {
             Err(ParquetError::General(format!(
                 "Unable to read metadata for {}.",
-                table_name
+                folder_name
             )))
         }
     }
 
     /// Create a `ObjectStorePath` to the segment folder in `table_folder`.
-    fn table_folder_to_segment_folder_object_store_path(
-        table_folder: &str,
+    fn create_object_store_path_to_segment_folder(
+        model_table_folder: &str,
     ) -> Result<ObjectStorePath, ParquetError> {
-        let segment_folder = table_folder.to_owned() + "/segment";
+        let segment_folder = model_table_folder.to_owned() + "/segment";
         let path = Path::new(&segment_folder);
         ObjectStorePath::from_filesystem_path(path)
             .map_err(|error| ParquetError::General(error.to_string()))
@@ -347,7 +349,9 @@ impl ModelTableMetadata {
             .column(column_index)
             .as_any()
             .downcast_ref::<Int32Array>()
-            .ok_or_else(|| ParquetError::ArrowError("Unable to read ids".to_owned()))?
+            .ok_or_else(|| {
+                ParquetError::ArrowError("Unable to read sampling intervals".to_owned())
+            })?
             .values();
 
         // -1 is stored at index 0 as ids starting at 1 is used for lookup.

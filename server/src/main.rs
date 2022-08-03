@@ -101,7 +101,7 @@ fn register_tables(runtime: &Runtime, session: &mut SessionContext, catalog: &mu
     catalog.table_metadata.retain(|table_metadata| {
         let result = runtime.block_on(session.register_parquet(
             &table_metadata.name,
-            &table_metadata.folder,
+            &table_metadata.path,
             ParquetReadOptions::default(),
         ));
         check_if_ok_otherwse_log_error("table", &table_metadata.name, result)
