@@ -25,8 +25,8 @@ use datafusion::arrow::record_batch::RecordBatch;
 use crate::storage::write_batch_to_parquet;
 use crate::types::{ArrowTimestamp, ArrowValue, TimestampArray};
 
-/// A single compressed time series, containing one or more compressed segments in order and providing
-/// functionality for appending more segments and saving all segments to a single Parquet file.
+/// A single compressed time series, containing one or more compressed segments and providing
+/// functionality for appending segments and saving all segments to a single Parquet file.
 pub struct CompressedTimeSeries {
     /// Compressed segments that make up the sequential compressed data of the time series.
     compressed_segments: Vec<RecordBatch>,
@@ -42,13 +42,12 @@ impl CompressedTimeSeries {
         }
     }
 
-    // TODO: Maybe use debug assert to check that the schema is correct.
-    /// Append `segment` to the compressed data in the time series and return the size `segment` in bytes.
+    /// Append `segment` to the compressed data in the time series and return the size of `segment` in bytes.
     pub fn append_segment(&mut self, segment: RecordBatch) -> usize {
-        let segment_size = CompressedTimeSeries::get_size_of_segment(&segment);
+        let segment_size = Self::get_size_of_segment(&segment);
 
         debug_assert!(
-            segment.schema() == Arc::new(CompressedTimeSeries::get_compressed_segment_schema()),
+            segment.schema() == Arc::new(Self::get_compressed_segment_schema()),
             "Schema of record batch does not match compressed segment schema."
         );
 
@@ -67,7 +66,7 @@ impl CompressedTimeSeries {
             ))
         } else {
             // Combine the segments into a single record batch.
-            let schema = CompressedTimeSeries::get_compressed_segment_schema();
+            let schema = Self::get_compressed_segment_schema();
             let batch = RecordBatch::concat(&Arc::new(schema), &*self.compressed_segments).unwrap();
 
             // Create the folder structure if it does not already exist.
@@ -75,8 +74,8 @@ impl CompressedTimeSeries {
             fs::create_dir_all(&folder_path)?;
 
             // Create a path that uses the first timestamp as the filename.
-            let timestamps: &TimestampArray = batch.column(0).as_any().downcast_ref().unwrap();
-            let path = format!("{}/{}.parquet", folder_path, timestamps.value(0));
+            let start_times: &TimestampArray = batch.column(2).as_any().downcast_ref().unwrap();
+            let path = format!("{}/{}.parquet", folder_path, start_times.value(0));
 
             write_batch_to_parquet(batch, path.clone());
 
@@ -132,7 +131,7 @@ mod tests {
 
     #[test]
     #[should_panic(expected = "Schema of record batch does not match compressed segment schema.")]
-    fn test_cannot_append_invalid_compressed_segment() {
+    fn test_panic_if_appending_invalid_compressed_segment() {
         let invalid = test_util::get_invalid_compressed_segment_record_batch();
 
         let mut time_series = CompressedTimeSeries::new();
@@ -177,7 +176,6 @@ pub mod test_util {
 
     pub fn get_invalid_compressed_segment_record_batch() -> RecordBatch {
         let model_type_id = UInt8Array::from(vec![2, 3, 3]);
-
         let schema = Schema::new(vec![Field::new("model_type_id", UInt8, false)]);
 
         RecordBatch::try_new(Arc::new(schema), vec![Arc::new(model_type_id)]).unwrap()

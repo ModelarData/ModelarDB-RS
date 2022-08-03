@@ -13,9 +13,9 @@
  * limitations under the License.
  */
 
-//! Converts raw MQTT messages to uncompressed data points, stores uncompressed data points
-//! temporarily in an in-memory buffer that spills to Apache Parquet files, and stores data points
-//! compressed as models in Apache Parquet files.
+//! Converts raw MQTT messages to uncompressed data points, stores uncompressed data points temporarily
+//! in an in-memory buffer that spills to Apache Parquet files, and stores data points compressed as
+//! models in memory to batch compressed data before saving it to Apache Parquet files.
 
 mod data_point;
 mod segment;
@@ -38,27 +38,25 @@ use crate::storage::time_series::CompressedTimeSeries;
 
 // TODO: Look into moving handling of uncompressed and compressed data into separate structs.
 // TODO: Look into custom errors for all errors in storage engine.
-// TODO: How should error returns from "save_to_parquet" be handled?
 
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
 // being larger due to internal alignment when allocating memory for the builders.
 const INITIAL_BUILDER_CAPACITY: usize = 64;
 const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
 const COMPRESSED_RESERVED_MEMORY_IN_BYTES: isize = 5000;
-const MAX_COMPRESSED_FILE_SIZE_IN_BYTES: usize = 1024;
 
-/// Manages all uncompressed data, both while being built and when finished.
+/// Manages all uncompressed and compressed data, both while being built and when finished.
 pub struct StorageEngine {
     /// The uncompressed segments while they are being built.
     uncompressed_data: HashMap<String, SegmentBuilder>,
     /// Prioritized queue of finished segments that are ready for compression.
     finished_queue: VecDeque<FinishedSegment>,
-    /// The compressed segments before they are saved to persistent storage.
-    compressed_data: HashMap<String, CompressedTimeSeries>,
-    /// Prioritized queue of time series keys that can be saved to persistent storage.
-    compression_queue: VecDeque<String>,
     /// How many bytes of memory that are left for storing uncompressed segments.
     uncompressed_remaining_memory_in_bytes: usize,
+    /// The compressed segments before they are saved to persistent storage.
+    compressed_data: HashMap<String, CompressedTimeSeries>,
+    /// Prioritized queue of time series keys referring to data that can be saved to persistent storage.
+    compression_queue: VecDeque<String>,
     /// How many bytes of memory that are left for storing compressed segments.
     compressed_remaining_memory_in_bytes: isize,
 }
@@ -109,7 +107,7 @@ impl StorageEngine {
             self.uncompressed_remaining_memory_in_bytes -= SegmentBuilder::get_memory_size();
 
             info!(
-                "Created segment. Remaining bytes: {}.",
+                "Created segment. Remaining reserved bytes: {}.",
                 self.uncompressed_remaining_memory_in_bytes
             );
 
@@ -120,8 +118,8 @@ impl StorageEngine {
         Ok(())
     }
 
-    /// Remove the oldest finished segment from the compression queue and return it. Return `None`
-    /// if the compression queue is empty.
+    /// Remove the oldest finished segment from the finished queue and return it. Return `None`
+    /// if the finished queue is empty.
     pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
         if let Some(finished_segment) = self.finished_queue.pop_front() {
             // Add the memory size of the removed finished segment back to the remaining bytes.
@@ -134,7 +132,6 @@ impl StorageEngine {
         }
     }
 
-    // TODO: Check if the max compressed file size is reached and save if so.
     /// Insert `batch` into the in-memory compressed time series buffer.
     pub fn insert_compressed_data(&mut self, key: String, batch: RecordBatch) {
         let _span = info_span!("insert_compressed_segment", key = key.clone()).entered();
@@ -166,7 +163,7 @@ impl StorageEngine {
         }
     }
 
-    /// Move `segment_builder` to the compression queue.
+    /// Move `segment_builder` to the queue of finished segments.
     fn enqueue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
         let finished_segment = FinishedSegment {
             key,
@@ -176,7 +173,7 @@ impl StorageEngine {
         self.finished_queue.push_back(finished_segment);
     }
 
-    /// Spill the first in-memory finished segment in the compression queue. If no in-memory
+    /// Spill the first in-memory finished segment in the finished queue. If no in-memory
     /// finished segments could be found, panic.
     fn spill_finished_segment(&mut self) {
         info!("Not enough memory to create segment. Spilling an already finished segment.");
@@ -188,7 +185,7 @@ impl StorageEngine {
                 self.uncompressed_remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
 
                 info!(
-                    "Spilled the segment to '{}'. Remaining bytes: {}.",
+                    "Spilled the segment to '{}'. Remaining reserved bytes: {}.",
                     path, self.uncompressed_remaining_memory_in_bytes
                 );
                 return ();
@@ -212,6 +209,11 @@ impl StorageEngine {
             time_series.save_to_parquet(key.clone());
 
             self.compressed_remaining_memory_in_bytes += time_series_size as isize;
+
+            info!(
+                "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
+                time_series_size, self.compressed_remaining_memory_in_bytes
+            );
         }
     }
 }
@@ -355,7 +357,7 @@ mod tests {
     // Tests for compressed data.
     #[test]
     #[should_panic(expected = "Schema of record batch does not match compressed segment schema.")]
-    fn test_cannot_insert_invalid_compressed_segment() {
+    fn test_panic_if_inserting_invalid_compressed_segment() {
         let invalid = test_util::get_invalid_compressed_segment_record_batch();
         let mut storage_engine = StorageEngine::new();
 
@@ -371,7 +373,6 @@ mod tests {
 
         assert!(storage_engine.compressed_data.contains_key("key"));
         assert_eq!(storage_engine.compression_queue.pop_front().unwrap(), "key");
-
         assert!(storage_engine.compressed_data.get("key").unwrap().size_in_bytes > 0);
     }
 
