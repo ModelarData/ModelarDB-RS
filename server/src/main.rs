@@ -81,7 +81,7 @@ fn main() -> Result<(), String> {
         // The errors are consciously ignored as the program is terminating.
         let binary_path = std::env::current_exe().unwrap();
         let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
-        eprintln!("Usage: {} absolute_path_to_data_folder.", binary_name);
+        eprintln!("Usage: {} path_to_data_folder.", binary_name);
     }
     Ok(())
 }

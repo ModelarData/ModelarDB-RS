@@ -21,7 +21,7 @@ use std::fs::{read_dir, DirEntry};
 use std::io::{Error, ErrorKind, Read};
 use std::str;
 use std::sync::Arc;
-use std::{fs::File, fs::OpenOptions, path::Path};
+use std::{fs::File, path::Path};
 
 use datafusion::arrow::array::{
     Array, ArrayRef, BinaryArray, Int32Array, Int32Builder, StringBuilder,
@@ -30,7 +30,6 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader};
 use datafusion::parquet::errors::ParquetError;
-use datafusion::parquet::file::metadata::ParquetMetaData;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use datafusion::parquet::record::RowAccessor;
 use object_store::path::Path as ObjectStorePath;
@@ -171,20 +170,10 @@ impl Catalog {
         }
     }
 
-    /// Return `true` if `dir_entry` is an readable Apache Parquet file, otherwise `false`.
+    /// Return `true` if `dir_entry` is an readable Apache Parquet file,
+    /// otherwise `false`.
     fn is_dir_entry_a_parquet_file(dir_entry: &DirEntry) -> bool {
-        // OpenOptions is dropped while borrowed if it is crated in the if.
-        let mut file_builder = OpenOptions::new();
-
-        // Write permission is only required on Microsoft Windows.
-        let maybe_file = if cfg!(windows) {
-            file_builder.write(true)
-        } else {
-            file_builder.read(true)
-        }
-        .open(dir_entry.path());
-
-        if let Ok(mut file) = maybe_file {
+        if let Ok(mut file) = File::open(dir_entry.path()) {
             let mut magic_bytes = vec![0u8; 4];
             let _ = file.read_exact(&mut magic_bytes);
             magic_bytes == [80, 65, 82, 49] // Magic bytes PAR1.
@@ -298,8 +287,9 @@ impl ModelTableMetadata {
     fn table_folder_to_segment_folder_object_store_path(
         table_folder: &str,
     ) -> Result<ObjectStorePath, ParquetError> {
-        // TODO: replace replace() with conversion from local path to object store path?
-        ObjectStorePath::parse(table_folder.replace("\\", "/") + "/segment")
+        let segment_folder = table_folder.to_owned() + "/segment";
+        let path = Path::new(&segment_folder);
+        ObjectStorePath::from_filesystem_path(path)
             .map_err(|error| ParquetError::General(error.to_string()))
     }
 
@@ -347,8 +337,8 @@ impl ModelTableMetadata {
         Ok(())
     }
 
-    /// Read the array at `column_index` from `rows`, cast it to `Int32Array`, and
-    /// increase the index of all values in the array with one.
+    /// Read the array at `column_index` from `rows`, cast it to `Int32Array`,
+    /// and increase the index of all values in the array with one.
     fn extract_and_shift_int32_column(
         rows: &RecordBatch,
         column_index: usize,
@@ -368,8 +358,8 @@ impl ModelTableMetadata {
     }
 
     /// Read the arrays from `first_column_index` to `rows.num_columns()` from
-    /// `rows`, cast them to `BinaryArray`, and increase the index of all values in
-    /// the arrays with one.
+    /// `rows`, cast them to `BinaryArray`, and increase the index of all values
+    /// in the arrays with one.
     fn extract_and_shift_denormalized_dimensions(
         rows: &RecordBatch,
         first_column_index: usize,
@@ -382,8 +372,8 @@ impl ModelTableMetadata {
         Ok(denormalized_dimensions)
     }
 
-    /// Read the array at `column_index` from `rows`, cast it to `BinaryArray`, and
-    /// increase the index of all values in the array with one.
+    /// Read the array at `column_index` from `rows`, cast it to `BinaryArray`,
+    /// and increase the index of all values in the array with one.
     fn extract_and_shift_text_column(
         rows: &RecordBatch,
         column_index: usize,
