@@ -18,8 +18,38 @@ MiniModelarDB intentionally does not gather usage data. So, all users are highly
 encouraged to post comments, suggestions, and bugs as GitHub issues, especially
 if a limitation of MiniModelarDB prevents it from being used in a particular domain.
 
+## Installation
+### Linux
+The following commands are for Ubuntu Server. However, equivalent commands should work for other Linux distributions.
+
+1. Install [build-essential](https://packages.ubuntu.com/jammy/build-essential): `sudo apt install build-essential`
+2. Install [CMake](https://cmake.org/): `sudo apt install cmake`
+
+### macOS
+1. Install the Xcode Command Line Developer Tools: `xcode-select --install`
+2. Install [CMake](https://cmake.org/) and follow the _"How to Install For Command Line Use"_ menu item.
+
+### Windows
+1. Install a supported version of [Visual Studio](https://visualstudio.microsoft.com/vs/older-downloads/) with Visual C++:
+   * Visual Studio 2017 ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
+   * Visual Studio 2019 ([Supported](https://github.com/microsoft/snmalloc/issues/525#issuecomment-1128901104))
+   * Note that Visual Studio 2022 is **not** supported.
+2. Install [CMake](https://cmake.org/) and select one of the following options during installation:
+   * _Add CMake to the system PATH for all users_
+   * _Add CMake to the system PATH for current user_
+
+### All
+3. Install the latest stable [Rust Toolchain](https://rustup.rs/).
+4. Build, test, and run the system using Cargo:
+   * Debug Build: `cargo build`
+   * Release Build: `cargo build --release`
+   * Run Tests: `cargo test`
+   * Run Server: `cargo run --bin mmdbd absolute_path_to_data_folder`
+   * Run Client: `cargo run --bin mmdb [server_address] [query_file]`
+5. Move `mmdbd` and `mmdb` from the `target` directory to any directory.
+
 ## Development
-All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md) 
+All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md)
 using [rustfmt](https://github.com/rust-lang/rustfmt). Subjects not covered in the style guide, or requirements specific to this repository, are covered here.
 
 ### Documentation
@@ -30,8 +60,8 @@ All modules must have an accompanying doc comment that describes the general fun
 of the public functions, structs, enums, or other central elements of the module can be included.
 
 ### Testing
-All public and private functions must be covered by unit tests. Full coverage is required, which means all 
-branches of computation within the function needs to be tested. 
+All public and private functions must be covered by unit tests. Full coverage is required, which means all
+branches of computation within the function needs to be tested.
 
 ### Crates
 To avoid confusion and unnecessary dependencies, a list of utility crates are included. Note that this only includes crates
