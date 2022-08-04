@@ -26,7 +26,7 @@ use crate::storage::write_batch_to_parquet;
 use crate::types::{ArrowTimestamp, ArrowValue, TimestampArray};
 
 /// A single compressed time series, containing one or more compressed segments and providing
-/// functionality for appending segments and saving all segments to a single Parquet file.
+/// functionality for appending segments and saving all segments to a single Apache Parquet file.
 pub struct CompressedTimeSeries {
     /// Compressed segments that make up the sequential compressed data of the time series.
     compressed_segments: Vec<RecordBatch>,
@@ -57,7 +57,8 @@ impl CompressedTimeSeries {
         segment_size
     }
 
-    /// If the compressed segments are successfully saved to Parquet, return Ok, otherwise return Err.
+    /// If the compressed segments are successfully saved to an Apache Parquet file, return Ok,
+    /// otherwise return Err.
     pub fn save_to_parquet(&mut self, key: String) -> Result<(), std::io::Error> {
         if self.compressed_segments.is_empty() {
             Err(std::io::Error::new(
@@ -69,11 +70,13 @@ impl CompressedTimeSeries {
             let schema = Self::get_compressed_segment_schema();
             let batch = RecordBatch::concat(&Arc::new(schema), &*self.compressed_segments).unwrap();
 
+            // TODO: "storage" should be replaced by a user-defined storage folder.
             // Create the folder structure if it does not already exist.
             let folder_path = format!("storage/{}/compressed", key);
             fs::create_dir_all(&folder_path)?;
 
-            // Create a path that uses the first timestamp as the filename.
+            // Create a path that uses the first timestamp as the filename to better support
+            // pruning data that is too new or too old when executing a specific query.
             let start_times: &TimestampArray = batch.column(2).as_any().downcast_ref().unwrap();
             let path = format!("{}/{}.parquet", folder_path, start_times.value(0));
 
@@ -158,11 +161,16 @@ mod tests {
     fn test_get_size_of_segment() {
         let segment = test_util::get_compressed_segment_record_batch();
 
-        assert_eq!(CompressedTimeSeries::get_size_of_segment(&segment), 2032);
+        assert_eq!(
+            CompressedTimeSeries::get_size_of_segment(&segment),
+            test_util::COMPRESSED_SEGMENT_SIZE,
+        );
     }
 }
 
 #[cfg(test)]
+/// Separate module for compressed segment utility functions since they are needed to test both
+/// CompressedTimeSeries and StorageEngine.
 pub mod test_util {
     use std::sync::Arc;
 
@@ -174,6 +182,10 @@ pub mod test_util {
     use crate::storage::time_series::CompressedTimeSeries;
     use crate::types::{TimestampArray, ValueArray};
 
+    pub const COMPRESSED_SEGMENT_SIZE: usize = 2032;
+
+    /// Return a record batch that only has a single column, and therefore does not match the
+    /// compressed segment schema.
     pub fn get_invalid_compressed_segment_record_batch() -> RecordBatch {
         let model_type_id = UInt8Array::from(vec![2, 3, 3]);
         let schema = Schema::new(vec![Field::new("model_type_id", UInt8, false)]);

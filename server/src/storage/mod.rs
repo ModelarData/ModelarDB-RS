@@ -40,7 +40,10 @@ use crate::storage::time_series::CompressedTimeSeries;
 // TODO: Look into custom errors for all errors in storage engine.
 
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
-// being larger due to internal alignment when allocating memory for the builders.
+// being larger due to internal alignment when allocating memory for the builders. The reserved
+// bytes for compressed data is a signed integer since compressed data is inserted first and the
+// remaining bytes are checked after. This means that the remaining bytes can be negative briefly
+// until compressed data is saved to disk.
 const INITIAL_BUILDER_CAPACITY: usize = 64;
 const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
 const COMPRESSED_RESERVED_MEMORY_IN_BYTES: isize = 5000;
@@ -91,6 +94,7 @@ impl StorageEngine {
             if segment.is_full() {
                 info!("Segment is full, moving it to the queue of finished segments.");
 
+                // Since this is only reachable if the segment exists in the HashMap, unwrap is safe to use.
                 let full_segment = self.uncompressed_data.remove(&key).unwrap();
                 self.enqueue_segment(key, full_segment)
             }
@@ -137,25 +141,25 @@ impl StorageEngine {
         let _span = info_span!("insert_compressed_segment", key = key.clone()).entered();
         info!("Inserting batch with {} rows into compressed time series.", segment.num_rows());
 
-        let compressed_segment_size;
-
         // Since the compressed segment is already in memory, insert the segment in to the structure
         // first and check if the reserved memory limit is exceeded after.
-        if let Some(time_series) = self.compressed_data.get_mut(&key) {
+        let segment_size = if let Some(time_series) = self.compressed_data.get_mut(&key) {
             info!("Found existing compressed time series.");
 
-            compressed_segment_size = time_series.append_segment(segment);
+            time_series.append_segment(segment)
         } else {
             info!("Could not find compressed time series. Creating compressed time series.");
 
             let mut time_series = CompressedTimeSeries::new();
-            compressed_segment_size = time_series.append_segment(segment);
+            let segment_size = time_series.append_segment(segment);
 
             self.compressed_data.insert(key.clone(), time_series);
             self.compressed_queue.push_back(key.clone());
-        }
 
-        self.compressed_remaining_memory_in_bytes -= compressed_segment_size as isize;
+            segment_size
+        };
+
+        self.compressed_remaining_memory_in_bytes -= segment_size as isize;
 
         // If the reserved memory limit is exceeded, save compressed data to disk.
         if self.compressed_remaining_memory_in_bytes < 0 {
@@ -192,6 +196,7 @@ impl StorageEngine {
             }
         }
 
+        // TODO: All uncompressed and compressed data should be saved to disk first.
         // If not able to find any in-memory finished segments, we should panic.
         panic!("Not enough reserved memory to hold all necessary segment builders.");
     }
