@@ -22,7 +22,7 @@ use std::sync::Arc;
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 
-use crate::storage::write_batch_to_parquet;
+use crate::storage::write_batch_to_apache_parquet;
 use crate::types::{ArrowTimestamp, ArrowValue, TimestampArray};
 
 /// A single compressed time series, containing one or more compressed segments and providing
@@ -59,7 +59,7 @@ impl CompressedTimeSeries {
 
     /// If the compressed segments are successfully saved to an Apache Parquet file, return Ok,
     /// otherwise return Err.
-    pub fn save_to_parquet(&mut self, key: String) -> Result<(), std::io::Error> {
+    pub fn save_to_apache_parquet(&mut self, key: String) -> Result<(), std::io::Error> {
         if self.compressed_segments.is_empty() {
             Err(std::io::Error::new(
                 Other,
@@ -80,7 +80,7 @@ impl CompressedTimeSeries {
             let start_times: &TimestampArray = batch.column(2).as_any().downcast_ref().unwrap();
             let path = format!("{}/{}.parquet", folder_path, start_times.value(0));
 
-            write_batch_to_parquet(batch, path.clone());
+            write_batch_to_apache_parquet(batch, path.clone());
 
             Ok(())
         }
@@ -150,9 +150,9 @@ mod tests {
     }
 
     #[test]
-    fn test_cannot_save_empty_compressed_segments_to_parquet() {
+    fn test_cannot_save_empty_compressed_segments_to_apache_parquet() {
         let mut empty_time_series = CompressedTimeSeries::new();
-        let result = empty_time_series.save_to_parquet("key".to_owned());
+        let result = empty_time_series.save_to_apache_parquet("key".to_owned());
 
         assert!(result.is_err());
     }

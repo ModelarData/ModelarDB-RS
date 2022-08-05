@@ -31,7 +31,7 @@ use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use tracing::info;
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::{write_batch_to_parquet, INITIAL_BUILDER_CAPACITY};
+use crate::storage::{write_batch_to_apache_parquet, INITIAL_BUILDER_CAPACITY};
 use crate::types::{
     ArrowTimestamp, ArrowValue, Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder,
 };
@@ -45,7 +45,7 @@ pub trait UncompressedSegment {
 
     // Since both segment builders and spilled segments are present in the compression queue, both
     // structs need to implement spilling to Apache Parquet, with already spilled segments returning Err.
-    fn spill_to_parquet(&mut self, key: String) -> Result<SpilledSegment, std::io::Error>;
+    fn spill_to_apache_parquet(&mut self, key: String) -> Result<SpilledSegment, std::io::Error>;
 }
 
 /// A single segment being built, consisting of an ordered sequence of timestamps and values. Note
@@ -127,7 +127,7 @@ impl UncompressedSegment for SegmentBuilder {
     }
 
     /// Spill the in-memory segment to an Apache Parquet file and return Ok when finished.
-    fn spill_to_parquet(&mut self, key: String) -> Result<SpilledSegment, std::io::Error> {
+    fn spill_to_apache_parquet(&mut self, key: String) -> Result<SpilledSegment, std::io::Error> {
         let batch = self.get_record_batch();
         Ok(SpilledSegment::new(key.clone(), batch))
     }
@@ -150,7 +150,7 @@ impl SpilledSegment {
         let timestamps: &TimestampArray = batch.column(0).as_any().downcast_ref().unwrap();
         let path = format!("{}/{}.parquet", folder_path, timestamps.value(0));
 
-        write_batch_to_parquet(batch, path.clone());
+        write_batch_to_apache_parquet(batch, path.clone());
 
         Self { path }
     }
@@ -181,7 +181,7 @@ impl UncompressedSegment for SpilledSegment {
     }
 
     /// Since the segment has already been spilled, return Err.
-    fn spill_to_parquet(&mut self, __key: String) -> Result<SpilledSegment, std::io::Error> {
+    fn spill_to_apache_parquet(&mut self, __key: String) -> Result<SpilledSegment, std::io::Error> {
         Err(std::io::Error::new(
             Other,
             format!("The segment has already been spilled to '{}'.", &self.path),
@@ -197,10 +197,10 @@ pub struct FinishedSegment {
 
 impl FinishedSegment {
     /// If in memory, spill the segment to an Apache Parquet file and return the path, otherwise return Err.
-    pub fn spill_to_parquet(&mut self) -> Result<String, std::io::Error> {
+    pub fn spill_to_apache_parquet(&mut self) -> Result<String, std::io::Error> {
         let spilled = self
             .uncompressed_segment
-            .spill_to_parquet(self.key.clone())?;
+            .spill_to_apache_parquet(self.key.clone())?;
 
         let path = spilled.path.clone();
         self.uncompressed_segment = Box::new(spilled);
@@ -295,6 +295,6 @@ mod tests {
             path: "path".to_owned(),
         };
 
-        assert!(spilled_segment.spill_to_parquet("key".to_owned()).is_err())
+        assert!(spilled_segment.spill_to_apache_parquet("key".to_owned()).is_err())
     }
 }

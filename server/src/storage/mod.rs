@@ -184,7 +184,7 @@ impl StorageEngine {
 
         // Iterate through the finished segments to find a segment that is in memory.
         for finished in self.finished_queue.iter_mut() {
-            if let Ok(path) = finished.spill_to_parquet() {
+            if let Ok(path) = finished.spill_to_apache_parquet() {
                 // Add the size of the segment back to the remaining reserved bytes.
                 self.uncompressed_remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
 
@@ -211,7 +211,7 @@ impl StorageEngine {
 
             let mut time_series = self.compressed_data.remove(&key).unwrap();
             let time_series_size = time_series.size_in_bytes.clone();
-            time_series.save_to_parquet(key.clone());
+            time_series.save_to_apache_parquet(key.clone());
 
             self.compressed_remaining_memory_in_bytes += time_series_size as isize;
 
@@ -225,7 +225,7 @@ impl StorageEngine {
 
 // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
 /// Write `batch` to an Apache Parquet file at the location given by `path`.
-fn write_batch_to_parquet(batch: RecordBatch, path: String) {
+fn write_batch_to_apache_parquet(batch: RecordBatch, path: String) {
     let file = File::create(path).unwrap();
     let props = WriterProperties::builder()
         .set_dictionary_enabled(false)
