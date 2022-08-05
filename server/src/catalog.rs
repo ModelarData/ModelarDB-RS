@@ -35,15 +35,23 @@ use datafusion::parquet::record::RowAccessor;
 use object_store::path::Path as ObjectStorePath;
 use tracing::{error, info, warn};
 
+/// The expected [first four bytes of any Apache Parquet file].
+///
+/// [first four bytes of any Apache Parquet file]: https://en.wikipedia.org/wiki/List_of_file_signatures
+const APACHE_PARQUET_FILE_SIGNATURE: &[u8] = &[80, 65, 82, 49]; // PAR1.
+
 /// Metadata for the tables and model tables in the data folder.
 pub struct Catalog {
+    /// Metadata for the tables in the data folder.
     pub table_metadata: Vec<TableMetadata>,
+    /// Metadata for the model tables in the data folder.
     pub model_table_metadata: Vec<Arc<ModelTableMetadata>>,
 }
 
 impl Catalog {
     /// Scan `data_folder` for tables and model tables and construct a `Catalog`
-    /// that contains the metadata necessary to query these tables.
+    /// that contains the metadata necessary to query these tables. Returns
+    /// `Error` if the contents of `data_folder` cannot be read.
     pub fn try_new(data_folder: &str) -> Result<Self, Error> {
         let mut table_metadata = vec![];
         let mut model_table_metadata = vec![];
@@ -56,13 +64,16 @@ impl Catalog {
             Field::new("gaps", DataType::Binary, false),
         ]));
 
-        if Self::is_path_a_model_table(Path::new(data_folder)) {
-            warn!("The data folder contains a model table, please use the parent directory.");
+        let path = Path::new(data_folder);
+        if Self::is_path_a_table(path) {
+            warn!("The data folder is a table, please use the parent directory.");
+        } else if Self::is_path_a_model_table(path) {
+            warn!("The data folder is a model table, please use the parent directory.");
         }
 
         for maybe_dir_entry in read_dir(data_folder)? {
             // The check if maybe_dir_entry is an error is not performed in
-            // try_adding_metadata_for_table_or_model_table as it does not seem
+            // try_adding_table_or_model_table_metadata() as it does not seem
             // possible to return an error without moving it out of a reference.
             if let Ok(ref dir_entry) = maybe_dir_entry {
                 if let Err(maybe_error) = Self::try_adding_table_or_model_table_metadata(
@@ -72,18 +83,18 @@ impl Catalog {
                     &model_table_legacy_segment_file_schema,
                 ) {
                     error!(
-                        "Cannot read metadata from {} due to {}.",
+                        "Cannot read metadata from '{}': {}",
                         dir_entry.path().to_string_lossy(),
                         maybe_error,
                     );
                 }
             } else {
                 let reason = maybe_dir_entry.unwrap_err();
-                error!("Unable to read file or folder due to {}.", reason);
+                error!("Unable to read file or folder: {}", reason);
             }
         }
 
-        Ok(Catalog {
+        Ok(Self {
             table_metadata,
             model_table_metadata,
         })
@@ -112,69 +123,53 @@ impl Catalog {
         model_table_metadata: &mut Vec<Arc<ModelTableMetadata>>,
         model_table_legacy_segment_file_schema: &SchemaRef,
     ) -> Result<(), Error> {
-        // The extra let binding is required to crate a longer lived value.
         let path = dir_entry.path();
-        let path = path.to_str().ok_or_else(|| {
-            Error::new(ErrorKind::InvalidInput, "File or folder path is not UTF-8.")
+        let path_str = path.to_str().ok_or_else(|| {
+            Error::new(ErrorKind::InvalidData, "File or folder path is not UTF-8.")
         })?;
 
-        // The extra let binding is required to crate a longer lived value.
+        // The extra let binding is required to create a longer lived value.
         let file_name = dir_entry.file_name();
         let file_name = file_name.to_str().ok_or_else(|| {
-            Error::new(ErrorKind::InvalidInput, "File or folder name is not UTF-8.")
+            Error::new(ErrorKind::InvalidData, "File or folder name is not UTF-8.")
         })?;
 
         // HACK: workaround for DataFusion converting table names to lowercase.
         let normalized_file_or_folder_name = file_name.to_ascii_lowercase();
 
         // Check if the file or folder is a table, a model table, or neither.
-        if Self::is_dir_entry_a_table(&dir_entry) {
+        if Self::is_path_a_table(&path) {
             table_metadata.push(TableMetadata::new(
                 normalized_file_or_folder_name,
-                path.to_string(),
+                path_str.to_owned(),
             ));
-            info!("Found table {}.", path);
-        } else if Self::is_path_a_model_table(&dir_entry.path()) {
+            info!("Found table '{}'.", path_str);
+        } else if Self::is_path_a_model_table(&path) {
             model_table_metadata.push(ModelTableMetadata::try_new(
-                normalized_file_or_folder_name, // A folder for model tables.
-                path.to_string(),
+                normalized_file_or_folder_name, // Only folder for model tables.
+                path_str.to_owned(),
                 &model_table_legacy_segment_file_schema,
             )?);
-            info!("Found model table {}.", path);
+            info!("Found model table '{}'.", path_str);
         } else {
-            error!("File or folder is not a table or model table {}.", path);
+            error!(
+                "File or folder '{}' is not a table or model table.",
+                path_str
+            );
         }
         Ok(())
     }
 
-    /// Return `true` if `dir_entry` is a readable table, otherwise `false`.
-    fn is_dir_entry_a_table(dir_entry: &DirEntry) -> bool {
-        if let Ok(metadata) = dir_entry.metadata() {
-            if metadata.is_file() {
-                Self::is_dir_entry_a_parquet_file(dir_entry)
-            } else if metadata.is_dir() {
-                if let Ok(mut data_folder) = read_dir(dir_entry.path()) {
-                    data_folder.all(|result| {
-                        result.is_ok() && Self::is_dir_entry_a_parquet_file(&result.unwrap())
-                    })
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        }
-    }
-
-    /// Return `true` if `dir_entry` is an readable Apache Parquet file,
-    /// otherwise `false`.
-    fn is_dir_entry_a_parquet_file(dir_entry: &DirEntry) -> bool {
-        if let Ok(mut file) = File::open(dir_entry.path()) {
-            let mut magic_bytes = vec![0u8; 4];
-            let _ = file.read_exact(&mut magic_bytes);
-            magic_bytes == [80, 65, 82, 49] // Magic bytes PAR1.
+    /// Return `true` if `path` is a readable table, otherwise `false`.
+    fn is_path_a_table(path: &Path) -> bool {
+        if path.is_file() {
+            Self::is_path_an_apache_parquet_file(&path)
+        } else if path.is_dir() {
+            let table_folder = read_dir(&path);
+            table_folder.is_ok()
+                && table_folder.unwrap().all(|result| {
+                    result.is_ok() && Self::is_path_an_apache_parquet_file(&result.unwrap().path())
+                })
         } else {
             false
         }
@@ -182,17 +177,43 @@ impl Catalog {
 
     /// Return `true` if `path_to_folder` is a model table, otherwise `false`.
     fn is_path_a_model_table(path_to_folder: &Path) -> bool {
-        if path_to_folder.exists() && path_to_folder.is_dir() {
-            return ["model_type.parquet", "time_series.parquet", "segment"]
-                .iter()
-                .map(|required_file_name| {
-                    let mut path_buf = path_to_folder.to_path_buf();
-                    path_buf.push(required_file_name);
-                    Path::new(&path_buf).exists()
+        if path_to_folder.is_dir() {
+            // Construction of the Paths is duplicated as it seems impossible to
+            // create a function that accepts a Path and returns a new Path.
+            let mut model_type = path_to_folder.to_path_buf();
+            model_type.push("model_type.parquet");
+            let model_type = model_type.as_path();
+
+            let mut time_series = path_to_folder.to_path_buf();
+            time_series.push("time_series.parquet");
+            let time_series = time_series.as_path();
+
+            let mut segment = path_to_folder.to_path_buf();
+            segment.push("segment");
+            let segment = segment.as_path();
+            let segment_folder = read_dir(&segment);
+
+            Self::is_path_an_apache_parquet_file(model_type)
+                && Self::is_path_an_apache_parquet_file(time_series)
+                && segment_folder.is_ok()
+                && segment_folder.unwrap().all(|result| {
+                    result.is_ok() && Self::is_path_an_apache_parquet_file(&result.unwrap().path())
                 })
-                .all(|exists| exists);
+        } else {
+            false
         }
-        false
+    }
+
+    /// Return `true` if `path` is a readable Apache Parquet file, otherwise
+    /// `false`.
+    fn is_path_an_apache_parquet_file(path: &Path) -> bool {
+        if let Ok(mut file) = File::open(path) {
+            let mut first_four_bytes = vec![0u8; 4];
+            let _ = file.read_exact(&mut first_four_bytes);
+            first_four_bytes == APACHE_PARQUET_FILE_SIGNATURE
+        } else {
+            false
+        }
     }
 }
 
@@ -202,14 +223,14 @@ pub struct TableMetadata {
     /// Name of the table.
     pub name: String,
     /// Location of the table's file or folder in an `ObjectStore`.
-    pub path: String, // Not ObjectStorePath as register_parquet needs a start /
+    pub path: String, // Not ObjectStorePath as register_parquet() need '/path'.
 }
 
 impl TableMetadata {
     fn new(file_or_folder_name: String, file_or_folder_path: String) -> Self {
         // The full extension is removed manually as file_prefix is not stable.
         let name = if let Some(index) = file_or_folder_name.find('.') {
-            file_or_folder_name[0..index].to_string()
+            file_or_folder_name[0..index].to_owned()
         } else {
             file_or_folder_name
         };
@@ -238,9 +259,10 @@ pub struct ModelTableMetadata {
     /// Cache that maps from time series id to sampling interval for all time
     /// series in the table.
     pub sampling_intervals: Int32Array,
-    /// Cache that maps from time series id to members for all time series in
-    /// the table. Each `Array` in `denormalized_dimensions` is a level in a
-    /// dimension.
+    // TODO: rename dimension members to tags when refactoring query engine.
+    /// Cache that maps from time series id to data warehouse dimension members
+    /// for all time series in the table. Each `Array` in
+    /// `denormalized_dimensions` is a level in a dimension.
     pub denormalized_dimensions: Vec<ArrayRef>,
 }
 
@@ -259,15 +281,16 @@ impl ModelTableMetadata {
         let segment_path = Self::create_object_store_path_to_segment_folder(&folder_path)?;
 
         // Ensure only supported model types are used.
-        Self::check_model_type_metdata(&folder_path)?;
+        Self::check_model_type_metadata(&folder_path)?;
 
-        // Read time series metadata.
+        // Read time series metadata. The sampling intervals and dimension
+        // members are shifted by one as the time series ids start at one.
         let time_series_file = folder_path.clone() + "/time_series.parquet";
         let path = Path::new(&time_series_file);
         if let Ok(file) = File::open(&path) {
-            let rows = Self::read_entire_parquet_file(&folder_name, file)?;
+            let rows = Self::read_entire_apache_parquet_file(&folder_name, file)?;
             let sampling_intervals = Self::extract_and_shift_int32_array(&rows, 2)?;
-            let denormalized_dimensions =
+            let denormalized_dimensions = // Columns with metadata as strings.
                 Self::extract_and_shift_denormalized_dimensions(&rows, 4)?;
 
             Ok(Arc::new(Self {
@@ -285,7 +308,8 @@ impl ModelTableMetadata {
         }
     }
 
-    /// Create a `ObjectStorePath` to the segment folder in `table_folder`.
+    /// Create an `ObjectStorePath` to the segment folder in
+    /// `model_table_folder`.
     fn create_object_store_path_to_segment_folder(
         model_table_folder: &str,
     ) -> Result<ObjectStorePath, ParquetError> {
@@ -297,13 +321,13 @@ impl ModelTableMetadata {
 
     /// Read all rows in the Apache Parquet `file` for the model table with
     /// `table_name`.
-    fn read_entire_parquet_file(
+    fn read_entire_apache_parquet_file(
         table_name: &String,
         file: File,
     ) -> Result<RecordBatch, ParquetError> {
         let reader = SerializedFileReader::new(file)?;
-        let parquet_metadata = reader.metadata();
-        let row_count = parquet_metadata
+        let apache_parquet_metadata = reader.metadata();
+        let row_count = apache_parquet_metadata
             .row_groups()
             .iter()
             .map(|rg| rg.num_rows())
@@ -318,7 +342,7 @@ impl ModelTableMetadata {
     }
 
     /// Check that the model table only use supported model types.
-    fn check_model_type_metdata(table_folder: &String) -> Result<(), ParquetError> {
+    fn check_model_type_metadata(table_folder: &String) -> Result<(), ParquetError> {
         let model_types_file = table_folder.clone() + "/model_type.parquet";
         let path = Path::new(&model_types_file);
         if let Ok(file) = File::open(&path) {
@@ -332,7 +356,7 @@ impl ModelTableMetadata {
                     (2, "dk.aau.modelardb.core.models.PMC_MeanModelType") => (),
                     (3, "dk.aau.modelardb.core.models.SwingFilterModelType") => (),
                     (4, "dk.aau.modelardb.core.models.FacebookGorillaModelType") => (),
-                    _ => return Err(ParquetError::General("unsupported model type".to_string())),
+                    _ => return Err(ParquetError::General("Unsupported model type.".to_owned())),
                 }
             }
         }
@@ -350,11 +374,13 @@ impl ModelTableMetadata {
             .as_any()
             .downcast_ref::<Int32Array>()
             .ok_or_else(|| {
-                ParquetError::ArrowError("Unable to read sampling intervals".to_owned())
+                ParquetError::ArrowError("Unable to read sampling intervals.".to_owned())
             })?
             .values();
 
-        // -1 is stored at index 0 as ids starting at 1 is used for lookup.
+        // -1 is stored at index 0 as time series ids starting at 1 is used for
+        // lookup. Time series ids starting at 1 is used for compatibility with
+        // the JVM-based version of ModelarDB.
         let mut shifted_column = Int32Builder::new(column.len() + 1);
         shifted_column.append_value(-1)?;
         shifted_column.append_slice(column)?;
@@ -382,7 +408,7 @@ impl ModelTableMetadata {
         rows: &RecordBatch,
         column_index: usize,
     ) -> Result<ArrayRef, ParquetError> {
-        let error_message = "Unable to read tags";
+        let error_message = "Unable to read tags.";
 
         let schema = rows.schema();
         let name = schema.field(column_index).name();
@@ -480,10 +506,12 @@ mod tests {
     fn test_extract_and_shift_empty_int32_array() {
         let array = Int32Array::from(vec![] as Vec<i32>);
         assert_eq!(0, array.len());
+
         let record_batch = create_record_batch_with_int32_array(array);
         let maybe_shifted_array =
             ModelTableMetadata::extract_and_shift_int32_array(&record_batch, 0);
         assert!(maybe_shifted_array.is_ok());
+
         let shifted_array = maybe_shifted_array.unwrap();
         assert_eq!(1, shifted_array.len());
         assert_eq!(-1, shifted_array.value(0));
@@ -494,10 +522,12 @@ mod tests {
     fn test_extract_and_shift_int32_array_with_value(value in num::i32::ANY) {
         let array = Int32Array::from(vec![value]);
         assert_eq!(1, array.len());
+
         let record_batch = create_record_batch_with_int32_array(array);
         let maybe_shifted_array =
             ModelTableMetadata::extract_and_shift_int32_array(&record_batch, 0);
         prop_assert!(maybe_shifted_array.is_ok());
+
         let shifted_array = maybe_shifted_array.unwrap();
         prop_assert_eq!(2, shifted_array.len());
         assert_eq!(-1, shifted_array.value(0));
@@ -514,11 +544,13 @@ mod tests {
     fn test_extract_and_shift_empty_text_array() {
         let array = BinaryArray::from_vec(vec![]);
         assert_eq!(0, array.len());
+
         let record_batch = create_record_batch_with_string_array(array);
         let maybe_shifted_array =
             ModelTableMetadata::extract_and_shift_string_array(&record_batch, 0);
         assert!(maybe_shifted_array.is_ok());
-        // The extra let binding is required to crate a longer lived value.
+
+        // The extra let binding is required to create a longer lived value.
         let shifted_array = maybe_shifted_array.unwrap();
         let shifted_array = shifted_array
             .as_any()
@@ -535,11 +567,13 @@ mod tests {
     ) {
         let array = BinaryArray::from_vec(vec![value.as_bytes()]);
         assert_eq!(1, array.len());
+
         let record_batch = create_record_batch_with_string_array(array);
         let maybe_shifted_array =
             ModelTableMetadata::extract_and_shift_string_array(&record_batch, 0);
         prop_assert!(maybe_shifted_array.is_ok());
-        // The extra let binding is required to crate a longer lived value.
+
+        // The extra let binding is required to create a longer lived value.
         let shifted_array = maybe_shifted_array.unwrap();
         let shifted_array = shifted_array
             .as_any()
