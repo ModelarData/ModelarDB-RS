@@ -35,29 +35,29 @@ impl DataPoint {
         let payload = message.payload_str();
 
         if payload.is_empty() {
-            Err("The message is empty.".to_string())
+            Err("The message is empty.".to_owned())
         } else {
             if payload.chars().next().unwrap() != '[' || payload.chars().last().unwrap() != ']' {
-                Err("The message does not have the correct format.".to_string())
+                Err("The message does not have the correct format.".to_owned())
             } else {
                 let first_last_off: &str = &payload[1..payload.len() - 1];
                 let timestamp_value: Vec<&str> = first_last_off.split(", ").collect();
 
                 if timestamp_value.len() != 2 {
-                    Err("The message can only contain a timestamp and a single value.".to_string())
+                    Err("The message can only contain a timestamp and a single value.".to_owned())
                 } else {
                     if let Ok(timestamp) = timestamp_value[0].parse::<Timestamp>() {
                         if let Ok(value) = timestamp_value[1].parse::<Value>() {
                             Ok(Self {
                                 timestamp,
                                 value,
-                                metadata: vec![message.topic().to_string().replace("/", "-")],
+                                metadata: vec![message.topic().to_owned().replace("/", "-")],
                             })
                         } else {
-                            Err("Value could not be parsed.".to_string())
+                            Err("Value could not be parsed.".to_owned())
                         }
                     } else {
-                        Err("Timestamp could not be parsed.".to_string())
+                        Err("Timestamp could not be parsed.".to_owned())
                     }
                 }
             }
@@ -91,7 +91,7 @@ mod tests {
         let data_point = result.unwrap();
         assert_eq!(data_point.timestamp, 1657878396943245);
         assert_eq!(data_point.value, 30 as f32);
-        assert_eq!(data_point.metadata, vec!["ModelarDB-test".to_string()])
+        assert_eq!(data_point.metadata, vec!["ModelarDB-test".to_owned()])
     }
 
     #[test]
