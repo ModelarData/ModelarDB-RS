@@ -91,6 +91,8 @@ impl SegmentBuilder {
 
     /// Add the timestamp and value from `data_point` to the segment's array builders.
     pub fn insert_data(&mut self, data_point: &DataPoint) {
+        // TODO: debug_assert!(is not full)
+
         self.timestamps.append_value(data_point.timestamp);
         self.values.append_value(data_point.value);
 
@@ -107,6 +109,8 @@ impl fmt::Display for SegmentBuilder {
 impl UncompressedSegment for SegmentBuilder {
     /// Finish the array builders and return the data in a structured record batch.
     fn get_record_batch(&mut self) -> RecordBatch {
+        // TODO: debug_assert!(is full)
+
         let timestamps = self.timestamps.finish();
         let values = self.values.finish();
 
@@ -128,6 +132,8 @@ impl UncompressedSegment for SegmentBuilder {
 
     /// Spill the in-memory segment to an Apache Parquet file and return Ok when finished.
     fn spill_to_apache_parquet(&mut self, folder_path: String) -> Result<SpilledSegment, std::io::Error> {
+        // TODO: debug_assert!(is full)
+
         let batch = self.get_record_batch();
         Ok(SpilledSegment::new(folder_path, batch))
     }
@@ -140,16 +146,18 @@ pub struct SpilledSegment {
 }
 
 impl SpilledSegment {
-    /// Spill the data in `batch` to an Apache Parquet file, and return a spilled segment with the path.
-    pub fn new(folder_path: String, batch: RecordBatch) -> Self {
+    /// Spill the data in `segment` to an Apache Parquet file, and return a spilled segment with the path.
+    pub fn new(folder_path: String, segment: RecordBatch) -> Self {
+        // TODO: debug_assert!(is of the correct schema)
+
         let complete_path = format!("{}/uncompressed", folder_path);
         fs::create_dir_all(&complete_path);
 
         // Create a path that uses the first timestamp as the filename.
-        let timestamps: &TimestampArray = batch.column(0).as_any().downcast_ref().unwrap();
+        let timestamps: &TimestampArray = segment.column(0).as_any().downcast_ref().unwrap();
         let path = format!("{}/{}.parquet", complete_path, timestamps.value(0));
 
-        write_batch_to_apache_parquet(batch, path.clone());
+        write_batch_to_apache_parquet(segment, path.clone());
 
         Self { path }
     }
@@ -172,6 +180,8 @@ impl UncompressedSegment for SpilledSegment {
             .unwrap();
 
         record_batch_reader.next().unwrap().unwrap()
+
+        // TODO: debug_assert!(is of the correct schema)
     }
 
     /// Since the data is not kept in memory, return 0.
@@ -262,7 +272,12 @@ mod tests {
     }
 
     #[test]
-    fn test_get_data_from_segment_builder() {
+    fn test_panic_if_inserting_data_point_when_full() {
+
+    }
+
+    #[test]
+    fn test_get_record_batch_from_segment_builder() {
         let data_point = get_data_point();
         let mut segment_builder = SegmentBuilder::new();
 
@@ -274,6 +289,21 @@ mod tests {
         assert_eq!(data.num_rows(), 2);
     }
 
+    #[test]
+    fn test_panic_if_getting_record_batch_when_not_full() {
+
+    }
+
+    #[test]
+    fn test_can_spill_finished_segment_builder() {
+
+    }
+
+    #[test]
+    fn test_panic_if_spilling_segment_builder_when_not_full() {
+
+    }
+
     fn get_data_point() -> DataPoint {
         let message = Message::new("ModelarDB/test", "[1657878396943245, 30]", 1);
         DataPoint::from_message(&message).unwrap()
@@ -281,12 +311,27 @@ mod tests {
 
     // Tests for SpilledSegment.
     #[test]
+    fn test_panic_if_creating_spilled_segment_with_invalid_segment() {
+
+    }
+
+    #[test]
     fn test_get_spilled_segment_memory_size() {
         let spilled_segment = SpilledSegment {
             path: "path".to_owned(),
         };
 
         assert_eq!(spilled_segment.get_memory_size(), 0)
+    }
+
+    #[test]
+    fn test_get_record_batch_from_spilled_segment() {
+
+    }
+
+    #[test]
+    fn test_panic_if_getting_record_batch_from_invalid_spilled_segment() {
+
     }
 
     #[test]

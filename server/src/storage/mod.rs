@@ -247,16 +247,14 @@ mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use crate::storage::time_series::test_util;
+    use tempfile::tempdir;
 
-    // TODO: Create a temporary folder with tempfile crate. The folder name should be an uuid.
-    // TODO: Give this temporary folder to the storage engine so all created files are deleted once done.
-    // TODO: Implement I/O tests.
+    use crate::storage::time_series::test_util;
 
     // Tests for uncompressed data.
     #[test]
     fn test_cannot_insert_invalid_message() {
-        let mut storage_engine = StorageEngine::new();
+        let mut storage_engine = create_storage_engine();
 
         let message = Message::new("ModelarDB/test", "invalid", 1);
         storage_engine.insert_message(message.clone());
@@ -266,7 +264,7 @@ mod tests {
 
     #[test]
     fn test_can_insert_message_into_new_segment() {
-        let mut storage_engine = StorageEngine::new();
+        let mut storage_engine = create_storage_engine();
         let key = insert_generated_message(&mut storage_engine, "ModelarDB/test".to_owned());
 
         assert!(storage_engine.uncompressed_data.contains_key(&key));
@@ -275,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_can_insert_message_into_existing_segment() {
-        let mut storage_engine = StorageEngine::new();
+        let mut storage_engine = create_storage_engine();
         let key = insert_multiple_messages(2, &mut storage_engine);
 
         assert!(storage_engine.uncompressed_data.contains_key(&key));
@@ -284,7 +282,7 @@ mod tests {
 
     #[test]
     fn test_can_get_finished_segment_when_finished() {
-        let mut storage_engine = StorageEngine::new();
+        let mut storage_engine = create_storage_engine();
         let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY, &mut storage_engine);
 
         assert!(storage_engine.get_finished_segment().is_some());
@@ -292,7 +290,7 @@ mod tests {
 
     #[test]
     fn test_can_get_multiple_finished_segments_when_multiple_finished() {
-        let mut storage_engine = StorageEngine::new();
+        let mut storage_engine = create_storage_engine();
         let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY * 2, &mut storage_engine);
 
         assert!(storage_engine.get_finished_segment().is_some());
@@ -301,14 +299,24 @@ mod tests {
 
     #[test]
     fn test_cannot_get_finished_segment_when_not_finished() {
-        let mut storage_engine = StorageEngine::new();
+        let mut storage_engine = create_storage_engine();
 
         assert!(storage_engine.get_finished_segment().is_none());
     }
 
     #[test]
+    fn test_spill_first_finished_segment_if_out_of_memory() {
+
+    }
+
+    #[test]
+    fn test_remaining_memory_incremented_when_spilling_finished_segment() {
+
+    }
+
+    #[test]
     fn test_remaining_memory_decremented_when_creating_new_segment() {
-        let mut storage_engine = StorageEngine::new();
+        let mut storage_engine = create_storage_engine();
         let initial_remaining_memory = storage_engine.uncompressed_remaining_memory_in_bytes;
 
         insert_generated_message(&mut storage_engine, "ModelarDB/test".to_owned());
@@ -318,7 +326,7 @@ mod tests {
 
     #[test]
     fn test_remaining_memory_incremented_when_popping_in_memory() {
-        let mut storage_engine = StorageEngine::new();
+        let mut storage_engine = create_storage_engine();
         let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY, &mut storage_engine);
 
         let previous_remaining_memory = storage_engine.uncompressed_remaining_memory_in_bytes.clone();
@@ -328,9 +336,14 @@ mod tests {
     }
 
     #[test]
+    fn test_remaining_memory_not_incremented_when_popping_spilled() {
+
+    }
+
+    #[test]
     #[should_panic(expected = "Not enough reserved memory to hold all necessary segment builders.")]
     fn test_panic_if_not_enough_reserved_memory() {
-        let mut storage_engine = StorageEngine::new();
+        let mut storage_engine = create_storage_engine();
         let reserved_memory = storage_engine.uncompressed_remaining_memory_in_bytes;
 
         // If there is enough reserved memory to hold n builders, we need to create n + 1 to panic.
@@ -373,7 +386,7 @@ mod tests {
     #[should_panic(expected = "Schema of record batch does not match compressed segment schema.")]
     fn test_panic_if_inserting_invalid_compressed_segment() {
         let invalid = test_util::get_invalid_compressed_segment_record_batch();
-        let mut storage_engine = StorageEngine::new();
+        let mut storage_engine = create_storage_engine();
 
         storage_engine.insert_compressed_data("key".to_owned(), invalid);
     }
@@ -381,7 +394,7 @@ mod tests {
     #[test]
     fn test_can_insert_compressed_segment_into_new_time_series() {
         let segment = test_util::get_compressed_segment_record_batch();
-        let mut storage_engine = StorageEngine::new();
+        let mut storage_engine = create_storage_engine();
 
         storage_engine.insert_compressed_data("key".to_owned(), segment);
 
@@ -393,7 +406,7 @@ mod tests {
     #[test]
     fn test_can_insert_compressed_segment_into_existing_time_series() {
         let segment = test_util::get_compressed_segment_record_batch();
-        let mut storage_engine = StorageEngine::new();
+        let mut storage_engine = create_storage_engine();
 
         storage_engine.insert_compressed_data("key".to_owned(), segment.clone());
         let previous_size = storage_engine.compressed_data.get("key").unwrap().size_in_bytes;
@@ -403,13 +416,37 @@ mod tests {
     }
 
     #[test]
+    fn test_save_first_compressed_time_series_if_out_of_memory() {
+
+    }
+
+    #[test]
+    fn test_save_multiple_compressed_time_series_if_necessary() {
+
+    }
+
+    #[test]
     fn test_remaining_bytes_decremented_when_inserting() {
         let segment = test_util::get_compressed_segment_record_batch();
-        let mut storage_engine = StorageEngine::new();
+        let mut storage_engine = create_storage_engine();
         let initial_remaining_memory = storage_engine.compressed_remaining_memory_in_bytes;
 
         storage_engine.insert_compressed_data("key".to_owned(), segment);
 
         assert!(storage_engine.compressed_remaining_memory_in_bytes < initial_remaining_memory);
+    }
+
+    #[test]
+    fn test_remaining_memory_incremented_when_saving_compressed_time_series() {
+
+    }
+
+    // TODO: We might need to return the temp dir to ensure it is not deleted immediately.
+    /// Create the storage engine with a folder that is automatically deleted once the test is finished.
+    fn create_storage_engine() -> StorageEngine {
+        let temp_dir = tempdir().unwrap();
+        let storage_folder_path = temp_dir.path().to_str().unwrap().to_string();
+
+        StorageEngine::new(storage_folder_path)
     }
 }

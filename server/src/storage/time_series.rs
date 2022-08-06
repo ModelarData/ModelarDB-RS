@@ -60,6 +60,7 @@ impl CompressedTimeSeries {
     /// If the compressed segments are successfully saved to an Apache Parquet file, return Ok,
     /// otherwise return Err.
     pub fn save_to_apache_parquet(&mut self, folder_path: String) -> Result<(), std::io::Error> {
+        // TODO: This should be a debug assert instead.
         if self.compressed_segments.is_empty() {
             Err(std::io::Error::new(
                 Other,
@@ -149,7 +150,12 @@ mod tests {
     }
 
     #[test]
-    fn test_cannot_save_empty_compressed_segments_to_apache_parquet() {
+    fn test_can_save_compressed_segments_to_apache_parquet() {
+
+    }
+
+    #[test]
+    fn test_panic_if_saving_empty_compressed_segments_to_apache_parquet() {
         let mut empty_time_series = CompressedTimeSeries::new();
         let result = empty_time_series.save_to_apache_parquet("key".to_owned());
 
