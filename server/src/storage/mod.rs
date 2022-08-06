@@ -50,6 +50,8 @@ const COMPRESSED_RESERVED_MEMORY_IN_BYTES: isize = 5000;
 
 /// Manages all uncompressed and compressed data, both while being built and when finished.
 pub struct StorageEngine {
+    /// Path to the folder containing all uncompressed and compressed data managed by the storage engine.
+    storage_folder_path: String,
     /// The uncompressed segments while they are being built.
     uncompressed_data: HashMap<String, SegmentBuilder>,
     /// Prioritized queue of finished segments that are ready for compression.
@@ -65,8 +67,9 @@ pub struct StorageEngine {
 }
 
 impl StorageEngine {
-    pub fn new() -> Self {
+    pub fn new(storage_folder_path: String) -> Self {
         Self {
+            storage_folder_path,
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             uncompressed_data: HashMap::new(),
             finished_queue: VecDeque::new(),
@@ -184,7 +187,7 @@ impl StorageEngine {
 
         // Iterate through the finished segments to find a segment that is in memory.
         for finished in self.finished_queue.iter_mut() {
-            if let Ok(path) = finished.spill_to_apache_parquet() {
+            if let Ok(path) = finished.spill_to_apache_parquet(self.storage_folder_path.clone()) {
                 // Add the size of the segment back to the remaining reserved bytes.
                 self.uncompressed_remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
 
@@ -211,7 +214,9 @@ impl StorageEngine {
 
             let mut time_series = self.compressed_data.remove(&key).unwrap();
             let time_series_size = time_series.size_in_bytes.clone();
-            time_series.save_to_apache_parquet(key.clone());
+
+            let folder_path = format!("{}/{}", self.storage_folder_path.clone(), key.clone());
+            time_series.save_to_apache_parquet(folder_path);
 
             self.compressed_remaining_memory_in_bytes += time_series_size as isize;
 
@@ -243,6 +248,10 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use crate::storage::time_series::test_util;
+
+    // TODO: Create a temporary folder with tempfile crate. The folder name should be an uuid.
+    // TODO: Give this temporary folder to the storage engine so all created files are deleted once done.
+    // TODO: Implement I/O tests.
 
     // Tests for uncompressed data.
     #[test]

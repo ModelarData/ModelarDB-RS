@@ -59,7 +59,7 @@ impl CompressedTimeSeries {
 
     /// If the compressed segments are successfully saved to an Apache Parquet file, return Ok,
     /// otherwise return Err.
-    pub fn save_to_apache_parquet(&mut self, key: String) -> Result<(), std::io::Error> {
+    pub fn save_to_apache_parquet(&mut self, folder_path: String) -> Result<(), std::io::Error> {
         if self.compressed_segments.is_empty() {
             Err(std::io::Error::new(
                 Other,
@@ -70,15 +70,14 @@ impl CompressedTimeSeries {
             let schema = Self::get_compressed_segment_schema();
             let batch = RecordBatch::concat(&Arc::new(schema), &*self.compressed_segments).unwrap();
 
-            // TODO: "storage" should be replaced by a user-defined storage folder.
             // Create the folder structure if it does not already exist.
-            let folder_path = format!("storage/{}/compressed", key);
-            fs::create_dir_all(&folder_path)?;
+            let complete_path = format!("{}/compressed", folder_path);
+            fs::create_dir_all(&complete_path)?;
 
             // Create a path that uses the first timestamp as the filename to better support
             // pruning data that is too new or too old when executing a specific query.
             let start_times: &TimestampArray = batch.column(2).as_any().downcast_ref().unwrap();
-            let path = format!("{}/{}.parquet", folder_path, start_times.value(0));
+            let path = format!("{}/{}.parquet", complete_path, start_times.value(0));
 
             write_batch_to_apache_parquet(batch, path.clone());
 
