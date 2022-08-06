@@ -144,7 +144,7 @@ fn register_tables_and_model_tables(
     });
 }
 
-/// Check if the `result`from a table or model table initialization is an
+/// Check if the `result` from a table or model table initialization is an
 /// `Error`, if so log an error message containing `table_type` and `name` and
 /// return `false`, otherwise return `true`.
 fn check_if_table_or_model_table_is_initialized_otherwise_log_error<T>(

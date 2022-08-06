@@ -302,7 +302,7 @@ impl ModelTableMetadata {
             }))
         } else {
             Err(ParquetError::General(format!(
-                "Unable to read metadata for {}.",
+                "Unable to read metadata for folder '{}'.",
                 folder_name
             )))
         }
@@ -336,7 +336,7 @@ impl ModelTableMetadata {
         let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(reader));
         let mut record_batch_reader = arrow_reader.get_record_reader(row_count)?;
         let rows = record_batch_reader.next().ok_or_else(|| {
-            ParquetError::General(format!("No metadata exists for {}.", *table_name))
+            ParquetError::General(format!("No metadata exists for table '{}'.", *table_name))
         })??;
         Ok(rows)
     }
