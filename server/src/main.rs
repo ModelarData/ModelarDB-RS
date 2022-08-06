@@ -1,4 +1,4 @@
-/* Copyright 2021 The MiniModelarDB Contributors
+/* Copyright 2021 The ModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Implementation of MiniModelarDB's main function and a `Context` type that
+//! Implementation of ModelarDB's main function and a `Context` type that
 //! provides access to the system's configuration and components throughout the
 //! system.
 

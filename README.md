@@ -1,22 +1,36 @@
-# MiniModelarDB
-MiniModelarDB is a model-based time series management system that is primarily
-built as a re-design and re-implementation of
-[ModelarDB](https://github.com/ModelarData/ModelarDB). It is implemented in
-[Rust](https://www.rust-lang.org/) and uses
-[DataFusion](https://github.com/apache/arrow-datafusion) as the query engine,
-[Apache Arrow](https://github.com/apache/arrow-rs) as the in-memory format, and
-[Apache Parquet](https://github.com/apache/arrow-rs) as the on-disk format. The
-primary goals of the project are to experiment with low-level optimizations
-that are not easily possible on the JVM, design methods for efficiently
-representing irregular time series using a model-based approach while only
-requiring users to specify an error bound, develop a query optimizer that
-allows queries to automatically exploit the model-based representation, and
-provide a single easy to use relational query interface. MiniModelarDB is
-designed for Unix-like operating systems and is tested on Linux.
+# ModelarDB
+ModelarDB is an efficient high-performance time series management system. It
+provides state-of-the-art lossless compression, lossy compression, and query
+performance by representing time series using multiple different types of models
+such as constant and linear functions. These compressed time series can be
+efficiently queried using a relational interface and SQL without any knowledge
+about the model-based representation. A query optimizer automatically rewrites
+the queries to exploits the model-based representation.
 
-MiniModelarDB intentionally does not gather usage data. So, all users are highly
+ModelarDB is designed to be cross-platform and is tested on Microsoft Windows,
+macOS, and Ubuntu. It is implemented in [Rust](https://www.rust-lang.org/) and
+uses [Apache Arrow
+Flight](https://github.com/apache/arrow-rs/tree/master/arrow-flight) for
+communicating with clients, [Apache Arrow
+DataFusion](https://github.com/apache/arrow-datafusion) as its query engine,
+[Apache Arrow](https://github.com/apache/arrow-rs) as its in-memory data format,
+and [Apache Parquet](https://github.com/apache/arrow-rs/tree/master/parquet) as
+its on-disk data format.
+
+The first prototype of ModelarDB was implemented using [Apache
+Spark](https://www.h2database.com/html/main.html), [Apache
+Cassandra](https://cassandra.apache.org/_/index.html), and
+[H2](https://www.h2database.com/html/main.html) and was developed as part of a
+[research project](https://github.com/skejserjensen/ModelarDB) at Aalborg
+University and later as an [open-source
+project](https://github.com/ModelarData/ModelarDB). While this JVM-based
+prototype validated the benefits of using a model-based representation for time
+series, it has been superseded by the much most efficient Rust-based
+implementation.
+
+ModelarDB intentionally does not gather usage data. So, all users are highly
 encouraged to post comments, suggestions, and bugs as GitHub issues, especially
-if a limitation of MiniModelarDB prevents it from being used in a particular domain.
+if a limitation of ModelarDB prevents it from being used in a particular domain.
 
 ## Installation
 ### Linux
@@ -44,9 +58,9 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
    * Debug Build: `cargo build`
    * Release Build: `cargo build --release`
    * Run Tests: `cargo test`
-   * Run Server: `cargo run --bin mmdbd path_to_data_folder`
-   * Run Client: `cargo run --bin mmdb [server_address] [query_file]`
-5. Move `mmdbd` and `mmdb` from the `target` directory to any directory.
+   * Run Server: `cargo run --bin mdbd path_to_data_folder`
+   * Run Client: `cargo run --bin mdb [server_address] [query_file]`
+5. Move `mdbd` and `mdb` from the `target` directory to any directory.
 
 ## Development
 All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md)
@@ -72,8 +86,8 @@ used for purposes such as logging, where multiple crates provide similar functio
 - Property-based Testing - [proptest](https://crates.io/crates/proptest)
 
 ## Contributions
-Contributions to all aspects of MiniModelarDB are highly appreciated and do not
-need to be in the form of code. For example, contributions can be:
+Contributions to all aspects of ModelarDB are highly appreciated and do not need
+to be in the form of code. For example, contributions can be:
 
 - Helping other users.
 - Writing documentation.
@@ -88,5 +102,5 @@ in the appropriate GitHub issue if one exists, e.g., the bug report if it is a
 bugfix, and as a new GitHub issue otherwise.
 
 ## License
-MiniModelarDB is licensed under version 2.0 of the Apache License and a copy of the
+ModelarDB is licensed under version 2.0 of the Apache License and a copy of the
 license is bundled with the program.
