@@ -144,7 +144,7 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Criteria>,
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
-        let table_names = self.context.catalog.table_names();
+        let table_names = self.context.catalog.table_and_model_table_names();
         let flight_descriptor = FlightDescriptor::new_path(table_names);
         let flight_info =
             FlightInfo::new(IpcMessage(vec![]), Some(flight_descriptor), vec![], -1, -1);

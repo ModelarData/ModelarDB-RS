@@ -13,8 +13,13 @@
  * limitations under the License.
  */
 
+//! Implementation of MiniModelarDB's main function and a `Context` type that
+//! provides access to the system's configuration and components throughout the
+//! system.
+
 mod catalog;
 mod errors;
+mod ingestion;
 mod macros;
 mod models;
 mod optimizer;
@@ -22,15 +27,15 @@ mod remote;
 mod storage;
 mod tables;
 mod types;
-mod ingestion;
 
 use std::sync::Arc;
 
+use datafusion::common::DataFusionError;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::options::ParquetReadOptions;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use tokio::runtime::Runtime;
-use tracing::{error, Instrument};
+use tracing::error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::catalog::Catalog;
@@ -40,15 +45,21 @@ use crate::tables::ModelTable;
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
-/** Public Types **/
+/// Provides access to the system's configuration and components.
 pub struct Context {
-    catalog: catalog::Catalog,
+    /// Metadata for the tables and model tables in the data folder.
+    catalog: Catalog,
+    /// A Tokio runtime for executing asynchronous tasks.
     runtime: Runtime,
+    /// Main interface for Apache Arrow DataFusion.
     session: SessionContext,
 }
 
-/** Public Functions **/
-fn main() {
+/// Setup tracing, read table and model table metadata from the path given by
+/// the first command line argument, construct a `Context`, and start Apache
+/// Arrow Flight interface. Returns `Error` if the metadata cannot be read or
+/// the Apache Arrow Flight interface cannot be started.
+fn main() -> Result<(), String> {
     // A layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();
     tracing_subscriber::registry().with(stdout_log).init();
@@ -57,12 +68,14 @@ fn main() {
     args.next(); // Skip executable.
     if let Some(data_folder) = args.next() {
         // Build Context.
-        let catalog = catalog::new(&data_folder);
+        let mut catalog = Catalog::try_new(&data_folder).map_err(|error| {
+            format!("Unable to read data folder '{}': {}", &data_folder, &error)
+        })?;
         let runtime = Runtime::new().unwrap();
         let mut session = create_session_context();
 
         // Register Tables.
-        runtime.block_on(register_tables(&mut session, &catalog));
+        register_tables_and_model_tables(&runtime, &mut session, &mut catalog);
 
         // Start Interface.
         let context = Arc::new(Context {
@@ -70,16 +83,22 @@ fn main() {
             runtime,
             session,
         });
-        remote::start_arrow_flight_server(context, 9999);
+        remote::start_arrow_flight_server(context, 9999).map_err(|error| error.to_string())?
     } else {
         // The errors are consciously ignored as the program is terminating.
         let binary_path = std::env::current_exe().unwrap();
-        let binary_name = binary_path.file_name().unwrap();
-        eprintln!("Usage: {} data_folder.", binary_name.to_str().unwrap());
+        let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
+        eprintln!("Usage: {} path_to_data_folder.", binary_name);
     }
+    Ok(())
 }
 
-/** Private Functions **/
+/// Create a new `SessionContext` for interacting with Apache Arrow DataFusion.
+/// The `SessionContext` is constructed with the default configuration, default
+/// resource managers, the local file system as the only object store, and
+/// additional optimizer rules that rewrite simple aggregate queries to be
+/// executed directly on the models instead of on reconstructed data points for
+/// model tables.
 fn create_session_context() -> SessionContext {
     let config = SessionConfig::new();
     let runtime = Arc::new(RuntimeEnv::default());
@@ -89,36 +108,59 @@ fn create_session_context() -> SessionContext {
     SessionContext::with_state(state)
 }
 
-async fn register_tables(session: &mut SessionContext, catalog: &Catalog) {
+/// Register all tables and model tables in `catalog` with Apache Arrow
+/// DataFusion through `session_context`. If initialization fails the table or
+/// model table is removed from `catalog`.
+fn register_tables_and_model_tables(
+    runtime: &Runtime,
+    session_context: &mut SessionContext,
+    catalog: &mut Catalog,
+) {
     // Initializes tables consisting of standard Apache Parquet files.
-    for table_metadata in &catalog.table_metadata {
-        if session
-            .register_parquet(
-                &table_metadata.name,
-                &table_metadata.path,
-                ParquetReadOptions::default(),
-            )
-            .instrument(tracing::error_span!("register_parquet"))
-            .await
-            .is_err()
-        {
-            error!("Unable to initialize table {}.", table_metadata.name);
-        }
-    }
+    catalog.table_metadata.retain(|table_metadata| {
+        let result = runtime.block_on(session_context.register_parquet(
+            &table_metadata.name,
+            &table_metadata.path,
+            ParquetReadOptions::default(),
+        ));
+        check_if_table_or_model_table_is_initialized_otherwise_log_error(
+            "table",
+            &table_metadata.name,
+            result,
+        )
+    });
 
     // Initializes tables storing time series as models in Apache Parquet files.
-    for model_table_metadata in &catalog.model_table_metadata {
-        if session
-            .register_table(
-                model_table_metadata.name.as_str(),
-                ModelTable::new(model_table_metadata),
-            )
-            .is_err()
-        {
-            error!(
-                "Unable to initialize model table {}.",
-                model_table_metadata.name
-            );
-        }
+    catalog.model_table_metadata.retain(|model_table_metadata| {
+        let result = session_context.register_table(
+            model_table_metadata.name.as_str(),
+            ModelTable::new(model_table_metadata),
+        );
+        check_if_table_or_model_table_is_initialized_otherwise_log_error(
+            "model table",
+            &model_table_metadata.name,
+            result,
+        )
+    });
+}
+
+/// Check if the `result` from a table or model table initialization is an
+/// `Error`, if so log an error message containing `table_type` and `name` and
+/// return `false`, otherwise return `true`.
+fn check_if_table_or_model_table_is_initialized_otherwise_log_error<T>(
+    table_type: &str,
+    name: &str,
+    result: Result<T, DataFusionError>,
+) -> bool {
+    if result.is_err() {
+        error!(
+            "Unable to initialize {} '{}': {}",
+            table_type,
+            name,
+            result.err().unwrap(),
+        );
+        false
+    } else {
+        true
     }
 }

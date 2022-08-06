@@ -78,7 +78,7 @@ impl ModelTable {
 
         Arc::new(ModelTable {
             model_table_metadata: model_table_metadata.clone(),
-            segment_folder_path: Path::from(model_table_metadata.segment_folder.clone()),
+            segment_folder_path: Path::from(model_table_metadata.segment_path.clone()),
             object_store_url: ObjectStoreUrl::local_filesystem(),
             schema: Arc::new(Schema::new(columns)),
         })
@@ -167,14 +167,14 @@ impl ModelTable {
 
         let df_schema = self
             .model_table_metadata
-            .segment_group_file_schema
+            .segment_file_legacy_schema
             .clone()
             .to_dfschema()?;
 
         let physical_predicate = planner::create_physical_expr(
             predicate,
             &df_schema,
-            &self.model_table_metadata.segment_group_file_schema,
+            &self.model_table_metadata.segment_file_legacy_schema,
             &ExecutionProps::new(),
         )?;
 
@@ -237,7 +237,7 @@ impl TableProvider for ModelTable {
         //TODO: partition and limit the number of rows read from the files properly
         let file_scan_config = FileScanConfig {
             object_store_url: self.object_store_url.clone(),
-            file_schema: self.model_table_metadata.segment_group_file_schema.clone(),
+            file_schema: self.model_table_metadata.segment_file_legacy_schema.clone(),
             file_groups: vec![partitioned_files],
             statistics,
             projection: None,

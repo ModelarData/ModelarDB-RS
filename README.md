@@ -44,7 +44,7 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
    * Debug Build: `cargo build`
    * Release Build: `cargo build --release`
    * Run Tests: `cargo test`
-   * Run Server: `cargo run --bin mmdbd absolute_path_to_data_folder`
+   * Run Server: `cargo run --bin mmdbd path_to_data_folder`
    * Run Client: `cargo run --bin mmdb [server_address] [query_file]`
 5. Move `mmdbd` and `mmdb` from the `target` directory to any directory.
 
