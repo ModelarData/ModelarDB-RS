@@ -5,7 +5,7 @@ performance by representing time series using multiple different types of models
 such as constant and linear functions. These compressed time series can be
 efficiently queried using a relational interface and SQL without any knowledge
 about the model-based representation. A query optimizer automatically rewrites
-the queries to exploits the model-based representation.
+the queries to exploit the model-based representation.
 
 ModelarDB is designed to be cross-platform and is tested on Microsoft Windows,
 macOS, and Ubuntu. It is implemented in [Rust](https://www.rust-lang.org/) and
