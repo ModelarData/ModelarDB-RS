@@ -24,6 +24,7 @@ mod time_series;
 use std::collections::vec_deque::VecDeque;
 use std::collections::HashMap;
 use std::fs::File;
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::ArrowWriter;
@@ -35,6 +36,7 @@ use tracing::{info, info_span};
 use crate::storage::data_point::DataPoint;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder};
 use crate::storage::time_series::CompressedTimeSeries;
+use crate::types::{ArrowTimestamp, ArrowValue};
 
 // TODO: Look into moving handling of uncompressed and compressed data into separate structs.
 // TODO: Look into custom errors for all errors in storage engine.
@@ -165,6 +167,28 @@ impl StorageEngine {
         if self.compressed_remaining_memory_in_bytes < 0 {
             self.save_compressed_data();
         }
+    }
+
+    /// Return the record batch schema used for uncompressed segments.
+    pub fn get_uncompressed_segment_schema() -> Schema {
+        Schema::new(vec![
+            Field::new("timestamps", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("values", ArrowValue::DATA_TYPE, false),
+        ])
+    }
+
+    /// Return the record batch schema used for compressed segments.
+    pub fn get_compressed_segment_schema() -> Schema {
+        Schema::new(vec![
+            Field::new("model_type_id", DataType::UInt8, false),
+            Field::new("timestamps", DataType::Binary, false),
+            Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("values", DataType::Binary, false),
+            Field::new("min_value", ArrowValue::DATA_TYPE, false),
+            Field::new("max_value", ArrowValue::DATA_TYPE, false),
+            Field::new("error", DataType::Float32, false),
+        ])
     }
 
     /// Move `segment_builder` to the queue of finished segments.

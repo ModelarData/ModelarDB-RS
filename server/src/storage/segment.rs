@@ -31,7 +31,7 @@ use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use tracing::info;
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::{write_batch_to_apache_parquet, INITIAL_BUILDER_CAPACITY};
+use crate::storage::{write_batch_to_apache_parquet, INITIAL_BUILDER_CAPACITY, StorageEngine};
 use crate::types::{
     ArrowTimestamp, ArrowValue, Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder,
 };
@@ -110,10 +110,7 @@ impl UncompressedSegment for SegmentBuilder {
         let timestamps = self.timestamps.finish();
         let values = self.values.finish();
 
-        let schema = Schema::new(vec![
-            Field::new("timestamps", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("values", ArrowValue::DATA_TYPE, false),
-        ]);
+        let schema = StorageEngine::get_uncompressed_segment_schema();
 
         RecordBatch::try_new(
             Arc::new(schema),
