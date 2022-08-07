@@ -1299,6 +1299,7 @@ dependencies = [
  "paho-mqtt",
  "proptest",
  "snmalloc-rs",
+ "tempfile",
  "tokio",
  "tonic",
  "tracing",
