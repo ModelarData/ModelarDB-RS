@@ -151,7 +151,10 @@ impl StorageEngine {
     /// Insert `segment` into the in-memory compressed time series buffer.
     pub fn insert_compressed_data(&mut self, key: String, segment: RecordBatch) {
         let _span = info_span!("insert_compressed_segment", key = key.clone()).entered();
-        info!("Inserting batch with {} rows into compressed time series.", segment.num_rows());
+        info!(
+            "Inserting batch with {} rows into compressed time series.",
+            segment.num_rows()
+        );
 
         // Since the compressed segment is already in memory, insert the segment in to the structure
         // first and check if the reserved memory limit is exceeded after.
@@ -206,8 +209,16 @@ impl StorageEngine {
     /// file was written successfully, otherwise return `ParquetError`.
     pub fn write_batch_to_apache_parquet_file(
         batch: RecordBatch,
-        path: &Path
+        path: &Path,
     ) -> Result<(), ParquetError> {
+        let error = ParquetError::General(
+            format!("Apache Parquet file at path '{}' could not be created.", path.display())
+        );
+
+        if !StorageEngine::is_path_a_viable_apache_parquet_path(path) {
+            return Err(error);
+        }
+
         if let Ok(file) = File::create(path) {
             let props = WriterProperties::builder()
                 .set_dictionary_enabled(false)
@@ -220,17 +231,15 @@ impl StorageEngine {
 
             Ok(())
         } else {
-            Err(ParquetError::General(
-                format!("Apache Parquet file at path '{}' could not be created.", path.display())
-            ))
+            Err(error)
         }
     }
 
     /// Read all rows from the Apache Parquet file at the location given by `path` and return them
     /// in a record batch. If the file could not be read successfully, `ParquetError` is returned.
     pub fn read_batch_from_apache_parquet_file(path: &Path) -> Result<RecordBatch, ParquetError> {
-        let error = format!(
-            "Apache Parquet file at path '{}' could not be read.", path.display()
+        let error = ParquetError::General(
+            format!("Apache Parquet file at path '{}' could not be read.", path.display())
         );
 
         if let Ok(file) = File::open(path) {
@@ -248,18 +257,18 @@ impl StorageEngine {
             let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(reader));
             let mut record_batch_reader = arrow_reader.get_record_reader(row_count)?;
 
-            let batch = record_batch_reader.next().ok_or_else(|| {
-                ParquetError::General(error.to_owned())
-            })??;
+            let batch = record_batch_reader
+                .next()
+                .ok_or_else(|| error)??;
 
             Ok(batch)
         } else {
-            Err(ParquetError::General(error.to_owned()))
+            Err(error)
         }
     }
 
     /// Return `true` if `path` is a readable Apache Parquet file, otherwise `false`.
-    fn is_path_an_apache_parquet_file(path: &Path) -> bool {
+    pub fn is_path_an_apache_parquet_file(path: &Path) -> bool {
         if let Ok(mut file) = File::open(path) {
             let mut first_four_bytes = vec![0u8; 4];
             file.read_exact(&mut first_four_bytes);
@@ -267,6 +276,11 @@ impl StorageEngine {
         } else {
             false
         }
+    }
+
+    /// Return `true` if `path` is a viable Apache Parquet file path, otherwise `false`.
+    fn is_path_a_viable_apache_parquet_path(path: &Path) -> bool {
+        path.extension().is_some() && path.extension().unwrap().to_str().unwrap() == "parquet"
     }
 
     /// Move `segment_builder` to the queue of finished segments.
