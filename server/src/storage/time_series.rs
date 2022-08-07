@@ -17,6 +17,7 @@
 
 use std::fs;
 use std::io::ErrorKind::Other;
+use std::path::Path;
 use std::sync::Arc;
 
 use datafusion::arrow::record_batch::RecordBatch;
@@ -79,7 +80,7 @@ impl CompressedTimeSeries {
             let start_times: &TimestampArray = batch.column(2).as_any().downcast_ref().unwrap();
             let path = format!("{}/{}.parquet", folder_path, start_times.value(0));
 
-            StorageEngine::write_batch_to_apache_parquet_file(batch, path.clone());
+            StorageEngine::write_batch_to_apache_parquet_file(batch, Path::new(&path.clone()));
 
             Ok(())
         }
