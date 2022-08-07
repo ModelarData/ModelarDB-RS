@@ -24,12 +24,15 @@ mod time_series;
 use std::collections::vec_deque::VecDeque;
 use std::collections::HashMap;
 use std::fs::File;
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
+use std::sync::Arc;
 
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::ArrowWriter;
+use datafusion::parquet::arrow::{ArrowReader, ArrowWriter, ParquetFileArrowReader};
 use datafusion::parquet::basic::Encoding;
+use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::WriterProperties;
+use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use paho_mqtt::Message;
 use tracing::{info, info_span};
 
@@ -191,6 +194,42 @@ impl StorageEngine {
         ])
     }
 
+    // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
+    /// Write `batch` to an Apache Parquet file at the location given by `path`.
+    pub fn write_batch_to_apache_parquet_file(batch: RecordBatch, path: String) {
+        let file = File::create(path).unwrap();
+        let props = WriterProperties::builder()
+            .set_dictionary_enabled(false)
+            .set_encoding(Encoding::PLAIN)
+            .build();
+
+        let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
+        writer.write(&batch).expect("Writing batch.");
+        writer.close().unwrap();
+    }
+
+    /// Read all rows in the Apache Parquet `file` and return them. If the file could not be read
+    /// successfully, `ParquetError` is returned.
+    pub fn read_batch_from_apache_parquet_file(
+        file: File,
+    ) -> Result<RecordBatch, ParquetError> {
+        let reader = SerializedFileReader::new(file)?;
+
+        // Extract the total row count from the file metadata.
+        let apache_parquet_metadata = reader.metadata();
+        let row_count = apache_parquet_metadata
+            .row_groups()
+            .iter()
+            .map(|rg| rg.num_rows())
+            .sum::<i64>() as usize;
+
+        // Read the data and convert it into a record batch.
+        let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(reader));
+        let mut record_batch_reader = arrow_reader.get_record_reader(row_count)?;
+
+        Ok(record_batch_reader.next()??)
+    }
+
     /// Move `segment_builder` to the queue of finished segments.
     fn enqueue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
         let finished_segment = FinishedSegment {
@@ -245,20 +284,6 @@ impl StorageEngine {
             );
         }
     }
-}
-
-// TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
-/// Write `batch` to an Apache Parquet file at the location given by `path`.
-fn write_batch_to_apache_parquet(batch: RecordBatch, path: String) {
-    let file = File::create(path).unwrap();
-    let props = WriterProperties::builder()
-        .set_dictionary_enabled(false)
-        .set_encoding(Encoding::PLAIN)
-        .build();
-
-    let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
-    writer.write(&batch).expect("Writing batch.");
-    writer.close().unwrap();
 }
 
 #[cfg(test)]
