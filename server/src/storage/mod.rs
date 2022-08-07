@@ -195,39 +195,58 @@ impl StorageEngine {
     }
 
     // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
-    /// Write `batch` to an Apache Parquet file at the location given by `path`.
-    pub fn write_batch_to_apache_parquet_file(batch: RecordBatch, path: String) {
-        let file = File::create(path).unwrap();
-        let props = WriterProperties::builder()
-            .set_dictionary_enabled(false)
-            .set_encoding(Encoding::PLAIN)
-            .build();
+    /// Write `batch` to an Apache Parquet file at the location given by `path`. Return Ok if the
+    /// file was written successfully, otherwise return `ParquetError`.
+    pub fn write_batch_to_apache_parquet_file(
+        batch: RecordBatch,
+        path: String
+    ) -> Result<(), ParquetError> {
+        if let Ok(file) = File::create(path.clone()) {
+            let props = WriterProperties::builder()
+                .set_dictionary_enabled(false)
+                .set_encoding(Encoding::PLAIN)
+                .build();
 
-        let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
-        writer.write(&batch).expect("Writing batch.");
-        writer.close().unwrap();
+            let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))?;
+            writer.write(&batch)?;
+            writer.close()?;
+
+            Ok(())
+        } else {
+            Err(ParquetError::General(
+                format!("Apache Parquet file at path '{}' could not be created.", path)
+            ))
+        }
     }
 
-    /// Read all rows in the Apache Parquet `file` and return them. If the file could not be read
-    /// successfully, `ParquetError` is returned.
-    pub fn read_batch_from_apache_parquet_file(
-        file: File,
-    ) -> Result<RecordBatch, ParquetError> {
-        let reader = SerializedFileReader::new(file)?;
+    /// Read all rows from the Apache Parquet file at the location given by `path` and return them
+    /// in a record batch. If the file could not be read successfully, `ParquetError` is returned.
+    pub fn read_batch_from_apache_parquet_file(path: String) -> Result<RecordBatch, ParquetError> {
+        let error = format!("Apache Parquet file at path '{}' could not be read.", path);
 
-        // Extract the total row count from the file metadata.
-        let apache_parquet_metadata = reader.metadata();
-        let row_count = apache_parquet_metadata
-            .row_groups()
-            .iter()
-            .map(|rg| rg.num_rows())
-            .sum::<i64>() as usize;
+        if let Ok(file) = File::open(&path) {
+            let reader = SerializedFileReader::new(file)?;
 
-        // Read the data and convert it into a record batch.
-        let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(reader));
-        let mut record_batch_reader = arrow_reader.get_record_reader(row_count)?;
+            // Extract the total row count from the file metadata.
+            let apache_parquet_metadata = reader.metadata();
+            let row_count = apache_parquet_metadata
+                .row_groups()
+                .iter()
+                .map(|rg| rg.num_rows())
+                .sum::<i64>() as usize;
 
-        Ok(record_batch_reader.next()??)
+            // Read the data and convert it into a record batch.
+            let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(reader));
+            let mut record_batch_reader = arrow_reader.get_record_reader(row_count)?;
+
+            let batch = record_batch_reader.next().ok_or_else(|| {
+                ParquetError::General(error.to_owned())
+            })??;
+
+            Ok(batch)
+        } else {
+            Err(ParquetError::General(error.to_owned()))
+        }
     }
 
     /// Move `segment_builder` to the queue of finished segments.
