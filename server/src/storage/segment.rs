@@ -24,17 +24,14 @@ use std::sync::Arc;
 use std::{fmt, fs, mem};
 
 use datafusion::arrow::array::ArrayBuilder;
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader, ProjectionMask};
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use tracing::info;
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::{write_batch_to_apache_parquet, INITIAL_BUILDER_CAPACITY, StorageEngine};
-use crate::types::{
-    ArrowTimestamp, ArrowValue, Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder,
-};
+use crate::storage::{INITIAL_BUILDER_CAPACITY, StorageEngine};
+use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
 
 /// Shared functionality between different types of uncompressed segments, such as segment builders
 /// and spilled segments.
@@ -147,7 +144,7 @@ impl SpilledSegment {
         let timestamps: &TimestampArray = batch.column(0).as_any().downcast_ref().unwrap();
         let path = format!("{}/{}.parquet", folder_path, timestamps.value(0));
 
-        write_batch_to_apache_parquet(batch, path.clone());
+        StorageEngine::write_batch_to_apache_parquet_file(batch, path.clone());
 
         Self { path }
     }

@@ -19,11 +19,10 @@ use std::fs;
 use std::io::ErrorKind::Other;
 use std::sync::Arc;
 
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 
-use crate::storage::{StorageEngine, write_batch_to_apache_parquet};
-use crate::types::{ArrowTimestamp, ArrowValue, TimestampArray};
+use crate::storage::StorageEngine;
+use crate::types::TimestampArray;
 
 /// A single compressed time series, containing one or more compressed segments and providing
 /// functionality for appending segments and saving all segments to a single Apache Parquet file.
@@ -80,7 +79,7 @@ impl CompressedTimeSeries {
             let start_times: &TimestampArray = batch.column(2).as_any().downcast_ref().unwrap();
             let path = format!("{}/{}.parquet", folder_path, start_times.value(0));
 
-            write_batch_to_apache_parquet(batch, path.clone());
+            StorageEngine::write_batch_to_apache_parquet_file(batch, path.clone());
 
             Ok(())
         }
