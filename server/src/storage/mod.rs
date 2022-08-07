@@ -24,6 +24,8 @@ mod time_series;
 use std::collections::vec_deque::VecDeque;
 use std::collections::HashMap;
 use std::fs::File;
+use std::io::Read;
+use std::path::Path;
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
@@ -52,6 +54,11 @@ use crate::types::{ArrowTimestamp, ArrowValue};
 const INITIAL_BUILDER_CAPACITY: usize = 64;
 const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
 const COMPRESSED_RESERVED_MEMORY_IN_BYTES: isize = 5000;
+
+/// The expected [first four bytes of any Apache Parquet file].
+///
+/// [first four bytes of any Apache Parquet file]: https://en.wikipedia.org/wiki/List_of_file_signatures
+const APACHE_PARQUET_FILE_SIGNATURE: &[u8] = &[80, 65, 82, 49]; // PAR1.
 
 /// Manages all uncompressed and compressed data, both while being built and when finished.
 pub struct StorageEngine {
@@ -199,9 +206,9 @@ impl StorageEngine {
     /// file was written successfully, otherwise return `ParquetError`.
     pub fn write_batch_to_apache_parquet_file(
         batch: RecordBatch,
-        path: String
+        path: &Path
     ) -> Result<(), ParquetError> {
-        if let Ok(file) = File::create(path.clone()) {
+        if let Ok(file) = File::create(path) {
             let props = WriterProperties::builder()
                 .set_dictionary_enabled(false)
                 .set_encoding(Encoding::PLAIN)
@@ -214,17 +221,19 @@ impl StorageEngine {
             Ok(())
         } else {
             Err(ParquetError::General(
-                format!("Apache Parquet file at path '{}' could not be created.", path)
+                format!("Apache Parquet file at path '{}' could not be created.", path.display())
             ))
         }
     }
 
     /// Read all rows from the Apache Parquet file at the location given by `path` and return them
     /// in a record batch. If the file could not be read successfully, `ParquetError` is returned.
-    pub fn read_batch_from_apache_parquet_file(path: String) -> Result<RecordBatch, ParquetError> {
-        let error = format!("Apache Parquet file at path '{}' could not be read.", path);
+    pub fn read_batch_from_apache_parquet_file(path: &Path) -> Result<RecordBatch, ParquetError> {
+        let error = format!(
+            "Apache Parquet file at path '{}' could not be read.", path.display()
+        );
 
-        if let Ok(file) = File::open(&path) {
+        if let Ok(file) = File::open(path) {
             let reader = SerializedFileReader::new(file)?;
 
             // Extract the total row count from the file metadata.
@@ -246,6 +255,17 @@ impl StorageEngine {
             Ok(batch)
         } else {
             Err(ParquetError::General(error.to_owned()))
+        }
+    }
+
+    /// Return `true` if `path` is a readable Apache Parquet file, otherwise `false`.
+    fn is_path_an_apache_parquet_file(path: &Path) -> bool {
+        if let Ok(mut file) = File::open(path) {
+            let mut first_four_bytes = vec![0u8; 4];
+            file.read_exact(&mut first_four_bytes);
+            first_four_bytes == APACHE_PARQUET_FILE_SIGNATURE
+        } else {
+            false
         }
     }
 

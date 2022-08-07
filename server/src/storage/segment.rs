@@ -22,6 +22,7 @@ use std::fs::File;
 use std::io::ErrorKind::Other;
 use std::sync::Arc;
 use std::{fmt, fs, mem};
+use std::path::Path;
 
 use datafusion::arrow::array::ArrayBuilder;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -144,7 +145,7 @@ impl SpilledSegment {
         let timestamps: &TimestampArray = batch.column(0).as_any().downcast_ref().unwrap();
         let path = format!("{}/{}.parquet", folder_path, timestamps.value(0));
 
-        StorageEngine::write_batch_to_apache_parquet_file(batch, path.clone());
+        StorageEngine::write_batch_to_apache_parquet_file(batch, Path::new(&path.clone()));
 
         Self { path }
     }
