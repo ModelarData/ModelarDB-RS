@@ -1266,6 +1266,7 @@ dependencies = [
  "paho-mqtt",
  "proptest",
  "snmalloc-rs",
+ "tempfile",
  "tokio",
  "tonic",
  "tracing",
@@ -1307,6 +1308,7 @@ dependencies = [
 ]
 
 [[package]]
+>>>>>>> c50754d (Added tests for writing batch to Apache Parquet)
 name = "multimap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

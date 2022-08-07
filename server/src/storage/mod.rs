@@ -269,10 +269,14 @@ impl StorageEngine {
 
     /// Return `true` if `path` is a readable Apache Parquet file, otherwise `false`.
     pub fn is_path_an_apache_parquet_file(path: &Path) -> bool {
-        if let Ok(mut file) = File::open(path) {
-            let mut first_four_bytes = vec![0u8; 4];
-            file.read_exact(&mut first_four_bytes);
-            first_four_bytes == APACHE_PARQUET_FILE_SIGNATURE
+        if StorageEngine::is_path_a_viable_apache_parquet_path(path) {
+            if let Ok(mut file) = File::open(path) {
+                let mut first_four_bytes = vec![0u8; 4];
+                file.read_exact(&mut first_four_bytes);
+                first_four_bytes == APACHE_PARQUET_FILE_SIGNATURE
+            } else {
+                false
+            }
         } else {
             false
         }
@@ -342,7 +346,10 @@ impl StorageEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::read_dir;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    use tempfile::tempdir;
 
     use crate::storage::time_series::test_util;
 
@@ -414,10 +421,10 @@ mod tests {
         let mut storage_engine = StorageEngine::new();
         let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY, &mut storage_engine);
 
-        let previous_remaining_memory = storage_engine.uncompressed_remaining_memory_in_bytes.clone();
+        let remaining_memory = storage_engine.uncompressed_remaining_memory_in_bytes.clone();
         storage_engine.get_finished_segment();
 
-        assert!(previous_remaining_memory < storage_engine.uncompressed_remaining_memory_in_bytes);
+        assert!(remaining_memory < storage_engine.uncompressed_remaining_memory_in_bytes);
     }
 
     #[test]
@@ -505,4 +512,60 @@ mod tests {
 
         assert!(storage_engine.compressed_remaining_memory_in_bytes < initial_remaining_memory);
     }
+
+    // Tests for Apache Parquet.
+    #[test]
+    fn test_write_batch_to_new_apache_parquet_file() {
+        let temp_dir = tempdir().unwrap();
+        let batch = test_util::get_compressed_segment_record_batch();
+
+        let parquet_path = temp_dir.path().join("test.parquet");
+        StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path());
+
+        assert!(parquet_path.exists());
+    }
+
+    #[test]
+    fn test_write_batch_to_invalid_extension() {
+        let temp_dir = tempdir().unwrap();
+        let batch = test_util::get_compressed_segment_record_batch();
+
+        let parquet_path = temp_dir.path().join("test.txt");
+        let result =
+            StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path());
+
+        assert!(result.is_err());
+        assert!(!parquet_path.exists());
+    }
+
+    #[test]
+    fn test_write_batch_to_existing_apache_parquet_file() {
+        let temp_dir = tempdir().unwrap();
+        let batch = test_util::get_compressed_segment_record_batch();
+
+        let parquet_path = temp_dir.path().join("test.parquet");
+        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path());
+
+        // The file should just be truncated.
+        let result =
+            StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path());
+
+        assert!(result.is_ok());
+        assert!(parquet_path.exists());
+    }
+
+    #[test]
+    fn test_read_batch_from_apache_parquet_file() {}
+
+    #[test]
+    fn test_read_batch_from_invalid_extension() {}
+
+    #[test]
+    fn test_read_batch_from_non_existent_path() {}
+
+    #[test]
+    fn test_is_parquet_path_apache_parquet_file() {}
+
+    #[test]
+    fn test_is_non_parquet_path_apache_parquet_file() {}
 }
