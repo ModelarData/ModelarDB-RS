@@ -37,6 +37,8 @@ use crate::storage::segment::{FinishedSegment, SegmentBuilder};
 use crate::storage::time_series::CompressedTimeSeries;
 
 // TODO: Look into moving handling of uncompressed and compressed data into separate structs.
+// TODO: Reading from, writing to, and identifying Parquet files can also be moved to storage engine.
+// TODO: The "get_schema" functions in "types.rs" could also be moved to the storage engine.
 // TODO: Look into custom errors for all errors in storage engine.
 
 // Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
