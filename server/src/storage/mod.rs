@@ -217,20 +217,20 @@ impl StorageEngine {
 
         // Check if the extension of the given path is correct.
         if path.extension().is_some() && path.extension().unwrap().to_str().unwrap() == "parquet" {
-            return Err(error);
-        }
+            if let Ok(file) = File::create(path) {
+                let props = WriterProperties::builder()
+                    .set_dictionary_enabled(false)
+                    .set_encoding(Encoding::PLAIN)
+                    .build();
 
-        if let Ok(file) = File::create(path) {
-            let props = WriterProperties::builder()
-                .set_dictionary_enabled(false)
-                .set_encoding(Encoding::PLAIN)
-                .build();
+                let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))?;
+                writer.write(&batch)?;
+                writer.close()?;
 
-            let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))?;
-            writer.write(&batch)?;
-            writer.close()?;
-
-            Ok(())
+                Ok(())
+            } else {
+                Err(error)
+            }
         } else {
             Err(error)
         }
@@ -536,11 +536,20 @@ mod tests {
     }
 
     #[test]
-    fn test_write_batch_to_invalid_extension() {
+    fn test_write_batch_to_file_with_invalid_extension() {
+        write_to_file_and_assert_failed("test.txt".to_owned());
+    }
+
+    #[test]
+    fn test_write_batch_to_file_with_no_extension() {
+        write_to_file_and_assert_failed("test".to_owned());
+    }
+
+    fn write_to_file_and_assert_failed(file_name: String) {
         let temp_dir = tempdir().unwrap();
         let batch = test_util::get_compressed_segment_record_batch();
 
-        let parquet_path = temp_dir.path().join("test.txt");
+        let parquet_path = temp_dir.path().join(file_name);
         let result =
             StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path());
 
@@ -550,31 +559,52 @@ mod tests {
 
     #[test]
     fn test_read_batch_from_apache_parquet_file() {
+        let file_name = "test.parquet".to_owned();
+        let (_temp_dir, path, batch) = create_file_in_temp_dir(file_name);
 
+        let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path());
+
+        assert!(result.is_ok());
+        assert_eq!(batch, result.unwrap());
     }
 
     #[test]
-    fn test_read_batch_from_invalid_extension() {}
+    fn test_read_batch_from_non_parquet_file() {
+        let temp_dir = tempdir().unwrap();
+        let path = temp_dir.path().join("test.txt");
+        File::create(path.clone()).unwrap();
+
+        let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path());
+
+        assert!(result.is_err());
+    }
 
     #[test]
-    fn test_read_batch_from_non_existent_path() {}
+    fn test_read_batch_from_non_existent_path() {
+        let temp_dir = tempdir().unwrap();
+        let path = temp_dir.path().join("none.parquet");
+        let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path());
+
+        assert!(result.is_err());
+    }
 
     #[test]
     fn test_is_parquet_path_apache_parquet_file() {
-        let batch = test_util::get_compressed_segment_record_batch();
-        let (temp_dir, path) = create_file_in_temp_dir(batch.clone(), "test.parquet".to_owned());
+        let file_name = "test.parquet".to_owned();
+        let (_temp_dir, path, _batch) = create_file_in_temp_dir(file_name);
 
         assert!(StorageEngine::is_path_an_apache_parquet_file(path.as_path()));
     }
 
     /// Create an Apache Parquet file from a generated record batch in the temp dir.
-    fn create_file_in_temp_dir(batch: RecordBatch, file_name: String) -> (TempDir, PathBuf) {
+    fn create_file_in_temp_dir(file_name: String) -> (TempDir, PathBuf, RecordBatch) {
         let temp_dir = tempdir().unwrap();
+        let batch = test_util::get_compressed_segment_record_batch();
 
         let parquet_path = temp_dir.path().join(file_name);
-        StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path());
+        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path());
 
-        (temp_dir, parquet_path)
+        (temp_dir, parquet_path, batch)
     }
 
     #[test]
