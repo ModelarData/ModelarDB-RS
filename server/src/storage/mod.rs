@@ -406,12 +406,53 @@ mod tests {
 
     #[test]
     fn test_spill_first_finished_segment_if_out_of_memory() {
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        spill_finished_segment(&mut storage_engine);
 
+        // The first finished segment should have a memory size of 0 since it is spilled to disk.
+        let first_finished = storage_engine.finished_queue.pop_front().unwrap();
+        assert_eq!(first_finished.uncompressed_segment.get_memory_size(), 0);
+
+        let storage_folder_path = Path::new(&storage_engine.storage_folder_path);
+        let uncompressed_path = storage_folder_path.join("modelardb-test/uncompressed");
+
+        // The finished segment should be spilled to the "uncompressed" folder under the key.
+        assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1);
+    }
+
+    #[test]
+    fn test_ignore_already_spilled_segments_when_spilling_if_out_of_memory() {
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        spill_finished_segment(&mut storage_engine);
+
+        // When spilling one more segment, the first, already spilled, segment should be ignored.
+        insert_multiple_messages(BUILDER_CAPACITY, &mut storage_engine);
+
+        storage_engine.finished_queue.pop_front();
+        // The second finished segment should have a memory size of 0 since it is spilled to disk.
+        let second_finished = storage_engine.finished_queue.pop_front().unwrap();
+        assert_eq!(second_finished.uncompressed_segment.get_memory_size(), 0);
+
+        let storage_folder_path = Path::new(&storage_engine.storage_folder_path);
+        let uncompressed_path = storage_folder_path.join("modelardb-test/uncompressed");
+
+        // The finished segments should be spilled to the "uncompressed" folder under the key.
+        assert_eq!(uncompressed_path.read_dir().unwrap().count(), 2);
     }
 
     #[test]
     fn test_remaining_memory_incremented_when_spilling_finished_segment() {
 
+    }
+
+    /// Insert messages into the storage engine until a segment is spilled to Apache Parquet.
+    fn spill_finished_segment(storage_engine: &mut StorageEngine) {
+        let reserved_memory = storage_engine.uncompressed_remaining_memory_in_bytes;
+
+        // If there is enough memory to hold n full segments, we need n + 1 to spill a segment.
+        let max_full_segments = reserved_memory / SegmentBuilder::get_memory_size();
+        let message_count = (max_full_segments * BUILDER_CAPACITY) + 1;
+        insert_multiple_messages(message_count, storage_engine);
     }
 
     #[test]
