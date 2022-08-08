@@ -215,7 +215,8 @@ impl StorageEngine {
             format!("Apache Parquet file at path '{}' could not be created.", path.display())
         );
 
-        if !StorageEngine::is_path_a_viable_apache_parquet_path(path) {
+        // Check if the extension of the given path is correct.
+        if path.extension().is_some() && path.extension().unwrap().to_str().unwrap() == "parquet" {
             return Err(error);
         }
 
@@ -269,14 +270,10 @@ impl StorageEngine {
 
     /// Return `true` if `path` is a readable Apache Parquet file, otherwise `false`.
     pub fn is_path_an_apache_parquet_file(path: &Path) -> bool {
-        if StorageEngine::is_path_a_viable_apache_parquet_path(path) {
-            if let Ok(mut file) = File::open(path) {
-                let mut first_four_bytes = vec![0u8; 4];
-                file.read_exact(&mut first_four_bytes);
-                first_four_bytes == APACHE_PARQUET_FILE_SIGNATURE
-            } else {
-                false
-            }
+        if let Ok(mut file) = File::open(path) {
+            let mut first_four_bytes = vec![0u8; 4];
+            file.read_exact(&mut first_four_bytes);
+            first_four_bytes == APACHE_PARQUET_FILE_SIGNATURE
         } else {
             false
         }
@@ -347,9 +344,10 @@ impl StorageEngine {
 mod tests {
     use super::*;
     use std::fs::read_dir;
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use tempfile::tempdir;
+    use tempfile::{tempdir, TempDir};
 
     use crate::storage::time_series::test_util;
 
@@ -551,7 +549,9 @@ mod tests {
     }
 
     #[test]
-    fn test_read_batch_from_apache_parquet_file() {}
+    fn test_read_batch_from_apache_parquet_file() {
+
+    }
 
     #[test]
     fn test_read_batch_from_invalid_extension() {}
@@ -560,8 +560,30 @@ mod tests {
     fn test_read_batch_from_non_existent_path() {}
 
     #[test]
-    fn test_is_parquet_path_apache_parquet_file() {}
+    fn test_is_parquet_path_apache_parquet_file() {
+        let batch = test_util::get_compressed_segment_record_batch();
+        let (temp_dir, path) = create_file_in_temp_dir(batch.clone(), "test.parquet".to_owned());
+
+        assert!(StorageEngine::is_path_an_apache_parquet_file(path.as_path()));
+    }
+
+    /// Create an Apache Parquet file from a generated record batch in the temp dir.
+    fn create_file_in_temp_dir(batch: RecordBatch, file_name: String) -> (TempDir, PathBuf) {
+        let temp_dir = tempdir().unwrap();
+
+        let parquet_path = temp_dir.path().join(file_name);
+        StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path());
+
+        (temp_dir, parquet_path)
+    }
 
     #[test]
-    fn test_is_non_parquet_path_apache_parquet_file() {}
+    fn test_is_non_parquet_path_apache_parquet_file() {
+        let temp_dir = tempdir().unwrap();
+        let path = temp_dir.path().join("test.txt");
+        File::create(path.clone()).unwrap();
+
+        assert!(path.exists());
+        assert!(!StorageEngine::is_path_an_apache_parquet_file(path.as_path()));
+    }
 }
