@@ -1,4 +1,4 @@
-/* Copyright 2021 The MiniModelarDB Contributors
+/* Copyright 2021 The ModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ use std::cmp::{Ordering, PartialOrd};
 
 use datafusion::arrow::array::{Int32Array, Int64Array};
 
-use crate::errors::MiniModelarDBError;
+use crate::errors::ModelarDBError;
 use crate::types::{
     TimeSeriesId, TimeSeriesIdArray, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value,
     ValueBuilder,
@@ -50,9 +50,9 @@ struct ErrorBound(f32);
 impl ErrorBound {
     /// Return `ErrorBound` if `error_bound` is a positive finite value,
     /// otherwise `CompressionError`.
-    fn try_new(error_bound: f32) -> Result<Self, MiniModelarDBError> {
+    fn try_new(error_bound: f32) -> Result<Self, ModelarDBError> {
         if error_bound < 0.0 || error_bound.is_infinite() || error_bound.is_nan() {
-            Err(MiniModelarDBError::CompressionError(
+            Err(ModelarDBError::CompressionError(
                 "Error bound cannot be negative, infinite, or NAN.".to_owned(),
             ))
         } else {

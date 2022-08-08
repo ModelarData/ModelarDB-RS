@@ -1,4 +1,4 @@
-/* Copyright 2022 The MiniModelarDB Contributors
+/* Copyright 2022 The ModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -25,17 +25,17 @@ use std::fmt::{Display, Formatter};
 
 /// Error type used throughout the system.
 #[derive(Debug)]
-pub enum MiniModelarDBError {
+pub enum ModelarDBError {
     /// Error returned by the model types.
     CompressionError(String),
 }
 
-impl Error for MiniModelarDBError {}
+impl Error for ModelarDBError {}
 
-impl Display for MiniModelarDBError {
+impl Display for ModelarDBError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-	match self {
-	    MiniModelarDBError::CompressionError(reason) => write!(f, "Compression Error: {}", reason),
-	}
+        match self {
+            ModelarDBError::CompressionError(reason) => write!(f, "Compression Error: {}", reason),
+        }
     }
 }
