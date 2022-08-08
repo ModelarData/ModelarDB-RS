@@ -280,11 +280,6 @@ impl StorageEngine {
         }
     }
 
-    /// Return `true` if `path` is a viable Apache Parquet file path, otherwise `false`.
-    fn is_path_a_viable_apache_parquet_path(path: &Path) -> bool {
-        path.extension().is_some() && path.extension().unwrap().to_str().unwrap() == "parquet"
-    }
-
     /// Move `segment_builder` to the queue of finished segments.
     fn enqueue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
         let finished_segment = FinishedSegment {
