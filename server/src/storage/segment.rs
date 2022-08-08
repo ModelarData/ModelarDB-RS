@@ -29,7 +29,7 @@ use datafusion::parquet::errors::ParquetError;
 use tracing::info;
 
 use crate::storage::data_point::DataPoint;
-use crate::storage::{INITIAL_BUILDER_CAPACITY, StorageEngine};
+use crate::storage::{BUILDER_CAPACITY, StorageEngine};
 use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
 
 /// Shared functionality between different types of uncompressed segments, such as segment builders
@@ -60,15 +60,15 @@ pub struct SegmentBuilder {
 impl SegmentBuilder {
     pub fn new() -> Self {
         Self {
-            timestamps: TimestampBuilder::new(INITIAL_BUILDER_CAPACITY),
-            values: ValueBuilder::new(INITIAL_BUILDER_CAPACITY),
+            timestamps: TimestampBuilder::new(BUILDER_CAPACITY),
+            values: ValueBuilder::new(BUILDER_CAPACITY),
         }
     }
 
     /// Return the total size of the builder in bytes. Note that this is constant.
     pub fn get_memory_size() -> usize {
-        (INITIAL_BUILDER_CAPACITY * mem::size_of::<Timestamp>())
-            + (INITIAL_BUILDER_CAPACITY * mem::size_of::<Value>())
+        (BUILDER_CAPACITY * mem::size_of::<Timestamp>())
+            + (BUILDER_CAPACITY * mem::size_of::<Value>())
     }
 
     /// Return `true` if the segment is full, meaning additional data points cannot be appended.
@@ -153,7 +153,7 @@ impl SpilledSegment {
     /// Spill the data in `segment` to an Apache Parquet file, and return a spilled segment with the path.
     pub fn new(folder_path: String, segment: RecordBatch) -> Self {
         debug_assert!(
-            segment.schema() == Arc::new(get_uncompressed_segment_schema()),
+            segment.schema() == Arc::new(StorageEngine::get_uncompressed_segment_schema()),
             "Schema of record batch does not match uncompressed segment schema."
         );
 
@@ -164,7 +164,7 @@ impl SpilledSegment {
         let timestamps: &TimestampArray = segment.column(0).as_any().downcast_ref().unwrap();
         let path = format!("{}/{}.parquet", complete_path, timestamps.value(0));
 
-        StorageEngine::write_batch_to_apache_parquet_file(batch, Path::new(&path.clone()));
+        StorageEngine::write_batch_to_apache_parquet_file(segment, Path::new(&path.clone()));
 
         Self { path }
     }
@@ -174,14 +174,14 @@ impl UncompressedSegment for SpilledSegment {
     /// Retrieve the data from the Apache Parquet file and return it in a structured record batch.
     fn get_record_batch(&mut self) -> Result<RecordBatch, ParquetError> {
         let path = Path::new(&self.path);
-        let segment = StorageEngine::read_batch_from_apache_parquet_file(path)
+        let segment = StorageEngine::read_batch_from_apache_parquet_file(path)?;
 
 		debug_assert!(
-            segment.schema() == Arc::new(get_uncompressed_segment_schema()),
+            segment.schema() == Arc::new(StorageEngine::get_uncompressed_segment_schema()),
             "Schema of record batch does not match uncompressed segment schema."
         );
 
-        segment
+        Ok(segment)
     }
 
     /// Since the data is not kept in memory, return 0.
@@ -229,9 +229,10 @@ impl FinishedSegment {
 mod tests {
     use super::*;
 
+    use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
     use paho_mqtt::Message;
 
-    use crate::types::ValueArray;
+    use crate::types::{ArrowValue, ValueArray};
 
     // Tests for SegmentBuilder.
     #[test]

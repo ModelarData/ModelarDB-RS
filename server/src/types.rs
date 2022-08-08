@@ -13,14 +13,12 @@
  * limitations under the License.
  */
 
-//! The types and schemas used throughout the system.
+//! The types used throughout the system.
 //!
 //! Use declarations are purposely not used to minimize the chance of
 //! accidentally defining incorrect aliases if types from different modules use
 //! the same name, e.g., `std::primitive::f32` and `proptest::num::f32`. It is
 //! assumed that each set of aliases are all for the same underlying type.
-
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 
 // Types used for a single time series id.
 pub type TimeSeriesId = std::primitive::i32; // Signed integer for compatibility with tables.rs.
@@ -50,26 +48,3 @@ pub mod tests {
 // Types used for a collection of values.
 pub type ValueBuilder = datafusion::arrow::array::PrimitiveBuilder<ArrowValue>;
 pub type ValueArray = datafusion::arrow::array::PrimitiveArray<ArrowValue>;
-
-// TODO: Maybe move the schemas to the configuration component when this is added.
-/// Return the record batch schema used for uncompressed segments.
-pub fn get_uncompressed_segment_schema() -> Schema {
-    Schema::new(vec![
-        Field::new("timestamps", ArrowTimestamp::DATA_TYPE, false),
-        Field::new("values", ArrowValue::DATA_TYPE, false),
-    ])
-}
-
-/// Return the record batch schema used for compressed segments.
-pub fn get_compressed_segment_schema() -> Schema {
-    Schema::new(vec![
-        Field::new("model_type_id", DataType::UInt8, false),
-        Field::new("timestamps", DataType::Binary, false),
-        Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
-        Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),
-        Field::new("values", DataType::Binary, false),
-        Field::new("min_value", ArrowValue::DATA_TYPE, false),
-        Field::new("max_value", ArrowValue::DATA_TYPE, false),
-        Field::new("error", DataType::Float32, false),
-    ])
-}
