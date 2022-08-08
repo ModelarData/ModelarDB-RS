@@ -27,6 +27,7 @@ use std::path::Path;
 use datafusion::arrow::array::ArrayBuilder;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader, ProjectionMask};
+use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use tracing::info;
 
@@ -37,7 +38,7 @@ use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuil
 /// Shared functionality between different types of uncompressed segments, such as segment builders
 /// and spilled segments.
 pub trait UncompressedSegment {
-    fn get_record_batch(&mut self) -> RecordBatch;
+    fn get_record_batch(&mut self) -> Result<RecordBatch, ParquetError>;
 
     fn get_memory_size(&self) -> usize;
 
@@ -104,16 +105,16 @@ impl fmt::Display for SegmentBuilder {
 
 impl UncompressedSegment for SegmentBuilder {
     /// Finish the array builders and return the data in a structured record batch.
-    fn get_record_batch(&mut self) -> RecordBatch {
+    fn get_record_batch(&mut self) -> Result<RecordBatch, ParquetError> {
         let timestamps = self.timestamps.finish();
         let values = self.values.finish();
 
         let schema = StorageEngine::get_uncompressed_segment_schema();
 
-        RecordBatch::try_new(
+        Ok(RecordBatch::try_new(
             Arc::new(schema),
             vec![Arc::new(timestamps), Arc::new(values)],
-        ).unwrap()
+        ).unwrap())
     }
 
     /// Return the total size of the uncompressed segment in bytes.
@@ -123,7 +124,7 @@ impl UncompressedSegment for SegmentBuilder {
 
     /// Spill the in-memory segment to an Apache Parquet file and return Ok when finished.
     fn spill_to_apache_parquet(&mut self, key: String) -> Result<SpilledSegment, std::io::Error> {
-        let batch = self.get_record_batch();
+        let batch = self.get_record_batch().unwrap();
         Ok(SpilledSegment::new(key.clone(), batch))
     }
 }
@@ -131,6 +132,7 @@ impl UncompressedSegment for SegmentBuilder {
 /// A single segment that has been spilled to an Apache Parquet file due to memory constraints.
 pub struct SpilledSegment {
     /// Path to the Apache Parquet file containing the uncompressed data in the segment.
+    // TODO: Maybe change this to an actual Path instead of a String.
     path: String,
 }
 
@@ -153,21 +155,9 @@ impl SpilledSegment {
 
 impl UncompressedSegment for SpilledSegment {
     /// Retrieve the data from the Apache Parquet file and return it in a structured record batch.
-    fn get_record_batch(&mut self) -> RecordBatch {
-        let file = File::open(&self.path).unwrap();
-        let file_reader = SerializedFileReader::new(file).unwrap();
-
-        // Specify that we want to read the first two columns (timestamps, values) from the file.
-        let file_metadata = file_reader.metadata().file_metadata();
-        let mask = ProjectionMask::leaves(file_metadata.schema_descr(), [0, 1]);
-
-        // Convert the read data into a structured record batch.
-        let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(file_reader));
-        let mut record_batch_reader = arrow_reader
-            .get_record_reader_by_columns(mask, 2048)
-            .unwrap();
-
-        record_batch_reader.next().unwrap().unwrap()
+    fn get_record_batch(&mut self) -> Result<RecordBatch, ParquetError> {
+        let path = Path::new(&self.path);
+        StorageEngine::read_batch_from_apache_parquet_file(path)
     }
 
     /// Since the data is not kept in memory, return 0.
@@ -264,7 +254,7 @@ mod tests {
         segment_builder.insert_data(&data_point);
         segment_builder.insert_data(&data_point);
 
-        let data = segment_builder.get_record_batch();
+        let data = segment_builder.get_record_batch().unwrap();
         assert_eq!(data.num_columns(), 2);
         assert_eq!(data.num_rows(), 2);
     }
