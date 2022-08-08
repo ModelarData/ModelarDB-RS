@@ -515,11 +515,23 @@ mod tests {
 
     // Tests for Apache Parquet.
     #[test]
-    fn test_write_batch_to_new_apache_parquet_file() {
+    fn test_write_batch_to_apache_parquet_file() {
         let temp_dir = tempdir().unwrap();
         let batch = test_util::get_compressed_segment_record_batch();
 
         let parquet_path = temp_dir.path().join("test.parquet");
+        StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path());
+
+        assert!(parquet_path.exists());
+    }
+
+    #[test]
+    fn test_write_empty_batch_to_apache_parquet_file() {
+        let schema = Schema::new(vec![]);
+        let batch = RecordBatch::new_empty(Arc::new(schema));
+
+        let temp_dir = tempdir().unwrap();
+        let parquet_path = temp_dir.path().join("empty.parquet");
         StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path());
 
         assert!(parquet_path.exists());
@@ -536,22 +548,6 @@ mod tests {
 
         assert!(result.is_err());
         assert!(!parquet_path.exists());
-    }
-
-    #[test]
-    fn test_write_batch_to_existing_apache_parquet_file() {
-        let temp_dir = tempdir().unwrap();
-        let batch = test_util::get_compressed_segment_record_batch();
-
-        let parquet_path = temp_dir.path().join("test.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path());
-
-        // The file should just be truncated.
-        let result =
-            StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path());
-
-        assert!(result.is_ok());
-        assert!(parquet_path.exists());
     }
 
     #[test]
