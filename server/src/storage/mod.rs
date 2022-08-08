@@ -206,8 +206,8 @@ impl StorageEngine {
     }
 
     // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
-    /// Write `batch` to an Apache Parquet file at the location given by `path`. Return Ok if the
-    /// file was written successfully, otherwise return `ParquetError`.
+    /// Write `batch` to an Apache Parquet file at the location given by `path`. `path` must use the
+    /// extension '.parquet'. Return Ok if the file was written successfully, otherwise `ParquetError`.
     pub fn write_batch_to_apache_parquet_file(
         batch: RecordBatch,
         path: &Path,
@@ -218,20 +218,17 @@ impl StorageEngine {
 
         // Check if the extension of the given path is correct.
         if path.extension().and_then(OsStr::to_str) == Some("parquet") {
-            if let Ok(file) = File::create(path) {
-                let props = WriterProperties::builder()
-                    .set_dictionary_enabled(false)
-                    .set_encoding(Encoding::PLAIN)
-                    .build();
+            let file = File::create(path).map_err(|_e| error)?;
+            let props = WriterProperties::builder()
+                .set_dictionary_enabled(false)
+                .set_encoding(Encoding::PLAIN)
+                .build();
 
-                let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))?;
-                writer.write(&batch)?;
-                writer.close()?;
+            let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))?;
+            writer.write(&batch)?;
+            writer.close()?;
 
-                Ok(())
-            } else {
-                Err(error)
-            }
+            Ok(())
         } else {
             Err(error)
         }
@@ -239,34 +236,31 @@ impl StorageEngine {
 
     /// Read all rows from the Apache Parquet file at the location given by `path` and return them
     /// in a record batch. If the file could not be read successfully, `ParquetError` is returned.
-    pub fn read_batch_from_apache_parquet_file(path: &Path) -> Result<RecordBatch, ParquetError> {
+    pub fn read_entire_apache_parquet_file(path: &Path) -> Result<RecordBatch, ParquetError> {
         let error = ParquetError::General(
             format!("Apache Parquet file at path '{}' could not be read.", path.display())
         );
 
-        if let Ok(file) = File::open(path) {
-            let reader = SerializedFileReader::new(file)?;
+        let file = File::open(path).map_err(|_e| error.clone())?;
+        let reader = SerializedFileReader::new(file)?;
 
-            // Extract the total row count from the file metadata.
-            let apache_parquet_metadata = reader.metadata();
-            let row_count = apache_parquet_metadata
-                .row_groups()
-                .iter()
-                .map(|rg| rg.num_rows())
-                .sum::<i64>() as usize;
+        // Extract the total row count from the file metadata.
+        let apache_parquet_metadata = reader.metadata();
+        let row_count = apache_parquet_metadata
+            .row_groups()
+            .iter()
+            .map(|rg| rg.num_rows())
+            .sum::<i64>() as usize;
 
-            // Read the data and convert it into a record batch.
-            let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(reader));
-            let mut record_batch_reader = arrow_reader.get_record_reader(row_count)?;
+        // Read the data and convert it to a record batch.
+        let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(reader));
+        let mut record_batch_reader = arrow_reader.get_record_reader(row_count)?;
 
-            let batch = record_batch_reader
-                .next()
-                .ok_or_else(|| error)??;
+        let batch = record_batch_reader
+            .next()
+            .ok_or_else(|| error)??;
 
-            Ok(batch)
-        } else {
-            Err(error)
-        }
+        Ok(batch)
     }
 
     /// Return `true` if `path` is a readable Apache Parquet file, otherwise `false`.
@@ -556,9 +550,9 @@ mod tests {
     #[test]
     fn test_read_batch_from_apache_parquet_file() {
         let file_name = "test.parquet".to_owned();
-        let (_temp_dir, path, batch) = create_file_in_temp_dir(file_name);
+        let (_temp_dir, path, batch) = create_apache_parquet_file_in_temp_dir(file_name);
 
-        let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path());
+        let result = StorageEngine::read_entire_apache_parquet_file(path.as_path());
 
         assert!(result.is_ok());
         assert_eq!(batch, result.unwrap());
@@ -570,7 +564,7 @@ mod tests {
         let path = temp_dir.path().join("test.txt");
         File::create(path.clone()).unwrap();
 
-        let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path());
+        let result = StorageEngine::read_entire_apache_parquet_file(path.as_path());
 
         assert!(result.is_err());
     }
@@ -579,7 +573,7 @@ mod tests {
     fn test_read_batch_from_non_existent_path() {
         let temp_dir = tempdir().unwrap();
         let path = temp_dir.path().join("none.parquet");
-        let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path());
+        let result = StorageEngine::read_entire_apache_parquet_file(path.as_path());
 
         assert!(result.is_err());
     }
@@ -587,13 +581,13 @@ mod tests {
     #[test]
     fn test_is_parquet_path_apache_parquet_file() {
         let file_name = "test.parquet".to_owned();
-        let (_temp_dir, path, _batch) = create_file_in_temp_dir(file_name);
+        let (_temp_dir, path, _batch) = create_apache_parquet_file_in_temp_dir(file_name);
 
         assert!(StorageEngine::is_path_an_apache_parquet_file(path.as_path()));
     }
 
     /// Create an Apache Parquet file from a generated record batch in the temp dir.
-    fn create_file_in_temp_dir(file_name: String) -> (TempDir, PathBuf, RecordBatch) {
+    fn create_apache_parquet_file_in_temp_dir(file_name: String) -> (TempDir, PathBuf, RecordBatch) {
         let temp_dir = tempdir().unwrap();
         let batch = test_util::get_compressed_segment_record_batch();
 
