@@ -23,6 +23,7 @@ mod time_series;
 
 use std::collections::vec_deque::VecDeque;
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Read;
 use std::path::Path;
@@ -216,7 +217,7 @@ impl StorageEngine {
         );
 
         // Check if the extension of the given path is correct.
-        if path.extension().is_some() && path.extension().unwrap().to_str().unwrap() == "parquet" {
+        if path.extension().and_then(OsStr::to_str) == Some("parquet") {
             if let Ok(file) = File::create(path) {
                 let props = WriterProperties::builder()
                     .set_dictionary_enabled(false)
