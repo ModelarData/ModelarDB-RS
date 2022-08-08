@@ -25,7 +25,7 @@ Cassandra](https://cassandra.apache.org/_/index.html), and
 University and later as an [open-source
 project](https://github.com/ModelarData/ModelarDB). While this JVM-based
 prototype validated the benefits of using a model-based representation for time
-series, it has been superseded by the much most efficient Rust-based
+series, it has been superseded by this much more efficient Rust-based
 implementation.
 
 ModelarDB intentionally does not gather usage data. So, all users are highly
