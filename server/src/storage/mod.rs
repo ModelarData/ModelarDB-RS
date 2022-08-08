@@ -273,7 +273,7 @@ impl StorageEngine {
     pub fn is_path_an_apache_parquet_file(path: &Path) -> bool {
         if let Ok(mut file) = File::open(path) {
             let mut first_four_bytes = vec![0u8; 4];
-            file.read_exact(&mut first_four_bytes);
+            let _ = file.read_exact(&mut first_four_bytes);
             first_four_bytes == APACHE_PARQUET_FILE_SIGNATURE
         } else {
             false

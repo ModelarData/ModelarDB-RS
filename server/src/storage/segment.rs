@@ -18,7 +18,6 @@
 //! storing uncompressed data in Apache Parquet files.
 
 use std::fmt::Formatter;
-use std::fs::File;
 use std::io::ErrorKind::Other;
 use std::sync::Arc;
 use std::{fmt, fs, mem};
@@ -26,9 +25,7 @@ use std::path::Path;
 
 use datafusion::arrow::array::ArrayBuilder;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader, ProjectionMask};
 use datafusion::parquet::errors::ParquetError;
-use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use tracing::info;
 
 use crate::storage::data_point::DataPoint;
