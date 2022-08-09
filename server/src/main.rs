@@ -18,6 +18,7 @@
 //! system.
 
 mod catalog;
+mod compression;
 mod errors;
 mod ingestion;
 mod macros;

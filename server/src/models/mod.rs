@@ -28,6 +28,7 @@ use std::mem;
 use datafusion::arrow::array::{Int32Array, Int64Array};
 
 use crate::errors::ModelarDBError;
+use crate::models::{gorilla::Gorilla, pmcmean::PMCMean, swing::Swing};
 use crate::types::{
     TimeSeriesId, TimeSeriesIdArray, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value,
     ValueBuilder,
@@ -80,6 +81,50 @@ impl PartialEq<ErrorBound> for f32 {
 impl PartialOrd<ErrorBound> for f32 {
     fn partial_cmp(&self, other: &ErrorBound) -> Option<Ordering> {
         self.partial_cmp(&other.0)
+    }
+}
+
+/// Select the model that uses the fewest number of bytes per value.
+pub fn select_model(
+    pmc_mean: PMCMean,
+    swing: Swing,
+    gorilla: Gorilla,
+    uncompressed_values: &[Value],
+) -> (u8, f32, f32, Vec<u8>) {
+    // TODO: include the metadata as it is amortized over the values.
+    let bytes_per_value = [
+        (PMC_MEAN_ID, pmc_mean.get_bytes_per_value()),
+        (SWING_ID, swing.get_bytes_per_value()),
+        (GORILLA_ID, gorilla.get_bytes_per_value()),
+    ];
+
+    // unwrap() cannot fail as the array is not empty and there are no NaN.
+    let model_type_id = bytes_per_value
+        .iter()
+        .min_by(|x, y| f32::partial_cmp(&x.1, &y.1).unwrap())
+        .unwrap()
+        .0;
+
+    match model_type_id {
+        PMC_MEAN_ID => {
+            let value = pmc_mean.get_model();
+            (PMC_MEAN_ID, value, value, vec![])
+        }
+        SWING_ID => {
+            let (min_value, max_value) = swing.get_model();
+            (SWING_ID, min_value, max_value, vec![])
+        }
+        GORILLA_ID => {
+            let min_value = uncompressed_values
+                .iter()
+                .fold(Value::MAX, |x, y| Value::min(x, *y));
+            let max_value = uncompressed_values
+                .iter()
+                .fold(Value::MIN, |x, y| Value::min(x, *y));
+            let values = gorilla.get_compressed_values();
+            (GORILLA_ID, min_value, max_value, values)
+        }
+        _ => panic!("Unknown model type."),
     }
 }
 
