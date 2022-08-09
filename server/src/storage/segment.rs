@@ -42,10 +42,7 @@ pub trait UncompressedSegment {
 
     // Since both segment builders and spilled segments are present in the compression queue, both
     // structs need to implement spilling to Apache Parquet, with already spilled segments returning Err.
-    fn spill_to_apache_parquet(
-        &mut self,
-        folder_path: String,
-    ) -> Result<SpilledSegment, IOError>;
+    fn spill_to_apache_parquet(&mut self, folder_path: String) -> Result<SpilledSegment, IOError>;
 }
 
 /// A single segment being built, consisting of an ordered sequence of timestamps and values. Note
@@ -134,13 +131,10 @@ impl UncompressedSegment for SegmentBuilder {
     }
 
     /// Spill the in-memory segment to an Apache Parquet file and return Ok when finished.
-    fn spill_to_apache_parquet(
-        &mut self,
-        folder_path: String,
-    ) -> Result<SpilledSegment, IOError> {
+    fn spill_to_apache_parquet(&mut self, folder_path: String) -> Result<SpilledSegment, IOError> {
         // Since the schema is constant and the columns are always the same length, creating the
         // record batch should never fail and unwrap is therefore safe to use.
-		let batch = self.get_record_batch().unwrap();
+        let batch = self.get_record_batch().unwrap();
         Ok(SpilledSegment::new(folder_path, batch))
     }
 }
@@ -193,10 +187,7 @@ impl UncompressedSegment for SpilledSegment {
     }
 
     /// Since the segment has already been spilled, return Err.
-    fn spill_to_apache_parquet(
-        &mut self,
-        _folder_path: String,
-    ) -> Result<SpilledSegment, IOError> {
+    fn spill_to_apache_parquet(&mut self, _folder_path: String) -> Result<SpilledSegment, IOError> {
         Err(IOError::new(
             Other,
             format!("The segment has already been spilled to '{}'.", &self.path),
@@ -286,6 +277,7 @@ mod tests {
     #[should_panic(expected = "Cannot insert data into full segment builder.")]
     fn test_panic_if_inserting_data_point_when_full() {
         let mut segment_builder = SegmentBuilder::new();
+
         insert_multiple_data_points(segment_builder.get_capacity() + 1, &mut segment_builder);
     }
 
@@ -347,7 +339,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Schema of record batch does not match uncompressed segment schema.")]
     fn test_panic_if_creating_spilled_segment_with_invalid_segment() {
-        // Create a record batch is missing timestamps.
+        // Create a record batch that is missing timestamps.
         let values = ValueArray::from(vec![2.5, 3.3, 3.2]);
         let schema = Schema::new(vec![Field::new("values", ArrowValue::DATA_TYPE, false)]);
         let record_batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(values)]).unwrap();
@@ -384,6 +376,7 @@ mod tests {
     fn test_panic_if_getting_record_batch_from_invalid_spilled_segment() {
         let temp_dir = tempdir().unwrap();
 
+        // Save a compressed segment to the file where SpilledSegment expects an uncompressed segment.
         let segment = test_util::get_compressed_segment_record_batch();
         let path = temp_dir.path().join("test.parquet").to_str().unwrap().to_string();
         StorageEngine::write_batch_to_apache_parquet_file(segment, Path::new(&path.clone()));

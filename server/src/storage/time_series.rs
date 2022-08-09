@@ -142,7 +142,7 @@ mod tests {
         let folder_path = temp_dir.path().to_str().unwrap().to_string();
         time_series.save_to_apache_parquet(folder_path);
 
-        // Data should be saved to a file with the first timestamp as the name under "compressed".
+        // Data should be saved to a file with the first timestamp as the file name.
         let compressed_path = temp_dir.path().join("compressed/1.parquet");
         assert!(compressed_path.exists());
     }
@@ -151,6 +151,7 @@ mod tests {
     #[should_panic(expected = "Cannot save compressed time series with no data.")]
     fn test_panic_if_saving_empty_compressed_segments_to_apache_parquet() {
         let mut empty_time_series = CompressedTimeSeries::new();
+
         empty_time_series.save_to_apache_parquet("key".to_owned());
     }
 

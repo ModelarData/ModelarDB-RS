@@ -427,7 +427,7 @@ mod tests {
         insert_multiple_messages(BUILDER_CAPACITY * 2, &mut storage_engine);
 
         storage_engine.spill_finished_segment();
-        // When spilling one more segment, the first, already spilled segment, should be ignored.
+        // When spilling one more, the first segment should be ignored since it is already spilled.
         storage_engine.spill_finished_segment();
 
         storage_engine.finished_queue.pop_front();
@@ -455,11 +455,11 @@ mod tests {
     #[test]
     fn test_remaining_memory_decremented_when_creating_new_segment() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
-        let initial_remaining_memory = storage_engine.uncompressed_remaining_memory_in_bytes;
+        let reserved_memory = storage_engine.uncompressed_remaining_memory_in_bytes;
 
         insert_generated_message(&mut storage_engine, "ModelarDB/test".to_owned());
 
-        assert!(initial_remaining_memory > storage_engine.uncompressed_remaining_memory_in_bytes);
+        assert!(reserved_memory > storage_engine.uncompressed_remaining_memory_in_bytes);
     }
 
     #[test]
@@ -481,7 +481,7 @@ mod tests {
         storage_engine.spill_finished_segment();
         let remaining_memory = storage_engine.uncompressed_remaining_memory_in_bytes.clone();
 
-        // Since the finished segment is not in memory, it should not increment when popped.
+        // Since the finished segment is not in memory, the remaining memory should not increase when popped.
         storage_engine.get_finished_segment();
 
         assert_eq!(remaining_memory, storage_engine.uncompressed_remaining_memory_in_bytes);
@@ -581,14 +581,14 @@ mod tests {
     }
 
     #[test]
-    fn test_remaining_bytes_decremented_when_inserting() {
+    fn test_remaining_bytes_decremented_when_inserting_compressed_segment() {
         let segment = test_util::get_compressed_segment_record_batch();
         let (_temp_dir, mut storage_engine) = create_storage_engine();
-        let initial_remaining_memory = storage_engine.compressed_remaining_memory_in_bytes;
+        let reserved_memory = storage_engine.compressed_remaining_memory_in_bytes;
 
         storage_engine.insert_compressed_data("key".to_owned(), segment);
 
-        assert!(initial_remaining_memory > storage_engine.compressed_remaining_memory_in_bytes);
+        assert!(reserved_memory > storage_engine.compressed_remaining_memory_in_bytes);
     }
 
 	#[test]
@@ -671,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_from_non_parquet_file() {
+    fn test_read_from_non_apache_parquet_file() {
         let temp_dir = tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
         File::create(path.clone()).unwrap();
