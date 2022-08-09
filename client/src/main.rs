@@ -1,4 +1,4 @@
-/* Copyright 2021 The MiniModelarDB Contributors
+/* Copyright 2021 The ModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -137,7 +137,7 @@ fn repl(rt: Runtime, mut fsc: FlightServiceClient<Channel>) -> Result<()> {
     let mut editor = Editor::<ClientHelper>::new()?;
     let table_names = retrieve_table_names(&rt, &mut fsc)?;
     editor.set_helper(Some(ClientHelper::new(table_names)));
-    let history_file_name = ".mmdbc_history";
+    let history_file_name = ".mdb_history";
     if let Some(mut home) = dirs::home_dir() {
         home.push(history_file_name);
         let _ = editor.load_history(&home);

@@ -1,4 +1,4 @@
-/* Copyright 2022 The MiniModelarDB Contributors
+/* Copyright 2022 The ModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,6 +19,7 @@
 
 use std::fmt::Formatter;
 use std::io::ErrorKind::Other;
+use std::io::Error as IOError;
 use std::sync::Arc;
 use std::{fmt, fs, mem};
 use std::path::Path;
@@ -44,7 +45,7 @@ pub trait UncompressedSegment {
     fn spill_to_apache_parquet(
         &mut self,
         folder_path: String,
-    ) -> Result<SpilledSegment, std::io::Error>;
+    ) -> Result<SpilledSegment, IOError>;
 }
 
 /// A single segment being built, consisting of an ordered sequence of timestamps and values. Note
@@ -136,8 +137,10 @@ impl UncompressedSegment for SegmentBuilder {
     fn spill_to_apache_parquet(
         &mut self,
         folder_path: String,
-    ) -> Result<SpilledSegment, std::io::Error> {
-        let batch = self.get_record_batch().unwrap();
+    ) -> Result<SpilledSegment, IOError> {
+        // Since the schema is constant and the columns are always the same length, creating the
+        // record batch should never fail and unwrap is therefore safe to use.
+		let batch = self.get_record_batch().unwrap();
         Ok(SpilledSegment::new(folder_path, batch))
     }
 }
@@ -174,7 +177,7 @@ impl UncompressedSegment for SpilledSegment {
     /// Retrieve the data from the Apache Parquet file and return it in a structured record batch.
     fn get_record_batch(&mut self) -> Result<RecordBatch, ParquetError> {
         let path = Path::new(&self.path);
-        let segment = StorageEngine::read_batch_from_apache_parquet_file(path)?;
+        let segment = StorageEngine::read_entire_apache_parquet_file(path)?;
 
 		debug_assert!(
             segment.schema() == Arc::new(StorageEngine::get_uncompressed_segment_schema()),
@@ -193,8 +196,8 @@ impl UncompressedSegment for SpilledSegment {
     fn spill_to_apache_parquet(
         &mut self,
         _folder_path: String,
-    ) -> Result<SpilledSegment, std::io::Error> {
-        Err(std::io::Error::new(
+    ) -> Result<SpilledSegment, IOError> {
+        Err(IOError::new(
             Other,
             format!("The segment has already been spilled to '{}'.", &self.path),
         ))
@@ -212,7 +215,7 @@ impl FinishedSegment {
     pub fn spill_to_apache_parquet(
         &mut self,
         storage_folder_path: String,
-    ) -> Result<String, std::io::Error> {
+    ) -> Result<String, IOError> {
         let folder_path = format!("{}/{}", storage_folder_path, self.key.clone());
         let spilled = self
             .uncompressed_segment
@@ -302,7 +305,7 @@ mod tests {
         }
 
         let capacity = segment_builder.get_capacity();
-        let data = segment_builder.get_record_batch().unwrap();
+        let data = segment_builder.get_record_batch().unwrap().unwrap();
         assert_eq!(data.num_columns(), 2);
         assert_eq!(data.num_rows(), capacity);
     }

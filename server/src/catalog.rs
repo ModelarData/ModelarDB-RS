@@ -1,4 +1,4 @@
-/* Copyright 2021 The MiniModelarDB Contributors
+/* Copyright 2021 The ModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -273,7 +273,7 @@ impl ModelTableMetadata {
         // members are shifted by one as the time series ids start at one.
         let time_series_file = folder_path.clone() + "/time_series.parquet";
         let path = Path::new(&time_series_file);
-        if let Ok(rows) = StorageEngine::read_batch_from_apache_parquet_file(path) {
+        if let Ok(rows) = StorageEngine::read_entire_apache_parquet_file(path) {
             let sampling_intervals = Self::extract_and_shift_int32_array(&rows, 2)?;
             let denormalized_dimensions = // Columns with metadata as strings.
                 Self::extract_and_shift_denormalized_dimensions(&rows, 4)?;

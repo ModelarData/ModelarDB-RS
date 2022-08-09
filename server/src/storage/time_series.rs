@@ -1,4 +1,4 @@
-/* Copyright 2022 The MiniModelarDB Contributors
+/* Copyright 2022 The ModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -169,6 +169,7 @@ pub mod test_util {
     use datafusion::arrow::datatypes::DataType::UInt8;
     use datafusion::arrow::datatypes::{Field, Schema};
     use datafusion::arrow::record_batch::RecordBatch;
+    use crate::storage::StorageEngine;
 
     use crate::storage::StorageEngine;
     use crate::storage::time_series::CompressedTimeSeries;
