@@ -18,7 +18,7 @@
 //! models.
 
 use std::fs::{read_dir, DirEntry};
-use std::io::{Error, ErrorKind, Read};
+use std::io::{Error, ErrorKind};
 use std::str;
 use std::sync::Arc;
 use std::{fs::File, path::Path};
@@ -28,17 +28,13 @@ use datafusion::arrow::array::{
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::{ArrowReader, ParquetFileArrowReader};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use datafusion::parquet::record::RowAccessor;
 use object_store::path::Path as ObjectStorePath;
 use tracing::{error, info, warn};
 
-/// The expected [first four bytes of any Apache Parquet file].
-///
-/// [first four bytes of any Apache Parquet file]: https://en.wikipedia.org/wiki/List_of_file_signatures
-const APACHE_PARQUET_FILE_SIGNATURE: &[u8] = &[80, 65, 82, 49]; // PAR1.
+use crate::storage::StorageEngine;
 
 /// Metadata for the tables and model tables in the data folder.
 pub struct Catalog {
@@ -163,12 +159,13 @@ impl Catalog {
     /// Return `true` if `path` is a readable table, otherwise `false`.
     fn is_path_a_table(path: &Path) -> bool {
         if path.is_file() {
-            Self::is_path_an_apache_parquet_file(&path)
+            StorageEngine::is_path_an_apache_parquet_file(&path)
         } else if path.is_dir() {
             let table_folder = read_dir(&path);
             table_folder.is_ok()
                 && table_folder.unwrap().all(|result| {
-                    result.is_ok() && Self::is_path_an_apache_parquet_file(&result.unwrap().path())
+                    result.is_ok() &&
+                        StorageEngine::is_path_an_apache_parquet_file(&result.unwrap().path())
                 })
         } else {
             false
@@ -193,24 +190,13 @@ impl Catalog {
             let segment = segment.as_path();
             let segment_folder = read_dir(&segment);
 
-            Self::is_path_an_apache_parquet_file(model_type)
-                && Self::is_path_an_apache_parquet_file(time_series)
+            StorageEngine::is_path_an_apache_parquet_file(model_type)
+                && StorageEngine::is_path_an_apache_parquet_file(time_series)
                 && segment_folder.is_ok()
                 && segment_folder.unwrap().all(|result| {
-                    result.is_ok() && Self::is_path_an_apache_parquet_file(&result.unwrap().path())
+                    result.is_ok() &&
+                        StorageEngine::is_path_an_apache_parquet_file(&result.unwrap().path())
                 })
-        } else {
-            false
-        }
-    }
-
-    /// Return `true` if `path` is a readable Apache Parquet file, otherwise
-    /// `false`.
-    fn is_path_an_apache_parquet_file(path: &Path) -> bool {
-        if let Ok(mut file) = File::open(path) {
-            let mut first_four_bytes = vec![0u8; 4];
-            let _ = file.read_exact(&mut first_four_bytes);
-            first_four_bytes == APACHE_PARQUET_FILE_SIGNATURE
         } else {
             false
         }
@@ -287,8 +273,7 @@ impl ModelTableMetadata {
         // members are shifted by one as the time series ids start at one.
         let time_series_file = folder_path.clone() + "/time_series.parquet";
         let path = Path::new(&time_series_file);
-        if let Ok(file) = File::open(&path) {
-            let rows = Self::read_entire_apache_parquet_file(&folder_name, file)?;
+        if let Ok(rows) = StorageEngine::read_entire_apache_parquet_file(path) {
             let sampling_intervals = Self::extract_and_shift_int32_array(&rows, 2)?;
             let denormalized_dimensions = // Columns with metadata as strings.
                 Self::extract_and_shift_denormalized_dimensions(&rows, 4)?;
@@ -317,28 +302,6 @@ impl ModelTableMetadata {
         let path = Path::new(&segment_folder);
         ObjectStorePath::from_filesystem_path(path)
             .map_err(|error| ParquetError::General(error.to_string()))
-    }
-
-    /// Read all rows in the Apache Parquet `file` for the model table with
-    /// `table_name`.
-    fn read_entire_apache_parquet_file(
-        table_name: &String,
-        file: File,
-    ) -> Result<RecordBatch, ParquetError> {
-        let reader = SerializedFileReader::new(file)?;
-        let apache_parquet_metadata = reader.metadata();
-        let row_count = apache_parquet_metadata
-            .row_groups()
-            .iter()
-            .map(|rg| rg.num_rows())
-            .sum::<i64>() as usize;
-
-        let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(reader));
-        let mut record_batch_reader = arrow_reader.get_record_reader(row_count)?;
-        let rows = record_batch_reader.next().ok_or_else(|| {
-            ParquetError::General(format!("No metadata exists for table '{}'.", *table_name))
-        })??;
-        Ok(rows)
     }
 
     /// Check that the model table only use supported model types.

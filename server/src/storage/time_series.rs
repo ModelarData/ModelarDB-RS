@@ -17,13 +17,13 @@
 
 use std::fs;
 use std::io::ErrorKind::Other;
+use std::path::Path;
 use std::sync::Arc;
 
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 
-use crate::storage::write_batch_to_apache_parquet;
-use crate::types::{ArrowTimestamp, ArrowValue, TimestampArray};
+use crate::storage::StorageEngine;
+use crate::types::TimestampArray;
 
 /// A single compressed time series, containing one or more compressed segments and providing
 /// functionality for appending segments and saving all segments to a single Apache Parquet file.
@@ -47,7 +47,7 @@ impl CompressedTimeSeries {
         let segment_size = Self::get_size_of_segment(&segment);
 
         debug_assert!(
-            segment.schema() == Arc::new(Self::get_compressed_segment_schema()),
+            segment.schema() == Arc::new(StorageEngine::get_compressed_segment_schema()),
             "Schema of record batch does not match compressed segment schema."
         );
 
@@ -67,7 +67,7 @@ impl CompressedTimeSeries {
             ))
         } else {
             // Combine the segments into a single record batch.
-            let schema = Self::get_compressed_segment_schema();
+            let schema = StorageEngine::get_compressed_segment_schema();
             let batch = RecordBatch::concat(&Arc::new(schema), &*self.compressed_segments).unwrap();
 
             // TODO: "storage" should be replaced by a user-defined storage folder.
@@ -80,7 +80,7 @@ impl CompressedTimeSeries {
             let start_times: &TimestampArray = batch.column(2).as_any().downcast_ref().unwrap();
             let path = format!("{}/{}.parquet", folder_path, start_times.value(0));
 
-            write_batch_to_apache_parquet(batch, path.clone());
+            StorageEngine::write_batch_to_apache_parquet_file(batch, Path::new(&path.clone()));
 
             Ok(())
         }
@@ -96,20 +96,6 @@ impl CompressedTimeSeries {
         }
 
         total_size
-    }
-
-    /// Return the record batch schema used for compressed segments.
-    fn get_compressed_segment_schema() -> Schema {
-        Schema::new(vec![
-            Field::new("model_type_id", DataType::UInt8, false),
-            Field::new("timestamps", DataType::Binary, false),
-            Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("values", DataType::Binary, false),
-            Field::new("min_value", ArrowValue::DATA_TYPE, false),
-            Field::new("max_value", ArrowValue::DATA_TYPE, false),
-            Field::new("error", DataType::Float32, false),
-        ])
     }
 }
 
@@ -178,6 +164,7 @@ pub mod test_util {
     use datafusion::arrow::datatypes::DataType::UInt8;
     use datafusion::arrow::datatypes::{Field, Schema};
     use datafusion::arrow::record_batch::RecordBatch;
+    use crate::storage::StorageEngine;
 
     use crate::storage::time_series::CompressedTimeSeries;
     use crate::types::{TimestampArray, ValueArray};
@@ -204,7 +191,7 @@ pub mod test_util {
         let max_value = ValueArray::from(vec![20.2, 12.2, 34.2]);
         let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
 
-        let schema = CompressedTimeSeries::get_compressed_segment_schema();
+        let schema = StorageEngine::get_compressed_segment_schema();
 
         RecordBatch::try_new(
             Arc::new(schema),
