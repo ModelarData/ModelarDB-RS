@@ -104,6 +104,7 @@ mod tests {
     use datafusion::arrow::datatypes::DataType::UInt8;
     use datafusion::arrow::datatypes::{Field, Schema};
     use datafusion::arrow::record_batch::RecordBatch;
+    use tempfile::tempdir;
 
     use crate::storage::time_series::{test_util, CompressedTimeSeries};
 
@@ -134,7 +135,16 @@ mod tests {
 
     #[test]
     fn test_can_save_compressed_segments_to_apache_parquet() {
+        let mut time_series = CompressedTimeSeries::new();
+        time_series.append_segment(test_util::get_compressed_segment_record_batch());
 
+        let temp_dir = tempdir().unwrap();
+        let folder_path = temp_dir.path().to_str().unwrap().to_string();
+        time_series.save_to_apache_parquet(folder_path);
+
+        // Data should be saved to a file with the first timestamp as the name under "compressed".
+        let compressed_path = temp_dir.path().join("compressed/1.parquet");
+        assert!(compressed_path.exists());
     }
 
     #[test]
