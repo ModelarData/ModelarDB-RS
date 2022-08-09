@@ -1308,7 +1308,41 @@ dependencies = [
 ]
 
 [[package]]
->>>>>>> c50754d (Added tests for writing batch to Apache Parquet)
+name = "mmdb"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "arrow-flight",
+ "dirs",
+ "rustyline",
+ "serde_json",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
+name = "mmdbd"
+version = "0.1.0"
+dependencies = [
+ "arrow-flight",
+ "async-trait",
+ "datafusion",
+ "datafusion-physical-expr",
+ "futures",
+ "log",
+ "object_store",
+ "paho-mqtt",
+ "proptest",
+ "snmalloc-rs",
+ "tempfile",
+ "tokio",
+ "tonic",
+ "tracing",
+ "tracing-futures",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "multimap"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
