@@ -169,7 +169,6 @@ pub mod test_util {
     use datafusion::arrow::datatypes::DataType::UInt8;
     use datafusion::arrow::datatypes::{Field, Schema};
     use datafusion::arrow::record_batch::RecordBatch;
-    use crate::storage::StorageEngine;
 
     use crate::storage::StorageEngine;
     use crate::storage::time_series::CompressedTimeSeries;

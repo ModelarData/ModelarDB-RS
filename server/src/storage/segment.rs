@@ -147,8 +147,8 @@ impl UncompressedSegment for SegmentBuilder {
 
 /// A single segment that has been spilled to an Apache Parquet file due to memory constraints.
 pub struct SpilledSegment {
-    /// Path to the Apache Parquet file containing the uncompressed data in the segment.
     // TODO: Maybe change this to an actual Path instead of a String.
+    /// Path to the Apache Parquet file containing the uncompressed data in the segment.
     path: String,
 }
 
@@ -305,7 +305,7 @@ mod tests {
         }
 
         let capacity = segment_builder.get_capacity();
-        let data = segment_builder.get_record_batch().unwrap().unwrap();
+        let data = segment_builder.get_record_batch().unwrap();
         assert_eq!(data.num_columns(), 2);
         assert_eq!(data.num_rows(), capacity);
     }
