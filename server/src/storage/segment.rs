@@ -234,7 +234,9 @@ mod tests {
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
     use paho_mqtt::Message;
+    use tempfile::tempdir;
 
+    use crate::storage::time_series::test_util;
     use crate::types::{ArrowValue, ValueArray};
 
     // Tests for SegmentBuilder.
@@ -267,12 +269,8 @@ mod tests {
 
     #[test]
     fn test_check_segment_is_full() {
-        let data_point = get_data_point();
         let mut segment_builder = SegmentBuilder::new();
-
-        for _ in 0..segment_builder.get_capacity() {
-            segment_builder.insert_data(&data_point)
-        }
+        insert_multiple_data_points(segment_builder.get_capacity(), &mut segment_builder);
 
         assert!(segment_builder.is_full());
     }
@@ -287,22 +285,14 @@ mod tests {
     #[test]
     #[should_panic(expected = "Cannot insert data into full segment builder.")]
     fn test_panic_if_inserting_data_point_when_full() {
-        let data_point = get_data_point();
         let mut segment_builder = SegmentBuilder::new();
-
-        for _ in 0..segment_builder.get_capacity() + 1 {
-            segment_builder.insert_data(&data_point)
-        }
+        insert_multiple_data_points(segment_builder.get_capacity() + 1, &mut segment_builder);
     }
 
     #[test]
     fn test_get_record_batch_from_segment_builder() {
-        let data_point = get_data_point();
         let mut segment_builder = SegmentBuilder::new();
-
-        for _ in 0..segment_builder.get_capacity() {
-            segment_builder.insert_data(&data_point);
-        }
+        insert_multiple_data_points(segment_builder.get_capacity(), &mut segment_builder);
 
         let capacity = segment_builder.get_capacity();
         let data = segment_builder.get_record_batch().unwrap();
@@ -319,8 +309,35 @@ mod tests {
     }
 
     #[test]
-    fn test_can_spill_finished_segment_builder() {}
+    fn test_can_spill_full_segment_builder() {
+        let mut segment_builder = SegmentBuilder::new();
+        insert_multiple_data_points(segment_builder.get_capacity(), &mut segment_builder);
 
+        let temp_dir = tempdir().unwrap();
+        let folder_path = temp_dir.path().to_str().unwrap().to_string();
+        segment_builder.spill_to_apache_parquet(folder_path);
+
+        let uncompressed_path = temp_dir.path().join("uncompressed");
+        assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
+    }
+
+    #[test]
+    #[should_panic(expected = "Cannot get record batch from segment builder that is not full.")]
+    fn test_panic_if_spilling_segment_builder_when_not_full() {
+        let mut segment_builder = SegmentBuilder::new();
+        segment_builder.spill_to_apache_parquet("folder_path".to_owned());
+    }
+
+    /// Insert `count` generated data points into `segment_builder`.
+    fn insert_multiple_data_points(count: usize, segment_builder: &mut SegmentBuilder) {
+        let data_point = get_data_point();
+
+        for _ in 0..count {
+            segment_builder.insert_data(&data_point);
+        }
+    }
+
+    /// Create a data point with a constant timestamp and value.
     fn get_data_point() -> DataPoint {
         let message = Message::new("ModelarDB/test", "[1657878396943245, 30]", 1);
         DataPoint::from_message(&message).unwrap()
@@ -330,6 +347,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "Schema of record batch does not match uncompressed segment schema.")]
     fn test_panic_if_creating_spilled_segment_with_invalid_segment() {
+        // Create a record batch is missing timestamps.
         let values = ValueArray::from(vec![2.5, 3.3, 3.2]);
         let schema = Schema::new(vec![Field::new("values", ArrowValue::DATA_TYPE, false)]);
         let record_batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(values)]).unwrap();
@@ -347,10 +365,33 @@ mod tests {
     }
 
     #[test]
-    fn test_get_record_batch_from_spilled_segment() {}
+    fn test_get_record_batch_from_spilled_segment() {
+        let mut segment_builder = SegmentBuilder::new();
+        let capacity = segment_builder.get_capacity();
+        insert_multiple_data_points(capacity, &mut segment_builder);
+
+        let temp_dir = tempdir().unwrap();
+        let folder_path = temp_dir.path().to_str().unwrap().to_string();
+        let mut spilled_segment = segment_builder.spill_to_apache_parquet(folder_path).unwrap();
+
+        let data = spilled_segment.get_record_batch().unwrap();
+        assert_eq!(data.num_columns(), 2);
+        assert_eq!(data.num_rows(), capacity);
+    }
 
     #[test]
-    fn test_panic_if_getting_record_batch_from_invalid_spilled_segment() {}
+    #[should_panic(expected = "Schema of record batch does not match uncompressed segment schema.")]
+    fn test_panic_if_getting_record_batch_from_invalid_spilled_segment() {
+        let temp_dir = tempdir().unwrap();
+
+        let segment = test_util::get_compressed_segment_record_batch();
+        let path = temp_dir.path().join("test.parquet").to_str().unwrap().to_string();
+        StorageEngine::write_batch_to_apache_parquet_file(segment, Path::new(&path.clone()));
+
+        let mut spilled_segment = SpilledSegment { path };
+
+        spilled_segment.get_record_batch();
+    }
 
     #[test]
     fn test_cannot_spill_already_spilled_segment() {
@@ -358,8 +399,7 @@ mod tests {
             path: "path".to_owned(),
         };
 
-        assert!(spilled_segment
-            .spill_to_apache_parquet("key".to_owned())
-            .is_err())
+        let result = spilled_segment.spill_to_apache_parquet("folder_path".to_owned());
+        assert!(result.is_err())
     }
 }
