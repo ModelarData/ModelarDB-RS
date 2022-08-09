@@ -340,7 +340,8 @@ mod tests {
     use super::*;
     use std::fs::read_dir;
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use tempfile::{tempdir, TempDir};
 
@@ -415,8 +416,9 @@ mod tests {
         assert_eq!(first_finished.uncompressed_segment.get_memory_size(), 0);
 
         // The finished segment should be spilled to the "uncompressed" folder under the key.
-        let uncompressed_folder_path = get_uncompressed_folder_path(&storage_engine);
-        assert_eq!(uncompressed_folder_path.read_dir().unwrap().count(), 1);
+        let storage_folder_path = Path::new(&storage_engine.storage_folder_path);
+        let uncompressed_path = storage_folder_path.join("modelardb-test/uncompressed");
+        assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1);
     }
 
     #[test]
@@ -434,13 +436,9 @@ mod tests {
         assert_eq!(second_finished.uncompressed_segment.get_memory_size(), 0);
 
         // The finished segments should be spilled to the "uncompressed" folder under the key.
-        let uncompressed_folder_path = get_uncompressed_folder_path(&storage_engine);
-        assert_eq!(uncompressed_folder_path.read_dir().unwrap().count(), 2);
-    }
-
-    fn get_uncompressed_folder_path(storage_engine: &StorageEngine) -> PathBuf {
         let storage_folder_path = Path::new(&storage_engine.storage_folder_path);
-        storage_folder_path.join("modelardb-test/uncompressed")
+        let uncompressed_path = storage_folder_path.join("modelardb-test/uncompressed");
+        assert_eq!(uncompressed_path.read_dir().unwrap().count(), 2);
     }
 
     #[test]
@@ -477,7 +475,16 @@ mod tests {
 
     #[test]
     fn test_remaining_memory_not_incremented_when_popping_spilled() {
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut storage_engine);
 
+        storage_engine.spill_finished_segment();
+        let remaining_memory = storage_engine.uncompressed_remaining_memory_in_bytes.clone();
+
+        // Since the finished segment is not in memory, it should not increment when popped.
+        storage_engine.get_finished_segment();
+
+        assert_eq!(remaining_memory, storage_engine.uncompressed_remaining_memory_in_bytes);
     }
 
     #[test]
@@ -557,12 +564,20 @@ mod tests {
 
     #[test]
     fn test_save_first_compressed_time_series_if_out_of_memory() {
+        let segment = test_util::get_compressed_segment_record_batch();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let reserved_memory = storage_engine.compressed_remaining_memory_in_bytes as usize;
 
-    }
+        // Insert compressed data into the storage engine until data is saved to Apache Parquet.
+        let max_compressed_segments = reserved_memory / test_util::COMPRESSED_SEGMENT_SIZE;
+        for _ in 0..max_compressed_segments + 1 {
+            storage_engine.insert_compressed_data("modelardb-test".to_owned(), segment.clone());
+        }
 
-    #[test]
-    fn test_save_multiple_compressed_time_series_if_necessary() {
-
+        // The compressed data should be saved to the "compressed" folder under the key.
+        let storage_folder_path = Path::new(&storage_engine.storage_folder_path);
+        let compressed_path = storage_folder_path.join("modelardb-test/compressed");
+        assert_eq!(compressed_path.read_dir().unwrap().count(), 1);
     }
 
     #[test]
@@ -573,15 +588,23 @@ mod tests {
 
         storage_engine.insert_compressed_data("key".to_owned(), segment);
 
-        assert!(storage_engine.compressed_remaining_memory_in_bytes < initial_remaining_memory);
+        assert!(initial_remaining_memory > storage_engine.compressed_remaining_memory_in_bytes);
     }
 
 	#[test]
 	fn test_remaining_memory_incremented_when_saving_compressed_time_series() {
+        let segment = test_util::get_compressed_segment_record_batch();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
 
+        storage_engine.insert_compressed_data("modelardb-test".to_owned(), segment.clone());
+
+        // Set the remaining memory to a negative value since data is only saved when out of memory.
+        storage_engine.compressed_remaining_memory_in_bytes = -1;
+        storage_engine.save_compressed_data();
+
+        assert!(-1 < storage_engine.compressed_remaining_memory_in_bytes);
 	}
 
-	// TODO: We might need to return the temp dir to ensure it is not deleted immediately.
 	/// Create the storage engine with a folder that is automatically deleted once the test is finished.
 	fn create_storage_engine() -> (TempDir, StorageEngine) {
 		let temp_dir = tempdir().unwrap();
