@@ -16,7 +16,7 @@
 //! Support for managing multiple compressed segments from the same time series.
 
 use std::fs;
-use std::io::ErrorKind::Other;
+use std::io::Error as IOError;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -59,31 +59,28 @@ impl CompressedTimeSeries {
 
     /// If the compressed segments are successfully saved to an Apache Parquet file, return Ok,
     /// otherwise return Err.
-    pub fn save_to_apache_parquet(&mut self, folder_path: String) -> Result<(), std::io::Error> {
-        // TODO: This should be a debug assert instead.
-        if self.compressed_segments.is_empty() {
-            Err(std::io::Error::new(
-                Other,
-                "The compressed time series does not contain any compressed data.",
-            ))
-        } else {
-            // Combine the segments into a single record batch.
-            let schema = StorageEngine::get_compressed_segment_schema();
-            let batch = RecordBatch::concat(&Arc::new(schema), &*self.compressed_segments).unwrap();
+    pub fn save_to_apache_parquet(&mut self, folder_path: String) -> Result<(), IOError> {
+        debug_assert!(
+            !self.compressed_segments.is_empty(),
+            "Cannot save compressed time series with no data."
+        );
 
-            // Create the folder structure if it does not already exist.
-            let complete_path = format!("{}/compressed", folder_path);
-            fs::create_dir_all(&complete_path)?;
+        // Combine the segments into a single record batch.
+        let schema = StorageEngine::get_compressed_segment_schema();
+        let batch = RecordBatch::concat(&Arc::new(schema), &*self.compressed_segments).unwrap();
 
-            // Create a path that uses the first timestamp as the filename to better support
-            // pruning data that is too new or too old when executing a specific query.
-            let start_times: &TimestampArray = batch.column(2).as_any().downcast_ref().unwrap();
-            let path = format!("{}/{}.parquet", complete_path, start_times.value(0));
+        // Create the folder structure if it does not already exist.
+        let complete_path = format!("{}/compressed", folder_path);
+        fs::create_dir_all(&complete_path)?;
 
-            StorageEngine::write_batch_to_apache_parquet_file(batch, Path::new(&path.clone()));
+        // Create a path that uses the first timestamp as the filename to better support
+        // pruning data that is too new or too old when executing a specific query.
+        let start_times: &TimestampArray = batch.column(2).as_any().downcast_ref().unwrap();
+        let path = format!("{}/{}.parquet", complete_path, start_times.value(0));
 
-            Ok(())
-        }
+        StorageEngine::write_batch_to_apache_parquet_file(batch, Path::new(&path.clone()));
+
+        Ok(())
     }
 
     /// Return the size in bytes of `segment`.
@@ -141,11 +138,10 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Cannot save compressed time series with no data.")]
     fn test_panic_if_saving_empty_compressed_segments_to_apache_parquet() {
         let mut empty_time_series = CompressedTimeSeries::new();
-        let result = empty_time_series.save_to_apache_parquet("key".to_owned());
-
-        assert!(result.is_err());
+        empty_time_series.save_to_apache_parquet("key".to_owned());
     }
 
     #[test]
