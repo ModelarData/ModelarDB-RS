@@ -18,11 +18,12 @@
 //! each type. The module itself contains general functionality used by the
 //! model types.
 
-mod gorilla;
-mod pmcmean;
-mod swing;
+pub mod gorilla;
+pub mod pmcmean;
+pub mod swing;
 
 use std::cmp::{Ordering, PartialOrd};
+use std::mem;
 
 use datafusion::arrow::array::{Int32Array, Int64Array};
 
@@ -38,19 +39,26 @@ use crate::types::{
 /// the legacy JVM-based version of [ModelarDB].
 ///
 /// [ModelarDB]: https://github.com/ModelarData/ModelarDB
-const PMC_MEAN_ID: u8 = 2;
-const SWING_ID: u8 = 3;
-const GORILLA_ID: u8 = 4;
+pub const PMC_MEAN_ID: u8 = 2;
+pub const SWING_ID: u8 = 3;
+pub const GORILLA_ID: u8 = 4;
+
+/// Size of `types::Value` in bytes.
+const VALUE_SIZE_IN_BYTES: u8 = mem::size_of::<Value>() as u8;
+
+/// Size of `types::Value` in bits.
+const VALUE_SIZE_IN_BITS: u8 = 8 * VALUE_SIZE_IN_BYTES as u8;
 
 /// General error bound that is guaranteed to not be negative, infinite, or NAN.
 /// For `PMCMean` and `Swing` the error bound is interpreted as a relative per
 /// value error bound in percentage, while `Gorilla` uses lossless compression.
-struct ErrorBound(f32);
+#[derive(Copy, Clone)]
+pub struct ErrorBound(f32);
 
 impl ErrorBound {
     /// Return `ErrorBound` if `error_bound` is a positive finite value,
     /// otherwise `CompressionError`.
-    fn try_new(error_bound: f32) -> Result<Self, ModelarDBError> {
+    pub fn try_new(error_bound: f32) -> Result<Self, ModelarDBError> {
         if error_bound < 0.0 || error_bound.is_infinite() || error_bound.is_nan() {
             Err(ModelarDBError::CompressionError(
                 "Error bound cannot be negative, infinite, or NAN.".to_owned(),
@@ -98,12 +106,12 @@ pub fn count(
             sampling_interval,
         );
     }
-    data_points as usize
+    data_points
 }
 
 /// Compute the number of data points in a time series segment.
-pub fn length(start_time: Timestamp, end_time: Timestamp, sampling_interval: i32) -> i64 {
-    ((end_time - start_time) / sampling_interval as i64) + 1
+pub fn length(start_time: Timestamp, end_time: Timestamp, sampling_interval: i32) -> usize {
+    (((end_time - start_time) / sampling_interval as i64) + 1) as usize
 }
 
 /// Compute the minimum value for a time series segment whose values are

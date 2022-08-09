@@ -31,7 +31,7 @@ use crate::types::{
 
 /// The state the Swing model type needs while fitting a model to a time series
 /// segment.
-struct Swing {
+pub struct Swing {
     /// Maximum relative error for the value of each data point.
     error_bound: ErrorBound,
     /// Time at which the first value represented by the current model was
@@ -59,7 +59,7 @@ struct Swing {
 }
 
 impl Swing {
-    fn new(error_bound: ErrorBound) -> Self {
+    pub fn new(error_bound: ErrorBound) -> Self {
         Self {
             error_bound,
             first_timestamp: 0,
@@ -89,7 +89,7 @@ impl Swing {
     /// For more detail see Algorithm 1 in the [Swing and Slide paper].
     ///
     /// [Swing and Slide paper]: https://dl.acm.org/doi/10.14778/1687627.1687645
-    fn fit_data_point(&mut self, timestamp: Timestamp, value: Value) -> bool {
+    pub fn fit_data_point(&mut self, timestamp: Timestamp, value: Value) -> bool {
         // Simplify the calculations by removing a significant number of casts.
         let value = value as f64;
         let error_bound = self.error_bound.0 as f64;
@@ -179,12 +179,17 @@ impl Swing {
         }
     }
 
+    /// Return the number of bytes the current model uses per data point on average.
+    pub fn get_bytes_per_value(&self) -> f32 {
+        (2.0 * models::VALUE_SIZE_IN_BYTES as f32) / self.length as f32
+    }
+
     /// Return the current model. For a model of type Swing, the first and last
     /// values of the time series segment the model represents are returned. The
     /// two values are returned instead of the slope and intercept as the values
     /// only require `size_of::<Value>` while the slope and intercept generally
     /// must be `f64` to be precise enough.
-    fn get_model(&self) -> (Value, Value) {
+    pub fn get_model(&self) -> (Value, Value) {
         // TODO: Use the method in the Slide and Swing paper to select the
         // linear function within the lower and upper that minimizes error
         let first_value =

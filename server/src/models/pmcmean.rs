@@ -28,7 +28,7 @@ use crate::types::{
 
 /// The state the PMC-Mean model type needs while fitting a model to a time
 /// series segment.
-struct PMCMean {
+pub struct PMCMean {
     /// Maximum relative error for the value of each data point.
     error_bound: ErrorBound,
     /// Minimum value in the segment the current model is fitted to.
@@ -42,7 +42,7 @@ struct PMCMean {
 }
 
 impl PMCMean {
-    fn new(error_bound: ErrorBound) -> Self {
+    pub fn new(error_bound: ErrorBound) -> Self {
         Self {
             error_bound,
             min_value: Value::NAN,
@@ -55,7 +55,7 @@ impl PMCMean {
     /// Attempt to update the current model of type PMC-Mean to also represent
     /// `value`. Returns `true` if the model can also represent `value`,
     /// otherwise `false`.
-    fn fit_value(&mut self, value: Value) -> bool {
+    pub fn fit_value(&mut self, value: Value) -> bool {
         let next_min_value = Value::min(self.min_value, value);
         let next_max_value = Value::max(self.max_value, value);
         let next_sum_of_values = self.sum_of_values + value as f64;
@@ -74,9 +74,14 @@ impl PMCMean {
         }
     }
 
+    /// Return the number of bytes the current model uses per data point on average.
+    pub fn get_bytes_per_value(&self) -> f32 {
+        models::VALUE_SIZE_IN_BYTES as f32 / self.length as f32
+    }
+
     /// Return the current model. For a model of type PMC-Mean, its coefficient
     /// is the average value of the time series segment the model represents.
-    fn get_model(&self) -> Value {
+    pub fn get_model(&self) -> Value {
         (self.sum_of_values / self.length as f64) as Value
     }
 
