@@ -107,3 +107,98 @@ impl CompressedDataManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    use tempfile::{TempDir, tempdir};
+
+    use crate::storage::StorageEngine;
+    use crate::storage::time_series::test_util;
+
+    #[test]
+    #[should_panic(expected = "Schema of record batch does not match compressed segment schema.")]
+    fn test_panic_if_inserting_invalid_compressed_segment() {
+        let invalid = test_util::get_invalid_compressed_segment_record_batch();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+
+        storage_engine.insert_compressed_data("key".to_owned(), invalid);
+    }
+
+    #[test]
+    fn test_can_insert_compressed_segment_into_new_time_series() {
+        let segment = test_util::get_compressed_segment_record_batch();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+
+        storage_engine.insert_compressed_data("key".to_owned(), segment);
+
+        assert!(storage_engine.compressed_data.contains_key("key"));
+        assert_eq!(storage_engine.compressed_queue.pop_front().unwrap(), "key");
+        assert!(storage_engine.compressed_data.get("key").unwrap().size_in_bytes > 0);
+    }
+
+    #[test]
+    fn test_can_insert_compressed_segment_into_existing_time_series() {
+        let segment = test_util::get_compressed_segment_record_batch();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+
+        storage_engine.insert_compressed_data("key".to_owned(), segment.clone());
+        let previous_size = storage_engine.compressed_data.get("key").unwrap().size_in_bytes;
+        storage_engine.insert_compressed_data("key".to_owned(), segment);
+
+        assert!(storage_engine.compressed_data.get("key").unwrap().size_in_bytes > previous_size);
+    }
+
+    #[test]
+    fn test_save_first_compressed_time_series_if_out_of_memory() {
+        let segment = test_util::get_compressed_segment_record_batch();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let reserved_memory = storage_engine.compressed_remaining_memory_in_bytes as usize;
+
+        // Insert compressed data into the storage engine until data is saved to Apache Parquet.
+        let max_compressed_segments = reserved_memory / test_util::COMPRESSED_SEGMENT_SIZE;
+        for _ in 0..max_compressed_segments + 1 {
+            storage_engine.insert_compressed_data("modelardb-test".to_owned(), segment.clone());
+        }
+
+        // The compressed data should be saved to the "compressed" folder under the key.
+        let storage_folder_path = Path::new(&storage_engine.storage_folder_path);
+        let compressed_path = storage_folder_path.join("modelardb-test/compressed");
+        assert_eq!(compressed_path.read_dir().unwrap().count(), 1);
+    }
+
+    #[test]
+    fn test_remaining_bytes_decremented_when_inserting_compressed_segment() {
+        let segment = test_util::get_compressed_segment_record_batch();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let reserved_memory = storage_engine.compressed_remaining_memory_in_bytes;
+
+        storage_engine.insert_compressed_data("key".to_owned(), segment);
+
+        assert!(reserved_memory > storage_engine.compressed_remaining_memory_in_bytes);
+    }
+
+    #[test]
+    fn test_remaining_memory_incremented_when_saving_compressed_time_series() {
+        let segment = test_util::get_compressed_segment_record_batch();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+
+        storage_engine.insert_compressed_data("modelardb-test".to_owned(), segment.clone());
+
+        // Set the remaining memory to a negative value since data is only saved when out of memory.
+        storage_engine.compressed_remaining_memory_in_bytes = -1;
+        storage_engine.save_compressed_data();
+
+        assert!(-1 < storage_engine.compressed_remaining_memory_in_bytes);
+    }
+
+    /// Create the storage engine with a folder that is automatically deleted once the test is finished.
+    fn create_storage_engine() -> (TempDir, StorageEngine) {
+        let temp_dir = tempdir().unwrap();
+        let storage_folder_path = temp_dir.path().to_str().unwrap().to_string();
+
+        (temp_dir, StorageEngine::new(storage_folder_path))
+    }
+}
