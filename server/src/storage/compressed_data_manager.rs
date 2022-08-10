@@ -28,7 +28,8 @@ const COMPRESSED_RESERVED_MEMORY_IN_BYTES: isize = 5000;
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
-struct CompressedDataManager {
+pub struct CompressedDataManager {
+    // TODO: Maybe change this to an actual Path instead of a String.
     /// Path to the folder containing all compressed data managed by the storage engine.
     storage_folder_path: String,
     /// The compressed segments before they are saved to persistent storage.

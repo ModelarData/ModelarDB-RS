@@ -31,7 +31,8 @@ const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
 /// Converts raw MQTT messages to uncompressed data points and stores uncompressed data points
 /// temporarily in an in-memory buffer that spills to Apache Parquet files. When finished the data
 /// is made available for compression.
-struct UncompressedDataManager {
+pub struct UncompressedDataManager {
+    // TODO: Maybe change this to an actual Path instead of a String.
     /// Path to the folder containing all uncompressed data managed by the storage engine.
     storage_folder_path: String,
     /// The uncompressed segments while they are being built.
