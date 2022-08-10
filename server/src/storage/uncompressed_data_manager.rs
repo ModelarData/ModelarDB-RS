@@ -23,9 +23,6 @@ use tracing::{info, info_span};
 use crate::storage::data_point::DataPoint;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder};
 
-// Note that the capacity has to be a multiple of 64 bytes to avoid the actual capacity
-// being larger due to internal alignment when allocating memory for the builders.
-const BUILDER_CAPACITY: usize = 64;
 const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
 
 /// Converts raw MQTT messages to uncompressed data points and stores uncompressed data points
@@ -156,173 +153,173 @@ mod tests {
 
     use tempfile::{TempDir, tempdir};
 
-    use crate::storage::StorageEngine;
+    use crate::storage::{BUILDER_CAPACITY, StorageEngine};
 
     #[test]
     fn test_cannot_insert_invalid_message() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
 
         let message = Message::new("ModelarDB/test", "invalid", 1);
-        storage_engine.insert_message(message.clone());
+        data_manager.insert_message(message.clone());
 
-        assert!(storage_engine.uncompressed_data.is_empty());
+        assert!(data_manager.uncompressed_data.is_empty());
     }
 
     #[test]
     fn test_can_insert_message_into_new_segment() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
-        let key = insert_generated_message(&mut storage_engine, "ModelarDB/test".to_owned());
+        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
+        let key = insert_generated_message(&mut data_manager, "ModelarDB/test".to_owned());
 
-        assert!(storage_engine.uncompressed_data.contains_key(&key));
-        assert_eq!(storage_engine.uncompressed_data.get(&key).unwrap().get_length(), 1);
+        assert!(data_manager.uncompressed_data.contains_key(&key));
+        assert_eq!(data_manager.uncompressed_data.get(&key).unwrap().get_length(), 1);
     }
 
     #[test]
     fn test_can_insert_message_into_existing_segment() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
-        let key = insert_multiple_messages(2, &mut storage_engine);
+        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
+        let key = insert_multiple_messages(2, &mut data_manager);
 
-        assert!(storage_engine.uncompressed_data.contains_key(&key));
-        assert_eq!(storage_engine.uncompressed_data.get(&key).unwrap().get_length(), 2);
+        assert!(data_manager.uncompressed_data.contains_key(&key));
+        assert_eq!(data_manager.uncompressed_data.get(&key).unwrap().get_length(), 2);
     }
 
     #[test]
     fn test_can_get_finished_segment_when_finished() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
-        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut storage_engine);
+        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
+        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut data_manager);
 
-        assert!(storage_engine.get_finished_segment().is_some());
+        assert!(data_manager.get_finished_segment().is_some());
     }
 
     #[test]
     fn test_can_get_multiple_finished_segments_when_multiple_finished() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
-        let key = insert_multiple_messages(BUILDER_CAPACITY * 2, &mut storage_engine);
+        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
+        let key = insert_multiple_messages(BUILDER_CAPACITY * 2, &mut data_manager);
 
-        assert!(storage_engine.get_finished_segment().is_some());
-        assert!(storage_engine.get_finished_segment().is_some());
+        assert!(data_manager.get_finished_segment().is_some());
+        assert!(data_manager.get_finished_segment().is_some());
     }
 
     #[test]
     fn test_cannot_get_finished_segment_when_not_finished() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
 
-        assert!(storage_engine.get_finished_segment().is_none());
+        assert!(data_manager.get_finished_segment().is_none());
     }
 
     #[test]
     fn test_spill_first_finished_segment_if_out_of_memory() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
-        let reserved_memory = storage_engine.uncompressed_remaining_memory_in_bytes;
+        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
+        let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
 
         // Insert messages into the storage engine until a segment is spilled to Apache Parquet.
         // If there is enough memory to hold n full segments, we need n + 1 to spill a segment.
         let max_full_segments = reserved_memory / SegmentBuilder::get_memory_size();
         let message_count = (max_full_segments * BUILDER_CAPACITY) + 1;
-        insert_multiple_messages(message_count, &mut storage_engine);
+        insert_multiple_messages(message_count, &mut data_manager);
 
         // The first finished segment should have a memory size of 0 since it is spilled to disk.
-        let first_finished = storage_engine.finished_queue.pop_front().unwrap();
+        let first_finished = data_manager.finished_queue.pop_front().unwrap();
         assert_eq!(first_finished.uncompressed_segment.get_memory_size(), 0);
 
         // The finished segment should be spilled to the "uncompressed" folder under the key.
-        let storage_folder_path = Path::new(&storage_engine.storage_folder_path);
+        let storage_folder_path = Path::new(&data_manager.storage_folder_path);
         let uncompressed_path = storage_folder_path.join("modelardb-test/uncompressed");
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1);
     }
 
     #[test]
     fn test_ignore_already_spilled_segments_when_spilling() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
-        insert_multiple_messages(BUILDER_CAPACITY * 2, &mut storage_engine);
+        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
+        insert_multiple_messages(BUILDER_CAPACITY * 2, &mut data_manager);
 
-        storage_engine.spill_finished_segment();
+        data_manager.spill_finished_segment();
         // When spilling one more, the first segment should be ignored since it is already spilled.
-        storage_engine.spill_finished_segment();
+        data_manager.spill_finished_segment();
 
-        storage_engine.finished_queue.pop_front();
+        data_manager.finished_queue.pop_front();
         // The second finished segment should have a memory size of 0 since it is spilled to disk.
-        let second_finished = storage_engine.finished_queue.pop_front().unwrap();
+        let second_finished = data_manager.finished_queue.pop_front().unwrap();
         assert_eq!(second_finished.uncompressed_segment.get_memory_size(), 0);
 
         // The finished segments should be spilled to the "uncompressed" folder under the key.
-        let storage_folder_path = Path::new(&storage_engine.storage_folder_path);
+        let storage_folder_path = Path::new(&data_manager.storage_folder_path);
         let uncompressed_path = storage_folder_path.join("modelardb-test/uncompressed");
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 2);
     }
 
     #[test]
     fn test_remaining_memory_incremented_when_spilling_finished_segment() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
 
-        insert_multiple_messages(BUILDER_CAPACITY, &mut storage_engine);
-        let remaining_memory = storage_engine.uncompressed_remaining_memory_in_bytes.clone();
-        storage_engine.spill_finished_segment();
+        insert_multiple_messages(BUILDER_CAPACITY, &mut data_manager);
+        let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
+        data_manager.spill_finished_segment();
 
-        assert!(remaining_memory < storage_engine.uncompressed_remaining_memory_in_bytes);
+        assert!(remaining_memory < data_manager.uncompressed_remaining_memory_in_bytes);
     }
 
     #[test]
     fn test_remaining_memory_decremented_when_creating_new_segment() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
-        let reserved_memory = storage_engine.uncompressed_remaining_memory_in_bytes;
+        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
+        let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
 
-        insert_generated_message(&mut storage_engine, "ModelarDB/test".to_owned());
+        insert_generated_message(&mut data_manager, "ModelarDB/test".to_owned());
 
-        assert!(reserved_memory > storage_engine.uncompressed_remaining_memory_in_bytes);
+        assert!(reserved_memory > data_manager.uncompressed_remaining_memory_in_bytes);
     }
 
     #[test]
     fn test_remaining_memory_incremented_when_popping_in_memory() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
-        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut storage_engine);
+        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
+        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut data_manager);
 
-        let remaining_memory = storage_engine.uncompressed_remaining_memory_in_bytes.clone();
-        storage_engine.get_finished_segment();
+        let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
+        data_manager.get_finished_segment();
 
-        assert!(remaining_memory < storage_engine.uncompressed_remaining_memory_in_bytes);
+        assert!(remaining_memory < data_manager.uncompressed_remaining_memory_in_bytes);
     }
 
     #[test]
     fn test_remaining_memory_not_incremented_when_popping_spilled() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
-        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut storage_engine);
+        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
+        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut data_manager);
 
-        storage_engine.spill_finished_segment();
-        let remaining_memory = storage_engine.uncompressed_remaining_memory_in_bytes.clone();
+        data_manager.spill_finished_segment();
+        let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
 
         // Since the finished segment is not in memory, the remaining memory should not increase when popped.
-        storage_engine.get_finished_segment();
+        data_manager.get_finished_segment();
 
-        assert_eq!(remaining_memory, storage_engine.uncompressed_remaining_memory_in_bytes);
+        assert_eq!(remaining_memory, data_manager.uncompressed_remaining_memory_in_bytes);
     }
 
     #[test]
     #[should_panic(expected = "Not enough reserved memory to hold all necessary segment builders.")]
     fn test_panic_if_not_enough_reserved_memory() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
-        let reserved_memory = storage_engine.uncompressed_remaining_memory_in_bytes;
+        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
+        let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
 
         // If there is enough reserved memory to hold n builders, we need to create n + 1 to panic.
         for i in 0..(reserved_memory / SegmentBuilder::get_memory_size()) + 1 {
-            insert_generated_message(&mut storage_engine, i.to_string());
+            insert_generated_message(&mut data_manager, i.to_string());
         }
     }
 
-    /// Generate `count` data points for the same time series and insert them into `storage_engine`.
+    /// Generate `count` data points for the same time series and insert them into `data_manager`.
     /// Return the key, which is the same for all generated data points.
-    fn insert_multiple_messages(count: usize, storage_engine: &mut StorageEngine) -> String {
+    fn insert_multiple_messages(count: usize, data_manager: &mut UncompressedDataManager) -> String {
         let mut key = String::new();
 
         for _ in 0..count {
-            key = insert_generated_message(storage_engine, "ModelarDB/test".to_owned());
+            key = insert_generated_message(data_manager, "ModelarDB/test".to_owned());
         }
 
         key
     }
 
-    /// Generate a data point and insert it into `storage_engine`. Return the data point key.
-    fn insert_generated_message(storage_engine: &mut StorageEngine, topic: String) -> String {
+    /// Generate a data point and insert it into `data_manager`. Return the data point key.
+    fn insert_generated_message(data_manager: &mut UncompressedDataManager, topic: String) -> String {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -331,18 +328,19 @@ mod tests {
         let payload = format!("[{}, 30]", timestamp);
         let message = Message::new(topic, payload, 1);
 
-        storage_engine.insert_message(message.clone());
+        data_manager.insert_message(message.clone());
 
         DataPoint::from_message(&message)
             .unwrap()
             .generate_unique_key()
     }
 
-    /// Create the storage engine with a folder that is automatically deleted once the test is finished.
-    fn create_storage_engine() -> (TempDir, StorageEngine) {
+    /// Create the uncompressed data manager with a folder that is automatically deleted once the
+    /// test is finished.
+    fn create_uncompressed_data_manager() -> (TempDir, UncompressedDataManager) {
         let temp_dir = tempdir().unwrap();
         let storage_folder_path = temp_dir.path().to_str().unwrap().to_string();
 
-        (temp_dir, StorageEngine::new(storage_folder_path))
+        (temp_dir, UncompressedDataManager::new(storage_folder_path))
     }
 }
