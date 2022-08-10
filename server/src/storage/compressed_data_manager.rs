@@ -116,8 +116,7 @@ mod tests {
 
     use tempfile::{TempDir, tempdir};
 
-    use crate::storage::StorageEngine;
-    use crate::storage::time_series::test_util;
+    use crate::storage::{StorageEngine, test_util};
 
     #[test]
     #[should_panic(expected = "Schema of record batch does not match compressed segment schema.")]

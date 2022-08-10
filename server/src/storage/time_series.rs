@@ -101,6 +101,7 @@ mod tests {
     use super::*;
 
     use tempfile::tempdir;
+    use crate::storage::test_util;
 
     #[test]
     fn test_can_append_valid_compressed_segment() {
@@ -157,61 +158,5 @@ mod tests {
             CompressedTimeSeries::get_size_of_segment(&segment),
             test_util::COMPRESSED_SEGMENT_SIZE,
         );
-    }
-}
-
-#[cfg(test)]
-/// Separate module for compressed segment utility functions since they are needed to test both
-/// CompressedTimeSeries and StorageEngine.
-pub mod test_util {
-    use std::sync::Arc;
-
-    use datafusion::arrow::array::{BinaryArray, Float32Array, UInt8Array};
-    use datafusion::arrow::datatypes::DataType::UInt8;
-    use datafusion::arrow::datatypes::{Field, Schema};
-    use datafusion::arrow::record_batch::RecordBatch;
-
-    use crate::storage::StorageEngine;
-    use crate::storage::time_series::CompressedTimeSeries;
-    use crate::types::{TimestampArray, ValueArray};
-
-    pub const COMPRESSED_SEGMENT_SIZE: usize = 2032;
-
-    /// Return a record batch that only has a single column, and therefore does not match the
-    /// compressed segment schema.
-    pub fn get_invalid_compressed_segment_record_batch() -> RecordBatch {
-        let model_type_id = UInt8Array::from(vec![2, 3, 3]);
-        let schema = Schema::new(vec![Field::new("model_type_id", UInt8, false)]);
-
-        RecordBatch::try_new(Arc::new(schema), vec![Arc::new(model_type_id)]).unwrap()
-    }
-
-    /// Return a generated compressed segment with three model segments.
-    pub fn get_compressed_segment_record_batch() -> RecordBatch {
-        let model_type_id = UInt8Array::from(vec![2, 3, 3]);
-        let timestamps = BinaryArray::from_vec(vec![b"000", b"001", b"010"]);
-        let start_time = TimestampArray::from(vec![1, 2, 3]);
-        let end_time = TimestampArray::from(vec![2, 3, 4]);
-        let values = BinaryArray::from_vec(vec![b"1111", b"1000", b"0000"]);
-        let min_value = ValueArray::from(vec![5.2, 10.3, 30.2]);
-        let max_value = ValueArray::from(vec![20.2, 12.2, 34.2]);
-        let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
-
-        let schema = StorageEngine::get_compressed_segment_schema();
-
-        RecordBatch::try_new(
-            Arc::new(schema),
-            vec![
-                Arc::new(model_type_id),
-                Arc::new(timestamps),
-                Arc::new(start_time),
-                Arc::new(end_time),
-                Arc::new(values),
-                Arc::new(min_value),
-                Arc::new(max_value),
-                Arc::new(error),
-            ],
-        )
-        .unwrap()
     }
 }

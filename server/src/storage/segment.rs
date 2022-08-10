@@ -227,7 +227,7 @@ mod tests {
     use paho_mqtt::Message;
     use tempfile::tempdir;
 
-    use crate::storage::time_series::test_util;
+    use crate::storage::test_util;
     use crate::types::{ArrowValue, ValueArray};
 
     // Tests for SegmentBuilder.
