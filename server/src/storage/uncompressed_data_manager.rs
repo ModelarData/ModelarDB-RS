@@ -16,6 +16,7 @@
 //! Support for managing all uncompressed data that is ingested into the storage engine.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 
 use paho_mqtt::Message;
 use tracing::{info, info_span};
@@ -29,9 +30,8 @@ const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
 /// temporarily in an in-memory buffer that spills to Apache Parquet files. When finished the data
 /// is made available for compression.
 pub struct UncompressedDataManager {
-    // TODO: Maybe change this to an actual Path instead of a String.
     /// Path to the folder containing all uncompressed data managed by the storage engine.
-    storage_folder_path: String,
+    storage_folder_path: PathBuf,
     /// The uncompressed segments while they are being built.
     uncompressed_data: HashMap<String, SegmentBuilder>,
     /// Prioritized queue of finished segments that are ready for compression.
@@ -41,7 +41,7 @@ pub struct UncompressedDataManager {
 }
 
 impl UncompressedDataManager {
-    pub fn new(storage_folder_path: String) -> Self {
+    pub fn new(storage_folder_path: PathBuf) -> Self {
         Self {
             storage_folder_path,
             // TODO: Maybe create with estimated capacity to avoid reallocation.
@@ -127,13 +127,13 @@ impl UncompressedDataManager {
 
         // Iterate through the finished segments to find a segment that is in memory.
         for finished in self.finished_queue.iter_mut() {
-            if let Ok(path) = finished.spill_to_apache_parquet(self.storage_folder_path.clone()) {
+            if let Ok(file_path) = finished.spill_to_apache_parquet(self.storage_folder_path.as_path()) {
                 // Add the size of the segment back to the remaining reserved bytes.
                 self.uncompressed_remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
 
                 info!(
                     "Spilled the segment to '{}'. Remaining reserved bytes: {}.",
-                    path, self.uncompressed_remaining_memory_in_bytes
+                    file_path.display(), self.uncompressed_remaining_memory_in_bytes
                 );
                 return ();
             }
@@ -338,8 +338,8 @@ mod tests {
     /// Create an uncompressed data manager with a folder that is deleted once the test is finished.
     fn create_uncompressed_data_manager() -> (TempDir, UncompressedDataManager) {
         let temp_dir = tempdir().unwrap();
-        let storage_folder_path = temp_dir.path().to_str().unwrap().to_string();
 
+        let storage_folder_path = temp_dir.path().to_path_buf();
         (temp_dir, UncompressedDataManager::new(storage_folder_path))
     }
 }

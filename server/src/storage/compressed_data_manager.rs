@@ -16,22 +16,22 @@
 //! Support for managing all compressed data that is inserted into the storage engine.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 
 use datafusion::arrow::record_batch::RecordBatch;
 use tracing::{info, info_span};
 
 use crate::storage::time_series::CompressedTimeSeries;
 
-// Signed integer since compressed data is inserted first and the remaining bytes are checked after.
-// This means that the remaining bytes can be negative briefly until compressed data is saved to disk.
+/// Signed integer since compressed data is inserted first and the remaining bytes are checked after.
+/// This means that the remaining bytes can be negative briefly until compressed data is saved to disk.
 const COMPRESSED_RESERVED_MEMORY_IN_BYTES: isize = 5000;
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
 pub struct CompressedDataManager {
-    // TODO: Maybe change this to an actual Path instead of a String.
     /// Path to the folder containing all compressed data managed by the storage engine.
-    storage_folder_path: String,
+    storage_folder_path: PathBuf,
     /// The compressed segments before they are saved to persistent storage.
     compressed_data: HashMap<String, CompressedTimeSeries>,
     /// Prioritized queue of time series keys referring to data that can be saved to persistent storage.
@@ -41,7 +41,7 @@ pub struct CompressedDataManager {
 }
 
 impl CompressedDataManager {
-    pub fn new(storage_folder_path: String) -> Self {
+    pub fn new(storage_folder_path: PathBuf) -> Self {
         Self {
             storage_folder_path,
             // TODO: Maybe create with estimated capacity to avoid reallocation.
@@ -96,8 +96,8 @@ impl CompressedDataManager {
             let mut time_series = self.compressed_data.remove(&key).unwrap();
             let time_series_size = time_series.size_in_bytes.clone();
 
-            let folder_path = format!("{}/{}", self.storage_folder_path.clone(), key.clone());
-            time_series.save_to_apache_parquet(folder_path);
+            let folder_path = self.storage_folder_path.join(key);
+            time_series.save_to_apache_parquet(folder_path.as_path());
 
             self.compressed_remaining_memory_in_bytes += time_series_size as isize;
 
@@ -197,8 +197,8 @@ mod tests {
     /// Create a compressed data manager with a folder that is deleted once the test is finished.
     fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
         let temp_dir = tempdir().unwrap();
-        let storage_folder_path = temp_dir.path().to_str().unwrap().to_string();
 
+        let storage_folder_path = temp_dir.path().to_path_buf();
         (temp_dir, CompressedDataManager::new(storage_folder_path))
     }
 }

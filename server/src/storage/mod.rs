@@ -26,7 +26,7 @@ mod compressed_data_manager;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::Read;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
@@ -50,8 +50,8 @@ use crate::types::{ArrowTimestamp, ArrowValue};
 /// [first four bytes of any Apache Parquet file]: https://en.wikipedia.org/wiki/List_of_file_signatures
 const APACHE_PARQUET_FILE_SIGNATURE: &[u8] = &[80, 65, 82, 49]; // PAR1.
 
-// Note that the capacity has to be a multiple of 64 bytes to avoid the actual capacity
-// being larger due to internal alignment when allocating memory for the builders.
+/// Note that the capacity has to be a multiple of 64 bytes to avoid the actual capacity
+/// being larger due to internal alignment when allocating memory for the builders.
 const BUILDER_CAPACITY: usize = 64;
 
 /// Manages all uncompressed and compressed data, both while being built and when finished.
@@ -63,7 +63,7 @@ pub struct StorageEngine {
 }
 
 impl StorageEngine {
-    pub fn new(storage_folder_path: String) -> Self {
+    pub fn new(storage_folder_path: PathBuf) -> Self {
         Self {
             uncompressed_data_manager: UncompressedDataManager::new(storage_folder_path.clone()),
             compressed_data_manager: CompressedDataManager::new(storage_folder_path),
@@ -112,19 +112,20 @@ impl StorageEngine {
     }
 
     // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
-    /// Write `batch` to an Apache Parquet file at the location given by `path`. `path` must use the
-    /// extension '.parquet'. Return Ok if the file was written successfully, otherwise `ParquetError`.
+    /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`
+    /// must use the extension '.parquet'. Return Ok if the file was written successfully,
+    /// otherwise `ParquetError`.
     pub fn write_batch_to_apache_parquet_file(
         batch: RecordBatch,
-        path: &Path,
+        file_path: &Path,
     ) -> Result<(), ParquetError> {
         let error = ParquetError::General(
-            format!("Apache Parquet file at path '{}' could not be created.", path.display())
+            format!("Apache Parquet file at path '{}' could not be created.", file_path.display())
         );
 
         // Check if the extension of the given path is correct.
-        if path.extension().and_then(OsStr::to_str) == Some("parquet") {
-            let file = File::create(path).map_err(|_e| error)?;
+        if file_path.extension().and_then(OsStr::to_str) == Some("parquet") {
+            let file = File::create(file_path).map_err(|_e| error)?;
             let props = WriterProperties::builder()
                 .set_dictionary_enabled(false)
                 .set_encoding(Encoding::PLAIN)
@@ -140,14 +141,14 @@ impl StorageEngine {
         }
     }
 
-    /// Read all rows from the Apache Parquet file at the location given by `path` and return them
+    /// Read all rows from the Apache Parquet file at the location given by `file_path` and return them
     /// in a record batch. If the file could not be read successfully, `ParquetError` is returned.
-    pub fn read_entire_apache_parquet_file(path: &Path) -> Result<RecordBatch, ParquetError> {
+    pub fn read_entire_apache_parquet_file(file_path: &Path) -> Result<RecordBatch, ParquetError> {
         let error = ParquetError::General(
-            format!("Apache Parquet file at path '{}' could not be read.", path.display())
+            format!("Apache Parquet file at path '{}' could not be read.", file_path.display())
         );
 
-        let file = File::open(path).map_err(|_e| error.clone())?;
+        let file = File::open(file_path).map_err(|_e| error.clone())?;
         let reader = SerializedFileReader::new(file)?;
 
         // Extract the total row count from the file metadata.
@@ -169,9 +170,9 @@ impl StorageEngine {
         Ok(batch)
     }
 
-    /// Return `true` if `path` is a readable Apache Parquet file, otherwise `false`.
-    pub fn is_path_an_apache_parquet_file(path: &Path) -> bool {
-        if let Ok(mut file) = File::open(path) {
+    /// Return `true` if `file_path` is a readable Apache Parquet file, otherwise `false`.
+    pub fn is_path_an_apache_parquet_file(file_path: &Path) -> bool {
+        if let Ok(mut file) = File::open(file_path) {
             let mut first_four_bytes = vec![0u8; 4];
             let _ = file.read_exact(&mut first_four_bytes);
             first_four_bytes == APACHE_PARQUET_FILE_SIGNATURE

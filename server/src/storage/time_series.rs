@@ -59,7 +59,7 @@ impl CompressedTimeSeries {
 
     /// If the compressed segments are successfully saved to an Apache Parquet file, return Ok,
     /// otherwise return Err.
-    pub fn save_to_apache_parquet(&mut self, folder_path: String) -> Result<(), IOError> {
+    pub fn save_to_apache_parquet(&mut self, folder_path: &Path) -> Result<(), IOError> {
         debug_assert!(
             !self.compressed_segments.is_empty(),
             "Cannot save compressed time series with no data."
@@ -70,15 +70,16 @@ impl CompressedTimeSeries {
         let batch = RecordBatch::concat(&Arc::new(schema), &*self.compressed_segments).unwrap();
 
         // Create the folder structure if it does not already exist.
-        let complete_path = format!("{}/compressed", folder_path);
-        fs::create_dir_all(&complete_path)?;
+        let complete_folder_path = folder_path.join("compressed");
+        fs::create_dir_all(complete_folder_path.as_path())?;
 
         // Create a path that uses the first timestamp as the filename to better support
         // pruning data that is too new or too old when executing a specific query.
         let start_times: &TimestampArray = batch.column(2).as_any().downcast_ref().unwrap();
-        let path = format!("{}/{}.parquet", complete_path, start_times.value(0));
+        let file_name = format!("{}.parquet", start_times.value(0));
+        let file_path = complete_folder_path.join(file_name);
 
-        StorageEngine::write_batch_to_apache_parquet_file(batch, Path::new(&path.clone()));
+        StorageEngine::write_batch_to_apache_parquet_file(batch, file_path.as_path());
 
         Ok(())
     }
@@ -134,8 +135,7 @@ mod tests {
         time_series.append_segment(test_util::get_compressed_segment_record_batch());
 
         let temp_dir = tempdir().unwrap();
-        let folder_path = temp_dir.path().to_str().unwrap().to_string();
-        time_series.save_to_apache_parquet(folder_path);
+        time_series.save_to_apache_parquet(temp_dir.path());
 
         // Data should be saved to a file with the first timestamp as the file name.
         let compressed_path = temp_dir.path().join("compressed/1.parquet");
@@ -147,7 +147,7 @@ mod tests {
     fn test_panic_if_saving_empty_compressed_segments_to_apache_parquet() {
         let mut empty_time_series = CompressedTimeSeries::new();
 
-        empty_time_series.save_to_apache_parquet("key".to_owned());
+        empty_time_series.save_to_apache_parquet(Path::new("key"));
     }
 
     #[test]
