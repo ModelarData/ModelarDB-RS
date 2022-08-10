@@ -16,8 +16,10 @@
 //! Support for managing all uncompressed data that is ingested into the storage engine.
 
 use std::collections::{HashMap, VecDeque};
+
 use paho_mqtt::Message;
 use tracing::{info, info_span};
+
 use crate::storage::data_point::DataPoint;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder};
 
@@ -148,15 +150,12 @@ impl UncompressedDataManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs::read_dir;
-    use std::path::{Path, PathBuf};
-    use std::thread;
-    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+    use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
-    use tempfile::{tempdir, TempDir};
+    use tempfile::{TempDir, tempdir};
 
     use crate::storage::StorageEngine;
-    use crate::storage::time_series::test_util;
 
     #[test]
     fn test_cannot_insert_invalid_message() {

@@ -98,15 +98,9 @@ impl CompressedTimeSeries {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use super::*;
 
-    use datafusion::arrow::array::UInt8Array;
-    use datafusion::arrow::datatypes::DataType::UInt8;
-    use datafusion::arrow::datatypes::{Field, Schema};
-    use datafusion::arrow::record_batch::RecordBatch;
     use tempfile::tempdir;
-
-    use crate::storage::time_series::{test_util, CompressedTimeSeries};
 
     #[test]
     fn test_can_append_valid_compressed_segment() {
