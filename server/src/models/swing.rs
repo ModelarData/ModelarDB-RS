@@ -179,6 +179,11 @@ impl Swing {
         }
     }
 
+    /// Return the number of values the model currently represented.
+    pub fn get_length(&self) -> u32 {
+	self.length
+    }
+
     /// Return the number of bytes the current model uses per data point on average.
     pub fn get_bytes_per_value(&self) -> f32 {
         (2.0 * models::VALUE_SIZE_IN_BYTES as f32) / self.length as f32

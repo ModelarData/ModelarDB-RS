@@ -31,7 +31,7 @@ use crate::errors::ModelarDBError;
 use crate::models::{gorilla::Gorilla, pmcmean::PMCMean, swing::Swing};
 use crate::types::{
     TimeSeriesId, TimeSeriesIdArray, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value,
-    ValueBuilder,
+    ValueArray, ValueBuilder,
 };
 
 /// Unique ids for each model type. Constant values are used instead of an enum
@@ -86,11 +86,12 @@ impl PartialOrd<ErrorBound> for f32 {
 
 /// Select the model that uses the fewest number of bytes per value.
 pub fn select_model(
+    start_index: usize,
     pmc_mean: PMCMean,
     swing: Swing,
     gorilla: Gorilla,
-    uncompressed_values: &[Value],
-) -> (u8, f32, f32, Vec<u8>) {
+    uncompressed_values: &ValueArray,
+) -> (u8, usize, f32, f32, Vec<u8>) { // TODO: replace with SelectedModel struct.
     // TODO: include the metadata as it is amortized over the values.
     let bytes_per_value = [
         (PMC_MEAN_ID, pmc_mean.get_bytes_per_value()),
@@ -108,13 +109,17 @@ pub fn select_model(
     match model_type_id {
         PMC_MEAN_ID => {
             let value = pmc_mean.get_model();
-            (PMC_MEAN_ID, value, value, vec![])
+	    let end_index = start_index + pmc_mean.get_length() as usize;
+            (PMC_MEAN_ID, end_index, value, value, vec![])
         }
         SWING_ID => {
             let (min_value, max_value) = swing.get_model();
-            (SWING_ID, min_value, max_value, vec![])
+	    let end_index = start_index + swing.get_length() as usize;
+            (SWING_ID, end_index, min_value, max_value, vec![])
         }
         GORILLA_ID => {
+	    let end_index = start_index + gorilla.get_length() as usize;
+            let uncompressed_values = &uncompressed_values.values()[start_index..end_index];
             let min_value = uncompressed_values
                 .iter()
                 .fold(Value::MAX, |x, y| Value::min(x, *y));
@@ -122,7 +127,7 @@ pub fn select_model(
                 .iter()
                 .fold(Value::MIN, |x, y| Value::min(x, *y));
             let values = gorilla.get_compressed_values();
-            (GORILLA_ID, min_value, max_value, values)
+            (GORILLA_ID, end_index, min_value, max_value, values)
         }
         _ => panic!("Unknown model type."),
     }

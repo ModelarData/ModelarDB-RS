@@ -79,6 +79,11 @@ impl PMCMean {
         models::VALUE_SIZE_IN_BYTES as f32 / self.length as f32
     }
 
+    /// Return the number of values the model currently represented.
+    pub fn get_length(&self) -> u32 {
+	self.length
+    }
+
     /// Return the current model. For a model of type PMC-Mean, its coefficient
     /// is the average value of the time series segment the model represents.
     pub fn get_model(&self) -> Value {
