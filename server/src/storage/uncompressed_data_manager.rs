@@ -335,8 +335,7 @@ mod tests {
             .generate_unique_key()
     }
 
-    /// Create the uncompressed data manager with a folder that is automatically deleted once the
-    /// test is finished.
+    /// Create an uncompressed data manager with a folder that is deleted once the test is finished.
     fn create_uncompressed_data_manager() -> (TempDir, UncompressedDataManager) {
         let temp_dir = tempdir().unwrap();
         let storage_folder_path = temp_dir.path().to_str().unwrap().to_string();
