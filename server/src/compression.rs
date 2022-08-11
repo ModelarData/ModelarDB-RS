@@ -34,7 +34,6 @@ use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArra
 /// will never exceed the user-defined error bounds.
 const GORILLA_MAXIMUM_LENGTH: usize = 50;
 
-// TODO: support irregular univariate time series.
 /// Compress the regular `uncompressed_timestamps` using a start time, end time,
 /// and a sampling interval, and `uncompressed_values` within `error_bound`
 /// using the model types in `models`. Returns `CompressionError` if
@@ -55,31 +54,31 @@ pub fn try_compress(
         ));
     }
 
-    // num_data points is allocated to not reallocate as one model is created
-    // per data point in the worst cast, however, usually a lot fewer are used.
-    let num_data_points = uncompressed_timestamps.len();
-    let mut compressed_record_batch_builder = CompressedRecordBatchBuilder::new(num_data_points);
+    // Enough memory for end_index elements are allocated to never require
+    // reallocation as one model is created per data point in the worst cast.
+    let end_index = uncompressed_timestamps.len();
+    let mut compressed_record_batch_builder = CompressedRecordBatchBuilder::new(end_index);
 
     // Compress the uncompressed timestamps and uncompressed values.
-    let mut current_row = 0;
-    while current_row < num_data_points {
-        // Create a compressed segment that represents the timestamps and values
-        // from current_row to row_n within error_bound where row_n <= num_rows.
+    let mut current_index = 0;
+    while current_index < end_index {
+        // Create a compressed segment that represents the data points from
+        // current_index to index within error_bound where index <= end_index.
         let compressed_segment_builder = create_next_compressed_segment(
-            current_row,
-            num_data_points,
+            current_index,
+            end_index,
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
         );
-        current_row += compressed_segment_builder.finish(&mut compressed_record_batch_builder);
+        current_index += compressed_segment_builder.finish(&mut compressed_record_batch_builder);
     }
     Ok(compressed_record_batch_builder.finnish())
 }
 
 /// Create a compressed segment that represents the regular timestamps in
 /// `uncompressed_timestamps` and the values in `uncompressed_values` from
-/// `start_index` to index_n within `error_bound` where index_n <= `end_index`.
+/// `start_index` to index within `error_bound` where index <= `end_index`.
 fn create_next_compressed_segment<'a>(
     start_index: usize,
     end_index: usize,
@@ -97,11 +96,12 @@ fn create_next_compressed_segment<'a>(
         compressed_segment_builder.try_to_update_models(timestamp, value);
         current_index += 1;
     }
+
     compressed_segment_builder
 }
 
-/// A single compressed segment being build from an uncompressed segment using
-/// the model types in `models`.
+/// A compressed segment being build from an uncompressed segment using the
+/// model types in `models`.
 struct CompressedSegmentBuilder<'a> {
     /// The regular timestamps of the uncompressed segment the compressed
     /// segment is being build from.
@@ -112,20 +112,20 @@ struct CompressedSegmentBuilder<'a> {
     /// Index of the first data point in `self.uncompressed_timestamps` and
     /// `self.uncompressed_values` the compressed segment represents.
     start_index: usize,
-    /// Constant function that represents the values in
+    /// Constant function that currently represents the values in
     /// `self.uncompressed_values` from `self.start_index` to `self.start_index`
     /// + `self.pmc_mean.length`.
     pmc_mean: PMCMean,
     /// Indicates if `self.pmc_mean` could represent all values in
-    /// `self.uncompressed_values` from `self.start_index` to `self.start_index`
-    /// + `self.length`.
+    /// `self.uncompressed_values` from `self.start_index` to `current_index` in
+    /// `create_next_compressed_segment()`.
     pmc_mean_has_fit_all: bool,
     /// Linear function that represents the values in `self.uncompressed_values`
     /// from `self.start_index` to `self.start_index` + `self.swing.length`.
     swing: Swing,
-    /// Indicates if `self.swing` could represent all data points in
-    /// `self.uncompressed_timestamps` and `self.uncompressed_values` from
-    /// `self.start_index` to `self.start_index` + `self.length`.
+    /// Indicates if `self.swing` could represent all values in
+    /// `self.uncompressed_values` from `self.start_index` to `current_index` in
+    /// `create_next_compressed_segment()`.
     swing_has_fit_all: bool,
     /// Values in `self.uncompressed_values` from `self.start_index` to
     /// `self.start_index` + `self.gorilla.length` compressed using lossless
@@ -192,13 +192,11 @@ impl<'a> CompressedSegmentBuilder<'a> {
             self.uncompressed_values,
         );
 
-        // Timestamps
+        // Add timestamps and error.
         let start_time = self.uncompressed_timestamps.value(self.start_index);
         let end_time = self.uncompressed_timestamps.value(end_index);
         let timestamps = &[]; // TODO: compress irregular timestamps.
-
-        // TODO: compute and store the actual error.
-        let error = f32::NAN;
+        let error = f32::NAN; // TODO: compute and store the actual error.
 
         compressed_record_batch_builder.append_compressed_segment(
             model_type_id,
@@ -298,8 +296,6 @@ impl CompressedRecordBatchBuilder {
 mod tests {
     use super::*;
     use datafusion::arrow::array::UInt8Array;
-    // TODO: add tests with random time series and where the selected model is
-    // not the longest.
 
     // Tests compress.
     #[test]
@@ -307,6 +303,7 @@ mod tests {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&[], &[]);
+
         let compressed_record_batch =
             try_compress(&uncompressed_timestamps, &uncompressed_values, error_bound).unwrap();
         assert_eq!(0, compressed_record_batch.num_rows())
@@ -319,6 +316,7 @@ mod tests {
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);
         let error_bound = ErrorBound::try_new(0.0).unwrap();
+
         let compressed_record_batch =
             try_compress(&uncompressed_timestamps, &uncompressed_values, error_bound).unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
@@ -335,6 +333,7 @@ mod tests {
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);
         let error_bound = ErrorBound::try_new(5.0).unwrap();
+
         let compressed_record_batch =
             try_compress(&uncompressed_timestamps, &uncompressed_values, error_bound).unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
@@ -351,6 +350,7 @@ mod tests {
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);
         let error_bound = ErrorBound::try_new(0.0).unwrap();
+
         let compressed_record_batch =
             try_compress(&uncompressed_timestamps, &uncompressed_values, error_bound).unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
@@ -367,6 +367,7 @@ mod tests {
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);
         let error_bound = ErrorBound::try_new(5.0).unwrap();
+
         let compressed_record_batch =
             try_compress(&uncompressed_timestamps, &uncompressed_values, error_bound).unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
@@ -383,6 +384,7 @@ mod tests {
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);
         let error_bound = ErrorBound::try_new(0.0).unwrap();
+
         let compressed_record_batch =
             try_compress(&uncompressed_timestamps, &uncompressed_values, error_bound).unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
@@ -403,7 +405,6 @@ mod tests {
         values.append(&mut linear);
         values.append(&mut constant);
 
-        // TODO: make all tests use an auto generated set of timestamps based on the length of values.
         let timestamps = Vec::from_iter((100..(values.len() + 1) as i64 * 100).step_by(100));
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);

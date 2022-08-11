@@ -125,7 +125,6 @@ pub fn select_model(
     gorilla: Gorilla,
     uncompressed_values: &ValueArray,
 ) -> SelectedModel {
-    // TODO: include the metadata as it is amortized over the values.
     let bytes_per_value = [
         (PMC_MEAN_ID, pmc_mean.get_bytes_per_value()),
         (SWING_ID, swing.get_bytes_per_value()),
@@ -142,16 +141,16 @@ pub fn select_model(
     match model_type_id {
         PMC_MEAN_ID => {
             let value = pmc_mean.get_model();
-            let end_index = start_index + pmc_mean.get_length();
+            let end_index = start_index + pmc_mean.get_length() - 1;
             SelectedModel::new(PMC_MEAN_ID, end_index, value, value, vec![])
         }
         SWING_ID => {
             let (min_value, max_value) = swing.get_model();
-            let end_index = start_index + swing.get_length();
+            let end_index = start_index + swing.get_length() - 1;
             SelectedModel::new(SWING_ID, end_index, min_value, max_value, vec![])
         }
         GORILLA_ID => {
-            let end_index = start_index + gorilla.get_length();
+            let end_index = start_index + gorilla.get_length() - 1;
             let uncompressed_values = &uncompressed_values.values()[start_index..end_index];
             let min_value = uncompressed_values
                 .iter()
