@@ -70,25 +70,25 @@ impl StorageEngine {
         }
     }
 
-    /// Pass `message` to the uncompressed data manager. Return Ok if the message was successfully
+    /// Pass `message` to [`UncompressedDataManager`]. Return Ok if the message was successfully
     /// inserted, otherwise return Err.
     pub fn insert_message(&mut self, message: Message) -> Result<(), String> {
         self.uncompressed_data_manager.insert_message(message)
     }
 
-    /// Retrieve the oldest finished segment from the uncompressed data manager and return it.
+    /// Retrieve the oldest [`FinishedSegment`] from [`UncompressedDataManager`] and return it.
     /// Return `None` if there are no finished segments.
     pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
         self.uncompressed_data_manager.get_finished_segment()
     }
 
-    /// Pass `segment` to the compressed data manager.
+    /// Pass `segment` to [`CompressedDataManager`].
     pub fn insert_compressed_data(&mut self, key: String, segment: RecordBatch) {
         self.compressed_data_manager.insert_compressed_data(key, segment)
     }
 
-    // TODO: Maybe move to configuration struct and have a single Arc.
-    /// Return the record batch schema used for uncompressed segments.
+    // TODO: Move to configuration struct and have a single Arc.
+    /// Return the [`RecordBatch`] schema used for uncompressed segments.
     pub fn get_uncompressed_segment_schema() -> Schema {
         Schema::new(vec![
             Field::new("timestamps", ArrowTimestamp::DATA_TYPE, false),
@@ -96,8 +96,8 @@ impl StorageEngine {
         ])
     }
 
-    // TODO: Maybe move to configuration struct and have a single Arc.
-    /// Return the record batch schema used for compressed segments.
+    // TODO: Move to configuration struct and have a single Arc.
+    /// Return the [`RecordBatch`] schema used for compressed segments.
     pub fn get_compressed_segment_schema() -> Schema {
         Schema::new(vec![
             Field::new("model_type_id", DataType::UInt8, false),
@@ -114,7 +114,7 @@ impl StorageEngine {
     // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
     /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`
     /// must use the extension '.parquet'. Return Ok if the file was written successfully,
-    /// otherwise `ParquetError`.
+    /// otherwise [`ParquetError`].
     pub fn write_batch_to_apache_parquet_file(
         batch: RecordBatch,
         file_path: &Path,
@@ -142,7 +142,7 @@ impl StorageEngine {
     }
 
     /// Read all rows from the Apache Parquet file at the location given by `file_path` and return them
-    /// in a record batch. If the file could not be read successfully, `ParquetError` is returned.
+    /// in a record batch. If the file could not be read successfully, [`ParquetError`] is returned.
     pub fn read_entire_apache_parquet_file(file_path: &Path) -> Result<RecordBatch, ParquetError> {
         let error = ParquetError::General(
             format!("Apache Parquet file at path '{}' could not be read.", file_path.display())
@@ -159,7 +159,7 @@ impl StorageEngine {
             .map(|rg| rg.num_rows())
             .sum::<i64>() as usize;
 
-        // Read the data and convert it to a record batch.
+        // Read the data and convert it to a RecordBatch.
         let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(reader));
         let mut record_batch_reader = arrow_reader.get_record_reader(row_count)?;
 
@@ -273,7 +273,7 @@ mod tests {
         assert!(StorageEngine::is_path_an_apache_parquet_file(path.as_path()));
     }
 
-    /// Create an Apache Parquet file from a generated record batch in the temp dir.
+    /// Create an Apache Parquet file in the [`TempDir`] from a generated [`RecordBatch`].
     fn create_apache_parquet_file_in_temp_dir(file_name: String) -> (TempDir, PathBuf, RecordBatch) {
         let temp_dir = tempdir().unwrap();
         let batch = test_util::get_compressed_segment_record_batch();
@@ -312,7 +312,7 @@ pub mod test_util {
 
     pub const COMPRESSED_SEGMENT_SIZE: usize = 2032;
 
-    /// Return a record batch that only has a single column, and therefore does not match the
+    /// Return a [`RecordBatch`] that only has a single column, and therefore does not match the
     /// compressed segment schema.
     pub fn get_invalid_compressed_segment_record_batch() -> RecordBatch {
         let model_type_id = UInt8Array::from(vec![2, 3, 3]);

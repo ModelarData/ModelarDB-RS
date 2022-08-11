@@ -28,7 +28,7 @@ use crate::types::TimestampArray;
 /// A single compressed time series, containing one or more compressed segments and providing
 /// functionality for appending segments and saving all segments to a single Apache Parquet file.
 pub struct CompressedTimeSeries {
-    /// Compressed segments that make up the sequential compressed data of the time series.
+    /// Compressed segments that make up the sequential compressed data of the [`CompressedTimeSeries`].
     compressed_segments: Vec<RecordBatch>,
     /// Continuously updated total sum of the size of the compressed segments.
     pub size_in_bytes: usize,
@@ -42,13 +42,14 @@ impl CompressedTimeSeries {
         }
     }
 
-    /// Append `segment` to the compressed data in the time series and return the size of `segment` in bytes.
+    /// Append `segment` to the compressed data in the [`CompressedTimeSeries`] and return the size
+    /// of `segment` in bytes.
     pub fn append_segment(&mut self, segment: RecordBatch) -> usize {
         let segment_size = Self::get_size_of_segment(&segment);
 
         debug_assert!(
             segment.schema() == Arc::new(StorageEngine::get_compressed_segment_schema()),
-            "Schema of record batch does not match compressed segment schema."
+            "Schema of RecordBatch does not match compressed segment schema."
         );
 
         self.compressed_segments.push(segment);
@@ -57,15 +58,15 @@ impl CompressedTimeSeries {
         segment_size
     }
 
-    /// If the compressed segments are successfully saved to an Apache Parquet file, return Ok,
-    /// otherwise return Err.
+    /// If the compressed segments are successfully saved to an Apache Parquet file return [`Ok`],
+    /// otherwise return [`IOError`].
     pub fn save_to_apache_parquet(&mut self, folder_path: &Path) -> Result<(), IOError> {
         debug_assert!(
             !self.compressed_segments.is_empty(),
-            "Cannot save compressed time series with no data."
+            "Cannot save CompressedTimeSeries with no data."
         );
 
-        // Combine the segments into a single record batch.
+        // Combine the segments into a single RecordBatch.
         let schema = StorageEngine::get_compressed_segment_schema();
         let batch = RecordBatch::concat(&Arc::new(schema), &*self.compressed_segments).unwrap();
 
@@ -73,7 +74,7 @@ impl CompressedTimeSeries {
         let complete_folder_path = folder_path.join("compressed");
         fs::create_dir_all(complete_folder_path.as_path())?;
 
-        // Create a path that uses the first timestamp as the filename to better support
+        // Create a path that uses the first timestamp as the file name to better support
         // pruning data that is too new or too old when executing a specific query.
         let start_times: &TimestampArray = batch.column(2).as_any().downcast_ref().unwrap();
         let file_name = format!("{}.parquet", start_times.value(0));
@@ -113,7 +114,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Schema of record batch does not match compressed segment schema.")]
+    #[should_panic(expected = "Schema of RecordBatch does not match compressed segment schema.")]
     fn test_panic_if_appending_invalid_compressed_segment() {
         let invalid = test_util::get_invalid_compressed_segment_record_batch();
 
@@ -143,7 +144,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Cannot save compressed time series with no data.")]
+    #[should_panic(expected = "Cannot save CompressedTimeSeries with no data.")]
     fn test_panic_if_saving_empty_compressed_segments_to_apache_parquet() {
         let mut empty_time_series = CompressedTimeSeries::new();
 

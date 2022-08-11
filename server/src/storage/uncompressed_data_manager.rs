@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Support for managing all uncompressed data that is ingested into the storage engine.
+//! Support for managing all uncompressed data that is ingested into the [`StorageEngine`].
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -30,7 +30,7 @@ const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
 /// temporarily in an in-memory buffer that spills to Apache Parquet files. When finished the data
 /// is made available for compression.
 pub struct UncompressedDataManager {
-    /// Path to the folder containing all uncompressed data managed by the storage engine.
+    /// Path to the folder containing all uncompressed data managed by the [`StorageEngine`].
     data_folder_path: PathBuf,
     /// The uncompressed segments while they are being built.
     uncompressed_data: HashMap<String, SegmentBuilder>,
@@ -51,8 +51,8 @@ impl UncompressedDataManager {
         }
     }
 
-    /// Parse `message` and insert it into the in-memory buffer. Return Ok if the message was
-    /// successfully inserted, otherwise return Err.
+    /// Parse `message` and insert it into the in-memory buffer. Return [`Ok`] if the message was
+    /// successfully inserted, otherwise return [`Err`].
     pub fn insert_message(&mut self, message: Message) -> Result<(), String> {
         let data_point = DataPoint::from_message(&message)?;
         let key = data_point.generate_unique_key();
@@ -96,11 +96,11 @@ impl UncompressedDataManager {
         Ok(())
     }
 
-    /// Remove the oldest finished segment from the queue and return it. Return `None` if the queue
+    /// Remove the oldest [`FinishedSegment`] from the queue and return it. Return `None` if the queue
     /// of finished segments is empty.
     pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
         if let Some(finished_segment) = self.finished_queue.pop_front() {
-            // Add the memory size of the removed finished segment back to the remaining bytes.
+            // Add the memory size of the removed FinishedSegment back to the remaining bytes.
             self.uncompressed_remaining_memory_in_bytes +=
                 finished_segment.uncompressed_segment.get_memory_size();
 
@@ -120,7 +120,7 @@ impl UncompressedDataManager {
         self.finished_queue.push_back(finished_segment);
     }
 
-    /// Spill the first in-memory finished segment in the queue of finished segments. If no
+    /// Spill the first in-memory [`FinishedSegment`] in the queue of finished segments. If no
     /// in-memory finished segments could be found, panic.
     fn spill_finished_segment(&mut self) {
         info!("Not enough memory to create segment. Spilling an already finished segment.");
@@ -212,17 +212,17 @@ mod tests {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
         let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
 
-        // Insert messages into the storage engine until a segment is spilled to Apache Parquet.
+        // Insert messages into the StorageEngine until a segment is spilled to Apache Parquet.
         // If there is enough memory to hold n full segments, we need n + 1 to spill a segment.
         let max_full_segments = reserved_memory / SegmentBuilder::get_memory_size();
         let message_count = (max_full_segments * BUILDER_CAPACITY) + 1;
         insert_multiple_messages(message_count, &mut data_manager);
 
-        // The first finished segment should have a memory size of 0 since it is spilled to disk.
+        // The first FinishedSegment should have a memory size of 0 since it is spilled to disk.
         let first_finished = data_manager.finished_queue.pop_front().unwrap();
         assert_eq!(first_finished.uncompressed_segment.get_memory_size(), 0);
 
-        // The finished segment should be spilled to the "uncompressed" folder under the key.
+        // The FinishedSegment should be spilled to the "uncompressed" folder under the key.
         let data_folder_path = Path::new(&data_manager.data_folder_path);
         let uncompressed_path = data_folder_path.join("modelardb-test/uncompressed");
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1);
@@ -234,11 +234,11 @@ mod tests {
         insert_multiple_messages(BUILDER_CAPACITY * 2, &mut data_manager);
 
         data_manager.spill_finished_segment();
-        // When spilling one more, the first segment should be ignored since it is already spilled.
+        // When spilling one more, the first FinishedSegment should be ignored since it is already spilled.
         data_manager.spill_finished_segment();
 
         data_manager.finished_queue.pop_front();
-        // The second finished segment should have a memory size of 0 since it is spilled to disk.
+        // The second FinishedSegment should have a memory size of 0 since it is spilled to disk.
         let second_finished = data_manager.finished_queue.pop_front().unwrap();
         assert_eq!(second_finished.uncompressed_segment.get_memory_size(), 0);
 
@@ -288,7 +288,7 @@ mod tests {
         data_manager.spill_finished_segment();
         let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
 
-        // Since the finished segment is not in memory, the remaining memory should not increase when popped.
+        // Since the FinishedSegment is not in memory, the remaining memory should not increase when popped.
         data_manager.get_finished_segment();
 
         assert_eq!(remaining_memory, data_manager.uncompressed_remaining_memory_in_bytes);
@@ -318,7 +318,7 @@ mod tests {
         key
     }
 
-    /// Generate a data point and insert it into `data_manager`. Return the data point key.
+    /// Generate a [`DataPoint`] and insert it into `data_manager`. Return the [`DataPoint`] key.
     fn insert_generated_message(data_manager: &mut UncompressedDataManager, topic: String) -> String {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -335,7 +335,7 @@ mod tests {
             .generate_unique_key()
     }
 
-    /// Create an uncompressed data manager with a folder that is deleted once the test is finished.
+    /// Create an [`UncompressedDataManager`] with a folder that is deleted once the test is finished.
     fn create_uncompressed_data_manager() -> (TempDir, UncompressedDataManager) {
         let temp_dir = tempdir().unwrap();
 

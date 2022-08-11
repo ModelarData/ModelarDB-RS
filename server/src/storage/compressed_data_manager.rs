@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Support for managing all compressed data that is inserted into the storage engine.
+//! Support for managing all compressed data that is inserted into the [`StorageEngine`].
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -30,11 +30,11 @@ const COMPRESSED_RESERVED_MEMORY_IN_BYTES: isize = 5000;
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
 pub struct CompressedDataManager {
-    /// Path to the folder containing all compressed data managed by the storage engine.
+    /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
     data_folder_path: PathBuf,
     /// The compressed segments before they are saved to persistent storage.
     compressed_data: HashMap<String, CompressedTimeSeries>,
-    /// Prioritized queue of time series keys referring to data that can be saved to persistent storage.
+    /// Prioritized queue of keys referring to [`CompressedTimeSeries`] that can be saved to persistent storage.
     compressed_queue: VecDeque<String>,
     /// How many bytes of memory that are left for storing compressed segments.
     compressed_remaining_memory_in_bytes: isize,
@@ -85,7 +85,7 @@ impl CompressedDataManager {
         }
     }
 
-    /// Save compressed time series to disk until the reserved memory limit is no longer exceeded.
+    /// Save [`CompressedTimeSeries`] to disk until the reserved memory limit is no longer exceeded.
     fn save_compressed_data(&mut self) {
         info!("Out of memory to store compressed data. Saving compressed data to disk.");
 
@@ -119,7 +119,7 @@ mod tests {
     use crate::storage::{StorageEngine, test_util};
 
     #[test]
-    #[should_panic(expected = "Schema of record batch does not match compressed segment schema.")]
+    #[should_panic(expected = "Schema of RecordBatch does not match compressed segment schema.")]
     fn test_panic_if_inserting_invalid_compressed_segment() {
         let invalid = test_util::get_invalid_compressed_segment_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
@@ -194,7 +194,7 @@ mod tests {
         assert!(-1 < data_manager.compressed_remaining_memory_in_bytes);
     }
 
-    /// Create a compressed data manager with a folder that is deleted once the test is finished.
+    /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
     fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
         let temp_dir = tempdir().unwrap();
 

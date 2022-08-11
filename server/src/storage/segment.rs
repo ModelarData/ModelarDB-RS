@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-//! Support for different kinds of uncompressed segments. The SegmentBuilder struct provides support
-//! for inserting and storing data in an in-memory segment. SpilledSegment provides support for
+//! Support for different kinds of uncompressed segments. The [`SegmentBuilder`] struct provides support
+//! for inserting and storing data in an in-memory segment. [`SpilledSegment`] provides support for
 //! storing uncompressed data in Apache Parquet files.
 
 use std::fmt::Formatter;
@@ -33,20 +33,20 @@ use crate::storage::data_point::DataPoint;
 use crate::storage::{BUILDER_CAPACITY, StorageEngine};
 use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
 
-/// Shared functionality between different types of uncompressed segments, such as segment builders
-/// and spilled segments.
+/// Shared functionality between different types of uncompressed segments, such as [`SegmentBuilder`]
+/// and [`SpilledSegment`].
 pub trait UncompressedSegment {
     fn get_record_batch(&mut self) -> Result<RecordBatch, ParquetError>;
 
     fn get_memory_size(&self) -> usize;
 
-    // Since both segment builders and spilled segments are present in the compression queue, both
+    // Since both SegmentBuilders and SpilledSegments are present in the queue of finished segments, both
     // structs need to implement spilling to Apache Parquet, with already spilled segments returning Err.
     fn spill_to_apache_parquet(&mut self, folder_path: &Path) -> Result<SpilledSegment, IOError>;
 }
 
 /// A single segment being built, consisting of an ordered sequence of timestamps and values. Note
-/// that since array builders are used, the data can only be read once the builders are finished and
+/// that since [`ArrayBuilder`] is used, the data can only be read once the builders are finished and
 /// cannot be further appended to after.
 pub struct SegmentBuilder {
     /// Builder consisting of timestamps.
@@ -63,34 +63,34 @@ impl SegmentBuilder {
         }
     }
 
-    /// Return the total size of the builder in bytes. Note that this is constant.
+    /// Return the total size of the [`SegmentBuilder`] in bytes. Note that this is constant.
     pub fn get_memory_size() -> usize {
         (BUILDER_CAPACITY * mem::size_of::<Timestamp>())
             + (BUILDER_CAPACITY * mem::size_of::<Value>())
     }
 
-    /// Return `true` if the segment is full, meaning additional data points cannot be appended.
+    /// Return `true` if the [`SegmentBuilder`] is full, meaning additional data points cannot be appended.
     pub fn is_full(&self) -> bool {
         self.get_length() == self.get_capacity()
     }
 
-    /// Return how many data points the segment currently contains.
+    /// Return how many data points the [`SegmentBuilder`] currently contains.
     pub fn get_length(&self) -> usize {
         // The length is always the same for both builders.
         self.timestamps.len()
     }
 
-    /// Return how many data points the segment can contain.
+    /// Return how many data points the [`SegmentBuilder`] can contain.
     fn get_capacity(&self) -> usize {
         // The capacity is always the same for both builders.
         self.timestamps.capacity()
     }
 
-    /// Add the timestamp and value from `data_point` to the segment's array builders.
+    /// Add the timestamp and value from `data_point` to the [`SegmentBuilder`].
     pub fn insert_data(&mut self, data_point: &DataPoint) {
         debug_assert!(
             !self.is_full(),
-            "Cannot insert data into full segment builder."
+            "Cannot insert data into full SegmentBuilder."
         );
 
         self.timestamps.append_value(data_point.timestamp);
@@ -107,11 +107,11 @@ impl fmt::Display for SegmentBuilder {
 }
 
 impl UncompressedSegment for SegmentBuilder {
-    /// Finish the array builders and return the data in a structured record batch.
+    /// Finish the array builders and return the data in a structured [`RecordBatch`].
     fn get_record_batch(&mut self) -> Result<RecordBatch, ParquetError> {
         debug_assert!(
             self.is_full(),
-            "Cannot get record batch from segment builder that is not full."
+            "Cannot get RecordBatch from SegmentBuilder that is not full."
         );
 
         let timestamps = self.timestamps.finish();
@@ -125,15 +125,16 @@ impl UncompressedSegment for SegmentBuilder {
         ).unwrap())
     }
 
-    /// Return the total size of the uncompressed segment in bytes.
+    /// Return the total size of the [`SegmentBuilder`] in bytes.
     fn get_memory_size(&self) -> usize {
         SegmentBuilder::get_memory_size()
     }
 
-    /// Spill the in-memory segment to an Apache Parquet file and return Ok when finished.
+    /// Spill the in-memory [`SegmentBuilder`] to an Apache Parquet file and return the
+    /// [`SpilledSegment`] when finished.
     fn spill_to_apache_parquet(&mut self, folder_path: &Path) -> Result<SpilledSegment, IOError> {
         // Since the schema is constant and the columns are always the same length, creating the
-        // record batch should never fail and unwrap is therefore safe to use.
+        // RecordBatch should never fail and unwrap is therefore safe to use.
         let batch = self.get_record_batch().unwrap();
         Ok(SpilledSegment::new(folder_path, batch))
     }
@@ -141,16 +142,17 @@ impl UncompressedSegment for SegmentBuilder {
 
 /// A single segment that has been spilled to an Apache Parquet file due to memory constraints.
 pub struct SpilledSegment {
-    /// Path to the Apache Parquet file containing the uncompressed data in the segment.
+    /// Path to the Apache Parquet file containing the uncompressed data in the [`SpilledSegment`].
     file_path: PathBuf,
 }
 
 impl SpilledSegment {
-    /// Spill the data in `segment` to an Apache Parquet file, and return a spilled segment with the path.
+    /// Spill the data in `segment` to an Apache Parquet file, and return a [`SpilledSegment`]
+    /// containing the file path.
     pub fn new(folder_path: &Path, segment: RecordBatch) -> Self {
         debug_assert!(
             segment.schema() == Arc::new(StorageEngine::get_uncompressed_segment_schema()),
-            "Schema of record batch does not match uncompressed segment schema."
+            "Schema of RecordBatch does not match uncompressed segment schema."
         );
 
         let complete_folder_path = folder_path.join("uncompressed");
@@ -168,13 +170,13 @@ impl SpilledSegment {
 }
 
 impl UncompressedSegment for SpilledSegment {
-    /// Retrieve the data from the Apache Parquet file and return it in a structured record batch.
+    /// Retrieve the data from the Apache Parquet file and return it in a structured [`RecordBatch`].
     fn get_record_batch(&mut self) -> Result<RecordBatch, ParquetError> {
         let segment = StorageEngine::read_entire_apache_parquet_file(self.file_path.as_path())?;
 
 		debug_assert!(
             segment.schema() == Arc::new(StorageEngine::get_uncompressed_segment_schema()),
-            "Schema of record batch does not match uncompressed segment schema."
+            "Schema of RecordBatch does not match uncompressed segment schema."
         );
 
         Ok(segment)
@@ -185,7 +187,7 @@ impl UncompressedSegment for SpilledSegment {
         0
     }
 
-    /// Since the segment has already been spilled, return Err.
+    /// Since the segment has already been spilled, return [`IOError`].
     fn spill_to_apache_parquet(&mut self, _folder_path: &Path) -> Result<SpilledSegment, IOError> {
         Err(IOError::new(
             Other,
@@ -194,14 +196,17 @@ impl UncompressedSegment for SpilledSegment {
     }
 }
 
-/// Representing either an in-memory or spilled segment that is finished and ready for compression.
+/// Representing either a [`SegmentBuilder`] or [`SpilledSegment`] that is finished and ready for compression.
 pub struct FinishedSegment {
+    /// Key that uniquely identifies the time series the [`FinishedSegment`] belongs to.
     pub key: String,
+    /// Either a finished [`SegmentBuilder`] or a [`SpilledSegment`].
     pub uncompressed_segment: Box<dyn UncompressedSegment>,
 }
 
 impl FinishedSegment {
-    /// If in memory, spill the segment to an Apache Parquet file and return the path, otherwise return Err.
+    /// If in memory, spill the segment to an Apache Parquet file and return the file path,
+    /// otherwise return [`IOError`].
     pub fn spill_to_apache_parquet(
         &mut self,
         data_folder_path: &Path,
@@ -273,7 +278,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Cannot insert data into full segment builder.")]
+    #[should_panic(expected = "Cannot insert data into full SegmentBuilder.")]
     fn test_panic_if_inserting_data_point_when_full() {
         let mut segment_builder = SegmentBuilder::new();
 
@@ -292,7 +297,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Cannot get record batch from segment builder that is not full.")]
+    #[should_panic(expected = "Cannot get RecordBatch from SegmentBuilder that is not full.")]
     fn test_panic_if_getting_record_batch_when_not_full() {
         let mut segment_builder = SegmentBuilder::new();
 
@@ -312,7 +317,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Cannot get record batch from segment builder that is not full.")]
+    #[should_panic(expected = "Cannot get RecordBatch from SegmentBuilder that is not full.")]
     fn test_panic_if_spilling_segment_builder_when_not_full() {
         let mut segment_builder = SegmentBuilder::new();
         segment_builder.spill_to_apache_parquet(Path::new("folder_path"));
@@ -327,7 +332,7 @@ mod tests {
         }
     }
 
-    /// Create a data point with a constant timestamp and value.
+    /// Create a [`DataPoint`] with a constant timestamp and value.
     fn get_data_point() -> DataPoint {
         let message = Message::new("ModelarDB/test", "[1657878396943245, 30]", 1);
         DataPoint::from_message(&message).unwrap()
@@ -335,9 +340,9 @@ mod tests {
 
     // Tests for SpilledSegment.
     #[test]
-    #[should_panic(expected = "Schema of record batch does not match uncompressed segment schema.")]
+    #[should_panic(expected = "Schema of RecordBatch does not match uncompressed segment schema.")]
     fn test_panic_if_creating_spilled_segment_with_invalid_segment() {
-        // Create a record batch that is missing timestamps.
+        // Create a RecordBatch that is missing timestamps.
         let values = ValueArray::from(vec![2.5, 3.3, 3.2]);
         let schema = Schema::new(vec![Field::new("values", ArrowValue::DATA_TYPE, false)]);
         let record_batch = RecordBatch::try_new(Arc::new(schema), vec![Arc::new(values)]).unwrap();
@@ -369,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Schema of record batch does not match uncompressed segment schema.")]
+    #[should_panic(expected = "Schema of RecordBatch does not match uncompressed segment schema.")]
     fn test_panic_if_getting_record_batch_from_invalid_spilled_segment() {
         let temp_dir = tempdir().unwrap();
 
