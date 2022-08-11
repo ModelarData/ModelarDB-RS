@@ -55,7 +55,7 @@ pub struct Swing {
     /// current model.
     lower_bound_intercept: f64,
     /// The number of data points the current model has been fitted to.
-    length: u32,
+    length: usize,
 }
 
 impl Swing {
@@ -180,7 +180,7 @@ impl Swing {
     }
 
     /// Return the number of values the model currently represented.
-    pub fn get_length(&self) -> u32 {
+    pub fn get_length(&self) -> usize {
 	self.length
     }
 

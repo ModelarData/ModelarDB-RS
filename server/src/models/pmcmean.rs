@@ -38,7 +38,7 @@ pub struct PMCMean {
     /// The sum of the values in the segment the current model is fitted to.
     sum_of_values: f64,
     /// The number of data points the current model has been fitted to.
-    length: u32,
+    length: usize,
 }
 
 impl PMCMean {
@@ -80,7 +80,7 @@ impl PMCMean {
     }
 
     /// Return the number of values the model currently represented.
-    pub fn get_length(&self) -> u32 {
+    pub fn get_length(&self) -> usize {
 	self.length
     }
 

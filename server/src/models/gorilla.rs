@@ -43,7 +43,7 @@ pub struct Gorilla {
     /// Values compressed using XOR and a variable length binary encoding.
     compressed_values: BitVecBuilder,
     /// The number of values stored in `compressed_values`.
-    pub length: u32, // TODO: use Gorilla as a fallback to remove pub.
+    pub length: usize, // TODO: use Gorilla as a fallback to remove pub.
 }
 
 impl Gorilla {
@@ -114,7 +114,7 @@ impl Gorilla {
 
     /// Return the number of values currently compressed using XOR and a
     /// variable length binary encoding.
-    pub fn get_length(&self) -> u32 {
+    pub fn get_length(&self) -> usize {
 	self.length
     }
 

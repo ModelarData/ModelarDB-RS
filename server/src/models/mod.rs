@@ -84,6 +84,39 @@ impl PartialOrd<ErrorBound> for f32 {
     }
 }
 
+/// Model that uses the fewest number of bytes per value.
+pub struct SelectedModel {
+    /// Id of the model type that created this model.
+    pub model_type_id: u8,
+    /// The selected model's length.
+    pub end_index: usize,
+    /// The selected model's minimum value.
+    pub min_value: Value,
+    /// The selected model's maximum value.
+    pub max_value: Value,
+    /// Data required in addition to `self.min` and `self.max` for the model to
+    /// reconstruct the values it represents when given a specific timestamp.
+    pub values: Vec<u8>,
+}
+
+impl SelectedModel {
+    fn new(
+        model_type_id: u8,
+        end_index: usize,
+        min_value: Value,
+        max_value: Value,
+        values: Vec<u8>,
+    ) -> Self {
+        Self {
+            model_type_id,
+            end_index,
+            min_value,
+            max_value,
+            values,
+        }
+    }
+}
+
 /// Select the model that uses the fewest number of bytes per value.
 pub fn select_model(
     start_index: usize,
@@ -91,7 +124,7 @@ pub fn select_model(
     swing: Swing,
     gorilla: Gorilla,
     uncompressed_values: &ValueArray,
-) -> (u8, usize, f32, f32, Vec<u8>) { // TODO: replace with SelectedModel struct.
+) -> SelectedModel {
     // TODO: include the metadata as it is amortized over the values.
     let bytes_per_value = [
         (PMC_MEAN_ID, pmc_mean.get_bytes_per_value()),
@@ -109,16 +142,16 @@ pub fn select_model(
     match model_type_id {
         PMC_MEAN_ID => {
             let value = pmc_mean.get_model();
-	    let end_index = start_index + pmc_mean.get_length() as usize;
-            (PMC_MEAN_ID, end_index, value, value, vec![])
+            let end_index = start_index + pmc_mean.get_length();
+            SelectedModel::new(PMC_MEAN_ID, end_index, value, value, vec![])
         }
         SWING_ID => {
             let (min_value, max_value) = swing.get_model();
-	    let end_index = start_index + swing.get_length() as usize;
-            (SWING_ID, end_index, min_value, max_value, vec![])
+            let end_index = start_index + swing.get_length();
+            SelectedModel::new(SWING_ID, end_index, min_value, max_value, vec![])
         }
         GORILLA_ID => {
-	    let end_index = start_index + gorilla.get_length() as usize;
+            let end_index = start_index + gorilla.get_length();
             let uncompressed_values = &uncompressed_values.values()[start_index..end_index];
             let min_value = uncompressed_values
                 .iter()
@@ -127,7 +160,7 @@ pub fn select_model(
                 .iter()
                 .fold(Value::MIN, |x, y| Value::min(x, *y));
             let values = gorilla.get_compressed_values();
-            (GORILLA_ID, end_index, min_value, max_value, values)
+            SelectedModel::new(GORILLA_ID, end_index, min_value, max_value, values)
         }
         _ => panic!("Unknown model type."),
     }

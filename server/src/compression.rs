@@ -24,7 +24,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 
 use crate::errors::ModelarDBError;
 use crate::models;
-use crate::models::{gorilla::Gorilla, pmcmean::PMCMean, swing::Swing, ErrorBound};
+use crate::models::{gorilla::Gorilla, pmcmean::PMCMean, swing::Swing, ErrorBound, SelectedModel};
 use crate::storage::StorageEngine;
 use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder};
 
@@ -32,7 +32,7 @@ use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArra
 /// Maximum number of data points that models of type Gorilla can represent per
 /// compressed segment. As models of type Gorilla use lossless compression they
 /// will never exceed the user-defined error bounds.
-const GORILLA_MAXIMUM_LENGTH: u32 = 50; // TODO: use usize instead of u32 for lengths.
+const GORILLA_MAXIMUM_LENGTH: usize = 50;
 
 // TODO: support irregular univariate time series.
 /// Compress the regular `uncompressed_timestamps` using a start time, end time,
@@ -178,7 +178,13 @@ impl<'a> CompressedSegmentBuilder<'a> {
     /// `uncompressed_values` the selected model could not represent.
     fn finish(self, compressed_record_batch_builder: &mut CompressedRecordBatchBuilder) -> usize {
         // The model that uses the fewest number of bytes per value is selected.
-        let (model_type_id, end_index, min_value, max_value, values) = models::select_model(
+        let SelectedModel {
+            model_type_id,
+            end_index,
+            min_value,
+            max_value,
+            values,
+        } = models::select_model(
             self.start_index,
             self.pmc_mean,
             self.swing,
