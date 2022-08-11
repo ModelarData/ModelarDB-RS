@@ -63,10 +63,10 @@ pub struct StorageEngine {
 }
 
 impl StorageEngine {
-    pub fn new(storage_folder_path: PathBuf) -> Self {
+    pub fn new(data_folder_path: PathBuf) -> Self {
         Self {
-            uncompressed_data_manager: UncompressedDataManager::new(storage_folder_path.clone()),
-            compressed_data_manager: CompressedDataManager::new(storage_folder_path),
+            uncompressed_data_manager: UncompressedDataManager::new(data_folder_path.clone()),
+            compressed_data_manager: CompressedDataManager::new(data_folder_path),
         }
     }
 

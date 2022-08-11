@@ -31,7 +31,7 @@ const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
 /// is made available for compression.
 pub struct UncompressedDataManager {
     /// Path to the folder containing all uncompressed data managed by the storage engine.
-    storage_folder_path: PathBuf,
+    data_folder_path: PathBuf,
     /// The uncompressed segments while they are being built.
     uncompressed_data: HashMap<String, SegmentBuilder>,
     /// Prioritized queue of finished segments that are ready for compression.
@@ -41,9 +41,9 @@ pub struct UncompressedDataManager {
 }
 
 impl UncompressedDataManager {
-    pub fn new(storage_folder_path: PathBuf) -> Self {
+    pub fn new(data_folder_path: PathBuf) -> Self {
         Self {
-            storage_folder_path,
+            data_folder_path,
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             uncompressed_data: HashMap::new(),
             finished_queue: VecDeque::new(),
@@ -127,7 +127,7 @@ impl UncompressedDataManager {
 
         // Iterate through the finished segments to find a segment that is in memory.
         for finished in self.finished_queue.iter_mut() {
-            if let Ok(file_path) = finished.spill_to_apache_parquet(self.storage_folder_path.as_path()) {
+            if let Ok(file_path) = finished.spill_to_apache_parquet(self.data_folder_path.as_path()) {
                 // Add the size of the segment back to the remaining reserved bytes.
                 self.uncompressed_remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
 
@@ -223,8 +223,8 @@ mod tests {
         assert_eq!(first_finished.uncompressed_segment.get_memory_size(), 0);
 
         // The finished segment should be spilled to the "uncompressed" folder under the key.
-        let storage_folder_path = Path::new(&data_manager.storage_folder_path);
-        let uncompressed_path = storage_folder_path.join("modelardb-test/uncompressed");
+        let data_folder_path = Path::new(&data_manager.data_folder_path);
+        let uncompressed_path = data_folder_path.join("modelardb-test/uncompressed");
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1);
     }
 
@@ -243,8 +243,8 @@ mod tests {
         assert_eq!(second_finished.uncompressed_segment.get_memory_size(), 0);
 
         // The finished segments should be spilled to the "uncompressed" folder under the key.
-        let storage_folder_path = Path::new(&data_manager.storage_folder_path);
-        let uncompressed_path = storage_folder_path.join("modelardb-test/uncompressed");
+        let data_folder_path = Path::new(&data_manager.data_folder_path);
+        let uncompressed_path = data_folder_path.join("modelardb-test/uncompressed");
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 2);
     }
 
@@ -339,7 +339,7 @@ mod tests {
     fn create_uncompressed_data_manager() -> (TempDir, UncompressedDataManager) {
         let temp_dir = tempdir().unwrap();
 
-        let storage_folder_path = temp_dir.path().to_path_buf();
-        (temp_dir, UncompressedDataManager::new(storage_folder_path))
+        let data_folder_path = temp_dir.path().to_path_buf();
+        (temp_dir, UncompressedDataManager::new(data_folder_path))
     }
 }

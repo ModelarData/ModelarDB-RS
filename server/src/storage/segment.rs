@@ -204,9 +204,9 @@ impl FinishedSegment {
     /// If in memory, spill the segment to an Apache Parquet file and return the path, otherwise return Err.
     pub fn spill_to_apache_parquet(
         &mut self,
-        storage_folder_path: &Path,
+        data_folder_path: &Path,
     ) -> Result<PathBuf, IOError> {
-        let folder_path = storage_folder_path.join(self.key.clone());
+        let folder_path = data_folder_path.join(self.key.clone());
         let spilled = self
             .uncompressed_segment
             .spill_to_apache_parquet(folder_path.as_path())?;
