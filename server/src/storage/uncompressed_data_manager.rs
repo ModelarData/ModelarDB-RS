@@ -96,8 +96,8 @@ impl UncompressedDataManager {
         Ok(())
     }
 
-    /// Remove the oldest [`FinishedSegment`] from the queue and return it. Return `None` if the queue
-    /// of finished segments is empty.
+    /// Remove the oldest [`FinishedSegment`] from the queue and return it. Return [`None`] if the
+    /// queue of finished segments is empty.
     pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
         if let Some(finished_segment) = self.finished_queue.pop_front() {
             // Add the memory size of the removed FinishedSegment back to the remaining bytes.
@@ -121,7 +121,7 @@ impl UncompressedDataManager {
     }
 
     /// Spill the first in-memory [`FinishedSegment`] in the queue of finished segments. If no
-    /// in-memory finished segments could be found, panic.
+    /// in-memory finished segments could be found, [`panic`](core::panic).
     fn spill_finished_segment(&mut self) {
         info!("Not enough memory to create segment. Spilling an already finished segment.");
 

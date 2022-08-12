@@ -70,14 +70,14 @@ impl StorageEngine {
         }
     }
 
-    /// Pass `message` to [`UncompressedDataManager`]. Return Ok if the message was successfully
-    /// inserted, otherwise return Err.
+    /// Pass `message` to [`UncompressedDataManager`]. Return [`Ok`] if the message was successfully
+    /// inserted, otherwise return [`Err`].
     pub fn insert_message(&mut self, message: Message) -> Result<(), String> {
         self.uncompressed_data_manager.insert_message(message)
     }
 
     /// Retrieve the oldest [`FinishedSegment`] from [`UncompressedDataManager`] and return it.
-    /// Return `None` if there are no finished segments.
+    /// Return [`None`] if there are no finished segments.
     pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
         self.uncompressed_data_manager.get_finished_segment()
     }
@@ -113,7 +113,7 @@ impl StorageEngine {
 
     // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
     /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`
-    /// must use the extension '.parquet'. Return Ok if the file was written successfully,
+    /// must use the extension '.parquet'. Return [`Ok`] if the file was written successfully,
     /// otherwise [`ParquetError`].
     pub fn write_batch_to_apache_parquet_file(
         batch: RecordBatch,
@@ -142,7 +142,7 @@ impl StorageEngine {
     }
 
     /// Read all rows from the Apache Parquet file at the location given by `file_path` and return them
-    /// in a record batch. If the file could not be read successfully, [`ParquetError`] is returned.
+    /// in a [`RecordBatch`]. If the file could not be read successfully, [`ParquetError`] is returned.
     pub fn read_entire_apache_parquet_file(file_path: &Path) -> Result<RecordBatch, ParquetError> {
         let error = ParquetError::General(
             format!("Apache Parquet file at path '{}' could not be read.", file_path.display())
