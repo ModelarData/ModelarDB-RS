@@ -44,15 +44,14 @@ use crate::storage::segment::{FinishedSegment, SegmentBuilder};
 use crate::storage::time_series::CompressedTimeSeries;
 use crate::types::{ArrowTimestamp, ArrowValue};
 
-// TODO: Look into moving handling of uncompressed and compressed data into separate structs.
 // TODO: Look into custom errors for all errors in storage engine.
 
-// Note that the initial capacity has to be a multiple of 64 bytes to avoid the actual capacity
+// Note that the capacity has to be a multiple of 64 bytes to avoid the actual capacity
 // being larger due to internal alignment when allocating memory for the builders. The reserved
 // bytes for compressed data is a signed integer since compressed data is inserted first and the
 // remaining bytes are checked after. This means that the remaining bytes can be negative briefly
 // until compressed data is saved to disk.
-const INITIAL_BUILDER_CAPACITY: usize = 64;
+const BUILDER_CAPACITY: usize = 64;
 const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
 const COMPRESSED_RESERVED_MEMORY_IN_BYTES: isize = 5000;
 
@@ -63,6 +62,9 @@ const APACHE_PARQUET_FILE_SIGNATURE: &[u8] = &[80, 65, 82, 49]; // PAR1.
 
 /// Manages all uncompressed and compressed data, both while being built and when finished.
 pub struct StorageEngine {
+    // TODO: Maybe change this to an actual Path instead of a String.
+    /// Path to the folder containing all uncompressed and compressed data managed by the storage engine.
+    storage_folder_path: String,
     /// The uncompressed segments while they are being built.
     uncompressed_data: HashMap<String, SegmentBuilder>,
     /// Prioritized queue of finished segments that are ready for compression.
@@ -78,8 +80,9 @@ pub struct StorageEngine {
 }
 
 impl StorageEngine {
-    pub fn new() -> Self {
+    pub fn new(storage_folder_path: String) -> Self {
         Self {
+            storage_folder_path,
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             uncompressed_data: HashMap::new(),
             finished_queue: VecDeque::new(),
@@ -291,7 +294,7 @@ impl StorageEngine {
 
         // Iterate through the finished segments to find a segment that is in memory.
         for finished in self.finished_queue.iter_mut() {
-            if let Ok(path) = finished.spill_to_apache_parquet() {
+            if let Ok(path) = finished.spill_to_apache_parquet(self.storage_folder_path.clone()) {
                 // Add the size of the segment back to the remaining reserved bytes.
                 self.uncompressed_remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
 
@@ -318,7 +321,9 @@ impl StorageEngine {
 
             let mut time_series = self.compressed_data.remove(&key).unwrap();
             let time_series_size = time_series.size_in_bytes.clone();
-            time_series.save_to_apache_parquet(key.clone());
+
+            let folder_path = format!("{}/{}", self.storage_folder_path.clone(), key.clone());
+            time_series.save_to_apache_parquet(folder_path);
 
             self.compressed_remaining_memory_in_bytes += time_series_size as isize;
 
@@ -335,7 +340,8 @@ mod tests {
     use super::*;
     use std::fs::read_dir;
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::thread;
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     use tempfile::{tempdir, TempDir};
 
@@ -344,7 +350,7 @@ mod tests {
     // Tests for uncompressed data.
     #[test]
     fn test_cannot_insert_invalid_message() {
-        let mut storage_engine = StorageEngine::new();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
 
         let message = Message::new("ModelarDB/test", "invalid", 1);
         storage_engine.insert_message(message.clone());
@@ -354,7 +360,7 @@ mod tests {
 
     #[test]
     fn test_can_insert_message_into_new_segment() {
-        let mut storage_engine = StorageEngine::new();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
         let key = insert_generated_message(&mut storage_engine, "ModelarDB/test".to_owned());
 
         assert!(storage_engine.uncompressed_data.contains_key(&key));
@@ -363,7 +369,7 @@ mod tests {
 
     #[test]
     fn test_can_insert_message_into_existing_segment() {
-        let mut storage_engine = StorageEngine::new();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
         let key = insert_multiple_messages(2, &mut storage_engine);
 
         assert!(storage_engine.uncompressed_data.contains_key(&key));
@@ -372,16 +378,16 @@ mod tests {
 
     #[test]
     fn test_can_get_finished_segment_when_finished() {
-        let mut storage_engine = StorageEngine::new();
-        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY, &mut storage_engine);
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut storage_engine);
 
         assert!(storage_engine.get_finished_segment().is_some());
     }
 
     #[test]
     fn test_can_get_multiple_finished_segments_when_multiple_finished() {
-        let mut storage_engine = StorageEngine::new();
-        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY * 2, &mut storage_engine);
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let key = insert_multiple_messages(BUILDER_CAPACITY * 2, &mut storage_engine);
 
         assert!(storage_engine.get_finished_segment().is_some());
         assert!(storage_engine.get_finished_segment().is_some());
@@ -389,25 +395,77 @@ mod tests {
 
     #[test]
     fn test_cannot_get_finished_segment_when_not_finished() {
-        let mut storage_engine = StorageEngine::new();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
 
         assert!(storage_engine.get_finished_segment().is_none());
     }
 
     #[test]
+    fn test_spill_first_finished_segment_if_out_of_memory() {
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let reserved_memory = storage_engine.uncompressed_remaining_memory_in_bytes;
+
+        // Insert messages into the storage engine until a segment is spilled to Apache Parquet.
+        // If there is enough memory to hold n full segments, we need n + 1 to spill a segment.
+        let max_full_segments = reserved_memory / SegmentBuilder::get_memory_size();
+        let message_count = (max_full_segments * BUILDER_CAPACITY) + 1;
+        insert_multiple_messages(message_count, &mut storage_engine);
+
+        // The first finished segment should have a memory size of 0 since it is spilled to disk.
+        let first_finished = storage_engine.finished_queue.pop_front().unwrap();
+        assert_eq!(first_finished.uncompressed_segment.get_memory_size(), 0);
+
+        // The finished segment should be spilled to the "uncompressed" folder under the key.
+        let storage_folder_path = Path::new(&storage_engine.storage_folder_path);
+        let uncompressed_path = storage_folder_path.join("modelardb-test/uncompressed");
+        assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1);
+    }
+
+    #[test]
+    fn test_ignore_already_spilled_segments_when_spilling() {
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        insert_multiple_messages(BUILDER_CAPACITY * 2, &mut storage_engine);
+
+        storage_engine.spill_finished_segment();
+        // When spilling one more, the first segment should be ignored since it is already spilled.
+        storage_engine.spill_finished_segment();
+
+        storage_engine.finished_queue.pop_front();
+        // The second finished segment should have a memory size of 0 since it is spilled to disk.
+        let second_finished = storage_engine.finished_queue.pop_front().unwrap();
+        assert_eq!(second_finished.uncompressed_segment.get_memory_size(), 0);
+
+        // The finished segments should be spilled to the "uncompressed" folder under the key.
+        let storage_folder_path = Path::new(&storage_engine.storage_folder_path);
+        let uncompressed_path = storage_folder_path.join("modelardb-test/uncompressed");
+        assert_eq!(uncompressed_path.read_dir().unwrap().count(), 2);
+    }
+
+    #[test]
+    fn test_remaining_memory_incremented_when_spilling_finished_segment() {
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+
+        insert_multiple_messages(BUILDER_CAPACITY, &mut storage_engine);
+        let remaining_memory = storage_engine.uncompressed_remaining_memory_in_bytes.clone();
+        storage_engine.spill_finished_segment();
+
+        assert!(remaining_memory < storage_engine.uncompressed_remaining_memory_in_bytes);
+    }
+
+    #[test]
     fn test_remaining_memory_decremented_when_creating_new_segment() {
-        let mut storage_engine = StorageEngine::new();
-        let initial_remaining_memory = storage_engine.uncompressed_remaining_memory_in_bytes;
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let reserved_memory = storage_engine.uncompressed_remaining_memory_in_bytes;
 
         insert_generated_message(&mut storage_engine, "ModelarDB/test".to_owned());
 
-        assert!(initial_remaining_memory > storage_engine.uncompressed_remaining_memory_in_bytes);
+        assert!(reserved_memory > storage_engine.uncompressed_remaining_memory_in_bytes);
     }
 
     #[test]
     fn test_remaining_memory_incremented_when_popping_in_memory() {
-        let mut storage_engine = StorageEngine::new();
-        let key = insert_multiple_messages(INITIAL_BUILDER_CAPACITY, &mut storage_engine);
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut storage_engine);
 
         let remaining_memory = storage_engine.uncompressed_remaining_memory_in_bytes.clone();
         storage_engine.get_finished_segment();
@@ -416,9 +474,23 @@ mod tests {
     }
 
     #[test]
+    fn test_remaining_memory_not_incremented_when_popping_spilled() {
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut storage_engine);
+
+        storage_engine.spill_finished_segment();
+        let remaining_memory = storage_engine.uncompressed_remaining_memory_in_bytes.clone();
+
+        // Since the finished segment is not in memory, the remaining memory should not increase when popped.
+        storage_engine.get_finished_segment();
+
+        assert_eq!(remaining_memory, storage_engine.uncompressed_remaining_memory_in_bytes);
+    }
+
+    #[test]
     #[should_panic(expected = "Not enough reserved memory to hold all necessary segment builders.")]
     fn test_panic_if_not_enough_reserved_memory() {
-        let mut storage_engine = StorageEngine::new();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
         let reserved_memory = storage_engine.uncompressed_remaining_memory_in_bytes;
 
         // If there is enough reserved memory to hold n builders, we need to create n + 1 to panic.
@@ -461,7 +533,7 @@ mod tests {
     #[should_panic(expected = "Schema of record batch does not match compressed segment schema.")]
     fn test_panic_if_inserting_invalid_compressed_segment() {
         let invalid = test_util::get_invalid_compressed_segment_record_batch();
-        let mut storage_engine = StorageEngine::new();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
 
         storage_engine.insert_compressed_data("key".to_owned(), invalid);
     }
@@ -469,7 +541,7 @@ mod tests {
     #[test]
     fn test_can_insert_compressed_segment_into_new_time_series() {
         let segment = test_util::get_compressed_segment_record_batch();
-        let mut storage_engine = StorageEngine::new();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
 
         storage_engine.insert_compressed_data("key".to_owned(), segment);
 
@@ -481,7 +553,7 @@ mod tests {
     #[test]
     fn test_can_insert_compressed_segment_into_existing_time_series() {
         let segment = test_util::get_compressed_segment_record_batch();
-        let mut storage_engine = StorageEngine::new();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
 
         storage_engine.insert_compressed_data("key".to_owned(), segment.clone());
         let previous_size = storage_engine.compressed_data.get("key").unwrap().size_in_bytes;
@@ -491,15 +563,55 @@ mod tests {
     }
 
     #[test]
-    fn test_remaining_bytes_decremented_when_inserting() {
+    fn test_save_first_compressed_time_series_if_out_of_memory() {
         let segment = test_util::get_compressed_segment_record_batch();
-        let mut storage_engine = StorageEngine::new();
-        let initial_remaining_memory = storage_engine.compressed_remaining_memory_in_bytes;
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let reserved_memory = storage_engine.compressed_remaining_memory_in_bytes as usize;
+
+        // Insert compressed data into the storage engine until data is saved to Apache Parquet.
+        let max_compressed_segments = reserved_memory / test_util::COMPRESSED_SEGMENT_SIZE;
+        for _ in 0..max_compressed_segments + 1 {
+            storage_engine.insert_compressed_data("modelardb-test".to_owned(), segment.clone());
+        }
+
+        // The compressed data should be saved to the "compressed" folder under the key.
+        let storage_folder_path = Path::new(&storage_engine.storage_folder_path);
+        let compressed_path = storage_folder_path.join("modelardb-test/compressed");
+        assert_eq!(compressed_path.read_dir().unwrap().count(), 1);
+    }
+
+    #[test]
+    fn test_remaining_bytes_decremented_when_inserting_compressed_segment() {
+        let segment = test_util::get_compressed_segment_record_batch();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let reserved_memory = storage_engine.compressed_remaining_memory_in_bytes;
 
         storage_engine.insert_compressed_data("key".to_owned(), segment);
 
-        assert!(storage_engine.compressed_remaining_memory_in_bytes < initial_remaining_memory);
+        assert!(reserved_memory > storage_engine.compressed_remaining_memory_in_bytes);
     }
+
+	#[test]
+	fn test_remaining_memory_incremented_when_saving_compressed_time_series() {
+        let segment = test_util::get_compressed_segment_record_batch();
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+
+        storage_engine.insert_compressed_data("modelardb-test".to_owned(), segment.clone());
+
+        // Set the remaining memory to a negative value since data is only saved when out of memory.
+        storage_engine.compressed_remaining_memory_in_bytes = -1;
+        storage_engine.save_compressed_data();
+
+        assert!(-1 < storage_engine.compressed_remaining_memory_in_bytes);
+	}
+
+	/// Create the storage engine with a folder that is automatically deleted once the test is finished.
+	fn create_storage_engine() -> (TempDir, StorageEngine) {
+		let temp_dir = tempdir().unwrap();
+		let storage_folder_path = temp_dir.path().to_str().unwrap().to_string();
+
+        (temp_dir, StorageEngine::new(storage_folder_path))
+	}
 
     // Tests for Apache Parquet.
     #[test]
@@ -548,7 +660,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_batch_from_apache_parquet_file() {
+    fn test_read_entire_apache_parquet_file() {
         let file_name = "test.parquet".to_owned();
         let (_temp_dir, path, batch) = create_apache_parquet_file_in_temp_dir(file_name);
 
@@ -559,7 +671,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_batch_from_non_parquet_file() {
+    fn test_read_from_non_apache_parquet_file() {
         let temp_dir = tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
         File::create(path.clone()).unwrap();
@@ -570,7 +682,7 @@ mod tests {
     }
 
     #[test]
-    fn test_read_batch_from_non_existent_path() {
+    fn test_read_from_non_existent_path() {
         let temp_dir = tempdir().unwrap();
         let path = temp_dir.path().join("none.parquet");
         let result = StorageEngine::read_entire_apache_parquet_file(path.as_path());

@@ -48,10 +48,15 @@ impl DataPoint {
                 } else {
                     if let Ok(timestamp) = timestamp_value[0].parse::<Timestamp>() {
                         if let Ok(value) = timestamp_value[1].parse::<Value>() {
+                            // Format the topic to make it a viable folder name.
+                            let topic = message.topic().to_owned()
+                                .replace("/", "-")
+                                .to_lowercase();
+
                             Ok(Self {
                                 timestamp,
                                 value,
-                                metadata: vec![message.topic().to_owned().replace("/", "-")],
+                                metadata: vec![topic],
                             })
                         } else {
                             Err("Value could not be parsed.".to_owned())
@@ -91,7 +96,7 @@ mod tests {
         let data_point = result.unwrap();
         assert_eq!(data_point.timestamp, 1657878396943245);
         assert_eq!(data_point.value, 30 as f32);
-        assert_eq!(data_point.metadata, vec!["ModelarDB-test".to_owned()])
+        assert_eq!(data_point.metadata, vec!["modelardb-test".to_owned()])
     }
 
     #[test]
