@@ -44,21 +44,22 @@ pub const PMC_MEAN_ID: u8 = 2;
 pub const SWING_ID: u8 = 3;
 pub const GORILLA_ID: u8 = 4;
 
-/// Size of `types::Value` in bytes.
+/// Size of [`Value`] in bytes.
 const VALUE_SIZE_IN_BYTES: u8 = mem::size_of::<Value>() as u8;
 
-/// Size of `types::Value` in bits.
+/// Size of [`Value`] in bits.
 const VALUE_SIZE_IN_BITS: u8 = 8 * VALUE_SIZE_IN_BYTES as u8;
 
 /// General error bound that is guaranteed to not be negative, infinite, or NAN.
-/// For `PMCMean` and `Swing` the error bound is interpreted as a relative per
-/// value error bound in percentage, while `Gorilla` uses lossless compression.
+/// For [`PMCMean`] and [`Swing`] the error bound is interpreted as a relative
+/// per value error bound in percentage, while [`Gorilla`] uses lossless
+/// compression.
 #[derive(Copy, Clone)]
 pub struct ErrorBound(f32);
 
 impl ErrorBound {
-    /// Return `ErrorBound` if `error_bound` is a positive finite value,
-    /// otherwise `CompressionError`.
+    /// Return [`ErrorBound`] if `error_bound` is a positive finite value,
+    /// otherwise [`CompressionError`](ModelarDBError::CompressionError).
     pub fn try_new(error_bound: f32) -> Result<Self, ModelarDBError> {
         if error_bound < 0.0 || error_bound.is_infinite() || error_bound.is_nan() {
             Err(ModelarDBError::CompressionError(
@@ -70,14 +71,14 @@ impl ErrorBound {
     }
 }
 
-/// Enable equal and not equal for `ErrorBound` and `f32`.
+/// Enable equal and not equal for [`ErrorBound`] and [`f32`].
 impl PartialEq<ErrorBound> for f32 {
     fn eq(&self, other: &ErrorBound) -> bool {
         self.eq(&other.0)
     }
 }
 
-/// Enable less than and greater than for `ErrorBound` and `f32`.
+/// Enable less than and greater than for [`ErrorBound`] and [`f32`].
 impl PartialOrd<ErrorBound> for f32 {
     fn partial_cmp(&self, other: &ErrorBound) -> Option<Ordering> {
         self.partial_cmp(&other.0)
@@ -88,13 +89,14 @@ impl PartialOrd<ErrorBound> for f32 {
 pub struct SelectedModel {
     /// Id of the model type that created this model.
     pub model_type_id: u8,
-    /// The selected model's length.
+    /// Index of the last data point in the `UncompressedSegment` that the
+    /// selected model represents.
     pub end_index: usize,
     /// The selected model's minimum value.
     pub min_value: Value,
     /// The selected model's maximum value.
     pub max_value: Value,
-    /// Data required in addition to `self.min` and `self.max` for the model to
+    /// Data required in addition to `min` and `max` for the model to
     /// reconstruct the values it represents when given a specific timestamp.
     pub values: Vec<u8>,
 }
@@ -130,23 +132,26 @@ pub fn select_model(
         (SWING_ID, swing.get_bytes_per_value()),
         (GORILLA_ID, gorilla.get_bytes_per_value()),
     ];
+    dbg!(bytes_per_value);
 
     // unwrap() cannot fail as the array is not empty and there are no NaN.
-    let model_type_id = bytes_per_value
+    let selected_model_type_id = bytes_per_value
         .iter()
         .min_by(|x, y| f32::partial_cmp(&x.1, &y.1).unwrap())
         .unwrap()
         .0;
 
-    match model_type_id {
+    match selected_model_type_id {
         PMC_MEAN_ID => {
             let value = pmc_mean.get_model();
             let end_index = start_index + pmc_mean.get_length() - 1;
             SelectedModel::new(PMC_MEAN_ID, end_index, value, value, vec![])
         }
         SWING_ID => {
-            let (min_value, max_value) = swing.get_model();
+            let (start_value, end_value) = swing.get_model();
             let end_index = start_index + swing.get_length() - 1;
+            let min_value = Value::min(start_value, end_value);
+            let max_value = Value::max(start_value, end_value);
             SelectedModel::new(SWING_ID, end_index, min_value, max_value, vec![])
         }
         GORILLA_ID => {
@@ -154,10 +159,14 @@ pub fn select_model(
             let uncompressed_values = &uncompressed_values.values()[start_index..end_index];
             let min_value = uncompressed_values
                 .iter()
-                .fold(Value::MAX, |x, y| Value::min(x, *y));
+                .fold(Value::NAN, |current_min, value| {
+                    Value::min(current_min, *value)
+                });
             let max_value = uncompressed_values
                 .iter()
-                .fold(Value::MIN, |x, y| Value::min(x, *y));
+                .fold(Value::NAN, |current_max, value| {
+                    Value::max(current_max, *value)
+                });
             let values = gorilla.get_compressed_values();
             SelectedModel::new(GORILLA_ID, end_index, min_value, max_value, values)
         }
@@ -311,8 +320,13 @@ fn equal_or_nan(v1: f64, v2: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion::from_slice::FromSlice;
     use proptest::num;
     use proptest::{prop_assert, prop_assume, proptest};
+
+    use crate::types::TimestampArray;
+
+    const UNCOMPRESSED_TIMESTAMPS: &[Timestamp] = &[100, 200, 300, 400, 500];
 
     // Tests for ErrorBound.
     proptest! {
@@ -340,6 +354,82 @@ mod tests {
     #[test]
     fn test_error_bound_cannot_be_nan() {
         assert!(ErrorBound::try_new(f32::NAN).is_err())
+    }
+
+    // Tests for SelectedModel.
+    #[test]
+    fn test_model_selected_model_attributes_for_pmc_mean() {
+        let uncompressed_timestamps = TimestampArray::from_slice(UNCOMPRESSED_TIMESTAMPS);
+        let uncompressed_values = ValueArray::from(vec![10.0, 10.0, 10.0, 10.0, 10.0]);
+
+        let selected_model = create_selected_model(&uncompressed_timestamps, &uncompressed_values);
+
+        assert_eq!(PMC_MEAN_ID, selected_model.model_type_id);
+        assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
+        assert_eq!(10.0, selected_model.min_value);
+        assert_eq!(10.0, selected_model.max_value);
+        assert_eq!(0, selected_model.values.len());
+    }
+
+    #[test]
+    fn test_model_selected_model_attributes_for_increasing_swing() {
+        let uncompressed_timestamps = TimestampArray::from_slice(UNCOMPRESSED_TIMESTAMPS);
+        let uncompressed_values = ValueArray::from(vec![10.0, 20.0, 30.0, 40.0, 50.0]);
+        let selected_model = create_selected_model(&uncompressed_timestamps, &uncompressed_values);
+
+        assert_eq!(SWING_ID, selected_model.model_type_id);
+        assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
+        assert_eq!(10.0, selected_model.min_value);
+        assert_eq!(50.0, selected_model.max_value);
+        assert_eq!(0, selected_model.values.len());
+    }
+
+    #[test]
+    fn test_model_selected_model_attributes_for_decreasing_swing() {
+        let uncompressed_timestamps = TimestampArray::from_slice(UNCOMPRESSED_TIMESTAMPS);
+        let uncompressed_values = ValueArray::from(vec![50.0, 40.0, 30.0, 20.0, 10.0]);
+        let selected_model = create_selected_model(&uncompressed_timestamps, &uncompressed_values);
+
+        assert_eq!(SWING_ID, selected_model.model_type_id);
+        assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
+        assert_eq!(10.0, selected_model.min_value);
+        assert_eq!(50.0, selected_model.max_value);
+        assert_eq!(0, selected_model.values.len());
+    }
+
+    #[test]
+    fn test_model_selected_model_attributes_for_gorilla() {
+        let uncompressed_timestamps = TimestampArray::from_slice(UNCOMPRESSED_TIMESTAMPS);
+        let uncompressed_values = ValueArray::from(vec![37.0, 73.0, 37.0, 73.0, 37.0]);
+        let selected_model = create_selected_model(&uncompressed_timestamps, &uncompressed_values);
+
+        assert_eq!(GORILLA_ID, selected_model.model_type_id);
+        assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
+        assert_eq!(37.0, selected_model.min_value);
+        assert_eq!(73.0, selected_model.max_value);
+        assert_eq!(10, selected_model.values.len());
+    }
+
+    fn create_selected_model(
+        uncompressed_timestamps: &TimestampArray,
+        uncompressed_values: &ValueArray,
+    ) -> SelectedModel {
+        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let mut pmc_mean = PMCMean::new(error_bound);
+        let mut swing = Swing::new(error_bound);
+        let mut gorilla = Gorilla::new();
+
+        let mut pmc_mean_has_fit_all = true;
+        let mut swing_has_fit_all = true;
+        for index in 0..uncompressed_timestamps.len() {
+            let timestamp = uncompressed_timestamps.value(index);
+            let value = uncompressed_values.value(index);
+
+            pmc_mean_has_fit_all = pmc_mean_has_fit_all && pmc_mean.fit_value(value);
+            swing_has_fit_all = swing_has_fit_all && swing.fit_data_point(timestamp, value);
+            gorilla.compress_value(value);
+        }
+        select_model(0, pmc_mean, swing, gorilla, &uncompressed_values)
     }
 
     // Tests for length().

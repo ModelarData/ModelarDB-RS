@@ -53,8 +53,8 @@ impl PMCMean {
     }
 
     /// Attempt to update the current model of type PMC-Mean to also represent
-    /// `value`. Returns `true` if the model can also represent `value`,
-    /// otherwise `false`.
+    /// `value`. Returns [`true`] if the model can also represent `value`,
+    /// otherwise [`false`].
     pub fn fit_value(&mut self, value: Value) -> bool {
         let next_min_value = Value::min(self.min_value, value);
         let next_max_value = Value::max(self.max_value, value);
@@ -74,14 +74,14 @@ impl PMCMean {
         }
     }
 
+    /// Return the number of values the model currently represented.
+    pub fn get_length(&self) -> usize {
+        self.length
+    }
+
     /// Return the number of bytes the current model uses per data point on average.
     pub fn get_bytes_per_value(&self) -> f32 {
         models::VALUE_SIZE_IN_BYTES as f32 / self.length as f32
-    }
-
-    /// Return the number of values the model currently represented.
-    pub fn get_length(&self) -> usize {
-	self.length
     }
 
     /// Return the current model. For a model of type PMC-Mean, its coefficient
@@ -90,8 +90,8 @@ impl PMCMean {
         (self.sum_of_values / self.length as f64) as Value
     }
 
-    /// Determine if `approximate_value` is within `PMCMean`'s relative error
-    /// bound of `real_value`.
+    /// Determine if `approximate_value` is within [`PMCMean's`](PMCMean)
+    /// relative error bound of `real_value`.
     fn is_value_within_error_bound(&self, real_value: Value, approximate_value: Value) -> bool {
         // Needed because result becomes NAN and approximate_value is rejected
         // if approximate_value and real_value are zero, and because NAN != NAN.

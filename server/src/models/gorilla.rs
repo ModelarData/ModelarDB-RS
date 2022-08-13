@@ -58,7 +58,7 @@ impl Gorilla {
     }
 
     /// Compress `value` using XOR and a variable length binary encoding and
-    /// append the compressed value to an internal buffer in `Gorilla`.
+    /// append the compressed value to an internal buffer in [`Gorilla`].
     pub fn compress_value(&mut self, value: Value) {
         let value_as_integer = value.to_bits();
         let last_value_as_integer = self.last_value.to_bits();
@@ -115,7 +115,7 @@ impl Gorilla {
     /// Return the number of values currently compressed using XOR and a
     /// variable length binary encoding.
     pub fn get_length(&self) -> usize {
-	self.length
+        self.length
     }
 
     /// Return the number of bytes currently used per data point on average.
@@ -248,14 +248,14 @@ fn decompress_values(
     }
 }
 
-/// Read one or multiple bits from a `[u8]`. `BitReader` is implemented based on
-/// [code published by Ilkka Rauta] dual-licensed under MIT and Apache2.
+/// Read one or multiple bits from a `[u8]`. [`BitReader`] is implemented based
+/// on [code published by Ilkka Rauta] dual-licensed under MIT and Apache2.
 ///
 /// [code published by Ilkka Rauta]: https://github.com/irauta/bitreader
 struct BitReader<'a> {
-    /// Next bit to read from `self.bytes`.
+    /// Next bit to read from `bytes`.
     next_bit: u64,
-    /// Bits packed into one or more `u8`s.
+    /// Bits packed into one or more [`u8s`](u8).
     bytes: &'a [u8],
 }
 
@@ -268,12 +268,12 @@ impl<'a> BitReader<'a> {
         }
     }
 
-    /// Read the next bit from the `BitReader`.
+    /// Read the next bit from the [`BitReader`].
     fn read_bit(&mut self) -> bool {
         self.read_bits(1) == 1
     }
 
-    /// Read the next `number_of_bits` bits from the `BitReader`.
+    /// Read the next `number_of_bits` bits from the [`BitReader`].
     fn read_bits(&mut self, number_of_bits: u8) -> u32 {
         let mut value: u64 = 0;
         let start_bit = self.next_bit;
@@ -290,13 +290,13 @@ impl<'a> BitReader<'a> {
     }
 }
 
-/// Append one or multiple bits to a `vec<u8>`.
+/// Append one or multiple bits to a [`Vec<u8>`].
 struct BitVecBuilder {
-    /// `u8` currently used for storing the bits.
+    /// [`u8`] currently used for storing the bits.
     current_byte: u8,
     /// Bits remaining in `current_byte`.
     remaining_bits: u8,
-    /// Bits packed into one or more `u8`s.
+    /// Bits packed into one or more [`u8s`](u8).
     bytes: Vec<u8>,
 }
 
@@ -309,17 +309,17 @@ impl BitVecBuilder {
         }
     }
 
-    /// Append a zero bit to the `BitVecBuilder`.
+    /// Append a zero bit to the [`BitVecBuilder`].
     fn append_a_zero_bit(&mut self) {
         self.append_bits(0, 1)
     }
 
-    /// Append a one bit to the `BitVecBuilder`.
+    /// Append a one bit to the [`BitVecBuilder`].
     fn append_a_one_bit(&mut self) {
         self.append_bits(1, 1)
     }
 
-    /// Append `number_of_bits` from `bits` to the `BitVecBuilder`.
+    /// Append `number_of_bits` from `bits` to the [`BitVecBuilder`].
     fn append_bits(&mut self, bits: u32, number_of_bits: u8) {
         let mut number_of_bits = number_of_bits;
 
@@ -344,8 +344,8 @@ impl BitVecBuilder {
         }
     }
 
-    /// Return `true` if no bits have been appended to the `BitVecBuilder`,
-    /// otherwise `false`.
+    /// Return [`true`] if no bits have been appended to the [`BitVecBuilder`],
+    /// otherwise [`false`].
     fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
@@ -355,8 +355,8 @@ impl BitVecBuilder {
         self.bytes.len() + (self.remaining_bits != 8) as usize
     }
 
-    /// Consume the `BitVecBuilder` and return the appended bits packed into a
-    /// `Vec<u8>`.
+    /// Consume the [`BitVecBuilder`] and return the appended bits packed into a
+    /// [`Vec<u8>`].
     fn finish(mut self) -> Vec<u8> {
         if self.remaining_bits != 8 {
             self.bytes.push(self.current_byte);
@@ -568,49 +568,49 @@ mod tests {
 
     #[test]
     fn test_empty_bit_vec_builder_length() {
-        assert!(BitVecBuilder::new().length() == 0);
+        assert_eq!(BitVecBuilder::new().length(), 0);
     }
 
     #[test]
     fn test_one_one_bit_vec_builder_length() {
         let mut bit_vec_builder = BitVecBuilder::new();
         bit_vec_builder.append_a_one_bit();
-        assert!(bit_vec_builder.length() == 1);
+        assert_eq!(bit_vec_builder.length(), 1);
     }
 
     #[test]
     fn test_one_zero_bit_vec_builder_length() {
         let mut bit_vec_builder = BitVecBuilder::new();
         bit_vec_builder.append_a_zero_bit();
-        assert!(bit_vec_builder.length() == 1);
+        assert_eq!(bit_vec_builder.length(), 1);
     }
 
     #[test]
     fn test_eight_one_bits_vec_builder_length() {
         let mut bit_vec_builder = BitVecBuilder::new();
         (0..8).for_each(|_| bit_vec_builder.append_a_one_bit());
-        assert!(bit_vec_builder.length() == 1);
+        assert_eq!(bit_vec_builder.length(), 1);
     }
 
     #[test]
     fn test_eight_zero_bits_vec_builder_length() {
         let mut bit_vec_builder = BitVecBuilder::new();
         (0..8).for_each(|_| bit_vec_builder.append_a_zero_bit());
-        assert!(bit_vec_builder.length() == 1);
+        assert_eq!(bit_vec_builder.length(), 1);
     }
 
     #[test]
     fn test_nine_one_bits_vec_builder_length() {
         let mut bit_vec_builder = BitVecBuilder::new();
         (0..9).for_each(|_| bit_vec_builder.append_a_one_bit());
-        assert!(bit_vec_builder.length() == 2);
+        assert_eq!(bit_vec_builder.length(), 2);
     }
 
     #[test]
     fn test_nine_zero_bits_vec_builder_length() {
         let mut bit_vec_builder = BitVecBuilder::new();
         (0..9).for_each(|_| bit_vec_builder.append_a_zero_bit());
-        assert!(bit_vec_builder.length() == 2);
+        assert_eq!(bit_vec_builder.length(), 2);
     }
 
     // Tests combining BitReader and BitVecBuilder.

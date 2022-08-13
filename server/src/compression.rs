@@ -13,9 +13,9 @@
  * limitations under the License.
  */
 
-//! Compress `UncompressedSegment`s provided by `StorageEngine` using the model
-//! types in `models` to produce compressed segments which are returned to
-//! `StorageEngine`.
+//! Compress `UncompressedSegments` provided by [`StorageEngine`] using the
+//! model types in [`models`] to produce compressed segments which are returned
+//! to [`StorageEngine`].
 
 use std::sync::Arc;
 
@@ -36,10 +36,12 @@ const GORILLA_MAXIMUM_LENGTH: usize = 50;
 
 /// Compress the regular `uncompressed_timestamps` using a start time, end time,
 /// and a sampling interval, and `uncompressed_values` within `error_bound`
-/// using the model types in `models`. Returns `CompressionError` if
+/// using the model types in [`models`]. Returns
+/// [`CompressionError`](ModelarDBError::CompressionError) if
 /// `uncompressed_timestamps` and `uncompressed_values` have different lengths,
-/// otherwise the resulting compressed segments are returned as a `RecordBatch`
-/// with the schema provided by `get_compressed_segment_schema_ref()`.
+/// otherwise the resulting compressed segments are returned as a
+/// [`RecordBatch`] with the schema provided by
+/// [`get_compressed_segment_schema()`](StorageEngine::get_compressed_segment_schema()).
 pub fn try_compress(
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
@@ -55,16 +57,16 @@ pub fn try_compress(
     }
 
     // Enough memory for end_index elements are allocated to never require
-    // reallocation as one model is created per data point in the worst cast.
+    // reallocation as one model is created per data point in the worst case.
     let end_index = uncompressed_timestamps.len();
-    let mut compressed_record_batch_builder = CompressedRecordBatchBuilder::new(end_index);
+    let mut compressed_record_batch_builder = CompressedSegmentBatchBuilder::new(end_index);
 
     // Compress the uncompressed timestamps and uncompressed values.
     let mut current_index = 0;
     while current_index < end_index {
         // Create a compressed segment that represents the data points from
         // current_index to index within error_bound where index <= end_index.
-        let compressed_segment_builder = create_next_compressed_segment(
+        let compressed_segment_builder = CompressedSegmentBuilder::new(
             current_index,
             end_index,
             &uncompressed_timestamps,
@@ -73,35 +75,13 @@ pub fn try_compress(
         );
         current_index += compressed_segment_builder.finish(&mut compressed_record_batch_builder);
     }
-    Ok(compressed_record_batch_builder.finnish())
-}
-
-/// Create a compressed segment that represents the regular timestamps in
-/// `uncompressed_timestamps` and the values in `uncompressed_values` from
-/// `start_index` to index within `error_bound` where index <= `end_index`.
-fn create_next_compressed_segment<'a>(
-    start_index: usize,
-    end_index: usize,
-    uncompressed_timestamps: &'a TimestampArray,
-    uncompressed_values: &'a ValueArray,
-    error_bound: ErrorBound,
-) -> CompressedSegmentBuilder<'a> {
-    let mut compressed_segment_builder =
-        CompressedSegmentBuilder::new(uncompressed_timestamps, uncompressed_values, error_bound);
-
-    let mut current_index = start_index;
-    while compressed_segment_builder.can_fit_more() && current_index < end_index {
-        let timestamp = uncompressed_timestamps.value(current_index);
-        let value = uncompressed_values.value(current_index);
-        compressed_segment_builder.try_to_update_models(timestamp, value);
-        current_index += 1;
-    }
-
-    compressed_segment_builder
+    Ok(compressed_record_batch_builder.finish())
 }
 
 /// A compressed segment being build from an uncompressed segment using the
-/// model types in `models`.
+/// model types in [`models`]. Each of the model types is used to fit models to
+/// the data points, and then the model that uses the fewest number of bytes per
+/// value is selected.
 struct CompressedSegmentBuilder<'a> {
     /// The regular timestamps of the uncompressed segment the compressed
     /// segment is being build from.
@@ -109,55 +89,69 @@ struct CompressedSegmentBuilder<'a> {
     /// The values of the uncompressed segment the compressed segment is being
     /// build from.
     uncompressed_values: &'a ValueArray,
-    /// Index of the first data point in `self.uncompressed_timestamps` and
-    /// `self.uncompressed_values` the compressed segment represents.
+    /// Index of the first data point in `uncompressed_timestamps` and
+    /// `uncompressed_values` the compressed segment represents.
     start_index: usize,
     /// Constant function that currently represents the values in
-    /// `self.uncompressed_values` from `self.start_index` to `self.start_index`
-    /// + `self.pmc_mean.length`.
+    /// `uncompressed_values` from `start_index` to `start_index` +
+    /// `pmc_mean.length`.
     pmc_mean: PMCMean,
-    /// Indicates if `self.pmc_mean` could represent all values in
-    /// `self.uncompressed_values` from `self.start_index` to `current_index` in
-    /// `create_next_compressed_segment()`.
-    pmc_mean_has_fit_all: bool,
-    /// Linear function that represents the values in `self.uncompressed_values`
-    /// from `self.start_index` to `self.start_index` + `self.swing.length`.
+    /// Indicates if `pmc_mean` could represent all values in
+    /// `uncompressed_values` from `start_index` to `current_index` in `new()`.
+    pmc_mean_could_fit_all: bool,
+    /// Linear function that represents the values in `uncompressed_values` from
+    /// `start_index` to `start_index` + `swing.length`.
     swing: Swing,
-    /// Indicates if `self.swing` could represent all values in
-    /// `self.uncompressed_values` from `self.start_index` to `current_index` in
-    /// `create_next_compressed_segment()`.
-    swing_has_fit_all: bool,
-    /// Values in `self.uncompressed_values` from `self.start_index` to
-    /// `self.start_index` + `self.gorilla.length` compressed using lossless
-    /// compression.
+    /// Indicates if `swing` could represent all values in `uncompressed_values`
+    /// from `start_index` to `current_index` in `new()`.
+    swing_could_fit_all: bool,
+    /// Values in `uncompressed_values` from `start_index` to `start_index` +
+    /// `gorilla.length` compressed using lossless compression.
     gorilla: Gorilla,
 }
 
 impl<'a> CompressedSegmentBuilder<'a> {
+    /// Create a compressed segment that represents the regular timestamps in
+    /// `uncompressed_timestamps` and the values in `uncompressed_values` from
+    /// `start_index` to index within `error_bound` where index <= `end_index`.
     fn new(
+        start_index: usize,
+        end_index: usize,
         uncompressed_timestamps: &'a TimestampArray,
         uncompressed_values: &'a ValueArray,
         error_bound: ErrorBound,
     ) -> Self {
-        Self {
+        let mut compressed_segment_builder = Self {
             uncompressed_timestamps,
             uncompressed_values,
             start_index: 0,
             pmc_mean: PMCMean::new(error_bound),
-            pmc_mean_has_fit_all: true,
+            pmc_mean_could_fit_all: true,
             swing: Swing::new(error_bound),
-            swing_has_fit_all: true,
+            swing_could_fit_all: true,
             gorilla: Gorilla::new(),
+        };
+
+        let mut current_index = start_index;
+        while compressed_segment_builder.can_fit_more() && current_index < end_index {
+            let timestamp = uncompressed_timestamps.value(current_index);
+            let value = uncompressed_values.value(current_index);
+            compressed_segment_builder.try_to_update_models(timestamp, value);
+            current_index += 1;
         }
+
+        compressed_segment_builder
     }
 
     /// Attempt to update the current models to also represent the `value` of
     /// the data point collected at `timestamp`.
     fn try_to_update_models(&mut self, timestamp: Timestamp, value: Value) {
-        self.pmc_mean_has_fit_all = self.pmc_mean_has_fit_all && self.pmc_mean.fit_value(value);
+        debug_assert!(self.can_fit_more());
 
-        self.swing_has_fit_all =
-            self.swing_has_fit_all && self.swing.fit_data_point(timestamp, value);
+        self.pmc_mean_could_fit_all = self.pmc_mean_could_fit_all && self.pmc_mean.fit_value(value);
+
+        self.swing_could_fit_all =
+            self.swing_could_fit_all && self.swing.fit_data_point(timestamp, value);
 
         // Gorilla uses lossless compression and cannot exceed the error bound.
         if self.gorilla.length < GORILLA_MAXIMUM_LENGTH {
@@ -165,18 +159,18 @@ impl<'a> CompressedSegmentBuilder<'a> {
         }
     }
 
-    /// Return `true` if any of the current models can represent additional
-    /// values, otherwise `false`.
+    /// Return [`true`] if any of the current models can represent additional
+    /// values, otherwise [`false`].
     fn can_fit_more(&self) -> bool {
-        self.pmc_mean_has_fit_all
-            || self.swing_has_fit_all
+        self.pmc_mean_could_fit_all
+            || self.swing_could_fit_all
             || self.gorilla.length < GORILLA_MAXIMUM_LENGTH
     }
 
     /// Store the model that requires the smallest number of bits per value in
-    /// `compressed_record_batch_builder`. Returns the index of the value in
-    /// `uncompressed_values` the selected model could not represent.
-    fn finish(self, compressed_record_batch_builder: &mut CompressedRecordBatchBuilder) -> usize {
+    /// `compressed_record_batch_builder`. Returns the index of the first value
+    /// in `uncompressed_values` the selected model could not represent.
+    fn finish(self, compressed_record_batch_builder: &mut CompressedSegmentBatchBuilder) -> usize {
         // The model that uses the fewest number of bytes per value is selected.
         let SelectedModel {
             model_type_id,
@@ -213,7 +207,7 @@ impl<'a> CompressedSegmentBuilder<'a> {
 }
 
 /// A batch of compressed segments being build.
-struct CompressedRecordBatchBuilder {
+struct CompressedSegmentBatchBuilder {
     /// Model type ids of each compressed segment in the batch.
     model_type_ids: UInt8Builder,
     /// Data required in addition to `start_times` and `end_times` to
@@ -235,7 +229,7 @@ struct CompressedRecordBatchBuilder {
     error: Float32Builder,
 }
 
-impl CompressedRecordBatchBuilder {
+impl CompressedSegmentBatchBuilder {
     fn new(capacity: usize) -> Self {
         Self {
             model_type_ids: UInt8Builder::new(capacity),
@@ -273,8 +267,8 @@ impl CompressedRecordBatchBuilder {
         self.error.append_value(error).unwrap();
     }
 
-    /// Return `RecordBatch` of compressed segments and consume the builder.
-    fn finnish(mut self) -> RecordBatch {
+    /// Return [`RecordBatch`] of compressed segments and consume the builder.
+    fn finish(mut self) -> RecordBatch {
         RecordBatch::try_new(
             Arc::new(StorageEngine::get_compressed_segment_schema()),
             vec![
@@ -297,9 +291,9 @@ mod tests {
     use super::*;
     use datafusion::arrow::array::UInt8Array;
 
-    // Tests compress.
+    // Tests try_compress.
     #[test]
-    fn test_compress_empty_time_series() {
+    fn test_try_compress_empty_time_series() {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&[], &[]);
@@ -310,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compress_regular_constant_time_series() {
+    fn test_try_compress_regular_constant_time_series() {
         let timestamps = Vec::from_iter((100..1000).step_by(100));
         let values = vec![10.0; timestamps.len()];
         let (uncompressed_timestamps, uncompressed_values) =
@@ -327,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compress_regular_almost_constant_time_series() {
+    fn test_try_compress_regular_almost_constant_time_series() {
         let timestamps = Vec::from_iter((100..1000).step_by(100));
         let values = vec![10.1, 10.0, 10.2, 10.2, 10.0, 10.1, 10.0, 10.0, 10.0];
         let (uncompressed_timestamps, uncompressed_values) =
@@ -344,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compress_regular_linear_time_series() {
+    fn test_try_compress_regular_linear_time_series() {
         let timestamps = Vec::from_iter((100..1000).step_by(100));
         let values = Vec::from_iter((10..100).step_by(10).map(|v| v as f32));
         let (uncompressed_timestamps, uncompressed_values) =
@@ -361,7 +355,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compress_regular_almost_linear_time_series() {
+    fn test_try_compress_regular_almost_linear_time_series() {
         let timestamps = Vec::from_iter((100..1000).step_by(100));
         let values = vec![10.0, 20.0, 30.1, 40.8, 51.0, 60.2, 70.1, 80.7, 90.4];
         let (uncompressed_timestamps, uncompressed_values) =
@@ -378,7 +372,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compress_regular_random_time_series() {
+    fn test_try_compress_regular_random_time_series() {
         let timestamps = Vec::from_iter((100..1000).step_by(100));
         let values = vec![7.47, 13.34, 14.50, 4.88, 7.84, 6.69, 8.63, 5.109, 2.16];
         let (uncompressed_timestamps, uncompressed_values) =
@@ -395,7 +389,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compress_regular_random_linear_constant_time_series() {
+    fn test_try_compress_regular_random_linear_constant_time_series() {
         let mut constant = vec![10.0; 100];
         let mut linear = Vec::from_iter((10..1000).step_by(10).map(|v| v as f32));
         let mut random = vec![7.47, 13.34, 14.50, 4.88, 7.84, 6.69, 8.63, 5.109, 2.16];
