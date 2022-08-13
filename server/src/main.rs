@@ -20,7 +20,6 @@
 mod catalog;
 mod compression;
 mod errors;
-mod ingestion;
 mod macros;
 mod models;
 mod optimizer;
