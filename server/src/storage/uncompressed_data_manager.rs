@@ -32,11 +32,11 @@ const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
 pub struct UncompressedDataManager {
     /// Path to the folder containing all uncompressed data managed by the [`StorageEngine`].
     data_folder_path: PathBuf,
-    /// The uncompressed segments while they are being built.
+    /// The [`UncompressedSegments`](UncompressedSegment) while they are being built.
     uncompressed_data: HashMap<String, SegmentBuilder>,
-    /// Prioritized queue of finished segments that are ready for compression.
+    /// FIFO queue of [`FinishedSegments`](FinishedSegment) that are ready for compression.
     finished_queue: VecDeque<FinishedSegment>,
-    /// How many bytes of memory that are left for storing uncompressed segments.
+    /// How many bytes of memory that are left for storing [`UncompressedSegments`](UncompressedSegment).
     uncompressed_remaining_memory_in_bytes: usize,
 }
 
@@ -97,7 +97,7 @@ impl UncompressedDataManager {
     }
 
     /// Remove the oldest [`FinishedSegment`] from the queue and return it. Return [`None`] if the
-    /// queue of finished segments is empty.
+    /// queue of [`FinishedSegments`](FinishedSegment) is empty.
     pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
         if let Some(finished_segment) = self.finished_queue.pop_front() {
             // Add the memory size of the removed FinishedSegment back to the remaining bytes.
@@ -110,7 +110,7 @@ impl UncompressedDataManager {
         }
     }
 
-    /// Move `segment_builder` to the queue of finished segments.
+    /// Move `segment_builder` to the queue of [`FinishedSegments`](FinishedSegment).
     fn enqueue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
         let finished_segment = FinishedSegment {
             key,
@@ -120,8 +120,8 @@ impl UncompressedDataManager {
         self.finished_queue.push_back(finished_segment);
     }
 
-    /// Spill the first in-memory [`FinishedSegment`] in the queue of finished segments. If no
-    /// in-memory finished segments could be found, [`panic`](core::panic).
+    /// Spill the first in-memory [`FinishedSegment`] in the queue of [`FinishedSegments`](FinishedSegment).
+    /// If no in-memory [`FinishedSegments`](FinishedSegment) could be found, [`panic`](std::panic).
     fn spill_finished_segment(&mut self) {
         info!("Not enough memory to create segment. Spilling an already finished segment.");
 

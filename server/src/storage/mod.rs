@@ -77,14 +77,14 @@ impl StorageEngine {
     }
 
     /// Retrieve the oldest [`FinishedSegment`] from [`UncompressedDataManager`] and return it.
-    /// Return [`None`] if there are no finished segments.
+    /// Return [`None`] if there are no [`FinishedSegments`](FinishedSegment).
     pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
         self.uncompressed_data_manager.get_finished_segment()
     }
 
     /// Pass `segment` to [`CompressedDataManager`].
-    pub fn insert_compressed_data(&mut self, key: String, segment: RecordBatch) {
-        self.compressed_data_manager.insert_compressed_data(key, segment)
+    pub fn insert_compressed_segment(&mut self, key: String, segment: RecordBatch) {
+        self.compressed_data_manager.insert_compressed_segment(key, segment)
     }
 
     // TODO: Move to configuration struct and have a single Arc.

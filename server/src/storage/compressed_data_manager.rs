@@ -34,7 +34,7 @@ pub struct CompressedDataManager {
     data_folder_path: PathBuf,
     /// The compressed segments before they are saved to persistent storage.
     compressed_data: HashMap<String, CompressedTimeSeries>,
-    /// Prioritized queue of keys referring to [`CompressedTimeSeries`] that can be saved to persistent storage.
+    /// FIFO queue of keys referring to [`CompressedTimeSeries`] that can be saved to persistent storage.
     compressed_queue: VecDeque<String>,
     /// How many bytes of memory that are left for storing compressed segments.
     compressed_remaining_memory_in_bytes: isize,
@@ -52,14 +52,14 @@ impl CompressedDataManager {
     }
 
     /// Insert `segment` into the in-memory compressed time series buffer.
-    pub fn insert_compressed_data(&mut self, key: String, segment: RecordBatch) {
+    pub fn insert_compressed_segment(&mut self, key: String, segment: RecordBatch) {
         let _span = info_span!("insert_compressed_segment", key = key.clone()).entered();
         info!(
             "Inserting batch with {} rows into compressed time series.",
             segment.num_rows()
         );
 
-        // Since the compressed segment is already in memory, insert the segment in to the structure
+        // Since the compressed segment is already in memory, insert the segment into the structure
         // first and check if the reserved memory limit is exceeded after.
         let segment_size = if let Some(time_series) = self.compressed_data.get_mut(&key) {
             info!("Found existing compressed time series.");
@@ -87,7 +87,7 @@ impl CompressedDataManager {
 
     /// Save [`CompressedTimeSeries`] to disk until the reserved memory limit is no longer exceeded.
     fn save_compressed_data(&mut self) {
-        info!("Out of memory to store compressed data. Saving compressed data to disk.");
+        info!("Out of memory for compressed data. Saving compressed data to disk.");
 
         while self.compressed_remaining_memory_in_bytes < 0 {
             let key = self.compressed_queue.pop_front().unwrap();
@@ -124,7 +124,7 @@ mod tests {
         let invalid = test_util::get_invalid_compressed_segment_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        data_manager.insert_compressed_data("key".to_owned(), invalid);
+        data_manager.insert_compressed_segment("key".to_owned(), invalid);
     }
 
     #[test]
@@ -132,7 +132,7 @@ mod tests {
         let segment = test_util::get_compressed_segment_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        data_manager.insert_compressed_data("key".to_owned(), segment);
+        data_manager.insert_compressed_segment("key".to_owned(), segment);
 
         assert!(data_manager.compressed_data.contains_key("key"));
         assert_eq!(data_manager.compressed_queue.pop_front().unwrap(), "key");
@@ -144,9 +144,9 @@ mod tests {
         let segment = test_util::get_compressed_segment_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        data_manager.insert_compressed_data("key".to_owned(), segment.clone());
+        data_manager.insert_compressed_segment("key".to_owned(), segment.clone());
         let previous_size = data_manager.compressed_data.get("key").unwrap().size_in_bytes;
-        data_manager.insert_compressed_data("key".to_owned(), segment);
+        data_manager.insert_compressed_segment("key".to_owned(), segment);
 
         assert!(data_manager.compressed_data.get("key").unwrap().size_in_bytes > previous_size);
     }
@@ -160,7 +160,7 @@ mod tests {
         // Insert compressed data into the storage engine until data is saved to Apache Parquet.
         let max_compressed_segments = reserved_memory / test_util::COMPRESSED_SEGMENT_SIZE;
         for _ in 0..max_compressed_segments + 1 {
-            data_manager.insert_compressed_data("modelardb-test".to_owned(), segment.clone());
+            data_manager.insert_compressed_segment("modelardb-test".to_owned(), segment.clone());
         }
 
         // The compressed data should be saved to the "compressed" folder under the key.
@@ -175,7 +175,7 @@ mod tests {
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
         let reserved_memory = data_manager.compressed_remaining_memory_in_bytes;
 
-        data_manager.insert_compressed_data("key".to_owned(), segment);
+        data_manager.insert_compressed_segment("key".to_owned(), segment);
 
         assert!(reserved_memory > data_manager.compressed_remaining_memory_in_bytes);
     }
@@ -185,7 +185,7 @@ mod tests {
         let segment = test_util::get_compressed_segment_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        data_manager.insert_compressed_data("modelardb-test".to_owned(), segment.clone());
+        data_manager.insert_compressed_segment("modelardb-test".to_owned(), segment.clone());
 
         // Set the remaining memory to a negative value since data is only saved when out of memory.
         data_manager.compressed_remaining_memory_in_bytes = -1;

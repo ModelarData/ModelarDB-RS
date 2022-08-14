@@ -13,9 +13,9 @@
  * limitations under the License.
  */
 
-//! Support for different kinds of uncompressed segments. The [`SegmentBuilder`] struct provides support
-//! for inserting and storing data in an in-memory segment. [`SpilledSegment`] provides support for
-//! storing uncompressed data in Apache Parquet files.
+//! Support for different kinds of types implementing [`UncompressedSegment`]. The [`SegmentBuilder`]
+//! struct provides support for inserting and storing data in an in-memory segment. [`SpilledSegment`]
+//! provides support for storing uncompressed data in Apache Parquet files.
 
 use std::fmt::Formatter;
 use std::io::ErrorKind::Other;
@@ -40,14 +40,15 @@ pub trait UncompressedSegment {
 
     fn get_memory_size(&self) -> usize;
 
-    // Since both SegmentBuilders and SpilledSegments are present in the queue of finished segments, both
-    // structs need to implement spilling to Apache Parquet, with already spilled segments returning Err.
+    /// Since both [`SegmentBuilders`](SegmentBuilder) and [`SpilledSegments`](SpilledSegment) are
+    /// present in the queue of [`FinishedSegments`](FinishedSegment), both structs need to implement
+    /// spilling to Apache Parquet, with already spilled segments returning [`IOError`].
     fn spill_to_apache_parquet(&mut self, folder_path: &Path) -> Result<SpilledSegment, IOError>;
 }
 
 /// A single segment being built, consisting of an ordered sequence of timestamps and values. Note
-/// that since [`ArrayBuilder`] is used, the data can only be read once the builders are finished and
-/// cannot be further appended to after.
+/// that since [`ArrayBuilder`] is used, the data can only be read once the builders are finished.
+/// The builders cannot be further appended to once finished.
 pub struct SegmentBuilder {
     /// Builder consisting of timestamps.
     timestamps: TimestampBuilder,
