@@ -29,7 +29,7 @@ pub struct DataPoint {
 }
 
 impl DataPoint {
-    /// Given a raw MQTT message, extract the message components and return them as a data point.
+    /// Given a raw MQTT message, extract the message components and return them as a [`DataPoint`].
     /// MQTT messages with a payload format of "[timestamp, value]" are expected.
     pub fn from_message(message: &Message) -> Result<Self, String> {
         let payload = message.payload_str();
