@@ -22,8 +22,6 @@
 //!
 //! [Gorilla paper]: https://dl.acm.org/doi/10.14778/2824032.2824078
 
-use std::mem;
-
 use datafusion::arrow::compute::kernels::aggregate;
 
 use crate::models;
@@ -31,11 +29,9 @@ use crate::types::{
     TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
 
-const VALUE_SIZE_IN_BITS: u8 = 8 * mem::size_of::<Value>() as u8;
-
 /// The state the Gorilla model type needs while compressing the values of a
 /// time series segment.
-struct Gorilla {
+pub struct Gorilla {
     /// Last value compressed and added to `compressed_values`.
     last_value: Value,
     /// Number of leading zero bits for the last value that was compressed by
@@ -46,21 +42,24 @@ struct Gorilla {
     last_trailing_zero_bits: u8,
     /// Values compressed using XOR and a variable length binary encoding.
     compressed_values: BitVecBuilder,
+    /// The number of values stored in `compressed_values`.
+    pub length: usize, // TODO: use Gorilla as a fallback to remove pub.
 }
 
 impl Gorilla {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             last_value: 0.0,
             last_leading_zero_bits: u8::MAX,
             last_trailing_zero_bits: 0,
             compressed_values: BitVecBuilder::new(),
+            length: 0,
         }
     }
 
     /// Compress `value` using XOR and a variable length binary encoding and
-    /// append the compressed value to an internal buffer in `Gorilla`.
-    fn compress_value(&mut self, value: Value) {
+    /// append the compressed value to an internal buffer in [`Gorilla`].
+    pub fn compress_value(&mut self, value: Value) {
         let value_as_integer = value.to_bits();
         let last_value_as_integer = self.last_value.to_bits();
         let value_xor_last_value = value_as_integer ^ last_value_as_integer;
@@ -68,7 +67,7 @@ impl Gorilla {
         if self.compressed_values.is_empty() {
             // Store the first value uncompressed using size_of::<Value> bits.
             self.compressed_values
-                .append_bits(value_as_integer, VALUE_SIZE_IN_BITS);
+                .append_bits(value_as_integer, models::VALUE_SIZE_IN_BITS);
         } else if value_xor_last_value == 0 {
             // Store each repeated value as a single zero bit.
             self.compressed_values.append_a_zero_bit();
@@ -84,8 +83,9 @@ impl Gorilla {
             {
                 // Store only the meaningful bits.
                 self.compressed_values.append_a_zero_bit();
-                let meaningful_bits =
-                    VALUE_SIZE_IN_BITS - self.last_leading_zero_bits - self.last_trailing_zero_bits;
+                let meaningful_bits = models::VALUE_SIZE_IN_BITS
+                    - self.last_leading_zero_bits
+                    - self.last_trailing_zero_bits;
                 self.compressed_values.append_bits(
                     value_xor_last_value >> self.last_trailing_zero_bits,
                     meaningful_bits as u8,
@@ -97,7 +97,8 @@ impl Gorilla {
                 self.compressed_values
                     .append_bits(leading_zero_bits as u32, 5);
 
-                let meaningful_bits = VALUE_SIZE_IN_BITS - leading_zero_bits - trailing_zero_bits;
+                let meaningful_bits =
+                    models::VALUE_SIZE_IN_BITS - leading_zero_bits - trailing_zero_bits;
                 self.compressed_values
                     .append_bits(meaningful_bits as u32, 6);
                 self.compressed_values
@@ -108,11 +109,23 @@ impl Gorilla {
             }
         }
         self.last_value = value;
+        self.length += 1;
+    }
+
+    /// Return the number of values currently compressed using XOR and a
+    /// variable length binary encoding.
+    pub fn get_length(&self) -> usize {
+        self.length
+    }
+
+    /// Return the number of bytes currently used per data point on average.
+    pub fn get_bytes_per_value(&self) -> f32 {
+        self.compressed_values.length() as f32 / self.length as f32
     }
 
     /// Return the values compressed using XOR and a variable length binary
     /// encoding.
-    fn get_compressed_values(self) -> Vec<u8> {
+    pub fn get_compressed_values(self) -> Vec<u8> {
         self.compressed_values.finish()
     }
 }
@@ -209,7 +222,7 @@ fn decompress_values(
     let mut bits = BitReader::try_new(model).unwrap();
     let mut leading_zeroes = u8::MAX;
     let mut trailing_zeroes: u8 = 0;
-    let mut last_value = bits.read_bits(VALUE_SIZE_IN_BITS);
+    let mut last_value = bits.read_bits(models::VALUE_SIZE_IN_BITS);
 
     // The first value is stored uncompressed using size_of::<Value> bits.
     values.append_value(Value::from_bits(last_value)).unwrap();
@@ -222,10 +235,10 @@ fn decompress_values(
                 // New leading and trailing zeros.
                 leading_zeroes = bits.read_bits(5) as u8;
                 let meaningful_bits = bits.read_bits(6) as u8;
-                trailing_zeroes = VALUE_SIZE_IN_BITS - meaningful_bits - leading_zeroes;
+                trailing_zeroes = models::VALUE_SIZE_IN_BITS - meaningful_bits - leading_zeroes;
             }
 
-            let meaningful_bits = VALUE_SIZE_IN_BITS - leading_zeroes - trailing_zeroes;
+            let meaningful_bits = models::VALUE_SIZE_IN_BITS - leading_zeroes - trailing_zeroes;
             let mut value = bits.read_bits(meaningful_bits);
             value <<= trailing_zeroes;
             value ^= last_value;
@@ -235,14 +248,14 @@ fn decompress_values(
     }
 }
 
-/// Read one or multiple bits from a `[u8]`. `BitReader` is implemented based on
-/// [code published by Ilkka Rauta] dual-licensed under MIT and Apache2.
+/// Read one or multiple bits from a `[u8]`. [`BitReader`] is implemented based
+/// on [code published by Ilkka Rauta] dual-licensed under MIT and Apache2.
 ///
 /// [code published by Ilkka Rauta]: https://github.com/irauta/bitreader
 struct BitReader<'a> {
-    /// Next bit to read from `self.bytes`.
+    /// Next bit to read from `bytes`.
     next_bit: u64,
-    /// Bits packed into one or more `u8`s.
+    /// Bits packed into one or more [`u8s`](u8).
     bytes: &'a [u8],
 }
 
@@ -255,12 +268,12 @@ impl<'a> BitReader<'a> {
         }
     }
 
-    /// Read the next bit from the `BitReader`.
+    /// Read the next bit from the [`BitReader`].
     fn read_bit(&mut self) -> bool {
         self.read_bits(1) == 1
     }
 
-    /// Read the next `number_of_bits` bits from the `BitReader`.
+    /// Read the next `number_of_bits` bits from the [`BitReader`].
     fn read_bits(&mut self, number_of_bits: u8) -> u32 {
         let mut value: u64 = 0;
         let start_bit = self.next_bit;
@@ -277,13 +290,13 @@ impl<'a> BitReader<'a> {
     }
 }
 
-/// Append one or multiple bits to a `vec<u8>`.
+/// Append one or multiple bits to a [`Vec<u8>`].
 struct BitVecBuilder {
-    /// `u8` currently used for storing the bits.
+    /// [`u8`] currently used for storing the bits.
     current_byte: u8,
     /// Bits remaining in `current_byte`.
     remaining_bits: u8,
-    /// Bits packed into one or more `u8`s.
+    /// Bits packed into one or more [`u8s`](u8).
     bytes: Vec<u8>,
 }
 
@@ -296,17 +309,17 @@ impl BitVecBuilder {
         }
     }
 
-    /// Append a zero bit to the `BitVecBuilder`.
+    /// Append a zero bit to the [`BitVecBuilder`].
     fn append_a_zero_bit(&mut self) {
         self.append_bits(0, 1)
     }
 
-    /// Append a one bit to the `BitVecBuilder`.
+    /// Append a one bit to the [`BitVecBuilder`].
     fn append_a_one_bit(&mut self) {
         self.append_bits(1, 1)
     }
 
-    /// Append `number_of_bits` from `bits` to the `BitVecBuilder`.
+    /// Append `number_of_bits` from `bits` to the [`BitVecBuilder`].
     fn append_bits(&mut self, bits: u32, number_of_bits: u8) {
         let mut number_of_bits = number_of_bits;
 
@@ -331,14 +344,19 @@ impl BitVecBuilder {
         }
     }
 
-    /// Return `true` if no bits have been appended to the `BitVecBuilder`,
-    /// otherwise `false`.
+    /// Return [`true`] if no bits have been appended to the [`BitVecBuilder`],
+    /// otherwise [`false`].
     fn is_empty(&self) -> bool {
         self.bytes.is_empty()
     }
 
-    /// Consume the `BitVecBuilder` and return the appended bits packed into a
-    /// `Vec<u8>`.
+    /// Return the number of bytes required to store the appended bits.
+    fn length(&self) -> usize {
+        self.bytes.len() + (self.remaining_bits != 8) as usize
+    }
+
+    /// Consume the [`BitVecBuilder`] and return the appended bits packed into a
+    /// [`Vec<u8>`].
     fn finish(mut self) -> Vec<u8> {
         if self.remaining_bits != 8 {
             self.bytes.push(self.current_byte);
@@ -544,8 +562,55 @@ mod tests {
 
     // Tests for BitVecBuilder.
     #[test]
-    fn test_empty_bit_vec_builder() {
+    fn test_empty_bit_vec_builder_is_empty() {
         assert!(BitVecBuilder::new().finish().is_empty());
+    }
+
+    #[test]
+    fn test_empty_bit_vec_builder_length() {
+        assert_eq!(BitVecBuilder::new().length(), 0);
+    }
+
+    #[test]
+    fn test_one_one_bit_vec_builder_length() {
+        let mut bit_vec_builder = BitVecBuilder::new();
+        bit_vec_builder.append_a_one_bit();
+        assert_eq!(bit_vec_builder.length(), 1);
+    }
+
+    #[test]
+    fn test_one_zero_bit_vec_builder_length() {
+        let mut bit_vec_builder = BitVecBuilder::new();
+        bit_vec_builder.append_a_zero_bit();
+        assert_eq!(bit_vec_builder.length(), 1);
+    }
+
+    #[test]
+    fn test_eight_one_bits_vec_builder_length() {
+        let mut bit_vec_builder = BitVecBuilder::new();
+        (0..8).for_each(|_| bit_vec_builder.append_a_one_bit());
+        assert_eq!(bit_vec_builder.length(), 1);
+    }
+
+    #[test]
+    fn test_eight_zero_bits_vec_builder_length() {
+        let mut bit_vec_builder = BitVecBuilder::new();
+        (0..8).for_each(|_| bit_vec_builder.append_a_zero_bit());
+        assert_eq!(bit_vec_builder.length(), 1);
+    }
+
+    #[test]
+    fn test_nine_one_bits_vec_builder_length() {
+        let mut bit_vec_builder = BitVecBuilder::new();
+        (0..9).for_each(|_| bit_vec_builder.append_a_one_bit());
+        assert_eq!(bit_vec_builder.length(), 2);
+    }
+
+    #[test]
+    fn test_nine_zero_bits_vec_builder_length() {
+        let mut bit_vec_builder = BitVecBuilder::new();
+        (0..9).for_each(|_| bit_vec_builder.append_a_zero_bit());
+        assert_eq!(bit_vec_builder.length(), 2);
     }
 
     // Tests combining BitReader and BitVecBuilder.
