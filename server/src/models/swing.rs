@@ -179,9 +179,9 @@ impl Swing {
         }
     }
 
-    /// Return the number of values the model currently represented.
+    /// Return the number of values the model currently represents.
     pub fn get_length(&self) -> usize {
-	self.length
+        self.length
     }
 
     /// Return the number of bytes the current model uses per data point on average.

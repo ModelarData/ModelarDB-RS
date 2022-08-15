@@ -102,75 +102,92 @@ pub struct SelectedModel {
 }
 
 impl SelectedModel {
-    fn new(
-        model_type_id: u8,
-        end_index: usize,
-        min_value: Value,
-        max_value: Value,
-        values: Vec<u8>,
+    /// Select the model that uses the fewest number of bytes per value.
+    pub fn new(
+        start_index: usize,
+        pmc_mean: PMCMean,
+        swing: Swing,
+        gorilla: Gorilla,
+        uncompressed_values: &ValueArray,
     ) -> Self {
+        let bytes_per_value = [
+            (PMC_MEAN_ID, pmc_mean.get_bytes_per_value()),
+            (SWING_ID, swing.get_bytes_per_value()),
+            (GORILLA_ID, gorilla.get_bytes_per_value()),
+        ];
+
+        // unwrap() cannot fail as the array is not empty and there are no NaN.
+        let selected_model_type_id = bytes_per_value
+            .iter()
+            .min_by(|x, y| f32::partial_cmp(&x.1, &y.1).unwrap())
+            .unwrap()
+            .0;
+
+        match selected_model_type_id {
+            PMC_MEAN_ID => Self::select_pmc_mean(start_index, pmc_mean),
+            SWING_ID => Self::select_swing(start_index, swing),
+            GORILLA_ID => Self::select_gorilla(start_index, gorilla, uncompressed_values),
+            _ => panic!("Unknown model type."),
+        }
+    }
+
+    /// Create a [`SelectedModel`] from `pmc_mean`.
+    fn select_pmc_mean(start_index: usize, pmc_mean: PMCMean) -> Self {
+        let value = pmc_mean.get_model();
+        let end_index = start_index + pmc_mean.get_length() - 1;
+
         Self {
-            model_type_id,
+            model_type_id: PMC_MEAN_ID,
+            end_index,
+            min_value: value,
+            max_value: value,
+            values: vec![],
+        }
+    }
+
+    /// Create a [`SelectedModel`] from `swing`.
+    fn select_swing(start_index: usize, swing: Swing) -> Self {
+        let (start_value, end_value) = swing.get_model();
+        let end_index = start_index + swing.get_length() - 1;
+        let min_value = Value::min(start_value, end_value);
+        let max_value = Value::max(start_value, end_value);
+
+        Self {
+            model_type_id: SWING_ID,
+            end_index,
+            min_value,
+            max_value,
+            values: vec![],
+        }
+    }
+
+    /// Create a [`SelectedModel`] from `gorilla`.
+    fn select_gorilla(
+        start_index: usize,
+        gorilla: Gorilla,
+        uncompressed_values: &ValueArray,
+    ) -> Self {
+        let end_index = start_index + gorilla.get_length() - 1;
+        let uncompressed_values = &uncompressed_values.values()[start_index..end_index];
+        let min_value = uncompressed_values
+            .iter()
+            .fold(Value::NAN, |current_min, value| {
+                Value::min(current_min, *value)
+            });
+        let max_value = uncompressed_values
+            .iter()
+            .fold(Value::NAN, |current_max, value| {
+                Value::max(current_max, *value)
+            });
+        let values = gorilla.get_compressed_values();
+
+        Self {
+            model_type_id: GORILLA_ID,
             end_index,
             min_value,
             max_value,
             values,
         }
-    }
-}
-
-/// Select the model that uses the fewest number of bytes per value.
-pub fn select_model(
-    start_index: usize,
-    pmc_mean: PMCMean,
-    swing: Swing,
-    gorilla: Gorilla,
-    uncompressed_values: &ValueArray,
-) -> SelectedModel {
-    let bytes_per_value = [
-        (PMC_MEAN_ID, pmc_mean.get_bytes_per_value()),
-        (SWING_ID, swing.get_bytes_per_value()),
-        (GORILLA_ID, gorilla.get_bytes_per_value()),
-    ];
-    dbg!(bytes_per_value);
-
-    // unwrap() cannot fail as the array is not empty and there are no NaN.
-    let selected_model_type_id = bytes_per_value
-        .iter()
-        .min_by(|x, y| f32::partial_cmp(&x.1, &y.1).unwrap())
-        .unwrap()
-        .0;
-
-    match selected_model_type_id {
-        PMC_MEAN_ID => {
-            let value = pmc_mean.get_model();
-            let end_index = start_index + pmc_mean.get_length() - 1;
-            SelectedModel::new(PMC_MEAN_ID, end_index, value, value, vec![])
-        }
-        SWING_ID => {
-            let (start_value, end_value) = swing.get_model();
-            let end_index = start_index + swing.get_length() - 1;
-            let min_value = Value::min(start_value, end_value);
-            let max_value = Value::max(start_value, end_value);
-            SelectedModel::new(SWING_ID, end_index, min_value, max_value, vec![])
-        }
-        GORILLA_ID => {
-            let end_index = start_index + gorilla.get_length() - 1;
-            let uncompressed_values = &uncompressed_values.values()[start_index..end_index];
-            let min_value = uncompressed_values
-                .iter()
-                .fold(Value::NAN, |current_min, value| {
-                    Value::min(current_min, *value)
-                });
-            let max_value = uncompressed_values
-                .iter()
-                .fold(Value::NAN, |current_max, value| {
-                    Value::max(current_max, *value)
-                });
-            let values = gorilla.get_compressed_values();
-            SelectedModel::new(GORILLA_ID, end_index, min_value, max_value, values)
-        }
-        _ => panic!("Unknown model type."),
     }
 }
 
@@ -419,17 +436,17 @@ mod tests {
         let mut swing = Swing::new(error_bound);
         let mut gorilla = Gorilla::new();
 
-        let mut pmc_mean_has_fit_all = true;
-        let mut swing_has_fit_all = true;
+        let mut pmc_mean_could_fit_all = true;
+        let mut swing_could_fit_all = true;
         for index in 0..uncompressed_timestamps.len() {
             let timestamp = uncompressed_timestamps.value(index);
             let value = uncompressed_values.value(index);
 
-            pmc_mean_has_fit_all = pmc_mean_has_fit_all && pmc_mean.fit_value(value);
-            swing_has_fit_all = swing_has_fit_all && swing.fit_data_point(timestamp, value);
+            pmc_mean_could_fit_all = pmc_mean_could_fit_all && pmc_mean.fit_value(value);
+            swing_could_fit_all = swing_could_fit_all && swing.fit_data_point(timestamp, value);
             gorilla.compress_value(value);
         }
-        select_model(0, pmc_mean, swing, gorilla, &uncompressed_values)
+        SelectedModel::new(0, pmc_mean, swing, gorilla, &uncompressed_values)
     }
 
     // Tests for length().

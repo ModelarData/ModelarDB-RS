@@ -78,16 +78,16 @@ pub fn try_compress(
     Ok(compressed_record_batch_builder.finish())
 }
 
-/// A compressed segment being build from an uncompressed segment using the
+/// A compressed segment being built from an uncompressed segment using the
 /// model types in [`models`]. Each of the model types is used to fit models to
 /// the data points, and then the model that uses the fewest number of bytes per
 /// value is selected.
 struct CompressedSegmentBuilder<'a> {
     /// The regular timestamps of the uncompressed segment the compressed
-    /// segment is being build from.
+    /// segment is being built from.
     uncompressed_timestamps: &'a TimestampArray,
     /// The values of the uncompressed segment the compressed segment is being
-    /// build from.
+    /// built from.
     uncompressed_values: &'a ValueArray,
     /// Index of the first data point in `uncompressed_timestamps` and
     /// `uncompressed_values` the compressed segment represents.
@@ -146,7 +146,10 @@ impl<'a> CompressedSegmentBuilder<'a> {
     /// Attempt to update the current models to also represent the `value` of
     /// the data point collected at `timestamp`.
     fn try_to_update_models(&mut self, timestamp: Timestamp, value: Value) {
-        debug_assert!(self.can_fit_more());
+        debug_assert!(
+            self.can_fit_more(),
+            "The current models cannot be fitted to additional data points."
+        );
 
         self.pmc_mean_could_fit_all = self.pmc_mean_could_fit_all && self.pmc_mean.fit_value(value);
 
@@ -178,7 +181,7 @@ impl<'a> CompressedSegmentBuilder<'a> {
             min_value,
             max_value,
             values,
-        } = models::select_model(
+        } = SelectedModel::new(
             self.start_index,
             self.pmc_mean,
             self.swing,
@@ -206,7 +209,7 @@ impl<'a> CompressedSegmentBuilder<'a> {
     }
 }
 
-/// A batch of compressed segments being build.
+/// A batch of compressed segments being built.
 struct CompressedSegmentBatchBuilder {
     /// Model type ids of each compressed segment in the batch.
     model_type_ids: UInt8Builder,
@@ -291,7 +294,7 @@ mod tests {
     use super::*;
     use datafusion::arrow::array::UInt8Array;
 
-    // Tests try_compress.
+    // Tests for try_compress().
     #[test]
     fn test_try_compress_empty_time_series() {
         let error_bound = ErrorBound::try_new(0.0).unwrap();

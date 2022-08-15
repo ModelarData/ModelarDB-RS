@@ -74,7 +74,7 @@ impl PMCMean {
         }
     }
 
-    /// Return the number of values the model currently represented.
+    /// Return the number of values the model currently represents.
     pub fn get_length(&self) -> usize {
         self.length
     }
