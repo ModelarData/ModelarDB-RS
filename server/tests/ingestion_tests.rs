@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use rand::Rng;
 use arrow_flight::flight_service_client::FlightServiceClient;
+use arrow_flight::FlightDescriptor;
 use assert_cmd::Command;
 use datafusion::arrow::array;
 use datafusion::arrow::array::{Float32Array, PrimitiveArray, StringArray, TimestampMillisecondArray};
@@ -15,7 +16,7 @@ use tonic::transport::Channel;
 #[test]
 fn test_ingest_message_into_storage_engine() {
     start_arrow_flight_server();
-    let client = create_flight_service_client();
+    let mut client = create_flight_service_client().unwrap();
 
     // TODO: Send a single message to do_put.
     send_messages_to_arrow_flight_server(client,1, "key".to_owned())
@@ -72,26 +73,29 @@ fn test_can_query_ingested_uncompressed_and_compressed_data() {
 }
 
 fn start_arrow_flight_server() {
-    // TODO: Call the "mdbd" binary to start the server.
     // TODO: It might be necessary to create a temporary data folder.
+    let mut cmd = Command::cargo_bin("mdbd").unwrap();
+    cmd.unwrap();
 }
 
-fn create_flight_service_client() -> FlightServiceClient<Channel> {
+fn create_flight_service_client() -> Result<FlightServiceClient<Channel>, ()> {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
     let address = format!("grpc://127.0.0.1:9999");
 
-    block_on(async {
-        let client = FlightServiceClient::connect(address).await?;
-        Ok(client)
-    }).unwrap()
+    runtime.block_on(async {
+        let fsc = FlightServiceClient::connect(address).await;
+        Ok(fsc.unwrap())
+    })
 }
 
 /// Generate `count` random messages for the time series referenced by `key` and send it to the
 /// ModelarDB server with Arrow Flight through the `do_put()` endpoint.
-fn send_messages_to_arrow_flight_server(client: FlightServiceClient<Channel>, count: usize, key: String) {
+fn send_messages_to_arrow_flight_server(mut client: FlightServiceClient<Channel>, count: usize, key: String) {
     for _ in 0..count {
         let message = generate_random_message(key.clone());
 
         // TODO: Send the message.
+        let flight_descriptor = FlightDescriptor::new_path(vec![]);
     }
 }
 
