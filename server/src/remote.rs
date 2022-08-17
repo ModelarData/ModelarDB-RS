@@ -288,19 +288,35 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// Not implemented.
+    /// Perform a specific action based on the type of the action in `request`. Currently supports
+    /// two actions: `CreateTable` and `CreateIngestionTable`. `CreateTable` creates a normal table
+    /// in the catalog when given a table name and schema. `CreateIngestionTable` creates a table
+    /// that can be used for ingestion when given a table name, a schema and a list of indexes,
+    /// specifying which columns are metadata tag columns.
     async fn do_action(
         &self,
         _request: Request<Action>,
     ) -> Result<Response<Self::DoActionStream>, Status> {
+        // TODO: Add an action to create a table. It should have a name and a schema.
+        // TODO: The table should be added to the catalog.
+        // TODO: The name should be the given name and the path should be based on the name.
+        // TODO: If the table already exists and the schema is different, return an error.
+
+        // TODO: Add an action to create a model table. It should have a name, a schema and what are tag columns.
+        // TODO: The table should be added to the catalog (as a model table?).
+        // TODO: If the table already exists and the schemas is different, return an error.
+        // TODO: If the indexes for the tag columns does not match the schema, return an error.
+
+        // TODO: If given an action that does not exist return not implemented error.
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// Not implemented.
+    /// Return all available actions, including both a name of the action and a description.
     async fn list_actions(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::ListActionsStream>, Status> {
+        // TODO: List two new actions above.
         Err(Status::unimplemented("Not implemented."))
     }
 }
