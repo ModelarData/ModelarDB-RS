@@ -349,8 +349,20 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::ListActionsStream>, Status> {
-        // TODO: List two new actions above.
-        Err(Status::unimplemented("Not implemented."))
+        let create_table_action = ActionType {
+            r#type: "CreateTable".to_owned(),
+            description: "Given a table name and a schema, create a table and add it to the \
+            catalog.".to_owned(),
+        };
+
+        let create_ingestion_table_action = ActionType {
+            r#type: "CreateIngestionTable".to_owned(),
+            description: "Given a table name, a schema, and a list of tag column indices, \
+            create an ingestion table and add it to the catalog.".to_owned()
+        };
+
+        let output = stream::iter(vec![Ok(create_table_action), Ok(create_ingestion_table_action)]);
+        Ok(Response::new(Box::pin(output)))
     }
 }
 
