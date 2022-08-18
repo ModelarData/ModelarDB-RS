@@ -309,10 +309,7 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action: {}", action.r#type);
 
-        if action.r#type == "CreateTable" {
-            info!("{}", action.body.len());
-            info!("{:?}", &action.body);
-
+        if action.r#type == "CreateTable" || action.r#type == "CreateIngestionTable" {
             let (table_name_bytes, table_name_offset) = extract_argument_bytes(&action.body);
             let table_name = str::from_utf8(table_name_bytes).unwrap();
 
@@ -320,29 +317,25 @@ impl FlightService for FlightServiceHandler {
             // TODO: Fix the problem where the first 8 bytes have to be removed to read the schema.
             let schema = schema_from_bytes(&schema_bytes[8..]).unwrap();
 
-            info!("Table name: {}", table_name);
-            info!("Schema: {:?}", schema);
-
             // TODO: If the table already exists and the schema is different, return an error.
             // TODO: If the table already exists and the schema is the same, maybe return ALREADY_EXISTS error.
 
-            // Create an empty Apache Parquet file to save the schema.
-            let empty_batch = RecordBatch::new_empty(Arc::new(schema));
-            // TODO: Handle names that cannot be file names directly.
-            let file_name = format!("{}.parquet", table_name);
-            let file_path = Path::new("../../../../data").join(file_name);
-            StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path());
+            if action.r#type == "CreateTable" {
+                // TODO: Save the table in the catalog.
+                // TODO: The name should be the given name and the path should be based on the name.
 
-            // TODO: Save the table in the catalog.
-            // TODO: The name should be the given name and the path should be based on the name.
-
-            // Confirm the table was created.
-            Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "CreateIngestionTable" {
-            // TODO: Add an action to create a model table. It should have a name, a schema and what are tag columns.
-            // TODO: The table should be added to the catalog (as a model table?).
-            // TODO: If the table already exists and the schemas is different, return an error.
-            // TODO: If the indexes for the tag columns does not match the schema, return an error.
+                // Create an empty Apache Parquet file to save the schema.
+                let empty_batch = RecordBatch::new_empty(Arc::new(schema));
+                // TODO: Handle names that cannot be file names directly.
+                let file_name = format!("{}.parquet", table_name);
+                let file_path = Path::new("../../../../data").join(file_name);
+                StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path());
+            } else {
+                // TODO: Add an action to create a model table. It should have a name, a schema and what are tag columns.
+                // TODO: The table should be added to the catalog (as a model table?).
+                // TODO: If the table already exists and the schemas is different, return an error.
+                // TODO: If the indexes for the tag columns does not match the schema, return an error.
+            }
 
             // Confirm the table was created.
             Ok(Response::new(Box::pin(stream::empty())))
