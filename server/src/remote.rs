@@ -298,6 +298,10 @@ impl FlightService for FlightServiceHandler {
     /// in the catalog when given a table name and schema. `CreateIngestionTable` creates a table
     /// that can be used for ingestion when given a table name, a schema and a list of indices,
     /// specifying which columns are metadata tag columns.
+    ///
+    /// The data is given in the action body and must have the following format:
+    /// The first two bytes are the length x of the first argument. The next x bytes are the first
+    /// argument. This pattern repeats until all arguments are consumed.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -309,8 +313,12 @@ impl FlightService for FlightServiceHandler {
             info!("{}", action.body.len());
             info!("{:?}", &action.body);
 
-            let table_name = str::from_utf8(&action.body[..10]).unwrap();
-            let schema = schema_from_bytes(&action.body[18..]).unwrap();
+            let (table_name_bytes, table_name_offset) = extract_argument_bytes(&action.body);
+            let table_name = str::from_utf8(table_name_bytes).unwrap();
+
+            let (schema_bytes, _schema_offset) = extract_argument_bytes(&action.body[table_name_offset..]);
+            // TODO: Fix the problem where the first 8 bytes have to be removed to read the schema.
+            let schema = schema_from_bytes(&schema_bytes[8..]).unwrap();
 
             info!("Table name: {}", table_name);
             info!("Schema: {:?}", schema);
@@ -351,4 +359,16 @@ impl FlightService for FlightServiceHandler {
         // TODO: List two new actions above.
         Err(Status::unimplemented("Not implemented."))
     }
+}
+
+/// Given an array of bytes, extract a slice that contains the first argument. It is assumed that the
+/// length of the argument is in the first two bytes. A tuple with the argument bytes and an offset
+/// specifying where the next argument starts, is returned.
+fn extract_argument_bytes(data: &[u8]) -> (&[u8], usize) {
+    let size_bytes: [u8; 2] = data[..2].try_into().expect("Slice with incorrect length.");
+    let size = u16::from_be_bytes(size_bytes) as usize;
+
+    let argument_bytes = &data[2..(size + 2)];
+
+    (argument_bytes, size + 2)
 }
