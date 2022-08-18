@@ -23,6 +23,7 @@ use std::convert::Infallible;
 use std::convert::TryInto;
 use std::error::Error;
 use std::net::SocketAddr;
+use std::path::Path;
 use std::pin::Pin;
 use std::str;
 use std::sync::Arc;
@@ -34,12 +35,16 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
 use datafusion::arrow::{array::ArrayRef, datatypes::SchemaRef, ipc::writer::IpcWriteOptions};
+use datafusion::arrow::datatypes::Schema;
+use datafusion::arrow::ipc::convert::{schema_from_bytes};
+use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, Stream, StreamExt};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{error, info};
 
 use crate::Context;
+use crate::storage::StorageEngine;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
@@ -300,19 +305,39 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action: {}", action.r#type);
 
-        // TODO: Add an action to create a table. It should have a name and a schema.
-        // TODO: The table should be added to the catalog.
-        // TODO: The name should be the given name and the path should be based on the name.
-        // TODO: If the table already exists and the schema is different, return an error.
-
         if action.r#type == "CreateTable" {
-            Err(Status::unimplemented("Action not implemented."))
+            info!("{}", action.body.len());
+            info!("{:?}", &action.body);
+
+            let table_name = str::from_utf8(&action.body[..10]).unwrap();
+            let schema = schema_from_bytes(&action.body[18..]).unwrap();
+
+            info!("Table name: {}", table_name);
+            info!("Schema: {:?}", schema);
+
+            // TODO: If the table already exists and the schema is different, return an error.
+            // TODO: If the table already exists and the schema is the same, maybe return ALREADY_EXISTS error.
+
+            // Create an empty Apache Parquet file to save the schema.
+            let empty_batch = RecordBatch::new_empty(Arc::new(schema));
+            // TODO: Handle names that cannot be file names directly.
+            let file_name = format!("{}.parquet", table_name);
+            let file_path = Path::new("../../../../data").join(file_name);
+            StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path());
+
+            // TODO: Save the table in the catalog.
+            // TODO: The name should be the given name and the path should be based on the name.
+
+            // Confirm the table was created.
+            Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "CreateIngestionTable" {
             // TODO: Add an action to create a model table. It should have a name, a schema and what are tag columns.
             // TODO: The table should be added to the catalog (as a model table?).
             // TODO: If the table already exists and the schemas is different, return an error.
             // TODO: If the indexes for the tag columns does not match the schema, return an error.
-            Err(Status::unimplemented("Action not implemented."))
+
+            // Confirm the table was created.
+            Ok(Response::new(Box::pin(stream::empty())))
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
