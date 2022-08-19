@@ -35,7 +35,6 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
 use datafusion::arrow::{array::ArrayRef, datatypes::SchemaRef, ipc::writer::IpcWriteOptions};
-use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::ipc::convert::{schema_from_bytes};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, Stream, StreamExt};
@@ -311,25 +310,32 @@ impl FlightService for FlightServiceHandler {
 
         if action.r#type == "CreateTable" || action.r#type == "CreateIngestionTable" {
             let (table_name_bytes, table_name_offset) = extract_argument_bytes(&action.body);
-            let table_name = str::from_utf8(table_name_bytes).unwrap();
+            let table_name = str::from_utf8(table_name_bytes)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             let (schema_bytes, _schema_offset) = extract_argument_bytes(&action.body[table_name_offset..]);
             // TODO: Fix the problem where the first 8 bytes have to be removed to read the schema.
-            let schema = schema_from_bytes(&schema_bytes[8..]).unwrap();
-
-            // TODO: If the table already exists and the schema is different, return an error.
-            // TODO: If the table already exists and the schema is the same, maybe return ALREADY_EXISTS error.
+            let schema = schema_from_bytes(&schema_bytes[8..])
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             if action.r#type == "CreateTable" {
-                // TODO: Save the table in the catalog.
-                // TODO: The name should be the given name and the path should be based on the name.
+                // TODO: Maybe check if the schema is different, this is expensive since all tables have to be read.
+                // If the table name already exists, return an error.
+                let mut existing_tables = self.context.catalog.table_metadata.iter();
+                if existing_tables.any(|table| table.name == table_name) {
+                    let message = format!("Table with name '{}' already exists.", table_name);
+                    return Err(Status::already_exists(message));
+                }
 
                 // Create an empty Apache Parquet file to save the schema.
                 let empty_batch = RecordBatch::new_empty(Arc::new(schema));
                 // TODO: Handle names that cannot be file names directly.
                 let file_name = format!("{}.parquet", table_name);
                 let file_path = Path::new("../../../../data").join(file_name);
-                StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path());
+
+                StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path())
+                    .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                // TODO: Save the table in the catalog.
             } else {
                 // TODO: Add an action to create a model table. It should have a name, a schema and what are tag columns.
                 // TODO: The table should be added to the catalog (as a model table?).
