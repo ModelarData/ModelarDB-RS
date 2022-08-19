@@ -41,6 +41,7 @@ use futures::{stream, Stream, StreamExt};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{error, info};
+use crate::catalog::TableMetadata;
 
 use crate::Context;
 use crate::storage::StorageEngine;
@@ -293,8 +294,8 @@ impl FlightService for FlightServiceHandler {
     }
 
     /// Perform a specific action based on the type of the action in `request`. Currently supports
-    /// two actions: `CreateTable` and `CreateIngestionTable`. `CreateTable` creates a normal table
-    /// in the catalog when given a table name and schema. `CreateIngestionTable` creates a table
+    /// two actions: `CreateTable` and `CreateModelTable`. `CreateTable` creates a normal table
+    /// in the catalog when given a table name and schema. `CreateModelTable` creates a table
     /// that can be used for ingestion when given a table name, a schema and a list of indices,
     /// specifying which columns are metadata tag columns.
     ///
@@ -308,12 +309,13 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action: {}", action.r#type);
 
-        if action.r#type == "CreateTable" || action.r#type == "CreateIngestionTable" {
+        if action.r#type == "CreateTable" || action.r#type == "CreateModelTable" {
             let (table_name_bytes, table_name_offset) = extract_argument_bytes(&action.body);
             let table_name = str::from_utf8(table_name_bytes)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            let (schema_bytes, _schema_offset) = extract_argument_bytes(&action.body[table_name_offset..]);
+            let offset_data = &action.body[table_name_offset..];
+            let (schema_bytes, schema_offset) = extract_argument_bytes(offset_data);
             // TODO: Fix the problem where the first 8 bytes have to be removed to read the schema.
             let schema = schema_from_bytes(&schema_bytes[8..])
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
@@ -329,15 +331,20 @@ impl FlightService for FlightServiceHandler {
 
                 // Create an empty Apache Parquet file to save the schema.
                 let empty_batch = RecordBatch::new_empty(Arc::new(schema));
-                // TODO: Handle names that cannot be file names directly.
+                // TODO: Maybe handle names that cannot be file names directly.
                 let file_name = format!("{}.parquet", table_name);
-                let file_path = Path::new("../../../../data").join(file_name);
+                let file_path = self.context.catalog.data_folder_path.join(file_name);
 
                 StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path())
                     .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
                 // TODO: Save the table in the catalog.
             } else {
-                // TODO: Add an action to create a model table. It should have a name, a schema and what are tag columns.
+                let offset_data = &action.body[(table_name_offset + schema_offset)..];
+                let (tag_indices_bytes, _offset) = extract_argument_bytes(offset_data);
+
+                info!("Tag indices: {:?}", tag_indices_bytes);
+
                 // TODO: The table should be added to the catalog (as a model table?).
                 // TODO: If the table already exists and the schemas is different, return an error.
                 // TODO: If the indexes for the tag columns does not match the schema, return an error.
@@ -361,13 +368,13 @@ impl FlightService for FlightServiceHandler {
             catalog.".to_owned(),
         };
 
-        let create_ingestion_table_action = ActionType {
-            r#type: "CreateIngestionTable".to_owned(),
+        let create_model_table_action = ActionType {
+            r#type: "CreateModelTable".to_owned(),
             description: "Given a table name, a schema, and a list of tag column indices, \
-            create an ingestion table and add it to the catalog.".to_owned()
+            create a model table and add it to the catalog.".to_owned()
         };
 
-        let output = stream::iter(vec![Ok(create_table_action), Ok(create_ingestion_table_action)]);
+        let output = stream::iter(vec![Ok(create_table_action), Ok(create_model_table_action)]);
         Ok(Response::new(Box::pin(output)))
     }
 }
