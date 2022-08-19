@@ -22,6 +22,7 @@ use std::io::{Error, ErrorKind};
 use std::str;
 use std::sync::Arc;
 use std::{fs::File, path::Path};
+use std::path::PathBuf;
 
 use datafusion::arrow::array::{
     Array, ArrayRef, BinaryArray, Int32Array, Int32Builder, StringBuilder,
@@ -38,6 +39,8 @@ use crate::storage::StorageEngine;
 
 /// Metadata for the tables and model tables in the data folder.
 pub struct Catalog {
+    /// Folder containing the tables and model tables.
+    pub data_folder_path: PathBuf,
     /// Metadata for the tables in the data folder.
     pub table_metadata: Vec<TableMetadata>,
     /// Metadata for the model tables in the data folder.
@@ -48,7 +51,7 @@ impl Catalog {
     /// Scan `data_folder` for tables and model tables and construct a `Catalog`
     /// that contains the metadata necessary to query these tables. Returns
     /// `Error` if the contents of `data_folder` cannot be read.
-    pub fn try_new(data_folder: &str) -> Result<Self, Error> {
+    pub fn try_new(data_folder_path: &Path) -> Result<Self, Error> {
         let mut table_metadata = vec![];
         let mut model_table_metadata = vec![];
         let model_table_legacy_segment_file_schema = Arc::new(Schema::new(vec![
@@ -60,14 +63,13 @@ impl Catalog {
             Field::new("gaps", DataType::Binary, false),
         ]));
 
-        let path = Path::new(data_folder);
-        if Self::is_path_a_table(path) {
+        if Self::is_path_a_table(data_folder_path) {
             warn!("The data folder is a table, please use the parent directory.");
-        } else if Self::is_path_a_model_table(path) {
+        } else if Self::is_path_a_model_table(data_folder_path) {
             warn!("The data folder is a model table, please use the parent directory.");
         }
 
-        for maybe_dir_entry in read_dir(data_folder)? {
+        for maybe_dir_entry in read_dir(data_folder_path)? {
             // The check if maybe_dir_entry is an error is not performed in
             // try_adding_table_or_model_table_metadata() as it does not seem
             // possible to return an error without moving it out of a reference.
@@ -91,6 +93,7 @@ impl Catalog {
         }
 
         Ok(Self {
+            data_folder_path: data_folder_path.to_path_buf(),
             table_metadata,
             model_table_metadata,
         })
@@ -407,6 +410,7 @@ mod tests {
     #[test]
     fn test_empty_catalog_table_and_model_table_names() {
         let catalog = Catalog {
+            data_folder_path: PathBuf::from(""),
             table_metadata: vec![],
             model_table_metadata: vec![],
         };
@@ -416,6 +420,7 @@ mod tests {
     #[test]
     fn test_catalog_table_and_model_table_names() {
         let mut catalog = Catalog {
+            data_folder_path: PathBuf::from(""),
             table_metadata: vec![],
             model_table_metadata: vec![],
         };

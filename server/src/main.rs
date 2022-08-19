@@ -29,6 +29,7 @@ mod storage;
 mod tables;
 mod types;
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use datafusion::common::DataFusionError;
@@ -68,8 +69,10 @@ fn main() -> Result<(), String> {
     let mut args = std::env::args();
     args.next(); // Skip executable.
     if let Some(data_folder) = args.next() {
+        let data_folder_path = PathBuf::from(&data_folder);
+
         // Build Context.
-        let mut catalog = Catalog::try_new(&data_folder).map_err(|error| {
+        let mut catalog = Catalog::try_new(&data_folder_path).map_err(|error| {
             format!("Unable to read data folder '{}': {}", &data_folder, &error)
         })?;
         let runtime = Runtime::new().unwrap();
