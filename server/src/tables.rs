@@ -222,6 +222,7 @@ impl TableProvider for ModelTable {
                 object_meta: object_meta.unwrap(),
                 partition_values: vec![],
                 range: None,
+                extensions: None,
             })
             .collect::<Vec<PartitionedFile>>()
             .await;
@@ -246,7 +247,7 @@ impl TableProvider for ModelTable {
         };
 
         let predicate = self.rewrite_and_combine_filters(filters);
-        let parquet_exec = Arc::new(ParquetExec::new(file_scan_config, predicate.clone()));
+        let parquet_exec = Arc::new(ParquetExec::new(file_scan_config, predicate.clone(), None));
         let input = self
             .add_filter_exec(&predicate, &parquet_exec)
             .unwrap_or(parquet_exec);
@@ -516,8 +517,7 @@ impl GridStream {
         let mut members = StringBuilder::new(level.iter().map(|s| s.unwrap().len()).sum());
         for tid in tids {
             members
-                .append_value(level.value(tid.unwrap() as usize))
-                .unwrap();
+                .append_value(level.value(tid.unwrap() as usize));
         }
         Arc::new(members.finish())
     }

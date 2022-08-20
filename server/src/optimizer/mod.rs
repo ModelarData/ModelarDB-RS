@@ -35,7 +35,7 @@ impl OptimizerRule for LogOptimizerRule {
     fn optimize(
         &self,
         logical_plan: &LogicalPlan,
-        _execution_props: &OptimizerConfig,
+        _execution_props: &mut OptimizerConfig,
     ) -> Result<LogicalPlan> {
         debug!("Logical plan:\n{:#?}\n", &logical_plan);
         Ok(logical_plan.clone())

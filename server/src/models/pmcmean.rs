@@ -146,9 +146,9 @@ pub fn grid(
     let value = decode_model(model);
     let sampling_interval = sampling_interval as usize;
     for timestamp in (start_time..=end_time).step_by(sampling_interval) {
-        time_series_ids.append_value(time_series_id).unwrap();
-        timestamps.append_value(timestamp).unwrap();
-        values.append_value(value).unwrap();
+        time_series_ids.append_value(time_series_id);
+        timestamps.append_value(timestamp);
+        values.append_value(value);
     }
 }
 

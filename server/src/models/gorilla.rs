@@ -184,8 +184,8 @@ pub fn grid(
     values: &mut ValueBuilder,
 ) {
     for timestamp in (start_time..=end_time).step_by(sampling_interval as usize) {
-        time_series_ids.append_value(time_series_id).unwrap();
-        timestamps.append_value(timestamp).unwrap();
+        time_series_ids.append_value(time_series_id);
+        timestamps.append_value(timestamp);
     }
     decompress_values(start_time, end_time, sampling_interval, model, values);
 }
@@ -225,7 +225,7 @@ fn decompress_values(
     let mut last_value = bits.read_bits(models::VALUE_SIZE_IN_BITS);
 
     // The first value is stored uncompressed using size_of::<Value> bits.
-    values.append_value(Value::from_bits(last_value)).unwrap();
+    values.append_value(Value::from_bits(last_value));
 
     // Then values are stored using XOR and a variable length binary encoding.
     let length_without_first_value = models::length(start_time, end_time, sampling_interval) - 1;
@@ -244,7 +244,7 @@ fn decompress_values(
             value ^= last_value;
             last_value = value;
         }
-        values.append_value(Value::from_bits(last_value)).unwrap();
+        values.append_value(Value::from_bits(last_value));
     }
 }
 
