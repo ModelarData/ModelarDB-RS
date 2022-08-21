@@ -258,16 +258,14 @@ impl CompressedSegmentBatchBuilder {
         max_value: Value,
         error: f32,
     ) {
-        // unwrap() is used as append_value() never returns Error for
-        // PrimitiveBuilder.
-        self.model_type_ids.append_value(model_type_id).unwrap();
-        self.timestamps.append_value(timestamps).unwrap();
-        self.start_times.append_value(start_time).unwrap();
-        self.end_times.append_value(end_time).unwrap();
-        self.values.append_value(values).unwrap();
-        self.min_values.append_value(min_value).unwrap();
-        self.max_values.append_value(max_value).unwrap();
-        self.error.append_value(error).unwrap();
+        self.model_type_ids.append_value(model_type_id);
+        self.timestamps.append_value(timestamps);
+        self.start_times.append_value(start_time);
+        self.end_times.append_value(end_time);
+        self.values.append_value(values);
+        self.min_values.append_value(min_value);
+        self.max_values.append_value(max_value);
+        self.error.append_value(error);
     }
 
     /// Return [`RecordBatch`] of compressed segments and consume the builder.
@@ -421,9 +419,9 @@ mod tests {
         values: &[Value],
     ) -> (TimestampArray, ValueArray) {
         let mut timestamps_builder = TimestampBuilder::new(timestamps.len());
-        timestamps_builder.append_slice(timestamps).unwrap();
+        timestamps_builder.append_slice(timestamps);
         let mut values_builder = ValueBuilder::new(values.len());
-        values_builder.append_slice(values).unwrap();
+        values_builder.append_slice(values);
         (timestamps_builder.finish(), values_builder.finish())
     }
 

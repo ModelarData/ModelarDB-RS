@@ -164,8 +164,8 @@ impl Catalog {
             let table_folder = read_dir(&path);
             table_folder.is_ok()
                 && table_folder.unwrap().all(|result| {
-                    result.is_ok() &&
-                        StorageEngine::is_path_an_apache_parquet_file(&result.unwrap().path())
+                    result.is_ok()
+                        && StorageEngine::is_path_an_apache_parquet_file(&result.unwrap().path())
                 })
         } else {
             false
@@ -194,8 +194,8 @@ impl Catalog {
                 && StorageEngine::is_path_an_apache_parquet_file(time_series)
                 && segment_folder.is_ok()
                 && segment_folder.unwrap().all(|result| {
-                    result.is_ok() &&
-                        StorageEngine::is_path_an_apache_parquet_file(&result.unwrap().path())
+                    result.is_ok()
+                        && StorageEngine::is_path_an_apache_parquet_file(&result.unwrap().path())
                 })
         } else {
             false
@@ -345,8 +345,8 @@ impl ModelTableMetadata {
         // lookup. Time series ids starting at 1 is used for compatibility with
         // the JVM-based version of ModelarDB.
         let mut shifted_column = Int32Builder::new(column.len() + 1);
-        shifted_column.append_value(-1)?;
-        shifted_column.append_slice(column)?;
+        shifted_column.append_value(-1);
+        shifted_column.append_slice(column);
         Ok(shifted_column.finish())
     }
 
@@ -384,12 +384,12 @@ impl ModelTableMetadata {
         // The level's name is at index 0 as ids from 1 is used for lookup.
         let mut shifted_column =
             StringBuilder::with_capacity(column.len(), column.get_buffer_memory_size());
-        shifted_column.append_value(name)?;
+        shifted_column.append_value(name);
         for maybe_member_as_bytes in column {
             let member_as_bytes = maybe_member_as_bytes
                 .ok_or_else(|| ParquetError::ArrowError(error_message.to_owned()))?;
             let member_as_str = str::from_utf8(member_as_bytes)?;
-            shifted_column.append_value(member_as_str)?;
+            shifted_column.append_value(member_as_str);
         }
         Ok(Arc::new(shifted_column.finish()))
     }
