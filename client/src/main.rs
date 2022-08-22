@@ -189,7 +189,13 @@ fn execute_command(
             let fd = FlightDescriptor::new_path(vec![table_name.to_string()]);
             let request = Request::new(fd);
             rt.block_on(async {
-                let schema_result = fsc.get_schema(request).await?.into_inner();
+                // Both the 32-bit continuation indicator and the 32-bit
+                // little-endian length will be prepended to SchemaResult.schema
+                // for compatibility with other Apache Arrow Flight
+                // implementations until issue
+                // https://github.com/apache/arrow-rs/issues/2445 is fixed.
+                let mut schema_result = fsc.get_schema(request).await?.into_inner();
+                schema_result.schema.drain(0..8);
                 let schema = schema_from_bytes(&schema_result.schema)?;
                 for field in schema.fields() {
                     println!("{}: {}", field.name(), field.data_type());

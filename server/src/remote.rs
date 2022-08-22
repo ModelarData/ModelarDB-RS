@@ -19,8 +19,6 @@
 //! `start_arrow_flight_server()`.
 
 use std::collections::HashMap;
-use std::convert::Infallible;
-use std::convert::TryInto;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -40,6 +38,9 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{error, info};
 
 use crate::Context;
+
+/// Value Apache Arrow Flight use to indicate a valid message.
+const APACHE_ARROW_FLIGHT_CONTINUATION_INDICATOR: &[u8] = &[255, 255, 255, 255];
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
@@ -124,12 +125,12 @@ impl FlightService for FlightServiceHandler {
         Pin<Box<dyn Stream<Item = Result<FlightData, Status>> + Send + Sync + 'static>>;
     type DoPutStream =
         Pin<Box<dyn Stream<Item = Result<PutResult, Status>> + Send + Sync + 'static>>;
+    type DoExchangeStream =
+        Pin<Box<dyn Stream<Item = Result<FlightData, Status>> + Send + Sync + 'static>>;
     type DoActionStream =
         Pin<Box<dyn Stream<Item = Result<arrow_flight::Result, Status>> + Send + Sync + 'static>>;
     type ListActionsStream =
         Pin<Box<dyn Stream<Item = Result<ActionType, Status>> + Send + Sync + 'static>>;
-    type DoExchangeStream =
-        Pin<Box<dyn Stream<Item = Result<FlightData, Status>> + Send + Sync + 'static>>;
 
     /// Not implemented.
     async fn handshake(
@@ -171,11 +172,25 @@ impl FlightService for FlightServiceHandler {
         let schema = self.get_table_schema_from_default_catalog(table_name)?;
 
         let options = IpcWriteOptions::default();
-        let schema_as_ipc = SchemaAsIpc::new(&*schema, &options);
-        let serialized_schema = schema_as_ipc
-            .try_into()
-            .map_err(|error: Infallible| Status::internal(error.to_string()))?;
-        Ok(Response::new(serialized_schema))
+        let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
+        let mut schema_result: SchemaResult = schema_as_ipc.into();
+
+        // Create a complete message by prepending both the 32-bit continuation
+        // indicator and the 32-bit little-endian length to SchemaResult.schema
+        // for compatibility with other Apache Arrow Flight implementations
+        // until issue https://github.com/apache/arrow-rs/issues/2445 is fixed.
+        let schema_result_length = schema_result.schema.len();
+        let mut continuation_length_and_schema_result =
+            Vec::with_capacity(8 + schema_result_length);
+
+        continuation_length_and_schema_result
+            .extend_from_slice(APACHE_ARROW_FLIGHT_CONTINUATION_INDICATOR);
+        continuation_length_and_schema_result
+            .extend_from_slice(&(schema_result_length as u32).to_le_bytes());
+        continuation_length_and_schema_result.append(&mut schema_result.schema);
+
+        schema_result.schema = continuation_length_and_schema_result;
+        Ok(Response::new(schema_result))
     }
 
     /// Execute a SQL query provided in UTF-8 and return the schema of the query
