@@ -31,16 +31,15 @@ use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
-use datafusion::arrow::{array::ArrayRef, datatypes::SchemaRef, ipc::writer::IpcWriteOptions};
+use datafusion::arrow::{
+    array::ArrayRef, datatypes::SchemaRef, error::ArrowError, ipc::writer::IpcWriteOptions,
+};
 use futures::{stream, Stream, StreamExt};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{error, info};
 
 use crate::Context;
-
-/// Value Apache Arrow Flight use to indicate a valid message.
-const APACHE_ARROW_FLIGHT_CONTINUATION_INDICATOR: &[u8] = &[255, 255, 255, 255];
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
@@ -171,25 +170,19 @@ impl FlightService for FlightServiceHandler {
         let table_name = self.get_table_name_from_flight_descriptor(&flight_descriptor)?;
         let schema = self.get_table_schema_from_default_catalog(table_name)?;
 
+        // IpcMessages are transferred as SchemaResults for compatibility with
+        // the return type of get_schema() and to ensure the SchemaResult match
+        // what is expected by the other Arrow Flight implementations until
+        // https://github.com/apache/arrow-rs/issues/2445 is fixed.
         let options = IpcWriteOptions::default();
         let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
-        let mut schema_result: SchemaResult = schema_as_ipc.into();
+        let ipc_message: IpcMessage = schema_as_ipc
+            .try_into()
+            .map_err(|error: ArrowError| Status::internal(error.to_string()))?;
 
-        // Create a complete message by prepending both the 32-bit continuation
-        // indicator and the 32-bit little-endian length to SchemaResult.schema
-        // for compatibility with other Apache Arrow Flight implementations
-        // until issue https://github.com/apache/arrow-rs/issues/2445 is fixed.
-        let schema_result_length = schema_result.schema.len();
-        let mut continuation_length_and_schema_result =
-            Vec::with_capacity(8 + schema_result_length);
-
-        continuation_length_and_schema_result
-            .extend_from_slice(APACHE_ARROW_FLIGHT_CONTINUATION_INDICATOR);
-        continuation_length_and_schema_result
-            .extend_from_slice(&(schema_result_length as u32).to_le_bytes());
-        continuation_length_and_schema_result.append(&mut schema_result.schema);
-
-        schema_result.schema = continuation_length_and_schema_result;
+        let schema_result = SchemaResult {
+            schema: ipc_message.0,
+        };
         Ok(Response::new(schema_result))
     }
 
