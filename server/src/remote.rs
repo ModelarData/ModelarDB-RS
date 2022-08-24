@@ -19,8 +19,6 @@
 //! `start_arrow_flight_server()`.
 
 use std::collections::HashMap;
-use std::convert::Infallible;
-use std::convert::TryInto;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -33,7 +31,9 @@ use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
-use datafusion::arrow::{array::ArrayRef, datatypes::SchemaRef, ipc::writer::IpcWriteOptions};
+use datafusion::arrow::{
+    array::ArrayRef, datatypes::SchemaRef, error::ArrowError, ipc::writer::IpcWriteOptions,
+};
 use futures::{stream, Stream, StreamExt};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
@@ -124,12 +124,12 @@ impl FlightService for FlightServiceHandler {
         Pin<Box<dyn Stream<Item = Result<FlightData, Status>> + Send + Sync + 'static>>;
     type DoPutStream =
         Pin<Box<dyn Stream<Item = Result<PutResult, Status>> + Send + Sync + 'static>>;
+    type DoExchangeStream =
+        Pin<Box<dyn Stream<Item = Result<FlightData, Status>> + Send + Sync + 'static>>;
     type DoActionStream =
         Pin<Box<dyn Stream<Item = Result<arrow_flight::Result, Status>> + Send + Sync + 'static>>;
     type ListActionsStream =
         Pin<Box<dyn Stream<Item = Result<ActionType, Status>> + Send + Sync + 'static>>;
-    type DoExchangeStream =
-        Pin<Box<dyn Stream<Item = Result<FlightData, Status>> + Send + Sync + 'static>>;
 
     /// Not implemented.
     async fn handshake(
@@ -170,12 +170,20 @@ impl FlightService for FlightServiceHandler {
         let table_name = self.get_table_name_from_flight_descriptor(&flight_descriptor)?;
         let schema = self.get_table_schema_from_default_catalog(table_name)?;
 
+        // IpcMessages are transferred as SchemaResults for compatibility with
+        // the return type of get_schema() and to ensure the SchemaResult match
+        // what is expected by the other Arrow Flight implementations until
+        // https://github.com/apache/arrow-rs/issues/2445 is fixed.
         let options = IpcWriteOptions::default();
-        let schema_as_ipc = SchemaAsIpc::new(&*schema, &options);
-        let serialized_schema = schema_as_ipc
+        let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
+        let ipc_message: IpcMessage = schema_as_ipc
             .try_into()
-            .map_err(|error: Infallible| Status::internal(error.to_string()))?;
-        Ok(Response::new(serialized_schema))
+            .map_err(|error: ArrowError| Status::internal(error.to_string()))?;
+
+        let schema_result = SchemaResult {
+            schema: ipc_message.0,
+        };
+        Ok(Response::new(schema_result))
     }
 
     /// Execute a SQL query provided in UTF-8 and return the schema of the query
