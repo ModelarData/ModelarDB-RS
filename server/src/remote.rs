@@ -296,8 +296,9 @@ impl FlightService for FlightServiceHandler {
     /// Perform a specific action based on the type of the action in `request`. Currently supports
     /// two actions: `CreateTable` and `CreateModelTable`. `CreateTable` creates a normal table
     /// in the catalog when given a table name and schema. `CreateModelTable` creates a table
-    /// that can be used for ingestion when given a table name, a schema and a list of indices,
-    /// specifying which columns are metadata tag columns.
+    /// that can be used for ingestion when given a table name, a schema, a list of indices
+    /// specifying which columns are metadata tag columns, and an index specifying which column
+    /// is the timestamp column.
     ///
     /// The data is given in the action body and must have the following format:
     /// The first two bytes are the length x of the first argument. The next x bytes are the first
@@ -321,7 +322,7 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             if action.r#type == "CreateTable" {
-                // TODO: Maybe check if the schema is different, this is expensive since all tables have to be read.
+                // TODO: Maybe check if the schema is different.
                 // If the table name already exists, return an error.
                 let mut existing_tables = self.context.catalog.table_metadata.iter();
                 if existing_tables.any(|table| table.name == table_name) {
@@ -345,9 +346,21 @@ impl FlightService for FlightServiceHandler {
 
                 info!("Tag indices: {:?}", tag_indices_bytes);
 
+                // TODO: In main, create the model_table_metadata SQLite table if it does not exist.
+                // TODO: In main, create the columns SQLite table if it does not exist.
+                // TODO: Merge.
+
+                // TODO: Create the folder to check if it is a valid object_store folder.
                 // TODO: The table should be added to the catalog (as a model table?).
-                // TODO: If the table already exists and the schemas is different, return an error.
+                // TODO: If the table already exists and the schemas are different, return an error.
                 // TODO: If the indexes for the tag columns does not match the schema, return an error.
+                // TODO: If the index for the timestamp columns does not match the schema, return an error.
+                // TODO: Create tests for all these checks.
+
+                // TODO: If it passes the checks, create a table_tags SQLite table.
+                // TODO: Create a new row in the model_table_metadata table.
+                // TODO: Add the field columns to the columns table.
+                // TODO: Create test to ensure this happens.
             }
 
             // Confirm the table was created.
