@@ -21,7 +21,6 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::pin::Pin;
 use std::str;
 use std::sync::Arc;
@@ -33,13 +32,13 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
 use datafusion::arrow::{array::ArrayRef, datatypes::SchemaRef, ipc::writer::IpcWriteOptions, error::ArrowError};
-use datafusion::arrow::ipc::convert::{schema_from_bytes};
+use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, Stream, StreamExt};
+use object_store;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{error, info};
-use crate::catalog::TableMetadata;
 
 use crate::Context;
 use crate::storage::StorageEngine;
@@ -317,14 +316,20 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action: {}", action.r#type);
 
         if action.r#type == "CreateTable" || action.r#type == "CreateModelTable" {
+            // Extract the table name from the action body.
             let (table_name_bytes, table_name_offset) = extract_argument_bytes(&action.body);
             let table_name = str::from_utf8(table_name_bytes)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
+            // Check if the table name is a valid object_store path.
+            object_store::path::Path::parse(table_name)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+            // Extract the schema from the action body.
             let offset_data = &action.body[table_name_offset..];
             let (schema_bytes, schema_offset) = extract_argument_bytes(offset_data);
-            // TODO: Fix the problem where the first 8 bytes have to be removed to read the schema.
-            let schema = schema_from_bytes(&schema_bytes[8..])
+            let ipc_message = IpcMessage(Vec::from(schema_bytes));
+            let schema = Schema::try_from(ipc_message)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             if action.r#type == "CreateTable" {
@@ -338,7 +343,6 @@ impl FlightService for FlightServiceHandler {
 
                 // Create an empty Apache Parquet file to save the schema.
                 let empty_batch = RecordBatch::new_empty(Arc::new(schema));
-                // TODO: Maybe handle names that cannot be file names directly.
                 let file_name = format!("{}.parquet", table_name);
                 let file_path = self.context.catalog.data_folder_path.join(file_name);
 
@@ -354,7 +358,6 @@ impl FlightService for FlightServiceHandler {
 
                 // TODO: In main, create the model_table_metadata SQLite table if it does not exist.
                 // TODO: In main, create the columns SQLite table if it does not exist.
-                // TODO: Merge.
 
                 // TODO: Create the folder to check if it is a valid object_store folder.
                 // TODO: The table should be added to the catalog (as a model table?).
