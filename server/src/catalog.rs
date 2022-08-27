@@ -113,18 +113,18 @@ impl Catalog {
     }
 
     /// Add a table to the catalog of normal tables. If the table name already exists in the catalog
-    /// return [`Err`]. If the table is successfully inserted, return the inserted [`TableMetadata`].
-    pub fn insert_table(&mut self, name: String, path: String) -> Result<TableMetadata, String> {
+    /// return [`Err`]. If the table is successfully inserted, return [`Ok`].
+    pub fn insert_table(&mut self, name: String, path: String) -> Result<(), String> {
         let mut existing_tables = self.table_metadata.iter();
 
-        if existing_tables.any(|table| table.name == table_name) {
+        if existing_tables.any(|table| table.name == name) {
             // TODO: Maybe check if the schema is different.
-            Err(format!("Table with name '{}' already exists.", table_name))
+            Err(format!("Table with name '{}' already exists.", name))
         } else {
             let new_table_metadata = TableMetadata { name, path };
-            self.table_metadata.push(new_table_medata);
+            self.table_metadata.push(new_table_metadata);
 
-            Ok(new_table_metadata)
+            Ok(())
         }
     }
 

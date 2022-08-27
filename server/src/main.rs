@@ -30,7 +30,7 @@ mod tables;
 mod types;
 
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use datafusion::common::DataFusionError;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
@@ -50,7 +50,7 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 /// Provides access to the system's configuration and components.
 pub struct Context {
     /// Metadata for the tables and model tables in the data folder.
-    catalog: Catalog,
+    catalog: RwLock<Catalog>,
     /// A Tokio runtime for executing asynchronous tasks.
     runtime: Runtime,
     /// Main interface for Apache Arrow DataFusion.
@@ -83,7 +83,7 @@ fn main() -> Result<(), String> {
 
         // Start Interface.
         let context = Arc::new(Context {
-            catalog,
+            catalog: RwLock::new(catalog),
             runtime,
             session,
         });

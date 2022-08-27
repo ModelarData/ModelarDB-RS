@@ -146,7 +146,8 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Criteria>,
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
-        let table_names = self.context.catalog.table_and_model_table_names();
+        let catalog = self.context.catalog.read().unwrap();
+        let table_names = catalog.table_and_model_table_names();
         let flight_descriptor = FlightDescriptor::new_path(table_names);
         let flight_info =
             FlightInfo::new(IpcMessage(vec![]), Some(flight_descriptor), vec![], -1, -1);
@@ -333,23 +334,20 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             if action.r#type == "CreateTable" {
-                // TODO: Maybe check if the schema is different.
-                // If the table name already exists, return an error.
-                let mut existing_tables = self.context.catalog.table_metadata.iter();
-                if existing_tables.any(|table| table.name == table_name) {
-                    let message = format!("Table with name '{}' already exists.", table_name);
-                    return Err(Status::already_exists(message));
-                }
+                let mut catalog = self.context.catalog.write().unwrap();
+                let file_name = format!("{}.parquet", table_name);
+                let file_path = catalog.data_folder_path.join(file_name);
 
+                // Save the table in the catalog.
+                let path_str = file_path.to_str().unwrap().to_string();
+                catalog.insert_table(table_name.to_owned(), path_str)
+                    .map_err(|error| Status::already_exists(error.to_string()))?;
+
+                // TODO: If this fails, the table should not be added to the catalog.
                 // Create an empty Apache Parquet file to save the schema.
                 let empty_batch = RecordBatch::new_empty(Arc::new(schema));
-                let file_name = format!("{}.parquet", table_name);
-                let file_path = self.context.catalog.data_folder_path.join(file_name);
-
                 StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path())
                     .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-                // TODO: Save the table in the catalog.
             } else {
                 let offset_data = &action.body[(table_name_offset + schema_offset)..];
                 let (tag_indices_bytes, _offset) = extract_argument_bytes(offset_data);
