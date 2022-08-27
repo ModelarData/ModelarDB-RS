@@ -27,13 +27,12 @@ use std::sync::Arc;
 
 use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
-use arrow::ipc::convert::schema_from_bytes;
 use arrow::record_batch::RecordBatch;
 use arrow::util::pretty;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::utils::flight_data_to_arrow_batch;
-use arrow_flight::{Criteria, FlightDescriptor};
+use arrow_flight::{Criteria, FlightDescriptor, IpcMessage};
 
 use rustyline::Editor;
 
@@ -189,8 +188,15 @@ fn execute_command(
             let fd = FlightDescriptor::new_path(vec![table_name.to_string()]);
             let request = Request::new(fd);
             rt.block_on(async {
+                // SchemaResults contains the bytes from IpcMessages for
+                // compatibility with the return type of
+                // FlightService.get_schema() and to ensure the SchemaResults
+                // match what is expected by the other Arrow Flight
+                // implementations until
+                // https://github.com/apache/arrow-rs/issues/2445 is fixed.
                 let schema_result = fsc.get_schema(request).await?.into_inner();
-                let schema = schema_from_bytes(&schema_result.schema)?;
+                let ipc_message = IpcMessage(schema_result.schema);
+                let schema = Schema::try_from(ipc_message)?;
                 for field in schema.fields() {
                     println!("{}: {}", field.name(), field.data_type());
                 }
