@@ -23,7 +23,7 @@ use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
 use std::str;
-use std::sync::Arc;
+use std::sync::{Arc, RwLockWriteGuard};
 
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::utils;
@@ -40,7 +40,7 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{error, info};
 
-use crate::Context;
+use crate::{Catalog, Context};
 use crate::storage::StorageEngine;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
@@ -335,39 +335,25 @@ impl FlightService for FlightServiceHandler {
 
             if action.r#type == "CreateTable" {
                 let mut catalog = self.context.catalog.write().unwrap();
-                let file_name = format!("{}.parquet", table_name);
-                let file_path = catalog.data_folder_path.join(file_name);
-
-                // Save the table in the catalog.
-                let path_str = file_path.to_str().unwrap().to_string();
-                catalog.insert_table(table_name.to_owned(), path_str)
-                    .map_err(|error| Status::already_exists(error.to_string()))?;
-
-                // TODO: If this fails, the table should not be added to the catalog.
-                // Create an empty Apache Parquet file to save the schema.
-                let empty_batch = RecordBatch::new_empty(Arc::new(schema));
-                StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path())
-                    .map_err(|error| Status::invalid_argument(error.to_string()))?;
+                create_table(catalog, table_name.to_owned(), schema);
             } else {
                 let offset_data = &action.body[(table_name_offset + schema_offset)..];
-                let (tag_indices_bytes, _offset) = extract_argument_bytes(offset_data);
+                let (tag_indices, tag_offset) = extract_argument_bytes(offset_data);
 
-                info!("Tag indices: {:?}", tag_indices_bytes);
+                let offset = (table_name_offset + schema_offset + tag_offset);
+                let offset_data = &action.body[offset..];
+                let (timestamp_index, _offset) = extract_argument_bytes(offset_data);
 
-                // TODO: In main, create the model_table_metadata SQLite table if it does not exist.
-                // TODO: In main, create the columns SQLite table if it does not exist.
-
-                // TODO: Create the folder to check if it is a valid object_store folder.
-                // TODO: The table should be added to the catalog (as a model table?).
-                // TODO: If the table already exists and the schemas are different, return an error.
-                // TODO: If the indexes for the tag columns does not match the schema, return an error.
-                // TODO: If the index for the timestamp columns does not match the schema, return an error.
-                // TODO: Create tests for all these checks.
+                // TODO: If the table already exists, return an error.
+                // TODO: Create a new model table metadata.
 
                 // TODO: If it passes the checks, create a table_tags SQLite table.
                 // TODO: Create a new row in the model_table_metadata table.
                 // TODO: Add the field columns to the columns table.
+                // TODO: Maybe do all this as a transaction?
                 // TODO: Create test to ensure this happens.
+
+                // TODO: The table should be added to the catalog (as a model table?).
             }
 
             // Confirm the table was created.
@@ -409,4 +395,28 @@ fn extract_argument_bytes(data: &[u8]) -> (&[u8], usize) {
     let argument_bytes = &data[2..(size + 2)];
 
     (argument_bytes, size + 2)
+}
+
+/// Create a normal table. If the table already exists or if the Apache Parquet file cannot be
+/// created, return [`Status`] error.
+fn create_table(
+    mut catalog: RwLockWriteGuard<Catalog>,
+    table_name: String,
+    schema: Schema
+) -> Result<(), Status> {
+    let file_name = format!("{}.parquet", table_name);
+    let file_path = catalog.data_folder_path.join(file_name);
+
+    // Save the table in the catalog.
+    let path_str = file_path.to_str().unwrap().to_string();
+    catalog.insert_table(table_name.to_owned(), path_str)
+        .map_err(|error| Status::already_exists(error.to_string()))?;
+
+    // TODO: If this fails, the table should not be added to the catalog.
+    // Create an empty Apache Parquet file to save the schema.
+    let empty_batch = RecordBatch::new_empty(Arc::new(schema));
+    StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path())
+        .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+    Ok(())
 }
