@@ -36,6 +36,8 @@ use datafusion::common::DataFusionError;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::options::ParquetReadOptions;
 use datafusion::execution::runtime_env::RuntimeEnv;
+use log::info;
+use rusqlite::Connection;
 use tokio::runtime::Runtime;
 use tracing::error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -81,6 +83,10 @@ fn main() -> Result<(), String> {
         // Register Tables.
         register_tables_and_model_tables(&runtime, &mut session, &mut catalog);
 
+        // Set up the metadata tables used for model tables.
+        create_model_table_metadata_tables(data_folder_path.as_path())
+            .map_err(|error| error.to_string())?;
+
         // Start Interface.
         let context = Arc::new(Context {
             catalog: RwLock::new(catalog),
@@ -111,6 +117,41 @@ fn create_session_context() -> SessionContext {
     ]);
     SessionContext::with_state(state)
 }
+
+
+/// If they do not already exist, create the tables used for model table metadata. A
+/// "model_table_metadata" table that can persist model tables is created. A "columns" table that
+/// can save the index of field columns in specific tables is also created. If the tables already
+/// exist or were successfully created, return [`Ok`], otherwise return [`rusqlite::Error`].
+fn create_model_table_metadata_tables(data_folder_path: &Path) -> Result<(), rusqlite::Error> {
+    let database_path = data_folder_path.join("metadata.sqlite3");
+    let conn = Connection::open(database_path)?;
+
+    // Create the model_table_metadata SQLite table if it does not exist.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS model_table_metadata (
+                table_name TEXT PRIMARY KEY,
+                schema BLOB NOT NULL,
+                timestamp_column_index INTEGER NOT NULL,
+                tag_column_indices TEXT NOT NULL
+        )",
+        (),
+    )?;
+
+    // Create the columns SQLite table if it does not exist.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS model_table_columns (
+                id INTEGER PRIMARY KEY,
+                table_name TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                column_index INTEGER NOT NULL
+        )",
+        (),
+    )?;
+
+    Ok(())
+}
+
 
 /// Register all tables and model tables in `catalog` with Apache Arrow
 /// DataFusion through `session_context`. If initialization fails the table or
