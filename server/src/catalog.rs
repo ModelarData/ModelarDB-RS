@@ -247,6 +247,56 @@ impl TableMetadata {
     }
 }
 
+// TODO: Change name to "ModelTableMetadata" when the old version is removed.
+/// Metadata required to ingest data into and query a model table.
+pub struct NewModelTableMetadata {
+    /// Name of the model table.
+    pub table_name: String,
+    /// Schema of the data that can be ingested into the model table.
+    pub schema: SchemaRef,
+    /// Index of the timestamp column in the schema.
+    pub timestamp_column_index: u8,
+    /// Indices of the tag columns in the schema.
+    pub tag_column_indices: [u8]
+}
+
+impl NewModelTableMetadata {
+    // TODO: Create tests for all these checks.
+    /// Create a new model table with the given metadata. If the timestamp or tag column indices
+    /// does not match `schema` or if the timestamp column index is in the tag column indices,
+    /// [`Err`] is returned.
+    pub fn try_new(
+        table_name: String,
+        schema: &SchemaRef,
+        timestamp_column_index: u8,
+        tag_column_indices: &[u8]
+    ) -> Result<Self, String> {
+        // If timestamp index is in the tag indices, return an error.
+        if tag_column_indices.contains(&timestamp_column_index) {
+            return Err("The timestamp column index cannot be a tag column.".to_owned());
+        };
+
+        // If the index for the timestamp columns does not match the schema, return an error.
+        if None = schema.fields.get(timestamp_column_index) {
+            return Err("The timestamp column index does not match a field in the schema.".to_owned());
+        };
+
+        // If the indexes for the tag columns does not match the schema, return an error.
+        for tag_column_index in tag_column_indices {
+            if None = schema.fields.get(tag_column_index) {
+                return Err(format!("The tag column index '{}' does not match a field in the schema.", tag_column_index));
+            };
+        };
+
+        Ok(Self {
+            table_name,
+            schema: schema.clone(),
+            timestamp_column_index,
+            tag_column_indices: *tag_column_indices.clone()
+        })
+    }
+}
+
 // TODO: update after implementing the compression component.
 /// Metadata required to query a model table.
 #[derive(Debug)]
