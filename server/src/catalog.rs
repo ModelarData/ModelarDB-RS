@@ -253,11 +253,11 @@ pub struct NewModelTableMetadata {
     /// Name of the model table.
     pub table_name: String,
     /// Schema of the data that can be ingested into the model table.
-    pub schema: SchemaRef,
+    pub schema: Schema,
     /// Index of the timestamp column in the schema.
     pub timestamp_column_index: u8,
     /// Indices of the tag columns in the schema.
-    pub tag_column_indices: [u8]
+    pub tag_column_indices: &'static [u8]
 }
 
 impl NewModelTableMetadata {
@@ -267,9 +267,9 @@ impl NewModelTableMetadata {
     /// [`Err`] is returned.
     pub fn try_new(
         table_name: String,
-        schema: &SchemaRef,
+        schema: Schema,
         timestamp_column_index: u8,
-        tag_column_indices: &[u8]
+        tag_column_indices: &'static [u8]
     ) -> Result<Self, String> {
         // If timestamp index is in the tag indices, return an error.
         if tag_column_indices.contains(&timestamp_column_index) {
@@ -277,13 +277,13 @@ impl NewModelTableMetadata {
         };
 
         // If the index for the timestamp columns does not match the schema, return an error.
-        if None = schema.fields.get(timestamp_column_index) {
+        if None == schema.fields.get(timestamp_column_index as usize) {
             return Err("The timestamp column index does not match a field in the schema.".to_owned());
         };
 
         // If the indexes for the tag columns does not match the schema, return an error.
         for tag_column_index in tag_column_indices {
-            if None = schema.fields.get(tag_column_index) {
+            if None == schema.fields.get(*tag_column_index as usize) {
                 return Err(format!("The tag column index '{}' does not match a field in the schema.", tag_column_index));
             };
         };
@@ -292,7 +292,7 @@ impl NewModelTableMetadata {
             table_name,
             schema: schema.clone(),
             timestamp_column_index,
-            tag_column_indices: *tag_column_indices.clone()
+            tag_column_indices: tag_column_indices.clone(),
         })
     }
 }
@@ -533,6 +533,71 @@ mod tests {
             "/path/to/folder".to_owned(),
         );
         assert_eq!("file", table_metadata.name);
+    }
+
+    // Tests for NewModelTableMetadata.
+    #[test]
+    fn test_can_create_model_table_metadata() {
+        let schema = get_model_table_schema();
+        let result = NewModelTableMetadata::try_new(
+            "table_name".to_owned(),
+            schema,
+            3,
+            &[0, 1, 2]
+        );
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cannot_create_model_table_metadata_with_timestamp_index_in_tag_indices() {
+        let schema = get_model_table_schema();
+        let result = NewModelTableMetadata::try_new(
+            "table_name".to_owned(),
+            schema,
+            0,
+            &[0, 1, 2]
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cannot_create_model_table_metadata_with_invalid_timestamp_index() {
+        let schema = get_model_table_schema();
+        let result = NewModelTableMetadata::try_new(
+            "table_name".to_owned(),
+            schema,
+            10,
+            &[0, 1, 2]
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cannot_create_model_table_metadata_with_invalid_tag_index() {
+        let schema = get_model_table_schema();
+        let result = NewModelTableMetadata::try_new(
+            "table_name".to_owned(),
+            schema,
+            3,
+            &[0, 1, 10]
+        );
+
+        assert!(result.is_err());
+    }
+
+    fn get_model_table_schema() -> Schema {
+        Schema::new(vec![
+            Field::new("location", DataType::Utf8, false),
+            Field::new("install_year", DataType::Utf8, false),
+            Field::new("model", DataType::Utf8, false),
+            Field::new("timestamp", DataType::UInt64, false),
+            Field::new("power_output", DataType::Float32, false),
+            Field::new("wind_speed", DataType::Float32, false),
+            Field::new("temperature", DataType::Float32, false),
+        ])
     }
 
     // Tests for ModelTableMetadata.
