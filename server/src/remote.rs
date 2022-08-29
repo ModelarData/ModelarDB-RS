@@ -41,6 +41,7 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{error, info};
 
 use crate::{Catalog, Context};
+use crate::catalog::TableMetadata;
 use crate::storage::StorageEngine;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
@@ -333,27 +334,28 @@ impl FlightService for FlightServiceHandler {
             let schema = Schema::try_from(ipc_message)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
+            // Get the write lock for the catalog to ensure that multiple writes cannot happen at the same time.
+            let mut catalog = self.context.catalog.write().unwrap();
+
             if action.r#type == "CreateTable" {
-                let mut catalog = self.context.catalog.write().unwrap();
-                create_table(catalog, table_name.to_owned(), schema);
+                create_table(catalog, table_name.to_owned(), schema)?;
             } else {
+                // Extract the tag column indices from the action body.
                 let offset_data = &action.body[(table_name_offset + schema_offset)..];
                 let (tag_indices, tag_offset) = extract_argument_bytes(offset_data);
 
-                let offset = (table_name_offset + schema_offset + tag_offset);
+                // Extract the timestamp column index from the action body.
+                let offset = table_name_offset + schema_offset + tag_offset;
                 let offset_data = &action.body[offset..];
                 let (timestamp_index, _offset) = extract_argument_bytes(offset_data);
 
-                // TODO: If the table already exists, return an error.
-                // TODO: Create a new model table metadata.
-
-                // TODO: If it passes the checks, create a table_tags SQLite table.
-                // TODO: Create a new row in the model_table_metadata table.
-                // TODO: Add the field columns to the columns table.
-                // TODO: Maybe do all this as a transaction?
-                // TODO: Create test to ensure this happens.
-
-                // TODO: The table should be added to the catalog (as a model table?).
+                create_model_table(
+                    catalog,
+                    table_name.to_owned(),
+                    schema,
+                    tag_indices,
+                    timestamp_index[0]
+                )?;
             }
 
             // Confirm the table was created.
@@ -404,19 +406,25 @@ fn create_table(
     table_name: String,
     schema: Schema
 ) -> Result<(), Status> {
+    // If the table already exists, return an error.
+    let mut existing_tables = catalog.table_metadata.iter();
+    if existing_tables.any(|table| table.name == table_name) {
+        let message = format!("Table with name '{}' already exists.", table_name);
+        return Err(Status::already_exists(message));
+    }
+
     let file_name = format!("{}.parquet", table_name);
     let file_path = catalog.data_folder_path.join(file_name);
 
-    // Save the table in the catalog.
-    let path_str = file_path.to_str().unwrap().to_string();
-    catalog.insert_table(table_name.to_owned(), path_str)
-        .map_err(|error| Status::already_exists(error.to_string()))?;
-
-    // TODO: If this fails, the table should not be added to the catalog.
     // Create an empty Apache Parquet file to save the schema.
     let empty_batch = RecordBatch::new_empty(Arc::new(schema));
     StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path())
         .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+    // Save the table in the catalog.
+    let path_str = file_path.to_str().unwrap().to_string();
+    let new_table_metadata = TableMetadata { name: table_name, path: path_str };
+    catalog.table_metadata.push(new_table_metadata);
 
     Ok(())
 }
