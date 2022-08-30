@@ -44,6 +44,8 @@ pub struct Catalog {
     /// Metadata for the tables in the data folder.
     pub table_metadata: Vec<TableMetadata>,
     /// Metadata for the model tables in the data folder.
+    pub new_model_table_metadata: Vec<NewModelTableMetadata>,
+    /// Metadata for the model tables in the data folder.
     pub model_table_metadata: Vec<Arc<ModelTableMetadata>>,
 }
 
@@ -92,9 +94,13 @@ impl Catalog {
             }
         }
 
+        // TODO: Retrieve the model table metadata from teh SQLite table.
+        let new_model_table_metadata = vec![];
+
         Ok(Self {
             data_folder_path: data_folder_path.to_path_buf(),
             table_metadata,
+            new_model_table_metadata,
             model_table_metadata,
         })
     }
@@ -235,25 +241,24 @@ impl TableMetadata {
 /// Metadata required to ingest data into and query a model table.
 pub struct NewModelTableMetadata {
     /// Name of the model table.
-    pub table_name: String,
+    pub name: String,
     /// Schema of the data that can be ingested into the model table.
     pub schema: Schema,
     /// Index of the timestamp column in the schema.
     pub timestamp_column_index: u8,
     /// Indices of the tag columns in the schema.
-    pub tag_column_indices: &'static [u8]
+    pub tag_column_indices: Vec<u8>
 }
 
 impl NewModelTableMetadata {
-    // TODO: Create tests for all these checks.
     /// Create a new model table with the given metadata. If the timestamp or tag column indices
     /// does not match `schema` or if the timestamp column index is in the tag column indices,
     /// [`Err`] is returned.
     pub fn try_new(
-        table_name: String,
+        name: String,
         schema: Schema,
+        tag_column_indices: Vec<u8>,
         timestamp_column_index: u8,
-        tag_column_indices: &'static [u8]
     ) -> Result<Self, String> {
         // If timestamp index is in the tag indices, return an error.
         if tag_column_indices.contains(&timestamp_column_index) {
@@ -266,17 +271,17 @@ impl NewModelTableMetadata {
         };
 
         // If the indexes for the tag columns does not match the schema, return an error.
-        for tag_column_index in tag_column_indices {
+        for tag_column_index in &tag_column_indices {
             if None == schema.fields.get(*tag_column_index as usize) {
                 return Err(format!("The tag column index '{}' does not match a field in the schema.", tag_column_index));
             };
         };
 
         Ok(Self {
-            table_name,
+            name,
             schema: schema.clone(),
             timestamp_column_index,
-            tag_column_indices: tag_column_indices.clone(),
+            tag_column_indices,
         })
     }
 }
@@ -462,6 +467,7 @@ mod tests {
         let catalog = Catalog {
             data_folder_path: PathBuf::from(""),
             table_metadata: vec![],
+            new_model_table_metadata: vec![],
             model_table_metadata: vec![],
         };
         assert!(catalog.table_and_model_table_names().is_empty())
@@ -472,6 +478,7 @@ mod tests {
         let mut catalog = Catalog {
             data_folder_path: PathBuf::from(""),
             table_metadata: vec![],
+            new_model_table_metadata: vec![],
             model_table_metadata: vec![],
         };
 
@@ -526,8 +533,8 @@ mod tests {
         let result = NewModelTableMetadata::try_new(
             "table_name".to_owned(),
             schema,
+            vec![0, 1, 2],
             3,
-            &[0, 1, 2]
         );
 
         assert!(result.is_ok());
@@ -539,8 +546,8 @@ mod tests {
         let result = NewModelTableMetadata::try_new(
             "table_name".to_owned(),
             schema,
+            vec![0, 1, 2],
             0,
-            &[0, 1, 2]
         );
 
         assert!(result.is_err());
@@ -552,8 +559,8 @@ mod tests {
         let result = NewModelTableMetadata::try_new(
             "table_name".to_owned(),
             schema,
+            vec![0, 1, 2],
             10,
-            &[0, 1, 2]
         );
 
         assert!(result.is_err());
@@ -565,8 +572,8 @@ mod tests {
         let result = NewModelTableMetadata::try_new(
             "table_name".to_owned(),
             schema,
+            vec![0, 1, 10],
             3,
-            &[0, 1, 10]
         );
 
         assert!(result.is_err());

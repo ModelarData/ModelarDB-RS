@@ -80,12 +80,17 @@ fn main() -> Result<(), String> {
         let runtime = Runtime::new().unwrap();
         let mut session = create_session_context();
 
-        // Register Tables.
-        register_tables_and_model_tables(&runtime, &mut session, &mut catalog);
-
         // Set up the metadata tables used for model tables.
         create_model_table_metadata_tables(data_folder_path.as_path())
             .map_err(|error| error.to_string())?;
+
+        // TODO: Currently we load the tables into the ModelarDB catalog when starting. We also just
+        //       add the tables to the ModelarDB catalog when creating tables. When querying should
+        //       be supported, the tables should be loaded/added to the DataFusion catalog.
+        // TODO: Load the model tables from the metadata table to the catalog.
+
+        // Register Tables.
+        register_tables_and_model_tables(&runtime, &mut session, &mut catalog);
 
         // Start Interface.
         let context = Arc::new(Context {
@@ -125,26 +130,26 @@ fn create_session_context() -> SessionContext {
 /// exist or were successfully created, return [`Ok`], otherwise return [`rusqlite::Error`].
 fn create_model_table_metadata_tables(data_folder_path: &Path) -> Result<(), rusqlite::Error> {
     let database_path = data_folder_path.join("metadata.sqlite3");
-    let conn = Connection::open(database_path)?;
+    let connection = Connection::open(database_path)?;
 
     // Create the model_table_metadata SQLite table if it does not exist.
-    conn.execute(
+    connection.execute(
         "CREATE TABLE IF NOT EXISTS model_table_metadata (
                 table_name TEXT PRIMARY KEY,
-                schema BLOB NOT NULL,
+                schema TEXT NOT NULL,
                 timestamp_column_index INTEGER NOT NULL,
-                tag_column_indices TEXT NOT NULL
+                tag_column_indices BLOB NOT NULL
         )",
         (),
     )?;
 
     // Create the columns SQLite table if it does not exist.
-    conn.execute(
+    connection.execute(
         "CREATE TABLE IF NOT EXISTS model_table_columns (
-                id INTEGER PRIMARY KEY,
                 table_name TEXT NOT NULL,
                 column_name TEXT NOT NULL,
-                column_index INTEGER NOT NULL
+                column_index INTEGER NOT NULL,
+                PRIMARY KEY (table_name, column_name)
         )",
         (),
     )?;
