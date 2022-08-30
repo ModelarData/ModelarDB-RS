@@ -21,6 +21,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::str;
 use std::sync::{Arc, RwLockWriteGuard};
@@ -31,18 +32,21 @@ use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
-use datafusion::arrow::{array::ArrayRef, datatypes::SchemaRef, ipc::writer::IpcWriteOptions, error::ArrowError};
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::arrow::{
+    array::ArrayRef, datatypes::SchemaRef, error::ArrowError, ipc::writer::IpcWriteOptions,
+};
 use futures::{stream, Stream, StreamExt};
 use object_store;
+use rusqlite::{Connection, params};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{error, info};
 
-use crate::{Catalog, Context};
-use crate::catalog::TableMetadata;
+use crate::catalog::{NewModelTableMetadata, TableMetadata};
 use crate::storage::StorageEngine;
+use crate::{Catalog, Context};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
@@ -353,8 +357,8 @@ impl FlightService for FlightServiceHandler {
                     catalog,
                     table_name.to_owned(),
                     schema,
-                    tag_indices,
-                    timestamp_index[0]
+                    tag_indices.to_vec(),
+                    timestamp_index[0],
                 )?;
             }
 
@@ -404,7 +408,7 @@ fn extract_argument_bytes(data: &[u8]) -> (&[u8], usize) {
 fn create_table(
     mut catalog: RwLockWriteGuard<Catalog>,
     table_name: String,
-    schema: Schema
+    schema: Schema,
 ) -> Result<(), Status> {
     // If the table already exists, return an error.
     let mut existing_tables = catalog.table_metadata.iter();
@@ -421,10 +425,107 @@ fn create_table(
     StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path())
         .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-    // Save the table in the catalog.
+    // Save the table metadata in the catalog.
     let path_str = file_path.to_str().unwrap().to_string();
-    let new_table_metadata = TableMetadata { name: table_name, path: path_str };
-    catalog.table_metadata.push(new_table_metadata);
+    let new_table_metadata = TableMetadata {
+        name: table_name,
+        path: path_str,
+    };
 
+    catalog.table_metadata.push(new_table_metadata);
     Ok(())
+}
+
+/// Create a model table. If the table already exists or if the model table cannot be created,
+/// return [`Status`] error.
+fn create_model_table(
+    mut catalog: RwLockWriteGuard<Catalog>,
+    table_name: String,
+    schema: Schema,
+    tag_column_indices: Vec<u8>,
+    timestamp_column_index: u8,
+) -> Result<(), Status> {
+    // If the table already exists, return an error.
+    let mut existing_tables = catalog.new_model_table_metadata.iter();
+    if existing_tables.any(|table| table.name == table_name) {
+        let message = format!("Model table with name '{}' already exists.", table_name);
+        return Err(Status::already_exists(message));
+    }
+
+    // Create a new model table metadata.
+    let model_table_metadata = NewModelTableMetadata::try_new(
+        table_name,
+        schema,
+        tag_column_indices,
+        timestamp_column_index,
+    )
+    .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+    let database_path = catalog.data_folder_path.join("metadata.sqlite3");
+    save_model_table_to_database(database_path, &model_table_metadata)
+        .map_err(|error| Status::internal(error.to_string()))?;
+
+    // Save the model table metadata in the catalog.
+    catalog.new_model_table_metadata.push(model_table_metadata);
+    Ok(())
+}
+
+/// Save the created model table to the database. This includes creating a tags table for the
+/// model table, adding a new row in the model_table_metadata table, and adding a row to the
+/// model_table_columns table for each field column.
+fn save_model_table_to_database(
+    database_path: PathBuf,
+    model_table_metadata: &NewModelTableMetadata,
+) -> Result<(), rusqlite::Error> {
+    // Create a transaction to ensure the database state is consistent across tables.
+    let mut connection = Connection::open(database_path)?;
+    let transaction = connection.transaction()?;
+
+    // Add a column for each tag field in the schema.
+    let mut tag_columns = "".to_owned();
+    let mut tag_indices = model_table_metadata.tag_column_indices.iter().peekable();
+
+    while let Some(index) = tag_indices.next() {
+        let field = model_table_metadata.schema.field(*index as usize);
+        let suffix = if tag_indices.peek().is_none() {""} else {", "};
+
+        tag_columns.push_str(format!("{} TEXT NOT NULL{}", field.name(), suffix).as_str());
+    }
+
+    // Create a table_name_tags SQLite table to save the 54-bit tag hashes when ingesting data.
+    // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
+    transaction.execute(format!("CREATE TABLE {}_tags (hash TEXT PRIMARY KEY, {})",
+        model_table_metadata.name, tag_columns).as_str(), ())?;
+
+    // Add a new row in the model_table_metadata table to persist the model table.
+    transaction.execute(
+        "INSERT INTO model_table_metadata (table_name, schema, timestamp_column_index, tag_column_indices)
+             VALUES (?1, ?2, ?3, ?4)",
+        params![
+            model_table_metadata.name,
+            model_table_metadata.schema.to_json().to_string(),
+            model_table_metadata.timestamp_column_index,
+            model_table_metadata.tag_column_indices
+        ]
+    )?;
+
+    // Add a row for each field column to the model_table_columns table.
+    let mut insert_statement = transaction.prepare(
+        "INSERT INTO model_table_columns (table_name, column_name, column_index)
+             VALUES (?1, ?2, ?3)")?;
+
+    for (index, field) in model_table_metadata.schema.fields().iter().enumerate() {
+        // Only add a row for the field if it is not the timestamp or a tag.
+        let in_tag_indices = model_table_metadata.tag_column_indices.contains(&(index as u8));
+        let is_timestamp = index == model_table_metadata.timestamp_column_index as usize;
+
+        if !is_timestamp && !in_tag_indices {
+            insert_statement.execute(params![model_table_metadata.name, field.name(), index]);
+        }
+    }
+
+    // Explicitly dropping the statement to drop the borrow of "transaction" before the commit.
+    std::mem::drop(insert_statement);
+
+    transaction.commit()
 }
