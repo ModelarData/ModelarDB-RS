@@ -22,6 +22,7 @@ use std::io::{Error, ErrorKind};
 use std::str;
 use std::sync::Arc;
 use std::{fs::File, path::Path};
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use datafusion::arrow::array::{
@@ -276,6 +277,12 @@ impl NewModelTableMetadata {
                 return Err(format!("The tag column index '{}' does not match a field in the schema.", tag_column_index));
             };
         };
+
+        // If there are duplicate tag columns, return an error.
+        let mut uniq = HashSet::new();
+        if !tag_column_indices.clone().into_iter().all(|x| uniq.insert(x)) {
+            return Err("The tag column indices cannot have duplicate indices.".to_owned());
+        }
 
         Ok(Self {
             name,
@@ -573,6 +580,19 @@ mod tests {
             "table_name".to_owned(),
             schema,
             vec![0, 1, 10],
+            3,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cannot_create_model_table_metadata_with_duplicate_tag_indices() {
+        let schema = get_model_table_schema();
+        let result = NewModelTableMetadata::try_new(
+            "table_name".to_owned(),
+            schema,
+            vec![0, 1, 1],
             3,
         );
 
