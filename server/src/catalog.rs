@@ -29,13 +29,14 @@ use datafusion::arrow::array::{
     Array, ArrayRef, BinaryArray, Int32Array, Int32Builder, StringBuilder,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use datafusion::parquet::record::RowAccessor;
 use object_store::path::Path as ObjectStorePath;
 use rusqlite::Connection;
-use serde_json::Value;
+use rusqlite::types::Type::Text;
 use tracing::{error, info, warn};
 
 use crate::storage::StorageEngine;
@@ -99,7 +100,7 @@ impl Catalog {
 
         // Add model tables using the data from the model_table_metadata database table.
         let mut new_model_table_metadata = vec![];
-        if let Err(maybe_error) = Self::try_adding_new_model_table(
+        if let Err(maybe_error) = Self::try_adding_new_model_tables(
             &mut new_model_table_metadata,
             data_folder_path
         ) {
@@ -220,10 +221,10 @@ impl Catalog {
         }
     }
 
-    // TODO: Rename to "try_adding_model_table" when the old version is removed.
+    // TODO: Rename to "try_adding_model_tables" when the old version is removed.
     /// For each row in the model_table_metadata table, add a model table entry to the catalog. If
     /// the database could not be opened or the table could not be queried, return [`rusqlite::Error`].
-    fn try_adding_new_model_table(
+    fn try_adding_new_model_tables(
         model_table_metadata: &mut Vec<NewModelTableMetadata>,
         data_folder_path: &Path
     ) -> Result<(), rusqlite::Error> {
@@ -236,10 +237,12 @@ impl Catalog {
         while let Some(row) = rows.next()? {
             let name = row.get::<usize, String>(0)?;
 
-            // Since the schema is saved as JSON in the database, convert it back to a Schema.
-            let schema_str = row.get::<usize, String>(1)?;
-            let json = serde_json::from_str(schema_str.as_str()).unwrap();
-            let schema = Schema::from(&json).unwrap();
+            // Since the schema is saved as JSON in the database, convert it back to an Arrow schema.
+            let schema_string = row.get::<usize, String>(1)?;
+            let schema = Catalog::convert_string_to_schema(schema_string).map_err(|error| {
+                let message = format!("Column is not a valid JSON Schema: {}.", error);
+                rusqlite::Error::InvalidColumnType(1, message, Text)
+            })?;
 
             model_table_metadata.push(NewModelTableMetadata {
                 name: name.clone(),
@@ -252,6 +255,16 @@ impl Catalog {
         }
 
         Ok(())
+    }
+
+    /// Convert `schema_string` to JSON and convert the JSON to an Arrow Schema. If the string could
+    /// not be converted to JSON, or the JSON could not be converted to a Schema,
+    /// return [`ArrowError`](datafusion::arrow::error::ArrowError).
+    fn convert_string_to_schema(schema_string: String) -> Result<Schema, ArrowError> {
+        let schema_json = serde_json::from_str(schema_string.as_str())?;
+        let schema = Schema::from(&schema_json)?;
+
+        Ok(schema)
     }
 }
 
@@ -281,12 +294,11 @@ impl TableMetadata {
 }
 
 // TODO: Change name to "ModelTableMetadata" when the old version is removed.
-/// Metadata required to ingest data into and query a model table.
-#[derive(Debug)]
+/// Metadata required to ingest data into a model table and query a model table.
 pub struct NewModelTableMetadata {
     /// Name of the model table.
     pub name: String,
-    /// Schema of the data that can be ingested into the model table.
+    /// Schema of the data in the model table.
     pub schema: Schema,
     /// Index of the timestamp column in the schema.
     pub timestamp_column_index: u8,
@@ -296,25 +308,25 @@ pub struct NewModelTableMetadata {
 
 impl NewModelTableMetadata {
     /// Create a new model table with the given metadata. If the timestamp or tag column indices
-    /// does not match `schema` or if the timestamp column index is in the tag column indices,
-    /// [`Err`] is returned.
+    /// does not match `schema`, or if the timestamp column index is in the tag column indices, or
+    /// there are duplicates in the tag column indices, [`Err`] is returned.
     pub fn try_new(
         name: String,
         schema: Schema,
         tag_column_indices: Vec<u8>,
         timestamp_column_index: u8,
     ) -> Result<Self, String> {
-        // If timestamp index is in the tag indices, return an error.
+        // If the timestamp index is in the tag indices, return an error.
         if tag_column_indices.contains(&timestamp_column_index) {
-            return Err("The timestamp column index cannot be a tag column.".to_owned());
+            return Err("The timestamp column cannot be a tag column.".to_owned());
         };
 
-        // If the index for the timestamp columns does not match the schema, return an error.
+        // If the index of the timestamp column does not match the schema, return an error.
         if None == schema.fields.get(timestamp_column_index as usize) {
             return Err("The timestamp column index does not match a field in the schema.".to_owned());
         };
 
-        // If the indexes for the tag columns does not match the schema, return an error.
+        // If the indices for the tag columns does not match the schema, return an error.
         for tag_column_index in &tag_column_indices {
             if None == schema.fields.get(*tag_column_index as usize) {
                 return Err(format!("The tag column index '{}' does not match a field in the schema.", tag_column_index));
@@ -324,7 +336,7 @@ impl NewModelTableMetadata {
         // If there are duplicate tag columns, return an error.
         let mut uniq = HashSet::new();
         if !tag_column_indices.clone().into_iter().all(|x| uniq.insert(x)) {
-            return Err("The tag column indices cannot have duplicate indices.".to_owned());
+            return Err("The tag column indices cannot have duplicates.".to_owned());
         }
 
         Ok(Self {

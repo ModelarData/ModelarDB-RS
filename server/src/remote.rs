@@ -319,7 +319,7 @@ impl FlightService for FlightServiceHandler {
         request: Request<Action>,
     ) -> Result<Response<Self::DoActionStream>, Status> {
         let action = request.into_inner();
-        info!("Received request to perform action: {}", action.r#type);
+        info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "CreateTable" || action.r#type == "CreateModelTable" {
             // Extract the table name from the action body.
@@ -327,7 +327,7 @@ impl FlightService for FlightServiceHandler {
             let table_name = str::from_utf8(table_name_bytes)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            // Check if the table name is a valid object_store path and table name.
+            // Check if the table name is a valid object_store path and database table name.
             object_store::path::Path::parse(table_name)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
@@ -432,11 +432,13 @@ fn create_table(
     // Save the table metadata in the catalog.
     let path_str = file_path.to_str().unwrap().to_string();
     let new_table_metadata = TableMetadata {
-        name: table_name,
+        name: table_name.clone(),
         path: path_str,
     };
 
+    info!("Created table '{}'.", table_name);
     catalog.table_metadata.push(new_table_metadata);
+
     Ok(())
 }
 
@@ -456,21 +458,22 @@ fn create_model_table(
         return Err(Status::already_exists(message));
     }
 
-    // Create a new model table metadata.
     let model_table_metadata = NewModelTableMetadata::try_new(
-        table_name,
+        table_name.clone(),
         schema,
         tag_column_indices,
         timestamp_column_index,
     )
     .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
+    // Persist the new model table to the metadata database.
     let database_path = catalog.data_folder_path.join("metadata.sqlite3");
     save_model_table_to_database(database_path, &model_table_metadata)
         .map_err(|error| Status::internal(error.to_string()))?;
 
-    // Save the model table metadata in the catalog.
+    info!("Created model table '{}'.", table_name);
     catalog.new_model_table_metadata.push(model_table_metadata);
+
     Ok(())
 }
 
@@ -485,13 +488,14 @@ fn save_model_table_to_database(
     let mut connection = Connection::open(database_path)?;
     let transaction = connection.transaction()?;
 
-    // Add a column for each tag field in the schema.
+    // Add a column definition for each tag field in the schema.
     let mut tag_columns = "".to_owned();
     let mut tag_indices = model_table_metadata.tag_column_indices.iter().peekable();
 
     while let Some(index) = tag_indices.next() {
-        let field = model_table_metadata.schema.field(*index as usize);
+        // If it is the last column in the query, adding a "," results in an SQL syntax error.
         let suffix = if tag_indices.peek().is_none() {""} else {", "};
+        let field = model_table_metadata.schema.field(*index as usize);
 
         tag_columns.push_str(format!("{} TEXT NOT NULL{}", field.name(), suffix).as_str());
     }
@@ -524,11 +528,11 @@ fn save_model_table_to_database(
         let is_timestamp = index == model_table_metadata.timestamp_column_index as usize;
 
         if !is_timestamp && !in_tag_indices {
-            insert_statement.execute(params![model_table_metadata.name, field.name(), index]);
+            insert_statement.execute(params![model_table_metadata.name, field.name(), index])?;
         }
     }
 
-    // Explicitly dropping the statement to drop the borrow of "transaction" before the commit.
+    // Explicitly drop the statement to drop the borrow of "transaction" before the commit.
     std::mem::drop(insert_statement);
 
     transaction.commit()
