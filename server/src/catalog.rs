@@ -34,6 +34,8 @@ use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use datafusion::parquet::record::RowAccessor;
 use object_store::path::Path as ObjectStorePath;
+use rusqlite::Connection;
+use serde_json::Value;
 use tracing::{error, info, warn};
 
 use crate::storage::StorageEngine;
@@ -95,8 +97,14 @@ impl Catalog {
             }
         }
 
-        // TODO: Retrieve the model table metadata from teh SQLite table.
-        let new_model_table_metadata = vec![];
+        // Add model tables using the data from the model_table_metadata database table.
+        let mut new_model_table_metadata = vec![];
+        if let Err(maybe_error) = Self::try_adding_new_model_table(
+            &mut new_model_table_metadata,
+            data_folder_path
+        ) {
+            error!("Cannot register model tables from model_table_metadata: {}", maybe_error)
+        }
 
         Ok(Self {
             data_folder_path: data_folder_path.to_path_buf(),
@@ -211,6 +219,40 @@ impl Catalog {
             false
         }
     }
+
+    // TODO: Rename to "try_adding_model_table" when the old version is removed.
+    /// For each row in the model_table_metadata table, add a model table entry to the catalog. If
+    /// the database could not be opened or the table could not be queried, return [`rusqlite::Error`].
+    fn try_adding_new_model_table(
+        model_table_metadata: &mut Vec<NewModelTableMetadata>,
+        data_folder_path: &Path
+    ) -> Result<(), rusqlite::Error> {
+        let database_path = data_folder_path.join("metadata.sqlite3");
+        let connection = Connection::open(database_path)?;
+
+        let mut select_statement = connection.prepare("SELECT * FROM model_table_metadata")?;
+        let mut rows = select_statement.query(())?;
+
+        while let Some(row) = rows.next()? {
+            let name = row.get::<usize, String>(0)?;
+
+            // Since the schema is saved as JSON in the database, convert it back to a Schema.
+            let schema_str = row.get::<usize, String>(1)?;
+            let json = serde_json::from_str(schema_str.as_str()).unwrap();
+            let schema = Schema::from(&json).unwrap();
+
+            model_table_metadata.push(NewModelTableMetadata {
+                name: name.clone(),
+                schema,
+                timestamp_column_index: row.get(2)?,
+                tag_column_indices: row.get(3)?
+            });
+
+            info!("Found model table '{}'.", name);
+        }
+
+        Ok(())
+    }
 }
 
 /// Metadata required to query a table.
@@ -240,6 +282,7 @@ impl TableMetadata {
 
 // TODO: Change name to "ModelTableMetadata" when the old version is removed.
 /// Metadata required to ingest data into and query a model table.
+#[derive(Debug)]
 pub struct NewModelTableMetadata {
     /// Name of the model table.
     pub name: String,
