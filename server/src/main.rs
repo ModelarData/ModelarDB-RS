@@ -36,7 +36,6 @@ use datafusion::common::DataFusionError;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::options::ParquetReadOptions;
 use datafusion::execution::runtime_env::RuntimeEnv;
-use log::info;
 use rusqlite::Connection;
 use tokio::runtime::Runtime;
 use tracing::error;
@@ -84,11 +83,6 @@ fn main() -> Result<(), String> {
         create_model_table_metadata_tables(data_folder_path.as_path())
             .map_err(|error| error.to_string())?;
 
-        // TODO: Currently we load the tables into the ModelarDB catalog when starting. We also just
-        //       add the tables to the ModelarDB catalog when creating tables. When querying should
-        //       be supported, the tables should be loaded/added to the DataFusion catalog.
-        // TODO: Load the model tables from the metadata table to the catalog.
-
         // Register Tables.
         register_tables_and_model_tables(&runtime, &mut session, &mut catalog);
 
@@ -123,7 +117,7 @@ fn create_session_context() -> SessionContext {
     SessionContext::with_state(state)
 }
 
-
+// TODO: Move this function to the configuration/metadata component.
 /// If they do not already exist, create the tables used for model table metadata. A
 /// "model_table_metadata" table that can persist model tables is created. A "columns" table that
 /// can save the index of field columns in specific tables is also created. If the tables already
@@ -157,7 +151,9 @@ fn create_model_table_metadata_tables(data_folder_path: &Path) -> Result<(), rus
     Ok(())
 }
 
-
+// TODO: Currently we load the tables into the ModelarDB catalog when starting. We also just
+//       add the tables to the ModelarDB catalog when creating tables. When querying should
+//       be supported, the new model tables should be registered with the DataFusion catalog.
 /// Register all tables and model tables in `catalog` with Apache Arrow
 /// DataFusion through `session_context`. If initialization fails the table or
 /// model table is removed from `catalog`.

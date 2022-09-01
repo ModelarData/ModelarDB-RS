@@ -327,9 +327,13 @@ impl FlightService for FlightServiceHandler {
             let table_name = str::from_utf8(table_name_bytes)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            // Check if the table name is a valid object_store path.
+            // Check if the table name is a valid object_store path and table name.
             object_store::path::Path::parse(table_name)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+            if table_name.contains(char::is_whitespace) {
+                return Err(Status::invalid_argument("Table name cannot contain whitespace.".to_owned()));
+            }
 
             // Extract the schema from the action body.
             let offset_data = &action.body[table_name_offset..];
@@ -339,7 +343,7 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             // Get the write lock for the catalog to ensure that multiple writes cannot happen at the same time.
-            let mut catalog = self.context.catalog.write().unwrap();
+            let catalog = self.context.catalog.write().unwrap();
 
             if action.r#type == "CreateTable" {
                 create_table(catalog, table_name.to_owned(), schema)?;
@@ -382,8 +386,8 @@ impl FlightService for FlightServiceHandler {
 
         let create_model_table_action = ActionType {
             r#type: "CreateModelTable".to_owned(),
-            description: "Given a table name, a schema, and a list of tag column indices, \
-            create a model table and add it to the catalog.".to_owned()
+            description: "Given a table name, a schema, a list of tag column indices, and the \
+            timestamp column index, create a model table and add it to the catalog.".to_owned()
         };
 
         let output = stream::iter(vec![Ok(create_table_action), Ok(create_model_table_action)]);
@@ -403,8 +407,8 @@ fn extract_argument_bytes(data: &[u8]) -> (&[u8], usize) {
     (argument_bytes, size + 2)
 }
 
-/// Create a normal table. If the table already exists or if the Apache Parquet file cannot be
-/// created, return [`Status`] error.
+/// Create a normal table and add it to the catalog. If the table already exists or if the Apache
+/// Parquet file cannot be created, return [`Status`] error.
 fn create_table(
     mut catalog: RwLockWriteGuard<Catalog>,
     table_name: String,
@@ -436,8 +440,8 @@ fn create_table(
     Ok(())
 }
 
-/// Create a model table. If the table already exists or if the model table cannot be created,
-/// return [`Status`] error.
+/// Create a model table, add it to the metadata database tables, and add it to the catalog.
+/// If the table already exists or if the model table cannot be created, return [`Status`] error.
 fn create_model_table(
     mut catalog: RwLockWriteGuard<Catalog>,
     table_name: String,
@@ -494,7 +498,7 @@ fn save_model_table_to_database(
 
     // Create a table_name_tags SQLite table to save the 54-bit tag hashes when ingesting data.
     // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
-    transaction.execute(format!("CREATE TABLE {}_tags (hash TEXT PRIMARY KEY, {})",
+    transaction.execute(format!("CREATE TABLE {}_tags (hash BLOB PRIMARY KEY, {})",
         model_table_metadata.name, tag_columns).as_str(), ())?;
 
     // Add a new row in the model_table_metadata table to persist the model table.
