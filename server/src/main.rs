@@ -131,16 +131,17 @@ fn create_model_table_metadata_tables(data_folder_path: &Path) -> Result<(), rus
     connection.execute(
         "CREATE TABLE IF NOT EXISTS model_table_metadata (
                 table_name TEXT PRIMARY KEY,
-                schema TEXT NOT NULL,
+                schema BLOB NOT NULL,
                 timestamp_column_index INTEGER NOT NULL,
                 tag_column_indices BLOB NOT NULL
         )",
         (),
     )?;
 
-    // Create the model_table_columns SQLite table if it does not exist.
+    // Create the model_table_field_columns SQLite table if it does not exist. Note that column_index
+    // will only use a maximum of 10 bits.
     connection.execute(
-        "CREATE TABLE IF NOT EXISTS model_table_columns (
+        "CREATE TABLE IF NOT EXISTS model_table_field_columns (
                 table_name TEXT NOT NULL,
                 column_name TEXT NOT NULL,
                 column_index INTEGER NOT NULL,

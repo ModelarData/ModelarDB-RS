@@ -23,7 +23,7 @@ use std::error::Error;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::str;
+use std::{mem, str};
 use std::sync::{Arc, RwLockWriteGuard};
 
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
@@ -151,11 +151,16 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Criteria>,
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
-        let catalog = self.context.catalog.read().unwrap();
-        let table_names = catalog.table_and_model_table_names();
+        let table_names = {
+            // unwrap() is safe to use since read() only fails if the RwLock is poisoned.
+            let catalog = self.context.catalog.read().unwrap();
+            catalog.table_and_model_table_names()
+        };
+
         let flight_descriptor = FlightDescriptor::new_path(table_names);
         let flight_info =
             FlightInfo::new(IpcMessage(vec![]), Some(flight_descriptor), vec![], -1, -1);
+
         let output = stream::once(async { Ok(flight_info) });
         Ok(Response::new(Box::pin(output)))
     }
@@ -307,7 +312,8 @@ impl FlightService for FlightServiceHandler {
     /// Perform a specific action based on the type of the action in `request`. Currently supports
     /// two actions: `CreateTable` and `CreateModelTable`. `CreateTable` creates a normal table
     /// in the catalog when given a table name and schema. `CreateModelTable` creates a table
-    /// that can be used for ingestion when given a table name, a schema, a list of indices
+    /// that is specialized for efficiently storing multivariate time series with tags within
+    /// a user-defined error bound. This action takes a table name, a schema, a list of indices
     /// specifying which columns are metadata tag columns, and an index specifying which column
     /// is the timestamp column.
     ///
@@ -323,7 +329,7 @@ impl FlightService for FlightServiceHandler {
 
         if action.r#type == "CreateTable" || action.r#type == "CreateModelTable" {
             // Extract the table name from the action body.
-            let (table_name_bytes, table_name_offset) = extract_argument_bytes(&action.body);
+            let (table_name_bytes, offset_data) = extract_argument_bytes(&action.body);
             let table_name = str::from_utf8(table_name_bytes)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
@@ -336,26 +342,23 @@ impl FlightService for FlightServiceHandler {
             }
 
             // Extract the schema from the action body.
-            let offset_data = &action.body[table_name_offset..];
-            let (schema_bytes, schema_offset) = extract_argument_bytes(offset_data);
+            let (schema_bytes, offset_data) = extract_argument_bytes(offset_data);
             let ipc_message = IpcMessage(Vec::from(schema_bytes));
             let schema = Schema::try_from(ipc_message)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            // Get the write lock for the catalog to ensure that multiple writes cannot happen at the same time.
+            // Get the write lock for the catalog to ensure that multiple writes cannot happen at
+            // the same time. unwrap() is safe to use since write() only fails if the RwLock is poisoned.
             let catalog = self.context.catalog.write().unwrap();
 
             if action.r#type == "CreateTable" {
                 create_table(catalog, table_name.to_owned(), schema)?;
             } else {
                 // Extract the tag column indices from the action body.
-                let offset_data = &action.body[(table_name_offset + schema_offset)..];
-                let (tag_indices, tag_offset) = extract_argument_bytes(offset_data);
+                let (tag_indices, offset_data) = extract_argument_bytes(offset_data);
 
                 // Extract the timestamp column index from the action body.
-                let offset = table_name_offset + schema_offset + tag_offset;
-                let offset_data = &action.body[offset..];
-                let (timestamp_index, _offset) = extract_argument_bytes(offset_data);
+                let (timestamp_index, _offset_data) = extract_argument_bytes(offset_data);
 
                 create_model_table(
                     catalog,
@@ -373,7 +376,7 @@ impl FlightService for FlightServiceHandler {
         }
     }
 
-    /// Return all available actions, including both a name of the action and a description.
+    /// Return all available actions, including both a name and a description for each action.
     async fn list_actions(
         &self,
         _request: Request<Empty>,
@@ -395,16 +398,17 @@ impl FlightService for FlightServiceHandler {
     }
 }
 
-/// Given an array of bytes, extract a slice that contains the first argument. It is assumed that the
-/// length of the argument is in the first two bytes. A tuple with the argument bytes and an offset
-/// specifying where the next argument starts, is returned.
-fn extract_argument_bytes(data: &[u8]) -> (&[u8], usize) {
+/// Assumes `data` is a slice containing one or more arguments for an Action stored using the following
+/// format: size of argument (2 bytes) followed by argument (length bytes). Returns a tuple containing
+/// the first argument's bytes and `data` with the extracted argument's bytes removed.
+fn extract_argument_bytes(data: &[u8]) -> (&[u8], &[u8]) {
     let size_bytes: [u8; 2] = data[..2].try_into().expect("Slice with incorrect length.");
     let size = u16::from_be_bytes(size_bytes) as usize;
 
     let argument_bytes = &data[2..(size + 2)];
+    let remaining_bytes = &data[(size + 2)..];
 
-    (argument_bytes, size + 2)
+    (argument_bytes, remaining_bytes)
 }
 
 /// Create a normal table and add it to the catalog. If the table already exists or if the Apache
@@ -442,8 +446,8 @@ fn create_table(
     Ok(())
 }
 
-/// Create a model table, add it to the metadata database tables, and add it to the catalog.
-/// If the table already exists or if the model table cannot be created, return [`Status`] error.
+/// Create a model table, add it to the metadata database tables, and add it to the catalog. If the
+/// table already exists or if the metadata cannot be written to the metadata database, return [`Status`] error.
 fn create_model_table(
     mut catalog: RwLockWriteGuard<Catalog>,
     table_name: String,
@@ -460,15 +464,22 @@ fn create_model_table(
 
     let model_table_metadata = NewModelTableMetadata::try_new(
         table_name.clone(),
-        schema,
+        schema.clone(),
         tag_column_indices,
         timestamp_column_index,
     )
     .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
+    // Convert the schema to bytes so it can be saved as a BLOB in the metadata database.
+    let options = IpcWriteOptions::default();
+    let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
+    let ipc_message: IpcMessage = schema_as_ipc.try_into().map_err(|error: ArrowError| {
+        Status::internal(error.to_string())
+    })?;
+
     // Persist the new model table to the metadata database.
     let database_path = catalog.data_folder_path.join("metadata.sqlite3");
-    save_model_table_to_database(database_path, &model_table_metadata)
+    save_model_table_to_database(database_path, &model_table_metadata, ipc_message.0)
         .map_err(|error| Status::internal(error.to_string()))?;
 
     info!("Created model table '{}'.", table_name);
@@ -477,12 +488,13 @@ fn create_model_table(
     Ok(())
 }
 
-/// Save the created model table to the database. This includes creating a tags table for the
-/// model table, adding a new row in the model_table_metadata table, and adding a row to the
-/// model_table_columns table for each field column.
+/// Save the created model table to the metadata database. This includes creating a tags table for the
+/// model table, adding a row to the model_table_metadata table, and adding a row to the
+/// model_table_field_columns table for each field column.
 fn save_model_table_to_database(
     database_path: PathBuf,
     model_table_metadata: &NewModelTableMetadata,
+    schema_bytes: Vec<u8>,
 ) -> Result<(), rusqlite::Error> {
     // Create a transaction to ensure the database state is consistent across tables.
     let mut connection = Connection::open(database_path)?;
@@ -502,7 +514,7 @@ fn save_model_table_to_database(
 
     // Create a table_name_tags SQLite table to save the 54-bit tag hashes when ingesting data.
     // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
-    transaction.execute(format!("CREATE TABLE {}_tags (hash BLOB PRIMARY KEY, {})",
+    transaction.execute(format!("CREATE TABLE {}_tags (hash BIGINT PRIMARY KEY, {})",
         model_table_metadata.name, tag_columns).as_str(), ())?;
 
     // Add a new row in the model_table_metadata table to persist the model table.
@@ -511,16 +523,16 @@ fn save_model_table_to_database(
              VALUES (?1, ?2, ?3, ?4)",
         params![
             model_table_metadata.name,
-            model_table_metadata.schema.to_json().to_string(),
+            schema_bytes,
             model_table_metadata.timestamp_column_index,
             model_table_metadata.tag_column_indices
         ]
     )?;
 
-    // Add a row for each field column to the model_table_columns table.
+    // Add a row for each field column to the model_table_field_columns table.
     let mut insert_statement = transaction.prepare(
-        "INSERT INTO model_table_columns (table_name, column_name, column_index)
-             VALUES (?1, ?2, ?3)")?;
+        "INSERT INTO model_table_field_columns (table_name, column_name, column_index)
+        VALUES (?1, ?2, ?3)")?;
 
     for (index, field) in model_table_metadata.schema.fields().iter().enumerate() {
         // Only add a row for the field if it is not the timestamp or a tag.
@@ -533,7 +545,7 @@ fn save_model_table_to_database(
     }
 
     // Explicitly drop the statement to drop the borrow of "transaction" before the commit.
-    std::mem::drop(insert_statement);
+    mem::drop(insert_statement);
 
     transaction.commit()
 }

@@ -24,19 +24,19 @@ use std::sync::Arc;
 use std::{fs::File, path::Path};
 use std::collections::HashSet;
 use std::path::PathBuf;
+use arrow_flight::IpcMessage;
 
 use datafusion::arrow::array::{
     Array, ArrayRef, BinaryArray, Int32Array, Int32Builder, StringBuilder,
 };
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
-use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use datafusion::parquet::record::RowAccessor;
 use object_store::path::Path as ObjectStorePath;
 use rusqlite::Connection;
-use rusqlite::types::Type::Text;
+use rusqlite::types::Type::Blob;
 use tracing::{error, info, warn};
 
 use crate::storage::StorageEngine;
@@ -98,14 +98,12 @@ impl Catalog {
             }
         }
 
-        // Add model tables using the data from the model_table_metadata database table.
-        let mut new_model_table_metadata = vec![];
-        if let Err(maybe_error) = Self::try_adding_new_model_tables(
-            &mut new_model_table_metadata,
-            data_folder_path
-        ) {
-            error!("Cannot register model tables from model_table_metadata: {}", maybe_error)
-        }
+        // Add model tables using the data from the model_table_metadata metadata database table.
+        let new_model_table_metadata = Self::get_new_model_table_metadata(data_folder_path)
+            .unwrap_or_else(|error| {
+                error!("Cannot register model tables from model_table_metadata: {}", error);
+                vec![]
+            });
 
         Ok(Self {
             data_folder_path: data_folder_path.to_path_buf(),
@@ -221,27 +219,32 @@ impl Catalog {
         }
     }
 
-    // TODO: Rename to "try_adding_model_tables" when the old version is removed.
-    /// For each row in the model_table_metadata table, add a model table entry to the catalog. If
-    /// the database could not be opened or the table could not be queried, return [`rusqlite::Error`].
-    fn try_adding_new_model_tables(
-        model_table_metadata: &mut Vec<NewModelTableMetadata>,
+    // TODO: Rename to "get_model_table_metadata" when the old version is removed.
+    /// Convert the rows in the model_table_metadata table to a list of [`NewModelTableMetadata`]
+    /// and return it. If the metadata database could not be opened or the table could not be queried,
+    /// return [`rusqlite::Error`].
+    fn get_new_model_table_metadata(
         data_folder_path: &Path
-    ) -> Result<(), rusqlite::Error> {
+    ) -> Result<Vec<NewModelTableMetadata>, rusqlite::Error> {
         let database_path = data_folder_path.join("metadata.sqlite3");
         let connection = Connection::open(database_path)?;
 
-        let mut select_statement = connection.prepare("SELECT * FROM model_table_metadata")?;
+        let mut select_statement = connection.prepare(
+            "SELECT table_name, schema, timestamp_column_index, tag_column_indices
+            FROM model_table_metadata")?;
         let mut rows = select_statement.query(())?;
 
+        // TODO: Maybe only log errors from single rows instead of failing the entire table read.
+        let mut model_table_metadata = vec![];
         while let Some(row) = rows.next()? {
             let name = row.get::<usize, String>(0)?;
 
-            // Since the schema is saved as JSON in the database, convert it back to an Arrow schema.
-            let schema_string = row.get::<usize, String>(1)?;
-            let schema = Catalog::convert_string_to_schema(schema_string).map_err(|error| {
-                let message = format!("Column is not a valid JSON Schema: {}.", error);
-                rusqlite::Error::InvalidColumnType(1, message, Text)
+            // Since the schema is saved as a BLOB in the metadata database, convert it back to an Arrow schema.
+            let schema_bytes = row.get::<usize, Vec<u8>>(1)?;
+            let ipc_message = IpcMessage(schema_bytes);
+            let schema = Schema::try_from(ipc_message).map_err(|error| {
+                let message = format!("Blob is not a valid Schema: {}", error);
+                rusqlite::Error::InvalidColumnType(1, message, Blob)
             })?;
 
             model_table_metadata.push(NewModelTableMetadata {
@@ -254,17 +257,7 @@ impl Catalog {
             info!("Found model table '{}'.", name);
         }
 
-        Ok(())
-    }
-
-    /// Convert `schema_string` to JSON and convert the JSON to an Arrow Schema. If the string could
-    /// not be converted to JSON, or the JSON could not be converted to a Schema,
-    /// return [`ArrowError`](datafusion::arrow::error::ArrowError).
-    fn convert_string_to_schema(schema_string: String) -> Result<Schema, ArrowError> {
-        let schema_json = serde_json::from_str(schema_string.as_str())?;
-        let schema = Schema::from(&schema_json)?;
-
-        Ok(schema)
+        Ok(model_table_metadata)
     }
 }
 
@@ -307,9 +300,9 @@ pub struct NewModelTableMetadata {
 }
 
 impl NewModelTableMetadata {
-    /// Create a new model table with the given metadata. If the timestamp or tag column indices
-    /// does not match `schema`, or if the timestamp column index is in the tag column indices, or
-    /// there are duplicates in the tag column indices, [`Err`] is returned.
+    /// Create a new model table with the given metadata. If the timestamp or tag column indices does
+    /// not match `schema`, or if the timestamp column index is in the tag column indices, or there
+    /// are duplicates in the tag column indices, or there are more than 1024 columns, [`Err`] is returned.
     pub fn try_new(
         name: String,
         schema: Schema,
@@ -322,21 +315,28 @@ impl NewModelTableMetadata {
         };
 
         // If the index of the timestamp column does not match the schema, return an error.
-        if None == schema.fields.get(timestamp_column_index as usize) {
+        if schema.fields.get(timestamp_column_index as usize).is_none() {
             return Err("The timestamp column index does not match a field in the schema.".to_owned());
         };
 
         // If the indices for the tag columns does not match the schema, return an error.
         for tag_column_index in &tag_column_indices {
-            if None == schema.fields.get(*tag_column_index as usize) {
+            if schema.fields.get(*tag_column_index as usize).is_none() {
                 return Err(format!("The tag column index '{}' does not match a field in the schema.", tag_column_index));
             };
         };
 
-        // If there are duplicate tag columns, return an error.
+        // If there are duplicate tag columns, return an error. HashSet.insert() can be used to check
+        // for uniqueness since it returns true or false depending on if the inserted element already exists.
         let mut uniq = HashSet::new();
         if !tag_column_indices.clone().into_iter().all(|x| uniq.insert(x)) {
             return Err("The tag column indices cannot have duplicates.".to_owned());
+        }
+
+        // If there are more than 1024 columns, return an error. This limitation is necessary
+        // since 10 bits are used to identify the column index of the data in the 64-bit hash key.
+        if schema.fields.len() > 1024 {
+            return Err("There cannot be more than 1024 columns in the model table.".to_owned());
         }
 
         Ok(Self {
@@ -664,6 +664,24 @@ mod tests {
             Field::new("wind_speed", DataType::Float32, false),
             Field::new("temperature", DataType::Float32, false),
         ])
+    }
+
+    #[test]
+    fn test_cannot_create_model_table_metadata_with_too_many_fields() {
+        // Create 1025 fields that can be used to initialize a schema.
+        let fields = (0..1025).map(|i| {
+            Field::new(format!("field_{}", i).as_str(), DataType::Float32, false)
+        }).collect::<Vec<Field>>();
+
+        let schema = get_model_table_schema();
+        let result = NewModelTableMetadata::try_new(
+            "table_name".to_owned(),
+            Schema::new(fields),
+            vec![0, 1, 2],
+            3,
+        );
+
+        assert!(result.is_err());
     }
 
     // Tests for ModelTableMetadata.

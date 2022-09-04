@@ -1300,7 +1300,6 @@ dependencies = [
  "paho-mqtt",
  "proptest",
  "rusqlite",
- "serde_json",
  "snmalloc-rs",
  "tempfile",
  "tokio",
