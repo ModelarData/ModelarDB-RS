@@ -354,7 +354,9 @@ impl FlightService for FlightServiceHandler {
             if action.r#type == "CreateTable" {
                 create_table(catalog, table_name.to_owned(), schema)?;
             } else {
-                // Extract the tag column indices from the action body.
+                // Extract the tag column indices from the action body. Note that since we assume
+                // each tag column index is one byte, we directly use the slice of bytes as the list
+                // of tag column indices.
                 let (tag_indices, offset_data) = extract_argument_bytes(offset_data);
 
                 // Extract the timestamp column index from the action body.
