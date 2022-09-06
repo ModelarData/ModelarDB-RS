@@ -29,12 +29,14 @@ mod storage;
 mod tables;
 mod types;
 
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, RwLock};
 
 use datafusion::common::DataFusionError;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::options::ParquetReadOptions;
 use datafusion::execution::runtime_env::RuntimeEnv;
+use rusqlite::Connection;
 use tokio::runtime::Runtime;
 use tracing::error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -49,7 +51,7 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 /// Provides access to the system's configuration and components.
 pub struct Context {
     /// Metadata for the tables and model tables in the data folder.
-    catalog: Catalog,
+    catalog: RwLock<Catalog>,
     /// A Tokio runtime for executing asynchronous tasks.
     runtime: Runtime,
     /// Main interface for Apache Arrow DataFusion.
@@ -68,19 +70,26 @@ fn main() -> Result<(), String> {
     let mut args = std::env::args();
     args.next(); // Skip executable.
     if let Some(data_folder) = args.next() {
+        let data_folder_path = PathBuf::from(&data_folder);
+
         // Build Context.
-        let mut catalog = Catalog::try_new(&data_folder).map_err(|error| {
+        let mut catalog = Catalog::try_new(&data_folder_path).map_err(|error| {
             format!("Unable to read data folder '{}': {}", &data_folder, &error)
         })?;
         let runtime = Runtime::new().unwrap();
         let mut session = create_session_context();
+
+        // Set up the metadata tables used for model tables.
+        create_model_table_metadata_tables(data_folder_path.as_path()).map_err(|error| {
+            format!("Unable to create metadata tables: {}", error)
+        })?;
 
         // Register Tables.
         register_tables_and_model_tables(&runtime, &mut session, &mut catalog);
 
         // Start Interface.
         let context = Arc::new(Context {
-            catalog,
+            catalog: RwLock::new(catalog),
             runtime,
             session,
         });
@@ -109,6 +118,44 @@ fn create_session_context() -> SessionContext {
     SessionContext::with_state(state)
 }
 
+// TODO: Move this function to the configuration/metadata component.
+/// If they do not already exist, create the tables used for model table metadata. A
+/// "model_table_metadata" table that can persist model tables is created. A "columns" table that
+/// can save the index of field columns in specific tables is also created. If the tables already
+/// exist or were successfully created, return [`Ok`], otherwise return [`rusqlite::Error`].
+fn create_model_table_metadata_tables(data_folder_path: &Path) -> Result<(), rusqlite::Error> {
+    let database_path = data_folder_path.join("metadata.sqlite3");
+    let connection = Connection::open(database_path)?;
+
+    // Create the model_table_metadata SQLite table if it does not exist.
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS model_table_metadata (
+                table_name TEXT PRIMARY KEY,
+                schema BLOB NOT NULL,
+                timestamp_column_index INTEGER NOT NULL,
+                tag_column_indices BLOB NOT NULL
+        )",
+        (),
+    )?;
+
+    // Create the model_table_field_columns SQLite table if it does not exist. Note that column_index
+    // will only use a maximum of 10 bits.
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS model_table_field_columns (
+                table_name TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                column_index INTEGER NOT NULL,
+                PRIMARY KEY (table_name, column_name)
+        )",
+        (),
+    )?;
+
+    Ok(())
+}
+
+// TODO: Currently we load the model tables into the ModelarDB catalog when starting. We also just
+//       add the model tables to the ModelarDB catalog when creating tables. When querying should
+//       be supported, the new model tables should be registered with the DataFusion catalog.
 /// Register all tables and model tables in `catalog` with Apache Arrow
 /// DataFusion through `session_context`. If initialization fails the table or
 /// model table is removed from `catalog`.
