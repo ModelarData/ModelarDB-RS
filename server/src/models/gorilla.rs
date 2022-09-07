@@ -32,8 +32,6 @@ use crate::types::{
     ValueArray, ValueBuilder,
 };
 
-// TODO: fix zeroes vs zeros.
-
 /// The state the Gorilla model type needs while compressing the values of a
 /// time series segment.
 pub struct Gorilla {
@@ -307,8 +305,8 @@ fn decompress_values(
     values: &mut ValueBuilder,
 ) {
     let mut bits = BitReader::try_new(model).unwrap();
-    let mut leading_zeroes = u8::MAX;
-    let mut trailing_zeroes: u8 = 0;
+    let mut leading_zeros = u8::MAX;
+    let mut trailing_zeros: u8 = 0;
     let mut last_value = bits.read_bits(models::VALUE_SIZE_IN_BITS);
 
     // The first value is stored uncompressed using size_of::<Value> bits.
@@ -320,14 +318,14 @@ fn decompress_values(
         if bits.read_bit() {
             if bits.read_bit() {
                 // New leading and trailing zeros.
-                leading_zeroes = bits.read_bits(5) as u8;
+                leading_zeros = bits.read_bits(5) as u8;
                 let meaningful_bits = bits.read_bits(6) as u8;
-                trailing_zeroes = models::VALUE_SIZE_IN_BITS - meaningful_bits - leading_zeroes;
+                trailing_zeros = models::VALUE_SIZE_IN_BITS - meaningful_bits - leading_zeros;
             }
 
-            let meaningful_bits = models::VALUE_SIZE_IN_BITS - leading_zeroes - trailing_zeroes;
+            let meaningful_bits = models::VALUE_SIZE_IN_BITS - leading_zeros - trailing_zeros;
             let mut value = bits.read_bits(meaningful_bits);
-            value <<= trailing_zeroes;
+            value <<= trailing_zeros;
             value ^= last_value;
             last_value = value;
         }
