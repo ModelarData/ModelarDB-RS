@@ -288,6 +288,7 @@ impl TableMetadata {
 
 // TODO: Change name to "ModelTableMetadata" when the old version is removed.
 /// Metadata required to ingest data into a model table and query a model table.
+#[derive(Clone)]
 pub struct NewModelTableMetadata {
     /// Name of the model table.
     pub name: String,

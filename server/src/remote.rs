@@ -120,39 +120,49 @@ impl FlightServiceHandler {
             .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
     }
 
-    /// While there is till more data to receive, ingest the data into the table.
+    /// While there is still more data to receive, ingest the data into the table.
     fn ingest_into_table(
         &self,
         table_name: &str,
         schema: SchemaRef,
         request: Streaming<FlightData>) {
-
+        info!("Ingesting data into table '{}'.", table_name);
     }
+
+    // TODO: Convert the data to a record batch and send the record batch and the model table to the storage engine.
+    // TODO: This record batch can have multiple rows and multiple field columns.
+    // TODO: Change name of "insert_message" to "insert_data".
+    // TODO: The data point file should be removed.
+    // TODO: The storage engine function should first convert the data into univariate time series.
+    // TODO: These univariate time series can then be sent one by one to a function that does the same as "insert_message" a dynamic message count.
+
+    // TODO: Add a function to the storage engine to return data.
 
     /// While there is still more data to receive, ingest the data into the storage engine.
     async fn ingest_into_model_table(
         &self,
-        model_table: &NewModelTableMetadata,
+        model_table: NewModelTableMetadata,
         request: &mut Streaming<FlightData>
     ) -> Result<(), Status> {
-        // Log how many data points were received to make it possible to check
-        // that the expected number was received without the StorageEngine.
+        info!("Ingesting data into model table '{}'.", model_table.name);
+
+        // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = request.next().await {
             let flight_data = flight_data?;
             debug_assert_eq!(flight_data.flight_descriptor, None);
+
+            // Convert the flight data to a record batch.
             let record_batch = utils::flight_data_to_arrow_batch(
                 &flight_data,
                 SchemaRef::from(model_table.schema.clone()),
                 &self.dictionaries_by_id,
-            )
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            ).map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             info!(
                 "Received RecordBatch with {} data points for the table {}.",
                 record_batch.num_rows(),
                 model_table.name
             );
-            // TODO: forward the data points to the StorageEngine.
         }
 
         Ok(())
@@ -286,17 +296,6 @@ impl FlightService for FlightServiceHandler {
         Ok(Response::new(Box::pin(output)))
     }
 
-    // TODO: Check for the model table in the in-memory catalog first.
-    // TODO: if found, return the entire model table since more information is needed in the storage engine.
-    // TODO: Convert the data to a record batch and send the record batch and the model table to the storage engine.
-    // TODO: This record batch can have multiple rows and multiple field columns.
-    // TODO: Change name of "insert_message" to "insert_data".
-    // TODO: The data point file should be removed.
-    // TODO: The storage engine function should first convert the data into univariate time series.
-    // TODO: These univariate time series can then be sent one by one to a function that does the same as "insert_message" a dynamic message count.
-
-    // TODO: Add a function to the storage engine to return data.
-
     /// Insert data points into a table. The name of the table must be provided
     /// as the first element of `FlightDescriptor.path` and the schema of the
     /// data points must match the schema of the table. If the data points are
@@ -321,13 +320,18 @@ impl FlightService for FlightServiceHandler {
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
         let table_name = self.get_table_name_from_flight_descriptor(&flight_descriptor)?;
 
-        // unwrap() is safe to use since read() only fails if the RwLock is poisoned
-        let catalog = self.context.catalog.read().unwrap();
-        let mut model_tables = catalog.new_model_table_metadata.iter();
-
         // Check if it is a model table that can be found in the in-memory catalog.
-        if let Some(model_table) = model_tables.find(|table| table.name == *table_name) {
-            self.ingest_into_model_table(model_table, &mut request);
+        let maybe_model_table = {
+            // unwrap() is safe to use since read() only fails if the RwLock is poisoned.
+            let catalog = self.context.catalog.read().unwrap();
+            let mut model_tables = catalog.new_model_table_metadata.iter();
+
+            model_tables.find(|table| table.name == *table_name).cloned()
+        };
+
+        // Handle the data based on whether it is a normal table or a model table.
+        if let Some(model_table) = maybe_model_table {
+            self.ingest_into_model_table(model_table, &mut request).await;
         } else {
             // If the table is not a model table, check if it can be found in the datafusion catalog.
             let schema = self
