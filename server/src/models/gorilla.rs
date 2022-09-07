@@ -22,12 +22,17 @@
 //!
 //! [Gorilla paper]: https://dl.acm.org/doi/10.14778/2824032.2824078
 
+use std::mem;
+
 use datafusion::arrow::compute::kernels::aggregate;
 
 use crate::models;
 use crate::types::{
-    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueArray, ValueBuilder,
+    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampArray, TimestampBuilder, Value,
+    ValueArray, ValueBuilder,
 };
+
+// TODO: fix zeroes vs zeros.
 
 /// The state the Gorilla model type needs while compressing the values of a
 /// time series segment.
@@ -128,6 +133,88 @@ impl Gorilla {
     pub fn get_compressed_values(self) -> Vec<u8> {
         self.compressed_values.finish()
     }
+}
+
+pub fn compress_residual_timestamps(uncompressed_timestamps: &TimestampArray) -> Vec<u8> {
+    // Nothing to do as segments stores the first and last timestamp.
+    if uncompressed_timestamps.len() <= 2 {
+        return vec![];
+    }
+
+    if are_timestamps_regular(uncompressed_timestamps.values()) {
+        // Compress timestamps for a regular time series as a zero bit followed
+        // by the segment's length as an integer with all prefix zeros stripped.
+        let length = uncompressed_timestamps.len();
+        let leading_zero_bits = length.leading_zeros() as usize;
+        let number_of_bits_to_write = (mem::size_of_val(&length) * 8 - leading_zero_bits) + 1; // +1 for flag bit.
+        let number_of_bytes_to_write = (number_of_bits_to_write as f64 / 8.0).ceil() as usize;
+
+        let sampling_interval_bytes = length.to_be_bytes();
+        let bytes_index_first_byte = sampling_interval_bytes.len() - number_of_bytes_to_write;
+        sampling_interval_bytes[bytes_index_first_byte..].to_vec()
+    } else {
+        // Compress timestamps for irregular time series as a one bit and the
+        // segment's timestamps encoded using Gorillas compression method.
+        vec![]
+    }
+}
+
+pub fn decompress_all_timestamps(
+    start_time: Timestamp,
+    end_time: Timestamp,
+    bytes: &[u8],
+) -> TimestampArray {
+    if bytes.is_empty() && start_time == end_time {
+        // Timestamps are always unique so the segment has one timestamp.
+        let mut timestamp_builder = TimestampBuilder::new(1);
+        timestamp_builder.append_value(start_time);
+        timestamp_builder
+    } else if bytes.is_empty() {
+        // Timestamps are always unique so the segment has two timestamps.
+        let mut timestamp_builder = TimestampBuilder::new(2);
+        timestamp_builder.append_value(start_time);
+        timestamp_builder.append_value(end_time);
+        timestamp_builder
+    } else if bytes[0] & 128 == 0 {
+        // The flag bit is zero, so only the segment's length is stored as an
+        // integer with all the prefix zeros stripped from the integer.
+        let mut bytes_to_decode = [0; 8];
+        bytes_to_decode[..bytes.len()].copy_from_slice(bytes);
+        let length = usize::from_le_bytes(bytes_to_decode);
+        let sampling_interval = (end_time - start_time) as usize / (length - 1);
+        let mut timestamp_builder = TimestampBuilder::new(length);
+        for timestamp in (start_time..=end_time).step_by(sampling_interval) {
+            timestamp_builder.append_value(timestamp);
+        }
+        timestamp_builder
+    } else {
+        //TODO: flag bit is one so Gorilla is used.
+        let mut timestamp_builder = TimestampBuilder::new(1);
+        timestamp_builder.append_value(start_time);
+        timestamp_builder
+    }
+    .finish()
+}
+
+/// Return `true` if the timestamps in `uncompressed_timestamps` follow a
+/// regular sampling interval, otherwise `false`.
+fn are_timestamps_regular(uncompressed_timestamps: &[Timestamp]) -> bool {
+    if uncompressed_timestamps.len() < 2 {
+        return true;
+    }
+
+    // Unwrap is safe as uncompressed_timestamps has at least two timestamps.
+    let expected_sampling_interval = uncompressed_timestamps[1] - uncompressed_timestamps[0];
+    let mut uncompressed_timestamps = uncompressed_timestamps.iter();
+    let mut previous_timestamp = uncompressed_timestamps.next().unwrap();
+
+    while let Some(current_timestamp) = uncompressed_timestamps.next() {
+        if current_timestamp - previous_timestamp != expected_sampling_interval {
+            return false;
+        }
+        previous_timestamp = current_timestamp;
+    }
+    true
 }
 
 /// Compute the minimum value for a time series segment whose values are
@@ -437,6 +524,61 @@ mod tests {
         assert_eq!(model_type.compressed_values.current_byte, 112);
         assert_eq!(model_type.compressed_values.remaining_bits, 3);
         assert_eq!(model_type.compressed_values.bytes.len(), 7);
+    }
+
+    // Tests for compress_residual_timestamps() and decompress_all_timestamps().
+    #[test]
+    fn compress_timestamps_for_time_series_with_zero_one_or_two_timestamps() {
+        let mut uncompressed_timestamps_builder = TimestampBuilder::new(3);
+
+        uncompressed_timestamps_builder.append_slice(&[]);
+        assert!(compress_residual_timestamps(&uncompressed_timestamps_builder.finish()).is_empty());
+
+        uncompressed_timestamps_builder.append_slice(&[100]);
+        assert!(compress_residual_timestamps(&uncompressed_timestamps_builder.finish()).is_empty());
+
+        uncompressed_timestamps_builder.append_slice(&[100, 300]);
+        assert!(compress_residual_timestamps(&uncompressed_timestamps_builder.finish()).is_empty());
+    }
+
+    #[test]
+    fn compress_and_decompress_timestamps_for_a_regular_time_series() {
+        let uncompressed_timestamps = &[100, 200, 300, 400, 500, 600, 700, 800];
+        let mut uncompressed_timestamps_builder =
+            TimestampBuilder::new(uncompressed_timestamps.len());
+        uncompressed_timestamps_builder.append_slice(uncompressed_timestamps);
+        let uncompressed_timestamps = uncompressed_timestamps_builder.finish();
+
+        let compressed = compress_residual_timestamps(&uncompressed_timestamps);
+        assert!(!compressed.is_empty());
+        let decompressed = decompress_all_timestamps(
+            uncompressed_timestamps.value(0),
+            uncompressed_timestamps.value(uncompressed_timestamps.len() - 1),
+            compressed.as_slice(),
+        );
+        assert_eq!(uncompressed_timestamps, decompressed);
+    }
+
+    // Tests for are_timestamps_regular().
+    #[test]
+    fn test_time_series_with_one_data_point_is_regular() {
+        assert!(are_timestamps_regular(&[100]));
+    }
+
+    fn test_time_series_with_two_data_points_is_regular() {
+        assert!(are_timestamps_regular(&[100, 200]));
+    }
+
+    #[test]
+    fn test_regular_time_series_is_regular() {
+        assert!(are_timestamps_regular(&[100, 200, 300, 400, 500, 600, 700]))
+    }
+
+    #[test]
+    fn test_irregular_time_series_is_irregular() {
+        assert!(!are_timestamps_regular(&[
+            100, 150, 300, 350, 700, 750, 1500
+        ]))
     }
 
     // Tests for min().
