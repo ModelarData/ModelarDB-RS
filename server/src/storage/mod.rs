@@ -17,7 +17,6 @@
 //! in an in-memory buffer that spills to Apache Parquet files, and stores data points compressed as
 //! models in memory to batch compressed data before saving it to Apache Parquet files.
 
-mod data_point;
 mod segment;
 mod time_series;
 mod uncompressed_data_manager;
@@ -36,7 +35,7 @@ use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
-use paho_mqtt::Message;
+use crate::catalog::NewModelTableMetadata;
 
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::segment::FinishedSegment;
@@ -70,10 +69,14 @@ impl StorageEngine {
         }
     }
 
-    /// Pass `message` to [`UncompressedDataManager`]. Return [`Ok`] if the message was successfully
+    /// Pass `data` to [`UncompressedDataManager`]. Return [`Ok`] if the data was successfully
     /// inserted, otherwise return [`Err`].
-    pub fn insert_message(&mut self, message: Message) -> Result<(), String> {
-        self.uncompressed_data_manager.insert_message(message)
+    pub fn insert_data(
+        &mut self,
+        model_table: NewModelTableMetadatadata,
+        data: RecordBatch
+    ) -> Result<(), String> {
+        self.uncompressed_data_manager.insert_data(model_table, data)
     }
 
     /// Retrieve the oldest [`FinishedSegment`] from [`UncompressedDataManager`] and return it.

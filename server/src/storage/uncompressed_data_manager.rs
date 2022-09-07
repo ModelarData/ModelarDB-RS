@@ -17,9 +17,10 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use datafusion::arrow::record_batch::RecordBatch;
 
-use paho_mqtt::Message;
 use tracing::{info, info_span};
+use crate::catalog::NewModelTableMetadata;
 
 use crate::storage::data_point::DataPoint;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder};
@@ -51,15 +52,30 @@ impl UncompressedDataManager {
         }
     }
 
-    /// Parse `message` and insert it into the in-memory buffer. Return [`Ok`] if the message was
-    /// successfully inserted, otherwise return [`Err`].
-    pub fn insert_message(&mut self, message: Message) -> Result<(), String> {
-        let data_point = DataPoint::from_message(&message)?;
-        let key = data_point.generate_unique_key();
-        let _span = info_span!("insert_message", key = key.clone()).entered();
+    /// Parse `data` and insert it into the in-memory buffer. The data is first parsed into multiple
+    /// univariate time series based on `model_table`. These individual time series are then
+    /// inserted into the storage engine. Return [`Ok`] if the data was successfully inserted,
+    /// otherwise return [`Err`].
+    pub fn insert_data(
+        &mut self,
+        model_table: NewModelTableMetadata,
+        data: RecordBatch
+    ) -> Result<(), String> {
+        let _span = info_span!("insert_data", table = model_table.name).entered();
+        info!("Received record batch with {} data points for the table '{}'.",
+            data.num_rows(), model_table.name);
 
-        info!("Inserting data point '{}' into segment.", data_point);
+        // TODO: Generate the 54-bit tag hash based on the tag values of the record batch.
+        // TODO: Create a univariate time series for each field column in the model table schema.
+        // TODO: For each univariate time series, create a 64-bit key that uniquely identifies it.
+        // TODO: Send each separate time series to be further processed.
 
+    }
+
+    /// Insert `data` into the segment identified by `key`. If a segment does not already exist,
+    /// a new segment is created. Return [`Ok`] if the data was successfully inserted,
+    /// otherwise return [`Err`].
+    fn insert_into_segment(&mut self, data: RecordBatch, key: u64) -> Result<(), String> {
         if let Some(segment) = self.uncompressed_data.get_mut(&key) {
             info!("Found existing segment.");
 
@@ -160,7 +176,7 @@ mod tests {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
 
         let message = Message::new("ModelarDB/test", "invalid", 1);
-        data_manager.insert_message(message.clone());
+        data_manager.insert_data(message.clone());
 
         assert!(data_manager.uncompressed_data.is_empty());
     }
@@ -328,7 +344,7 @@ mod tests {
         let payload = format!("[{}, 30]", timestamp);
         let message = Message::new(topic, payload, 1);
 
-        data_manager.insert_message(message.clone());
+        data_manager.insert_data(message.clone());
 
         DataPoint::from_message(&message)
             .unwrap()
