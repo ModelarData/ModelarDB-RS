@@ -22,7 +22,7 @@
 /// [code published by Ilkka Rauta]: https://github.com/irauta/bitreader
 pub struct BitReader<'a> {
     /// Next bit to read from `bytes`.
-    next_bit: u64,
+    next_bit: usize,
     /// Bits packed into one or more [`u8s`](u8).
     bytes: &'a [u8],
 }
@@ -38,12 +38,12 @@ impl<'a> BitReader<'a> {
 
     /// Return `true` if the reader have been exhausted, otherwise `false`.
     pub fn is_empty(&self) -> bool {
-        ((self.next_bit / 8) as usize) == self.bytes.len()
+        (self.next_bit / 8) == self.bytes.len()
     }
 
     /// Return the remaining bits in the [`BitReader`].
     pub fn remaining_bits(&self) -> usize {
-        8 * self.bytes.len() - (self.next_bit as usize) // TODO: next_bit usize?
+        8 * self.bytes.len() - self.next_bit
     }
 
     /// Read the next bit from the [`BitReader`].
@@ -53,14 +53,14 @@ impl<'a> BitReader<'a> {
 
     /// Read the next `number_of_bits` bits from the [`BitReader`].
     pub fn read_bits(&mut self, number_of_bits: u8) -> u32 {
-        let mut value: u64 = 0;
+        let mut value = 0;
         let start_bit = self.next_bit;
-        let end_bit = self.next_bit + number_of_bits as u64;
+        let end_bit = self.next_bit + number_of_bits as usize;
         for bit in start_bit..end_bit {
-            let current_byte = (bit / 8) as usize;
+            let current_byte = (bit / 8);
             let byte = self.bytes[current_byte];
             let shift = 7 - (bit % 8);
-            let bit: u64 = (byte >> shift) as u64 & 1;
+            let bit = (byte >> shift) as u64 & 1;
             value = (value << 1) | bit;
         }
         self.next_bit = end_bit;
