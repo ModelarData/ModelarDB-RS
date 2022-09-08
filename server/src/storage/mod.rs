@@ -35,8 +35,8 @@ use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
-use crate::catalog::NewModelTableMetadata;
 
+use crate::catalog::NewModelTableMetadata;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::segment::FinishedSegment;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
@@ -73,7 +73,7 @@ impl StorageEngine {
     /// inserted, otherwise return [`Err`].
     pub fn insert_data(
         &mut self,
-        model_table: NewModelTableMetadatadata,
+        model_table: NewModelTableMetadata,
         data: RecordBatch
     ) -> Result<(), String> {
         self.uncompressed_data_manager.insert_data(model_table, data)

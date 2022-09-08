@@ -24,14 +24,13 @@ use std::sync::Arc;
 use std::{fmt, fs, mem};
 use std::path::{Path, PathBuf};
 
-use datafusion::arrow::array::ArrayBuilder;
+use datafusion::arrow::array::{Array, ArrayBuilder};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use tracing::info;
 
-use crate::storage::data_point::DataPoint;
 use crate::storage::{BUILDER_CAPACITY, StorageEngine};
-use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
+use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder};
 
 /// Shared functionality between different types of uncompressed segments, such as [`SegmentBuilder`]
 /// and [`SpilledSegment`].
@@ -87,17 +86,35 @@ impl SegmentBuilder {
         self.timestamps.capacity()
     }
 
-    /// Add the timestamp and value from `data_point` to the [`SegmentBuilder`].
-    pub fn insert_data(&mut self, data_point: &DataPoint) {
-        debug_assert!(
-            !self.is_full(),
-            "Cannot insert data into full SegmentBuilder."
-        );
+    // TODO: Test that this returns Some when full.
+    // TODO: Test that this returns None when not full.
+    /// Add as much data as possible from `timestamps` and `values` to the [`SegmentBuilder`].
+    /// If the segment could not hold all the data, the remaining data is returned. If all data
+    /// could be contained in the segment [`None`] is returned.
+    pub fn insert_data(
+        &mut self,
+        timestamps: TimestampArray,
+        values: ValueArray
+    ) -> Option<(TimestampArray, ValueArray)> {
+        debug_assert!(!self.is_full(), "Cannot insert data into full SegmentBuilder.");
 
-        self.timestamps.append_value(data_point.timestamp);
-        self.values.append_value(data_point.value);
+        let remaining_capacity = self.get_capacity() - self.get_length();
+        let new_timestamps = timestamps.slice(0, remaining_capacity);
+        let new_values = values.slice(0, remaining_capacity);
 
-        info!("Inserted data point into segment with {}.", self)
+        self.timestamps.append_slice(new_timestamps.as_ref());
+        self.values.append_slice(new_values.as_ref());
+
+        info!("Inserted {} data points into segment with {}.", new_timestamps.len(), self);
+
+        if self.is_full() {
+            None
+        } else {
+            let remaining_timestamps = timestamps.slice(new_timestamps.len(), timestamps.len() - new_timestamps.len());
+            let remaining_values = values.slice(new_values.len(), values.len() - new_values.len());
+
+            (remaining_timestamps.as_ref(), remaining_values.as_ref())
+        }
     }
 }
 
@@ -200,7 +217,7 @@ impl UncompressedSegment for SpilledSegment {
 /// Representing either a [`SegmentBuilder`] or [`SpilledSegment`] that is finished and ready for compression.
 pub struct FinishedSegment {
     /// Key that uniquely identifies the time series the [`FinishedSegment`] belongs to.
-    pub key: String,
+    pub key: u64,
     /// Either a finished [`SegmentBuilder`] or a [`SpilledSegment`].
     pub uncompressed_segment: Box<dyn UncompressedSegment>,
 }

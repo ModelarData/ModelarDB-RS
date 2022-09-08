@@ -22,8 +22,8 @@ use datafusion::arrow::record_batch::RecordBatch;
 use tracing::{info, info_span};
 use crate::catalog::NewModelTableMetadata;
 
-use crate::storage::data_point::DataPoint;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder};
+use crate::types::{TimestampArray, ValueArray};
 
 const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
 
@@ -34,7 +34,7 @@ pub struct UncompressedDataManager {
     /// Path to the folder containing all uncompressed data managed by the [`StorageEngine`].
     data_folder_path: PathBuf,
     /// The [`UncompressedSegments`](UncompressedSegment) while they are being built.
-    uncompressed_data: HashMap<String, SegmentBuilder>,
+    uncompressed_data: HashMap<u64, SegmentBuilder>,
     /// FIFO queue of [`FinishedSegments`](FinishedSegment) that are ready for compression.
     finished_queue: VecDeque<FinishedSegment>,
     /// How many bytes of memory that are left for storing [`UncompressedSegments`](UncompressedSegment).
@@ -69,47 +69,6 @@ impl UncompressedDataManager {
         // TODO: Create a univariate time series for each field column in the model table schema.
         // TODO: For each univariate time series, create a 64-bit key that uniquely identifies it.
         // TODO: Send each separate time series to be further processed.
-
-    }
-
-    /// Insert `data` into the segment identified by `key`. If a segment does not already exist,
-    /// a new segment is created. Return [`Ok`] if the data was successfully inserted,
-    /// otherwise return [`Err`].
-    fn insert_into_segment(&mut self, data: RecordBatch, key: u64) -> Result<(), String> {
-        if let Some(segment) = self.uncompressed_data.get_mut(&key) {
-            info!("Found existing segment.");
-
-            segment.insert_data(&data_point);
-
-            if segment.is_full() {
-                info!("Segment is full, moving it to the queue of finished segments.");
-
-                // Since this is only reachable if the segment exists in the HashMap, unwrap is safe to use.
-                let full_segment = self.uncompressed_data.remove(&key).unwrap();
-                self.enqueue_segment(key, full_segment)
-            }
-        } else {
-            info!("Could not find segment. Creating segment.");
-
-            // If there is not enough memory for a new segment, spill a finished segment.
-            if SegmentBuilder::get_memory_size() > self.uncompressed_remaining_memory_in_bytes {
-                self.spill_finished_segment();
-            }
-
-            // Create a new segment and reduce the remaining amount of reserved memory by its size.
-            let mut segment = SegmentBuilder::new();
-            self.uncompressed_remaining_memory_in_bytes -= SegmentBuilder::get_memory_size();
-
-            info!(
-                "Created segment. Remaining reserved bytes: {}.",
-                self.uncompressed_remaining_memory_in_bytes
-            );
-
-            segment.insert_data(&data_point);
-            self.uncompressed_data.insert(key, segment);
-        }
-
-        Ok(())
     }
 
     /// Remove the oldest [`FinishedSegment`] from the queue and return it. Return [`None`] if the
@@ -126,8 +85,65 @@ impl UncompressedDataManager {
         }
     }
 
+    // TODO: Test that you cant insert timestamp and values of different lengths.
+    /// Insert `data` into the segment identified by `key`. If a segment does not already exist,
+    /// a new segment is created. Return [`Ok`] if the data was successfully inserted,
+    /// otherwise return [`Err`].
+    fn insert_into_segment(
+        &mut self,
+        mut timestamps: TimestampArray,
+        mut values: ValueArray,
+        key: u64
+    ) -> Result<(), String> {
+        // Get the segment from the uncompressed data. Create a new segment if it does not exist.
+        let mut segment = self.uncompressed_data.get_mut(&key).unwrap_or_else(|| &mut {
+            info!("Could not find segment. Creating new segment.");
+            let mut segment = self.create_segment_builder();
+            self.uncompressed_data.insert(key, segment.clone());
+
+            segment
+        });
+
+        // Insert data into the segment. If data is returned, it means the segment is full.
+        while let Some((remaining_timestamps, remaining_values)) = segment.insert_data(timestamps, values) {
+            info!("Segment is full, moving it to the queue of finished segments.");
+
+            // Since this is only reachable if the segment exists in the HashMap, unwrap is safe to use.
+            let full_segment = self.uncompressed_data.remove(&key).unwrap();
+            self.enqueue_segment(key, full_segment);
+
+            // Since there is still data remaining, create a new segment to hold the remaining data.
+            segment = &mut self.create_segment_builder();
+            self.uncompressed_data.insert(key, segment.clone());
+
+            timestamps = remaining_timestamps;
+            values = remaining_values;
+        }
+
+        // TODO: Maybe add check for if the segment is full.
+
+        Ok(())
+    }
+
+    /// Create a new segment builder and remove its size from the uncompressed remaining memory.
+    fn create_segment_builder(&mut self) -> SegmentBuilder {
+        // If there is not enough memory for a new segment, spill a finished segment.
+        if SegmentBuilder::get_memory_size() > self.uncompressed_remaining_memory_in_bytes {
+            self.spill_finished_segment();
+        }
+
+        // Create a new segment and reduce the remaining amount of reserved memory by its size.
+        let segment = SegmentBuilder::new();
+        self.uncompressed_remaining_memory_in_bytes -= SegmentBuilder::get_memory_size();
+
+        info!("Created segment. Remaining reserved bytes: {}.",
+            self.uncompressed_remaining_memory_in_bytes);
+
+        segment
+    }
+
     /// Move `segment_builder` to the queue of [`FinishedSegments`](FinishedSegment).
-    fn enqueue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
+    fn enqueue_segment(&mut self, key: u64, segment_builder: SegmentBuilder) {
         let finished_segment = FinishedSegment {
             key,
             uncompressed_segment: Box::new(segment_builder),
