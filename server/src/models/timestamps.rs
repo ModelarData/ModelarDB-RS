@@ -32,6 +32,7 @@
 
 use std::mem;
 
+use crate::compression;
 use crate::models::bits::{BitReader, BitVecBuilder};
 use crate::types::{Timestamp, TimestampArray, TimestampBuilder};
 
@@ -48,128 +49,17 @@ pub fn compress_residual_timestamps(uncompressed_timestamps: &TimestampArray) ->
         return vec![];
     }
 
+    // Compress the residual timestamps using an optimized method depending on
+    // if the segment the timestamps are from is regular or irregular.
     if are_timestamps_regular(uncompressed_timestamps.values()) {
-        // Compress timestamps for a regular time series as a zero bit followed
-        // by the segment's length as an integer with all prefix zeros stripped.
-        let length = uncompressed_timestamps.len();
-        let leading_zero_bits = length.leading_zeros() as usize;
-        let number_of_bits_to_write = (mem::size_of_val(&length) * 8 - leading_zero_bits) + 1;
-        let number_of_bytes_to_write = (number_of_bits_to_write as f64 / 8.0).ceil() as usize;
-
-        let sampling_interval_bytes = length.to_be_bytes();
-        let bytes_index_first_byte = sampling_interval_bytes.len() - number_of_bytes_to_write;
-        sampling_interval_bytes[bytes_index_first_byte..].to_vec()
+        // The timestamps are regular, so only the segment's length is stored as
+        // an integer with all the prefix zeros stripped from the integer.
+        compress_regular_residual_timestamps(uncompressed_timestamps)
     } else {
-        // Compress timestamps for an irregular time series as a one bit and
-        // then the timestamps encoded using Gorilla's compression method.
-        let mut compressed_timestamps = BitVecBuilder::new();
-        compressed_timestamps.append_a_one_bit();
-
-        // Store the second timestamp as a delta using 14 bits.
-        // TODO: remove the casts when refactoring the query engine to use unsigned.
-        let mut last_delta = uncompressed_timestamps.value(1) - uncompressed_timestamps.value(0);
-        compressed_timestamps.append_bits(last_delta as u32, 14); // 14-bit delta is max four hours.
-
-        // Encode the timestamps from the third timestamp to the second to last.
-        // A delta of delta is computed and then encoded in buckets of different
-        // sizes. Assumes that the delta of delta can fit in at most 32 bits.
-        let mut last_timestamp = uncompressed_timestamps.value(1);
-        for timestamp in &uncompressed_timestamps.values()[2..uncompressed_timestamps.len() - 1] {
-            let delta = timestamp - last_timestamp;
-            let delta_of_delta = delta - last_delta;
-
-            match delta_of_delta {
-                0 => compressed_timestamps.append_a_zero_bit(),
-                -63..=64 => {
-                    compressed_timestamps.append_bits(0b10, 2);
-                    compressed_timestamps.append_bits(delta_of_delta as u32, 7);
-                }
-                -255..=256 => {
-                    compressed_timestamps.append_bits(0b110, 3);
-                    compressed_timestamps.append_bits(delta_of_delta as u32, 9);
-                }
-                -2047..=2048 => {
-                    compressed_timestamps.append_bits(0b1110, 4);
-                    compressed_timestamps.append_bits(delta_of_delta as u32, 12);
-                }
-                _ => {
-                    compressed_timestamps.append_bits(0b1111, 4);
-                    compressed_timestamps.append_bits(delta_of_delta as u32, 32);
-                }
-            }
-            last_delta = delta;
-            last_timestamp = *timestamp;
-        }
-        compressed_timestamps.finish()
-    }
-}
-
-pub fn decompress_all_timestamps(
-    start_time: Timestamp,
-    end_time: Timestamp,
-    residual_timestamps: &[u8],
-) -> TimestampArray {
-    if residual_timestamps.is_empty() && start_time == end_time {
-        // Timestamps are assumed to be unique so the segment has one timestamp.
-        let mut timestamp_builder = TimestampBuilder::new(1);
-        timestamp_builder.append_value(start_time);
-        timestamp_builder
-    } else if residual_timestamps.is_empty() {
-        // Timestamps are assumed to be unique so the segment has two timestamp.
-        let mut timestamp_builder = TimestampBuilder::new(2);
-        timestamp_builder.append_value(start_time);
-        timestamp_builder.append_value(end_time);
-        timestamp_builder
-    } else if residual_timestamps[0] & 128 == 0 {
-        // The flag bit is zero, so only the segment's length is stored as an
-        // integer with all the prefix zeros stripped from the integer.
-        let mut bytes_to_decode = [0; 8];
-        bytes_to_decode[..residual_timestamps.len()].copy_from_slice(residual_timestamps);
-        let length = usize::from_le_bytes(bytes_to_decode);
-        let sampling_interval = (end_time - start_time) as usize / (length - 1);
-        let mut timestamp_builder = TimestampBuilder::new(length);
-        for timestamp in (start_time..=end_time).step_by(sampling_interval) {
-            timestamp_builder.append_value(timestamp);
-        }
-        timestamp_builder
-    } else {
-        // The flag bit is one, so the timestamps are compressed as
+        // The timestamps are irregular so they are compressed as
         // delta-of-deltas stored using variable length binary encoding.
-        // TODO: remove the casts when refactoring the query engine to use unsigned.
-        let mut timestamp_builder = TimestampBuilder::new(1); // TODO: is pre-allocation possible?
-        timestamp_builder.append_value(start_time);
-
-        let mut bits = BitReader::try_new(residual_timestamps).unwrap();
-        let mut last_delta = bits.read_bits(14) as u32;
-        let mut timestamp = (start_time + last_delta as i64);
-
-        // Check if the flag is 0, 10, 110, 1110, or 1111.
-        let mut leading_one_bits = 0;
-        while bits.read_bit() && leading_one_bits < 4 {
-            leading_one_bits += 1;
-        }
-
-        // TODO: return if stream is empty, currently bits.read_bit() overflows
-        // if last bit is one but last bit cannot be always be zero as it would
-        // indicate a duplicate timestamp.
-
-        // TODO: Iterate until end of BitReader.
-        let current_delta = match leading_one_bits {
-            0 => last_delta,                                    // Flag is 0.
-            1 => read_and_decode_delta_of_delta(&mut bits, 7),  // Flag is 10.
-            2 => read_and_decode_delta_of_delta(&mut bits, 9),  // Flag is 110.
-            3 => read_and_decode_delta_of_delta(&mut bits, 12), // Flag is 1110.
-            4 => bits.read_bits(32),                            // Flag is 1111.
-            _ => panic!("Unknown encoding of timestamps"),
-        };
-
-        timestamp += current_delta as i64;
-        timestamp_builder.append_value(timestamp);
-
-        timestamp_builder.append_value(end_time);
-        timestamp_builder
+        compress_irregular_residual_timestamps(uncompressed_timestamps)
     }
-    .finish()
 }
 
 /// Return `true` if the timestamps in `uncompressed_timestamps` follow a
@@ -193,13 +83,178 @@ fn are_timestamps_regular(uncompressed_timestamps: &[Timestamp]) -> bool {
     true
 }
 
-fn read_and_decode_delta_of_delta(bits: &mut BitReader, bits_to_read: u8) -> u32 {
+/// Compress `uncompressed_timestamps` for a regular time series as a zero bit
+/// followed by the segment's length as an integer with prefix zeros stripped.
+fn compress_regular_residual_timestamps(uncompressed_timestamps: &TimestampArray) -> Vec<u8> {
+    let length = uncompressed_timestamps.len();
+    let leading_zero_bits = length.leading_zeros() as usize;
+    let number_of_bits_to_write = (mem::size_of_val(&length) * 8 - leading_zero_bits) + 1;
+    let number_of_bytes_to_write = (number_of_bits_to_write as f64 / 8.0).ceil() as usize;
+
+    let sampling_interval_bytes = length.to_be_bytes();
+    let bytes_index_first_byte = sampling_interval_bytes.len() - number_of_bytes_to_write;
+    sampling_interval_bytes[bytes_index_first_byte..].to_vec()
+}
+
+/// Compress `uncompressed_timestamps` from an irregular time series as a one
+/// bit and followed by the timestamp's delta-of-deltas encode using a variable
+/// length binary encoding.
+fn compress_irregular_residual_timestamps(uncompressed_timestamps: &TimestampArray) -> Vec<u8> {
+    // TODO: remove the casts when refactoring the query engine to use unsigned.
+    let mut compressed_timestamps = BitVecBuilder::new();
+    compressed_timestamps.append_a_one_bit();
+
+    // Store the second timestamp as a delta using 14 bits.
+    let mut last_delta = uncompressed_timestamps.value(1) - uncompressed_timestamps.value(0);
+    let compress_last_delta = last_delta as u32;
+    compressed_timestamps.append_bits(last_delta as u32, 14); // 14-bit delta is max four hours.
+
+    // Encode the timestamps from the third timestamp to the second to last.
+    // A delta of delta is computed and then encoded in buckets of different
+    // sizes. Assumes that the delta of delta can fit in at most 32 bits.
+    let mut last_timestamp = uncompressed_timestamps.value(1);
+    for timestamp in &uncompressed_timestamps.values()[2..uncompressed_timestamps.len() - 1] {
+        let delta = timestamp - last_timestamp;
+        let delta_of_delta = delta - last_delta;
+
+        match delta_of_delta {
+            0 => compressed_timestamps.append_a_zero_bit(),
+            -63..=64 => {
+                compressed_timestamps.append_bits(0b10, 2);
+                compressed_timestamps.append_bits(delta_of_delta as u32, 7);
+            }
+            -255..=256 => {
+                compressed_timestamps.append_bits(0b110, 3);
+                compressed_timestamps.append_bits(delta_of_delta as u32, 9);
+            }
+            -2047..=2048 => {
+                compressed_timestamps.append_bits(0b1110, 4);
+                compressed_timestamps.append_bits(delta_of_delta as u32, 12);
+            }
+            _ => {
+                compressed_timestamps.append_bits(0b1111, 4);
+                compressed_timestamps.append_bits(delta_of_delta as u32, 32);
+            }
+        }
+        last_delta = delta;
+        last_timestamp = *timestamp;
+    }
+    compressed_timestamps.finish()
+}
+
+/// Decompress all of the segment's timestamps which are compressed as
+/// `start_time` for segments of length one, `start_time` and `end_time` for
+/// segments of length two, the segment's length for regular time series, or
+/// using Gorilla's compression method for timestamps for irregular time series.
+pub fn decompress_all_timestamps(
+    start_time: Timestamp,
+    end_time: Timestamp,
+    residual_timestamps: &[u8],
+) -> TimestampArray {
+    if residual_timestamps.is_empty() && start_time == end_time {
+        // Timestamps are assumed to be unique so the segment has one timestamp.
+        let mut timestamp_builder = TimestampBuilder::new(1);
+        timestamp_builder.append_value(start_time);
+        timestamp_builder.finish()
+    } else if residual_timestamps.is_empty() {
+        // Timestamps are assumed to be unique so the segment has two timestamp.
+        let mut timestamp_builder = TimestampBuilder::new(2);
+        timestamp_builder.append_value(start_time);
+        timestamp_builder.append_value(end_time);
+        timestamp_builder.finish()
+    } else if residual_timestamps[0] & 128 == 0 {
+        // The flag bit is zero, so only the segment's length is stored as an
+        // integer with all the prefix zeros stripped from the integer.
+        decompress_all_regular_timestamps(start_time, end_time, residual_timestamps)
+    } else {
+        // The flag bit is one, so the timestamps are compressed as
+        // delta-of-deltas stored using variable length binary encoding.
+        decompress_all_irregular_timestamps(start_time, end_time, residual_timestamps)
+    }
+}
+
+/// Decompress all of a segment's timestamps, which for this segment are sampled
+/// at a regular sampling interval, and thus compressed as the segment's length.
+fn decompress_all_regular_timestamps(
+    start_time: Timestamp,
+    end_time: Timestamp,
+    residual_timestamps: &[u8],
+) -> TimestampArray {
+    let mut bytes_to_decode = [0; 8];
+    bytes_to_decode[..residual_timestamps.len()].copy_from_slice(residual_timestamps);
+    let length = usize::from_le_bytes(bytes_to_decode);
+    let sampling_interval = (end_time - start_time) as usize / (length - 1);
+    let mut timestamp_builder = TimestampBuilder::new(length);
+    for timestamp in (start_time..=end_time).step_by(sampling_interval) {
+        timestamp_builder.append_value(timestamp);
+    }
+    timestamp_builder.finish()
+}
+
+/// Decompress all of a segment's timestamps, which for this segment are not
+/// sampled at a regular sampling interval, and thus compressed using Gorilla's
+/// compression method for timestamps for irregular time series.
+fn decompress_all_irregular_timestamps(
+    start_time: Timestamp,
+    end_time: Timestamp,
+    residual_timestamps: &[u8],
+) -> TimestampArray {
+    // TODO: remove the casts when refactoring the query engine to use unsigned.
+
+    // Add the first timestamp stored as `start_time` in the segment.
+    let mut timestamp_builder = TimestampBuilder::new(compression::GORILLA_MAXIMUM_LENGTH);
+    timestamp_builder.append_value(start_time);
+
+    // Remove the one bit used as a flag to specify that Gorilla is used.
+    let mut bits = BitReader::try_new(residual_timestamps).unwrap();
+    bits.read_bit();
+
+    // Decompress the second timestamp stored as a delta in 14 bits.
+    let mut last_delta = bits.read_bits(14);
+    let mut timestamp = (start_time + last_delta as i64);
+    timestamp_builder.append_value(timestamp);
+
+    // Decompress the remaining timestamp residual timestamps.
+    // while ...
+
+    // Check if the flag is 0, 10, 110, 1110, or 1111.
+    let mut leading_one_bits = 0;
+    while bits.read_bit() && leading_one_bits < 4 {
+        leading_one_bits += 1;
+    }
+
+    // TODO: return if stream is empty, currently bits.read_bit() overflows
+    // if last bit is one but last bit cannot be always be zero as it would
+    // indicate a duplicate timestamp.
+
+    let delta = match leading_one_bits {
+        0 => last_delta,                                                // Flag is 0.
+        1 => read_and_decode_delta_of_delta(&mut bits, 7,  last_delta), // Flag is 10.
+        2 => read_and_decode_delta_of_delta(&mut bits, 9,  last_delta), // Flag is 110.
+        3 => read_and_decode_delta_of_delta(&mut bits, 12, last_delta), // Flag is 1110.
+        4 => last_delta + bits.read_bits(32),                           // Flag is 1111.
+        _ => panic!("Unknown encoding of timestamps"),
+    };
+
+    timestamp += delta as i64;
+    timestamp_builder.append_value(timestamp);
+    last_delta = delta;
+    //}
+
+    // Add the last timestamp stored as `end_time` in the segment.
+    timestamp_builder.append_value(end_time);
+    timestamp_builder.finish()
+}
+
+/// Read the next delta-of-delta as `bits_to_read` from `bits` and decode it.
+fn read_and_decode_delta_of_delta(bits: &mut BitReader, bits_to_read: u8, last_delta: u32) -> u32 {
     let encoded_delta_of_delta = bits.read_bits(bits_to_read);
-    if (encoded_delta_of_delta > (1 << (bits_to_read - 1))) {
+    let delta_of_delta = if encoded_delta_of_delta > (1 << (bits_to_read - 1)) {
         encoded_delta_of_delta - (1 << bits_to_read)
     } else {
         encoded_delta_of_delta
-    }
+    };
+    last_delta + delta_of_delta
 }
 
 #[cfg(test)]

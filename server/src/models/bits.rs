@@ -136,14 +136,23 @@ impl BitVecBuilder {
         }
         self.bytes
     }
+
+    /// Set the remaining bits in the byte [`BitVecBuilder`] is currently
+    /// packing bits into to one. Then consume the [`BitVecBuilder`] and return
+    /// the appended bits packed into a [`Vec<u8>`].
+    pub fn finish_with_one_bits(mut self) -> Vec<u8> {
+        if self.remaining_bits != 8 {
+            let remaining_bits_to_set = 2_u8.pow(self.remaining_bits as u32) - 1;
+            self.append_bits(remaining_bits_to_set as u32, self.remaining_bits);
+        }
+        self.finish()
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models;
-    use crate::types::tests::{ProptestTimestamp, ProptestValue};
-    use proptest::{bool, collection, prop_assert, prop_assert_eq, prop_assume, proptest};
+    use proptest::{bool, collection, prop_assert, prop_assume, proptest};
 
     // The largest byte, a random byte, and the smallest byte for testing.
     const TEST_BYTES: &[u8] = &[255, 170, 0];
@@ -214,6 +223,31 @@ mod tests {
         let mut bit_vec_builder = BitVecBuilder::new();
         (0..9).for_each(|_| bit_vec_builder.append_a_zero_bit());
         assert_eq!(bit_vec_builder.length(), 2);
+    }
+
+    #[test]
+    fn test_finish_with_one_bits_empty_no_effect() {
+        let mut bit_vec_builder = BitVecBuilder::new();
+        let bytes = bit_vec_builder.finish_with_one_bits();
+        assert_eq!(bytes.len(), 0);
+    }
+
+    #[test]
+    fn test_finish_with_one_bits_full_no_effect() {
+        let mut bit_vec_builder = BitVecBuilder::new();
+        bit_vec_builder.append_bits(255, 8);
+        let bytes = bit_vec_builder.finish_with_one_bits();
+        assert_eq!(bytes.len(), 1);
+        assert_eq!(bytes[0], 255);
+    }
+
+    #[test]
+    fn test_finish_with_one_bits_filling_current() {
+        let mut bit_vec_builder = BitVecBuilder::new();
+        bit_vec_builder.append_bits(15, 4);
+        let bytes = bit_vec_builder.finish_with_one_bits();
+        assert_eq!(bytes.len(), 1);
+        assert_eq!(bytes[0], 255);
     }
 
     // Tests combining BitReader and BitVecBuilder.

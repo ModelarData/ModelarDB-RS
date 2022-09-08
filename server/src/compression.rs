@@ -32,7 +32,7 @@ use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArra
 /// Maximum number of data points that models of type Gorilla can represent per
 /// compressed segment. As models of type Gorilla use lossless compression they
 /// will never exceed the user-defined error bounds.
-const GORILLA_MAXIMUM_LENGTH: usize = 50;
+pub const GORILLA_MAXIMUM_LENGTH: usize = 50;
 
 /// Compress the regular `uncompressed_timestamps` using a start time, end time,
 /// and a sampling interval, and `uncompressed_values` within `error_bound`
