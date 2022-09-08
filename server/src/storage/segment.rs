@@ -34,7 +34,7 @@ use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArra
 
 /// Shared functionality between different types of uncompressed segments, such as [`SegmentBuilder`]
 /// and [`SpilledSegment`].
-pub trait UncompressedSegment {
+pub trait UncompressedSegment: Sync + Send {
     fn get_record_batch(&mut self) -> Result<RecordBatch, ParquetError>;
 
     fn get_memory_size(&self) -> usize;
@@ -102,18 +102,18 @@ impl SegmentBuilder {
         let new_timestamps = timestamps.slice(0, remaining_capacity);
         let new_values = values.slice(0, remaining_capacity);
 
-        self.timestamps.append_slice(new_timestamps.as_ref());
-        self.values.append_slice(new_values.as_ref());
+        self.timestamps.append_slice(new_timestamps.as_any().downcast_ref::<&[Timestamp]>().unwrap());
+        self.values.append_slice(new_values.as_any().downcast_ref::<&[Value]>().unwrap());
 
         info!("Inserted {} data points into segment with {}.", new_timestamps.len(), self);
 
-        if self.is_full() {
+        if timestamps.len() <= remaining_capacity {
             None
         } else {
             let remaining_timestamps = timestamps.slice(new_timestamps.len(), timestamps.len() - new_timestamps.len());
             let remaining_values = values.slice(new_values.len(), values.len() - new_values.len());
 
-            (remaining_timestamps.as_ref(), remaining_values.as_ref())
+            Some((remaining_timestamps.into_data().into(), remaining_values.into_data().into()))
         }
     }
 }
@@ -229,7 +229,7 @@ impl FinishedSegment {
         &mut self,
         data_folder_path: &Path,
     ) -> Result<PathBuf, IOError> {
-        let folder_path = data_folder_path.join(self.key.clone());
+        let folder_path = data_folder_path.join(self.key.to_string());
         let spilled = self
             .uncompressed_segment
             .spill_to_apache_parquet(folder_path.as_path())?;

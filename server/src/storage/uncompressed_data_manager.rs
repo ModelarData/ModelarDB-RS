@@ -65,6 +65,7 @@ impl UncompressedDataManager {
         info!("Received record batch with {} data points for the table '{}'.",
             data.num_rows(), model_table.name);
 
+        Ok(())
         // TODO: Generate the 54-bit tag hash based on the tag values of the record batch.
         // TODO: Create a univariate time series for each field column in the model table schema.
         // TODO: For each univariate time series, create a 64-bit key that uniquely identifies it.
@@ -96,13 +97,16 @@ impl UncompressedDataManager {
         key: u64
     ) -> Result<(), String> {
         // Get the segment from the uncompressed data. Create a new segment if it does not exist.
-        let mut segment = self.uncompressed_data.get_mut(&key).unwrap_or_else(|| &mut {
-            info!("Could not find segment. Creating new segment.");
-            let mut segment = self.create_segment_builder();
-            self.uncompressed_data.insert(key, segment.clone());
+        let mut segment = match self.uncompressed_data.get_mut(&key) {
+            Some(segment) => segment,
+            None => {
+                info!("Could not find segment. Creating new segment.");
+                let new_segment = self.create_segment_builder();
+                self.uncompressed_data.insert(key, new_segment);
 
-            segment
-        });
+                self.uncompressed_data.get_mut(&key).unwrap()
+            }
+        };
 
         // Insert data into the segment. If data is returned, it means the segment is full.
         while let Some((remaining_timestamps, remaining_values)) = segment.insert_data(timestamps, values) {
@@ -113,8 +117,10 @@ impl UncompressedDataManager {
             self.enqueue_segment(key, full_segment);
 
             // Since there is still data remaining, create a new segment to hold the remaining data.
-            segment = &mut self.create_segment_builder();
-            self.uncompressed_data.insert(key, segment.clone());
+            let new_segment = self.create_segment_builder();
+            self.uncompressed_data.insert(key, new_segment);
+
+            segment = self.uncompressed_data.get_mut(&key).unwrap();
 
             timestamps = remaining_timestamps;
             values = remaining_values;

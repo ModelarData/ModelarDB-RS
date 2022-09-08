@@ -42,6 +42,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::catalog::Catalog;
 use crate::optimizer::model_simple_aggregates;
+use crate::storage::StorageEngine;
 use crate::tables::ModelTable;
 
 #[global_allocator]
@@ -55,6 +56,8 @@ pub struct Context {
     runtime: Runtime,
     /// Main interface for Apache Arrow DataFusion.
     session: SessionContext,
+    /// Engine to manage all uncompressed and compressed data in the system.
+    storage_engine: RwLock<StorageEngine>,
 }
 
 /// Setup tracing, read table and model table metadata from the path given by
@@ -77,6 +80,7 @@ fn main() -> Result<(), String> {
         })?;
         let runtime = Runtime::new().unwrap();
         let mut session = create_session_context();
+        let storage_engine = StorageEngine::new(data_folder_path.clone());
 
         // Set up the metadata tables used for model tables.
         create_model_table_metadata_tables(data_folder_path.as_path()).map_err(|error| {
@@ -91,7 +95,9 @@ fn main() -> Result<(), String> {
             catalog: RwLock::new(catalog),
             runtime,
             session,
+            storage_engine: RwLock::new(storage_engine)
         });
+
         remote::start_arrow_flight_server(context, 9999).map_err(|error| error.to_string())?
     } else {
         // The errors are consciously ignored as the program is terminating.

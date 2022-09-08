@@ -133,6 +133,7 @@ impl FlightServiceHandler {
     // TODO: This record batch can have multiple rows and multiple field columns.
     // TODO: Change name of "insert_message" to "insert_data".
     // TODO: The data point file should be removed.
+    // TODO: The tag values should be converted into a hash and saved in the database if necessary.
     // TODO: The storage engine function should first convert the data into univariate time series.
     // TODO: These univariate time series can then be sent one by one to a function that does the same as "insert_message" a dynamic message count.
 
@@ -158,11 +159,9 @@ impl FlightServiceHandler {
                 &self.dictionaries_by_id,
             ).map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            info!(
-                "Received RecordBatch with {} data points for the table {}.",
-                record_batch.num_rows(),
-                model_table.name
-            );
+            // unwrap() is safe to use since write() only fails if the RwLock is poisoned.
+            let mut storage_engine = self.context.storage_engine.write().unwrap();
+            storage_engine.insert_data(model_table.clone(), record_batch);
         }
 
         Ok(())
