@@ -38,7 +38,12 @@ impl<'a> BitReader<'a> {
 
     /// Return `true` if the reader have been exhausted, otherwise `false`.
     pub fn is_empty(&self) -> bool {
-        ((self.next_bit / 8) as usize) < self.bytes.len()
+        ((self.next_bit / 8) as usize) == self.bytes.len()
+    }
+
+    /// Return the remaining bits in the [`BitReader`].
+    pub fn remaining_bits(&self) -> usize {
+        8 * self.bytes.len() - (self.next_bit as usize) // TODO: next_bit usize?
     }
 
     /// Read the next bit from the [`BitReader`].
@@ -170,6 +175,19 @@ mod tests {
     #[test]
     fn test_reading_the_test_bits() {
         assert!(bytes_and_bits_are_equal(TEST_BYTES, TEST_BITS));
+    }
+
+    #[test]
+    pub fn test_remaining_bits() {
+        let mut bits = BitReader::try_new(&[0, 255]).unwrap();
+        assert_eq!(bits.remaining_bits(), 16);
+        bits.read_bits(4);
+        assert_eq!(bits.remaining_bits(), 12);
+        bits.read_bits(8);
+        assert_eq!(bits.remaining_bits(), 4);
+        bits.read_bits(4);
+        assert_eq!(bits.remaining_bits(), 0);
+        assert!(bits.is_empty());
     }
 
     // Tests for BitVecBuilder.
