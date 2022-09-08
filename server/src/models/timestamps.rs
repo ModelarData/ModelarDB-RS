@@ -106,7 +106,6 @@ fn compress_irregular_residual_timestamps(uncompressed_timestamps: &TimestampArr
 
     // Store the second timestamp as a delta using 14 bits.
     let mut last_delta = uncompressed_timestamps.value(1) - uncompressed_timestamps.value(0);
-    let compress_last_delta = last_delta as u32;
     compressed_timestamps.append_bits(last_delta as u32, 14); // 14-bit delta is max four hours.
 
     // Encode the timestamps from the third timestamp to the second to last.
@@ -139,7 +138,10 @@ fn compress_irregular_residual_timestamps(uncompressed_timestamps: &TimestampArr
         last_delta = delta;
         last_timestamp = *timestamp;
     }
-    compressed_timestamps.finish()
+
+    // All remaining bits in the current byte the BitVecBuilder is packing bits
+    // into is set to one to indicate that all timestamps are decompressed.
+    compressed_timestamps.finish_with_one_bits()
 }
 
 /// Decompress all of the segment's timestamps which are compressed as
@@ -215,31 +217,33 @@ fn decompress_all_irregular_timestamps(
     timestamp_builder.append_value(timestamp);
 
     // Decompress the remaining timestamp residual timestamps.
-    // while ...
+    while !bits.is_empty() {
+        // Check if the flag is 0, 10, 110, 1110, or 1111.
+        let mut leading_one_bits = 0;
+        while !bits.is_empty() && bits.read_bit() && leading_one_bits < 4 {
+            leading_one_bits += 1;
+        }
 
-    // Check if the flag is 0, 10, 110, 1110, or 1111.
-    let mut leading_one_bits = 0;
-    while bits.read_bit() && leading_one_bits < 4 {
-        leading_one_bits += 1;
+        // Any leftover bits in residual_timestamps are set to one. Thus, a
+        // sequence of one bits followed by fewer bits than specified by the
+        // flag means that all residual timestamps have been decompressed.
+        if leading_one_bits != 0 && bits.remaining_bits() < 7 {
+            break;
+        }
+
+        let delta = match leading_one_bits {
+            0 => last_delta,                                                // Flag is 0.
+            1 => read_and_decode_delta_of_delta(&mut bits, 7, last_delta),  // Flag is 10.
+            2 => read_and_decode_delta_of_delta(&mut bits, 9, last_delta),  // Flag is 110.
+            3 => read_and_decode_delta_of_delta(&mut bits, 12, last_delta), // Flag is 1110.
+            4 => last_delta + bits.read_bits(32),                           // Flag is 1111.
+            _ => panic!("Unknown encoding of timestamps"),
+        };
+
+        timestamp += delta as i64;
+        timestamp_builder.append_value(timestamp);
+        last_delta = delta;
     }
-
-    // TODO: return if stream is empty, currently bits.read_bit() overflows
-    // if last bit is one but last bit cannot be always be zero as it would
-    // indicate a duplicate timestamp.
-
-    let delta = match leading_one_bits {
-        0 => last_delta,                                                // Flag is 0.
-        1 => read_and_decode_delta_of_delta(&mut bits, 7,  last_delta), // Flag is 10.
-        2 => read_and_decode_delta_of_delta(&mut bits, 9,  last_delta), // Flag is 110.
-        3 => read_and_decode_delta_of_delta(&mut bits, 12, last_delta), // Flag is 1110.
-        4 => last_delta + bits.read_bits(32),                           // Flag is 1111.
-        _ => panic!("Unknown encoding of timestamps"),
-    };
-
-    timestamp += delta as i64;
-    timestamp_builder.append_value(timestamp);
-    last_delta = delta;
-    //}
 
     // Add the last timestamp stored as `end_time` in the segment.
     timestamp_builder.append_value(end_time);
@@ -247,14 +251,19 @@ fn decompress_all_irregular_timestamps(
 }
 
 /// Read the next delta-of-delta as `bits_to_read` from `bits` and decode it.
+/// [`read_and_decode_delta_of_delta`] is implemented based on [code published
+/// by Jerome Froelich] under MIT.
+///
+/// [code published by Jerome Froelich]: code published by Jerome Froelich
 fn read_and_decode_delta_of_delta(bits: &mut BitReader, bits_to_read: u8, last_delta: u32) -> u32 {
     let encoded_delta_of_delta = bits.read_bits(bits_to_read);
     let delta_of_delta = if encoded_delta_of_delta > (1 << (bits_to_read - 1)) {
-        encoded_delta_of_delta - (1 << bits_to_read)
+        encoded_delta_of_delta | (u32::max_value() << bits_to_read)
     } else {
         encoded_delta_of_delta
     };
-    last_delta + delta_of_delta
+    // Wrapping_add() ensure negative values are handled correctly
+    last_delta.wrapping_add(delta_of_delta)
 }
 
 #[cfg(test)]
