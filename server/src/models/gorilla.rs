@@ -22,14 +22,12 @@
 //!
 //! [Gorilla paper]: https://dl.acm.org/doi/10.14778/2824032.2824078
 
-use std::mem;
-
 use datafusion::arrow::compute::kernels::aggregate;
 
 use crate::models;
+use crate::models::bits::{BitReader, BitVecBuilder};
 use crate::types::{
-    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampArray, TimestampBuilder, Value,
-    ValueArray, ValueBuilder,
+    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
 
 /// The state the Gorilla model type needs while compressing the values of a
@@ -131,88 +129,6 @@ impl Gorilla {
     pub fn get_compressed_values(self) -> Vec<u8> {
         self.compressed_values.finish()
     }
-}
-
-pub fn compress_residual_timestamps(uncompressed_timestamps: &TimestampArray) -> Vec<u8> {
-    // Nothing to do as segments stores the first and last timestamp.
-    if uncompressed_timestamps.len() <= 2 {
-        return vec![];
-    }
-
-    if are_timestamps_regular(uncompressed_timestamps.values()) {
-        // Compress timestamps for a regular time series as a zero bit followed
-        // by the segment's length as an integer with all prefix zeros stripped.
-        let length = uncompressed_timestamps.len();
-        let leading_zero_bits = length.leading_zeros() as usize;
-        let number_of_bits_to_write = (mem::size_of_val(&length) * 8 - leading_zero_bits) + 1; // +1 for flag bit.
-        let number_of_bytes_to_write = (number_of_bits_to_write as f64 / 8.0).ceil() as usize;
-
-        let sampling_interval_bytes = length.to_be_bytes();
-        let bytes_index_first_byte = sampling_interval_bytes.len() - number_of_bytes_to_write;
-        sampling_interval_bytes[bytes_index_first_byte..].to_vec()
-    } else {
-        // Compress timestamps for irregular time series as a one bit and the
-        // segment's timestamps encoded using Gorillas compression method.
-        vec![]
-    }
-}
-
-pub fn decompress_all_timestamps(
-    start_time: Timestamp,
-    end_time: Timestamp,
-    bytes: &[u8],
-) -> TimestampArray {
-    if bytes.is_empty() && start_time == end_time {
-        // Timestamps are always unique so the segment has one timestamp.
-        let mut timestamp_builder = TimestampBuilder::new(1);
-        timestamp_builder.append_value(start_time);
-        timestamp_builder
-    } else if bytes.is_empty() {
-        // Timestamps are always unique so the segment has two timestamps.
-        let mut timestamp_builder = TimestampBuilder::new(2);
-        timestamp_builder.append_value(start_time);
-        timestamp_builder.append_value(end_time);
-        timestamp_builder
-    } else if bytes[0] & 128 == 0 {
-        // The flag bit is zero, so only the segment's length is stored as an
-        // integer with all the prefix zeros stripped from the integer.
-        let mut bytes_to_decode = [0; 8];
-        bytes_to_decode[..bytes.len()].copy_from_slice(bytes);
-        let length = usize::from_le_bytes(bytes_to_decode);
-        let sampling_interval = (end_time - start_time) as usize / (length - 1);
-        let mut timestamp_builder = TimestampBuilder::new(length);
-        for timestamp in (start_time..=end_time).step_by(sampling_interval) {
-            timestamp_builder.append_value(timestamp);
-        }
-        timestamp_builder
-    } else {
-        //TODO: flag bit is one so Gorilla is used.
-        let mut timestamp_builder = TimestampBuilder::new(1);
-        timestamp_builder.append_value(start_time);
-        timestamp_builder
-    }
-    .finish()
-}
-
-/// Return `true` if the timestamps in `uncompressed_timestamps` follow a
-/// regular sampling interval, otherwise `false`.
-fn are_timestamps_regular(uncompressed_timestamps: &[Timestamp]) -> bool {
-    if uncompressed_timestamps.len() < 2 {
-        return true;
-    }
-
-    // Unwrap is safe as uncompressed_timestamps has at least two timestamps.
-    let expected_sampling_interval = uncompressed_timestamps[1] - uncompressed_timestamps[0];
-    let mut uncompressed_timestamps = uncompressed_timestamps.iter();
-    let mut previous_timestamp = uncompressed_timestamps.next().unwrap();
-
-    while let Some(current_timestamp) = uncompressed_timestamps.next() {
-        if current_timestamp - previous_timestamp != expected_sampling_interval {
-            return false;
-        }
-        previous_timestamp = current_timestamp;
-    }
-    true
 }
 
 /// Compute the minimum value for a time series segment whose values are
@@ -333,136 +249,14 @@ fn decompress_values(
     }
 }
 
-/// Read one or multiple bits from a `[u8]`. [`BitReader`] is implemented based
-/// on [code published by Ilkka Rauta] dual-licensed under MIT and Apache2.
-///
-/// [code published by Ilkka Rauta]: https://github.com/irauta/bitreader
-struct BitReader<'a> {
-    /// Next bit to read from `bytes`.
-    next_bit: u64,
-    /// Bits packed into one or more [`u8s`](u8).
-    bytes: &'a [u8],
-}
-
-impl<'a> BitReader<'a> {
-    fn try_new(bytes: &'a [u8]) -> Result<Self, String> {
-        if bytes.is_empty() {
-            Err("The byte array cannot be empty".to_owned())
-        } else {
-            Ok(Self { next_bit: 0, bytes })
-        }
-    }
-
-    /// Read the next bit from the [`BitReader`].
-    fn read_bit(&mut self) -> bool {
-        self.read_bits(1) == 1
-    }
-
-    /// Read the next `number_of_bits` bits from the [`BitReader`].
-    fn read_bits(&mut self, number_of_bits: u8) -> u32 {
-        let mut value: u64 = 0;
-        let start_bit = self.next_bit;
-        let end_bit = self.next_bit + number_of_bits as u64;
-        for bit in start_bit..end_bit {
-            let current_byte = (bit / 8) as usize;
-            let byte = self.bytes[current_byte];
-            let shift = 7 - (bit % 8);
-            let bit: u64 = (byte >> shift) as u64 & 1;
-            value = (value << 1) | bit;
-        }
-        self.next_bit = end_bit;
-        value as u32
-    }
-}
-
-/// Append one or multiple bits to a [`Vec<u8>`].
-struct BitVecBuilder {
-    /// [`u8`] currently used for storing the bits.
-    current_byte: u8,
-    /// Bits remaining in `current_byte`.
-    remaining_bits: u8,
-    /// Bits packed into one or more [`u8s`](u8).
-    bytes: Vec<u8>,
-}
-
-impl BitVecBuilder {
-    pub fn new() -> Self {
-        Self {
-            current_byte: 0,
-            remaining_bits: 8,
-            bytes: vec![],
-        }
-    }
-
-    /// Append a zero bit to the [`BitVecBuilder`].
-    fn append_a_zero_bit(&mut self) {
-        self.append_bits(0, 1)
-    }
-
-    /// Append a one bit to the [`BitVecBuilder`].
-    fn append_a_one_bit(&mut self) {
-        self.append_bits(1, 1)
-    }
-
-    /// Append `number_of_bits` from `bits` to the [`BitVecBuilder`].
-    fn append_bits(&mut self, bits: u32, number_of_bits: u8) {
-        let mut number_of_bits = number_of_bits;
-
-        while number_of_bits > 0 {
-            let bits_to_write = if number_of_bits > self.remaining_bits {
-                let shift = number_of_bits - self.remaining_bits;
-                self.current_byte |= ((bits >> shift) & ((1 << self.remaining_bits) - 1)) as u8;
-                self.remaining_bits
-            } else {
-                let shift = self.remaining_bits - number_of_bits;
-                self.current_byte |= (bits << shift) as u8;
-                number_of_bits
-            };
-            number_of_bits -= bits_to_write;
-            self.remaining_bits -= bits_to_write;
-
-            if self.remaining_bits == 0 {
-                self.bytes.push(self.current_byte);
-                self.current_byte = 0;
-                self.remaining_bits = 8;
-            }
-        }
-    }
-
-    /// Return [`true`] if no bits have been appended to the [`BitVecBuilder`],
-    /// otherwise [`false`].
-    fn is_empty(&self) -> bool {
-        self.bytes.is_empty()
-    }
-
-    /// Return the number of bytes required to store the appended bits.
-    fn length(&self) -> usize {
-        self.bytes.len() + (self.remaining_bits != 8) as usize
-    }
-
-    /// Consume the [`BitVecBuilder`] and return the appended bits packed into a
-    /// [`Vec<u8>`].
-    fn finish(mut self) -> Vec<u8> {
-        if self.remaining_bits != 8 {
-            self.bytes.push(self.current_byte);
-        }
-        self.bytes
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models;
-    use crate::types::tests::ProptestValue;
+
     use proptest::{bool, collection, prop_assert, prop_assert_eq, prop_assume, proptest};
 
-    // The largest byte, a random byte, and the smallest byte for testing.
-    const TEST_BYTES: &[u8] = &[255, 170, 0];
-    const TEST_BITS: &[bool] = &[
-        true, true, true, true, true, true, true, true, true, false, true, false, true, false,
-        true, false, false, false, false, false, false, false, false, false,
-    ];
+    use crate::models;
+    use crate::types::tests::ProptestValue;
 
     // Tests for Gorilla.
     #[test]
@@ -478,9 +272,6 @@ mod tests {
         prop_assert!(models::equal_or_nan(value as f64, model_type.last_value as f64));
         prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
         prop_assert_eq!(model_type.last_trailing_zero_bits, 0);
-        prop_assert_eq!(model_type.compressed_values.current_byte, 0);
-        prop_assert_eq!(model_type.compressed_values.remaining_bits, 8);
-        prop_assert_eq!(model_type.compressed_values.bytes.len(), 4);
     }
 
     #[test]
@@ -491,9 +282,6 @@ mod tests {
         prop_assert!(models::equal_or_nan(value as f64, model_type.last_value as f64));
         prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
         prop_assert_eq!(model_type.last_trailing_zero_bits, 0);
-        prop_assert_eq!(model_type.compressed_values.current_byte, 0);
-        prop_assert_eq!(model_type.compressed_values.remaining_bits, 7);
-        prop_assert_eq!(model_type.compressed_values.bytes.len(), 4);
     }
     }
 
@@ -505,9 +293,6 @@ mod tests {
         assert!(models::equal_or_nan(73.0, model_type.last_value as f64));
         assert_eq!(model_type.last_leading_zero_bits, 8);
         assert_eq!(model_type.last_trailing_zero_bits, 17);
-        assert_eq!(model_type.compressed_values.current_byte, 48);
-        assert_eq!(model_type.compressed_values.remaining_bits, 4);
-        assert_eq!(model_type.compressed_values.bytes.len(), 6);
     }
 
     #[test]
@@ -519,65 +304,8 @@ mod tests {
         assert!(models::equal_or_nan(73.0, model_type.last_value as f64));
         assert_eq!(model_type.last_leading_zero_bits, 8);
         assert_eq!(model_type.last_trailing_zero_bits, 17);
-        assert_eq!(model_type.compressed_values.current_byte, 112);
-        assert_eq!(model_type.compressed_values.remaining_bits, 3);
-        assert_eq!(model_type.compressed_values.bytes.len(), 7);
     }
 
-    // Tests for compress_residual_timestamps() and decompress_all_timestamps().
-    #[test]
-    fn compress_timestamps_for_time_series_with_zero_one_or_two_timestamps() {
-        let mut uncompressed_timestamps_builder = TimestampBuilder::new(3);
-
-        uncompressed_timestamps_builder.append_slice(&[]);
-        assert!(compress_residual_timestamps(&uncompressed_timestamps_builder.finish()).is_empty());
-
-        uncompressed_timestamps_builder.append_slice(&[100]);
-        assert!(compress_residual_timestamps(&uncompressed_timestamps_builder.finish()).is_empty());
-
-        uncompressed_timestamps_builder.append_slice(&[100, 300]);
-        assert!(compress_residual_timestamps(&uncompressed_timestamps_builder.finish()).is_empty());
-    }
-
-    #[test]
-    fn compress_and_decompress_timestamps_for_a_regular_time_series() {
-        let uncompressed_timestamps = &[100, 200, 300, 400, 500, 600, 700, 800];
-        let mut uncompressed_timestamps_builder =
-            TimestampBuilder::new(uncompressed_timestamps.len());
-        uncompressed_timestamps_builder.append_slice(uncompressed_timestamps);
-        let uncompressed_timestamps = uncompressed_timestamps_builder.finish();
-
-        let compressed = compress_residual_timestamps(&uncompressed_timestamps);
-        assert!(!compressed.is_empty());
-        let decompressed = decompress_all_timestamps(
-            uncompressed_timestamps.value(0),
-            uncompressed_timestamps.value(uncompressed_timestamps.len() - 1),
-            compressed.as_slice(),
-        );
-        assert_eq!(uncompressed_timestamps, decompressed);
-    }
-
-    // Tests for are_timestamps_regular().
-    #[test]
-    fn test_time_series_with_one_data_point_is_regular() {
-        assert!(are_timestamps_regular(&[100]));
-    }
-
-    fn test_time_series_with_two_data_points_is_regular() {
-        assert!(are_timestamps_regular(&[100, 200]));
-    }
-
-    #[test]
-    fn test_regular_time_series_is_regular() {
-        assert!(are_timestamps_regular(&[100, 200, 300, 400, 500, 600, 700]))
-    }
-
-    #[test]
-    fn test_irregular_time_series_is_irregular() {
-        assert!(!are_timestamps_regular(&[
-            100, 150, 300, 350, 700, 750, 1500
-        ]))
-    }
 
     // Tests for min().
     proptest! {
@@ -687,111 +415,5 @@ mod tests {
             equal &= models::equal_or_nan(*value_one as f64, *value_two as f64);
         }
         equal
-    }
-
-    // Tests for BitReader.
-    #[test]
-    fn test_bit_reader_cannot_be_empty() {
-        assert!(BitReader::try_new(&[]).is_err());
-    }
-
-    #[test]
-    fn test_reading_the_test_bits() {
-        assert!(bytes_and_bits_are_equal(TEST_BYTES, TEST_BITS));
-    }
-
-    // Tests for BitVecBuilder.
-    #[test]
-    fn test_empty_bit_vec_builder_is_empty() {
-        assert!(BitVecBuilder::new().finish().is_empty());
-    }
-
-    #[test]
-    fn test_empty_bit_vec_builder_length() {
-        assert_eq!(BitVecBuilder::new().length(), 0);
-    }
-
-    #[test]
-    fn test_one_one_bit_vec_builder_length() {
-        let mut bit_vec_builder = BitVecBuilder::new();
-        bit_vec_builder.append_a_one_bit();
-        assert_eq!(bit_vec_builder.length(), 1);
-    }
-
-    #[test]
-    fn test_one_zero_bit_vec_builder_length() {
-        let mut bit_vec_builder = BitVecBuilder::new();
-        bit_vec_builder.append_a_zero_bit();
-        assert_eq!(bit_vec_builder.length(), 1);
-    }
-
-    #[test]
-    fn test_eight_one_bits_vec_builder_length() {
-        let mut bit_vec_builder = BitVecBuilder::new();
-        (0..8).for_each(|_| bit_vec_builder.append_a_one_bit());
-        assert_eq!(bit_vec_builder.length(), 1);
-    }
-
-    #[test]
-    fn test_eight_zero_bits_vec_builder_length() {
-        let mut bit_vec_builder = BitVecBuilder::new();
-        (0..8).for_each(|_| bit_vec_builder.append_a_zero_bit());
-        assert_eq!(bit_vec_builder.length(), 1);
-    }
-
-    #[test]
-    fn test_nine_one_bits_vec_builder_length() {
-        let mut bit_vec_builder = BitVecBuilder::new();
-        (0..9).for_each(|_| bit_vec_builder.append_a_one_bit());
-        assert_eq!(bit_vec_builder.length(), 2);
-    }
-
-    #[test]
-    fn test_nine_zero_bits_vec_builder_length() {
-        let mut bit_vec_builder = BitVecBuilder::new();
-        (0..9).for_each(|_| bit_vec_builder.append_a_zero_bit());
-        assert_eq!(bit_vec_builder.length(), 2);
-    }
-
-    // Tests combining BitReader and BitVecBuilder.
-    #[test]
-    fn test_writing_and_reading_the_test_bits() {
-        let mut bit_vector_builder = BitVecBuilder::new();
-        for bit in TEST_BITS {
-            write_bool_as_bit(&mut bit_vector_builder, *bit);
-        }
-        assert!(bytes_and_bits_are_equal(
-            &bit_vector_builder.finish(),
-            TEST_BITS
-        ));
-    }
-
-    proptest! {
-    #[test]
-    fn test_writing_and_reading_random_bits(bits in collection::vec(bool::ANY, 0..50)) {
-        prop_assume!(!bits.is_empty());
-        let mut bit_vector_builder = BitVecBuilder::new();
-        for bit in &bits {
-            write_bool_as_bit(&mut bit_vector_builder, *bit);
-        }
-        prop_assert!(bytes_and_bits_are_equal(&bit_vector_builder.finish(), &bits));
-    }
-    }
-
-    fn bytes_and_bits_are_equal(bytes: &[u8], bits: &[bool]) -> bool {
-        let mut bit_reader = BitReader::try_new(bytes).unwrap();
-        let mut contains = true;
-        for bit in bits {
-            contains &= *bit == bit_reader.read_bit();
-        }
-        contains
-    }
-
-    fn write_bool_as_bit(bit_vector_builder: &mut BitVecBuilder, bit: bool) {
-        if bit {
-            bit_vector_builder.append_a_one_bit();
-        } else {
-            bit_vector_builder.append_a_zero_bit();
-        }
     }
 }
