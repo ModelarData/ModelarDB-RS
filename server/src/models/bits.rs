@@ -57,8 +57,7 @@ impl<'a> BitReader<'a> {
         let start_bit = self.next_bit;
         let end_bit = self.next_bit + number_of_bits as usize;
         for bit in start_bit..end_bit {
-            let current_byte = (bit / 8);
-            let byte = self.bytes[current_byte];
+            let byte = self.bytes[bit / 8];
             let shift = 7 - (bit % 8);
             let bit = (byte >> shift) as u64 & 1;
             value = (value << 1) | bit;
@@ -129,7 +128,7 @@ impl BitVecBuilder {
     }
 
     /// Return the number of bytes required to store the appended bits.
-    pub fn length(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.bytes.len() + (self.remaining_bits != 8) as usize
     }
 
@@ -198,54 +197,54 @@ mod tests {
 
     #[test]
     fn test_empty_bit_vec_builder_length() {
-        assert_eq!(BitVecBuilder::new().length(), 0);
+        assert_eq!(BitVecBuilder::new().len(), 0);
     }
 
     #[test]
     fn test_one_one_bit_vec_builder_length() {
         let mut bit_vec_builder = BitVecBuilder::new();
         bit_vec_builder.append_a_one_bit();
-        assert_eq!(bit_vec_builder.length(), 1);
+        assert_eq!(bit_vec_builder.len(), 1);
     }
 
     #[test]
     fn test_one_zero_bit_vec_builder_length() {
         let mut bit_vec_builder = BitVecBuilder::new();
         bit_vec_builder.append_a_zero_bit();
-        assert_eq!(bit_vec_builder.length(), 1);
+        assert_eq!(bit_vec_builder.len(), 1);
     }
 
     #[test]
     fn test_eight_one_bits_vec_builder_length() {
         let mut bit_vec_builder = BitVecBuilder::new();
         (0..8).for_each(|_| bit_vec_builder.append_a_one_bit());
-        assert_eq!(bit_vec_builder.length(), 1);
+        assert_eq!(bit_vec_builder.len(), 1);
     }
 
     #[test]
     fn test_eight_zero_bits_vec_builder_length() {
         let mut bit_vec_builder = BitVecBuilder::new();
         (0..8).for_each(|_| bit_vec_builder.append_a_zero_bit());
-        assert_eq!(bit_vec_builder.length(), 1);
+        assert_eq!(bit_vec_builder.len(), 1);
     }
 
     #[test]
     fn test_nine_one_bits_vec_builder_length() {
         let mut bit_vec_builder = BitVecBuilder::new();
         (0..9).for_each(|_| bit_vec_builder.append_a_one_bit());
-        assert_eq!(bit_vec_builder.length(), 2);
+        assert_eq!(bit_vec_builder.len(), 2);
     }
 
     #[test]
     fn test_nine_zero_bits_vec_builder_length() {
         let mut bit_vec_builder = BitVecBuilder::new();
         (0..9).for_each(|_| bit_vec_builder.append_a_zero_bit());
-        assert_eq!(bit_vec_builder.length(), 2);
+        assert_eq!(bit_vec_builder.len(), 2);
     }
 
     #[test]
     fn test_finish_with_one_bits_empty_no_effect() {
-        let mut bit_vec_builder = BitVecBuilder::new();
+        let bit_vec_builder = BitVecBuilder::new();
         let bytes = bit_vec_builder.finish_with_one_bits();
         assert_eq!(bytes.len(), 0);
     }

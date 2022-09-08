@@ -18,7 +18,7 @@
 //! as described in the [ModelarDB paper].
 //!
 //! [Poor Man’s Compression paper]: https://ieeexplore.ieee.org/document/1260811
-//! [ModelarDB paper]: https://dl.acm.org/doi/abs/10.14778/3236187.3236215
+//! [ModelarDB paper]: http://www.vldb.org/pvldb/vol11/p1688-jensen.pdf
 
 use crate::models;
 use crate::models::ErrorBound;

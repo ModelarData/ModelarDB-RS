@@ -20,7 +20,7 @@
 //! encoding, aggregates are computed by iterating over all values in the
 //! segment.
 //!
-//! [Gorilla paper]: https://dl.acm.org/doi/10.14778/2824032.2824078
+//! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 
 use datafusion::arrow::compute::kernels::aggregate;
 
@@ -121,7 +121,7 @@ impl Gorilla {
 
     /// Return the number of bytes currently used per data point on average.
     pub fn get_bytes_per_value(&self) -> f32 {
-        self.compressed_values.length() as f32 / self.length as f32
+        self.compressed_values.len() as f32 / self.length as f32
     }
 
     /// Return the values compressed using XOR and a variable length binary

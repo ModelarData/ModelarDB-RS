@@ -21,7 +21,7 @@
 //! [`Value`] to make the calculations precise enough.
 //!
 //! [Swing and Slide paper]: https://dl.acm.org/doi/10.14778/1687627.1687645
-//! [ModelarDB paper]: https://dl.acm.org/doi/abs/10.14778/3236187.3236215
+//! [ModelarDB paper]: http://www.vldb.org/pvldb/vol11/p1688-jensen.pdf
 
 use crate::models;
 use crate::models::ErrorBound;
