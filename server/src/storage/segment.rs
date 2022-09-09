@@ -80,41 +80,23 @@ impl SegmentBuilder {
         self.timestamps.len()
     }
 
+    /// Add `timestamp` and `value` to the [`SegmentBuilder`].
+    pub fn insert_data(&mut self, timestamp: Timestamp, value: Value) {
+        debug_assert!(
+            !self.is_full(),
+            "Cannot insert data into full SegmentBuilder."
+        );
+
+        self.timestamps.append_value(timestamp);
+        self.values.append_value(value);
+
+        info!("Inserted data point into segment with {}.", self)
+    }
+
     /// Return how many data points the [`SegmentBuilder`] can contain.
     fn get_capacity(&self) -> usize {
         // The capacity is always the same for both builders.
         self.timestamps.capacity()
-    }
-
-    // TODO: Test that this returns Some when full.
-    // TODO: Test that this returns None when not full.
-    /// Add as much data as possible from `timestamps` and `values` to the [`SegmentBuilder`].
-    /// If the segment could not hold all the data, the remaining data is returned. If all data
-    /// could be contained in the segment [`None`] is returned.
-    pub fn insert_data(
-        &mut self,
-        timestamps: TimestampArray,
-        values: ValueArray
-    ) -> Option<(TimestampArray, ValueArray)> {
-        debug_assert!(!self.is_full(), "Cannot insert data into full SegmentBuilder.");
-
-        let remaining_capacity = self.get_capacity() - self.get_length();
-        let new_timestamps = timestamps.slice(0, remaining_capacity);
-        let new_values = values.slice(0, remaining_capacity);
-
-        self.timestamps.append_slice(new_timestamps.as_any().downcast_ref::<&[Timestamp]>().unwrap());
-        self.values.append_slice(new_values.as_any().downcast_ref::<&[Value]>().unwrap());
-
-        info!("Inserted {} data points into segment with {}.", new_timestamps.len(), self);
-
-        if timestamps.len() <= remaining_capacity {
-            None
-        } else {
-            let remaining_timestamps = timestamps.slice(new_timestamps.len(), timestamps.len() - new_timestamps.len());
-            let remaining_values = values.slice(new_values.len(), values.len() - new_values.len());
-
-            Some((remaining_timestamps.into_data().into(), remaining_values.into_data().into()))
-        }
     }
 }
 

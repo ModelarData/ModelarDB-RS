@@ -26,7 +26,7 @@ use tracing::{info, info_span};
 use crate::catalog::NewModelTableMetadata;
 
 use crate::storage::segment::{FinishedSegment, SegmentBuilder};
-use crate::types::{TimestampArray, ValueArray};
+use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
 
 const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
 
@@ -128,6 +128,51 @@ impl UncompressedDataManager {
         Ok(())
     }
 
+    /// Insert a single data point into the in-memory buffer. Return [`OK`] if the data point was
+    /// inserted successfully, otherwise return [`Err`].
+    fn insert_data_point(
+        &mut self,
+        key: u64,
+        timestamp: Timestamp,
+        value: Value
+    ) -> Result<(), String> {
+        info!("Inserting data point ({}, {}) into segment.", timestamp, value);
+
+        if let Some(segment) = self.uncompressed_data.get_mut(&key) {
+            info!("Found existing segment.");
+            segment.insert_data(timestamp, value);
+
+            if segment.is_full() {
+                info!("Segment is full, moving it to the queue of finished segments.");
+
+                // Since this is only reachable if the segment exists in the HashMap, unwrap is safe to use.
+                let full_segment = self.uncompressed_data.remove(&key).unwrap();
+                self.enqueue_segment(key, full_segment)
+            }
+        } else {
+            info!("Could not find segment. Creating segment.");
+
+            // If there is not enough memory for a new segment, spill a finished segment.
+            if SegmentBuilder::get_memory_size() > self.uncompressed_remaining_memory_in_bytes {
+                self.spill_finished_segment();
+            }
+
+            // Create a new segment and reduce the remaining amount of reserved memory by its size.
+            let mut segment = SegmentBuilder::new();
+            self.uncompressed_remaining_memory_in_bytes -= SegmentBuilder::get_memory_size();
+
+            info!(
+                "Created segment. Remaining reserved bytes: {}.",
+                self.uncompressed_remaining_memory_in_bytes
+            );
+
+            segment.insert_data(timestamp, value);
+            self.uncompressed_data.insert(key, segment);
+        }
+
+        Ok(())
+    }
+
     /// Remove the oldest [`FinishedSegment`] from the queue and return it. Return [`None`] if the
     /// queue of [`FinishedSegments`](FinishedSegment) is empty.
     pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
@@ -140,52 +185,6 @@ impl UncompressedDataManager {
         } else {
             None
         }
-    }
-
-    // TODO: Test that you cant insert timestamp and values of different lengths.
-    /// Insert `data` into the segment identified by `key`. If a segment does not already exist,
-    /// a new segment is created. Return [`Ok`] if the data was successfully inserted,
-    /// otherwise return [`Err`].
-    fn insert_into_segment(
-        &mut self,
-        mut timestamps: TimestampArray,
-        mut values: ValueArray,
-        key: u64
-    ) -> Result<(), String> {
-        // Get the segment from the uncompressed data. Create a new segment if it does not exist.
-        let mut segment = match self.uncompressed_data.get_mut(&key) {
-            Some(segment) => segment,
-            None => {
-                info!("Could not find segment. Creating new segment.");
-                let new_segment = self.create_segment_builder();
-                self.uncompressed_data.insert(key, new_segment);
-
-                self.uncompressed_data.get_mut(&key).unwrap()
-            }
-        };
-
-        // Insert data into the segment. If data is returned, it means the segment is full.
-        while let Some((remaining_timestamps, remaining_values)) = segment.insert_data(timestamps, values) {
-            info!("Segment is full, moving it to the queue of finished segments.");
-
-            // Since this is only reachable if the segment exists in the HashMap, unwrap() is safe to use.
-            let full_segment = self.uncompressed_data.remove(&key).unwrap();
-            self.enqueue_segment(key, full_segment);
-
-            // Since there is still data remaining, create a new segment to hold the remaining data.
-            let new_segment = self.create_segment_builder();
-            self.uncompressed_data.insert(key, new_segment);
-
-            // Since the segment has just been inserted, unwrap() is safe to use.
-            segment = self.uncompressed_data.get_mut(&key).unwrap();
-
-            timestamps = remaining_timestamps;
-            values = remaining_values;
-        }
-
-        // TODO: Maybe add check for if the segment is full.
-
-        Ok(())
     }
 
     /// Create a new segment builder and remove its size from the uncompressed remaining memory.
