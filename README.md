@@ -58,9 +58,9 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
    * Debug Build: `cargo build`
    * Release Build: `cargo build --release`
    * Run Tests: `cargo test`
-   * Run Server: `cargo run --bin mdbd path_to_data_folder`
-   * Run Client: `cargo run --bin mdb [server_address] [query_file]`
-5. Move `mdbd` and `mdb` from the `target` directory to any directory.
+   * Run Server: `cargo run --bin modelardbd path_to_data_folder`
+   * Run Client: `cargo run --bin modelardb [server_address] [query_file]`
+5. Move `modelardbd` and `modelardb` from the `target` directory to any directory.
 
 ## Development
 All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md)

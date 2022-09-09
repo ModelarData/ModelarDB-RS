@@ -136,7 +136,7 @@ fn repl(rt: Runtime, mut fsc: FlightServiceClient<Channel>) -> Result<()> {
     let mut editor = Editor::<ClientHelper>::new()?;
     let table_names = retrieve_table_names(&rt, &mut fsc)?;
     editor.set_helper(Some(ClientHelper::new(table_names)));
-    let history_file_name = ".mdb_history";
+    let history_file_name = ".modelardb_history";
     if let Some(mut home) = dirs::home_dir() {
         home.push(history_file_name);
         let _ = editor.load_history(&home);

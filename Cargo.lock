@@ -1273,43 +1273,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mdb"
-version = "0.1.0"
-dependencies = [
- "arrow",
- "arrow-flight",
- "dirs",
- "rustyline",
- "serde_json",
- "tokio",
- "tonic",
-]
-
-[[package]]
-name = "mdbd"
-version = "0.1.0"
-dependencies = [
- "arrow-flight",
- "async-trait",
- "datafusion",
- "datafusion-expr",
- "datafusion-physical-expr",
- "futures",
- "log",
- "object_store",
- "paho-mqtt",
- "proptest",
- "rusqlite",
- "snmalloc-rs",
- "tempfile",
- "tokio",
- "tonic",
- "tracing",
- "tracing-futures",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "memchr"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1340,6 +1303,43 @@ dependencies = [
  "log",
  "wasi",
  "windows-sys",
+]
+
+[[package]]
+name = "modelardb"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "arrow-flight",
+ "dirs",
+ "rustyline",
+ "serde_json",
+ "tokio",
+ "tonic",
+]
+
+[[package]]
+name = "modelardbd"
+version = "0.1.0"
+dependencies = [
+ "arrow-flight",
+ "async-trait",
+ "datafusion",
+ "datafusion-expr",
+ "datafusion-physical-expr",
+ "futures",
+ "log",
+ "object_store",
+ "paho-mqtt",
+ "proptest",
+ "rusqlite",
+ "snmalloc-rs",
+ "tempfile",
+ "tokio",
+ "tonic",
+ "tracing",
+ "tracing-futures",
+ "tracing-subscriber",
 ]
 
 [[package]]
