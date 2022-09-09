@@ -16,7 +16,10 @@
 //! Support for managing all uncompressed data that is ingested into the [`StorageEngine`].
 
 use std::collections::{HashMap, VecDeque};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::Hasher;
 use std::path::PathBuf;
+use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
 
 use tracing::{info, info_span};
@@ -65,11 +68,64 @@ impl UncompressedDataManager {
         info!("Received record batch with {} data points for the table '{}'.",
             data.num_rows(), model_table.name);
 
-        Ok(())
-        // TODO: Generate the 54-bit tag hash based on the tag values of the record batch.
+        // TODO: Maybe add a check for the types of the given timestamp column index and tag column indices.
+        // TODO: Maybe also check the other colums to ensure they are float 32
+
+        // TODO: We should first take the timestamp column and turn it into a primitive array iter. This can then be used to iterate through the record batch.
+        //  For each iteration we should look at the tag columns for that index and generate the 54-bit hash. We therefore need some way to access
+        //  the different colums values with an index. This can maybe be done by putting the downcasted columns in a list and use the column indexes
+        //  to get the right primitive array. After the tag hash has been generated we need to persist it. We should have a cache in the storage engine for this.
+        //  If the tag hash is already in the cache, we do not do anything (can this cache be used instead of hashing?). If it is not in the cache, we add it
+        //  and add it to persistent storage by modfifying the model table tags table.
+        //  When we have the 54-bit hash we can move on to retrieving the field columns. For each field column we extract the value and timestamp as well as the index.
+        //  We use the index to generate the 64-bit key for that specific column and specific combination of tags. We then send the value, timestamp and key to the
+        //  insert into segment function which should be reverted back to the old form where we insert a single data point at a time.
+
+        // Prepare the timestamp column for iteration.
+        let timestamp_index = model_table.timestamp_column_index as usize;
+        let timestamps: &TimestampArray = data.column(timestamp_index).as_any().downcast_ref().unwrap();
+
+        // Prepare the tag columns for iteration.
+        let tag_column_arrays: Vec<&StringArray> = model_table.tag_column_indices.iter().map(|index| {
+            data.column(*index as usize).as_any().downcast_ref().unwrap()
+        }).collect();
+
+        // Prepare the field columns for iteration.
+        let field_column_arrays: Vec<&ValueArray> = model_table.schema.fields().iter().filter_map(|field| {
+            let index = model_table.schema.index_of(field.name().as_str()).unwrap();
+
+            // Field columns are the columns that are not the timestamp column or one of the tag columns.
+            let not_timestamp_column = index != model_table.timestamp_column_index as usize;
+            let not_tag_column = !model_table.tag_column_indices.contains(&(index as u8));
+
+            if not_timestamp_column && not_tag_column {
+                Some(data.column(index as usize).as_any().downcast_ref().unwrap())
+            } else {
+                None
+            }
+        }).collect();
+
+        // For each row in the data, generate a tag hash, extract the individual measurements,
+        // and insert them into the storage engine.
+        for (index, timestamp) in timestamps.iter().enumerate() {
+            info!("{}, {:?}", index, timestamp);
+
+            // Generate the 54-bit tag hash based on the tag values of the record batch.
+            let tag_hash = {
+                let mut hasher = DefaultHasher::new();
+
+                for tag_column_array in &tag_column_arrays {
+                    hasher.write(tag_column_array.value(index).as_bytes());
+                }
+
+                hasher.finish()
+            };
+        };
+
         // TODO: Create a univariate time series for each field column in the model table schema.
         // TODO: For each univariate time series, create a 64-bit key that uniquely identifies it.
         // TODO: Send each separate time series to be further processed.
+        Ok(())
     }
 
     /// Remove the oldest [`FinishedSegment`] from the queue and return it. Return [`None`] if the
@@ -112,7 +168,7 @@ impl UncompressedDataManager {
         while let Some((remaining_timestamps, remaining_values)) = segment.insert_data(timestamps, values) {
             info!("Segment is full, moving it to the queue of finished segments.");
 
-            // Since this is only reachable if the segment exists in the HashMap, unwrap is safe to use.
+            // Since this is only reachable if the segment exists in the HashMap, unwrap() is safe to use.
             let full_segment = self.uncompressed_data.remove(&key).unwrap();
             self.enqueue_segment(key, full_segment);
 
@@ -120,6 +176,7 @@ impl UncompressedDataManager {
             let new_segment = self.create_segment_builder();
             self.uncompressed_data.insert(key, new_segment);
 
+            // Since the segment has just been inserted, unwrap() is safe to use.
             segment = self.uncompressed_data.get_mut(&key).unwrap();
 
             timestamps = remaining_timestamps;
