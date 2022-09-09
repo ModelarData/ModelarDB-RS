@@ -71,16 +71,6 @@ impl UncompressedDataManager {
         // TODO: Maybe add a check for the types of the given timestamp column index and tag column indices.
         // TODO: Maybe also check the other colums to ensure they are float 32
 
-        // TODO: We should first take the timestamp column and turn it into a primitive array iter. This can then be used to iterate through the record batch.
-        //  For each iteration we should look at the tag columns for that index and generate the 54-bit hash. We therefore need some way to access
-        //  the different colums values with an index. This can maybe be done by putting the downcasted columns in a list and use the column indexes
-        //  to get the right primitive array. After the tag hash has been generated we need to persist it. We should have a cache in the storage engine for this.
-        //  If the tag hash is already in the cache, we do not do anything (can this cache be used instead of hashing?). If it is not in the cache, we add it
-        //  and add it to persistent storage by modfifying the model table tags table.
-        //  When we have the 54-bit hash we can move on to retrieving the field columns. For each field column we extract the value and timestamp as well as the index.
-        //  We use the index to generate the 64-bit key for that specific column and specific combination of tags. We then send the value, timestamp and key to the
-        //  insert into segment function which should be reverted back to the old form where we insert a single data point at a time.
-
         // Prepare the timestamp column for iteration.
         let timestamp_index = model_table.timestamp_column_index as usize;
         let timestamps: &TimestampArray = data.column(timestamp_index).as_any().downcast_ref().unwrap();
@@ -108,24 +98,40 @@ impl UncompressedDataManager {
         // For each row in the data, generate a tag hash, extract the individual measurements,
         // and insert them into the storage engine.
         for (index, timestamp) in timestamps.iter().enumerate() {
-            info!("{}, {:?}", index, timestamp);
+            let tag_values = tag_column_arrays.iter().map(|array| {
+                array.value(index).to_string()
+            }).collect();
 
-            // Generate the 54-bit tag hash based on the tag values of the record batch.
-            let tag_hash = {
-                let mut hasher = DefaultHasher::new();
+            let tag_hash = self.get_tag_hash(model_table.name.clone(), tag_values);
 
-                for tag_column_array in &tag_column_arrays {
-                    hasher.write(tag_column_array.value(index).as_bytes());
-                }
+            // TODO: Save the index on the field_column_arrays data structure.
+            // TODO: For each field column, create a single data point, generate the 64-bit key, and
+            //  insert the data point into the in-memory buffer.
 
-                hasher.finish()
-            };
         };
 
-        // TODO: Create a univariate time series for each field column in the model table schema.
-        // TODO: For each univariate time series, create a 64-bit key that uniquely identifies it.
-        // TODO: Send each separate time series to be further processed.
         Ok(())
+    }
+
+    // TODO: https://stackoverflow.com/questions/19337029/insert-if-not-exists-statement-in-sqlite
+    /// Return the tag hash for the given list of tag values either by retrieving it from the cache
+    /// or, if it is a new combination of tag values, generating a new hash. If a new hash is
+    /// created, the hash is saved both in the cache and persisted to the model_table_tags table.
+    fn get_tag_hash(&mut self, model_table_name: String, tag_values: Vec<String>) -> u64 {
+        // TODO: Check if the tag hash is in the cache.
+        // TODO: If it is, retrieve it. If it is not, create a new one and save it both in the cache in the model_table_tags table.
+        // Generate the 54-bit tag hash based on the tag values of the record batch.
+        let tag_hash = {
+            let mut hasher = DefaultHasher::new();
+
+            for tag_value in tag_values {
+                hasher.write(tag_value.as_bytes());
+            }
+
+            hasher.finish()
+        };
+
+        tag_hash
     }
 
     /// Insert a single data point into the in-memory buffer. Return [`OK`] if the data point was

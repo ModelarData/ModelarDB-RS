@@ -30,7 +30,7 @@ use datafusion::parquet::errors::ParquetError;
 use tracing::info;
 
 use crate::storage::{BUILDER_CAPACITY, StorageEngine};
-use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder};
+use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
 
 /// Shared functionality between different types of uncompressed segments, such as [`SegmentBuilder`]
 /// and [`SpilledSegment`].
