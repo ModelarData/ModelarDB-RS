@@ -86,7 +86,7 @@ impl StorageEngine {
     }
 
     /// Pass `segment` to [`CompressedDataManager`].
-    pub fn insert_compressed_segment(&mut self, key: String, segment: RecordBatch) {
+    pub fn insert_compressed_segment(&mut self, key: u64, segment: RecordBatch) {
         self.compressed_data_manager.insert_compressed_segment(key, segment)
     }
 

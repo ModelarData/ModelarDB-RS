@@ -33,9 +33,9 @@ pub struct CompressedDataManager {
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
     data_folder_path: PathBuf,
     /// The compressed segments before they are saved to persistent storage.
-    compressed_data: HashMap<String, CompressedTimeSeries>,
+    compressed_data: HashMap<u64, CompressedTimeSeries>,
     /// FIFO queue of keys referring to [`CompressedTimeSeries`] that can be saved to persistent storage.
-    compressed_queue: VecDeque<String>,
+    compressed_queue: VecDeque<u64>,
     /// How many bytes of memory that are left for storing compressed segments.
     compressed_remaining_memory_in_bytes: isize,
 }
@@ -52,7 +52,7 @@ impl CompressedDataManager {
     }
 
     /// Insert `segment` into the in-memory compressed time series buffer.
-    pub fn insert_compressed_segment(&mut self, key: String, segment: RecordBatch) {
+    pub fn insert_compressed_segment(&mut self, key: u64, segment: RecordBatch) {
         let _span = info_span!("insert_compressed_segment", key = key.clone()).entered();
         info!(
             "Inserting batch with {} rows into compressed time series.",
@@ -96,7 +96,7 @@ impl CompressedDataManager {
             let mut time_series = self.compressed_data.remove(&key).unwrap();
             let time_series_size = time_series.size_in_bytes.clone();
 
-            let folder_path = self.data_folder_path.join(key);
+            let folder_path = self.data_folder_path.join(key.to_string());
             time_series.save_to_apache_parquet(folder_path.as_path());
 
             self.compressed_remaining_memory_in_bytes += time_series_size as isize;
