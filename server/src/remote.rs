@@ -536,6 +536,7 @@ fn create_model_table(
     Ok(())
 }
 
+// TODO: Move this to the metadata component when it exists.
 /// Save the created model table to the metadata database. This includes creating a tags table for the
 /// model table, adding a row to the model_table_metadata table, and adding a row to the
 /// model_table_field_columns table for each field column.
@@ -549,16 +550,10 @@ fn save_model_table_to_database(
     let transaction = connection.transaction()?;
 
     // Add a column definition for each tag field in the schema.
-    let mut tag_columns = "".to_owned();
-    let mut tag_indices = model_table_metadata.tag_column_indices.iter().peekable();
-
-    while let Some(index) = tag_indices.next() {
-        // If it is the last column in the query, adding a "," results in an SQL syntax error.
-        let suffix = if tag_indices.peek().is_none() {""} else {", "};
+    let tag_columns: String = model_table_metadata.tag_column_indices.iter().map(|index| {
         let field = model_table_metadata.schema.field(*index as usize);
-
-        tag_columns.push_str(format!("{} TEXT NOT NULL{}", field.name(), suffix).as_str());
-    }
+        format!("{} TEXT NOT NULL", field.name())
+    }).collect::<Vec<String>>().join(",");
 
     // Create a table_name_tags SQLite table to save the 54-bit tag hashes when ingesting data.
     // The query is executed with a formatted string since CREATE TABLE cannot take parameters.

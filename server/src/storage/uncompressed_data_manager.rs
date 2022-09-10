@@ -21,6 +21,7 @@ use std::hash::Hasher;
 use std::path::PathBuf;
 use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
+use rusqlite::Connection;
 
 use tracing::{info, info_span};
 use crate::catalog::NewModelTableMetadata;
@@ -40,6 +41,8 @@ pub struct UncompressedDataManager {
     uncompressed_data: HashMap<u64, SegmentBuilder>,
     /// FIFO queue of [`FinishedSegments`](FinishedSegment) that are ready for compression.
     finished_queue: VecDeque<FinishedSegment>,
+    /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
+    tag_value_hashes: HashMap<String, u64>,
     /// How many bytes of memory that are left for storing [`UncompressedSegments`](UncompressedSegment).
     uncompressed_remaining_memory_in_bytes: usize,
 }
@@ -51,6 +54,7 @@ impl UncompressedDataManager {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             uncompressed_data: HashMap::new(),
             finished_queue: VecDeque::new(),
+            tag_value_hashes: HashMap::new(),
             uncompressed_remaining_memory_in_bytes: UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
         }
     }
@@ -69,7 +73,7 @@ impl UncompressedDataManager {
             data.num_rows(), model_table.name);
 
         // TODO: Maybe add a check for the types of the given timestamp column index and tag column indices.
-        // TODO: Maybe also check the other colums to ensure they are float 32
+        // TODO: Maybe also check the other columns to ensure they are float 32
 
         // Prepare the timestamp column for iteration.
         let timestamp_index = model_table.timestamp_column_index as usize;
@@ -102,7 +106,8 @@ impl UncompressedDataManager {
                 array.value(index).to_string()
             }).collect();
 
-            let tag_hash = self.get_tag_hash(model_table.name.clone(), tag_values);
+            let tag_hash = self.get_tag_hash(model_table.clone(), tag_values)
+                .map_err(|error| format!("Tag hash could not be saved: {}", error.to_string()))?;
 
             // TODO: Save the index on the field_column_arrays data structure.
             // TODO: For each field column, create a single data point, generate the 64-bit key, and
@@ -113,25 +118,61 @@ impl UncompressedDataManager {
         Ok(())
     }
 
-    // TODO: https://stackoverflow.com/questions/19337029/insert-if-not-exists-statement-in-sqlite
     /// Return the tag hash for the given list of tag values either by retrieving it from the cache
     /// or, if it is a new combination of tag values, generating a new hash. If a new hash is
-    /// created, the hash is saved both in the cache and persisted to the model_table_tags table.
-    fn get_tag_hash(&mut self, model_table_name: String, tag_values: Vec<String>) -> u64 {
-        // TODO: Check if the tag hash is in the cache.
-        // TODO: If it is, retrieve it. If it is not, create a new one and save it both in the cache in the model_table_tags table.
-        // Generate the 54-bit tag hash based on the tag values of the record batch.
-        let tag_hash = {
-            let mut hasher = DefaultHasher::new();
+    /// created, the hash is saved both in the cache and persisted to the model_table_tags table. If
+    /// the table could not be accessed, return [`rusqlite::Error`].
+    fn get_tag_hash(
+        &mut self,
+        model_table: NewModelTableMetadata,
+        tag_values: Vec<String>
+    ) -> Result<u64, rusqlite::Error> {
+        let mut cache_key = {
+            let mut cache_key_list = tag_values.clone();
+            cache_key_list.push(model_table.name.clone());
 
-            for tag_value in tag_values {
-                hasher.write(tag_value.as_bytes());
-            }
-
-            hasher.finish()
+            cache_key_list.join("")
         };
 
-        tag_hash
+        // Check if the tag hash is in the cache. If it is, retrieve it. If it is not, create a new
+        // one and save it both in the cache and in the model_table_tags table.
+        if let Some(tag_hash) = self.tag_value_hashes.get(cache_key.as_str()) {
+            Ok(*tag_hash)
+        } else {
+            // Generate the 54-bit tag hash based on the tag values of the record batch and model table name.
+            let tag_hash = {
+                let mut hasher = DefaultHasher::new();
+                hasher.write(model_table.name.as_bytes());
+
+                for tag_value in &tag_values {
+                    hasher.write(tag_value.as_bytes());
+                }
+
+                hasher.finish()
+            };
+
+            // Save the tag hash in the cache and in the metadata database model_table_tags table.
+            self.tag_value_hashes.insert(cache_key, tag_hash);
+
+            // TODO: Move this to the metadata component when it exists.
+            let tag_columns: String = model_table.tag_column_indices.iter().map(|index| {
+                model_table.schema.field(*index as usize).name().clone()
+            }).collect::<Vec<String>>().join(",");
+
+            let values = tag_values.iter().map(|value| format!("'{}'", value))
+                .collect::<Vec<String>>().join(",");
+
+            let database_path = self.data_folder_path.join("metadata.sqlite3");
+            let mut connection = Connection::open(database_path)?;
+
+            connection.execute(
+                format!("INSERT INTO {}_tags (hash,{}) VALUES ({},{})",
+                        model_table.name, tag_columns, tag_hash, values).as_str(),
+                ()
+            )?;
+
+            Ok(tag_hash)
+        }
     }
 
     /// Insert a single data point into the in-memory buffer. Return [`OK`] if the data point was
