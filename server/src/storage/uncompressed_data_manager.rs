@@ -84,8 +84,8 @@ impl UncompressedDataManager {
             data.column(*index as usize).as_any().downcast_ref().unwrap()
         }).collect();
 
-        // Prepare the field columns for iteration.
-        let field_column_arrays: Vec<&ValueArray> = model_table.schema.fields().iter().filter_map(|field| {
+        // Prepare the field columns for iteration. The column index is saved with the corresponding array.
+        let field_column_arrays: Vec<(usize, &ValueArray)> = model_table.schema.fields().iter().filter_map(|field| {
             let index = model_table.schema.index_of(field.name().as_str()).unwrap();
 
             // Field columns are the columns that are not the timestamp column or one of the tag columns.
@@ -93,7 +93,7 @@ impl UncompressedDataManager {
             let not_tag_column = !model_table.tag_column_indices.contains(&(index as u8));
 
             if not_timestamp_column && not_tag_column {
-                Some(data.column(index as usize).as_any().downcast_ref().unwrap())
+                Some((index, data.column(index as usize).as_any().downcast_ref().unwrap()))
             } else {
                 None
             }
@@ -109,10 +109,15 @@ impl UncompressedDataManager {
             let tag_hash = self.get_tag_hash(model_table.clone(), tag_values)
                 .map_err(|error| format!("Tag hash could not be saved: {}", error.to_string()))?;
 
-            // TODO: Save the index on the field_column_arrays data structure.
-            // TODO: For each field column, create a single data point, generate the 64-bit key, and
-            //  insert the data point into the in-memory buffer.
+            // For each field column, generate the 64-bit key, create a single data point, and
+            // insert the data point into the in-memory buffer.
+            for (field_index, field_column_array) in &field_column_arrays {
+                let key = tag_hash | *field_index as u64;
+                let value = field_column_array.value(index);
 
+                // unwrap() is safe to use since the timestamps array cannot contain null values.
+                self.insert_data_point(key, timestamp.unwrap(), value);
+            }
         };
 
         Ok(())
@@ -127,7 +132,7 @@ impl UncompressedDataManager {
         model_table: NewModelTableMetadata,
         tag_values: Vec<String>
     ) -> Result<u64, rusqlite::Error> {
-        let mut cache_key = {
+        let cache_key = {
             let mut cache_key_list = tag_values.clone();
             cache_key_list.push(model_table.name.clone());
 
@@ -148,7 +153,8 @@ impl UncompressedDataManager {
                     hasher.write(tag_value.as_bytes());
                 }
 
-                hasher.finish()
+                // The 64-bit hash is shifted to make the final 10 bits 0.
+                hasher.finish() << 10
             };
 
             // Save the tag hash in the cache and in the metadata database model_table_tags table.
@@ -163,10 +169,11 @@ impl UncompressedDataManager {
                 .collect::<Vec<String>>().join(",");
 
             let database_path = self.data_folder_path.join("metadata.sqlite3");
-            let mut connection = Connection::open(database_path)?;
+            let connection = Connection::open(database_path)?;
 
+            // OR IGNORE is used to silently fail when trying to insert an already existing hash.
             connection.execute(
-                format!("INSERT INTO {}_tags (hash,{}) VALUES ({},{})",
+                format!("INSERT OR IGNORE INTO {}_tags (hash,{}) VALUES ({},{})",
                         model_table.name, tag_columns, tag_hash, values).as_str(),
                 ()
             )?;
@@ -232,23 +239,6 @@ impl UncompressedDataManager {
         } else {
             None
         }
-    }
-
-    /// Create a new segment builder and remove its size from the uncompressed remaining memory.
-    fn create_segment_builder(&mut self) -> SegmentBuilder {
-        // If there is not enough memory for a new segment, spill a finished segment.
-        if SegmentBuilder::get_memory_size() > self.uncompressed_remaining_memory_in_bytes {
-            self.spill_finished_segment();
-        }
-
-        // Create a new segment and reduce the remaining amount of reserved memory by its size.
-        let segment = SegmentBuilder::new();
-        self.uncompressed_remaining_memory_in_bytes -= SegmentBuilder::get_memory_size();
-
-        info!("Created segment. Remaining reserved bytes: {}.",
-            self.uncompressed_remaining_memory_in_bytes);
-
-        segment
     }
 
     /// Move `segment_builder` to the queue of [`FinishedSegments`](FinishedSegment).
