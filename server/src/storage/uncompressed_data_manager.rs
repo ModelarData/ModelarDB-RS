@@ -59,7 +59,6 @@ impl UncompressedDataManager {
         }
     }
 
-    // TODO: The insert data point function has been fully tested by this still needs tests.
     /// Parse `data` and insert it into the in-memory buffer. The data is first parsed into multiple
     /// univariate time series based on `model_table`. These individual time series are then
     /// inserted into the storage engine. Return [`Ok`] if the data was successfully inserted,
@@ -315,11 +314,143 @@ impl UncompressedDataManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
     use std::path::Path;
+    use std::sync::Arc;
 
     use tempfile::{tempdir, TempDir};
 
     use crate::storage::BUILDER_CAPACITY;
+    use crate::types::{ArrowTimestamp, ArrowValue};
+
+    #[test]
+    fn test_can_insert_record_batch() {
+        let (temp_dir, mut data_manager) = create_uncompressed_data_manager();
+
+        let (model_table, data) = get_uncompressed_data(1);
+        create_model_table_tags_table(&model_table, temp_dir.path());
+        data_manager.insert_data(model_table, data);
+
+        // Two separate builders are created since the inserted data has two field columns.
+        assert_eq!(data_manager.uncompressed_data.keys().len(), 2)
+    }
+
+    #[test]
+    fn test_can_insert_record_batch_with_multiple_data_points() {
+        let (temp_dir, mut data_manager) = create_uncompressed_data_manager();
+
+        let (model_table, data) = get_uncompressed_data(2);
+        create_model_table_tags_table(&model_table, temp_dir.path());
+
+        data_manager.insert_data(model_table, data);
+
+        // Since the tag is different for each data point, 4 separate builders should be created.
+        assert_eq!(data_manager.uncompressed_data.keys().len(), 4)
+    }
+
+    #[test]
+    fn test_get_new_tag_hash() {
+        let (temp_dir, mut data_manager) = create_uncompressed_data_manager();
+
+        let (model_table, _data) = get_uncompressed_data(2);
+        create_model_table_tags_table(&model_table, temp_dir.path());
+
+        let result = data_manager.get_tag_hash(model_table, vec!["tag1".to_owned()]);
+        assert!(result.is_ok());
+
+        // When a new tag hash is retrieved, the hash should be saved in the cache.
+        assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);
+
+        // It should also be saved in the metadata database table.
+        let database_path = temp_dir.path().join("metadata.sqlite3");
+        let connection = Connection::open(database_path).unwrap();
+
+        let mut statement = connection.prepare("SELECT * FROM model_table_tags").unwrap();
+        let mut rows = statement.query(()).unwrap();
+
+        assert_eq!(rows.next().unwrap().unwrap().get::<usize, String>(1).unwrap(), "tag1");
+    }
+
+    #[test]
+    fn test_get_existing_tag_hash() {
+        let (temp_dir, mut data_manager) = create_uncompressed_data_manager();
+
+        let (model_table, _data) = get_uncompressed_data(1);
+        create_model_table_tags_table(&model_table, temp_dir.path());
+
+        data_manager.get_tag_hash(model_table.clone(), vec!["tag1".to_owned()]);
+        assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);
+
+        // When getting the same tag hash again, it should just be retrieved from the cache.
+        let result = data_manager.get_tag_hash(model_table, vec!["tag1".to_owned()]);
+
+        assert!(result.is_ok());
+        assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);
+    }
+
+    /// Create a record batch with data that resembles uncompressed data with a single tag and two
+    /// field columns. The returned data has `row_count` rows, with a different tag for each row.
+    /// Also create model table metadata for a model table that matches the created data.
+    fn get_uncompressed_data(row_count: usize) -> (NewModelTableMetadata, RecordBatch) {
+        let tags: Vec<String> = (0..row_count).map(|tag| tag.to_string()).collect();
+        let timestamps: Vec<Timestamp> = (0..row_count).map(|ts| ts as Timestamp).collect();
+        let values: Vec<Value> = (0..row_count).map(|value| value as Value).collect();
+
+        let schema = Schema::new(vec![
+            Field::new("tag", DataType::Utf8, false),
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("value_1", ArrowValue::DATA_TYPE, false),
+            Field::new("value_2", ArrowValue::DATA_TYPE, false),
+        ]);
+
+        let data = RecordBatch::try_new(
+            Arc::new(schema.clone()),
+            vec![
+                Arc::new(StringArray::from(tags)),
+                Arc::new(TimestampArray::from(timestamps)),
+                Arc::new(ValueArray::from(values.clone())),
+                Arc::new(ValueArray::from(values)),
+            ],
+        ).unwrap();
+
+        let model_table_metadata = NewModelTableMetadata::try_new(
+            "model_table".to_owned(),
+            schema,
+            vec![0],
+            1
+        ).unwrap();
+
+        (model_table_metadata, data)
+    }
+
+    // TODO: This is duplicated from function in remote. Change this when metadata component exists.
+    /// Create the table in the metadata database that contains the tag hashes.
+    fn create_model_table_tags_table(model_table_metadata: &NewModelTableMetadata, path: &Path) {
+        let database_path = path.join("metadata.sqlite3");
+        let connection = Connection::open(database_path).unwrap();
+
+        // Add a column definition for each tag field in the schema.
+        let tag_columns: String = model_table_metadata
+            .tag_column_indices
+            .iter()
+            .map(|index| {
+                let field = model_table_metadata.schema.field(*index as usize);
+                format!("{} TEXT NOT NULL", field.name())
+            })
+            .collect::<Vec<String>>()
+            .join(",");
+
+        // Create a table_name_tags SQLite table to save the 54-bit tag hashes when ingesting data.
+        // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
+        connection.execute(
+            format!(
+                "CREATE TABLE {}_tags (hash BIGINT PRIMARY KEY, {})",
+                model_table_metadata.name, tag_columns
+            )
+            .as_str(),
+            (),
+        );
+    }
 
     #[test]
     fn test_can_insert_data_point_into_new_segment() {
@@ -482,7 +613,7 @@ mod tests {
     }
 
     /// Insert `count` data points into `data_manager`.
-    fn insert_data_points(count: usize, data_manager: &mut UncompressedDataManager, key: u64){
+    fn insert_data_points(count: usize, data_manager: &mut UncompressedDataManager, key: u64) {
         let value: Value = 30.0;
 
         for i in 0..count {
