@@ -15,17 +15,17 @@
 
 //! Support for managing all uncompressed data that is ingested into the [`StorageEngine`].
 
-use std::collections::{HashMap, VecDeque};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, VecDeque};
 use std::hash::Hasher;
 use std::path::PathBuf;
+
 use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
 use rusqlite::Connection;
-
 use tracing::{info, info_span};
-use crate::catalog::NewModelTableMetadata;
 
+use crate::catalog::NewModelTableMetadata;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder};
 use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
 
@@ -66,47 +66,68 @@ impl UncompressedDataManager {
     pub fn insert_data(
         &mut self,
         model_table: NewModelTableMetadata,
-        data: RecordBatch
+        data: RecordBatch,
     ) -> Result<(), String> {
         let _span = info_span!("insert_data", table = model_table.name).entered();
-        info!("Received record batch with {} data points for the table '{}'.",
-            data.num_rows(), model_table.name);
-
-        // TODO: Maybe add a check for the types of the given timestamp column index and tag column indices.
-        // TODO: Maybe also check the other columns to ensure they are float 32
+        info!(
+            "Received record batch with {} data points for the table '{}'.",
+            data.num_rows(),
+            model_table.name
+        );
 
         // Prepare the timestamp column for iteration.
         let timestamp_index = model_table.timestamp_column_index as usize;
-        let timestamps: &TimestampArray = data.column(timestamp_index).as_any().downcast_ref().unwrap();
+        let timestamps: &TimestampArray = data
+            .column(timestamp_index)
+            .as_any()
+            .downcast_ref()
+            .unwrap();
 
         // Prepare the tag columns for iteration.
-        let tag_column_arrays: Vec<&StringArray> = model_table.tag_column_indices.iter().map(|index| {
-            data.column(*index as usize).as_any().downcast_ref().unwrap()
-        }).collect();
+        let tag_column_arrays: Vec<&StringArray> = model_table
+            .tag_column_indices
+            .iter()
+            .map(|index| {
+                data.column(*index as usize)
+                    .as_any()
+                    .downcast_ref()
+                    .unwrap()
+            })
+            .collect();
 
         // Prepare the field columns for iteration. The column index is saved with the corresponding array.
-        let field_column_arrays: Vec<(usize, &ValueArray)> = model_table.schema.fields().iter().filter_map(|field| {
-            let index = model_table.schema.index_of(field.name().as_str()).unwrap();
+        let field_column_arrays: Vec<(usize, &ValueArray)> = model_table
+            .schema
+            .fields()
+            .iter()
+            .filter_map(|field| {
+                let index = model_table.schema.index_of(field.name().as_str()).unwrap();
 
-            // Field columns are the columns that are not the timestamp column or one of the tag columns.
-            let not_timestamp_column = index != model_table.timestamp_column_index as usize;
-            let not_tag_column = !model_table.tag_column_indices.contains(&(index as u8));
+                // Field columns are the columns that are not the timestamp column or one of the tag columns.
+                let not_timestamp_column = index != model_table.timestamp_column_index as usize;
+                let not_tag_column = !model_table.tag_column_indices.contains(&(index as u8));
 
-            if not_timestamp_column && not_tag_column {
-                Some((index, data.column(index as usize).as_any().downcast_ref().unwrap()))
-            } else {
-                None
-            }
-        }).collect();
+                if not_timestamp_column && not_tag_column {
+                    Some((
+                        index,
+                        data.column(index as usize).as_any().downcast_ref().unwrap(),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         // For each row in the data, generate a tag hash, extract the individual measurements,
         // and insert them into the storage engine.
         for (index, timestamp) in timestamps.iter().enumerate() {
-            let tag_values = tag_column_arrays.iter().map(|array| {
-                array.value(index).to_string()
-            }).collect();
+            let tag_values = tag_column_arrays
+                .iter()
+                .map(|array| array.value(index).to_string())
+                .collect();
 
-            let tag_hash = self.get_tag_hash(model_table.clone(), tag_values)
+            let tag_hash = self
+                .get_tag_hash(model_table.clone(), tag_values)
                 .map_err(|error| format!("Tag hash could not be saved: {}", error.to_string()))?;
 
             // For each field column, generate the 64-bit key, create a single data point, and
@@ -118,7 +139,7 @@ impl UncompressedDataManager {
                 // unwrap() is safe to use since the timestamps array cannot contain null values.
                 self.insert_data_point(key, timestamp.unwrap(), value);
             }
-        };
+        }
 
         Ok(())
     }
@@ -130,7 +151,7 @@ impl UncompressedDataManager {
     fn get_tag_hash(
         &mut self,
         model_table: NewModelTableMetadata,
-        tag_values: Vec<String>
+        tag_values: Vec<String>,
     ) -> Result<u64, rusqlite::Error> {
         let cache_key = {
             let mut cache_key_list = tag_values.clone();
@@ -161,21 +182,30 @@ impl UncompressedDataManager {
             self.tag_value_hashes.insert(cache_key, tag_hash);
 
             // TODO: Move this to the metadata component when it exists.
-            let tag_columns: String = model_table.tag_column_indices.iter().map(|index| {
-                model_table.schema.field(*index as usize).name().clone()
-            }).collect::<Vec<String>>().join(",");
+            let tag_columns: String = model_table
+                .tag_column_indices
+                .iter()
+                .map(|index| model_table.schema.field(*index as usize).name().clone())
+                .collect::<Vec<String>>()
+                .join(",");
 
-            let values = tag_values.iter().map(|value| format!("'{}'", value))
-                .collect::<Vec<String>>().join(",");
+            let values = tag_values
+                .iter()
+                .map(|value| format!("'{}'", value))
+                .collect::<Vec<String>>()
+                .join(",");
 
             let database_path = self.data_folder_path.join("metadata.sqlite3");
             let connection = Connection::open(database_path)?;
 
             // OR IGNORE is used to silently fail when trying to insert an already existing hash.
             connection.execute(
-                format!("INSERT OR IGNORE INTO {}_tags (hash,{}) VALUES ({},{})",
-                        model_table.name, tag_columns, tag_hash, values).as_str(),
-                ()
+                format!(
+                    "INSERT OR IGNORE INTO {}_tags (hash,{}) VALUES ({},{})",
+                    model_table.name, tag_columns, tag_hash, values
+                )
+                .as_str(),
+                (),
             )?;
 
             Ok(tag_hash)
@@ -188,9 +218,12 @@ impl UncompressedDataManager {
         &mut self,
         key: u64,
         timestamp: Timestamp,
-        value: Value
+        value: Value,
     ) -> Result<(), String> {
-        info!("Inserting data point ({}, {}) into segment.", timestamp, value);
+        info!(
+            "Inserting data point ({}, {}) into segment.",
+            timestamp, value
+        );
 
         if let Some(segment) = self.uncompressed_data.get_mut(&key) {
             info!("Found existing segment.");
@@ -258,13 +291,15 @@ impl UncompressedDataManager {
 
         // Iterate through the finished segments to find a segment that is in memory.
         for finished in self.finished_queue.iter_mut() {
-            if let Ok(file_path) = finished.spill_to_apache_parquet(self.data_folder_path.as_path()) {
+            if let Ok(file_path) = finished.spill_to_apache_parquet(self.data_folder_path.as_path())
+            {
                 // Add the size of the segment back to the remaining reserved bytes.
                 self.uncompressed_remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
 
                 info!(
                     "Spilled the segment to '{}'. Remaining reserved bytes: {}.",
-                    file_path.display(), self.uncompressed_remaining_memory_in_bytes
+                    file_path.display(),
+                    self.uncompressed_remaining_memory_in_bytes
                 );
                 return ();
             }
@@ -282,9 +317,9 @@ mod tests {
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    use tempfile::{TempDir, tempdir};
+    use tempfile::{tempdir, TempDir};
 
-    use crate::storage::{BUILDER_CAPACITY, StorageEngine};
+    use crate::storage::{StorageEngine, BUILDER_CAPACITY};
 
     #[test]
     fn test_cannot_insert_invalid_message() {
@@ -302,7 +337,14 @@ mod tests {
         let key = insert_generated_message(&mut data_manager, "ModelarDB/test".to_owned());
 
         assert!(data_manager.uncompressed_data.contains_key(&key));
-        assert_eq!(data_manager.uncompressed_data.get(&key).unwrap().get_length(), 1);
+        assert_eq!(
+            data_manager
+                .uncompressed_data
+                .get(&key)
+                .unwrap()
+                .get_length(),
+            1
+        );
     }
 
     #[test]
@@ -311,7 +353,14 @@ mod tests {
         let key = insert_multiple_messages(2, &mut data_manager);
 
         assert!(data_manager.uncompressed_data.contains_key(&key));
-        assert_eq!(data_manager.uncompressed_data.get(&key).unwrap().get_length(), 2);
+        assert_eq!(
+            data_manager
+                .uncompressed_data
+                .get(&key)
+                .unwrap()
+                .get_length(),
+            2
+        );
     }
 
     #[test]
@@ -422,7 +471,10 @@ mod tests {
         // Since the FinishedSegment is not in memory, the remaining memory should not increase when popped.
         data_manager.get_finished_segment();
 
-        assert_eq!(remaining_memory, data_manager.uncompressed_remaining_memory_in_bytes);
+        assert_eq!(
+            remaining_memory,
+            data_manager.uncompressed_remaining_memory_in_bytes
+        );
     }
 
     #[test]
@@ -439,7 +491,10 @@ mod tests {
 
     /// Generate `count` data points for the same time series and insert them into `data_manager`.
     /// Return the key, which is the same for all generated data points.
-    fn insert_multiple_messages(count: usize, data_manager: &mut UncompressedDataManager) -> String {
+    fn insert_multiple_messages(
+        count: usize,
+        data_manager: &mut UncompressedDataManager,
+    ) -> String {
         let mut key = String::new();
 
         for _ in 0..count {
@@ -450,7 +505,10 @@ mod tests {
     }
 
     /// Generate a [`DataPoint`] and insert it into `data_manager`. Return the [`DataPoint`] key.
-    fn insert_generated_message(data_manager: &mut UncompressedDataManager, topic: String) -> String {
+    fn insert_generated_message(
+        data_manager: &mut UncompressedDataManager,
+        topic: String,
+    ) -> String {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
