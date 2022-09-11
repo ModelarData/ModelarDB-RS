@@ -17,15 +17,15 @@
 //! store arbitrary data, while model tables can only store time series as
 //! models.
 
+use std::collections::HashSet;
 use std::fs::{read_dir, DirEntry};
 use std::io::{Error, ErrorKind};
+use std::path::PathBuf;
 use std::str;
 use std::sync::Arc;
 use std::{fs::File, path::Path};
-use std::collections::HashSet;
-use std::path::PathBuf;
-use arrow_flight::IpcMessage;
 
+use arrow_flight::IpcMessage;
 use datafusion::arrow::array::{
     Array, ArrayRef, BinaryArray, Int32Array, Int32Builder, StringBuilder,
 };
@@ -35,8 +35,8 @@ use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use datafusion::parquet::record::RowAccessor;
 use object_store::path::Path as ObjectStorePath;
-use rusqlite::Connection;
 use rusqlite::types::Type::Blob;
+use rusqlite::Connection;
 use tracing::{error, info, warn};
 
 use crate::storage::StorageEngine;
@@ -101,7 +101,10 @@ impl Catalog {
         // Add model tables using the data from the model_table_metadata metadata database table.
         let new_model_table_metadata = Self::get_new_model_table_metadata(data_folder_path)
             .unwrap_or_else(|error| {
-                error!("Cannot register model tables from model_table_metadata: {}", error);
+                error!(
+                    "Cannot register model tables from model_table_metadata: {}",
+                    error
+                );
                 vec![]
             });
 
@@ -224,18 +227,20 @@ impl Catalog {
     /// and return it. If the metadata database could not be opened or the table could not be queried,
     /// return [`rusqlite::Error`].
     fn get_new_model_table_metadata(
-        data_folder_path: &Path
+        data_folder_path: &Path,
     ) -> Result<Vec<NewModelTableMetadata>, rusqlite::Error> {
         let database_path = data_folder_path.join("metadata.sqlite3");
         let connection = Connection::open(database_path)?;
 
         let mut select_statement = connection.prepare(
             "SELECT table_name, schema, timestamp_column_index, tag_column_indices
-            FROM model_table_metadata")?;
+            FROM model_table_metadata",
+        )?;
+
         let mut rows = select_statement.query(())?;
+        let mut model_table_metadata = vec![];
 
         // TODO: Maybe only log errors from single rows instead of failing the entire table read.
-        let mut model_table_metadata = vec![];
         while let Some(row) = rows.next()? {
             let name = row.get::<usize, String>(0)?;
 
@@ -251,7 +256,7 @@ impl Catalog {
                 name: name.clone(),
                 schema,
                 timestamp_column_index: row.get(2)?,
-                tag_column_indices: row.get(3)?
+                tag_column_indices: row.get(3)?,
             });
 
             info!("Found model table '{}'.", name);
@@ -297,10 +302,13 @@ pub struct NewModelTableMetadata {
     /// Index of the timestamp column in the schema.
     pub timestamp_column_index: u8,
     /// Indices of the tag columns in the schema.
-    pub tag_column_indices: Vec<u8>
+    pub tag_column_indices: Vec<u8>,
 }
 
 impl NewModelTableMetadata {
+    // TODO: Maybe add a check for the types of the given timestamp column index and tag column indices.
+    // TODO: Maybe also check the other columns to ensure they are float 32.
+
     /// Create a new model table with the given metadata. If the timestamp or tag column indices does
     /// not match `schema`, or if the timestamp column index is in the tag column indices, or there
     /// are duplicates in the tag column indices, or there are more than 1024 columns, [`Err`] is returned.
@@ -317,20 +325,29 @@ impl NewModelTableMetadata {
 
         // If the index of the timestamp column does not match the schema, return an error.
         if schema.fields.get(timestamp_column_index as usize).is_none() {
-            return Err("The timestamp column index does not match a field in the schema.".to_owned());
+            return Err(
+                "The timestamp column index does not match a field in the schema.".to_owned(),
+            );
         };
 
         // If the indices for the tag columns does not match the schema, return an error.
         for tag_column_index in &tag_column_indices {
             if schema.fields.get(*tag_column_index as usize).is_none() {
-                return Err(format!("The tag column index '{}' does not match a field in the schema.", tag_column_index));
+                return Err(format!(
+                    "The tag column index '{}' does not match a field in the schema.",
+                    tag_column_index
+                ));
             };
-        };
+        }
 
         // If there are duplicate tag columns, return an error. HashSet.insert() can be used to check
         // for uniqueness since it returns true or false depending on if the inserted element already exists.
         let mut uniq = HashSet::new();
-        if !tag_column_indices.clone().into_iter().all(|x| uniq.insert(x)) {
+        if !tag_column_indices
+            .clone()
+            .into_iter()
+            .all(|x| uniq.insert(x))
+        {
             return Err("The tag column indices cannot have duplicates.".to_owned());
         }
 
@@ -670,9 +687,9 @@ mod tests {
     #[test]
     fn test_cannot_create_model_table_metadata_with_too_many_fields() {
         // Create 1025 fields that can be used to initialize a schema.
-        let fields = (0..1025).map(|i| {
-            Field::new(format!("field_{}", i).as_str(), DataType::Float32, false)
-        }).collect::<Vec<Field>>();
+        let fields = (0..1025)
+            .map(|i| Field::new(format!("field_{}", i).as_str(), DataType::Float32, false))
+            .collect::<Vec<Field>>();
 
         let schema = get_model_table_schema();
         let result = NewModelTableMetadata::try_new(

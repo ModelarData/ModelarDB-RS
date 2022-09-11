@@ -23,8 +23,8 @@ use std::error::Error;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::{mem, str};
 use std::sync::{Arc, RwLockWriteGuard};
+use std::{mem, str};
 
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::utils;
@@ -39,7 +39,7 @@ use datafusion::arrow::{
 };
 use futures::{stream, Stream, StreamExt};
 use object_store;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{error, info};
@@ -125,25 +125,16 @@ impl FlightServiceHandler {
         &self,
         table_name: &str,
         schema: SchemaRef,
-        request: Streaming<FlightData>) {
+        request: Streaming<FlightData>,
+    ) {
         info!("Ingesting data into table '{}'.", table_name);
     }
-
-    // TODO: Convert the data to a record batch and send the record batch and the model table to the storage engine.
-    // TODO: This record batch can have multiple rows and multiple field columns.
-    // TODO: Change name of "insert_message" to "insert_data".
-    // TODO: The data point file should be removed.
-    // TODO: The tag values should be converted into a hash and saved in the database if necessary.
-    // TODO: The storage engine function should first convert the data into univariate time series.
-    // TODO: These univariate time series can then be sent one by one to a function that does the same as "insert_message" a dynamic message count.
-
-    // TODO: Add a function to the storage engine to return data.
 
     /// While there is still more data to receive, ingest the data into the storage engine.
     async fn ingest_into_model_table(
         &self,
         model_table: NewModelTableMetadata,
-        request: &mut Streaming<FlightData>
+        request: &mut Streaming<FlightData>,
     ) -> Result<(), Status> {
         info!("Ingesting data into model table '{}'.", model_table.name);
 
@@ -157,7 +148,8 @@ impl FlightServiceHandler {
                 &flight_data,
                 SchemaRef::from(model_table.schema.clone()),
                 &self.dictionaries_by_id,
-            ).map_err(|error| Status::invalid_argument(error.to_string()))?;
+            )
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             // unwrap() is safe to use since write() only fails if the RwLock is poisoned.
             let mut storage_engine = self.context.storage_engine.write().unwrap();
@@ -384,7 +376,9 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             if table_name.contains(char::is_whitespace) {
-                return Err(Status::invalid_argument("Table name cannot contain whitespace.".to_owned()));
+                return Err(Status::invalid_argument(
+                    "Table name cannot contain whitespace.".to_owned(),
+                ));
             }
 
             // Extract the schema from the action body.
@@ -432,13 +426,15 @@ impl FlightService for FlightServiceHandler {
         let create_table_action = ActionType {
             r#type: "CreateTable".to_owned(),
             description: "Given a table name and a schema, create a table and add it to the \
-            catalog.".to_owned(),
+            catalog."
+                .to_owned(),
         };
 
         let create_model_table_action = ActionType {
             r#type: "CreateModelTable".to_owned(),
             description: "Given a table name, a schema, a list of tag column indices, and the \
-            timestamp column index, create a model table and add it to the catalog.".to_owned()
+            timestamp column index, create a model table and add it to the catalog."
+                .to_owned(),
         };
 
         let output = stream::iter(vec![Ok(create_table_action), Ok(create_model_table_action)]);
@@ -521,9 +517,9 @@ fn create_model_table(
     // Convert the schema to bytes so it can be saved as a BLOB in the metadata database.
     let options = IpcWriteOptions::default();
     let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
-    let ipc_message: IpcMessage = schema_as_ipc.try_into().map_err(|error: ArrowError| {
-        Status::internal(error.to_string())
-    })?;
+    let ipc_message: IpcMessage = schema_as_ipc
+        .try_into()
+        .map_err(|error: ArrowError| Status::internal(error.to_string()))?;
 
     // Persist the new model table to the metadata database.
     let database_path = catalog.data_folder_path.join("metadata.sqlite3");
@@ -550,15 +546,26 @@ fn save_model_table_to_database(
     let transaction = connection.transaction()?;
 
     // Add a column definition for each tag field in the schema.
-    let tag_columns: String = model_table_metadata.tag_column_indices.iter().map(|index| {
-        let field = model_table_metadata.schema.field(*index as usize);
-        format!("{} TEXT NOT NULL", field.name())
-    }).collect::<Vec<String>>().join(",");
+    let tag_columns: String = model_table_metadata
+        .tag_column_indices
+        .iter()
+        .map(|index| {
+            let field = model_table_metadata.schema.field(*index as usize);
+            format!("{} TEXT NOT NULL", field.name())
+        })
+        .collect::<Vec<String>>()
+        .join(",");
 
     // Create a table_name_tags SQLite table to save the 54-bit tag hashes when ingesting data.
     // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
-    transaction.execute(format!("CREATE TABLE {}_tags (hash BIGINT PRIMARY KEY, {})",
-        model_table_metadata.name, tag_columns).as_str(), ())?;
+    transaction.execute(
+        format!(
+            "CREATE TABLE {}_tags (hash BIGINT PRIMARY KEY, {})",
+            model_table_metadata.name, tag_columns
+        )
+        .as_str(),
+        (),
+    )?;
 
     // Add a new row in the model_table_metadata table to persist the model table.
     transaction.execute(
@@ -575,12 +582,15 @@ fn save_model_table_to_database(
     // Add a row for each field column to the model_table_field_columns table.
     let mut insert_statement = transaction.prepare(
         "INSERT INTO model_table_field_columns (table_name, column_name, column_index)
-        VALUES (?1, ?2, ?3)")?;
+        VALUES (?1, ?2, ?3)",
+    )?;
 
     for (index, field) in model_table_metadata.schema.fields().iter().enumerate() {
         // Only add a row for the field if it is not the timestamp or a tag.
-        let in_tag_indices = model_table_metadata.tag_column_indices.contains(&(index as u8));
         let is_timestamp = index == model_table_metadata.timestamp_column_index as usize;
+        let in_tag_indices = model_table_metadata
+            .tag_column_indices
+            .contains(&(index as u8));
 
         if !is_timestamp && !in_tag_indices {
             insert_statement.execute(params![model_table_metadata.name, field.name(), index])?;
