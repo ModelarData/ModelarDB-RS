@@ -310,7 +310,6 @@ pub mod test_util {
     use datafusion::arrow::record_batch::RecordBatch;
 
     use crate::storage::StorageEngine;
-    use crate::storage::time_series::CompressedTimeSeries;
     use crate::types::{TimestampArray, ValueArray};
 
     pub const COMPRESSED_SEGMENT_SIZE: usize = 2032;

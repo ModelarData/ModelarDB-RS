@@ -59,6 +59,7 @@ impl UncompressedDataManager {
         }
     }
 
+    // TODO: The insert data point function has been fully tested by this still needs tests.
     /// Parse `data` and insert it into the in-memory buffer. The data is first parsed into multiple
     /// univariate time series based on `model_table`. These individual time series are then
     /// inserted into the storage engine. Return [`Ok`] if the data was successfully inserted,
@@ -315,26 +316,16 @@ impl UncompressedDataManager {
 mod tests {
     use super::*;
     use std::path::Path;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use tempfile::{tempdir, TempDir};
 
-    use crate::storage::{StorageEngine, BUILDER_CAPACITY};
+    use crate::storage::BUILDER_CAPACITY;
 
     #[test]
-    fn test_cannot_insert_invalid_message() {
+    fn test_can_insert_data_point_into_new_segment() {
+        let key = 1;
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-
-        let message = Message::new("ModelarDB/test", "invalid", 1);
-        data_manager.insert_data(message.clone());
-
-        assert!(data_manager.uncompressed_data.is_empty());
-    }
-
-    #[test]
-    fn test_can_insert_message_into_new_segment() {
-        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        let key = insert_generated_message(&mut data_manager, "ModelarDB/test".to_owned());
+        insert_data_points(1, &mut data_manager, key);
 
         assert!(data_manager.uncompressed_data.contains_key(&key));
         assert_eq!(
@@ -349,8 +340,9 @@ mod tests {
 
     #[test]
     fn test_can_insert_message_into_existing_segment() {
+        let key = 1;
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        let key = insert_multiple_messages(2, &mut data_manager);
+        insert_data_points(2, &mut data_manager, key);
 
         assert!(data_manager.uncompressed_data.contains_key(&key));
         assert_eq!(
@@ -366,7 +358,7 @@ mod tests {
     #[test]
     fn test_can_get_finished_segment_when_finished() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut data_manager);
+        insert_data_points(BUILDER_CAPACITY, &mut data_manager, 1);
 
         assert!(data_manager.get_finished_segment().is_some());
     }
@@ -374,7 +366,7 @@ mod tests {
     #[test]
     fn test_can_get_multiple_finished_segments_when_multiple_finished() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        let key = insert_multiple_messages(BUILDER_CAPACITY * 2, &mut data_manager);
+        insert_data_points(BUILDER_CAPACITY * 2, &mut data_manager, 1);
 
         assert!(data_manager.get_finished_segment().is_some());
         assert!(data_manager.get_finished_segment().is_some());
@@ -396,7 +388,7 @@ mod tests {
         // If there is enough memory to hold n full segments, we need n + 1 to spill a segment.
         let max_full_segments = reserved_memory / SegmentBuilder::get_memory_size();
         let message_count = (max_full_segments * BUILDER_CAPACITY) + 1;
-        insert_multiple_messages(message_count, &mut data_manager);
+        insert_data_points(message_count, &mut data_manager, 1);
 
         // The first FinishedSegment should have a memory size of 0 since it is spilled to disk.
         let first_finished = data_manager.finished_queue.pop_front().unwrap();
@@ -404,14 +396,14 @@ mod tests {
 
         // The FinishedSegment should be spilled to the "uncompressed" folder under the key.
         let data_folder_path = Path::new(&data_manager.data_folder_path);
-        let uncompressed_path = data_folder_path.join("modelardb-test/uncompressed");
+        let uncompressed_path = data_folder_path.join("1/uncompressed");
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1);
     }
 
     #[test]
     fn test_ignore_already_spilled_segments_when_spilling() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        insert_multiple_messages(BUILDER_CAPACITY * 2, &mut data_manager);
+        insert_data_points(BUILDER_CAPACITY * 2, &mut data_manager, 1);
 
         data_manager.spill_finished_segment();
         // When spilling one more, the first FinishedSegment should be ignored since it is already spilled.
@@ -424,7 +416,7 @@ mod tests {
 
         // The finished segments should be spilled to the "uncompressed" folder under the key.
         let data_folder_path = Path::new(&data_manager.data_folder_path);
-        let uncompressed_path = data_folder_path.join("modelardb-test/uncompressed");
+        let uncompressed_path = data_folder_path.join("1/uncompressed");
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 2);
     }
 
@@ -432,7 +424,7 @@ mod tests {
     fn test_remaining_memory_incremented_when_spilling_finished_segment() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
 
-        insert_multiple_messages(BUILDER_CAPACITY, &mut data_manager);
+        insert_data_points(BUILDER_CAPACITY, &mut data_manager, 1);
         let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
         data_manager.spill_finished_segment();
 
@@ -444,7 +436,7 @@ mod tests {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
         let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
 
-        insert_generated_message(&mut data_manager, "ModelarDB/test".to_owned());
+        insert_data_points(1, &mut data_manager, 1);
 
         assert!(reserved_memory > data_manager.uncompressed_remaining_memory_in_bytes);
     }
@@ -452,7 +444,7 @@ mod tests {
     #[test]
     fn test_remaining_memory_incremented_when_popping_in_memory() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut data_manager);
+        insert_data_points(BUILDER_CAPACITY, &mut data_manager, 1);
 
         let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
         data_manager.get_finished_segment();
@@ -463,7 +455,7 @@ mod tests {
     #[test]
     fn test_remaining_memory_not_incremented_when_popping_spilled() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut data_manager);
+        insert_data_points(BUILDER_CAPACITY, &mut data_manager, 1);
 
         data_manager.spill_finished_segment();
         let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
@@ -485,43 +477,17 @@ mod tests {
 
         // If there is enough reserved memory to hold n builders, we need to create n + 1 to panic.
         for i in 0..(reserved_memory / SegmentBuilder::get_memory_size()) + 1 {
-            insert_generated_message(&mut data_manager, i.to_string());
+            insert_data_points(1, &mut data_manager, i as u64);
         }
     }
 
-    /// Generate `count` data points for the same time series and insert them into `data_manager`.
-    /// Return the key, which is the same for all generated data points.
-    fn insert_multiple_messages(
-        count: usize,
-        data_manager: &mut UncompressedDataManager,
-    ) -> String {
-        let mut key = String::new();
+    /// Insert `count` data points into `data_manager`.
+    fn insert_data_points(count: usize, data_manager: &mut UncompressedDataManager, key: u64){
+        let value: Value = 30.0;
 
-        for _ in 0..count {
-            key = insert_generated_message(data_manager, "ModelarDB/test".to_owned());
+        for i in 0..count {
+            data_manager.insert_data_point(key, i as i64, value);
         }
-
-        key
-    }
-
-    /// Generate a [`DataPoint`] and insert it into `data_manager`. Return the [`DataPoint`] key.
-    fn insert_generated_message(
-        data_manager: &mut UncompressedDataManager,
-        topic: String,
-    ) -> String {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_micros();
-
-        let payload = format!("[{}, 30]", timestamp);
-        let message = Message::new(topic, payload, 1);
-
-        data_manager.insert_data(message.clone());
-
-        DataPoint::from_message(&message)
-            .unwrap()
-            .generate_unique_key()
     }
 
     /// Create an [`UncompressedDataManager`] with a folder that is deleted once the test is finished.

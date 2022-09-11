@@ -234,7 +234,6 @@ mod tests {
     use super::*;
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
-    use paho_mqtt::Message;
     use tempfile::tempdir;
 
     use crate::storage::test_util;
