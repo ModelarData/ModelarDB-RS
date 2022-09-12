@@ -100,7 +100,7 @@ impl Ingestor {
         let mut stream = client.get_stream(25);
 
         // Define the last will and testament message to notify other clients about disconnect.
-        let lwt = mqtt::Message::new("mdb_lwt", "ModelarDB lost connection", mqtt::QOS_1);
+        let lwt = mqtt::Message::new("modelardbd_lwt", "ModelarDB lost connection", mqtt::QOS_1);
 
         let connect_options = mqtt::ConnectOptionsBuilder::new()
             // An interval of 30 seconds is used since it is the standard in paho_mqtt examples.
