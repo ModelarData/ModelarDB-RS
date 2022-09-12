@@ -29,7 +29,7 @@ use arrow_flight::IpcMessage;
 use datafusion::arrow::array::{
     Array, ArrayRef, BinaryArray, Int32Array, Int32Builder, StringBuilder,
 };
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef};
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
@@ -40,6 +40,7 @@ use rusqlite::Connection;
 use tracing::{error, info, warn};
 
 use crate::storage::StorageEngine;
+use crate::types::{ArrowTimestamp, ArrowValue};
 
 /// Metadata for the tables and model tables in the data folder.
 pub struct Catalog {
@@ -222,6 +223,7 @@ impl Catalog {
         }
     }
 
+    // TODO: Move to the metadata component when it exists.
     // TODO: Rename to "get_model_table_metadata" when the old version is removed.
     /// Convert the rows in the model_table_metadata table to a list of [`NewModelTableMetadata`]
     /// and return it. If the metadata database could not be opened or the table could not be queried,
@@ -306,12 +308,10 @@ pub struct NewModelTableMetadata {
 }
 
 impl NewModelTableMetadata {
-    // TODO: Maybe add a check for the types of the given timestamp column index and tag column indices.
-    // TODO: Maybe also check the other columns to ensure they are float 32.
-
-    /// Create a new model table with the given metadata. If the timestamp or tag column indices does
-    /// not match `schema`, or if the timestamp column index is in the tag column indices, or there
-    /// are duplicates in the tag column indices, or there are more than 1024 columns, [`Err`] is returned.
+    /// Create a new model table with the given metadata. If the timestamp or tag column indices
+    /// does not match `schema`, or the types are not correct, or if the timestamp column index is
+    /// in the tag column indices, or there are duplicates in the tag column indices, or there are
+    /// more than 1024 columns, or there are no field columns, [`Err`] is returned.
     pub fn try_new(
         name: String,
         schema: Schema,
@@ -323,21 +323,57 @@ impl NewModelTableMetadata {
             return Err("The timestamp column cannot be a tag column.".to_owned());
         };
 
-        // If the index of the timestamp column does not match the schema, return an error.
-        if schema.fields.get(timestamp_column_index as usize).is_none() {
+        if let Some(timestamp_field) = schema.fields.get(timestamp_column_index as usize) {
+            // If the field of the timestamp column is not of type ArrowTimestamp, return an error.
+            if !timestamp_field.data_type().equals_datatype(&ArrowTimestamp::DATA_TYPE) {
+                return Err("The timestamp column does not have the correct data type.".to_owned());
+            }
+        } else {
+            // If the index of the timestamp column does not match the schema, return an error.
             return Err(
                 "The timestamp column index does not match a field in the schema.".to_owned(),
             );
-        };
+        }
 
-        // If the indices for the tag columns does not match the schema, return an error.
         for tag_column_index in &tag_column_indices {
-            if schema.fields.get(*tag_column_index as usize).is_none() {
+            if let Some(tag_field) = schema.fields.get(*tag_column_index as usize) {
+                // If the fields of the tag columns is not of type Utf8, return an error.
+                if !tag_field.data_type().equals_datatype(&DataType::Utf8) {
+                    return Err(format!(
+                        "The tag column with index '{}' does not have the correct data type.",
+                        tag_column_index
+                    ));
+                }
+            } else {
+                // If the indices for the tag columns does not match the schema, return an error.
                 return Err(format!(
                     "The tag column index '{}' does not match a field in the schema.",
                     tag_column_index
                 ));
-            };
+            }
+        }
+
+        let field_column_indices: Vec<usize> = (0..schema.fields().len()).filter(|index| {
+            let index = *index as u8;
+            index != timestamp_column_index && !tag_column_indices.contains(&index)
+        }).collect();
+
+        // If there are no field columns, return an error.
+        if field_column_indices.is_empty() {
+            return Err("There needs to be at least one field column.".to_owned());
+        } else {
+            for field_column_index in &field_column_indices {
+                // unwrap() is safe to use since the indices are collected from the schema fields.
+                let field = schema.fields.get(*field_column_index).unwrap();
+
+                // If the fields of the field columns is not of type ArrowValue, return an error.
+                if !field.data_type().equals_datatype(&ArrowValue::DATA_TYPE) {
+                    return Err(format!(
+                        "The field column with index '{}' does not have the correct data type.",
+                        field_column_index
+                    ));
+                }
+            }
         }
 
         // If there are duplicate tag columns, return an error. HashSet.insert() can be used to check
@@ -537,9 +573,12 @@ impl ModelTableMetadata {
 mod tests {
     use super::*;
     use datafusion::arrow::array::StringArray;
+    use datafusion::arrow::datatypes::ArrowPrimitiveType;
     use proptest::num;
     use proptest::string;
     use proptest::{prop_assert, prop_assert_eq, proptest};
+
+    use crate::types::{ArrowTimestamp, ArrowValue};
 
     // Tests for Catalog.
     #[test]
@@ -647,6 +686,18 @@ mod tests {
     }
 
     #[test]
+    fn test_cannot_create_model_table_metadata_with_invalid_timestamp_type() {
+        let schema = Schema::new(vec![
+            Field::new("tag", DataType::Utf8, false),
+            Field::new("timestamp", DataType::UInt8, false),
+            Field::new("value", ArrowValue::DATA_TYPE, false),
+        ]);
+
+        let result = create_simple_model_table_metadata(schema);
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_cannot_create_model_table_metadata_with_invalid_tag_index() {
         let schema = get_model_table_schema();
         let result = NewModelTableMetadata::try_new(
@@ -657,6 +708,51 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cannot_create_model_table_metadata_with_invalid_tag_type() {
+        let schema = Schema::new(vec![
+            Field::new("tag", DataType::UInt8, false),
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("value", ArrowValue::DATA_TYPE, false),
+        ]);
+
+        let result = create_simple_model_table_metadata(schema);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cannot_create_model_table_metadata_with_no_fields() {
+        let schema = Schema::new(vec![
+            Field::new("tag", DataType::Utf8, false),
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+        ]);
+
+        let result = create_simple_model_table_metadata(schema);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_cannot_create_model_table_metadata_with_invalid_field_type() {
+        let schema = Schema::new(vec![
+            Field::new("tag", DataType::Utf8, false),
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("value", DataType::UInt8, false),
+        ]);
+
+        let result = create_simple_model_table_metadata(schema);
+        assert!(result.is_err());
+    }
+
+    /// Return metadata for a model table with one tag column and the timestamp column at index 1.
+    fn create_simple_model_table_metadata(schema: Schema) -> Result<NewModelTableMetadata, String> {
+        NewModelTableMetadata::try_new(
+            "table_name".to_owned(),
+            schema,
+            vec![0],
+            1,
+        )
     }
 
     #[test]
@@ -677,10 +773,10 @@ mod tests {
             Field::new("location", DataType::Utf8, false),
             Field::new("install_year", DataType::Utf8, false),
             Field::new("model", DataType::Utf8, false),
-            Field::new("timestamp", DataType::UInt64, false),
-            Field::new("power_output", DataType::Float32, false),
-            Field::new("wind_speed", DataType::Float32, false),
-            Field::new("temperature", DataType::Float32, false),
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("power_output", ArrowValue::DATA_TYPE, false),
+            Field::new("wind_speed", ArrowValue::DATA_TYPE, false),
+            Field::new("temperature", ArrowValue::DATA_TYPE, false),
         ])
     }
 

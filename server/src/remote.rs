@@ -128,6 +128,7 @@ impl FlightServiceHandler {
         schema: SchemaRef,
         request: Streaming<FlightData>,
     ) {
+        // TODO: Implement this.
         info!("Ingesting data into table '{}'.", table_name);
     }
 
@@ -184,17 +185,17 @@ impl FlightServiceHandler {
             file_path
         };
 
+        // Create an empty Apache Parquet file to save the schema.
+        let empty_batch = RecordBatch::new_empty(Arc::new(schema));
+        StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path())
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
         // Save the table in the Apache Arrow Datafusion catalog.
         self.context.session.register_parquet(
             &table_name,
             file_path.to_str().unwrap(),
             ParquetReadOptions::default(),
         ).await;
-
-        // Create an empty Apache Parquet file to save the schema.
-        let empty_batch = RecordBatch::new_empty(Arc::new(schema));
-        StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path())
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
         info!("Created table '{}'.", table_name);
         Ok(())
