@@ -37,6 +37,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::{
     array::ArrayRef, datatypes::SchemaRef, error::ArrowError, ipc::writer::IpcWriteOptions,
 };
+use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
 use object_store;
 use rusqlite::{params, Connection};
@@ -161,36 +162,41 @@ impl FlightServiceHandler {
 
     /// Create a normal table and add it to the catalog. If the table already exists or if the
     /// Apache Parquet file cannot be created, return [`Status`] error.
-    fn create_table(&self, table_name: String, schema: Schema, ) -> Result<(), Status> {
-        // Get the write lock for the catalog to ensure that multiple writes cannot happen at
-        // the same time. unwrap() is safe to use since write() only fails if the RwLock is poisoned.
-        let mut catalog = self.context.catalog.write().unwrap();
+    async fn create_table(&self, table_name: String, schema: Schema, ) -> Result<(), Status> {
+        // Modify the catalog in a separate scope to drop the RWLock as fast as possible.
+        let file_path = {
+            // Get the write lock for the catalog to ensure that multiple writes cannot happen at the
+            // same time. unwrap() is safe to use since write() only fails if the RwLock is poisoned.
+            let mut catalog = self.context.catalog.write().unwrap();
 
-        // If the table already exists, return an error.
-        let mut existing_tables = catalog.table_metadata.iter();
-        if existing_tables.any(|table| table.name == table_name) {
-            let message = format!("Table with name '{}' already exists.", table_name);
-            return Err(Status::already_exists(message));
-        }
+            let file_name = format!("{}.parquet", table_name);
+            let file_path = catalog.data_folder_path.join(file_name);
 
-        let file_name = format!("{}.parquet", table_name);
-        let file_path = catalog.data_folder_path.join(file_name);
+            // Save the table metadata in the catalog.
+            let path_str = file_path.to_str().unwrap().to_string();
+            let new_table_metadata = TableMetadata {
+                name: table_name.clone(),
+                path: path_str.clone(),
+            };
+
+            catalog.table_metadata.push(new_table_metadata);
+
+            file_path
+        };
+
+        // Save the table in the Apache Arrow Datafusion catalog.
+        self.context.session.register_parquet(
+            &table_name,
+            file_path.to_str().unwrap(),
+            ParquetReadOptions::default(),
+        ).await;
 
         // Create an empty Apache Parquet file to save the schema.
         let empty_batch = RecordBatch::new_empty(Arc::new(schema));
         StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path())
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-        // Save the table metadata in the catalog.
-        let path_str = file_path.to_str().unwrap().to_string();
-        let new_table_metadata = TableMetadata {
-            name: table_name.clone(),
-            path: path_str,
-        };
-
-        catalog.table_metadata.push(new_table_metadata);
         info!("Created table '{}'.", table_name);
-
         Ok(())
     }
 
@@ -207,13 +213,6 @@ impl FlightServiceHandler {
         // Get the write lock for the catalog to ensure that multiple writes cannot happen at
         // the same time. unwrap() is safe to use since write() only fails if the RwLock is poisoned.
         let mut catalog = self.context.catalog.write().unwrap();
-
-        // If the table already exists, return an error.
-        let mut existing_tables = catalog.new_model_table_metadata.iter();
-        if existing_tables.any(|table| table.name == table_name) {
-            let message = format!("Model table with name '{}' already exists.", table_name);
-            return Err(Status::already_exists(message));
-        }
 
         let model_table_metadata = NewModelTableMetadata::try_new(
             table_name.clone(),
@@ -452,6 +451,12 @@ impl FlightService for FlightServiceHandler {
             let table_name = str::from_utf8(table_name_bytes)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
+            // If the table already exists, return an error.
+            if self.get_table_schema_from_default_catalog(&table_name).is_ok() {
+                let message = format!("Table with name '{}' already exists.", table_name);
+                return Err(Status::already_exists(message));
+            }
+
             // Check if the table name is a valid object_store path and database table name.
             object_store::path::Path::parse(table_name)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
@@ -469,7 +474,7 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             if action.r#type == "CreateTable" {
-                self.create_table(table_name.to_owned(), schema)?;
+                self.create_table(table_name.to_owned(), schema).await?;
             } else {
                 // Extract the tag column indices from the action body. Note that since we assume
                 // each tag column index is one byte, we directly use the slice of bytes as the list
