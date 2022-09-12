@@ -28,15 +28,16 @@ pub struct BitReader<'a> {
 }
 
 impl<'a> BitReader<'a> {
+    /// Return a [`BitReader`] if `bytes` is not empty, otherwise [`String`].
     pub fn try_new(bytes: &'a [u8]) -> Result<Self, String> {
         if bytes.is_empty() {
-            Err("The byte array cannot be empty".to_owned())
+            Err("The byte array cannot be empty.".to_owned())
         } else {
             Ok(Self { next_bit: 0, bytes })
         }
     }
 
-    /// Return `true` if the reader have been exhausted, otherwise `false`.
+    /// Return [`true`] if the reader have been exhausted, otherwise [`false`].
     pub fn is_empty(&self) -> bool {
         (self.next_bit / 8) == self.bytes.len()
     }
@@ -51,12 +52,22 @@ impl<'a> BitReader<'a> {
         self.read_bits(1) == 1
     }
 
-    /// Read the next `number_of_bits` bits from the [`BitReader`].
+    /// Read the next `number_of_bits` bits from the [`BitReader`]. Assumes that
+    /// `number_of_bits` is less than or equal to 32.
     pub fn read_bits(&mut self, number_of_bits: u8) -> u32 {
+        debug_assert!(
+            number_of_bits <= 32,
+            "The number of bits to read must be less than or equal to 32."
+        );
+
         let mut value = 0;
         let start_bit = self.next_bit;
         let end_bit = self.next_bit + number_of_bits as usize;
         for bit in start_bit..end_bit {
+            // Read the byte storing the bit, compute the location of the bit in
+            // the byte, shift the bit in the byte to the rightmost position,
+            // clear the other bits in the byte, shift the output value one
+            // position to the left, and set the rightmost bit to the read bit.
             let byte = self.bytes[bit / 8];
             let shift = 7 - (bit % 8);
             let bit = (byte >> shift) as u64 & 1;
@@ -101,18 +112,21 @@ impl BitVecBuilder {
         let mut number_of_bits = number_of_bits;
 
         while number_of_bits > 0 {
-            let bits_to_write = if number_of_bits > self.remaining_bits {
+            let bits_written = if number_of_bits > self.remaining_bits {
+                // Write the next self.remaining bits from bits to self.current_byte.
                 let shift = number_of_bits - self.remaining_bits;
                 self.current_byte |= ((bits >> shift) & ((1 << self.remaining_bits) - 1)) as u8;
                 self.remaining_bits
             } else {
+                // Write the remaining number_of_bits bits from bits to self.current_byte.
                 let shift = self.remaining_bits - number_of_bits;
                 self.current_byte |= (bits << shift) as u8;
                 number_of_bits
             };
-            number_of_bits -= bits_to_write;
-            self.remaining_bits -= bits_to_write;
+            number_of_bits -= bits_written;
+            self.remaining_bits -= bits_written;
 
+            // Store self.current_byte if it is full and set its bits to zero.
             if self.remaining_bits == 0 {
                 self.bytes.push(self.current_byte);
                 self.current_byte = 0;
@@ -141,9 +155,9 @@ impl BitVecBuilder {
         self.bytes
     }
 
-    /// Set the remaining bits in the byte [`BitVecBuilder`] is currently
-    /// packing bits into to one. Then consume the [`BitVecBuilder`] and return
-    /// the appended bits packed into a [`Vec<u8>`].
+    /// Set the remaining bits to one in the byte [`BitVecBuilder`] is currently
+    /// packing bits into. Then consume the [`BitVecBuilder`] and return the
+    /// appended bits packed into a [`Vec<u8>`].
     pub fn finish_with_one_bits(mut self) -> Vec<u8> {
         if self.remaining_bits != 8 {
             let remaining_bits_to_set = 2_u8.pow(self.remaining_bits as u32) - 1;

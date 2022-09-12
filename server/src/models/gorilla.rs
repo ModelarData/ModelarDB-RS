@@ -239,6 +239,8 @@ fn decompress_values(
                 trailing_zeros = models::VALUE_SIZE_IN_BITS - meaningful_bits - leading_zeros;
             }
 
+            // Decompress the value by reading its meaningful bits, restoring
+            // its trailing zeroes through shifting, and reversing the XOR.
             let meaningful_bits = models::VALUE_SIZE_IN_BITS - leading_zeros - trailing_zeros;
             let mut value = bits.read_bits(meaningful_bits);
             value <<= trailing_zeros;
@@ -305,7 +307,6 @@ mod tests {
         assert_eq!(model_type.last_leading_zero_bits, 8);
         assert_eq!(model_type.last_trailing_zero_bits, 17);
     }
-
 
     // Tests for min().
     proptest! {

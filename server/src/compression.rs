@@ -14,8 +14,8 @@
  */
 
 //! Compress `UncompressedSegments` provided by [`StorageEngine`] using the
-//! model types in [`crate::models`] to produce compressed segments which are
-//! returned to [`StorageEngine`].
+//! model types in [`models`](crate::models) to produce compressed segments
+//! which are returned to [`StorageEngine`].
 
 use std::sync::Arc;
 
@@ -37,7 +37,7 @@ pub const GORILLA_MAXIMUM_LENGTH: usize = 50;
 
 /// Compress the regular `uncompressed_timestamps` using a start time, end time,
 /// and a sampling interval, and `uncompressed_values` within `error_bound`
-/// using the model types in [`crate::models`]. Returns
+/// using the model types in [`models`](crate::models). Returns
 /// [`CompressionError`](ModelarDBError::CompressionError) if
 /// `uncompressed_timestamps` and `uncompressed_values` have different lengths,
 /// otherwise the resulting compressed segments are returned as a
@@ -80,9 +80,9 @@ pub fn try_compress(
 }
 
 /// A compressed segment being built from an uncompressed segment using the
-/// model types in [`crate::models`]. Each of the model types is used to fit
-/// models to the data points, and then the model that uses the fewest number of
-/// bytes per value is selected.
+/// model types in [`models`](crate::models). Each of the model types is used to
+/// fit models to the data points, and then the model that uses the fewest
+/// number of bytes per value is selected.
 struct CompressedSegmentBuilder<'a> {
     /// The regular timestamps of the uncompressed segment the compressed
     /// segment is being built from.

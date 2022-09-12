@@ -41,7 +41,7 @@ pub type Value = std::primitive::f32;
 pub type ArrowValue = datafusion::arrow::datatypes::Float32Type;
 #[cfg(test)] // Proptest is a development dependency.
 pub mod tests {
-    // proptest::num::i64 is not a type and signed integer for compatibility with tables.rs.
+    // proptest::num::i64 is not a type. A signed integer is used for compatibility with tables.rs.
     pub use proptest::num::i64 as ProptestTimestamp;
 
     // proptest::num::f32 is not a type.
