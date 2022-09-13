@@ -45,7 +45,7 @@ use crate::types::{Timestamp, TimestampArray, TimestampBuilder};
 /// number of data points in the segment with prefix zeros stripped, and if it
 /// is irregular, the timestamp's delta-of-delta is computed and then encoded
 /// using a variable length binary encoding. The first bit that is written to
-/// the returned [`Vec`] is flag that indicates if the time series was regular
+/// the returned [`Vec`] is a flag that indicates if the time series was regular
 /// (a zero bit is written) or if it was irregular (a one bit is written).
 pub fn compress_residual_timestamps(uncompressed_timestamps: &TimestampArray) -> Vec<u8> {
     // Nothing to do as the segments already store the first and last timestamp.
