@@ -248,7 +248,10 @@ fn decompress_all_irregular_timestamps(
             2 => read_decode_and_compute_delta(&mut bits, 9, last_delta),  // Flag is 110.
             3 => read_decode_and_compute_delta(&mut bits, 12, last_delta), // Flag is 1110.
             4 => last_delta + bits.read_bits(32),                          // Flag is 1111.
-            _ => panic!("Unknown encoding of timestamps."),
+            _ => panic!(
+                "Unknown timestamp encoding with {} leading one bits.",
+                leading_one_bits
+            ),
         };
 
         timestamp += delta as i64;

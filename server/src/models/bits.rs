@@ -31,7 +31,7 @@ impl<'a> BitReader<'a> {
     /// Return a [`BitReader`] if `bytes` is not empty, otherwise [`String`].
     pub fn try_new(bytes: &'a [u8]) -> Result<Self, String> {
         if bytes.is_empty() {
-            Err("The byte array cannot be empty.".to_owned())
+            Err("The byte array must not be empty.".to_owned())
         } else {
             Ok(Self { next_bit: 0, bytes })
         }
