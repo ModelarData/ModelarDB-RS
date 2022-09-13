@@ -162,7 +162,7 @@ impl UncompressedDataManager {
 
         // Check if the tag hash is in the cache. If it is, retrieve it. If it is not, create a new
         // one and save it both in the cache and in the model_table_tags table.
-        if let Some(tag_hash) = self.tag_value_hashes.get(cache_key.as_str()) {
+        if let Some(tag_hash) = self.tag_value_hashes.get(&cache_key) {
             Ok(*tag_hash)
         } else {
             // Generate the 54-bit tag hash based on the tag values of the record batch and model table name.
@@ -214,12 +214,7 @@ impl UncompressedDataManager {
 
     /// Insert a single data point into the in-memory buffer. Return [`OK`] if the data point was
     /// inserted successfully, otherwise return [`Err`].
-    fn insert_data_point(
-        &mut self,
-        key: u64,
-        timestamp: Timestamp,
-        value: Value,
-    ) -> Result<(), String> {
+    fn insert_data_point(&mut self, key: u64, timestamp: Timestamp, value: Value)  {
         info!(
             "Inserting data point ({}, {}) into segment.",
             timestamp, value
@@ -256,8 +251,6 @@ impl UncompressedDataManager {
             segment.insert_data(timestamp, value);
             self.uncompressed_data.insert(key, segment);
         }
-
-        Ok(())
     }
 
     /// Remove the oldest [`FinishedSegment`] from the queue and return it. Return [`None`] if the
@@ -314,10 +307,10 @@ impl UncompressedDataManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
     use std::path::Path;
     use std::sync::Arc;
 
+    use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
     use tempfile::{tempdir, TempDir};
 
     use crate::storage::BUILDER_CAPACITY;
@@ -423,7 +416,7 @@ mod tests {
         (model_table_metadata, data)
     }
 
-    // TODO: This is duplicated from function in remote. Change this when metadata component exists.
+    // TODO: This is duplicated from a function in remote. Change this when the metadata component exists.
     /// Create the table in the metadata database that contains the tag hashes.
     fn create_model_table_tags_table(model_table_metadata: &NewModelTableMetadata, path: &Path) {
         let database_path = path.join("metadata.sqlite3");

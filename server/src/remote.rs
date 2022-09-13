@@ -125,8 +125,8 @@ impl FlightServiceHandler {
     fn ingest_into_table(
         &self,
         table_name: &str,
-        schema: SchemaRef,
-        request: Streaming<FlightData>,
+        _schema: SchemaRef,
+        _request: Streaming<FlightData>,
     ) {
         // TODO: Implement this.
         info!("Ingesting data into table '{}'.", table_name);
@@ -155,7 +155,9 @@ impl FlightServiceHandler {
 
             // unwrap() is safe to use since write() only fails if the RwLock is poisoned.
             let mut storage_engine = self.context.storage_engine.write().unwrap();
-            storage_engine.insert_data(model_table.clone(), record_batch);
+            storage_engine.insert_data(model_table.clone(), record_batch).map_err(|error| {
+                Status::internal(format!("Data could not be ingested: {}", error))
+            })?;
         }
 
         Ok(())
@@ -195,7 +197,7 @@ impl FlightServiceHandler {
             &table_name,
             file_path.to_str().unwrap(),
             ParquetReadOptions::default(),
-        ).await;
+        ).await.map_err(|error| Status::invalid_argument(error.to_string()))?;
 
         info!("Created table '{}'.", table_name);
         Ok(())
@@ -403,16 +405,10 @@ impl FlightService for FlightServiceHandler {
 
         // Handle the data based on whether it is a normal table or a model table.
         if let Some(model_table) = maybe_model_table {
-            self.ingest_into_model_table(model_table, &mut request).await;
+            self.ingest_into_model_table(model_table, &mut request).await?;
         } else {
             // If the table is not a model table, check if it can be found in the datafusion catalog.
-            let schema = self
-                .get_table_schema_from_default_catalog(&table_name)
-                .map_err(|error| {
-                    error!("Received RecordBatch for the missing table {}.", table_name);
-                    error
-                })?;
-
+            let schema = self.get_table_schema_from_default_catalog(&table_name)?;
             self.ingest_into_table(table_name, schema, request);
         }
 
