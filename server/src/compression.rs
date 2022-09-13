@@ -14,8 +14,8 @@
  */
 
 //! Compress `UncompressedSegments` provided by [`StorageEngine`] using the
-//! model types in [`models`] to produce compressed segments which are returned
-//! to [`StorageEngine`].
+//! model types in [`models`](crate::models) to produce compressed segments
+//! which are returned to [`StorageEngine`].
 
 use std::sync::Arc;
 
@@ -23,8 +23,9 @@ use datafusion::arrow::array::{BinaryBuilder, Float32Builder, UInt8Builder};
 use datafusion::arrow::record_batch::RecordBatch;
 
 use crate::errors::ModelarDBError;
-use crate::models;
-use crate::models::{gorilla::Gorilla, pmcmean::PMCMean, swing::Swing, ErrorBound, SelectedModel};
+use crate::models::{
+    gorilla::Gorilla, pmcmean::PMCMean, swing::Swing, timestamps, ErrorBound, SelectedModel,
+};
 use crate::storage::StorageEngine;
 use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder};
 
@@ -32,11 +33,11 @@ use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArra
 /// Maximum number of data points that models of type Gorilla can represent per
 /// compressed segment. As models of type Gorilla use lossless compression they
 /// will never exceed the user-defined error bounds.
-const GORILLA_MAXIMUM_LENGTH: usize = 50;
+pub const GORILLA_MAXIMUM_LENGTH: usize = 50;
 
 /// Compress the regular `uncompressed_timestamps` using a start time, end time,
 /// and a sampling interval, and `uncompressed_values` within `error_bound`
-/// using the model types in [`models`]. Returns
+/// using the model types in [`models`](crate::models). Returns
 /// [`CompressionError`](ModelarDBError::CompressionError) if
 /// `uncompressed_timestamps` and `uncompressed_values` have different lengths,
 /// otherwise the resulting compressed segments are returned as a
@@ -79,9 +80,9 @@ pub fn try_compress(
 }
 
 /// A compressed segment being built from an uncompressed segment using the
-/// model types in [`models`]. Each of the model types is used to fit models to
-/// the data points, and then the model that uses the fewest number of bytes per
-/// value is selected.
+/// model types in [`models`](crate::models). Each of the model types is used to
+/// fit models to the data points, and then the model that uses the fewest
+/// number of bytes per value is selected.
 struct CompressedSegmentBuilder<'a> {
     /// The regular timestamps of the uncompressed segment the compressed
     /// segment is being built from.
@@ -192,12 +193,12 @@ impl<'a> CompressedSegmentBuilder<'a> {
         // Add timestamps and error.
         let start_time = self.uncompressed_timestamps.value(self.start_index);
         let end_time = self.uncompressed_timestamps.value(end_index);
-        let timestamps = &[]; // TODO: compress irregular timestamps.
+        let timestamps = timestamps::compress_residual_timestamps(&self.uncompressed_timestamps);
         let error = f32::NAN; // TODO: compute and store the actual error.
 
         compressed_record_batch_builder.append_compressed_segment(
             model_type_id,
-            timestamps,
+            &timestamps,
             start_time,
             end_time,
             &values,
@@ -289,8 +290,12 @@ impl CompressedSegmentBatchBuilder {
 
 #[cfg(test)]
 mod tests {
+    // TODO: add tests for irregular time series when refactoring the query engine.
     use super::*;
+
     use datafusion::arrow::array::UInt8Array;
+
+    use crate::models;
 
     // Tests for try_compress().
     #[test]

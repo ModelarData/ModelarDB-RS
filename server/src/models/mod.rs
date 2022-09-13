@@ -21,6 +21,8 @@
 pub mod gorilla;
 pub mod pmcmean;
 pub mod swing;
+pub mod bits;
+pub mod timestamps;
 
 use std::cmp::{Ordering, PartialOrd};
 use std::mem;
