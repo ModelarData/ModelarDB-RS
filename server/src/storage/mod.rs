@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Converts raw MQTT messages to uncompressed data points, stores uncompressed data points temporarily
+//! Converts a batch of data to uncompressed data points, stores uncompressed data points temporarily
 //! in an in-memory buffer that spills to Apache Parquet files, and stores data points compressed as
 //! models in memory to batch compressed data before saving it to Apache Parquet files.
 
@@ -69,14 +69,14 @@ impl StorageEngine {
         }
     }
 
-    /// Pass `data` to [`UncompressedDataManager`]. Return [`Ok`] if the data was successfully
-    /// inserted, otherwise return [`Err`].
-    pub fn insert_data(
+    /// Pass `data_points` to [`UncompressedDataManager`]. Return [`Ok`] if the data was
+    /// successfully inserted, otherwise return [`Err`].
+    pub fn insert_data_points(
         &mut self,
-        model_table: NewModelTableMetadata,
-        data: RecordBatch
+        model_table: &NewModelTableMetadata,
+        data_points: &RecordBatch
     ) -> Result<(), String> {
-        self.uncompressed_data_manager.insert_data(model_table, data)
+        self.uncompressed_data_manager.insert_data_points(model_table, data_points)
     }
 
     /// Retrieve the oldest [`FinishedSegment`] from [`UncompressedDataManager`] and return it.

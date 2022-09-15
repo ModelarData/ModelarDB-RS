@@ -28,6 +28,8 @@ use std::fmt::{Display, Formatter};
 pub enum ModelarDBError {
     /// Error returned by the model types.
     CompressionError(String),
+    /// Error returned when failing to create a new instance of a struct.
+    ConfigurationError(String),
 }
 
 impl Error for ModelarDBError {}
@@ -36,6 +38,7 @@ impl Display for ModelarDBError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
             ModelarDBError::CompressionError(reason) => write!(f, "Compression Error: {}", reason),
+            ModelarDBError::ConfigurationError(reason) => write!(f, "Configuration Error: {}", reason)
         }
     }
 }

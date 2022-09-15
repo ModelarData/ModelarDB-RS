@@ -33,7 +33,11 @@ use crate::storage::{StorageEngine, BUILDER_CAPACITY};
 use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
 
 /// Shared functionality between different types of uncompressed segments, such as [`SegmentBuilder`]
-/// and [`SpilledSegment`].
+/// and [`SpilledSegment`]. Since the uncompressed segments are part of the storage engine, which
+/// is part of the context controlled by the asynchronous [`FlightServiceHandler`](crate::remote::FlightServiceHandler),
+/// uncompressed segments have to adhere to [`Sync`] and [`Send`]. Both [`SegmentBuilder`]
+/// and [`SpilledSegment`] only consist of either primitive types or aggregates of primitive
+/// types, which means the requirements of [`Sync`] and [`Send`] are fulfilled.
 pub trait UncompressedSegment: Sync + Send {
     fn get_record_batch(&mut self) -> Result<RecordBatch, ParquetError>;
 
@@ -242,7 +246,7 @@ mod tests {
     // Tests for SegmentBuilder.
     #[test]
     fn test_get_segment_builder_memory_size() {
-        let mut segment_builder = SegmentBuilder::new();
+        let segment_builder = SegmentBuilder::new();
 
         let expected = (segment_builder.timestamps.capacity() * mem::size_of::<Timestamp>())
             + (segment_builder.values.capacity() * mem::size_of::<Value>());
@@ -252,7 +256,7 @@ mod tests {
 
     #[test]
     fn test_get_length() {
-        let mut segment_builder = SegmentBuilder::new();
+        let segment_builder = SegmentBuilder::new();
 
         assert_eq!(segment_builder.get_length(), 0);
     }
@@ -275,7 +279,7 @@ mod tests {
 
     #[test]
     fn test_check_segment_is_not_full() {
-        let mut segment_builder = SegmentBuilder::new();
+        let segment_builder = SegmentBuilder::new();
 
         assert!(!segment_builder.is_full());
     }

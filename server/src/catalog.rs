@@ -38,6 +38,7 @@ use object_store::path::Path as ObjectStorePath;
 use rusqlite::types::Type::Blob;
 use rusqlite::Connection;
 use tracing::{error, info, warn};
+use crate::errors::ModelarDBError;
 
 use crate::storage::StorageEngine;
 use crate::types::{ArrowTimestamp, ArrowValue};
@@ -308,59 +309,74 @@ pub struct NewModelTableMetadata {
 }
 
 impl NewModelTableMetadata {
-    /// Create a new model table with the given metadata. If the timestamp or tag column indices
-    /// does not match `schema`, or the types are not correct, or if the timestamp column index is
-    /// in the tag column indices, or there are duplicates in the tag column indices, or there are
-    /// more than 1024 columns, or there are no field columns, [`Err`] is returned.
+    /// Create a new model table with the given metadata. If any of the following conditions are
+    /// true, [`ConfigurationError`](ModelarDBError::ConfigurationError) is returned:
+    /// * The timestamp or tag column indices does not match `schema`.
+    /// * The types of the fields are not correct.
+    /// * The timestamp column index is in the tag column indices.
+    /// * There are duplicates in the tag column indices.
+    /// * There are more than 1024 columns.
+    /// * There are no field columns.
     pub fn try_new(
         name: String,
         schema: Schema,
         tag_column_indices: Vec<u8>,
         timestamp_column_index: u8,
-    ) -> Result<Self, String> {
+    ) -> Result<Self, ModelarDBError> {
         // If the timestamp index is in the tag indices, return an error.
         if tag_column_indices.contains(&timestamp_column_index) {
-            return Err("The timestamp column cannot be a tag column.".to_owned());
+            return Err(ModelarDBError::ConfigurationError(
+                "The timestamp column cannot be a tag column.".to_owned()
+            ));
         };
 
         if let Some(timestamp_field) = schema.fields.get(timestamp_column_index as usize) {
             // If the field of the timestamp column is not of type ArrowTimestamp, return an error.
             if !timestamp_field.data_type().equals_datatype(&ArrowTimestamp::DATA_TYPE) {
-                return Err("The timestamp column does not have the correct data type.".to_owned());
+                return Err(ModelarDBError::ConfigurationError(format!(
+                    "The timestamp column with index '{}' is not of type '{}'.",
+                    timestamp_column_index,
+                    ArrowTimestamp::DATA_TYPE
+                )));
             }
         } else {
             // If the index of the timestamp column does not match the schema, return an error.
-            return Err(
-                "The timestamp column index does not match a field in the schema.".to_owned(),
-            );
+            return Err(ModelarDBError::ConfigurationError(format!(
+                "The timestamp column index '{}' does not match a field in the schema.",
+                timestamp_column_index
+            )));
         }
 
         for tag_column_index in &tag_column_indices {
             if let Some(tag_field) = schema.fields.get(*tag_column_index as usize) {
                 // If the fields of the tag columns is not of type Utf8, return an error.
                 if !tag_field.data_type().equals_datatype(&DataType::Utf8) {
-                    return Err(format!(
-                        "The tag column with index '{}' does not have the correct data type.",
-                        tag_column_index
-                    ));
+                    return Err(ModelarDBError::ConfigurationError(format!(
+                        "The tag column with index '{}' is not of type '{}'.",
+                        tag_column_index,
+                        DataType::Utf8
+                    )));
                 }
             } else {
                 // If the indices for the tag columns does not match the schema, return an error.
-                return Err(format!(
+                return Err(ModelarDBError::ConfigurationError(format!(
                     "The tag column index '{}' does not match a field in the schema.",
                     tag_column_index
-                ));
+                )));
             }
         }
 
         let field_column_indices: Vec<usize> = (0..schema.fields().len()).filter(|index| {
+            // TODO: Change this cast when indices in the action body are changed to use two bytes.
             let index = *index as u8;
             index != timestamp_column_index && !tag_column_indices.contains(&index)
         }).collect();
 
         // If there are no field columns, return an error.
         if field_column_indices.is_empty() {
-            return Err("There needs to be at least one field column.".to_owned());
+            return Err(ModelarDBError::ConfigurationError(
+                "There needs to be at least one field column.".to_owned()
+            ));
         } else {
             for field_column_index in &field_column_indices {
                 // unwrap() is safe to use since the indices are collected from the schema fields.
@@ -368,10 +384,11 @@ impl NewModelTableMetadata {
 
                 // If the fields of the field columns is not of type ArrowValue, return an error.
                 if !field.data_type().equals_datatype(&ArrowValue::DATA_TYPE) {
-                    return Err(format!(
-                        "The field column with index '{}' does not have the correct data type.",
-                        field_column_index
-                    ));
+                    return Err(ModelarDBError::ConfigurationError(format!(
+                        "The field column with index '{}' is not of type '{}'.",
+                        field_column_index,
+                        ArrowValue::DATA_TYPE
+                    )));
                 }
             }
         }
@@ -384,13 +401,17 @@ impl NewModelTableMetadata {
             .into_iter()
             .all(|x| uniq.insert(x))
         {
-            return Err("The tag column indices cannot have duplicates.".to_owned());
+            return Err(ModelarDBError::ConfigurationError(
+                "The tag column indices cannot have duplicates.".to_owned()
+            ));
         }
 
         // If there are more than 1024 columns, return an error. This limitation is necessary
         // since 10 bits are used to identify the column index of the data in the 64-bit hash key.
         if schema.fields.len() > 1024 {
-            return Err("There cannot be more than 1024 columns in the model table.".to_owned());
+            return Err(ModelarDBError::ConfigurationError(
+                "There cannot be more than 1024 columns in the model table.".to_owned()
+            ));
         }
 
         Ok(Self {
@@ -746,7 +767,9 @@ mod tests {
     }
 
     /// Return metadata for a model table with one tag column and the timestamp column at index 1.
-    fn create_simple_model_table_metadata(schema: Schema) -> Result<NewModelTableMetadata, String> {
+    fn create_simple_model_table_metadata(
+        schema: Schema
+    ) -> Result<NewModelTableMetadata, ModelarDBError> {
         NewModelTableMetadata::try_new(
             "table_name".to_owned(),
             schema,

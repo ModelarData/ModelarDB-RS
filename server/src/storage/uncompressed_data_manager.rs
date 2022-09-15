@@ -31,7 +31,7 @@ use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
 
 const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
 
-/// Converts raw MQTT messages to uncompressed data points and stores uncompressed data points
+/// Converts a batch of data to uncompressed data points and stores uncompressed data points
 /// temporarily in an in-memory buffer that spills to Apache Parquet files. When finished the data
 /// is made available for compression.
 pub struct UncompressedDataManager {
@@ -59,25 +59,25 @@ impl UncompressedDataManager {
         }
     }
 
-    /// Parse `data` and insert it into the in-memory buffer. The data is first parsed into multiple
-    /// univariate time series based on `model_table`. These individual time series are then
-    /// inserted into the storage engine. Return [`Ok`] if the data was successfully inserted,
-    /// otherwise return [`Err`].
-    pub fn insert_data(
+    /// Parse `data_points` and insert it into the in-memory buffer. The data points are first parsed
+    /// into multiple univariate time series based on `model_table`. These individual time series
+    /// are then inserted into the storage engine. Return [`Ok`] if the data was successfully
+    /// inserted, otherwise return [`Err`].
+    pub fn insert_data_points(
         &mut self,
-        model_table: NewModelTableMetadata,
-        data: RecordBatch,
+        model_table: &NewModelTableMetadata,
+        data_points: &RecordBatch,
     ) -> Result<(), String> {
-        let _span = info_span!("insert_data", table = model_table.name).entered();
+        let _span = info_span!("insert_data_points", table = model_table.name).entered();
         info!(
             "Received record batch with {} data points for the table '{}'.",
-            data.num_rows(),
+            data_points.num_rows(),
             model_table.name
         );
 
         // Prepare the timestamp column for iteration.
         let timestamp_index = model_table.timestamp_column_index as usize;
-        let timestamps: &TimestampArray = data
+        let timestamps: &TimestampArray = data_points
             .column(timestamp_index)
             .as_any()
             .downcast_ref()
@@ -88,7 +88,7 @@ impl UncompressedDataManager {
             .tag_column_indices
             .iter()
             .map(|index| {
-                data.column(*index as usize)
+                data_points.column(*index as usize)
                     .as_any()
                     .downcast_ref()
                     .unwrap()
@@ -110,7 +110,7 @@ impl UncompressedDataManager {
                 if not_timestamp_column && not_tag_column {
                     Some((
                         index,
-                        data.column(index as usize).as_any().downcast_ref().unwrap(),
+                        data_points.column(index as usize).as_any().downcast_ref().unwrap(),
                     ))
                 } else {
                     None
@@ -121,13 +121,13 @@ impl UncompressedDataManager {
         // For each row in the data, generate a tag hash, extract the individual measurements,
         // and insert them into the storage engine.
         for (index, timestamp) in timestamps.iter().enumerate() {
-            let tag_values = tag_column_arrays
+            let tag_values: Vec<String> = tag_column_arrays
                 .iter()
                 .map(|array| array.value(index).to_string())
                 .collect();
 
             let tag_hash = self
-                .get_tag_hash(model_table.clone(), tag_values)
+                .get_tag_hash(&model_table, &tag_values)
                 .map_err(|error| format!("Tag hash could not be saved: {}", error.to_string()))?;
 
             // For each field column, generate the 64-bit key, create a single data point, and
@@ -150,14 +150,14 @@ impl UncompressedDataManager {
     /// the table could not be accessed, return [`rusqlite::Error`].
     fn get_tag_hash(
         &mut self,
-        model_table: NewModelTableMetadata,
-        tag_values: Vec<String>,
+        model_table: &NewModelTableMetadata,
+        tag_values: &Vec<String>,
     ) -> Result<u64, rusqlite::Error> {
         let cache_key = {
             let mut cache_key_list = tag_values.clone();
             cache_key_list.push(model_table.name.clone());
 
-            cache_key_list.join("")
+            cache_key_list.join(";")
         };
 
         // Check if the tag hash is in the cache. If it is, retrieve it. If it is not, create a new
@@ -168,13 +168,9 @@ impl UncompressedDataManager {
             // Generate the 54-bit tag hash based on the tag values of the record batch and model table name.
             let tag_hash = {
                 let mut hasher = DefaultHasher::new();
-                hasher.write(model_table.name.as_bytes());
+                hasher.write(cache_key.as_bytes());
 
-                for tag_value in &tag_values {
-                    hasher.write(tag_value.as_bytes());
-                }
-
-                // The 64-bit hash is shifted to make the final 10 bits 0.
+                // The 64-bit hash is shifted to make the 10 least significant bits 0.
                 hasher.finish() << 10
             };
 
@@ -215,6 +211,7 @@ impl UncompressedDataManager {
     /// Insert a single data point into the in-memory buffer. Return [`OK`] if the data point was
     /// inserted successfully, otherwise return [`Err`].
     fn insert_data_point(&mut self, key: u64, timestamp: Timestamp, value: Value)  {
+        let _span = info_span!("insert_data_point", key = key).entered();
         info!(
             "Inserting data point ({}, {}) into segment.",
             timestamp, value
@@ -316,13 +313,15 @@ mod tests {
     use crate::storage::BUILDER_CAPACITY;
     use crate::types::{ArrowTimestamp, ArrowValue};
 
+    const KEY: u64 = 1;
+
     #[test]
     fn test_can_insert_record_batch() {
         let (temp_dir, mut data_manager) = create_uncompressed_data_manager();
 
         let (model_table, data) = get_uncompressed_data(1);
         create_model_table_tags_table(&model_table, temp_dir.path());
-        data_manager.insert_data(model_table, data);
+        data_manager.insert_data_points(&model_table, &data);
 
         // Two separate builders are created since the inserted data has two field columns.
         assert_eq!(data_manager.uncompressed_data.keys().len(), 2)
@@ -335,7 +334,7 @@ mod tests {
         let (model_table, data) = get_uncompressed_data(2);
         create_model_table_tags_table(&model_table, temp_dir.path());
 
-        data_manager.insert_data(model_table, data);
+        data_manager.insert_data_points(&model_table, &data);
 
         // Since the tag is different for each data point, 4 separate builders should be created.
         assert_eq!(data_manager.uncompressed_data.keys().len(), 4)
@@ -348,7 +347,7 @@ mod tests {
         let (model_table, _data) = get_uncompressed_data(2);
         create_model_table_tags_table(&model_table, temp_dir.path());
 
-        let result = data_manager.get_tag_hash(model_table, vec!["tag1".to_owned()]);
+        let result = data_manager.get_tag_hash(&model_table, &vec!["tag1".to_owned()]);
         assert!(result.is_ok());
 
         // When a new tag hash is retrieved, the hash should be saved in the cache.
@@ -371,11 +370,11 @@ mod tests {
         let (model_table, _data) = get_uncompressed_data(1);
         create_model_table_tags_table(&model_table, temp_dir.path());
 
-        data_manager.get_tag_hash(model_table.clone(), vec!["tag1".to_owned()]);
+        data_manager.get_tag_hash(&model_table, &vec!["tag1".to_owned()]);
         assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);
 
         // When getting the same tag hash again, it should just be retrieved from the cache.
-        let result = data_manager.get_tag_hash(model_table, vec!["tag1".to_owned()]);
+        let result = data_manager.get_tag_hash(&model_table, &vec!["tag1".to_owned()]);
 
         assert!(result.is_ok());
         assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);
@@ -442,20 +441,19 @@ mod tests {
             )
             .as_str(),
             (),
-        );
+        ).unwrap();
     }
 
     #[test]
     fn test_can_insert_data_point_into_new_segment() {
-        let key = 1;
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        insert_data_points(1, &mut data_manager, key);
+        insert_data_points(1, &mut data_manager, KEY);
 
-        assert!(data_manager.uncompressed_data.contains_key(&key));
+        assert!(data_manager.uncompressed_data.contains_key(&KEY));
         assert_eq!(
             data_manager
                 .uncompressed_data
-                .get(&key)
+                .get(&KEY)
                 .unwrap()
                 .get_length(),
             1
@@ -464,15 +462,14 @@ mod tests {
 
     #[test]
     fn test_can_insert_message_into_existing_segment() {
-        let key = 1;
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        insert_data_points(2, &mut data_manager, key);
+        insert_data_points(2, &mut data_manager, KEY);
 
-        assert!(data_manager.uncompressed_data.contains_key(&key));
+        assert!(data_manager.uncompressed_data.contains_key(&KEY));
         assert_eq!(
             data_manager
                 .uncompressed_data
-                .get(&key)
+                .get(&KEY)
                 .unwrap()
                 .get_length(),
             2
@@ -482,7 +479,7 @@ mod tests {
     #[test]
     fn test_can_get_finished_segment_when_finished() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        insert_data_points(BUILDER_CAPACITY, &mut data_manager, 1);
+        insert_data_points(BUILDER_CAPACITY, &mut data_manager, KEY);
 
         assert!(data_manager.get_finished_segment().is_some());
     }
@@ -490,7 +487,7 @@ mod tests {
     #[test]
     fn test_can_get_multiple_finished_segments_when_multiple_finished() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        insert_data_points(BUILDER_CAPACITY * 2, &mut data_manager, 1);
+        insert_data_points(BUILDER_CAPACITY * 2, &mut data_manager, KEY);
 
         assert!(data_manager.get_finished_segment().is_some());
         assert!(data_manager.get_finished_segment().is_some());
@@ -512,7 +509,7 @@ mod tests {
         // If there is enough memory to hold n full segments, we need n + 1 to spill a segment.
         let max_full_segments = reserved_memory / SegmentBuilder::get_memory_size();
         let message_count = (max_full_segments * BUILDER_CAPACITY) + 1;
-        insert_data_points(message_count, &mut data_manager, 1);
+        insert_data_points(message_count, &mut data_manager, KEY);
 
         // The first FinishedSegment should have a memory size of 0 since it is spilled to disk.
         let first_finished = data_manager.finished_queue.pop_front().unwrap();
@@ -520,14 +517,14 @@ mod tests {
 
         // The FinishedSegment should be spilled to the "uncompressed" folder under the key.
         let data_folder_path = Path::new(&data_manager.data_folder_path);
-        let uncompressed_path = data_folder_path.join("1/uncompressed");
+        let uncompressed_path = data_folder_path.join(format!("{}/uncompressed", KEY));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1);
     }
 
     #[test]
     fn test_ignore_already_spilled_segments_when_spilling() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        insert_data_points(BUILDER_CAPACITY * 2, &mut data_manager, 1);
+        insert_data_points(BUILDER_CAPACITY * 2, &mut data_manager, KEY);
 
         data_manager.spill_finished_segment();
         // When spilling one more, the first FinishedSegment should be ignored since it is already spilled.
@@ -540,7 +537,7 @@ mod tests {
 
         // The finished segments should be spilled to the "uncompressed" folder under the key.
         let data_folder_path = Path::new(&data_manager.data_folder_path);
-        let uncompressed_path = data_folder_path.join("1/uncompressed");
+        let uncompressed_path = data_folder_path.join(format!("{}/uncompressed", KEY));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 2);
     }
 
@@ -548,7 +545,7 @@ mod tests {
     fn test_remaining_memory_incremented_when_spilling_finished_segment() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
 
-        insert_data_points(BUILDER_CAPACITY, &mut data_manager, 1);
+        insert_data_points(BUILDER_CAPACITY, &mut data_manager, KEY);
         let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
         data_manager.spill_finished_segment();
 
@@ -560,7 +557,7 @@ mod tests {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
         let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
 
-        insert_data_points(1, &mut data_manager, 1);
+        insert_data_points(1, &mut data_manager, KEY);
 
         assert!(reserved_memory > data_manager.uncompressed_remaining_memory_in_bytes);
     }
@@ -568,7 +565,7 @@ mod tests {
     #[test]
     fn test_remaining_memory_incremented_when_popping_in_memory() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        insert_data_points(BUILDER_CAPACITY, &mut data_manager, 1);
+        insert_data_points(BUILDER_CAPACITY, &mut data_manager, KEY);
 
         let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
         data_manager.get_finished_segment();
@@ -579,7 +576,7 @@ mod tests {
     #[test]
     fn test_remaining_memory_not_incremented_when_popping_spilled() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        insert_data_points(BUILDER_CAPACITY, &mut data_manager, 1);
+        insert_data_points(BUILDER_CAPACITY, &mut data_manager, KEY);
 
         data_manager.spill_finished_segment();
         let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();

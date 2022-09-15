@@ -126,27 +126,30 @@ impl FlightServiceHandler {
         &self,
         table_name: &str,
         _schema: SchemaRef,
-        _request: Streaming<FlightData>,
+        _flight_data_stream: Streaming<FlightData>,
     ) {
         // TODO: Implement this.
-        info!("Ingesting data into table '{}'.", table_name);
+        error!(
+            "Received data for table '{}' but ingesting data into tables is not supported yet.",
+            table_name
+        );
     }
 
     /// While there is still more data to receive, ingest the data into the storage engine.
     async fn ingest_into_model_table(
         &self,
-        model_table: NewModelTableMetadata,
-        request: &mut Streaming<FlightData>,
+        model_table: &NewModelTableMetadata,
+        flight_data_stream: &mut Streaming<FlightData>,
     ) -> Result<(), Status> {
         info!("Ingesting data into model table '{}'.", model_table.name);
 
         // Retrieve the data until the request does not contain any more data.
-        while let Some(flight_data) = request.next().await {
+        while let Some(flight_data) = flight_data_stream.next().await {
             let flight_data = flight_data?;
             debug_assert_eq!(flight_data.flight_descriptor, None);
 
             // Convert the flight data to a record batch.
-            let record_batch = utils::flight_data_to_arrow_batch(
+            let data_points = utils::flight_data_to_arrow_batch(
                 &flight_data,
                 SchemaRef::from(model_table.schema.clone()),
                 &self.dictionaries_by_id,
@@ -155,7 +158,10 @@ impl FlightServiceHandler {
 
             // unwrap() is safe to use since write() only fails if the RwLock is poisoned.
             let mut storage_engine = self.context.storage_engine.write().unwrap();
-            storage_engine.insert_data(model_table.clone(), record_batch).map_err(|error| {
+
+            // Note that the storage engine returns when the data is stored in memory, which means
+            // the data could be lost if the system crashes right after ingesting the data.
+            storage_engine.insert_data_points(&model_table, &data_points).map_err(|error| {
                 Status::internal(format!("Data could not be ingested: {}", error))
             })?;
         }
@@ -379,10 +385,10 @@ impl FlightService for FlightServiceHandler {
         &self,
         request: Request<Streaming<FlightData>>,
     ) -> Result<Response<Self::DoPutStream>, Status> {
-        let mut request = request.into_inner();
+        let mut flight_data_stream = request.into_inner();
 
         // Extract the table name.
-        let flight_data = request
+        let flight_data = flight_data_stream
             .next()
             .await
             .ok_or_else(|| Status::invalid_argument("Missing FlightData."))??;
@@ -405,11 +411,11 @@ impl FlightService for FlightServiceHandler {
 
         // Handle the data based on whether it is a normal table or a model table.
         if let Some(model_table) = maybe_model_table {
-            self.ingest_into_model_table(model_table, &mut request).await?;
+            self.ingest_into_model_table(&model_table, &mut flight_data_stream).await?;
         } else {
             // If the table is not a model table, check if it can be found in the datafusion catalog.
             let schema = self.get_table_schema_from_default_catalog(&table_name)?;
-            self.ingest_into_table(table_name, schema, request);
+            self.ingest_into_table(table_name, schema, flight_data_stream);
         }
 
         // Confirm the data points were received.

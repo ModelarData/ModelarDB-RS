@@ -56,7 +56,7 @@ pub struct Context {
     runtime: Runtime,
     /// Main interface for Apache Arrow DataFusion.
     session: SessionContext,
-    /// Engine to manage all uncompressed and compressed data in the system.
+    /// Manages all uncompressed and compressed data in the system.
     storage_engine: RwLock<StorageEngine>,
 }
 

@@ -118,29 +118,30 @@ mod tests {
 
     use crate::storage::test_util;
 
+    const KEY: u64 = 1;
+
     #[test]
     #[should_panic(expected = "Schema of RecordBatch does not match compressed segment schema.")]
     fn test_panic_if_inserting_invalid_compressed_segment() {
         let invalid = test_util::get_invalid_compressed_segment_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        data_manager.insert_compressed_segment(1, invalid);
+        data_manager.insert_compressed_segment(KEY, invalid);
     }
 
     #[test]
     fn test_can_insert_compressed_segment_into_new_time_series() {
-        let key: u64 = 1;
         let segment = test_util::get_compressed_segment_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        data_manager.insert_compressed_segment(key, segment);
+        data_manager.insert_compressed_segment(KEY, segment);
 
-        assert!(data_manager.compressed_data.contains_key(&key));
-        assert_eq!(data_manager.compressed_queue.pop_front().unwrap(), key);
+        assert!(data_manager.compressed_data.contains_key(&KEY));
+        assert_eq!(data_manager.compressed_queue.pop_front().unwrap(), KEY);
         assert!(
             data_manager
                 .compressed_data
-                .get(&key)
+                .get(&KEY)
                 .unwrap()
                 .size_in_bytes
                 > 0
@@ -149,23 +150,22 @@ mod tests {
 
     #[test]
     fn test_can_insert_compressed_segment_into_existing_time_series() {
-        let key: u64 = 1;
         let segment = test_util::get_compressed_segment_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        data_manager.insert_compressed_segment(key, segment.clone());
+        data_manager.insert_compressed_segment(KEY, segment.clone());
         let previous_size = data_manager
             .compressed_data
-            .get(&key)
+            .get(&KEY)
             .unwrap()
             .size_in_bytes;
 
-        data_manager.insert_compressed_segment(key, segment);
+        data_manager.insert_compressed_segment(KEY, segment);
 
         assert!(
             data_manager
                 .compressed_data
-                .get(&key)
+                .get(&KEY)
                 .unwrap()
                 .size_in_bytes
                 > previous_size
@@ -181,12 +181,12 @@ mod tests {
         // Insert compressed data into the storage engine until data is saved to Apache Parquet.
         let max_compressed_segments = reserved_memory / test_util::COMPRESSED_SEGMENT_SIZE;
         for _ in 0..max_compressed_segments + 1 {
-            data_manager.insert_compressed_segment(1, segment.clone());
+            data_manager.insert_compressed_segment(KEY, segment.clone());
         }
 
         // The compressed data should be saved to the "compressed" folder under the key.
         let data_folder_path = Path::new(&data_manager.data_folder_path);
-        let compressed_path = data_folder_path.join("1/compressed");
+        let compressed_path = data_folder_path.join(format!("{}/compressed", KEY));
         assert_eq!(compressed_path.read_dir().unwrap().count(), 1);
     }
 
@@ -196,7 +196,7 @@ mod tests {
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
         let reserved_memory = data_manager.compressed_remaining_memory_in_bytes;
 
-        data_manager.insert_compressed_segment(1, segment);
+        data_manager.insert_compressed_segment(KEY, segment);
 
         assert!(reserved_memory > data_manager.compressed_remaining_memory_in_bytes);
     }
@@ -206,7 +206,7 @@ mod tests {
         let segment = test_util::get_compressed_segment_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        data_manager.insert_compressed_segment(1, segment.clone());
+        data_manager.insert_compressed_segment(KEY, segment.clone());
 
         // Set the remaining memory to a negative value since data is only saved when out of memory.
         data_manager.compressed_remaining_memory_in_bytes = -1;
