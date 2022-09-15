@@ -127,7 +127,7 @@ impl UncompressedDataManager {
                 .collect();
 
             let tag_hash = self
-                .get_tag_hash(&model_table, &tag_values)
+                .get_or_compute_tag_hash(&model_table, &tag_values)
                 .map_err(|error| format!("Tag hash could not be saved: {}", error.to_string()))?;
 
             // For each field column, generate the 64-bit key, create a single data point, and
@@ -148,7 +148,7 @@ impl UncompressedDataManager {
     /// or, if it is a new combination of tag values, generating a new hash. If a new hash is
     /// created, the hash is saved both in the cache and persisted to the model_table_tags table. If
     /// the table could not be accessed, return [`rusqlite::Error`].
-    fn get_tag_hash(
+    fn get_or_compute_tag_hash(
         &mut self,
         model_table: &NewModelTableMetadata,
         tag_values: &Vec<String>,
@@ -347,7 +347,7 @@ mod tests {
         let (model_table, _data) = get_uncompressed_data(2);
         create_model_table_tags_table(&model_table, temp_dir.path());
 
-        let result = data_manager.get_tag_hash(&model_table, &vec!["tag1".to_owned()]);
+        let result = data_manager.get_or_compute_tag_hash(&model_table, &vec!["tag1".to_owned()]);
         assert!(result.is_ok());
 
         // When a new tag hash is retrieved, the hash should be saved in the cache.
@@ -370,11 +370,11 @@ mod tests {
         let (model_table, _data) = get_uncompressed_data(1);
         create_model_table_tags_table(&model_table, temp_dir.path());
 
-        data_manager.get_tag_hash(&model_table, &vec!["tag1".to_owned()]);
+        data_manager.get_or_compute_tag_hash(&model_table, &vec!["tag1".to_owned()]);
         assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);
 
         // When getting the same tag hash again, it should just be retrieved from the cache.
-        let result = data_manager.get_tag_hash(&model_table, &vec!["tag1".to_owned()]);
+        let result = data_manager.get_or_compute_tag_hash(&model_table, &vec!["tag1".to_owned()]);
 
         assert!(result.is_ok());
         assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);

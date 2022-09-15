@@ -35,9 +35,9 @@ use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuil
 /// Shared functionality between different types of uncompressed segments, such as [`SegmentBuilder`]
 /// and [`SpilledSegment`]. Since the uncompressed segments are part of the storage engine, which
 /// is part of the context controlled by the asynchronous [`FlightServiceHandler`](crate::remote::FlightServiceHandler),
-/// uncompressed segments have to adhere to [`Sync`] and [`Send`]. Both [`SegmentBuilder`]
-/// and [`SpilledSegment`] only consist of either primitive types or aggregates of primitive
-/// types, which means the requirements of [`Sync`] and [`Send`] are fulfilled.
+/// uncompressed segments have to adhere to [`Sync`] and [`Send`]. Both [`SegmentBuilder`] and
+/// [`SpilledSegment`] automatically implements [`Sync`] and [`Send`] as they only contain types
+/// that implements [`Sync`] and [`Send`].
 pub trait UncompressedSegment: Sync + Send {
     fn get_record_batch(&mut self) -> Result<RecordBatch, ParquetError>;
 
