@@ -35,12 +35,14 @@ use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
+use object_store::ObjectMeta;
 
 use crate::catalog::NewModelTableMetadata;
+use crate::errors::ModelarDBError;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::segment::FinishedSegment;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
-use crate::types::{ArrowTimestamp, ArrowValue};
+use crate::types::{ArrowTimestamp, ArrowValue, Timestamp};
 
 // TODO: Look into custom errors for all errors in storage engine.
 
@@ -88,6 +90,24 @@ impl StorageEngine {
     /// Pass `segment` to [`CompressedDataManager`].
     pub fn insert_compressed_segment(&mut self, key: u64, segment: RecordBatch) {
         self.compressed_data_manager.insert_compressed_segment(key, segment)
+    }
+
+    /// Retrieve the compressed data that corresponds to `keys` within the given range of time.
+    /// If `keys` contain a key that does not exist or the end time is before the start time,
+    /// [`DataRetrievalError`](ModelarDBError::DataRetrievalError) is returned.
+    fn get_data(
+        &self,
+        keys: &[u64],
+        start_time: Option<Timestamp>,
+        end_time: Option<Timestamp>
+    ) -> Result<Vec<ObjectMeta>, ModelarDBError> {
+        // TODO: If data is requested from a time series that is not yet saved to disk,
+        //       save to disk before retrieving.
+        // TODO: For each key, list the files that contain compressed data.
+        // TODO: If a start time is given, remove all files before the start time.
+        // TODO: if an end time is given, remove all files after the end time.
+
+        Ok(vec![])
     }
 
     // TODO: Move to configuration struct and have a single Arc.
@@ -192,6 +212,38 @@ mod tests {
 
     use tempfile::{tempdir, TempDir};
 
+    // Tests for retrieving compressed data from the storage engine.
+    #[test]
+    fn test_can_get_data_from_keys() {
+
+    }
+
+    #[test]
+    fn test_cannot_get_data_from_non_existent_key() {
+
+    }
+
+    #[test]
+    fn test_can_get_data_after_start_time() {
+
+    }
+
+    #[test]
+    fn test_can_get_data_before_end_time() {
+
+    }
+
+    #[test]
+    fn test_can_get_data_between_start_time_and_end_time() {
+
+    }
+
+    #[test]
+    fn test_cannot_get_data_where_end_time_is_before_start_time() {
+
+    }
+
+    // Tests for writing and reading Apache Parquet files.
     #[test]
     fn test_write_batch_to_apache_parquet_file() {
         let temp_dir = tempdir().unwrap();
