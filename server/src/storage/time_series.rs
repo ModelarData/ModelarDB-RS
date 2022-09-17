@@ -17,6 +17,7 @@
 
 use std::fs;
 use std::io::Error as IOError;
+use std::io::ErrorKind::Other;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -80,7 +81,8 @@ impl CompressedTimeSeries {
         let file_name = format!("{}.parquet", start_times.value(0));
         let file_path = complete_folder_path.join(file_name);
 
-        StorageEngine::write_batch_to_apache_parquet_file(batch, file_path.as_path());
+        StorageEngine::write_batch_to_apache_parquet_file(batch, file_path.as_path())
+            .map_err(|error| IOError::new(Other, error.to_string()))?;
 
         Ok(())
     }

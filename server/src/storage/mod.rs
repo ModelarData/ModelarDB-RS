@@ -23,6 +23,7 @@ mod uncompressed_data_manager;
 mod compressed_data_manager;
 
 use std::ffi::OsStr;
+use std::fs;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -101,13 +102,19 @@ impl StorageEngine {
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>
     ) -> Result<Vec<ObjectMeta>, ModelarDBError> {
-        // TODO: If data is requested from a time series that is not yet saved to disk,
-        //       save to disk before retrieving.
-        // TODO: For each key, list the files that contain compressed data.
-        // TODO: If a start time is given, remove all files before the start time.
-        // TODO: if an end time is given, remove all files after the end time.
+        let mut compressed_data: Vec<ObjectMeta> = vec![];
 
-        Ok(vec![])
+        for key in keys {
+            // For each key, list the files that contain compressed data.
+            let key_files = self.compressed_data_manager.get_saved_compressed_data(key);
+
+            // If a start time is given, remove all files before the start time.
+            // if an end time is given, remove all files after the end time.
+
+            // TODO: Append the pruned files from the key to the total compressed data.
+        };
+
+        Ok(compressed_data)
     }
 
     // TODO: Move to configuration struct and have a single Arc.

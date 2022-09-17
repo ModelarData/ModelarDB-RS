@@ -16,10 +16,11 @@
 //! Support for managing all compressed data that is inserted into the [`StorageEngine`].
 
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use datafusion::arrow::record_batch::RecordBatch;
 use tracing::{info, info_span};
+use crate::errors::ModelarDBError;
 
 use crate::storage::time_series::CompressedTimeSeries;
 
@@ -83,6 +84,17 @@ impl CompressedDataManager {
         if self.compressed_remaining_memory_in_bytes < 0 {
             self.save_compressed_data();
         }
+    }
+
+    /// Return the file path to each on-disk compressed file that corresponds to `key`. If some
+    /// compressed data that corresponds to `key` is still in memory, save the data to disk first.
+    /// If `key` does not correspond to any data, [`DataRetrievalError`](ModelarDBError::DataRetrievalError) is returned.
+    pub fn get_saved_compressed_data(&self, key: &u64) -> Result<Vec<PathBuf>, ModelarDBError> {
+        // TODO: Check if there is any compressed data in memory.
+        // TODO: If so, save it first.
+        // TODO: Read the file path of the compressed data.
+        // TODO: Return all files in the path that are parquet files with a timestamp name.
+        Ok(vec![])
     }
 
     /// Save [`CompressedTimeSeries`] to disk until the reserved memory limit is no longer exceeded.
@@ -221,5 +233,20 @@ mod tests {
 
         let data_folder_path = temp_dir.path().to_path_buf();
         (temp_dir, CompressedDataManager::new(data_folder_path))
+    }
+
+    #[test]
+    fn test_can_get_saved_compressed_data() {
+
+    }
+
+    #[test]
+    fn test_save_in_memory_compressed_data_when_getting_saved_compressed_data() {
+
+    }
+
+    #[test]
+    fn test_cannot_get_saved_compressed_data_from_non_existent_key() {
+
     }
 }
