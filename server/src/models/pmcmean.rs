@@ -325,9 +325,9 @@ mod tests {
     fn test_grid(value in ProptestValue::ANY) {
         let model = value.to_be_bytes();
         let sampling_interval: i64 = 60;
-        let mut time_series_ids = TimeSeriesIdBuilder::new(10);
-        let mut timestamps = TimestampBuilder::new(10);
-        let mut values = ValueBuilder::new(10);
+        let mut time_series_ids = TimeSeriesIdBuilder::with_capacity(10);
+        let mut timestamps = TimestampBuilder::with_capacity(10);
+        let mut values = ValueBuilder::with_capacity(10);
 
         grid(
             1,

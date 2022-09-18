@@ -539,7 +539,7 @@ impl ModelTableMetadata {
         // -1 is stored at index 0 as time series ids starting at 1 is used for
         // lookup. Time series ids starting at 1 is used for compatibility with
         // the JVM-based version of ModelarDB.
-        let mut shifted_column = Int32Builder::new(column.len() + 1);
+        let mut shifted_column = Int32Builder::with_capacity(column.len() + 1);
         shifted_column.append_value(-1);
         shifted_column.append_slice(column);
         Ok(shifted_column.finish())

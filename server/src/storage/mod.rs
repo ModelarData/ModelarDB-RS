@@ -312,7 +312,7 @@ pub mod test_util {
     use crate::storage::StorageEngine;
     use crate::types::{TimestampArray, ValueArray};
 
-    pub const COMPRESSED_SEGMENT_SIZE: usize = 2032;
+    pub const COMPRESSED_SEGMENT_SIZE: usize = 2176;
 
     /// Return a [`RecordBatch`] that only has a single column, and therefore does not match the
     /// compressed segment schema.

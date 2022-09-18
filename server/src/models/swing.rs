@@ -558,9 +558,9 @@ mod tests {
         );
         let model = [slope.to_be_bytes(), intercept.to_be_bytes()].concat();
         let length = (((FINAL_TIMESTAMP - FIRST_TIMESTAMP) / SAMPLING_INTERVAL) + 1) as usize;
-        let mut time_series_ids = TimeSeriesIdBuilder::new(length);
-        let mut timestamps = TimestampBuilder::new(length);
-        let mut values = ValueBuilder::new(length);
+        let mut time_series_ids = TimeSeriesIdBuilder::with_capacity(length);
+        let mut timestamps = TimestampBuilder::with_capacity(length);
+        let mut values = ValueBuilder::with_capacity(length);
 
         grid(
             1,
