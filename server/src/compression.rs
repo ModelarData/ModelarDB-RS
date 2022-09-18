@@ -17,7 +17,7 @@
 //! model types in [`models`](crate::models) to produce compressed segments
 //! which are returned to [`StorageEngine`].
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use datafusion::arrow::array::{
@@ -105,7 +105,7 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
     let num_rows = compressed_segments.num_rows();
     let mut compressed_segments_to_merge = HashMap::with_capacity(num_rows);
 
-    for index in 0..compressed_segments.num_rows() {
+    for index in 0..num_rows {
         // f32 are converted to u32 with the same bitwise representation as f32
         // and f64 does not implement std::hash::Hash and thus cannot be hashed.
         let model = (
@@ -115,6 +115,8 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
             max_values.value(index).to_bits(),
         );
 
+        // Lookup the entry in the HashMap for model, create an empty Vec if an
+        // entry for model did not exist, and append index to the entry's Vec.
         compressed_segments_to_merge
             .entry(model)
             .or_insert_with(|| Vec::new())
@@ -125,10 +127,10 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
     // segments, otherwise return the smaller set of merged compressed segments.
     if compressed_segments_to_merge.len() < num_rows {
         let mut merged_compressed_segments = CompressedSegmentBatchBuilder::new(num_rows);
-        for (_, indexes) in compressed_segments_to_merge {
+        for (_, indices) in compressed_segments_to_merge {
             // Merge timestamps.
-            let mut timestamp_arrays = Vec::with_capacity(indexes.len());
-            for index in &indexes {
+            let mut timestamp_arrays = Vec::with_capacity(indices.len());
+            for index in &indices {
                 let start_time = start_times.value(*index);
                 let end_time = end_times.value(*index);
                 let timestamps = timestamps.value(*index);
@@ -139,8 +141,9 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
             let timestamps = flatten_timestamp_arrays(timestamp_arrays);
             let compressed_timestamps = timestamps::compress_residual_timestamps(&timestamps);
 
-            // Merge segments.
-            let index = indexes[0];
+            // Merge segments. The first segment's model is used for the merged
+            // segment as all of the segments contain the exact same model.
+            let index = indices[0];
             merged_compressed_segments.append_compressed_segment(
                 model_type_ids.value(index),
                 &compressed_timestamps,
@@ -367,7 +370,7 @@ impl CompressedSegmentBatchBuilder {
     }
 }
 
-/// Flatten an [`Vec<TimestampArray>`] into an [`TimestampArray`].
+/// Flatten a [`Vec<TimestampArray>`] into a [`TimestampArray`].
 fn flatten_timestamp_arrays(timestamp_arrays: Vec<TimestampArray>) -> TimestampArray {
     let total_length = timestamp_arrays.iter().map(|array| array.len()).sum();
     let mut timestamps_builder = TimestampBuilder::new(total_length);
@@ -560,7 +563,7 @@ mod tests {
         assert_eq!(uncompressed_timestamps.len(), total_compressed_length);
     }
 
-    // Tests merge_segments().
+    // Tests for merge_segments().
     #[test]
     fn test_merge_compressed_segments_empty_batch() {
         let merged_record_batch = merge_segments(CompressedSegmentBatchBuilder::new(0).finish());

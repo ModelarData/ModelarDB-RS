@@ -20,6 +20,10 @@
 /// ```
 /// let array = crate::get_array!(record_batch, 0, UInt8Array);
 /// ```
+///
+/// # Panics
+///
+/// Panics if `column` is not in `batch` or if it cannot be cast to `type`.
 #[macro_export]
 macro_rules! get_array {
     ($batch:ident, $column:literal, $type:ident) => {
@@ -39,6 +43,11 @@ macro_rules! get_array {
 /// ```
 /// crate::downcast_arrays!(gids, start_times, end_times, mtids, models, gaps, batch);
 /// ```
+///
+/// # Panics
+///
+/// Panics if `batch` contains less then six columns or if the columns are not
+/// Int32Array, Int64Array, Int64Array, Int32Array, BinaryArray, and BinaryArray.
 // TODO: rename downcast_arrays and update the types when refactoring query engine.
 #[macro_export]
 macro_rules! downcast_arrays {
