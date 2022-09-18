@@ -25,7 +25,7 @@ futures = "0.3.23"
 arrow-flight = "20.0.0"
 tonic = "0.8.0"
 
-snmalloc-rs = "0.3.3"
+snmalloc-rs = { version = "0.3.3", features = ["build_cc"] }
 
 rusqlite = { version = "0.28.0", features = ["bundled"] }
 
