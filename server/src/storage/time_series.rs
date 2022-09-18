@@ -102,6 +102,7 @@ impl CompressedTimeSeries {
 
 #[cfg(test)]
 mod tests {
+    use datafusion::arrow::array::Array;
     use super::*;
 
     use tempfile::tempdir;
@@ -135,14 +136,16 @@ mod tests {
     #[test]
     fn test_can_save_compressed_segments_to_apache_parquet() {
         let mut time_series = CompressedTimeSeries::new();
-        time_series.append_segment(test_util::get_compressed_segment_record_batch());
+        let segment = test_util::get_compressed_segment_record_batch();
+        time_series.append_segment(segment.clone());
 
         let temp_dir = tempdir().unwrap();
         time_series.save_to_apache_parquet(temp_dir.path());
 
         // Data should be saved to a file with the first timestamp as the file name.
-        let compressed_path = temp_dir.path().join("compressed/1.parquet");
-        assert!(compressed_path.exists());
+        let timestamps: &TimestampArray = segment.column(2).as_any().downcast_ref().unwrap();
+        let file_path = format!("compressed/{}.parquet", timestamps.value(0));
+        assert!(temp_dir.path().join(file_path).exists());
     }
 
     #[test]

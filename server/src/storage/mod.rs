@@ -97,7 +97,7 @@ impl StorageEngine {
     /// If `keys` contain a key that does not exist or the end time is before the start time,
     /// [`DataRetrievalError`](ModelarDBError::DataRetrievalError) is returned.
     fn get_data(
-        &self,
+        &mut self,
         keys: &[u64],
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>
@@ -106,7 +106,7 @@ impl StorageEngine {
 
         for key in keys {
             // For each key, list the files that contain compressed data.
-            let key_files = self.compressed_data_manager.get_saved_compressed_data(key);
+            let key_files = self.compressed_data_manager.get_saved_compressed_files(key)?;
 
             // If a start time is given, remove all files before the start time.
             // if an end time is given, remove all files after the end time.
@@ -362,6 +362,7 @@ mod tests {
 /// multiple modules in the storage engine.
 pub mod test_util {
     use std::sync::Arc;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     use datafusion::arrow::array::{BinaryArray, Float32Array, UInt8Array};
     use datafusion::arrow::datatypes::DataType::UInt8;
@@ -384,10 +385,14 @@ pub mod test_util {
 
     /// Return a generated compressed segment with three model segments.
     pub fn get_compressed_segment_record_batch() -> RecordBatch {
+        let time_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
+        let start_times = vec![time_ms, time_ms + 1, time_ms + 2];
+        let end_times = vec![time_ms + 1, time_ms + 2, time_ms + 3];
+
         let model_type_id = UInt8Array::from(vec![2, 3, 3]);
         let timestamps = BinaryArray::from_vec(vec![b"000", b"001", b"010"]);
-        let start_time = TimestampArray::from(vec![1, 2, 3]);
-        let end_time = TimestampArray::from(vec![2, 3, 4]);
+        let start_time = TimestampArray::from(start_times);
+        let end_time = TimestampArray::from(end_times);
         let values = BinaryArray::from_vec(vec![b"1111", b"1000", b"0000"]);
         let min_value = ValueArray::from(vec![5.2, 10.3, 30.2]);
         let max_value = ValueArray::from(vec![20.2, 12.2, 34.2]);

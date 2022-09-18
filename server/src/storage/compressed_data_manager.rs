@@ -91,7 +91,10 @@ impl CompressedDataManager {
     /// Return the file path to each on-disk compressed file that corresponds to `key`. If some
     /// compressed data that corresponds to `key` is still in memory, save the data to disk first.
     /// If `key` does not correspond to any data, [`DataRetrievalError`](ModelarDBError::DataRetrievalError) is returned.
-    pub fn get_saved_compressed_data(&mut self, key: &u64) -> Result<Vec<PathBuf>, ModelarDBError> {
+    pub fn get_saved_compressed_files(
+        &mut self,
+        key: &u64
+    ) -> Result<Vec<PathBuf>, ModelarDBError> {
         // If there is any compressed data in memory, save it first.
         if self.compressed_data.contains_key(key) {
             // Remove the data from the queue of compressed time series that are ready to be saved.
@@ -115,11 +118,14 @@ impl CompressedDataManager {
 
         // Return all files in the path that are parquet files.
         Ok(dir.filter_map(|maybe_dir_entry| {
-            match maybe_dir_entry {
-                Ok(dir_entry) if StorageEngine::is_path_an_apache_parquet_file(dir_entry.path().as_path()) => {
+            if let Ok(dir_entry) = maybe_dir_entry {
+                if StorageEngine::is_path_an_apache_parquet_file(dir_entry.path().as_path()) {
                     Some(dir_entry.path())
-                },
-                _ => None
+                } else {
+                    None
+                }
+            } else {
+                None
             }
         }).collect())
     }
@@ -159,9 +165,11 @@ mod tests {
     use super::*;
     use std::path::Path;
 
+    use datafusion::arrow::array::ArrayAccessor;
     use tempfile::{tempdir, TempDir};
 
     use crate::storage::test_util;
+    use crate::types::TimestampArray;
 
     const KEY: u64 = 1;
 
@@ -269,11 +277,53 @@ mod tests {
     }
 
     #[test]
-    fn test_can_get_saved_compressed_data() {}
+    fn test_can_get_saved_compressed_files() {
+        let segment = test_util::get_compressed_segment_record_batch();
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager();
+
+        data_manager.insert_compressed_segment(KEY, segment.clone());
+        data_manager.save_compressed_data(&KEY);
+
+        let result = data_manager.get_saved_compressed_files(&KEY);
+        assert!(result.is_ok());
+
+        let files = result.unwrap();
+        assert_eq!(files.len(), 1);
+
+        // The compressed file should have the first timestamp as the file name.
+        let timestamps: &TimestampArray = segment.column(2).as_any().downcast_ref().unwrap();
+        let expected_file_path = format!("{}/compressed/{}.parquet", KEY, timestamps.value(0));
+        let expected_full_path = data_manager.data_folder_path.join(expected_file_path);
+        assert_eq!(*files.get(0).unwrap(), expected_full_path)
+    }
 
     #[test]
-    fn test_save_in_memory_compressed_data_when_getting_saved_compressed_data() {}
+    fn test_save_in_memory_compressed_data_when_getting_saved_compressed_files() {
+        let segment = test_util::get_compressed_segment_record_batch();
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager();
+
+        data_manager.insert_compressed_segment(KEY, segment);
+        data_manager.save_compressed_data(&KEY);
+
+        // This second inserted segment should be saved when the compressed files are retrieved.
+        let segment_2 = test_util::get_compressed_segment_record_batch();
+        data_manager.insert_compressed_segment(KEY, segment_2.clone());
+
+        let result = data_manager.get_saved_compressed_files(&KEY);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 2);
+    }
 
     #[test]
-    fn test_cannot_get_saved_compressed_data_from_non_existent_key() {}
+    fn test_cannot_get_saved_compressed_files_from_non_existent_key() {
+        let segment = test_util::get_compressed_segment_record_batch();
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager();
+
+        data_manager.insert_compressed_segment(KEY, segment);
+        data_manager.save_compressed_data(&KEY);
+
+        let result = data_manager.get_saved_compressed_files(&999);
+        assert!(result.is_err());
+    }
 }
