@@ -168,11 +168,15 @@ impl SpilledSegment {
         let complete_folder_path = folder_path.join("uncompressed");
         fs::create_dir_all(complete_folder_path.as_path());
 
-        // Create a path that uses the first timestamp as the filename.
+        // Create a path that uses the first and last timestamp as the filename.
         let timestamps: &TimestampArray = segment.column(0).as_any().downcast_ref().unwrap();
-        let file_name = format!("{}.parquet", timestamps.value(0));
-        let file_path = complete_folder_path.join(file_name);
+        let file_name = format!(
+            "{}-{}.parquet",
+            timestamps.value(0),
+            timestamps.value(timestamps.len() - 1)
+        );
 
+        let file_path = complete_folder_path.join(file_name);
         StorageEngine::write_batch_to_apache_parquet_file(segment, file_path.as_path());
 
         Self { file_path }

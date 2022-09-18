@@ -23,7 +23,6 @@ mod uncompressed_data_manager;
 mod compressed_data_manager;
 
 use std::ffi::OsStr;
-use std::fs;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -93,28 +92,42 @@ impl StorageEngine {
         self.compressed_data_manager.insert_compressed_segment(key, segment)
     }
 
-    /// Retrieve the compressed data that corresponds to `keys` within the given range of time.
+    /// Retrieve the compressed files that correspond to `keys` within the given range of time.
     /// If `keys` contain a key that does not exist or the end time is before the start time,
     /// [`DataRetrievalError`](ModelarDBError::DataRetrievalError) is returned.
-    fn get_data(
+    fn get_compressed_files(
         &mut self,
         keys: &[u64],
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>
     ) -> Result<Vec<ObjectMeta>, ModelarDBError> {
-        let mut compressed_data: Vec<ObjectMeta> = vec![];
+        let mut compressed_files: Vec<ObjectMeta> = vec![];
 
         for key in keys {
             // For each key, list the files that contain compressed data.
             let key_files = self.compressed_data_manager.get_saved_compressed_files(key)?;
 
-            // If a start time is given, remove all files before the start time.
-            // if an end time is given, remove all files after the end time.
+            let pruned_files: Vec<PathBuf> = key_files.into_iter().filter(|file_path| {
+                let file_name = file_path.file_stem().unwrap().to_str().unwrap();
+                let split_file_name: Vec<&str> = file_name.split("-").collect();
+
+                // unwrap() is safe to use since the file name structure is internally generated.
+                let file_start_time = split_file_name.get(0).unwrap().parse::<i64>().unwrap();
+                let file_end_time = split_file_name.get(1).unwrap().parse::<i64>().unwrap();
+
+                // If a start time is given, only keep the file if it ends after the start time.
+                let ends_after_start = file_end_time >= start_time.unwrap_or(0);
+
+                // if an end time is given, only keep the file it if starts before the end time.
+                let starts_before_end = file_start_time <= end_time.unwrap_or(i64::MAX);
+
+                ends_after_start && starts_before_end
+            }).collect();
 
             // TODO: Append the pruned files from the key to the total compressed data.
         };
 
-        Ok(compressed_data)
+        Ok(compressed_files)
     }
 
     // TODO: Move to configuration struct and have a single Arc.

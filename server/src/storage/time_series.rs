@@ -75,12 +75,18 @@ impl CompressedTimeSeries {
         let complete_folder_path = folder_path.join("compressed");
         fs::create_dir_all(complete_folder_path.as_path())?;
 
-        // Create a path that uses the first timestamp as the file name to better support
-        // pruning data that is too new or too old when executing a specific query.
+        // Create a path that uses the first start timestamp and the last end timestamp as the file
+        // name to better support pruning data that is too new or too old when executing a specific query.
         let start_times: &TimestampArray = batch.column(2).as_any().downcast_ref().unwrap();
-        let file_name = format!("{}.parquet", start_times.value(0));
-        let file_path = complete_folder_path.join(file_name);
+        let end_times: &TimestampArray = batch.column(3).as_any().downcast_ref().unwrap();
 
+        let file_name = format!(
+            "{}-{}.parquet",
+            start_times.value(0),
+            end_times.value(end_times.len() - 1)
+        );
+
+        let file_path = complete_folder_path.join(file_name);
         StorageEngine::write_batch_to_apache_parquet_file(batch, file_path.as_path())
             .map_err(|error| IOError::new(Other, error.to_string()))?;
 
@@ -142,9 +148,15 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         time_series.save_to_apache_parquet(temp_dir.path());
 
-        // Data should be saved to a file with the first timestamp as the file name.
-        let timestamps: &TimestampArray = segment.column(2).as_any().downcast_ref().unwrap();
-        let file_path = format!("compressed/{}.parquet", timestamps.value(0));
+        // Data should be saved to a file with the first start time and last end time as the file name.
+        let start_times: &TimestampArray = segment.column(2).as_any().downcast_ref().unwrap();
+        let end_times: &TimestampArray = segment.column(3).as_any().downcast_ref().unwrap();
+        let file_path = format!(
+            "compressed/{}-{}.parquet",
+            start_times.value(0),
+            end_times.value(end_times.len() - 1)
+        );
+
         assert!(temp_dir.path().join(file_path).exists());
     }
 

@@ -106,7 +106,8 @@ impl CompressedDataManager {
         }
 
         // Read the directory that contains the compressed data corresponding to the key.
-        let dir = fs::read_dir(self.data_folder_path.join(format!("{}/compressed", key))).map_err(
+        let key_path = self.data_folder_path.join(format!("{}/compressed", key));
+        let dir = fs::read_dir(key_path).map_err(
             |error| {
                 ModelarDBError::DataRetrievalError(format!(
                     "Compressed data could not be found for key '{}': {}",
@@ -290,9 +291,16 @@ mod tests {
         let files = result.unwrap();
         assert_eq!(files.len(), 1);
 
-        // The compressed file should have the first timestamp as the file name.
-        let timestamps: &TimestampArray = segment.column(2).as_any().downcast_ref().unwrap();
-        let expected_file_path = format!("{}/compressed/{}.parquet", KEY, timestamps.value(0));
+        // The file should have the first start time and the last end time as the file name.
+        let start_times: &TimestampArray = segment.column(2).as_any().downcast_ref().unwrap();
+        let end_times: &TimestampArray = segment.column(3).as_any().downcast_ref().unwrap();
+        let expected_file_path = format!(
+            "{}/compressed/{}-{}.parquet",
+            KEY,
+            start_times.value(0),
+            end_times.value(end_times.len() - 1)
+        );
+
         let expected_full_path = data_manager.data_folder_path.join(expected_file_path);
         assert_eq!(*files.get(0).unwrap(), expected_full_path)
     }
