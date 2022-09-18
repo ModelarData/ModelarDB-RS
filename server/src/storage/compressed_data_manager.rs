@@ -16,13 +16,15 @@
 //! Support for managing all compressed data that is inserted into the [`StorageEngine`].
 
 use std::collections::{HashMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::fs;
+use std::path:: PathBuf;
 
 use datafusion::arrow::record_batch::RecordBatch;
 use tracing::{info, info_span};
-use crate::errors::ModelarDBError;
 
+use crate::errors::ModelarDBError;
 use crate::storage::time_series::CompressedTimeSeries;
+use crate::StorageEngine;
 
 /// Signed integer since compressed data is inserted first and the remaining bytes are checked after.
 /// This means that the remaining bytes can be negative briefly until compressed data is saved to disk.
@@ -82,42 +84,73 @@ impl CompressedDataManager {
 
         // If the reserved memory limit is exceeded, save compressed data to disk.
         if self.compressed_remaining_memory_in_bytes < 0 {
-            self.save_compressed_data();
+            self.free_compressed_data_memory();
         }
     }
 
     /// Return the file path to each on-disk compressed file that corresponds to `key`. If some
     /// compressed data that corresponds to `key` is still in memory, save the data to disk first.
     /// If `key` does not correspond to any data, [`DataRetrievalError`](ModelarDBError::DataRetrievalError) is returned.
-    pub fn get_saved_compressed_data(&self, key: &u64) -> Result<Vec<PathBuf>, ModelarDBError> {
-        // TODO: Check if there is any compressed data in memory.
-        // TODO: If so, save it first.
-        // TODO: Read the file path of the compressed data.
-        // TODO: Return all files in the path that are parquet files with a timestamp name.
-        Ok(vec![])
+    pub fn get_saved_compressed_data(&mut self, key: &u64) -> Result<Vec<PathBuf>, ModelarDBError> {
+        // If there is any compressed data in memory, save it first.
+        if self.compressed_data.contains_key(key) {
+            // Remove the data from the queue of compressed time series that are ready to be saved.
+            // unwrap() is safe since `compressed_data` contains the same keys as `compressed_queue`.
+            let data_index = self.compressed_queue.iter().position(|x| x == key).unwrap();
+            self.compressed_queue.remove(data_index);
+
+            self.save_compressed_data(key);
+        }
+
+        // Read the directory that contains the compressed data corresponding to the key.
+        let dir = fs::read_dir(self.data_folder_path.join(format!("{}/compressed", key))).map_err(
+            |error| {
+                ModelarDBError::DataRetrievalError(format!(
+                    "Compressed data could not be found for key '{}': {}",
+                    key,
+                    error.to_string()
+                ))
+            },
+        )?;
+
+        // Return all files in the path that are parquet files.
+        Ok(dir.filter_map(|maybe_dir_entry| {
+            match maybe_dir_entry {
+                Ok(dir_entry) if StorageEngine::is_path_an_apache_parquet_file(dir_entry.path().as_path()) => {
+                    Some(dir_entry.path())
+                },
+                _ => None
+            }
+        }).collect())
     }
 
     /// Save [`CompressedTimeSeries`] to disk until the reserved memory limit is no longer exceeded.
-    fn save_compressed_data(&mut self) {
+    fn free_compressed_data_memory(&mut self) {
         info!("Out of memory for compressed data. Saving compressed data to disk.");
 
         while self.compressed_remaining_memory_in_bytes < 0 {
             let key = self.compressed_queue.pop_front().unwrap();
-            info!("Saving compressed time series with key '{}' to disk.", key);
-
-            let mut time_series = self.compressed_data.remove(&key).unwrap();
-            let time_series_size = time_series.size_in_bytes.clone();
-
-            let folder_path = self.data_folder_path.join(key.to_string());
-            time_series.save_to_apache_parquet(folder_path.as_path());
-
-            self.compressed_remaining_memory_in_bytes += time_series_size as isize;
-
-            info!(
-                "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
-                time_series_size, self.compressed_remaining_memory_in_bytes
-            );
+            self.save_compressed_data(&key);
         }
+    }
+
+    /// Save the compressed data corresponding to `key` to disk. The size of the saved compressed
+    /// data is added back to the remaining reserved memory.
+    fn save_compressed_data(&mut self, key: &u64) {
+        info!("Saving compressed time series with key '{}' to disk.", key);
+
+        let mut time_series = self.compressed_data.remove(&key).unwrap();
+        let time_series_size = time_series.size_in_bytes.clone();
+
+        let folder_path = self.data_folder_path.join(key.to_string());
+        time_series.save_to_apache_parquet(folder_path.as_path());
+
+        self.compressed_remaining_memory_in_bytes += time_series_size as isize;
+
+        info!(
+            "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
+            time_series_size, self.compressed_remaining_memory_in_bytes
+        );
     }
 }
 
@@ -222,7 +255,7 @@ mod tests {
 
         // Set the remaining memory to a negative value since data is only saved when out of memory.
         data_manager.compressed_remaining_memory_in_bytes = -1;
-        data_manager.save_compressed_data();
+        data_manager.free_compressed_data_memory();
 
         assert!(-1 < data_manager.compressed_remaining_memory_in_bytes);
     }
@@ -236,17 +269,11 @@ mod tests {
     }
 
     #[test]
-    fn test_can_get_saved_compressed_data() {
-
-    }
+    fn test_can_get_saved_compressed_data() {}
 
     #[test]
-    fn test_save_in_memory_compressed_data_when_getting_saved_compressed_data() {
-
-    }
+    fn test_save_in_memory_compressed_data_when_getting_saved_compressed_data() {}
 
     #[test]
-    fn test_cannot_get_saved_compressed_data_from_non_existent_key() {
-
-    }
+    fn test_cannot_get_saved_compressed_data_from_non_existent_key() {}
 }

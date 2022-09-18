@@ -59,6 +59,7 @@ impl UncompressedDataManager {
         }
     }
 
+    // TODO: Use the new macro for downcasting the arrays.
     /// Parse `data_points` and insert it into the in-memory buffer. The data points are first parsed
     /// into multiple univariate time series based on `model_table`. These individual time series
     /// are then inserted into the storage engine. Return [`Ok`] if the data was successfully
