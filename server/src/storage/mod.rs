@@ -23,6 +23,7 @@ mod uncompressed_data_manager;
 mod compressed_data_manager;
 
 use std::ffi::OsStr;
+use std::fs;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -36,6 +37,8 @@ use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
 use object_store::ObjectMeta;
+use object_store::path::Path as ObjectStorePath;
+use chrono::DateTime;
 
 use crate::catalog::NewModelTableMetadata;
 use crate::errors::ModelarDBError;
@@ -107,7 +110,8 @@ impl StorageEngine {
             // For each key, list the files that contain compressed data.
             let key_files = self.compressed_data_manager.get_saved_compressed_files(key)?;
 
-            let pruned_files: Vec<PathBuf> = key_files.into_iter().filter(|file_path| {
+            // Prune the files based on the time range the file covers and convert to object meta.
+            let pruned_files = key_files.iter().filter_map(|file_path| {
                 let file_name = file_path.file_stem().unwrap().to_str().unwrap();
                 let split_file_name: Vec<&str> = file_name.split("-").collect();
 
@@ -121,10 +125,22 @@ impl StorageEngine {
                 // if an end time is given, only keep the file it if starts before the end time.
                 let starts_before_end = file_start_time <= end_time.unwrap_or(i64::MAX);
 
-                ends_after_start && starts_before_end
-            }).collect();
+                if ends_after_start && starts_before_end {
+                    // unwrap() is safe since we already know the file exists.
+                    let metadata = fs::metadata(&file_path).unwrap();
 
-            // TODO: Append the pruned files from the key to the total compressed data.
+                    // Create an object that contains the file path and extra metadata about the file.
+                    Some(ObjectMeta {
+                        location: ObjectStorePath::from(file_path.to_str().unwrap()),
+                        last_modified: DateTime::from(metadata.modified().unwrap()),
+                        size: metadata.len() as usize
+                    })
+                } else {
+                    None
+                }
+            });
+
+            compressed_files.extend(pruned_files);
         };
 
         Ok(compressed_files)
