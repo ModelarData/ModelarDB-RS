@@ -13,11 +13,10 @@
  * limitations under the License.
  */
 
-//! Converts raw MQTT messages to uncompressed data points, stores uncompressed data points temporarily
+//! Converts a batch of data to uncompressed data points, stores uncompressed data points temporarily
 //! in an in-memory buffer that spills to Apache Parquet files, and stores data points compressed as
 //! models in memory to batch compressed data before saving it to Apache Parquet files.
 
-mod data_point;
 mod segment;
 mod time_series;
 mod uncompressed_data_manager;
@@ -36,8 +35,8 @@ use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::WriterProperties;
 use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
-use paho_mqtt::Message;
 
+use crate::catalog::NewModelTableMetadata;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::segment::FinishedSegment;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
@@ -70,10 +69,14 @@ impl StorageEngine {
         }
     }
 
-    /// Pass `message` to [`UncompressedDataManager`]. Return [`Ok`] if the message was successfully
-    /// inserted, otherwise return [`Err`].
-    pub fn insert_message(&mut self, message: Message) -> Result<(), String> {
-        self.uncompressed_data_manager.insert_message(message)
+    /// Pass `data_points` to [`UncompressedDataManager`]. Return [`Ok`] if the data was
+    /// successfully inserted, otherwise return [`Err`].
+    pub fn insert_data_points(
+        &mut self,
+        model_table: &NewModelTableMetadata,
+        data_points: &RecordBatch
+    ) -> Result<(), String> {
+        self.uncompressed_data_manager.insert_data_points(model_table, data_points)
     }
 
     /// Retrieve the oldest [`FinishedSegment`] from [`UncompressedDataManager`] and return it.
@@ -83,7 +86,7 @@ impl StorageEngine {
     }
 
     /// Pass `segment` to [`CompressedDataManager`].
-    pub fn insert_compressed_segment(&mut self, key: String, segment: RecordBatch) {
+    pub fn insert_compressed_segment(&mut self, key: u64, segment: RecordBatch) {
         self.compressed_data_manager.insert_compressed_segment(key, segment)
     }
 
@@ -307,7 +310,6 @@ pub mod test_util {
     use datafusion::arrow::record_batch::RecordBatch;
 
     use crate::storage::StorageEngine;
-    use crate::storage::time_series::CompressedTimeSeries;
     use crate::types::{TimestampArray, ValueArray};
 
     pub const COMPRESSED_SEGMENT_SIZE: usize = 2032;

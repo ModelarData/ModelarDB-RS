@@ -23,8 +23,8 @@ use std::error::Error;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::{mem, str};
-use std::sync::{Arc, RwLockWriteGuard};
 
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::utils;
@@ -37,16 +37,17 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::{
     array::ArrayRef, datatypes::SchemaRef, error::ArrowError, ipc::writer::IpcWriteOptions,
 };
+use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
 use object_store;
-use rusqlite::{Connection, params};
+use rusqlite::{params, Connection};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{error, info};
 
 use crate::catalog::{NewModelTableMetadata, TableMetadata};
 use crate::storage::StorageEngine;
-use crate::{Catalog, Context};
+use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
@@ -118,6 +119,133 @@ impl FlightServiceHandler {
             .path
             .get(0)
             .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
+    }
+
+    /// While there is still more data to receive, ingest the data into the table.
+    fn ingest_into_table(
+        &self,
+        table_name: &str,
+        _schema: SchemaRef,
+        _flight_data_stream: Streaming<FlightData>,
+    ) {
+        // TODO: Implement this.
+        error!(
+            "Received data for table '{}' but ingesting data into tables is not supported yet.",
+            table_name
+        );
+    }
+
+    /// While there is still more data to receive, ingest the data into the storage engine.
+    async fn ingest_into_model_table(
+        &self,
+        model_table: &NewModelTableMetadata,
+        flight_data_stream: &mut Streaming<FlightData>,
+    ) -> Result<(), Status> {
+        info!("Ingesting data into model table '{}'.", model_table.name);
+
+        // Retrieve the data until the request does not contain any more data.
+        while let Some(flight_data) = flight_data_stream.next().await {
+            let flight_data = flight_data?;
+            debug_assert_eq!(flight_data.flight_descriptor, None);
+
+            // Convert the flight data to a record batch.
+            let data_points = utils::flight_data_to_arrow_batch(
+                &flight_data,
+                SchemaRef::from(model_table.schema.clone()),
+                &self.dictionaries_by_id,
+            )
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+            // unwrap() is safe to use since write() only fails if the RwLock is poisoned.
+            let mut storage_engine = self.context.storage_engine.write().unwrap();
+
+            // Note that the storage engine returns when the data is stored in memory, which means
+            // the data could be lost if the system crashes right after ingesting the data.
+            storage_engine.insert_data_points(&model_table, &data_points).map_err(|error| {
+                Status::internal(format!("Data could not be ingested: {}", error))
+            })?;
+        }
+
+        Ok(())
+    }
+
+    /// Create a normal table and add it to the catalog. If the table already exists or if the
+    /// Apache Parquet file cannot be created, return [`Status`] error.
+    async fn create_table(&self, table_name: String, schema: Schema, ) -> Result<(), Status> {
+        // Modify the catalog in a separate scope to drop the RWLock as fast as possible.
+        let file_path = {
+            // Get the write lock for the catalog to ensure that multiple writes cannot happen at the
+            // same time. unwrap() is safe to use since write() only fails if the RwLock is poisoned.
+            let mut catalog = self.context.catalog.write().unwrap();
+
+            let file_name = format!("{}.parquet", table_name);
+            let file_path = catalog.data_folder_path.join(file_name);
+
+            // Save the table metadata in the catalog.
+            let path_str = file_path.to_str().unwrap().to_string();
+            let new_table_metadata = TableMetadata {
+                name: table_name.clone(),
+                path: path_str.clone(),
+            };
+
+            catalog.table_metadata.push(new_table_metadata);
+
+            file_path
+        };
+
+        // Create an empty Apache Parquet file to save the schema.
+        let empty_batch = RecordBatch::new_empty(Arc::new(schema));
+        StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path())
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+        // Save the table in the Apache Arrow Datafusion catalog.
+        self.context.session.register_parquet(
+            &table_name,
+            file_path.to_str().unwrap(),
+            ParquetReadOptions::default(),
+        ).await.map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+        info!("Created table '{}'.", table_name);
+        Ok(())
+    }
+
+    /// Create a model table, add it to the metadata database tables, and add it to the catalog.
+    /// If the table already exists or if the metadata cannot be written to the metadata database,
+    /// return [`Status`] error.
+    fn create_model_table(
+        &self,
+        table_name: String,
+        schema: Schema,
+        tag_column_indices: Vec<u8>,
+        timestamp_column_index: u8,
+    ) -> Result<(), Status> {
+        // Get the write lock for the catalog to ensure that multiple writes cannot happen at
+        // the same time. unwrap() is safe to use since write() only fails if the RwLock is poisoned.
+        let mut catalog = self.context.catalog.write().unwrap();
+
+        let model_table_metadata = NewModelTableMetadata::try_new(
+            table_name.clone(),
+            schema.clone(),
+            tag_column_indices,
+            timestamp_column_index,
+        ).map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+        // Convert the schema to bytes so it can be saved as a BLOB in the metadata database.
+        let options = IpcWriteOptions::default();
+        let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
+        let ipc_message: IpcMessage = schema_as_ipc
+            .try_into()
+            .map_err(|error: ArrowError| Status::internal(error.to_string()))?;
+
+        // Persist the new model table to the metadata database.
+        let database_path = catalog.data_folder_path.join("metadata.sqlite3");
+        save_model_table_to_database(database_path, &model_table_metadata, ipc_message.0)
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        info!("Created model table '{}'.", table_name);
+        catalog.new_model_table_metadata.push(model_table_metadata);
+
+        Ok(())
     }
 }
 
@@ -257,44 +385,37 @@ impl FlightService for FlightServiceHandler {
         &self,
         request: Request<Streaming<FlightData>>,
     ) -> Result<Response<Self::DoPutStream>, Status> {
-        let mut request = request.into_inner();
+        let mut flight_data_stream = request.into_inner();
 
         // Extract the table name.
-        let flight_data = request
+        let flight_data = flight_data_stream
             .next()
             .await
             .ok_or_else(|| Status::invalid_argument("Missing FlightData."))??;
+
         debug_assert_eq!(flight_data.data_body.len(), 0);
+
         let flight_descriptor = flight_data
             .flight_descriptor
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
         let table_name = self.get_table_name_from_flight_descriptor(&flight_descriptor)?;
 
-        // Extract the schema.
-        let schema = self
-            .get_table_schema_from_default_catalog(&table_name)
-            .map_err(|error| {
-                error!("Received RecordBatch for the missing table {}.", table_name);
-                error
-            })?;
+        // Check if it is a model table that can be found in the in-memory catalog.
+        let maybe_model_table = {
+            // unwrap() is safe to use since read() only fails if the RwLock is poisoned.
+            let catalog = self.context.catalog.read().unwrap();
+            let mut model_tables = catalog.new_model_table_metadata.iter();
 
-        // Log how many data points were received to make it possible to check
-        // that the expected number was received without the StorageEngine.
-        while let Some(flight_data) = request.next().await {
-            let flight_data = flight_data?;
-            debug_assert_eq!(flight_data.flight_descriptor, None);
-            let record_batch = utils::flight_data_to_arrow_batch(
-                &flight_data,
-                schema.clone(),
-                &self.dictionaries_by_id,
-            )
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
-            info!(
-                "Received RecordBatch with {} data points for the table {}.",
-                record_batch.num_rows(),
-                table_name
-            );
-            // TODO: forward the data points to the StorageEngine.
+            model_tables.find(|table| table.name == *table_name).cloned()
+        };
+
+        // Handle the data based on whether it is a normal table or a model table.
+        if let Some(model_table) = maybe_model_table {
+            self.ingest_into_model_table(&model_table, &mut flight_data_stream).await?;
+        } else {
+            // If the table is not a model table, check if it can be found in the datafusion catalog.
+            let schema = self.get_table_schema_from_default_catalog(&table_name)?;
+            self.ingest_into_table(table_name, schema, flight_data_stream);
         }
 
         // Confirm the data points were received.
@@ -333,12 +454,20 @@ impl FlightService for FlightServiceHandler {
             let table_name = str::from_utf8(table_name_bytes)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
+            // If the table already exists, return an error.
+            if self.get_table_schema_from_default_catalog(&table_name).is_ok() {
+                let message = format!("Table with name '{}' already exists.", table_name);
+                return Err(Status::already_exists(message));
+            }
+
             // Check if the table name is a valid object_store path and database table name.
             object_store::path::Path::parse(table_name)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             if table_name.contains(char::is_whitespace) {
-                return Err(Status::invalid_argument("Table name cannot contain whitespace.".to_owned()));
+                return Err(Status::invalid_argument(
+                    "Table name cannot contain whitespace.".to_owned(),
+                ));
             }
 
             // Extract the schema from the action body.
@@ -347,12 +476,8 @@ impl FlightService for FlightServiceHandler {
             let schema = Schema::try_from(ipc_message)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            // Get the write lock for the catalog to ensure that multiple writes cannot happen at
-            // the same time. unwrap() is safe to use since write() only fails if the RwLock is poisoned.
-            let catalog = self.context.catalog.write().unwrap();
-
             if action.r#type == "CreateTable" {
-                create_table(catalog, table_name.to_owned(), schema)?;
+                self.create_table(table_name.to_owned(), schema).await?;
             } else {
                 // Extract the tag column indices from the action body. Note that since we assume
                 // each tag column index is one byte, we directly use the slice of bytes as the list
@@ -362,8 +487,7 @@ impl FlightService for FlightServiceHandler {
                 // Extract the timestamp column index from the action body.
                 let (timestamp_index, _offset_data) = extract_argument_bytes(offset_data);
 
-                create_model_table(
-                    catalog,
+                self.create_model_table(
                     table_name.to_owned(),
                     schema,
                     tag_indices.to_vec(),
@@ -386,13 +510,15 @@ impl FlightService for FlightServiceHandler {
         let create_table_action = ActionType {
             r#type: "CreateTable".to_owned(),
             description: "Given a table name and a schema, create a table and add it to the \
-            catalog.".to_owned(),
+            catalog."
+                .to_owned(),
         };
 
         let create_model_table_action = ActionType {
             r#type: "CreateModelTable".to_owned(),
             description: "Given a table name, a schema, a list of tag column indices, and the \
-            timestamp column index, create a model table and add it to the catalog.".to_owned()
+            timestamp column index, create a model table and add it to the catalog."
+                .to_owned(),
         };
 
         let output = stream::iter(vec![Ok(create_table_action), Ok(create_model_table_action)]);
@@ -413,83 +539,7 @@ fn extract_argument_bytes(data: &[u8]) -> (&[u8], &[u8]) {
     (argument_bytes, remaining_bytes)
 }
 
-/// Create a normal table and add it to the catalog. If the table already exists or if the Apache
-/// Parquet file cannot be created, return [`Status`] error.
-fn create_table(
-    mut catalog: RwLockWriteGuard<Catalog>,
-    table_name: String,
-    schema: Schema,
-) -> Result<(), Status> {
-    // If the table already exists, return an error.
-    let mut existing_tables = catalog.table_metadata.iter();
-    if existing_tables.any(|table| table.name == table_name) {
-        let message = format!("Table with name '{}' already exists.", table_name);
-        return Err(Status::already_exists(message));
-    }
-
-    let file_name = format!("{}.parquet", table_name);
-    let file_path = catalog.data_folder_path.join(file_name);
-
-    // Create an empty Apache Parquet file to save the schema.
-    let empty_batch = RecordBatch::new_empty(Arc::new(schema));
-    StorageEngine::write_batch_to_apache_parquet_file(empty_batch, file_path.as_path())
-        .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-    // Save the table metadata in the catalog.
-    let path_str = file_path.to_str().unwrap().to_string();
-    let new_table_metadata = TableMetadata {
-        name: table_name.clone(),
-        path: path_str,
-    };
-
-    info!("Created table '{}'.", table_name);
-    catalog.table_metadata.push(new_table_metadata);
-
-    Ok(())
-}
-
-/// Create a model table, add it to the metadata database tables, and add it to the catalog. If the
-/// table already exists or if the metadata cannot be written to the metadata database, return [`Status`] error.
-fn create_model_table(
-    mut catalog: RwLockWriteGuard<Catalog>,
-    table_name: String,
-    schema: Schema,
-    tag_column_indices: Vec<u8>,
-    timestamp_column_index: u8,
-) -> Result<(), Status> {
-    // If the table already exists, return an error.
-    let mut existing_tables = catalog.new_model_table_metadata.iter();
-    if existing_tables.any(|table| table.name == table_name) {
-        let message = format!("Model table with name '{}' already exists.", table_name);
-        return Err(Status::already_exists(message));
-    }
-
-    let model_table_metadata = NewModelTableMetadata::try_new(
-        table_name.clone(),
-        schema.clone(),
-        tag_column_indices,
-        timestamp_column_index,
-    )
-    .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-    // Convert the schema to bytes so it can be saved as a BLOB in the metadata database.
-    let options = IpcWriteOptions::default();
-    let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
-    let ipc_message: IpcMessage = schema_as_ipc.try_into().map_err(|error: ArrowError| {
-        Status::internal(error.to_string())
-    })?;
-
-    // Persist the new model table to the metadata database.
-    let database_path = catalog.data_folder_path.join("metadata.sqlite3");
-    save_model_table_to_database(database_path, &model_table_metadata, ipc_message.0)
-        .map_err(|error| Status::internal(error.to_string()))?;
-
-    info!("Created model table '{}'.", table_name);
-    catalog.new_model_table_metadata.push(model_table_metadata);
-
-    Ok(())
-}
-
+// TODO: Move this to the metadata component when it exists.
 /// Save the created model table to the metadata database. This includes creating a tags table for the
 /// model table, adding a row to the model_table_metadata table, and adding a row to the
 /// model_table_field_columns table for each field column.
@@ -503,21 +553,26 @@ fn save_model_table_to_database(
     let transaction = connection.transaction()?;
 
     // Add a column definition for each tag field in the schema.
-    let mut tag_columns = "".to_owned();
-    let mut tag_indices = model_table_metadata.tag_column_indices.iter().peekable();
-
-    while let Some(index) = tag_indices.next() {
-        // If it is the last column in the query, adding a "," results in an SQL syntax error.
-        let suffix = if tag_indices.peek().is_none() {""} else {", "};
-        let field = model_table_metadata.schema.field(*index as usize);
-
-        tag_columns.push_str(format!("{} TEXT NOT NULL{}", field.name(), suffix).as_str());
-    }
+    let tag_columns: String = model_table_metadata
+        .tag_column_indices
+        .iter()
+        .map(|index| {
+            let field = model_table_metadata.schema.field(*index as usize);
+            format!("{} TEXT NOT NULL", field.name())
+        })
+        .collect::<Vec<String>>()
+        .join(",");
 
     // Create a table_name_tags SQLite table to save the 54-bit tag hashes when ingesting data.
     // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
-    transaction.execute(format!("CREATE TABLE {}_tags (hash BIGINT PRIMARY KEY, {})",
-        model_table_metadata.name, tag_columns).as_str(), ())?;
+    transaction.execute(
+        format!(
+            "CREATE TABLE {}_tags (hash BIGINT PRIMARY KEY, {})",
+            model_table_metadata.name, tag_columns
+        )
+        .as_str(),
+        (),
+    )?;
 
     // Add a new row in the model_table_metadata table to persist the model table.
     transaction.execute(
@@ -534,12 +589,15 @@ fn save_model_table_to_database(
     // Add a row for each field column to the model_table_field_columns table.
     let mut insert_statement = transaction.prepare(
         "INSERT INTO model_table_field_columns (table_name, column_name, column_index)
-        VALUES (?1, ?2, ?3)")?;
+        VALUES (?1, ?2, ?3)",
+    )?;
 
     for (index, field) in model_table_metadata.schema.fields().iter().enumerate() {
         // Only add a row for the field if it is not the timestamp or a tag.
-        let in_tag_indices = model_table_metadata.tag_column_indices.contains(&(index as u8));
         let is_timestamp = index == model_table_metadata.timestamp_column_index as usize;
+        let in_tag_indices = model_table_metadata
+            .tag_column_indices
+            .contains(&(index as u8));
 
         if !is_timestamp && !in_tag_indices {
             insert_statement.execute(params![model_table_metadata.name, field.name(), index])?;
