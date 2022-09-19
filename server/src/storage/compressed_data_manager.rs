@@ -25,6 +25,7 @@ use tracing::{info, info_span};
 use crate::errors::ModelarDBError;
 use crate::storage::time_series::CompressedTimeSeries;
 use crate::StorageEngine;
+use crate::types::Timestamp;
 
 /// Signed integer since compressed data is inserted first and the remaining bytes are checked after.
 /// This means that the remaining bytes can be negative briefly until compressed data is saved to disk.
@@ -159,6 +160,29 @@ impl CompressedDataManager {
             time_series_size, self.compressed_remaining_memory_in_bytes
         );
     }
+}
+
+/// Return [`true`] if `file_path` has a file name that is within the time range given by
+/// `start_time` and `end_time`, otherwise [`false`]. Assumes `file_path` has a file stem with
+/// the format: ```start_timestamp-end_timestamp```, where both `start_timestamp` and
+/// `end_timestamp` are of the same unit as `start_time` and `end_time`.
+pub fn is_compressed_file_within_time_range(
+    file_path: &PathBuf,
+    start_time: Timestamp,
+    end_time: Timestamp
+) -> bool {
+    let file_name = file_path.file_stem().unwrap().to_str().unwrap();
+    let split_file_name: Vec<&str> = file_name.split("-").collect();
+
+    // unwrap() is safe to use since the file name structure is internally generated.
+    let file_start_time = split_file_name.get(0).unwrap().parse::<i64>().unwrap();
+    let file_end_time = split_file_name.get(1).unwrap().parse::<i64>().unwrap();
+
+    let ends_after_start = file_end_time >= start_time;
+    let starts_before_end = file_start_time <= end_time;
+
+    // Return true if the file ends after the start time and starts before the end time.
+    ends_after_start && starts_before_end
 }
 
 #[cfg(test)]

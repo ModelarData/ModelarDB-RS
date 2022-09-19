@@ -122,21 +122,7 @@ impl StorageEngine {
 
             // Prune the files based on the time range the file covers and convert to object meta.
             let pruned_files = key_files.iter().filter_map(|file_path| {
-                // TODO: Maybe move this check into "is_file_within_time_range" function.
-                let file_name = file_path.file_stem().unwrap().to_str().unwrap();
-                let split_file_name: Vec<&str> = file_name.split("-").collect();
-
-                // unwrap() is safe to use since the file name structure is internally generated.
-                let file_start_time = split_file_name.get(0).unwrap().parse::<i64>().unwrap();
-                let file_end_time = split_file_name.get(1).unwrap().parse::<i64>().unwrap();
-
-                // If a start time is given, only keep the file if it ends after the start time.
-                let ends_after_start = file_end_time >= start_time;
-
-                // if an end time is given, only keep the file it if starts before the end time.
-                let starts_before_end = file_start_time <= end_time;
-
-                if ends_after_start && starts_before_end {
+                if compressed_data_manager::is_compressed_file_within_time_range(file_path, start_time, end_time) {
                     // unwrap() is safe since we already know the file exists.
                     let metadata = fs::metadata(&file_path).unwrap();
 
