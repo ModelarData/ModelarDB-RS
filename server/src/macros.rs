@@ -46,7 +46,7 @@ macro_rules! get_array {
 ///
 /// # Panics
 ///
-/// Panics if `batch` contains less then six columns or if the columns are not
+/// Panics if `batch` contains less than six columns or if the columns are not
 /// Int32Array, Int64Array, Int64Array, Int32Array, BinaryArray, and BinaryArray.
 // TODO: rename downcast_arrays and update the types when refactoring query engine.
 #[macro_export]
