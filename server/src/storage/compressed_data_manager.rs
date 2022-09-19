@@ -357,4 +357,28 @@ mod tests {
         let result = data_manager.get_saved_compressed_files(&999);
         assert!(result.is_err());
     }
+
+    #[test]
+    fn test_compressed_file_starts_within_time_range() {
+        let file_path = PathBuf::from("test/1-10.parquet");
+        assert!(is_compressed_file_within_time_range(&file_path, 5, 15))
+    }
+
+    #[test]
+    fn test_compressed_file_ends_within_time_range() {
+        let file_path = PathBuf::from("test/10-20.parquet");
+        assert!(is_compressed_file_within_time_range(&file_path, 5, 15))
+    }
+
+    #[test]
+    fn test_compressed_file_is_within_time_range() {
+        let file_path = PathBuf::from("test/1-20.parquet");
+        assert!(is_compressed_file_within_time_range(&file_path, 5, 15))
+    }
+
+    #[test]
+    fn test_compressed_file_is_not_within_time_range() {
+        let file_path = PathBuf::from("test/1-10.parquet");
+        assert!(!is_compressed_file_within_time_range(&file_path, 20, 30))
+    }
 }
