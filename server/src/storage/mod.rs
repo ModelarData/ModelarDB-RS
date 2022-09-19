@@ -98,7 +98,7 @@ impl StorageEngine {
     /// Retrieve the compressed files that correspond to `keys` within the given range of time.
     /// If `keys` contain a key that does not exist or the end time is before the start time,
     /// [`DataRetrievalError`](ModelarDBError::DataRetrievalError) is returned.
-    fn get_compressed_files(
+    pub fn get_compressed_files(
         &mut self,
         keys: &[u64],
         start_time: Option<Timestamp>,
@@ -244,12 +244,13 @@ mod tests {
     use std::path::PathBuf;
     use std::thread;
     use std::time::Duration;
-    use datafusion::arrow::array::ArrayAccessor;
 
+    use datafusion::arrow::array::ArrayAccessor;
     use tempfile::{tempdir, TempDir};
+
     use crate::types::TimestampArray;
 
-    // Tests for retrieving compressed files from the storage engine.
+    // Tests for get_compressed_files().
     #[test]
     fn test_can_get_compressed_files_from_keys() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
@@ -312,7 +313,7 @@ mod tests {
     }
 
     #[test]
-    fn test_can_get_compressed_with_start_time_and_end_time() {
+    fn test_can_get_compressed_files_with_start_time_and_end_time() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
 
         // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
@@ -320,7 +321,7 @@ mod tests {
         let (_segment_3, segment_4) = insert_separated_segments(&mut storage_engine, 3, 4);
 
         // If we have a start time after the first segment ends and an end time before the fourth
-        // segment starts, only the files from the second and third segments should be retrieved.
+        // segment starts, only the files from the second and third segment should be retrieved.
         let end_times: &TimestampArray = segment_1.column(3).as_any().downcast_ref().unwrap();
         let start_times: &TimestampArray = segment_4.column(2).as_any().downcast_ref().unwrap();
 

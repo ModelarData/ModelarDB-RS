@@ -108,10 +108,11 @@ impl CompressedTimeSeries {
 
 #[cfg(test)]
 mod tests {
-    use datafusion::arrow::array::Array;
     use super::*;
 
+    use datafusion::arrow::array::Array;
     use tempfile::tempdir;
+
     use crate::storage::test_util;
 
     #[test]

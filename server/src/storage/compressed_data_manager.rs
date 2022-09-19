@@ -108,15 +108,13 @@ impl CompressedDataManager {
 
         // Read the directory that contains the compressed data corresponding to the key.
         let key_path = self.data_folder_path.join(format!("{}/compressed", key));
-        let dir = fs::read_dir(key_path).map_err(
-            |error| {
-                ModelarDBError::DataRetrievalError(format!(
-                    "Compressed data could not be found for key '{}': {}",
-                    key,
-                    error.to_string()
-                ))
-            },
-        )?;
+        let dir = fs::read_dir(key_path).map_err(|error| {
+            ModelarDBError::DataRetrievalError(format!(
+                "Compressed data could not be found for key '{}': {}",
+                key,
+                error.to_string()
+            ))
+        })?;
 
         // Return all files in the path that are parquet files.
         Ok(dir.filter_map(|maybe_dir_entry| {
@@ -164,8 +162,8 @@ impl CompressedDataManager {
 
 /// Return [`true`] if `file_path` has a file name that is within the time range given by
 /// `start_time` and `end_time`, otherwise [`false`]. Assumes `file_path` has a file stem with
-/// the format: ```start_timestamp-end_timestamp```, where both `start_timestamp` and
-/// `end_timestamp` are of the same unit as `start_time` and `end_time`.
+/// the format: `start_timestamp-end_timestamp`, where both `start_timestamp` and `end_timestamp`
+/// are of the same unit as `start_time` and `end_time`.
 pub fn is_compressed_file_within_time_range(
     file_path: &PathBuf,
     start_time: Timestamp,
@@ -300,6 +298,7 @@ mod tests {
         (temp_dir, CompressedDataManager::new(data_folder_path))
     }
 
+    // Tests for get_saved_compressed_files().
     #[test]
     fn test_can_get_saved_compressed_files() {
         let segment = test_util::get_compressed_segment_record_batch();
@@ -358,6 +357,7 @@ mod tests {
         assert!(result.is_err());
     }
 
+    // Tests for is_compressed_file_within_time_range().
     #[test]
     fn test_compressed_file_starts_within_time_range() {
         let file_path = PathBuf::from("test/1-10.parquet");
