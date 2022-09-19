@@ -166,7 +166,6 @@ mod tests {
     use super::*;
     use std::path::Path;
 
-    use datafusion::arrow::array::ArrayAccessor;
     use tempfile::{tempdir, TempDir};
 
     use crate::storage::test_util;

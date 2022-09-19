@@ -104,7 +104,17 @@ impl StorageEngine {
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>
     ) -> Result<Vec<ObjectMeta>, ModelarDBError> {
+        let start_time = start_time.unwrap_or(0);
+        let end_time = end_time.unwrap_or(i64::MAX);
         let mut compressed_files: Vec<ObjectMeta> = vec![];
+
+        if start_time > end_time {
+            return Err(ModelarDBError::DataRetrievalError(format!(
+                "Start time '{}' cannot be after end time '{}'.",
+                start_time,
+                end_time
+            )));
+        };
 
         for key in keys {
             // For each key, list the files that contain compressed data.
@@ -112,6 +122,7 @@ impl StorageEngine {
 
             // Prune the files based on the time range the file covers and convert to object meta.
             let pruned_files = key_files.iter().filter_map(|file_path| {
+                // TODO: Maybe move this check into "is_file_within_time_range" function.
                 let file_name = file_path.file_stem().unwrap().to_str().unwrap();
                 let split_file_name: Vec<&str> = file_name.split("-").collect();
 
@@ -120,10 +131,10 @@ impl StorageEngine {
                 let file_end_time = split_file_name.get(1).unwrap().parse::<i64>().unwrap();
 
                 // If a start time is given, only keep the file if it ends after the start time.
-                let ends_after_start = file_end_time >= start_time.unwrap_or(0);
+                let ends_after_start = file_end_time >= start_time;
 
                 // if an end time is given, only keep the file it if starts before the end time.
-                let starts_before_end = file_start_time <= end_time.unwrap_or(i64::MAX);
+                let starts_before_end = file_start_time <= end_time;
 
                 if ends_after_start && starts_before_end {
                     // unwrap() is safe since we already know the file exists.
@@ -245,38 +256,137 @@ impl StorageEngine {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::thread;
+    use std::time::Duration;
+    use datafusion::arrow::array::ArrayAccessor;
 
     use tempfile::{tempdir, TempDir};
+    use crate::types::TimestampArray;
 
-    // Tests for retrieving compressed data from the storage engine.
+    // Tests for retrieving compressed files from the storage engine.
     #[test]
-    fn test_can_get_data_from_keys() {
+    fn test_can_get_compressed_files_from_keys() {
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
 
+        // Insert compressed segments into multiple different keys.
+        let segment = test_util::get_compressed_segment_record_batch();
+        storage_engine.compressed_data_manager.insert_compressed_segment(1, segment.clone());
+        storage_engine.compressed_data_manager.insert_compressed_segment(2, segment);
+
+        let result = storage_engine.get_compressed_files(&[1, 2], None, None);
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 2);
     }
 
     #[test]
-    fn test_cannot_get_data_from_non_existent_key() {
+    fn test_cannot_get_compressed_files_from_non_existent_key() {
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
 
+        let result = storage_engine.get_compressed_files(&[1], None, None);
+        assert!(result.is_err());
     }
 
     #[test]
-    fn test_can_get_data_after_start_time() {
+    fn test_can_get_compressed_files_with_start_time() {
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 1, 2);
 
+        // If we have a start time after the first segments ends, only the file from the second
+        // segment should be retrieved.
+        let end_times: &TimestampArray = segment_1.column(3).as_any().downcast_ref().unwrap();
+        let start_time = Some(end_times.value(end_times.len() - 1) + 100);
+
+        let result = storage_engine.get_compressed_files(&[1, 2], start_time, None);
+        let files = result.unwrap();
+        assert_eq!(files.len(), 1);
+
+        // The path to the returned compressed file should contain the key of the second segment.
+        let file_path = files.get(0).unwrap().location.to_string();
+        assert!(file_path.contains("2/compressed"));
     }
 
     #[test]
-    fn test_can_get_data_before_end_time() {
+    fn test_can_get_compressed_files_with_end_time() {
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let (_segment_1, segment_2) = insert_separated_segments(&mut storage_engine, 1, 2);
 
+        // If we have an end time before the second segment starts, only the file from the first
+        // segment should be retrieved.
+        let start_times: &TimestampArray = segment_2.column(2).as_any().downcast_ref().unwrap();
+        let end_time = Some(start_times.value(1) - 100);
+
+        let result = storage_engine.get_compressed_files(&[1, 2], None, end_time);
+        let files = result.unwrap();
+        assert_eq!(files.len(), 1);
+
+        // The path to the returned compressed file should contain the key of the first segment.
+        let file_path = files.get(0).unwrap().location.to_string();
+        assert!(file_path.contains("1/compressed"));
     }
 
     #[test]
-    fn test_can_get_data_between_start_time_and_end_time() {
+    fn test_can_get_compressed_with_start_time_and_end_time() {
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
 
+        // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
+        let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 1, 2);
+        let (_segment_3, segment_4) = insert_separated_segments(&mut storage_engine, 3, 4);
+
+        // If we have a start time after the first segment ends and an end time before the fourth
+        // segment starts, only the files from the second and third segments should be retrieved.
+        let end_times: &TimestampArray = segment_1.column(3).as_any().downcast_ref().unwrap();
+        let start_times: &TimestampArray = segment_4.column(2).as_any().downcast_ref().unwrap();
+
+        let start_time = Some(end_times.value(end_times.len() - 1) + 100);
+        let end_time = Some(start_times.value(1) - 100);
+
+        let result = storage_engine.get_compressed_files(&[1, 2, 3, 4], start_time, end_time);
+        let files = result.unwrap();
+        assert_eq!(files.len(), 2);
+
+        // The paths to the returned compressed files should contain the key of the second and third segment.
+        let file_path = files.get(0).unwrap().location.to_string();
+        assert!(file_path.contains("2/compressed"));
+
+        let file_path = files.get(1).unwrap().location.to_string();
+        assert!(file_path.contains("3/compressed"));
+    }
+
+    /// Create and insert two compressed segments with a ~1 second time difference.
+    fn insert_separated_segments(
+        storage_engine: &mut StorageEngine,
+        key_1: u64,
+        key_2: u64
+    ) -> (RecordBatch, RecordBatch) {
+        let segment_1 = test_util::get_compressed_segment_record_batch();
+        storage_engine.compressed_data_manager.insert_compressed_segment(key_1, segment_1.clone());
+
+        thread::sleep(Duration::from_millis(1000));
+
+        let segment_2 = test_util::get_compressed_segment_record_batch();
+        storage_engine.compressed_data_manager.insert_compressed_segment(key_2, segment_2.clone());
+
+        (segment_1, segment_2)
     }
 
     #[test]
-    fn test_cannot_get_data_where_end_time_is_before_start_time() {
+    fn test_cannot_get_compressed_files_where_end_time_is_before_start_time() {
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
 
+        let segment = test_util::get_compressed_segment_record_batch();
+        storage_engine.compressed_data_manager.insert_compressed_segment(1, segment);
+
+        let result = storage_engine.get_compressed_files(&[1], Some(10), Some(1));
+        assert!(result.is_err());
+    }
+
+    /// Create a [`StorageEngine`] with a folder that is deleted once the test is finished.
+    fn create_storage_engine() -> (TempDir, StorageEngine) {
+        let temp_dir = tempdir().unwrap();
+
+        let data_folder_path = temp_dir.path().to_path_buf();
+        (temp_dir, StorageEngine::new(data_folder_path))
     }
 
     // Tests for writing and reading Apache Parquet files.
