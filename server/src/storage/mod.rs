@@ -242,7 +242,6 @@ impl StorageEngine {
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use std::thread;
     use std::time::Duration;
 
     use tempfile::{tempdir, TempDir};
