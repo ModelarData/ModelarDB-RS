@@ -236,14 +236,14 @@ struct CompressedSegmentBatchBuilder {
 impl CompressedSegmentBatchBuilder {
     fn new(capacity: usize) -> Self {
         Self {
-            model_type_ids: UInt8Builder::new(capacity),
-            timestamps: BinaryBuilder::new(capacity),
-            start_times: TimestampBuilder::new(capacity),
-            end_times: TimestampBuilder::new(capacity),
-            values: BinaryBuilder::new(capacity),
-            min_values: ValueBuilder::new(capacity),
-            max_values: ValueBuilder::new(capacity),
-            error: Float32Builder::new(capacity),
+            model_type_ids: UInt8Builder::with_capacity(capacity),
+            timestamps: BinaryBuilder::with_capacity(capacity, capacity),
+            start_times: TimestampBuilder::with_capacity(capacity),
+            end_times: TimestampBuilder::with_capacity(capacity),
+            values: BinaryBuilder::with_capacity(capacity, capacity),
+            min_values: ValueBuilder::with_capacity(capacity),
+            max_values: ValueBuilder::with_capacity(capacity),
+            error: Float32Builder::with_capacity(capacity),
         }
     }
 
@@ -423,9 +423,9 @@ mod tests {
         timestamps: &[Timestamp],
         values: &[Value],
     ) -> (TimestampArray, ValueArray) {
-        let mut timestamps_builder = TimestampBuilder::new(timestamps.len());
+        let mut timestamps_builder = TimestampBuilder::with_capacity(timestamps.len());
         timestamps_builder.append_slice(timestamps);
-        let mut values_builder = ValueBuilder::new(values.len());
+        let mut values_builder = ValueBuilder::with_capacity(values.len());
         values_builder.append_slice(values);
         (timestamps_builder.finish(), values_builder.finish())
     }

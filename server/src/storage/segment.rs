@@ -62,8 +62,8 @@ pub(super) struct SegmentBuilder {
 impl SegmentBuilder {
     pub(super) fn new() -> Self {
         Self {
-            timestamps: TimestampBuilder::new(BUILDER_CAPACITY),
-            values: ValueBuilder::new(BUILDER_CAPACITY),
+            timestamps: TimestampBuilder::with_capacity(BUILDER_CAPACITY),
+            values: ValueBuilder::with_capacity(BUILDER_CAPACITY),
         }
     }
 

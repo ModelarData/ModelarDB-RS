@@ -514,10 +514,10 @@ impl GridStream {
             .downcast_ref::<StringArray>()
             .unwrap();
 
-        let mut members = StringBuilder::new(level.iter().map(|s| s.unwrap().len()).sum());
+        let mut members =
+            StringBuilder::with_capacity(tids.len(), level.iter().map(|s| s.unwrap().len()).sum());
         for tid in tids {
-            members
-                .append_value(level.value(tid.unwrap() as usize));
+            members.append_value(level.value(tid.unwrap() as usize));
         }
         Arc::new(members.finish())
     }

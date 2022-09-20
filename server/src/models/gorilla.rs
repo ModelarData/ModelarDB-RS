@@ -200,7 +200,7 @@ fn decompress_values_to_array(
     model: &[u8],
 ) -> ValueArray {
     let length = models::length(start_time, end_time, sampling_interval);
-    let mut value_builder = ValueBuilder::new(length as usize);
+    let mut value_builder = ValueBuilder::with_capacity(length as usize);
     decompress_values(
         start_time,
         end_time,
@@ -350,9 +350,9 @@ mod tests {
     fn test_grid(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let compressed_values = compress_values_using_gorilla(&values);
-        let mut time_series_ids_builder = TimeSeriesIdBuilder::new(10);
-        let mut timestamps_builder = TimestampBuilder::new(10);
-        let mut values_builder = ValueBuilder::new(10);
+        let mut time_series_ids_builder = TimeSeriesIdBuilder::with_capacity(10);
+        let mut timestamps_builder = TimestampBuilder::with_capacity(10);
+        let mut values_builder = ValueBuilder::with_capacity(10);
 
         grid(
             1,
@@ -388,7 +388,7 @@ mod tests {
     fn test_decode(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let compressed_values = compress_values_using_gorilla(&values);
-        let mut decompressed_values_builder = ValueBuilder::new(values.len());
+        let mut decompressed_values_builder = ValueBuilder::with_capacity(values.len());
         decompress_values(
             1,
             values.len() as i64,

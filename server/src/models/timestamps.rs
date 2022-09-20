@@ -159,12 +159,12 @@ pub fn decompress_all_timestamps(
 ) -> TimestampArray {
     if residual_timestamps.is_empty() && start_time == end_time {
         // Timestamps are assumed to be unique so the segment has one timestamp.
-        let mut timestamp_builder = TimestampBuilder::new(1);
+        let mut timestamp_builder = TimestampBuilder::with_capacity(1);
         timestamp_builder.append_value(start_time);
         timestamp_builder.finish()
     } else if residual_timestamps.is_empty() {
         // Timestamps are assumed to be unique so the segment has two timestamp.
-        let mut timestamp_builder = TimestampBuilder::new(2);
+        let mut timestamp_builder = TimestampBuilder::with_capacity(2);
         timestamp_builder.append_value(start_time);
         timestamp_builder.append_value(end_time);
         timestamp_builder.finish()
@@ -191,7 +191,7 @@ fn decompress_all_regular_timestamps(
 
     let length = usize::from_le_bytes(bytes_to_decode);
     let sampling_interval = (end_time - start_time) as usize / (length - 1);
-    let mut timestamp_builder = TimestampBuilder::new(length);
+    let mut timestamp_builder = TimestampBuilder::with_capacity(length);
 
     for timestamp in (start_time..=end_time).step_by(sampling_interval) {
         timestamp_builder.append_value(timestamp);
@@ -213,7 +213,8 @@ fn decompress_all_irregular_timestamps(
     // `timestamp_builder` cannot be perfectly pre-allocated. However, as the
     // Gorilla model type is bounded by `compression::GORILLA_MAXIMUM_LENGTH`,
     // this generally becomes the predominant length of the compressed segments.
-    let mut timestamp_builder = TimestampBuilder::new(compression::GORILLA_MAXIMUM_LENGTH);
+    let mut timestamp_builder =
+        TimestampBuilder::with_capacity(compression::GORILLA_MAXIMUM_LENGTH);
 
     // Add the first timestamp stored as `start_time` in the segment.
     timestamp_builder.append_value(start_time);
@@ -288,7 +289,7 @@ mod tests {
     // Tests for compress_residual_timestamps() and decompress_all_timestamps().
     #[test]
     fn compress_timestamps_for_time_series_with_zero_one_or_two_timestamps() {
-        let mut uncompressed_timestamps_builder = TimestampBuilder::new(3);
+        let mut uncompressed_timestamps_builder = TimestampBuilder::with_capacity(3);
 
         uncompressed_timestamps_builder.append_slice(&[]);
         assert!(compress_residual_timestamps(&uncompressed_timestamps_builder.finish()).is_empty());
@@ -314,7 +315,7 @@ mod tests {
 
     fn compress_and_decompress_timestamps_for_a_time_series(uncompressed_timestamps: &[Timestamp]) {
         let mut uncompressed_timestamps_builder =
-            TimestampBuilder::new(uncompressed_timestamps.len());
+            TimestampBuilder::with_capacity(uncompressed_timestamps.len());
         uncompressed_timestamps_builder.append_slice(uncompressed_timestamps);
         let uncompressed_timestamps = uncompressed_timestamps_builder.finish();
 
