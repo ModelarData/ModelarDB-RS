@@ -373,7 +373,7 @@ impl CompressedSegmentBatchBuilder {
 /// Flatten a [`Vec<TimestampArray>`] into a [`TimestampArray`].
 fn flatten_timestamp_arrays(timestamp_arrays: Vec<TimestampArray>) -> TimestampArray {
     let total_length = timestamp_arrays.iter().map(|array| array.len()).sum();
-    let mut timestamps_builder = TimestampBuilder::new(total_length);
+    let mut timestamps_builder = TimestampBuilder::with_capacity(total_length);
     for array in timestamp_arrays {
         timestamps_builder.append_slice(array.values());
     }
