@@ -118,7 +118,7 @@ impl StorageEngine {
 
         for key in keys {
             // For each key, list the files that contain compressed data.
-            let key_files = self.compressed_data_manager.get_saved_compressed_files(key)?;
+            let key_files = self.compressed_data_manager.save_and_get_saved_compressed_files(key)?;
 
             // Prune the files based on the time range the file covers and convert to object meta.
             let pruned_files = key_files.iter().filter_map(|file_path| {
@@ -245,17 +245,16 @@ mod tests {
     use std::thread;
     use std::time::Duration;
 
-    use datafusion::arrow::array::ArrayAccessor;
     use tempfile::{tempdir, TempDir};
 
     use crate::types::TimestampArray;
 
     // Tests for get_compressed_files().
     #[test]
-    fn test_can_get_compressed_files_from_keys() {
+    fn test_can_get_compressed_files_for_keys() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
 
-        // Insert compressed segments into multiple different keys.
+        // Insert compressed segments with multiple different keys.
         let segment = test_util::get_compressed_segment_record_batch();
         storage_engine.compressed_data_manager.insert_compressed_segment(1, segment.clone());
         storage_engine.compressed_data_manager.insert_compressed_segment(2, segment);
@@ -267,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cannot_get_compressed_files_from_non_existent_key() {
+    fn test_cannot_get_compressed_files_for_non_existent_key() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
 
         let result = storage_engine.get_compressed_files(&[1], None, None);
@@ -277,7 +276,7 @@ mod tests {
     #[test]
     fn test_can_get_compressed_files_with_start_time() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
-        let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 1, 2);
+        let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 1, 2, 0);
 
         // If we have a start time after the first segments ends, only the file from the second
         // segment should be retrieved.
@@ -296,7 +295,7 @@ mod tests {
     #[test]
     fn test_can_get_compressed_files_with_end_time() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
-        let (_segment_1, segment_2) = insert_separated_segments(&mut storage_engine, 1, 2);
+        let (_segment_1, segment_2) = insert_separated_segments(&mut storage_engine, 1, 2, 0);
 
         // If we have an end time before the second segment starts, only the file from the first
         // segment should be retrieved.
@@ -317,8 +316,8 @@ mod tests {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
 
         // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
-        let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 1, 2);
-        let (_segment_3, segment_4) = insert_separated_segments(&mut storage_engine, 3, 4);
+        let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 1, 2, 0);
+        let (_segment_3, segment_4) = insert_separated_segments(&mut storage_engine, 3, 4, 1000);
 
         // If we have a start time after the first segment ends and an end time before the fourth
         // segment starts, only the files from the second and third segment should be retrieved.
@@ -340,18 +339,17 @@ mod tests {
         assert!(file_path.contains("3/compressed"));
     }
 
-    /// Create and insert two compressed segments with a ~1 second time difference.
+    /// Create and insert two compressed segments with a 1 second time difference offset by `start_time`.
     fn insert_separated_segments(
         storage_engine: &mut StorageEngine,
         key_1: u64,
-        key_2: u64
+        key_2: u64,
+        start_time: i64,
     ) -> (RecordBatch, RecordBatch) {
-        let segment_1 = test_util::get_compressed_segment_record_batch();
+        let segment_1 = test_util::get_compressed_segment_record_batch_with_time(1000 + start_time);
         storage_engine.compressed_data_manager.insert_compressed_segment(key_1, segment_1.clone());
 
-        thread::sleep(Duration::from_millis(1000));
-
-        let segment_2 = test_util::get_compressed_segment_record_batch();
+        let segment_2 = test_util::get_compressed_segment_record_batch_with_time(2000 + start_time);
         storage_engine.compressed_data_manager.insert_compressed_segment(key_2, segment_2.clone());
 
         (segment_1, segment_2)
@@ -488,7 +486,6 @@ mod tests {
 /// multiple modules in the storage engine.
 pub mod test_util {
     use std::sync::Arc;
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     use datafusion::arrow::array::{BinaryArray, Float32Array, UInt8Array};
     use datafusion::arrow::datatypes::DataType::UInt8;
@@ -511,7 +508,12 @@ pub mod test_util {
 
     /// Return a generated compressed segment with three model segments.
     pub fn get_compressed_segment_record_batch() -> RecordBatch {
-        let time_ms = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64;
+        get_compressed_segment_record_batch_with_time(0)
+    }
+
+    /// Return a generated compressed segment with three model segments. The segment time span is
+    /// from `time_ms` to `time_ms` + 3.
+    pub fn get_compressed_segment_record_batch_with_time(time_ms: i64) -> RecordBatch {
         let start_times = vec![time_ms, time_ms + 1, time_ms + 2];
         let end_times = vec![time_ms + 1, time_ms + 2, time_ms + 3];
 

@@ -44,7 +44,7 @@ impl CompressedTimeSeries {
     }
 
     /// Append `segment` to the compressed data in the [`CompressedTimeSeries`] and return the size
-    /// of `segment` in bytes.
+    /// of `segment` in bytes. It is assumed that `segment` is sorted by time.
     pub(super) fn append_segment(&mut self, segment: RecordBatch) -> usize {
         let segment_size = Self::get_size_of_segment(&segment);
 

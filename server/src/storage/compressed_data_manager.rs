@@ -92,7 +92,7 @@ impl CompressedDataManager {
     /// Return the file path to each on-disk compressed file that corresponds to `key`. If some
     /// compressed data that corresponds to `key` is still in memory, save the data to disk first.
     /// If `key` does not correspond to any data, [`DataRetrievalError`](ModelarDBError::DataRetrievalError) is returned.
-    pub(super) fn get_saved_compressed_files(
+    pub(super) fn save_and_get_saved_compressed_files(
         &mut self,
         key: &u64
     ) -> Result<Vec<PathBuf>, ModelarDBError> {
@@ -146,16 +146,14 @@ impl CompressedDataManager {
         info!("Saving compressed time series with key '{}' to disk.", key);
 
         let mut time_series = self.compressed_data.remove(&key).unwrap();
-        let time_series_size = time_series.size_in_bytes.clone();
-
         let folder_path = self.data_folder_path.join(key.to_string());
         time_series.save_to_apache_parquet(folder_path.as_path());
 
-        self.compressed_remaining_memory_in_bytes += time_series_size as isize;
+        self.compressed_remaining_memory_in_bytes += time_series.size_in_bytes as isize;
 
         info!(
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
-            time_series_size, self.compressed_remaining_memory_in_bytes
+            time_series.size_in_bytes, self.compressed_remaining_memory_in_bytes
         );
     }
 }
@@ -169,6 +167,7 @@ pub(super) fn is_compressed_file_within_time_range(
     start_time: Timestamp,
     end_time: Timestamp
 ) -> bool {
+    // unwrap() is safe to use since file_path is created and provided internally.
     let file_name = file_path.file_stem().unwrap().to_str().unwrap();
     let split_file_name: Vec<&str> = file_name.split("-").collect();
 
@@ -307,7 +306,7 @@ mod tests {
         data_manager.insert_compressed_segment(KEY, segment.clone());
         data_manager.save_compressed_data(&KEY);
 
-        let result = data_manager.get_saved_compressed_files(&KEY);
+        let result = data_manager.save_and_get_saved_compressed_files(&KEY);
         assert!(result.is_ok());
 
         let files = result.unwrap();
@@ -329,17 +328,17 @@ mod tests {
 
     #[test]
     fn test_save_in_memory_compressed_data_when_getting_saved_compressed_files() {
-        let segment = test_util::get_compressed_segment_record_batch();
+        let segment = test_util::get_compressed_segment_record_batch_with_time(1000);
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
         data_manager.insert_compressed_segment(KEY, segment);
         data_manager.save_compressed_data(&KEY);
 
         // This second inserted segment should be saved when the compressed files are retrieved.
-        let segment_2 = test_util::get_compressed_segment_record_batch();
+        let segment_2 = test_util::get_compressed_segment_record_batch_with_time(2000);
         data_manager.insert_compressed_segment(KEY, segment_2.clone());
 
-        let result = data_manager.get_saved_compressed_files(&KEY);
+        let result = data_manager.save_and_get_saved_compressed_files(&KEY);
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 2);
@@ -353,32 +352,38 @@ mod tests {
         data_manager.insert_compressed_segment(KEY, segment);
         data_manager.save_compressed_data(&KEY);
 
-        let result = data_manager.get_saved_compressed_files(&999);
+        let result = data_manager.save_and_get_saved_compressed_files(&999);
         assert!(result.is_err());
     }
 
     // Tests for is_compressed_file_within_time_range().
     #[test]
-    fn test_compressed_file_starts_within_time_range() {
+    fn test_compressed_file_ends_within_time_range() {
         let file_path = PathBuf::from("test/1-10.parquet");
         assert!(is_compressed_file_within_time_range(&file_path, 5, 15))
     }
 
     #[test]
-    fn test_compressed_file_ends_within_time_range() {
+    fn test_compressed_file_starts_within_time_range() {
         let file_path = PathBuf::from("test/10-20.parquet");
         assert!(is_compressed_file_within_time_range(&file_path, 5, 15))
     }
 
     #[test]
     fn test_compressed_file_is_within_time_range() {
-        let file_path = PathBuf::from("test/1-20.parquet");
-        assert!(is_compressed_file_within_time_range(&file_path, 5, 15))
+        let file_path = PathBuf::from("test/10-20.parquet");
+        assert!(is_compressed_file_within_time_range(&file_path, 1, 30))
     }
 
     #[test]
-    fn test_compressed_file_is_not_within_time_range() {
+    fn test_compressed_file_is_before_time_range() {
         let file_path = PathBuf::from("test/1-10.parquet");
         assert!(!is_compressed_file_within_time_range(&file_path, 20, 30))
+    }
+
+    #[test]
+    fn test_compressed_file_is_after_time_range() {
+        let file_path = PathBuf::from("test/20-30.parquet");
+        assert!(!is_compressed_file_within_time_range(&file_path, 1, 10))
     }
 }
