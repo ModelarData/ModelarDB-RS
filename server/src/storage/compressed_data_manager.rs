@@ -33,7 +33,7 @@ const COMPRESSED_RESERVED_MEMORY_IN_BYTES: isize = 5000;
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
-pub struct CompressedDataManager {
+pub(super) struct CompressedDataManager {
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
     data_folder_path: PathBuf,
     /// The compressed segments before they are saved to persistent storage.
@@ -45,7 +45,7 @@ pub struct CompressedDataManager {
 }
 
 impl CompressedDataManager {
-    pub fn new(data_folder_path: PathBuf) -> Self {
+    pub(super) fn new(data_folder_path: PathBuf) -> Self {
         Self {
             data_folder_path,
             // TODO: Maybe create with estimated capacity to avoid reallocation.
@@ -56,7 +56,7 @@ impl CompressedDataManager {
     }
 
     /// Insert `segment` into the in-memory compressed time series buffer.
-    pub fn insert_compressed_segment(&mut self, key: u64, segment: RecordBatch) {
+    pub(super) fn insert_compressed_segment(&mut self, key: u64, segment: RecordBatch) {
         let _span = info_span!("insert_compressed_segment", key = key.clone()).entered();
         info!(
             "Inserting batch with {} rows into compressed time series.",
@@ -85,14 +85,14 @@ impl CompressedDataManager {
 
         // If the reserved memory limit is exceeded, save compressed data to disk.
         if self.compressed_remaining_memory_in_bytes < 0 {
-            self.free_compressed_data_memory();
+            self.save_compressed_data_to_free_memory();
         }
     }
 
     /// Return the file path to each on-disk compressed file that corresponds to `key`. If some
     /// compressed data that corresponds to `key` is still in memory, save the data to disk first.
     /// If `key` does not correspond to any data, [`DataRetrievalError`](ModelarDBError::DataRetrievalError) is returned.
-    pub fn get_saved_compressed_files(
+    pub(super) fn get_saved_compressed_files(
         &mut self,
         key: &u64
     ) -> Result<Vec<PathBuf>, ModelarDBError> {
@@ -131,7 +131,7 @@ impl CompressedDataManager {
     }
 
     /// Save [`CompressedTimeSeries`] to disk until the reserved memory limit is no longer exceeded.
-    fn free_compressed_data_memory(&mut self) {
+    fn save_compressed_data_to_free_memory(&mut self) {
         info!("Out of memory for compressed data. Saving compressed data to disk.");
 
         while self.compressed_remaining_memory_in_bytes < 0 {
@@ -164,7 +164,7 @@ impl CompressedDataManager {
 /// `start_time` and `end_time`, otherwise [`false`]. Assumes `file_path` has a file stem with
 /// the format: `start_timestamp-end_timestamp`, where both `start_timestamp` and `end_timestamp`
 /// are of the same unit as `start_time` and `end_time`.
-pub fn is_compressed_file_within_time_range(
+pub(super) fn is_compressed_file_within_time_range(
     file_path: &PathBuf,
     start_time: Timestamp,
     end_time: Timestamp
@@ -285,7 +285,7 @@ mod tests {
 
         // Set the remaining memory to a negative value since data is only saved when out of memory.
         data_manager.compressed_remaining_memory_in_bytes = -1;
-        data_manager.free_compressed_data_memory();
+        data_manager.save_compressed_data_to_free_memory();
 
         assert!(-1 < data_manager.compressed_remaining_memory_in_bytes);
     }

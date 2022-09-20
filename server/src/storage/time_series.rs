@@ -28,15 +28,15 @@ use crate::types::TimestampArray;
 
 /// A single compressed time series, containing one or more compressed segments and providing
 /// functionality for appending segments and saving all segments to a single Apache Parquet file.
-pub struct CompressedTimeSeries {
+pub(super) struct CompressedTimeSeries {
     /// Compressed segments that make up the sequential compressed data of the [`CompressedTimeSeries`].
     compressed_segments: Vec<RecordBatch>,
     /// Continuously updated total sum of the size of the compressed segments.
-    pub size_in_bytes: usize,
+    pub(super) size_in_bytes: usize,
 }
 
 impl CompressedTimeSeries {
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             compressed_segments: Vec::new(),
             size_in_bytes: 0,
@@ -45,7 +45,7 @@ impl CompressedTimeSeries {
 
     /// Append `segment` to the compressed data in the [`CompressedTimeSeries`] and return the size
     /// of `segment` in bytes.
-    pub fn append_segment(&mut self, segment: RecordBatch) -> usize {
+    pub(super) fn append_segment(&mut self, segment: RecordBatch) -> usize {
         let segment_size = Self::get_size_of_segment(&segment);
 
         debug_assert!(
@@ -61,7 +61,7 @@ impl CompressedTimeSeries {
 
     /// If the compressed segments are successfully saved to an Apache Parquet file return [`Ok`],
     /// otherwise return [`IOError`].
-    pub fn save_to_apache_parquet(&mut self, folder_path: &Path) -> Result<(), IOError> {
+    pub(super) fn save_to_apache_parquet(&mut self, folder_path: &Path) -> Result<(), IOError> {
         debug_assert!(
             !self.compressed_segments.is_empty(),
             "Cannot save CompressedTimeSeries with no data."
