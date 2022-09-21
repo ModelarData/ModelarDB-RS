@@ -29,6 +29,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use tracing::info;
 
+use crate::get_array;
 use crate::storage::{StorageEngine, BUILDER_CAPACITY};
 use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
 
@@ -169,7 +170,7 @@ impl SpilledSegment {
         fs::create_dir_all(complete_folder_path.as_path());
 
         // Create a path that uses the first timestamp as the filename.
-        let timestamps: &TimestampArray = segment.column(0).as_any().downcast_ref().unwrap();
+        let timestamps = get_array!(segment, 0, TimestampArray);
         let file_name = format!("{}.parquet", timestamps.value(0));
         let file_path = complete_folder_path.join(file_name);
 

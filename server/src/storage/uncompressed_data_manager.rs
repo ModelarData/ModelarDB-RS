@@ -61,7 +61,6 @@ impl UncompressedDataManager {
         }
     }
 
-    // TODO: Use the new macro for downcasting the arrays.
     // TODO: When the compression component is changed, this function should return Ok or Err.
     /// Parse `data_points` and insert it into the in-memory buffer. The data points are first parsed
     /// into multiple univariate time series based on `model_table`. These individual time series

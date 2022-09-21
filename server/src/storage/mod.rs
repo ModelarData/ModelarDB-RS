@@ -253,6 +253,7 @@ mod tests {
 
     use tempfile::{tempdir, TempDir};
 
+    use crate::get_array;
     use crate::types::TimestampArray;
 
     // Tests for get_compressed_files().
@@ -286,7 +287,7 @@ mod tests {
 
         // If we have a start time after the first segments ends, only the file from the second
         // segment should be retrieved.
-        let end_times: &TimestampArray = segment_1.column(3).as_any().downcast_ref().unwrap();
+        let end_times = get_array!(segment_1, 3, TimestampArray);
         let start_time = Some(end_times.value(end_times.len() - 1) + 100);
 
         let result = storage_engine.get_compressed_files(&[1, 2], start_time, None);
@@ -305,7 +306,7 @@ mod tests {
 
         // If we have an end time before the second segment starts, only the file from the first
         // segment should be retrieved.
-        let start_times: &TimestampArray = segment_2.column(2).as_any().downcast_ref().unwrap();
+        let start_times = get_array!(segment_2, 2, TimestampArray);
         let end_time = Some(start_times.value(1) - 100);
 
         let result = storage_engine.get_compressed_files(&[1, 2], None, end_time);
@@ -327,8 +328,8 @@ mod tests {
 
         // If we have a start time after the first segment ends and an end time before the fourth
         // segment starts, only the files from the second and third segment should be retrieved.
-        let end_times: &TimestampArray = segment_1.column(3).as_any().downcast_ref().unwrap();
-        let start_times: &TimestampArray = segment_4.column(2).as_any().downcast_ref().unwrap();
+        let end_times = get_array!(segment_1, 3, TimestampArray);
+        let start_times = get_array!(segment_4, 2, TimestampArray);
 
         let start_time = Some(end_times.value(end_times.len() - 1) + 100);
         let end_time = Some(start_times.value(1) - 100);
