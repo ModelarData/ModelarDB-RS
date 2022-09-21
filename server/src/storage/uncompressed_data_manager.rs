@@ -61,7 +61,7 @@ impl UncompressedDataManager {
             finished_queue: VecDeque::new(),
             tag_value_hashes: HashMap::new(),
             uncompressed_remaining_memory_in_bytes: UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
-            compress_directly
+            compress_directly,
         }
     }
 
@@ -149,7 +149,7 @@ impl UncompressedDataManager {
                 // TODO: When the compression component is changed, just insert the data points.
                 // unwrap() is safe to use since the timestamps array cannot contain null values.
                 if let Some(segment) = self.insert_data_point(key, timestamp.unwrap(), value) {
-                    compressed_segments.push((key, segment))
+                    compressed_segments.push((key, segment));
                 };
             }
         }
@@ -250,9 +250,9 @@ impl UncompressedDataManager {
                 //       should be changed to queue the segment and let the compression component
                 //       retrieve the finished segment and insert it back when compressed.
                 if self.compress_directly {
-                    return Some(self.compress_full_segment(full_segment))
+                    return Some(self.compress_full_segment(full_segment));
                 } else {
-                    self.enqueue_segment(key, full_segment)
+                    self.enqueue_segment(key, full_segment);
                 }
             }
         } else {
