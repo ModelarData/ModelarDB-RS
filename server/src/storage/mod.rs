@@ -67,9 +67,9 @@ pub struct StorageEngine {
 }
 
 impl StorageEngine {
-    pub fn new(data_folder_path: PathBuf) -> Self {
+    pub fn new(data_folder_path: PathBuf, compress_directly: bool) -> Self {
         Self {
-            uncompressed_data_manager: UncompressedDataManager::new(data_folder_path.clone()),
+            uncompressed_data_manager: UncompressedDataManager::new(data_folder_path.clone(), compress_directly),
             compressed_data_manager: CompressedDataManager::new(data_folder_path),
         }
     }
@@ -378,7 +378,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
 
         let data_folder_path = temp_dir.path().to_path_buf();
-        (temp_dir, StorageEngine::new(data_folder_path))
+        (temp_dir, StorageEngine::new(data_folder_path, false))
     }
 
     // Tests for writing and reading Apache Parquet files.

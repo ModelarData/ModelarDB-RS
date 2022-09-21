@@ -47,10 +47,13 @@ pub(super) struct UncompressedDataManager {
     tag_value_hashes: HashMap<String, u64>,
     /// How many bytes of memory that are left for storing [`UncompressedSegments`](UncompressedSegment).
     uncompressed_remaining_memory_in_bytes: usize,
+    // TODO: This is a temporary field used to fix existing tests. Remove when configuration component is changed.
+    /// If this is true, compress full segments directly instead of queueing them.
+    compress_directly: bool,
 }
 
 impl UncompressedDataManager {
-    pub(super) fn new(data_folder_path: PathBuf) -> Self {
+    pub(super) fn new(data_folder_path: PathBuf, compress_directly: bool) -> Self {
         Self {
             data_folder_path,
             // TODO: Maybe create with estimated capacity to avoid reallocation.
@@ -58,6 +61,7 @@ impl UncompressedDataManager {
             finished_queue: VecDeque::new(),
             tag_value_hashes: HashMap::new(),
             uncompressed_remaining_memory_in_bytes: UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            compress_directly
         }
     }
 
@@ -242,12 +246,14 @@ impl UncompressedDataManager {
                 // Since this is only reachable if the segment exists in the HashMap, unwrap is safe to use.
                 let mut full_segment = self.uncompressed_data.remove(&key).unwrap();
 
-                // TODO: Currently we just directly compress a segment when it is finished. This
+                // TODO: Currently we directly compress a segment when it is finished. This
                 //       should be changed to queue the segment and let the compression component
                 //       retrieve the finished segment and insert it back when compressed.
-                // self.enqueue_segment(key, full_segment)
-
-                return Some(self.compress_full_segment(full_segment))
+                if self.compress_directly {
+                    return Some(self.compress_full_segment(full_segment))
+                } else {
+                    self.enqueue_segment(key, full_segment)
+                }
             }
         } else {
             info!("Could not find segment. Creating segment.");
@@ -663,6 +669,6 @@ mod tests {
         let temp_dir = tempdir().unwrap();
 
         let data_folder_path = temp_dir.path().to_path_buf();
-        (temp_dir, UncompressedDataManager::new(data_folder_path))
+        (temp_dir, UncompressedDataManager::new(data_folder_path, false))
     }
 }
