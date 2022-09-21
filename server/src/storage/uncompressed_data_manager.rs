@@ -34,7 +34,7 @@ const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
 /// Converts a batch of data to uncompressed data points and stores uncompressed data points
 /// temporarily in an in-memory buffer that spills to Apache Parquet files. When finished the data
 /// is made available for compression.
-pub struct UncompressedDataManager {
+pub(super) struct UncompressedDataManager {
     /// Path to the folder containing all uncompressed data managed by the [`StorageEngine`].
     data_folder_path: PathBuf,
     /// The [`UncompressedSegments`](UncompressedSegment) while they are being built.
@@ -48,7 +48,7 @@ pub struct UncompressedDataManager {
 }
 
 impl UncompressedDataManager {
-    pub fn new(data_folder_path: PathBuf) -> Self {
+    pub(super) fn new(data_folder_path: PathBuf) -> Self {
         Self {
             data_folder_path,
             // TODO: Maybe create with estimated capacity to avoid reallocation.
@@ -59,11 +59,12 @@ impl UncompressedDataManager {
         }
     }
 
+    // TODO: Use the new macro for downcasting the arrays.
     /// Parse `data_points` and insert it into the in-memory buffer. The data points are first parsed
     /// into multiple univariate time series based on `model_table`. These individual time series
     /// are then inserted into the storage engine. Return [`Ok`] if the data was successfully
     /// inserted, otherwise return [`Err`].
-    pub fn insert_data_points(
+    pub(super) fn insert_data_points(
         &mut self,
         model_table: &NewModelTableMetadata,
         data_points: &RecordBatch,
@@ -252,7 +253,7 @@ impl UncompressedDataManager {
 
     /// Remove the oldest [`FinishedSegment`] from the queue and return it. Return [`None`] if the
     /// queue of [`FinishedSegments`](FinishedSegment) is empty.
-    pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
+    pub(super) fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
         if let Some(finished_segment) = self.finished_queue.pop_front() {
             // Add the memory size of the removed FinishedSegment back to the remaining bytes.
             self.uncompressed_remaining_memory_in_bytes +=
