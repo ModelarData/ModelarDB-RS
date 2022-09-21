@@ -17,9 +17,12 @@
 //! model types in [`models`](crate::models) to produce compressed segments
 //! which are returned to [`StorageEngine`].
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use datafusion::arrow::array::{BinaryBuilder, Float32Builder, UInt8Builder};
+use datafusion::arrow::array::{
+    BinaryArray, BinaryBuilder, Float32Array, Float32Builder, UInt8Array, UInt8Builder,
+};
 use datafusion::arrow::record_batch::RecordBatch;
 
 use crate::errors::ModelarDBError;
@@ -35,9 +38,12 @@ use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArra
 /// will never exceed the user-defined error bounds.
 pub const GORILLA_MAXIMUM_LENGTH: usize = 50;
 
-/// Compress the regular `uncompressed_timestamps` using a start time, end time,
-/// and a sampling interval, and `uncompressed_values` within `error_bound`
-/// using the model types in [`models`](crate::models). Returns
+/// Compress `uncompressed_timestamps` using a start time, end time, and a
+/// sampling interval if regular and delta-of-deltas followed by a variable
+/// length binary encoding if irregular. `uncompressed_values` is compressed
+/// within `error_bound` using the model types in [`models`](crate::models).
+/// Assumes `uncompressed_timestamps` and `uncompressed_values` are sorted
+/// according to `uncompressed_timestamps`. Returns
 /// [`CompressionError`](ModelarDBError::CompressionError) if
 /// `uncompressed_timestamps` and `uncompressed_values` have different lengths,
 /// otherwise the resulting compressed segments are returned as a
@@ -77,6 +83,82 @@ pub fn try_compress(
         current_index += compressed_segment_builder.finish(&mut compressed_record_batch_builder);
     }
     Ok(compressed_record_batch_builder.finish())
+}
+
+/// Merges the segments in `compressed_segments` that contain equivalent models.
+/// Assumes that the segments in `compressed_segments` are all from the same
+/// time series and that the segments are all sorted according to time.
+pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
+    // TODO: merge segments with none equivalent models.
+
+    // Extract the columns from the RecordBatch.
+    let model_type_ids = crate::get_array!(compressed_segments, 0, UInt8Array);
+    let timestamps = crate::get_array!(compressed_segments, 1, BinaryArray);
+    let start_times = crate::get_array!(compressed_segments, 2, TimestampArray);
+    let end_times = crate::get_array!(compressed_segments, 3, TimestampArray);
+    let values = crate::get_array!(compressed_segments, 4, BinaryArray);
+    let min_values = crate::get_array!(compressed_segments, 5, ValueArray);
+    let max_values = crate::get_array!(compressed_segments, 6, ValueArray);
+    let errors = crate::get_array!(compressed_segments, 7, Float32Array);
+
+    // For each segment, check if it can be merged with another segment.
+    let num_rows = compressed_segments.num_rows();
+    let mut compressed_segments_to_merge = HashMap::with_capacity(num_rows);
+
+    for index in 0..num_rows {
+        // f32 are converted to u32 with the same bitwise representation as f32
+        // and f64 does not implement std::hash::Hash and thus cannot be hashed.
+        let model = (
+            model_type_ids.value(index),
+            values.value(index),
+            min_values.value(index).to_bits(),
+            max_values.value(index).to_bits(),
+        );
+
+        // Lookup the entry in the HashMap for model, create an empty Vec if an
+        // entry for model did not exist, and append index to the entry's Vec.
+        compressed_segments_to_merge
+            .entry(model)
+            .or_insert_with(|| Vec::new())
+            .push(index);
+    }
+
+    // If none of the segments can be merged return the original compressed
+    // segments, otherwise return the smaller set of merged compressed segments.
+    if compressed_segments_to_merge.len() < num_rows {
+        let mut merged_compressed_segments = CompressedSegmentBatchBuilder::new(num_rows);
+        for (_, indices) in compressed_segments_to_merge {
+            // Merge timestamps.
+            let mut timestamp_arrays = Vec::with_capacity(indices.len());
+            for index in &indices {
+                let start_time = start_times.value(*index);
+                let end_time = end_times.value(*index);
+                let timestamps = timestamps.value(*index);
+                timestamp_arrays.push(timestamps::decompress_all_timestamps(
+                    start_time, end_time, timestamps,
+                ));
+            }
+            let timestamps = flatten_timestamp_arrays(timestamp_arrays);
+            let compressed_timestamps = timestamps::compress_residual_timestamps(&timestamps);
+
+            // Merge segments. The first segment's model is used for the merged
+            // segment as all of the segments contain the exact same model.
+            let index = indices[0];
+            merged_compressed_segments.append_compressed_segment(
+                model_type_ids.value(index),
+                &compressed_timestamps,
+                timestamps.value(0),
+                timestamps.value(timestamps.len() - 1),
+                values.value(index),
+                min_values.value(index),
+                max_values.value(index),
+                errors.value(index),
+            );
+        }
+        merged_compressed_segments.finish()
+    } else {
+        compressed_segments
+    }
 }
 
 /// A compressed segment being built from an uncompressed segment using the
@@ -288,6 +370,16 @@ impl CompressedSegmentBatchBuilder {
     }
 }
 
+/// Flatten a [`Vec<TimestampArray>`] into a [`TimestampArray`].
+fn flatten_timestamp_arrays(timestamp_arrays: Vec<TimestampArray>) -> TimestampArray {
+    let total_length = timestamp_arrays.iter().map(|array| array.len()).sum();
+    let mut timestamps_builder = TimestampBuilder::with_capacity(total_length);
+    for array in timestamp_arrays {
+        timestamps_builder.append_slice(array.values());
+    }
+    timestamps_builder.finish()
+}
+
 #[cfg(test)]
 mod tests {
     // TODO: add tests for irregular time series when refactoring the query engine.
@@ -469,5 +561,120 @@ mod tests {
                 models::length(start_time, end_time, sampling_interval as i32);
         }
         assert_eq!(uncompressed_timestamps.len(), total_compressed_length);
+    }
+
+    // Tests for merge_segments().
+    #[test]
+    fn test_merge_compressed_segments_empty_batch() {
+        let merged_record_batch = merge_segments(CompressedSegmentBatchBuilder::new(0).finish());
+        assert_eq!(0, merged_record_batch.num_rows())
+    }
+
+    #[test]
+    fn test_merge_compressed_segments_batch() {
+        // merge_segments() currently merge segments with equivalent models.
+        let model_type_id = 1;
+        let values = &[];
+        let min_value = 5.0;
+        let max_value = 5.0;
+
+        // Add a mix of different segments that can be merged into two segments.
+        let mut compressed_record_batch_builder = CompressedSegmentBatchBuilder::new(10);
+
+        for start_time in (100..2000).step_by(400) {
+            compressed_record_batch_builder.append_compressed_segment(
+                model_type_id,
+                &[],
+                start_time,
+                start_time + 100,
+                values,
+                min_value,
+                max_value,
+                0.0,
+            );
+
+            compressed_record_batch_builder.append_compressed_segment(
+                model_type_id + 1,
+                &[],
+                start_time + 200,
+                start_time + 300,
+                &[],
+                -min_value,
+                -max_value,
+                10.0,
+            );
+        }
+
+        let compressed_record_batch = compressed_record_batch_builder.finish();
+        let merged_record_batch = merge_segments(compressed_record_batch);
+
+        // Extract the columns from the RecordBatch.
+        let timestamps = crate::get_array!(merged_record_batch, 1, BinaryArray);
+        let start_times = crate::get_array!(merged_record_batch, 2, TimestampArray);
+        let end_times = crate::get_array!(merged_record_batch, 3, TimestampArray);
+        let values = crate::get_array!(merged_record_batch, 4, BinaryArray);
+        let min_values = crate::get_array!(merged_record_batch, 5, ValueArray);
+        let max_values = crate::get_array!(merged_record_batch, 6, ValueArray);
+        let errors = crate::get_array!(merged_record_batch, 7, Float32Array);
+
+        // Assert that the number of segments are correct.
+        assert_eq!(2, merged_record_batch.num_rows());
+
+        // Assert that the timestamps are correct.
+        assert_eq!(
+            10,
+            timestamps::decompress_all_timestamps(
+                start_times.value(0),
+                end_times.value(0),
+                timestamps.value(0)
+            )
+            .len()
+        );
+
+        assert_eq!(
+            10,
+            timestamps::decompress_all_timestamps(
+                start_times.value(1),
+                end_times.value(1),
+                timestamps.value(1)
+            )
+            .len()
+        );
+
+        // Assert that the models are correct.
+        let (positive, negative) = if start_times.value(0) == 100 {
+            (0, 1)
+        } else {
+            (1, 0)
+        };
+
+        let value: &[u8] = &[];
+        assert_eq!(value, values.value(positive));
+        assert_eq!(min_value, min_values.value(positive));
+        assert_eq!(max_value, max_values.value(positive));
+
+        assert_eq!(value, values.value(negative));
+        assert_eq!(-min_value, min_values.value(negative));
+        assert_eq!(-max_value, max_values.value(negative));
+
+        // Assert that the errors are correct.
+        assert_eq!(0.0, errors.value(positive));
+        assert_eq!(10.0, errors.value(negative));
+    }
+
+    // Tests for flatten_timestamp_arrays().
+    #[test]
+    fn test_flatten_timestamp_arrays_empty() {
+        flatten_timestamp_arrays(vec![TimestampArray::builder(0).finish()]);
+    }
+
+    #[test]
+    fn test_flatten_timestamp_arrays() {
+        let mut one = TimestampArray::builder(3);
+        one.append_slice(&[100, 200, 300]);
+        let mut two = TimestampArray::builder(3);
+        two.append_slice(&[400, 500, 600]);
+        let combined = flatten_timestamp_arrays(vec![one.finish(), two.finish()]);
+        assert_eq!(combined.values(), &[100, 200, 300, 400, 500, 600]);
     }
 }

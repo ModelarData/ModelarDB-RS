@@ -13,38 +13,50 @@
  * limitations under the License.
  */
 
+/// Extract an [`array`](arrow::array) from a
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) and cast it to the
+/// specified type:
+///
+/// ```
+/// let array = crate::get_array!(record_batch, 0, UInt8Array);
+/// ```
+///
+/// # Panics
+///
+/// Panics if `column` is not in `batch` or if it cannot be cast to `type`.
+#[macro_export]
+macro_rules! get_array {
+    ($batch:ident, $column:literal, $type:ident) => {
+        $batch
+            .column($column)
+            .as_any()
+            .downcast_ref::<$type>()
+            .unwrap()
+    };
+}
+
+/// Extract the [`arrays`](arrow::array) required to execute queries against a
+/// model table from a [`RecordBatch`](arrow::record_batch::RecordBatch), cast
+/// them to the required type, and assign the resulting arrays to the specified
+/// variables:
+///
+/// ```
+/// crate::downcast_arrays!(gids, start_times, end_times, mtids, models, gaps, batch);
+/// ```
+///
+/// # Panics
+///
+/// Panics if `batch` contains less than six columns or if the columns are not
+/// Int32Array, Int64Array, Int64Array, Int32Array, BinaryArray, and BinaryArray.
+// TODO: rename downcast_arrays and update the types when refactoring query engine.
 #[macro_export]
 macro_rules! downcast_arrays {
     ($gids:ident, $start_times:ident, $end_times:ident, $mtids:ident, $models:ident, $gaps:ident, $batch:ident) => {
-        let $gids = $batch
-            .column(0)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .unwrap();
-        let $start_times = $batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let $end_times = $batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let $mtids = $batch
-            .column(3)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .unwrap();
-        let $models = $batch
-            .column(4)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
-        let $gaps = $batch
-            .column(5)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
+        let $gids = crate::get_array!($batch, 0, Int32Array);
+        let $start_times = crate::get_array!($batch, 1, Int64Array);
+        let $end_times = crate::get_array!($batch, 2, Int64Array);
+        let $mtids = crate::get_array!($batch, 3, Int32Array);
+        let $models = crate::get_array!($batch, 4, BinaryArray);
+        let $gaps = crate::get_array!($batch, 5, BinaryArray);
     };
 }
