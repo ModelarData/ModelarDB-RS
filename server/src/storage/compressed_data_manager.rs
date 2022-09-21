@@ -29,7 +29,7 @@ use crate::types::Timestamp;
 
 /// Signed integer since compressed data is inserted first and the remaining bytes are checked after.
 /// This means that the remaining bytes can be negative briefly until compressed data is saved to disk.
-const COMPRESSED_RESERVED_MEMORY_IN_BYTES: isize = 5000;
+const COMPRESSED_RESERVED_MEMORY_IN_BYTES: isize = 1000000;
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.

@@ -81,7 +81,14 @@ impl StorageEngine {
         model_table: &NewModelTableMetadata,
         data_points: &RecordBatch
     ) -> Result<(), String> {
-        self.uncompressed_data_manager.insert_data_points(model_table, data_points)
+        // TODO: When the compression component is changed, just insert the data points.
+        let compressed_segments = self.uncompressed_data_manager.insert_data_points(model_table, data_points)?;
+
+        for (key, segment) in compressed_segments {
+            self.compressed_data_manager.insert_compressed_segment(key, segment);
+        };
+
+        Ok(())
     }
 
     /// Retrieve the oldest [`FinishedSegment`] from [`UncompressedDataManager`] and return it.

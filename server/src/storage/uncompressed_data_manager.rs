@@ -26,7 +26,9 @@ use rusqlite::Connection;
 use tracing::{info, info_span};
 
 use crate::catalog::NewModelTableMetadata;
-use crate::storage::segment::{FinishedSegment, SegmentBuilder};
+use crate::{compression, get_array};
+use crate::models::ErrorBound;
+use crate::storage::segment::{FinishedSegment, SegmentBuilder, UncompressedSegment};
 use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
 
 const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
@@ -60,15 +62,17 @@ impl UncompressedDataManager {
     }
 
     // TODO: Use the new macro for downcasting the arrays.
+    // TODO: When the compression component is changed, this function should return Ok or Err.
     /// Parse `data_points` and insert it into the in-memory buffer. The data points are first parsed
     /// into multiple univariate time series based on `model_table`. These individual time series
-    /// are then inserted into the storage engine. Return [`Ok`] if the data was successfully
-    /// inserted, otherwise return [`Err`].
+    /// are then inserted into the storage engine. Return a list of segments that were compressed
+    /// as a result of inserting the data points with their corresponding keys if the data was
+    /// successfully inserted, otherwise return [`Err`].
     pub(super) fn insert_data_points(
         &mut self,
         model_table: &NewModelTableMetadata,
         data_points: &RecordBatch,
-    ) -> Result<(), String> {
+    ) -> Result<Vec<(u64, RecordBatch)>, String> {
         let _span = info_span!("insert_data_points", table = model_table.name).entered();
         info!(
             "Received record batch with {} data points for the table '{}'.",
@@ -119,6 +123,8 @@ impl UncompressedDataManager {
             })
             .collect();
 
+        let mut compressed_segments = vec![];
+
         // For each row in the data, generate a tag hash, extract the individual measurements,
         // and insert them into the storage engine.
         for (index, timestamp) in timestamps.iter().enumerate() {
@@ -137,12 +143,15 @@ impl UncompressedDataManager {
                 let key = tag_hash | *field_index as u64;
                 let value = field_column_array.value(index);
 
+                // TODO: When the compression component is changed, just insert the data points.
                 // unwrap() is safe to use since the timestamps array cannot contain null values.
-                self.insert_data_point(key, timestamp.unwrap(), value);
+                if let Some(segment) = self.insert_data_point(key, timestamp.unwrap(), value) {
+                    compressed_segments.push((key, segment))
+                };
             }
         }
 
-        Ok(())
+        Ok(compressed_segments)
     }
 
     /// Return the tag hash for the given list of tag values either by retrieving it from the cache
@@ -209,9 +218,15 @@ impl UncompressedDataManager {
         }
     }
 
-    /// Insert a single data point into the in-memory buffer. Return [`OK`] if the data point was
-    /// inserted successfully, otherwise return [`Err`].
-    fn insert_data_point(&mut self, key: u64, timestamp: Timestamp, value: Value)  {
+    // TODO: When the compression component is changed, this function should return Ok or Err.
+    /// Insert a single data point into the in-memory buffer. Return the compressed segment if
+    /// the inserted data point made the segment full, otherwise return [`None`].
+    fn insert_data_point(
+        &mut self,
+        key: u64,
+        timestamp: Timestamp,
+        value: Value,
+    ) -> Option<RecordBatch>  {
         let _span = info_span!("insert_data_point", key = key).entered();
         info!(
             "Inserting data point ({}, {}) into segment.",
@@ -226,8 +241,14 @@ impl UncompressedDataManager {
                 info!("Segment is full, moving it to the queue of finished segments.");
 
                 // Since this is only reachable if the segment exists in the HashMap, unwrap is safe to use.
-                let full_segment = self.uncompressed_data.remove(&key).unwrap();
-                self.enqueue_segment(key, full_segment)
+                let mut full_segment = self.uncompressed_data.remove(&key).unwrap();
+
+                // TODO: Currently we just directly compress a segment when it is finished. This
+                //       should be changed to queue the segment and let the compression component
+                //       retrieve the finished segment and insert it back when compressed.
+                // self.enqueue_segment(key, full_segment)
+
+                return Some(self.compress_full_segment(full_segment))
             }
         } else {
             info!("Could not find segment. Creating segment.");
@@ -249,6 +270,8 @@ impl UncompressedDataManager {
             segment.insert_data(timestamp, value);
             self.uncompressed_data.insert(key, segment);
         }
+
+        None
     }
 
     /// Remove the oldest [`FinishedSegment`] from the queue and return it. Return [`None`] if the
@@ -263,6 +286,30 @@ impl UncompressedDataManager {
         } else {
             None
         }
+    }
+
+    // TODO: Remove this when compression component is changed.
+    /// Compress the given full `segment_builder` and return the compressed and merged segment.
+    fn compress_full_segment(&mut self, mut segment_builder: SegmentBuilder) -> RecordBatch {
+        // Add the size of the segment back to the remaining reserved bytes.
+        self.uncompressed_remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
+
+        // unwrap() is safe to use since the error bound is not negative, infinite, or NAN.
+        let error_bound = ErrorBound::try_new(0.0).unwrap();
+
+        // unwrap() is safe to use
+        let data_points = segment_builder.get_record_batch().unwrap();
+        let uncompressed_timestamps = get_array!(data_points, 0, TimestampArray);
+        let uncompressed_values = get_array!(data_points, 1, ValueArray);
+
+        // unwrap() is safe to use since timestamps and values have the same length.
+        let compressed_segments = compression::try_compress(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            error_bound
+        ).unwrap();
+
+        compression::merge_segments(compressed_segments)
     }
 
     /// Move `segment_builder` to the queue of [`FinishedSegments`](FinishedSegment).
