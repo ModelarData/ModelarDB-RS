@@ -244,7 +244,7 @@ impl UncompressedDataManager {
                 info!("Segment is full, moving it to the queue of finished segments.");
 
                 // Since this is only reachable if the segment exists in the HashMap, unwrap is safe to use.
-                let mut full_segment = self.uncompressed_data.remove(&key).unwrap();
+                let full_segment = self.uncompressed_data.remove(&key).unwrap();
 
                 // TODO: Currently we directly compress a segment when it is finished. This
                 //       should be changed to queue the segment and let the compression component
@@ -302,12 +302,12 @@ impl UncompressedDataManager {
         // unwrap() is safe to use since the error bound is not negative, infinite, or NAN.
         let error_bound = ErrorBound::try_new(0.0).unwrap();
 
-        // unwrap() is safe to use
+        // unwrap() is safe to use since get_record_batch() can only fail for spilled segments.
         let data_points = segment_builder.get_record_batch().unwrap();
         let uncompressed_timestamps = get_array!(data_points, 0, TimestampArray);
         let uncompressed_values = get_array!(data_points, 1, ValueArray);
 
-        // unwrap() is safe to use since timestamps and values have the same length.
+        // unwrap() is safe to use since uncompressed_timestamps and uncompressed_values have the same length.
         let compressed_segments = compression::try_compress(
             &uncompressed_timestamps,
             &uncompressed_values,
