@@ -596,48 +596,6 @@ mod tests {
 
     use crate::types::{ArrowTimestamp, ArrowValue};
 
-    // Tests for Catalog.
-    #[test]
-    fn test_empty_catalog_table_and_model_table_names() {
-        let catalog = Catalog {
-            data_folder_path: PathBuf::from(""),
-            table_metadata: vec![],
-            new_model_table_metadata: vec![],
-            model_table_metadata: vec![],
-        };
-        assert!(catalog.table_and_model_table_names().is_empty())
-    }
-
-    #[test]
-    fn test_catalog_table_and_model_table_names() {
-        let mut catalog = Catalog {
-            data_folder_path: PathBuf::from(""),
-            table_metadata: vec![],
-            new_model_table_metadata: vec![],
-            model_table_metadata: vec![],
-        };
-
-        catalog.table_metadata.push(TableMetadata {
-            name: "table".to_owned(),
-            path: "".to_owned(),
-        });
-
-        catalog
-            .model_table_metadata
-            .push(Arc::new(ModelTableMetadata {
-                name: "model_table".to_owned(),
-                segment_path: ObjectStorePath::parse("").unwrap(),
-                segment_file_legacy_schema: Arc::new(Schema::new(vec![])),
-                sampling_intervals: Int32Array::builder(0).finish(),
-                denormalized_dimensions: vec![],
-            }));
-
-        assert_eq!(
-            vec!("table", "model_table"),
-            catalog.table_and_model_table_names()
-        )
-    }
-
     // Tests for TableMetadata.
     #[test]
     fn test_table_metadata_zero_suffixes() {
