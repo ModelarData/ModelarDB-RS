@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use datafusion::arrow::record_batch::RecordBatch;
 
+use crate::get_array;
 use crate::storage::StorageEngine;
 use crate::types::TimestampArray;
 
@@ -77,8 +78,8 @@ impl CompressedTimeSeries {
 
         // Create a path that uses the first start timestamp and the last end timestamp as the file
         // name to better support pruning data that is too new or too old when executing a specific query.
-        let start_times: &TimestampArray = batch.column(2).as_any().downcast_ref().unwrap();
-        let end_times: &TimestampArray = batch.column(3).as_any().downcast_ref().unwrap();
+        let start_times = get_array!(batch, 2, TimestampArray);
+        let end_times = get_array!(batch, 3, TimestampArray);
 
         let file_name = format!(
             "{}-{}.parquet",
@@ -150,8 +151,8 @@ mod tests {
         time_series.save_to_apache_parquet(temp_dir.path());
 
         // Data should be saved to a file with the first start time and last end time as the file name.
-        let start_times: &TimestampArray = segment.column(2).as_any().downcast_ref().unwrap();
-        let end_times: &TimestampArray = segment.column(3).as_any().downcast_ref().unwrap();
+        let start_times = get_array!(segment, 2, TimestampArray);
+        let end_times = get_array!(segment, 3, TimestampArray);
         let file_path = format!(
             "compressed/{}-{}.parquet",
             start_times.value(0),

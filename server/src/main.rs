@@ -80,7 +80,7 @@ fn main() -> Result<(), String> {
         })?;
         let runtime = Runtime::new().unwrap();
         let mut session = create_session_context();
-        let storage_engine = StorageEngine::new(data_folder_path.clone());
+        let storage_engine = StorageEngine::new(data_folder_path.clone(), true);
 
         // Set up the metadata tables used for model tables.
         create_model_table_metadata_tables(data_folder_path.as_path()).map_err(|error| {

@@ -67,9 +67,9 @@ pub struct StorageEngine {
 }
 
 impl StorageEngine {
-    pub fn new(data_folder_path: PathBuf) -> Self {
+    pub fn new(data_folder_path: PathBuf, compress_directly: bool) -> Self {
         Self {
-            uncompressed_data_manager: UncompressedDataManager::new(data_folder_path.clone()),
+            uncompressed_data_manager: UncompressedDataManager::new(data_folder_path.clone(), compress_directly),
             compressed_data_manager: CompressedDataManager::new(data_folder_path),
         }
     }
@@ -81,7 +81,14 @@ impl StorageEngine {
         model_table: &NewModelTableMetadata,
         data_points: &RecordBatch
     ) -> Result<(), String> {
-        self.uncompressed_data_manager.insert_data_points(model_table, data_points)
+        // TODO: When the compression component is changed, just insert the data points.
+        let compressed_segments = self.uncompressed_data_manager.insert_data_points(model_table, data_points)?;
+
+        for (key, segment) in compressed_segments {
+            self.compressed_data_manager.insert_compressed_segment(key, segment);
+        };
+
+        Ok(())
     }
 
     /// Retrieve the oldest [`FinishedSegment`] from [`UncompressedDataManager`] and return it.
@@ -242,10 +249,10 @@ impl StorageEngine {
 mod tests {
     use super::*;
     use std::path::PathBuf;
-    use std::time::Duration;
 
     use tempfile::{tempdir, TempDir};
 
+    use crate::get_array;
     use crate::types::TimestampArray;
 
     // Tests for get_compressed_files().
@@ -279,7 +286,7 @@ mod tests {
 
         // If we have a start time after the first segments ends, only the file from the second
         // segment should be retrieved.
-        let end_times: &TimestampArray = segment_1.column(3).as_any().downcast_ref().unwrap();
+        let end_times = get_array!(segment_1, 3, TimestampArray);
         let start_time = Some(end_times.value(end_times.len() - 1) + 100);
 
         let result = storage_engine.get_compressed_files(&[1, 2], start_time, None);
@@ -298,7 +305,7 @@ mod tests {
 
         // If we have an end time before the second segment starts, only the file from the first
         // segment should be retrieved.
-        let start_times: &TimestampArray = segment_2.column(2).as_any().downcast_ref().unwrap();
+        let start_times = get_array!(segment_2, 2, TimestampArray);
         let end_time = Some(start_times.value(1) - 100);
 
         let result = storage_engine.get_compressed_files(&[1, 2], None, end_time);
@@ -320,8 +327,8 @@ mod tests {
 
         // If we have a start time after the first segment ends and an end time before the fourth
         // segment starts, only the files from the second and third segment should be retrieved.
-        let end_times: &TimestampArray = segment_1.column(3).as_any().downcast_ref().unwrap();
-        let start_times: &TimestampArray = segment_4.column(2).as_any().downcast_ref().unwrap();
+        let end_times = get_array!(segment_1, 3, TimestampArray);
+        let start_times = get_array!(segment_4, 2, TimestampArray);
 
         let start_time = Some(end_times.value(end_times.len() - 1) + 100);
         let end_time = Some(start_times.value(1) - 100);
@@ -370,7 +377,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
 
         let data_folder_path = temp_dir.path().to_path_buf();
-        (temp_dir, StorageEngine::new(data_folder_path))
+        (temp_dir, StorageEngine::new(data_folder_path, false))
     }
 
     // Tests for writing and reading Apache Parquet files.

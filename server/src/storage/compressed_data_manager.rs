@@ -29,7 +29,7 @@ use crate::types::Timestamp;
 
 /// Signed integer since compressed data is inserted first and the remaining bytes are checked after.
 /// This means that the remaining bytes can be negative briefly until compressed data is saved to disk.
-const COMPRESSED_RESERVED_MEMORY_IN_BYTES: isize = 5000;
+const COMPRESSED_RESERVED_MEMORY_IN_BYTES: isize = 1000000;
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
@@ -189,6 +189,7 @@ mod tests {
 
     use tempfile::{tempdir, TempDir};
 
+    use crate::get_array;
     use crate::storage::test_util;
     use crate::types::TimestampArray;
 
@@ -313,8 +314,8 @@ mod tests {
         assert_eq!(files.len(), 1);
 
         // The file should have the first start time and the last end time as the file name.
-        let start_times: &TimestampArray = segment.column(2).as_any().downcast_ref().unwrap();
-        let end_times: &TimestampArray = segment.column(3).as_any().downcast_ref().unwrap();
+        let start_times = get_array!(segment, 2, TimestampArray);
+        let end_times = get_array!(segment, 3, TimestampArray);
         let expected_file_path = format!(
             "{}/compressed/{}-{}.parquet",
             KEY,
