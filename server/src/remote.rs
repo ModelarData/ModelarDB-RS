@@ -33,6 +33,7 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
 use datafusion::arrow::datatypes::Schema;
+use datafusion::catalog::schema::SchemaProvider;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::{
     array::ArrayRef, datatypes::SchemaRef, error::ArrowError, ipc::writer::IpcWriteOptions,
@@ -91,7 +92,19 @@ impl FlightServiceHandler {
     /// Return the schema of `table_name` if the table exists in the default
     /// catalog, otherwise a `Status` indicating at what level the lookup failed
     /// is returned.
-    fn get_table_schema_from_default_catalog(&self, table_name: &str) -> Result<SchemaRef, Status> {
+    fn get_table_schema_from_default_schema(&self, table_name: &str) -> Result<SchemaRef, Status> {
+        let schema = self.get_default_schema()?;
+
+        let table = schema
+            .table(table_name)
+            .ok_or_else(|| Status::not_found("Table does not exist."))?;
+
+        Ok(table.schema())
+    }
+
+    /// Return the default schema if it exists, otherwise a `Status` indicating
+    /// at what level the lookup failed is returned.
+    fn get_default_schema(&self) -> Result<Arc<dyn SchemaProvider>, Status> {
         let session = self.context.session.clone();
 
         let catalog = session
@@ -102,11 +115,7 @@ impl FlightServiceHandler {
             .schema("public")
             .ok_or_else(|| Status::internal("Default schema does not exist."))?;
 
-        let table = schema
-            .table(table_name)
-            .ok_or_else(|| Status::not_found("Table does not exist."))?;
-
-        Ok(table.schema())
+        Ok(schema)
     }
 
     /// Return the table stored as the first element in `FlightDescriptor.path`,
@@ -279,12 +288,7 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Criteria>,
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
-        let table_names = {
-            // unwrap() is safe to use since read() only fails if the RwLock is poisoned.
-            let catalog = self.context.catalog.read().unwrap();
-            catalog.table_and_model_table_names()
-        };
-
+        let table_names = self.get_default_schema()?.table_names();
         let flight_descriptor = FlightDescriptor::new_path(table_names);
         let flight_info =
             FlightInfo::new(IpcMessage(vec![]), Some(flight_descriptor), vec![], -1, -1);
@@ -309,7 +313,7 @@ impl FlightService for FlightServiceHandler {
     ) -> Result<Response<SchemaResult>, Status> {
         let flight_descriptor = request.into_inner();
         let table_name = self.get_table_name_from_flight_descriptor(&flight_descriptor)?;
-        let schema = self.get_table_schema_from_default_catalog(table_name)?;
+        let schema = self.get_table_schema_from_default_schema(table_name)?;
 
         // IpcMessages are transferred as SchemaResults for compatibility with
         // the return type of get_schema() and to ensure the SchemaResult match
@@ -414,7 +418,7 @@ impl FlightService for FlightServiceHandler {
             self.ingest_into_model_table(&model_table, &mut flight_data_stream).await?;
         } else {
             // If the table is not a model table, check if it can be found in the datafusion catalog.
-            let schema = self.get_table_schema_from_default_catalog(&table_name)?;
+            let schema = self.get_table_schema_from_default_schema(&table_name)?;
             self.ingest_into_table(table_name, schema, flight_data_stream);
         }
 
@@ -455,7 +459,7 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             // If the table already exists, return an error.
-            if self.get_table_schema_from_default_catalog(&table_name).is_ok() {
+            if self.get_table_schema_from_default_schema(&table_name).is_ok() {
                 let message = format!("Table with name '{}' already exists.", table_name);
                 return Err(Status::already_exists(message));
             }

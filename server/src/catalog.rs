@@ -118,19 +118,6 @@ impl Catalog {
         })
     }
 
-    /// Return the name of all tables and model tables in the `Catalog`.
-    pub fn table_and_model_table_names(&self) -> Vec<String> {
-        let mut table_names: Vec<String> = vec![];
-        for table_metadata in &self.table_metadata {
-            table_names.push(table_metadata.name.clone());
-        }
-
-        for model_table_metadata in &self.model_table_metadata {
-            table_names.push(model_table_metadata.name.clone());
-        }
-        table_names
-    }
-
     /// Determine if `dir_entry` is a table, a model table, or neither. If
     /// `dir_entry` is a table the metadata required to query the table is added
     /// to `table_metadata`, and if `dir_entry` is a model table the metadata
