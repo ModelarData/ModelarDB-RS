@@ -38,10 +38,13 @@ use object_store::path::Path as ObjectStorePath;
 use rusqlite::types::Type::Blob;
 use rusqlite::Connection;
 use tracing::{error, info, warn};
-use crate::errors::ModelarDBError;
 
+use crate::errors::ModelarDBError;
 use crate::storage::StorageEngine;
 use crate::types::{ArrowTimestamp, ArrowValue};
+
+/// Name used for the file containing the SQLite database storing the metadata.
+pub const METADATA_SQLITE_NAME: &str = "metadata.sqlite3";
 
 /// Metadata for the tables and model tables in the data folder.
 pub struct Catalog {
@@ -142,8 +145,11 @@ impl Catalog {
         // HACK: workaround for DataFusion converting table names to lowercase.
         let normalized_file_or_folder_name = file_name.to_ascii_lowercase();
 
-        // Check if the file or folder is a table, a model table, or neither.
-        if Self::is_path_a_table(&path) {
+        // Check if the file or folder is METADATA_SQLITE_NAME so it can be
+        // skipped without creating errors, a table, a model table, or neither.
+        if path.ends_with(METADATA_SQLITE_NAME) {
+            // Skip without emitting any errors.
+        } else if Self::is_path_a_table(&path) {
             table_metadata.push(TableMetadata::new(
                 normalized_file_or_folder_name,
                 path_str.to_owned(),
@@ -171,11 +177,13 @@ impl Catalog {
             StorageEngine::is_path_an_apache_parquet_file(&path)
         } else if path.is_dir() {
             let table_folder = read_dir(&path);
+            let mut number_of_files = 0;
             table_folder.is_ok()
                 && table_folder.unwrap().all(|result| {
+                    number_of_files += 1;
                     result.is_ok()
                         && StorageEngine::is_path_an_apache_parquet_file(&result.unwrap().path())
-                })
+                }) && number_of_files > 0
         } else {
             false
         }
@@ -219,7 +227,7 @@ impl Catalog {
     fn get_new_model_table_metadata(
         data_folder_path: &Path,
     ) -> Result<Vec<NewModelTableMetadata>, rusqlite::Error> {
-        let database_path = data_folder_path.join("metadata.sqlite3");
+        let database_path = data_folder_path.join(METADATA_SQLITE_NAME);
         let connection = Connection::open(database_path)?;
 
         let mut select_statement = connection.prepare(

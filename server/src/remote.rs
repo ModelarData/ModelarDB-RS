@@ -46,6 +46,7 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{error, info};
 
+use crate::catalog;
 use crate::catalog::{NewModelTableMetadata, TableMetadata};
 use crate::storage::StorageEngine;
 use crate::Context;
@@ -247,7 +248,7 @@ impl FlightServiceHandler {
             .map_err(|error: ArrowError| Status::internal(error.to_string()))?;
 
         // Persist the new model table to the metadata database.
-        let database_path = catalog.data_folder_path.join("metadata.sqlite3");
+        let database_path = catalog.data_folder_path.join(catalog::METADATA_SQLITE_NAME);
         save_model_table_to_database(database_path, &model_table_metadata, ipc_message.0)
             .map_err(|error| Status::internal(error.to_string()))?;
 

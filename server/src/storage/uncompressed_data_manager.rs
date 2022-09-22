@@ -25,6 +25,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use rusqlite::Connection;
 use tracing::{info, info_span};
 
+use crate::catalog;
 use crate::catalog::NewModelTableMetadata;
 use crate::{compression, get_array};
 use crate::models::ErrorBound;
@@ -204,7 +205,7 @@ impl UncompressedDataManager {
                 .collect::<Vec<String>>()
                 .join(",");
 
-            let database_path = self.data_folder_path.join("metadata.sqlite3");
+            let database_path = self.data_folder_path.join(catalog::METADATA_SQLITE_NAME);
             let connection = Connection::open(database_path)?;
 
             // OR IGNORE is used to silently fail when trying to insert an already existing hash.
@@ -407,7 +408,7 @@ mod tests {
         assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);
 
         // It should also be saved in the metadata database table.
-        let database_path = temp_dir.path().join("metadata.sqlite3");
+        let database_path = temp_dir.path().join(catalog::METADATA_SQLITE_NAME);
         let connection = Connection::open(database_path).unwrap();
 
         let mut statement = connection.prepare("SELECT * FROM model_table_tags").unwrap();
@@ -471,7 +472,7 @@ mod tests {
     // TODO: This is duplicated from a function in remote. Change this when the metadata component exists.
     /// Create the table in the metadata database that contains the tag hashes.
     fn create_model_table_tags_table(model_table_metadata: &NewModelTableMetadata, path: &Path) {
-        let database_path = path.join("metadata.sqlite3");
+        let database_path = path.join(catalog::METADATA_SQLITE_NAME);
         let connection = Connection::open(database_path).unwrap();
 
         // Add a column definition for each tag field in the schema.

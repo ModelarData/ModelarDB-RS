@@ -28,6 +28,7 @@ mod storage;
 mod tables;
 mod types;
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
@@ -72,7 +73,14 @@ fn main() -> Result<(), String> {
     let mut args = std::env::args();
     args.next(); // Skip executable.
     if let Some(data_folder) = args.next() {
+        // Ensure the data folder exists before reading from it.
         let data_folder_path = PathBuf::from(&data_folder);
+        fs::create_dir_all(data_folder_path.as_path()).map_err(|error| error.to_string())?;
+
+        // Set up the metadata tables used for model tables.
+        create_model_table_metadata_tables(data_folder_path.as_path()).map_err(|error| {
+            format!("Unable to create metadata tables: {}", error)
+        })?;
 
         // Build Context.
         let mut catalog = Catalog::try_new(&data_folder_path).map_err(|error| {
@@ -81,11 +89,6 @@ fn main() -> Result<(), String> {
         let runtime = Runtime::new().unwrap();
         let mut session = create_session_context();
         let storage_engine = StorageEngine::new(data_folder_path.clone(), true);
-
-        // Set up the metadata tables used for model tables.
-        create_model_table_metadata_tables(data_folder_path.as_path()).map_err(|error| {
-            format!("Unable to create metadata tables: {}", error)
-        })?;
 
         // Register Tables.
         register_tables_and_model_tables(&runtime, &mut session, &mut catalog);
@@ -129,7 +132,7 @@ fn create_session_context() -> SessionContext {
 /// can save the index of field columns in specific tables is also created. If the tables already
 /// exist or were successfully created, return [`Ok`], otherwise return [`rusqlite::Error`].
 fn create_model_table_metadata_tables(data_folder_path: &Path) -> Result<(), rusqlite::Error> {
-    let database_path = data_folder_path.join("metadata.sqlite3");
+    let database_path = data_folder_path.join(catalog::METADATA_SQLITE_NAME);
     let connection = Connection::open(database_path)?;
 
     // Create the model_table_metadata SQLite table if it does not exist.
