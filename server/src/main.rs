@@ -78,7 +78,7 @@ fn main() -> Result<(), String> {
         fs::create_dir_all(data_folder_path.as_path()).map_err(|error| error.to_string())?;
 
         // Set up the metadata tables used for model tables.
-        create_model_table_metadata_tables(data_folder_path.as_path()).map_err(|error| {
+         create_model_table_metadata_tables(data_folder_path.as_path()).map_err(|error| {
             format!("Unable to create metadata tables: {}", error)
         })?;
 
@@ -93,7 +93,7 @@ fn main() -> Result<(), String> {
         // Register Tables.
         register_tables_and_model_tables(&runtime, &mut session, &mut catalog);
 
-        // Start Interface.
+        // Create Context.
         let context = Arc::new(Context {
             catalog: RwLock::new(catalog),
             runtime,
@@ -101,6 +101,10 @@ fn main() -> Result<(), String> {
             storage_engine: RwLock::new(storage_engine)
         });
 
+        // Setup CTRL-C handler.
+        setup_ctrl_c_handler(&context);
+
+        // Start Interface.
         remote::start_arrow_flight_server(context, 9999).map_err(|error| error.to_string())?
     } else {
         // The errors are consciously ignored as the program is terminating.
@@ -219,4 +223,16 @@ fn check_if_table_or_model_table_is_initialized_otherwise_log_error<T>(
     } else {
         true
     }
+}
+
+/// Register a handler to execute when CTRL-C is pressed.
+fn setup_ctrl_c_handler(context: &Arc<Context>) {
+    let ctrl_c_context = context.clone();
+    context.runtime.spawn(async move {
+        // Errors are consciously ignored as the program should terminate if the
+        // handler cannot be registered as buffers otherwise cannot be flushed.
+        tokio::signal::ctrl_c().await.unwrap();
+        ctrl_c_context.storage_engine.write().unwrap().flush();
+        std::process::exit(0)
+    });
 }

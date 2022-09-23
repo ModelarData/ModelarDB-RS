@@ -158,6 +158,23 @@ impl UncompressedDataManager {
         Ok(compressed_segments)
     }
 
+    // TODO: Update to handle finished segments when compress_full_segment is removed.
+    /// Compress the uncompressed data that the [`UncompressedDataManager`] is
+    /// currently managing, and return the compressed segments and their keys.
+    pub(super) fn flush(&mut self) -> Vec<(u64, RecordBatch)> {
+        // The keys are copied to not have multiple borrows to self at the same
+        // time, however, it is not clear if it necessary or can be removed.
+        let keys: Vec<u64> = self.uncompressed_data.keys().cloned().collect();
+
+        let mut compressed_segments = vec![];
+        for key in keys {
+            let segment = self.uncompressed_data.remove(&key).unwrap();
+            let record_batch = self.compress_full_segment(segment);
+            compressed_segments.push((key, record_batch));
+        }
+        compressed_segments
+    }
+
     /// Return the tag hash for the given list of tag values either by retrieving it from the cache
     /// or, if it is a new combination of tag values, generating a new hash. If a new hash is
     /// created, the hash is saved both in the cache and persisted to the model_table_tags table. If

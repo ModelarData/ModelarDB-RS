@@ -17,7 +17,7 @@ tracing = { version = "0.1.36", features = ["max_level_debug", "release_max_leve
 tracing-subscriber = "0.3.15"
 tracing-futures = "0.2.5"
 
-tokio = { version = "1.21.1", features = ["rt-multi-thread"] }
+tokio = { version = "1.21.1", features = ["rt-multi-thread", "signal"] }
 
 async-trait = "0.1.57"
 futures = "0.3.24"

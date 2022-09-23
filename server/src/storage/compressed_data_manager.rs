@@ -21,6 +21,7 @@ use std::path:: PathBuf;
 
 use datafusion::arrow::record_batch::RecordBatch;
 use tracing::{debug, debug_span};
+use tracing::info;
 
 use crate::errors::ModelarDBError;
 use crate::storage::time_series::CompressedTimeSeries;
@@ -135,6 +136,19 @@ impl CompressedDataManager {
         debug!("Out of memory for compressed data. Saving compressed data to disk.");
 
         while self.compressed_remaining_memory_in_bytes < 0 {
+            let key = self.compressed_queue.pop_front().unwrap();
+            self.save_compressed_data(&key);
+        }
+    }
+
+    /// Flush the data that the [`CompressedDataManager`] is currently managing.
+    pub(super) fn flush(&mut self) {
+        info!(
+            "Flushing the remaining {} batches of compressed segments.",
+            self.compressed_queue.len()
+        );
+
+        while !self.compressed_queue.is_empty() {
             let key = self.compressed_queue.pop_front().unwrap();
             self.save_compressed_data(&key);
         }

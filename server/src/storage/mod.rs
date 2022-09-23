@@ -96,6 +96,17 @@ impl StorageEngine {
         self.uncompressed_data_manager.get_finished_segment()
     }
 
+    /// Flush all of the data the [`StorageEngine`] is managing to disk.
+    pub fn flush(&mut self) {
+        // Flush UncompressedDataManager.
+        for (key, segment) in self.uncompressed_data_manager.flush() {
+            self.compressed_data_manager.insert_compressed_segment(key, segment);
+        }
+
+        // Flush CompressedDataManager.
+        self.compressed_data_manager.flush();
+    }
+
     /// Pass `segment` to [`CompressedDataManager`].
     pub fn insert_compressed_segment(&mut self, key: u64, segment: RecordBatch) {
         self.compressed_data_manager.insert_compressed_segment(key, segment)
