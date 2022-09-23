@@ -27,7 +27,7 @@ use std::{fmt, fs, mem};
 use datafusion::arrow::array::{Array, ArrayBuilder};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
-use tracing::info;
+use tracing::debug;
 
 use crate::get_array;
 use crate::storage::{StorageEngine, BUILDER_CAPACITY};
@@ -95,7 +95,7 @@ impl SegmentBuilder {
         self.timestamps.append_value(timestamp);
         self.values.append_value(value);
 
-        info!("Inserted data point into segment with {}.", self)
+        debug!("Inserted data point into segment with {}.", self)
     }
 
     /// Return how many data points the [`SegmentBuilder`] can contain.

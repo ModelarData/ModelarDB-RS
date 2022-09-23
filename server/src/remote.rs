@@ -44,7 +44,7 @@ use object_store;
 use rusqlite::{params, Connection};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::catalog;
 use crate::catalog::{NewModelTableMetadata, TableMetadata};
@@ -151,7 +151,7 @@ impl FlightServiceHandler {
         model_table: &NewModelTableMetadata,
         flight_data_stream: &mut Streaming<FlightData>,
     ) -> Result<(), Status> {
-        info!("Ingesting data into model table '{}'.", model_table.name);
+        debug!("Ingesting data into model table '{}'.", model_table.name);
 
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {

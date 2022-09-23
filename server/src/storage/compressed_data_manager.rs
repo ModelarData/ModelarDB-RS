@@ -20,7 +20,7 @@ use std::fs;
 use std::path:: PathBuf;
 
 use datafusion::arrow::record_batch::RecordBatch;
-use tracing::{info, info_span};
+use tracing::{debug, debug_span};
 
 use crate::errors::ModelarDBError;
 use crate::storage::time_series::CompressedTimeSeries;
@@ -57,8 +57,8 @@ impl CompressedDataManager {
 
     /// Insert `segment` into the in-memory compressed time series buffer.
     pub(super) fn insert_compressed_segment(&mut self, key: u64, segment: RecordBatch) {
-        let _span = info_span!("insert_compressed_segment", key = key.clone()).entered();
-        info!(
+        let _span = debug_span!("insert_compressed_segment", key = key.clone()).entered();
+        debug!(
             "Inserting batch with {} rows into compressed time series.",
             segment.num_rows()
         );
@@ -66,11 +66,11 @@ impl CompressedDataManager {
         // Since the compressed segment is already in memory, insert the segment into the structure
         // first and check if the reserved memory limit is exceeded after.
         let segment_size = if let Some(time_series) = self.compressed_data.get_mut(&key) {
-            info!("Found existing compressed time series.");
+            debug!("Found existing compressed time series.");
 
             time_series.append_segment(segment)
         } else {
-            info!("Could not find compressed time series. Creating compressed time series.");
+            debug!("Could not find compressed time series. Creating compressed time series.");
 
             let mut time_series = CompressedTimeSeries::new();
             let segment_size = time_series.append_segment(segment);
@@ -132,7 +132,7 @@ impl CompressedDataManager {
 
     /// Save [`CompressedTimeSeries`] to disk until the reserved memory limit is no longer exceeded.
     fn save_compressed_data_to_free_memory(&mut self) {
-        info!("Out of memory for compressed data. Saving compressed data to disk.");
+        debug!("Out of memory for compressed data. Saving compressed data to disk.");
 
         while self.compressed_remaining_memory_in_bytes < 0 {
             let key = self.compressed_queue.pop_front().unwrap();
@@ -143,7 +143,7 @@ impl CompressedDataManager {
     /// Save the compressed data corresponding to `key` to disk. The size of the saved compressed
     /// data is added back to the remaining reserved memory.
     fn save_compressed_data(&mut self, key: &u64) {
-        info!("Saving compressed time series with key '{}' to disk.", key);
+        debug!("Saving compressed time series with key '{}' to disk.", key);
 
         let mut time_series = self.compressed_data.remove(&key).unwrap();
         let folder_path = self.data_folder_path.join(key.to_string());
@@ -151,7 +151,7 @@ impl CompressedDataManager {
 
         self.compressed_remaining_memory_in_bytes += time_series.size_in_bytes as isize;
 
-        info!(
+        debug!(
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
             time_series.size_in_bytes, self.compressed_remaining_memory_in_bytes
         );

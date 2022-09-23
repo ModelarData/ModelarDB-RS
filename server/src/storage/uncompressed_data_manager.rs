@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
 use rusqlite::Connection;
-use tracing::{info, info_span};
+use tracing::{debug, debug_span};
 
 use crate::catalog;
 use crate::catalog::NewModelTableMetadata;
@@ -77,8 +77,8 @@ impl UncompressedDataManager {
         model_table: &NewModelTableMetadata,
         data_points: &RecordBatch,
     ) -> Result<Vec<(u64, RecordBatch)>, String> {
-        let _span = info_span!("insert_data_points", table = model_table.name).entered();
-        info!(
+        let _span = debug_span!("insert_data_points", table = model_table.name).entered();
+        debug!(
             "Received record batch with {} data points for the table '{}'.",
             data_points.num_rows(),
             model_table.name
@@ -231,18 +231,18 @@ impl UncompressedDataManager {
         timestamp: Timestamp,
         value: Value,
     ) -> Option<RecordBatch>  {
-        let _span = info_span!("insert_data_point", key = key).entered();
-        info!(
+        let _span = debug_span!("insert_data_point", key = key).entered();
+        debug!(
             "Inserting data point ({}, {}) into segment.",
             timestamp, value
         );
 
         if let Some(segment) = self.uncompressed_data.get_mut(&key) {
-            info!("Found existing segment.");
+            debug!("Found existing segment.");
             segment.insert_data(timestamp, value);
 
             if segment.is_full() {
-                info!("Segment is full, moving it to the queue of finished segments.");
+                debug!("Segment is full, moving it to the queue of finished segments.");
 
                 // Since this is only reachable if the segment exists in the HashMap, unwrap is safe to use.
                 let full_segment = self.uncompressed_data.remove(&key).unwrap();
@@ -257,7 +257,7 @@ impl UncompressedDataManager {
                 }
             }
         } else {
-            info!("Could not find segment. Creating segment.");
+            debug!("Could not find segment. Creating segment.");
 
             // If there is not enough memory for a new segment, spill a finished segment.
             if SegmentBuilder::get_memory_size() > self.uncompressed_remaining_memory_in_bytes {
@@ -268,7 +268,7 @@ impl UncompressedDataManager {
             let mut segment = SegmentBuilder::new();
             self.uncompressed_remaining_memory_in_bytes -= SegmentBuilder::get_memory_size();
 
-            info!(
+            debug!(
                 "Created segment. Remaining reserved bytes: {}.",
                 self.uncompressed_remaining_memory_in_bytes
             );
@@ -331,7 +331,7 @@ impl UncompressedDataManager {
     /// Spill the first in-memory [`FinishedSegment`] in the queue of [`FinishedSegments`](FinishedSegment).
     /// If no in-memory [`FinishedSegments`](FinishedSegment) could be found, [`panic`](std::panic).
     fn spill_finished_segment(&mut self) {
-        info!("Not enough memory to create segment. Spilling an already finished segment.");
+        debug!("Not enough memory to create segment. Spilling an already finished segment.");
 
         // Iterate through the finished segments to find a segment that is in memory.
         for finished in self.finished_queue.iter_mut() {
@@ -340,7 +340,7 @@ impl UncompressedDataManager {
                 // Add the size of the segment back to the remaining reserved bytes.
                 self.uncompressed_remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
 
-                info!(
+                debug!(
                     "Spilled the segment to '{}'. Remaining reserved bytes: {}.",
                     file_path.display(),
                     self.uncompressed_remaining_memory_in_bytes
