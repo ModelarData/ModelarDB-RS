@@ -1,4 +1,4 @@
-/* Copyright 2022 The ModelarDB Contributors
+/* Copyright 2022 The ModelarDB C&ontributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ use crate::types::{Timestamp, TimestampArray, TimestampBuilder};
 /// using a variable length binary encoding. The first bit that is written to
 /// the returned [`Vec`] is a flag that indicates if the time series was regular
 /// (a zero bit is written) or if it was irregular (a one bit is written).
-pub fn compress_residual_timestamps(uncompressed_timestamps: &TimestampArray) -> Vec<u8> {
+pub fn compress_residual_timestamps(uncompressed_timestamps: &[Timestamp]) -> Vec<u8> {
     // Nothing to do as the segments already store the first and last timestamp.
     if uncompressed_timestamps.len() <= 2 {
         return vec![];
@@ -55,7 +55,7 @@ pub fn compress_residual_timestamps(uncompressed_timestamps: &TimestampArray) ->
 
     // Compress the residual timestamps using an optimized method depending on
     // if the segment the timestamps are from is regular or irregular.
-    if are_timestamps_regular(uncompressed_timestamps.values()) {
+    if are_timestamps_regular(uncompressed_timestamps) {
         // The timestamps are regular, so only the segment's length is stored as
         // an integer with all the prefix zeros stripped from the integer.
         compress_regular_residual_timestamps(uncompressed_timestamps)
@@ -89,7 +89,7 @@ fn are_timestamps_regular(uncompressed_timestamps: &[Timestamp]) -> bool {
 
 /// Compress `uncompressed_timestamps` for a regular time series as a zero bit
 /// followed by the segment's length as an integer with prefix zeros stripped.
-fn compress_regular_residual_timestamps(uncompressed_timestamps: &TimestampArray) -> Vec<u8> {
+fn compress_regular_residual_timestamps(uncompressed_timestamps: &[Timestamp]) -> Vec<u8> {
     let length = uncompressed_timestamps.len();
     let leading_zero_bits = length.leading_zeros() as usize;
     let number_of_bits_to_write = (mem::size_of_val(&length) * 8 - leading_zero_bits) + 1;
@@ -103,20 +103,20 @@ fn compress_regular_residual_timestamps(uncompressed_timestamps: &TimestampArray
 /// Compress `uncompressed_timestamps` from an irregular time series as a one
 /// bit followed by the timestamps' delta-of-deltas encode using a variable
 /// length binary encoding.
-fn compress_irregular_residual_timestamps(uncompressed_timestamps: &TimestampArray) -> Vec<u8> {
+fn compress_irregular_residual_timestamps(uncompressed_timestamps: &[Timestamp]) -> Vec<u8> {
     // TODO: remove the casts when refactoring the query engine to use unsigned.
     let mut compressed_timestamps = BitVecBuilder::new();
     compressed_timestamps.append_a_one_bit();
 
     // Store the second timestamp as a delta using 14 bits.
-    let mut last_delta = uncompressed_timestamps.value(1) - uncompressed_timestamps.value(0);
+    let mut last_delta = uncompressed_timestamps[1] - uncompressed_timestamps[0];
     compressed_timestamps.append_bits(last_delta as u32, 14); // 14-bit delta is max four hours.
 
     // Encode the timestamps from the third timestamp to the second to last.
     // A delta-of-delta is computed and then encoded in buckets of different
     // sizes. Assumes that the delta-of-delta can fit in at most 32 bits.
-    let mut last_timestamp = uncompressed_timestamps.value(1);
-    for timestamp in &uncompressed_timestamps.values()[2..uncompressed_timestamps.len() - 1] {
+    let mut last_timestamp = uncompressed_timestamps[1];
+    for timestamp in &uncompressed_timestamps[2..uncompressed_timestamps.len() - 1] {
         let delta = timestamp - last_timestamp;
         let delta_of_delta = delta - last_delta;
 
@@ -292,13 +292,16 @@ mod tests {
         let mut uncompressed_timestamps_builder = TimestampBuilder::with_capacity(3);
 
         uncompressed_timestamps_builder.append_slice(&[]);
-        assert!(compress_residual_timestamps(&uncompressed_timestamps_builder.finish()).is_empty());
+        let uncompressed_timestamps = &uncompressed_timestamps_builder.finish();
+        assert!(compress_residual_timestamps(uncompressed_timestamps.values()).is_empty());
 
         uncompressed_timestamps_builder.append_slice(&[100]);
-        assert!(compress_residual_timestamps(&uncompressed_timestamps_builder.finish()).is_empty());
+        let uncompressed_timestamps = &uncompressed_timestamps_builder.finish();
+        assert!(compress_residual_timestamps(uncompressed_timestamps.values()).is_empty());
 
         uncompressed_timestamps_builder.append_slice(&[100, 300]);
-        assert!(compress_residual_timestamps(&uncompressed_timestamps_builder.finish()).is_empty());
+        let uncompressed_timestamps = &uncompressed_timestamps_builder.finish();
+        assert!(compress_residual_timestamps(uncompressed_timestamps.values()).is_empty());
     }
 
     #[test]
@@ -319,7 +322,7 @@ mod tests {
         uncompressed_timestamps_builder.append_slice(uncompressed_timestamps);
         let uncompressed_timestamps = uncompressed_timestamps_builder.finish();
 
-        let compressed = compress_residual_timestamps(&uncompressed_timestamps);
+        let compressed = compress_residual_timestamps(&uncompressed_timestamps.values());
         assert!(!compressed.is_empty());
         let decompressed = decompress_all_timestamps(
             uncompressed_timestamps.value(0),

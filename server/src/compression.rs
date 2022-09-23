@@ -139,7 +139,8 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
                 ));
             }
             let timestamps = flatten_timestamp_arrays(timestamp_arrays);
-            let compressed_timestamps = timestamps::compress_residual_timestamps(&timestamps);
+            let compressed_timestamps =
+                timestamps::compress_residual_timestamps(timestamps.values());
 
             // Merge segments. The first segment's model is used for the merged
             // segment as all of the segments contain the exact same model.
@@ -275,7 +276,9 @@ impl<'a> CompressedSegmentBuilder<'a> {
         // Add timestamps and error.
         let start_time = self.uncompressed_timestamps.value(self.start_index);
         let end_time = self.uncompressed_timestamps.value(end_index);
-        let timestamps = timestamps::compress_residual_timestamps(&self.uncompressed_timestamps);
+        let timestamps = timestamps::compress_residual_timestamps(
+            &self.uncompressed_timestamps.values()[self.start_index..end_index],
+        );
         let error = f32::NAN; // TODO: compute and store the actual error.
 
         compressed_record_batch_builder.append_compressed_segment(
