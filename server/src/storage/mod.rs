@@ -27,15 +27,14 @@ use std::fs;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::{ArrowReader, ArrowWriter, ParquetFileArrowReader};
+use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::WriterProperties;
-use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
+use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use object_store::ObjectMeta;
 use object_store::path::Path as ObjectStorePath;
 use chrono::DateTime;
@@ -211,26 +210,13 @@ impl StorageEngine {
             format!("Apache Parquet file at path '{}' could not be read.", file_path.display())
         );
 
+        // Create a reader that can be used to read an Apache Parquet file.
         let file = File::open(file_path).map_err(|_e| error.clone())?;
-        let reader = SerializedFileReader::new(file)?;
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
+        let mut reader = builder.build()?;
 
-        // Extract the total row count from the file metadata.
-        let apache_parquet_metadata = reader.metadata();
-        let row_count = apache_parquet_metadata
-            .row_groups()
-            .iter()
-            .map(|rg| rg.num_rows())
-            .sum::<i64>() as usize;
-
-        // Read the data and convert it to a RecordBatch.
-        let mut arrow_reader = ParquetFileArrowReader::new(Arc::new(reader));
-        let mut record_batch_reader = arrow_reader.get_record_reader(row_count)?;
-
-        let batch = record_batch_reader
-            .next()
-            .ok_or_else(|| error)??;
-
-        Ok(batch)
+        let record_batch = reader.next().ok_or_else(|| error)??;
+        Ok(record_batch)
     }
 
     /// Return `true` if `file_path` is a readable Apache Parquet file, otherwise `false`.
@@ -249,6 +235,7 @@ impl StorageEngine {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use tempfile::{tempdir, TempDir};
 
