@@ -55,7 +55,7 @@ const APACHE_PARQUET_FILE_SIGNATURE: &[u8] = &[80, 65, 82, 49]; // PAR1.
 
 /// Note that the capacity has to be a multiple of 64 bytes to avoid the actual capacity
 /// being larger due to internal alignment when allocating memory for the builders.
-const BUILDER_CAPACITY: usize = 64;
+const BUILDER_CAPACITY: usize = 64 * 1024; // Each element is a Timestamp and a Value.
 
 /// Manages all uncompressed and compressed data, both while being built and when finished.
 pub struct StorageEngine {

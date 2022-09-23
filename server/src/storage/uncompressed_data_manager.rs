@@ -32,7 +32,7 @@ use crate::models::ErrorBound;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder, UncompressedSegment};
 use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
 
-const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
+const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 512 * 1024 * 1024; // 512 MiB
 
 /// Converts a batch of data to uncompressed data points and stores uncompressed data points
 /// temporarily in an in-memory buffer that spills to Apache Parquet files. When finished the data
