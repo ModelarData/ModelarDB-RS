@@ -39,7 +39,7 @@ use object_store::ObjectMeta;
 use object_store::path::Path as ObjectStorePath;
 use chrono::DateTime;
 
-use crate::catalog::NewModelTableMetadata;
+use crate::catalog::ModelTableMetadata;
 use crate::errors::ModelarDBError;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::segment::FinishedSegment;
@@ -77,7 +77,7 @@ impl StorageEngine {
     /// successfully inserted, otherwise return [`Err`].
     pub fn insert_data_points(
         &mut self,
-        model_table: &NewModelTableMetadata,
+        model_table: &ModelTableMetadata,
         data_points: &RecordBatch
     ) -> Result<(), String> {
         // TODO: When the compression component is changed, just insert the data points.

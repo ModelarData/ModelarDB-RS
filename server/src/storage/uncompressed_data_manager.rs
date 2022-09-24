@@ -26,7 +26,7 @@ use rusqlite::Connection;
 use tracing::{debug, debug_span};
 
 use crate::catalog;
-use crate::catalog::NewModelTableMetadata;
+use crate::catalog::ModelTableMetadata;
 use crate::{compression, get_array};
 use crate::models::ErrorBound;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder, UncompressedSegment};
@@ -74,7 +74,7 @@ impl UncompressedDataManager {
     /// successfully inserted, otherwise return [`Err`].
     pub(super) fn insert_data_points(
         &mut self,
-        model_table: &NewModelTableMetadata,
+        model_table: &ModelTableMetadata,
         data_points: &RecordBatch,
     ) -> Result<Vec<(u64, RecordBatch)>, String> {
         let _span = debug_span!("insert_data_points", table = model_table.name).entered();
@@ -181,7 +181,7 @@ impl UncompressedDataManager {
     /// the table could not be accessed, return [`rusqlite::Error`].
     fn get_or_compute_tag_hash(
         &mut self,
-        model_table: &NewModelTableMetadata,
+        model_table: &ModelTableMetadata,
         tag_values: &Vec<String>,
     ) -> Result<u64, rusqlite::Error> {
         let cache_key = {
@@ -454,7 +454,7 @@ mod tests {
     /// Create a record batch with data that resembles uncompressed data with a single tag and two
     /// field columns. The returned data has `row_count` rows, with a different tag for each row.
     /// Also create model table metadata for a model table that matches the created data.
-    fn get_uncompressed_data(row_count: usize) -> (NewModelTableMetadata, RecordBatch) {
+    fn get_uncompressed_data(row_count: usize) -> (ModelTableMetadata, RecordBatch) {
         let tags: Vec<String> = (0..row_count).map(|tag| tag.to_string()).collect();
         let timestamps: Vec<Timestamp> = (0..row_count).map(|ts| ts as Timestamp).collect();
         let values: Vec<Value> = (0..row_count).map(|value| value as Value).collect();
@@ -476,7 +476,7 @@ mod tests {
             ],
         ).unwrap();
 
-        let model_table_metadata = NewModelTableMetadata::try_new(
+        let model_table_metadata = ModelTableMetadata::try_new(
             "model_table".to_owned(),
             schema,
             vec![0],
@@ -488,7 +488,7 @@ mod tests {
 
     // TODO: This is duplicated from a function in remote. Change this when the metadata component exists.
     /// Create the table in the metadata database that contains the tag hashes.
-    fn create_model_table_tags_table(model_table_metadata: &NewModelTableMetadata, path: &Path) {
+    fn create_model_table_tags_table(model_table_metadata: &ModelTableMetadata, path: &Path) {
         let database_path = path.join(catalog::METADATA_SQLITE_NAME);
         let connection = Connection::open(database_path).unwrap();
 

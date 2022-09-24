@@ -47,7 +47,7 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
 use crate::catalog;
-use crate::catalog::{NewModelTableMetadata, TableMetadata};
+use crate::catalog::{ModelTableMetadata, TableMetadata};
 use crate::storage::StorageEngine;
 use crate::Context;
 
@@ -148,7 +148,7 @@ impl FlightServiceHandler {
     /// While there is still more data to receive, ingest the data into the storage engine.
     async fn ingest_into_model_table(
         &self,
-        model_table: &NewModelTableMetadata,
+        model_table: &ModelTableMetadata,
         flight_data_stream: &mut Streaming<FlightData>,
     ) -> Result<(), Status> {
         debug!("Ingesting data into model table '{}'.", model_table.name);
@@ -233,7 +233,7 @@ impl FlightServiceHandler {
         // the same time. unwrap() is safe to use since write() only fails if the RwLock is poisoned.
         let mut catalog = self.context.catalog.write().unwrap();
 
-        let model_table_metadata = NewModelTableMetadata::try_new(
+        let model_table_metadata = ModelTableMetadata::try_new(
             table_name.clone(),
             schema.clone(),
             tag_column_indices,
@@ -253,7 +253,8 @@ impl FlightServiceHandler {
             .map_err(|error| Status::internal(error.to_string()))?;
 
         info!("Created model table '{}'.", table_name);
-        catalog.new_model_table_metadata.push(model_table_metadata);
+        catalog.model_table_metadata.push(Arc::new(model_table_metadata));
+
 
         Ok(())
     }
@@ -409,7 +410,7 @@ impl FlightService for FlightServiceHandler {
         let maybe_model_table = {
             // unwrap() is safe to use since read() only fails if the RwLock is poisoned.
             let catalog = self.context.catalog.read().unwrap();
-            let mut model_tables = catalog.new_model_table_metadata.iter();
+            let mut model_tables = catalog.model_table_metadata.iter();
 
             model_tables.find(|table| table.name == *table_name).cloned()
         };
@@ -550,7 +551,7 @@ fn extract_argument_bytes(data: &[u8]) -> (&[u8], &[u8]) {
 /// model_table_field_columns table for each field column.
 fn save_model_table_to_database(
     database_path: PathBuf,
-    model_table_metadata: &NewModelTableMetadata,
+    model_table_metadata: &ModelTableMetadata,
     schema_bytes: Vec<u8>,
 ) -> Result<(), rusqlite::Error> {
     // Create a transaction to ensure the database state is consistent across tables.

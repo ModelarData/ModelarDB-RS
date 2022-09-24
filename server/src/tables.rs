@@ -12,18 +12,16 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
 use std::any::Any;
 use std::fmt;
 use std::fmt::Formatter;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::task::{Context, Poll};
+use std::task::{Context as StdTaskContext, Poll};
 
 use async_trait::async_trait;
-use datafusion::arrow::array::{
-    ArrayRef, BinaryArray, Float32Array, Int32Array, Int64Array, StringArray, StringBuilder,
-    TimestampMillisecondArray,
-};
+use datafusion::arrow::array::{ArrayRef, BinaryArray, Float32Array, UInt64Array, UInt8Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -43,25 +41,27 @@ use datafusion::physical_plan::{
 use datafusion::scalar::ScalarValue::{Int64, TimestampNanosecond};
 use datafusion_physical_expr::planner;
 use futures::stream::{Stream, StreamExt};
-use object_store::path::Path;
 
 use crate::catalog::ModelTableMetadata;
-use crate::models;
+use crate::storage::StorageEngine;
+use crate::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
+use crate::Context;
 
-/** Public Types **/
-/* TableProvider */
 pub struct ModelTable {
+    context: Arc<Context>,
     object_store_url: ObjectStoreUrl,
-    segment_folder_path: Path,
     model_table_metadata: Arc<ModelTableMetadata>,
     schema: Arc<Schema>,
 }
 
-/** Public Methods **/
 impl ModelTable {
-    pub fn new(model_table_metadata: &Arc<ModelTableMetadata>) -> Arc<Self> {
+    pub fn new(
+        context: Arc<Context>,
+        model_table_metadata: &Arc<ModelTableMetadata>,
+    ) -> Arc<Self> {
+        // TODO: support reconstructing the ingested multivariate time series.
         let mut columns = vec![
-            Field::new("tid", DataType::Int32, false),
+            Field::new("tid", DataType::UInt64, false),
             Field::new(
                 "timestamp",
                 DataType::Timestamp(TimeUnit::Millisecond, None),
@@ -70,22 +70,16 @@ impl ModelTable {
             Field::new("value", DataType::Float32, false),
         ];
 
-        // TODO: support dimensions with levels that are not strings?
-        for level in &model_table_metadata.denormalized_dimensions {
-            let level = level.as_any().downcast_ref::<StringArray>().unwrap();
-            columns.push(Field::new(level.value(0), DataType::Utf8, false));
-        }
-
         Arc::new(ModelTable {
+            context,
             model_table_metadata: model_table_metadata.clone(),
-            segment_folder_path: Path::from(model_table_metadata.segment_path.clone()),
             object_store_url: ObjectStoreUrl::local_filesystem(),
             schema: Arc::new(Schema::new(columns)),
         })
     }
 
     fn rewrite_and_combine_filters(&self, filters: &[Expr]) -> Option<Expr> {
-        // TODO: implement rewriting of members to group ids.
+        // TODO: rewrite remaining filters for the remaining columns.
         let rewritten_filters: Vec<Expr> = filters
             .iter()
             .map(|filter| match filter {
@@ -165,18 +159,11 @@ impl ModelTable {
             .as_ref()
             .ok_or_else(|| DataFusionError::Plan("predicate is none".to_owned()))?;
 
-        let df_schema = self
-            .model_table_metadata
-            .segment_file_legacy_schema
-            .clone()
-            .to_dfschema()?;
+        let schema = StorageEngine::get_compressed_segment_schema();
+        let df_schema = schema.clone().to_dfschema()?;
 
-        let physical_predicate = planner::create_physical_expr(
-            predicate,
-            &df_schema,
-            &self.model_table_metadata.segment_file_legacy_schema,
-            &ExecutionProps::new(),
-        )?;
+        let physical_predicate =
+            planner::create_physical_expr(predicate, &df_schema, &schema, &ExecutionProps::new())?;
 
         Ok(Arc::new(FilterExec::try_new(
             physical_predicate,
@@ -185,7 +172,6 @@ impl ModelTable {
     }
 }
 
-/** Private Methods **/
 #[async_trait]
 impl TableProvider for ModelTable {
     fn as_any(&self) -> &dyn Any {
@@ -211,21 +197,31 @@ impl TableProvider for ModelTable {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        //Create the data source node
-        let partitioned_files: Vec<PartitionedFile> = ctx //Assumes ObjectStore exists
-            .runtime_env
-            .object_store(&self.object_store_url)
-            .unwrap()
-            .list(Some(&self.segment_folder_path))
-            .await?
+        // TODO: Determine which hashes to retrieve.
+        let hashes = vec![];
+
+        // Request the matching files from the storage engine.
+        let mut object_metas = {
+            // unwrap() is safe as read() only fails if the RwLock is poisoned.
+            let mut storage_engines = self.context.storage_engine.write().unwrap();
+
+            // unwrap() is safe to use as get_compressed_files() only fails if a
+            // non-existing hash is passed or if end time is before start time.
+            // TODO: change the storage engine to allow multiple readers.
+            storage_engines
+                .get_compressed_files(&hashes, None, None)
+                .unwrap()
+        };
+
+        //Create the data source node. Assumes the ObjectStore already exists.
+        let partitioned_files: Vec<PartitionedFile> = object_metas.drain(0..)
             .map(|object_meta| PartitionedFile {
-                object_meta: object_meta.unwrap(),
+                object_meta,
                 partition_values: vec![],
                 range: None,
                 extensions: None,
             })
-            .collect::<Vec<PartitionedFile>>()
-            .await;
+            .collect::<Vec<PartitionedFile>>();
 
         //TODO: accumulate the size with filters
         let statistics = Statistics {
@@ -238,7 +234,7 @@ impl TableProvider for ModelTable {
         //TODO: partition and limit the number of rows read from the files properly
         let file_scan_config = FileScanConfig {
             object_store_url: self.object_store_url.clone(),
-            file_schema: self.model_table_metadata.segment_file_legacy_schema.clone(),
+            file_schema: Arc::new(StorageEngine::get_compressed_segment_schema()),
             file_groups: vec![partitioned_files],
             statistics,
             projection: None,
@@ -432,101 +428,64 @@ impl GridStream {
         }
     }
 
+    //TODO: it is necessary to return batch_size data points to prevent skew?
+    //TODO: limit the batches of data points to only contain what is needed.
     fn grid(&self, batch: &RecordBatch) -> ArrowResult<RecordBatch> {
-        //The timer records the time elapsed when dropped
+        // Record the time elapsed from the timer is created to it is dropped.
         let _timer = self.baseline_metrics.elapsed_compute().timer();
 
-        //TODO: it is necessary to only return batch_size data points to prevent skew?
-        //TODO: can start_time and end_time be converted to timestamps without adding overhead?
-        //TODO: can the signed ints from Java be cast to unsigned ints without adding overhead?
-        crate::downcast_arrays!(gids, start_times, end_times, mtids, models, gaps, batch);
-
-        //Compute the number of data points that will be reconstructed from the models and allocate
-        //memory for the them. It is assumed that most queries will request tids, timestamps, and
-        //values so they are written to the arrays together by a single iteration over the models.
-        //A segment represents at least one data points, so only limit segments are needed if set.
-        //TODO: reduce limit for each batch of data points returned to not output more than needed
-        let num_rows = batch
-            .num_rows()
-            .min(self.limit.unwrap_or(usize::max_value()));
-        let data_points = models::count(
-            num_rows,
-            gids,
-            start_times,
-            end_times,
-            &self.model_table_metadata.sampling_intervals,
+        // Retrieve the arrays from batch and cast them to their concrete type.
+        crate::get_arrays!(
+            batch,
+            model_type_id_array,
+            timestamps_array,
+            start_time_array,
+            end_time_array,
+            values_array,
+            min_value_array,
+            max_value_array,
+            error_array
         );
-        let mut tids = Int32Array::builder(data_points);
-        let mut timestamps = TimestampMillisecondArray::builder(data_points);
-        let mut values = Float32Array::builder(data_points);
+
+        // Each segments contains at least one data point.
+        //TODO: can the specific amount of memory required for the arrays be
+        // allocated without explicitly storing the length of the segment?
+        let num_rows = batch.num_rows();
+        let mut tids = UInt64Array::builder(num_rows);
+        let mut timestamps = TimestampBuilder::with_capacity(num_rows);
+        let mut values = ValueBuilder::with_capacity(num_rows);
 
         //Reconstructs the data points from the segments
         for row_index in 0..num_rows {
-            let gid = gids.value(row_index);
-            let start_time = start_times.value(row_index);
-            let end_time = end_times.value(row_index);
-            let mtid = mtids.value(row_index);
-            let sampling_interval = self
-                .model_table_metadata
-                .sampling_intervals
-                .value(gid as usize);
-            let model = models.value(row_index);
-            let gaps = gaps.value(row_index);
-            models::grid(
-                gid,
-                start_time,
-                end_time,
-                mtid,
-                sampling_interval,
-                model,
-                gaps,
-                &mut tids,
-                &mut timestamps,
-                &mut values,
-            );
+            let model_type_id = model_type_id_array.value(row_index);
+            let timestamps = timestamps_array.value(row_index);
+            let start_time = start_time_array.value(row_index);
+            let end_time = end_time_array.value(row_index);
+            let values = values_array.value(row_index);
+            let min_value = min_value_array.value(row_index);
+            let max_value = max_value_array.value(row_index);
+            let error = error_array.value(row_index);
+
+            // TODO:
         }
 
-        //Joins the reconstructed data points with the members
-        let mut columns: Vec<ArrayRef> =
-            Vec::with_capacity(self.schema_after_projection.fields().len());
-        let tids = Arc::new(tids.finish()); //Finished before the loop so it can be used by add_dimension_column
-
-        //Returns the batch of reconstructed data points with metadata
-        for column in &self.projection {
-            match column {
-                0 => columns.push(tids.clone()),
-                1 => columns.push(Arc::new(timestamps.finish())),
-                2 => columns.push(Arc::new(values.finish())),
-                column => columns.push(self.add_dimension_column(&tids, *column)),
-            }
-        }
+        // Returns the batch of reconstructed data points.
+        let columns: Vec<ArrayRef> = vec![
+            Arc::new(tids.finish()),
+            Arc::new(timestamps.finish()),
+            Arc::new(values.finish()),
+        ];
         Ok(RecordBatch::try_new(self.schema_after_projection.clone(), columns).unwrap())
-    }
-
-    fn add_dimension_column(&self, tids: &Int32Array, column: usize) -> ArrayRef {
-        //TODO: support dimensions with levels that are not strings?
-        let level = self
-            .model_table_metadata
-            .denormalized_dimensions
-            .get(column - 3)
-            .unwrap()
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap();
-
-        let mut members =
-            StringBuilder::with_capacity(tids.len(), level.iter().map(|s| s.unwrap().len()).sum());
-        for tid in tids {
-            members.append_value(level.value(tid.unwrap() as usize));
-        }
-        Arc::new(members.finish())
     }
 }
 
 impl Stream for GridStream {
     type Item = ArrowResult<RecordBatch>;
 
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+    fn poll_next(
+        mut self: Pin<&mut Self>,
+        cx: &mut StdTaskContext<'_>,
+    ) -> Poll<Option<Self::Item>> {
         let poll = self.input.poll_next_unpin(cx).map(|x| match x {
             Some(Ok(batch)) => Some(self.grid(&batch)),
             other => other,
