@@ -18,10 +18,10 @@
 //! each type. The module itself contains general functionality used by the
 //! model types.
 
+pub mod bits;
 pub mod gorilla;
 pub mod pmcmean;
 pub mod swing;
-pub mod bits;
 pub mod timestamps;
 
 use std::cmp::{Ordering, PartialOrd};
@@ -286,46 +286,44 @@ pub fn sum(
 /// and appended to `time_series_ids`, `timestamps`, and `values`.
 pub fn grid(
     time_series_id: TimeSeriesId,
+    model_type_id: u8,
+    timestamps: &[u8],
     start_time: Timestamp,
     end_time: Timestamp,
-    model_type_id: i32,
-    sampling_interval: i32,
-    model: &[u8],
-    _gaps: &[u8],
-    time_series_ids: &mut TimeSeriesIdBuilder,
-    timestamps: &mut TimestampBuilder,
-    values: &mut ValueBuilder,
+    values: &[u8],
+    min_value: Value,
+    max_value: Value,
+    time_series_id_builder: &mut TimeSeriesIdBuilder,
+    timestamp_builder: &mut TimestampBuilder,
+    value_builder: &mut ValueBuilder,
 ) {
+    timestamps::decompress_all_timestamps(start_time, end_time, timestamps, timestamp_builder);
+    let new_timestamps = &timestamp_builder.values_slice()[value_builder.values_slice().len()..];
+
     match model_type_id as u8 {
         PMC_MEAN_ID => pmcmean::grid(
             time_series_id,
-            start_time,
-            end_time,
-            sampling_interval,
-            model,
-            time_series_ids,
-            timestamps,
-            values,
+            min_value, // For PMC-Mean, min and max is the same value.
+            time_series_id_builder,
+            new_timestamps,
+            value_builder,
         ),
         SWING_ID => swing::grid(
             time_series_id,
             start_time,
             end_time,
-            sampling_interval,
-            model,
-            time_series_ids,
-            timestamps,
-            values,
+            min_value,
+            max_value,
+            time_series_id_builder,
+            new_timestamps,
+            value_builder,
         ),
         GORILLA_ID => gorilla::grid(
             time_series_id,
-            start_time,
-            end_time,
-            sampling_interval,
-            model,
-            time_series_ids,
-            timestamps,
             values,
+            time_series_id_builder,
+            new_timestamps,
+            value_builder,
         ),
         _ => panic!("Unknown model type."),
     }

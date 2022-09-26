@@ -170,25 +170,24 @@ pub fn sum(
     aggregate::sum(&decompressed_values).unwrap()
 }
 
-/// Reconstruct the data points for a time series segment whose values are
-/// compressed using Gorilla's compression method for floating-point values.
-/// Each data point is split into its three components and appended to
-/// `time_series_ids`, `timestamps`, and `values`.
+/// Decompress the values in `values` for the `timestamps` without matching
+/// values in `value_builder`. The values in `values` are compressed using
+/// Gorilla's compression method for floating-point values. `time_series_ids`
+/// and `values` are appended to `time_series_id_builder` and `value_builder`.
 pub fn grid(
     time_series_id: TimeSeriesId,
-    start_time: Timestamp,
-    end_time: Timestamp,
-    sampling_interval: i32,
-    model: &[u8],
-    time_series_ids: &mut TimeSeriesIdBuilder,
-    timestamps: &mut TimestampBuilder,
-    values: &mut ValueBuilder,
+    values: &[u8],
+    time_series_id_builder: &mut TimeSeriesIdBuilder,
+    timestamps: &[Timestamp],
+    value_builder: &mut ValueBuilder,
 ) {
-    for timestamp in (start_time..=end_time).step_by(sampling_interval as usize) {
-        time_series_ids.append_value(time_series_id);
-        timestamps.append_value(timestamp);
-    }
-    decompress_values(start_time, end_time, sampling_interval, model, values);
+    decompress_values(
+        time_series_id,
+        values,
+        time_series_id_builder,
+        timestamps,
+        value_builder,
+    );
 }
 
 /// Decompress values compressed using Gorilla's compression method for
@@ -199,38 +198,30 @@ fn decompress_values_to_array(
     sampling_interval: i32,
     model: &[u8],
 ) -> ValueArray {
-    let length = models::length(start_time, end_time, sampling_interval);
-    let mut value_builder = ValueBuilder::with_capacity(length as usize);
-    decompress_values(
-        start_time,
-        end_time,
-        sampling_interval,
-        model,
-        &mut value_builder,
-    );
-    value_builder.finish()
+    let mut value_builder = ValueBuilder::new();
+    unimplemented!();
 }
 
 /// Decompress values compressed using Gorilla's compression method for
 /// floating-point values and append them to `values`.
 fn decompress_values(
-    start_time: Timestamp,
-    end_time: Timestamp,
-    sampling_interval: i32,
-    model: &[u8],
-    values: &mut ValueBuilder,
+    time_series_id: TimeSeriesId,
+    values: &[u8],
+    time_series_ids: &mut TimeSeriesIdBuilder,
+    timestamps: &[Timestamp],
+    value_builder: &mut ValueBuilder,
 ) {
-    let mut bits = BitReader::try_new(model).unwrap();
+    let mut bits = BitReader::try_new(values).unwrap();
     let mut leading_zeros = u8::MAX;
     let mut trailing_zeros: u8 = 0;
     let mut last_value = bits.read_bits(models::VALUE_SIZE_IN_BITS);
 
     // The first value is stored uncompressed using size_of::<Value> bits.
-    values.append_value(Value::from_bits(last_value));
+    time_series_ids.append_value(time_series_id);
+    value_builder.append_value(Value::from_bits(last_value));
 
     // Then values are stored using XOR and a variable length binary encoding.
-    let length_without_first_value = models::length(start_time, end_time, sampling_interval) - 1;
-    for _ in 0..length_without_first_value {
+    for _ in 0..timestamps.len() - 1 {
         if bits.read_bit() {
             if bits.read_bit() {
                 // New leading and trailing zeros.
@@ -247,7 +238,8 @@ fn decompress_values(
             value ^= last_value;
             last_value = value;
         }
-        values.append_value(Value::from_bits(last_value));
+        time_series_ids.append_value(time_series_id);
+        value_builder.append_value(Value::from_bits(last_value));
     }
 }
 

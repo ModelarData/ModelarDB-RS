@@ -247,27 +247,27 @@ pub fn sum(
     (average * length as f64) as Value
 }
 
-/// Reconstruct the data points for a time series segment whose values are
-/// represented by a model of type Swing. Each data point is split into its
-/// three components and appended to `time_series_ids`, `timestamps`, and
-/// `values`.
+/// Reconstruct the values for the `timestamps` without matching values in
+/// `value_builder` using a model of type Swing. The `time_series_ids` and
+/// `values` are appended to `time_series_id_builder` and `value_builder`.
 pub fn grid(
     time_series_id: TimeSeriesId,
     start_time: Timestamp,
     end_time: Timestamp,
-    sampling_interval: i32,
-    model: &[u8],
+    min_value: Value,
+    max_value: Value,
     time_series_ids: &mut TimeSeriesIdBuilder,
-    timestamps: &mut TimestampBuilder,
-    values: &mut ValueBuilder,
+    timestamps: &[Timestamp],
+    value_builder: &mut ValueBuilder,
 ) {
-    let (slope, intercept) = decode_model(model);
-    let sampling_interval = sampling_interval as usize;
-    for timestamp in (start_time..=end_time).step_by(sampling_interval) {
+    // TODO: how to encode if min or max is the first or last value?
+    let (slope, intercept) =
+        compute_slope_and_intercept(start_time, min_value as f64, end_time, max_value as f64);
+
+    for timestamp in timestamps {
         time_series_ids.append_value(time_series_id);
-        timestamps.append_value(timestamp);
-        let value = (slope * timestamp as f64 + intercept) as Value;
-        values.append_value(value);
+        let value = (slope * (*timestamp as f64) + intercept) as Value;
+        value_builder.append_value(value);
     }
 }
 

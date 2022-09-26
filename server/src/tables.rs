@@ -16,6 +16,7 @@
 use std::any::Any;
 use std::fmt;
 use std::fmt::Formatter;
+use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
@@ -41,10 +42,13 @@ use datafusion::physical_plan::{
 use datafusion::scalar::ScalarValue::{Int64, TimestampNanosecond};
 use datafusion_physical_expr::planner;
 use futures::stream::{Stream, StreamExt};
+use rusqlite::{Connection, Result as RusqliteResult};
 
+use crate::catalog;
 use crate::catalog::ModelTableMetadata;
+use crate::models;
 use crate::storage::StorageEngine;
-use crate::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
+use crate::types::{TimeSeriesId, TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
 use crate::Context;
 
 pub struct ModelTable {
@@ -55,10 +59,7 @@ pub struct ModelTable {
 }
 
 impl ModelTable {
-    pub fn new(
-        context: Arc<Context>,
-        model_table_metadata: &Arc<ModelTableMetadata>,
-    ) -> Arc<Self> {
+    pub fn new(context: Arc<Context>, model_table_metadata: &Arc<ModelTableMetadata>) -> Arc<Self> {
         // TODO: support reconstructing the ingested multivariate time series.
         let mut columns = vec![
             Field::new("tid", DataType::UInt64, false),
@@ -170,6 +171,97 @@ impl ModelTable {
             input.clone(),
         )?))
     }
+
+    // TODO:extract the field columns requested in the user's query.
+    fn lookup_keys_from_tags(
+        &self,
+        table_name: &str,
+        columns: &Option<Vec<usize>>,
+        tag_predicates: &[(&str, &str)],
+    ) -> Result<Vec<TimeSeriesId>> {
+        // Open a connection to the database containing the metadata.
+        let database_path = {
+            // unwrap() is safe as read() only fails if the RwLock is poisoned.
+            let catalog = self.context.catalog.read().unwrap();
+            catalog.data_folder_path.join(catalog::METADATA_SQLITE_NAME)
+        };
+
+        // Construct the two queries that extract the field columns in the table
+        // being queried and the hashes of the multivariate time series in the
+        // table with tag values that match the tag values in the user's query.
+        // TODO: compute the columns that intersect with the queries projections.
+        let query_field_columns = if columns.is_none() {
+            format!(
+                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}'",
+                table_name
+            )
+        } else {
+            let column: Vec<String> = columns
+                .clone()
+                .unwrap()
+                .iter()
+                .map(|column| format!("column_index = {}", column))
+                .collect();
+
+            format!(
+                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}' AND {}",
+                table_name, column.join(" OR ")
+            )
+        };
+
+        let query_hashes = {
+            if tag_predicates.is_empty() {
+                format!("SELECT hash FROM {}_tags", table_name)
+            } else {
+                let predicates: Vec<String> = tag_predicates
+                    .iter()
+                    .map(|(tag, tag_value)| format!("{} = {}", tag, tag_value))
+                    .collect();
+
+                format!(
+                    "SELECT hash FROM {}_tags WHERE {}",
+                    table_name,
+                    predicates.join(" AND ")
+                )
+            }
+        };
+
+        // Retrieve the hashes using the query and reconstruct the keys.
+        self.lookup_keys_from_sqlite_database(&database_path, &query_hashes, &query_field_columns)
+            .map_err(|error| DataFusionError::Plan(error.to_string()))
+    }
+
+    // TODO:extract the field columns requested in the user's query.
+    fn lookup_keys_from_sqlite_database(
+        &self,
+        database_path: &PathBuf,
+        query_field_columns: &str,
+        query_hashes: &str,
+    ) -> RusqliteResult<Vec<u64>> {
+        let connection = Connection::open(database_path)?;
+
+        // Retrieve the field columns.
+        let mut select_statement = connection.prepare(query_field_columns)?;
+        let mut rows = select_statement.query([])?;
+
+        let mut field_columns = vec![];
+        while let Some(row) = rows.next()? {
+            field_columns.push(row.get::<usize, u64>(0)?);
+        }
+
+        // Retrieve the hashes and compute the keys;
+        let mut select_statement = connection.prepare(&query_hashes)?;
+        let mut rows = select_statement.query([])?;
+
+        let mut keys = vec![];
+        while let Some(row) = rows.next()? {
+            for field_column in &field_columns {
+                keys.push(row.get::<usize, u64>(0)? | field_column);
+            }
+        }
+        // TODO: which key to return if no fields were queried?
+        Ok(keys)
+    }
 }
 
 #[async_trait]
@@ -197,8 +289,13 @@ impl TableProvider for ModelTable {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        // TODO: Determine which hashes to retrieve.
-        let hashes = vec![];
+        // TODO:extract predicates that consist of tag = tag_value from the query.
+        let tag_predicates = vec![];
+        let keys = self.lookup_keys_from_tags(
+            &self.model_table_metadata.name,
+            projection,
+            &tag_predicates,
+        )?;
 
         // Request the matching files from the storage engine.
         let mut object_metas = {
@@ -209,12 +306,13 @@ impl TableProvider for ModelTable {
             // non-existing hash is passed or if end time is before start time.
             // TODO: change the storage engine to allow multiple readers.
             storage_engines
-                .get_compressed_files(&hashes, None, None)
+                .get_compressed_files(&keys, None, None)
                 .unwrap()
         };
 
         //Create the data source node. Assumes the ObjectStore already exists.
-        let partitioned_files: Vec<PartitionedFile> = object_metas.drain(0..)
+        let partitioned_files: Vec<PartitionedFile> = object_metas
+            .drain(0..)
             .map(|object_meta| PartitionedFile {
                 object_meta,
                 partition_values: vec![],
@@ -451,9 +549,9 @@ impl GridStream {
         //TODO: can the specific amount of memory required for the arrays be
         // allocated without explicitly storing the length of the segment?
         let num_rows = batch.num_rows();
-        let mut tids = UInt64Array::builder(num_rows);
-        let mut timestamps = TimestampBuilder::with_capacity(num_rows);
-        let mut values = ValueBuilder::with_capacity(num_rows);
+        let mut key_builder = UInt64Array::builder(num_rows);
+        let mut timestamp_builder = TimestampBuilder::with_capacity(num_rows);
+        let mut value_builder = ValueBuilder::with_capacity(num_rows);
 
         //Reconstructs the data points from the segments
         for row_index in 0..num_rows {
@@ -464,16 +562,27 @@ impl GridStream {
             let values = values_array.value(row_index);
             let min_value = min_value_array.value(row_index);
             let max_value = max_value_array.value(row_index);
-            let error = error_array.value(row_index);
 
-            // TODO:
+            models::grid(
+                2550278706267027457, // TODO: how to make the keys available?
+                model_type_id,
+                timestamps,
+                start_time,
+                end_time,
+                values,
+                min_value,
+                max_value,
+                &mut key_builder,
+                &mut timestamp_builder,
+                &mut value_builder,
+            );
         }
 
         // Returns the batch of reconstructed data points.
         let columns: Vec<ArrayRef> = vec![
-            Arc::new(tids.finish()),
-            Arc::new(timestamps.finish()),
-            Arc::new(values.finish()),
+            Arc::new(key_builder.finish()),
+            Arc::new(timestamp_builder.finish()),
+            Arc::new(value_builder.finish()),
         ];
         Ok(RecordBatch::try_new(self.schema_after_projection.clone(), columns).unwrap())
     }

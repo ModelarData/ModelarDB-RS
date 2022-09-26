@@ -129,16 +129,19 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
         let mut merged_compressed_segments = CompressedSegmentBatchBuilder::new(num_rows);
         for (_, indices) in compressed_segments_to_merge {
             // Merge timestamps.
-            let mut timestamp_arrays = Vec::with_capacity(indices.len());
+            let mut timestamp_builder = TimestampBuilder::new();
             for index in &indices {
                 let start_time = start_times.value(*index);
                 let end_time = end_times.value(*index);
                 let timestamps = timestamps.value(*index);
-                timestamp_arrays.push(timestamps::decompress_all_timestamps(
-                    start_time, end_time, timestamps,
-                ));
+                timestamps::decompress_all_timestamps(
+                    start_time,
+                    end_time,
+                    timestamps,
+                    &mut timestamp_builder,
+                );
             }
-            let timestamps = flatten_timestamp_arrays(timestamp_arrays);
+            let timestamps = timestamp_builder.finish();
             let compressed_timestamps =
                 timestamps::compress_residual_timestamps(timestamps.values());
 
@@ -371,16 +374,6 @@ impl CompressedSegmentBatchBuilder {
         )
         .unwrap()
     }
-}
-
-/// Flatten a [`Vec<TimestampArray>`] into a [`TimestampArray`].
-fn flatten_timestamp_arrays(timestamp_arrays: Vec<TimestampArray>) -> TimestampArray {
-    let total_length = timestamp_arrays.iter().map(|array| array.len()).sum();
-    let mut timestamps_builder = TimestampBuilder::with_capacity(total_length);
-    for array in timestamp_arrays {
-        timestamps_builder.append_slice(array.values());
-    }
-    timestamps_builder.finish()
 }
 
 #[cfg(test)]

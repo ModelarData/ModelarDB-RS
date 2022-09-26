@@ -21,15 +21,15 @@
 //! assumed that each set of aliases are all for the same underlying type.
 
 // Types used for a single time series id.
-pub type TimeSeriesId = std::primitive::i32; // Signed integer for compatibility with tables.rs.
-pub type ArrowTimeSeriesId = datafusion::arrow::datatypes::Int32Type;
+pub type TimeSeriesId = std::primitive::u64;
+pub type ArrowTimeSeriesId = datafusion::arrow::datatypes::UInt64Type;
 
 // Types used for a collection of time series ids.
 pub type TimeSeriesIdBuilder = datafusion::arrow::array::PrimitiveBuilder<ArrowTimeSeriesId>;
 pub type TimeSeriesIdArray = datafusion::arrow::array::PrimitiveArray<ArrowTimeSeriesId>;
 
 // Types used for a single timestamp.
-pub type Timestamp = std::primitive::i64; // Signed integer for compatibility with tables.rs.
+pub type Timestamp = std::primitive::i64; // It is signed to match TimestampMillisecondType.
 pub type ArrowTimestamp = datafusion::arrow::datatypes::TimestampMillisecondType;
 
 // Types used for a collection of timestamps.
@@ -41,7 +41,7 @@ pub type Value = std::primitive::f32;
 pub type ArrowValue = datafusion::arrow::datatypes::Float32Type;
 #[cfg(test)] // Proptest is a development dependency.
 pub mod tests {
-    // proptest::num::i64 is not a type. A signed integer is used for compatibility with tables.rs.
+    // proptest::num::i64 is not a type. It is signed to match TimestampMillisecondType.
     pub use proptest::num::i64 as ProptestTimestamp;
 
     // proptest::num::f32 is not a type.

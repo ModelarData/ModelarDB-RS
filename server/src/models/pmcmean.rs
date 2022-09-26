@@ -129,26 +129,19 @@ pub fn sum(
     length as Value * decode_model(model)
 }
 
-/// Reconstruct the data points for a time series segment whose values are
-/// represented by a model of type PMC-Mean. Each data point is split into its
-/// three components and appended to `time_series_ids`, `timestamps`, and
-/// `values`.
+/// Reconstruct the values for the `timestamps` without matching values in
+/// `value_builder` using a model of type PMC-Mean. The `time_series_ids` and
+/// `values` are appended to `time_series_id_builder` and `value_builder`.
 pub fn grid(
     time_series_id: TimeSeriesId,
-    start_time: Timestamp,
-    end_time: Timestamp,
-    sampling_interval: i32,
-    model: &[u8],
-    time_series_ids: &mut TimeSeriesIdBuilder,
-    timestamps: &mut TimestampBuilder,
-    values: &mut ValueBuilder,
+    value: Value,
+    time_series_id_builder: &mut TimeSeriesIdBuilder,
+    timestamps: &[Timestamp],
+    value_builder: &mut ValueBuilder,
 ) {
-    let value = decode_model(model);
-    let sampling_interval = sampling_interval as usize;
-    for timestamp in (start_time..=end_time).step_by(sampling_interval) {
-        time_series_ids.append_value(time_series_id);
-        timestamps.append_value(timestamp);
-        values.append_value(value);
+    for timestamp in timestamps {
+        time_series_id_builder.append_value(time_series_id);
+        value_builder.append_value(value);
     }
 }
 

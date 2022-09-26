@@ -34,7 +34,6 @@
 
 use std::mem;
 
-use crate::compression;
 use crate::models::bits::{BitReader, BitVecBuilder};
 use crate::types::{Timestamp, TimestampArray, TimestampBuilder};
 
@@ -152,47 +151,57 @@ fn compress_irregular_residual_timestamps(uncompressed_timestamps: &[Timestamp])
 /// `start_time` for segments of length one, `start_time` and `end_time` for
 /// segments of length two, the segment's length for regular time series, or
 /// using Gorilla's compression method for timestamps for irregular time series.
+/// The decompressed timestamps are appended to `timestamp_builder`.
 pub fn decompress_all_timestamps(
     start_time: Timestamp,
     end_time: Timestamp,
     residual_timestamps: &[u8],
+    timestamp_builder: &mut TimestampBuilder,
 ) -> TimestampArray {
     if residual_timestamps.is_empty() && start_time == end_time {
         // Timestamps are assumed to be unique so the segment has one timestamp.
-        let mut timestamp_builder = TimestampBuilder::with_capacity(1);
         timestamp_builder.append_value(start_time);
         timestamp_builder.finish()
     } else if residual_timestamps.is_empty() {
         // Timestamps are assumed to be unique so the segment has two timestamp.
-        let mut timestamp_builder = TimestampBuilder::with_capacity(2);
         timestamp_builder.append_value(start_time);
         timestamp_builder.append_value(end_time);
         timestamp_builder.finish()
     } else if residual_timestamps[0] & 128 == 0 {
         // The flag bit is zero, so only the segment's length is stored as an
         // integer with all the prefix zeros stripped from the integer.
-        decompress_all_regular_timestamps(start_time, end_time, residual_timestamps)
+        decompress_all_regular_timestamps(
+            start_time,
+            end_time,
+            residual_timestamps,
+            timestamp_builder,
+        )
     } else {
         // The flag bit is one, so the timestamps are compressed as
         // delta-of-deltas stored using a variable length binary encoding.
-        decompress_all_irregular_timestamps(start_time, end_time, residual_timestamps)
+        decompress_all_irregular_timestamps(
+            start_time,
+            end_time,
+            residual_timestamps,
+            timestamp_builder,
+        )
     }
 }
 
 /// Decompress all of a segment's timestamps, which for this segment are sampled
 /// at a regular sampling interval, and thus compressed as the segment's length.
+/// The decompressed timestamps are appended to `timestamp_builder`.
 fn decompress_all_regular_timestamps(
     start_time: Timestamp,
     end_time: Timestamp,
     residual_timestamps: &[u8],
+    timestamp_builder: &mut TimestampBuilder,
 ) -> TimestampArray {
     let mut bytes_to_decode = [0; 8];
     bytes_to_decode[..residual_timestamps.len()].copy_from_slice(residual_timestamps);
 
     let length = usize::from_le_bytes(bytes_to_decode);
     let sampling_interval = (end_time - start_time) as usize / (length - 1);
-    let mut timestamp_builder = TimestampBuilder::with_capacity(length);
-
     for timestamp in (start_time..=end_time).step_by(sampling_interval) {
         timestamp_builder.append_value(timestamp);
     }
@@ -201,21 +210,15 @@ fn decompress_all_regular_timestamps(
 
 /// Decompress all of a segment's timestamps, which for this segment are sampled
 /// at an irregular sampling interval, and thus compressed using Gorilla's
-/// compression method for timestamps.
+/// compression method for timestamps. The decompressed timestamps are appended
+/// to `timestamp_builder`.
 fn decompress_all_irregular_timestamps(
     start_time: Timestamp,
     end_time: Timestamp,
     residual_timestamps: &[u8],
+    timestamp_builder: &mut TimestampBuilder,
 ) -> TimestampArray {
     // TODO: remove the casts when refactoring the query engine to use unsigned.
-    // TODO: replace the pre-allocation when Gorilla is only used as a fallback.
-    // As the number of timestamps encoded in `residual_timestamps` is unknown,
-    // `timestamp_builder` cannot be perfectly pre-allocated. However, as the
-    // Gorilla model type is bounded by `compression::GORILLA_MAXIMUM_LENGTH`,
-    // this generally becomes the predominant length of the compressed segments.
-    let mut timestamp_builder =
-        TimestampBuilder::with_capacity(compression::GORILLA_MAXIMUM_LENGTH);
-
     // Add the first timestamp stored as `start_time` in the segment.
     timestamp_builder.append_value(start_time);
 

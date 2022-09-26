@@ -122,7 +122,7 @@ impl StorageEngine {
         end_time: Option<Timestamp>
     ) -> Result<Vec<ObjectMeta>, ModelarDBError> {
         let start_time = start_time.unwrap_or(0);
-        let end_time = end_time.unwrap_or(i64::MAX);
+        let end_time = end_time.unwrap_or(Timestamp::MAX);
         let mut compressed_files: Vec<ObjectMeta> = vec![];
 
         if start_time > end_time {
