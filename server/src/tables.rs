@@ -227,7 +227,7 @@ impl ModelTable {
         };
 
         // Retrieve the hashes using the query and reconstruct the keys.
-        self.lookup_keys_from_sqlite_database(&database_path, &query_hashes, &query_field_columns)
+        self.lookup_keys_from_sqlite_database(&database_path, &query_field_columns, &query_hashes)
             .map_err(|error| DataFusionError::Plan(error.to_string()))
     }
 

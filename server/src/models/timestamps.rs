@@ -157,16 +157,14 @@ pub fn decompress_all_timestamps(
     end_time: Timestamp,
     residual_timestamps: &[u8],
     timestamp_builder: &mut TimestampBuilder,
-) -> TimestampArray {
+) {
     if residual_timestamps.is_empty() && start_time == end_time {
         // Timestamps are assumed to be unique so the segment has one timestamp.
         timestamp_builder.append_value(start_time);
-        timestamp_builder.finish()
     } else if residual_timestamps.is_empty() {
         // Timestamps are assumed to be unique so the segment has two timestamp.
         timestamp_builder.append_value(start_time);
         timestamp_builder.append_value(end_time);
-        timestamp_builder.finish()
     } else if residual_timestamps[0] & 128 == 0 {
         // The flag bit is zero, so only the segment's length is stored as an
         // integer with all the prefix zeros stripped from the integer.
@@ -196,16 +194,15 @@ fn decompress_all_regular_timestamps(
     end_time: Timestamp,
     residual_timestamps: &[u8],
     timestamp_builder: &mut TimestampBuilder,
-) -> TimestampArray {
+) {
     let mut bytes_to_decode = [0; 8];
     bytes_to_decode[..residual_timestamps.len()].copy_from_slice(residual_timestamps);
 
     let length = usize::from_le_bytes(bytes_to_decode);
-    let sampling_interval = (end_time - start_time) as usize / (length - 1);
+    let sampling_interval = (end_time - start_time) as usize / length;
     for timestamp in (start_time..=end_time).step_by(sampling_interval) {
         timestamp_builder.append_value(timestamp);
     }
-    timestamp_builder.finish()
 }
 
 /// Decompress all of a segment's timestamps, which for this segment are sampled
@@ -217,7 +214,7 @@ fn decompress_all_irregular_timestamps(
     end_time: Timestamp,
     residual_timestamps: &[u8],
     timestamp_builder: &mut TimestampBuilder,
-) -> TimestampArray {
+) {
     // TODO: remove the casts when refactoring the query engine to use unsigned.
     // Add the first timestamp stored as `start_time` in the segment.
     timestamp_builder.append_value(start_time);
@@ -265,7 +262,6 @@ fn decompress_all_irregular_timestamps(
 
     // Add the last timestamp stored as `end_time` in the segment.
     timestamp_builder.append_value(end_time);
-    timestamp_builder.finish()
 }
 
 /// Read the next delta-of-delta as `bits_to_read` from `bits`, decode the
