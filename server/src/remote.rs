@@ -48,6 +48,7 @@ use tracing::{debug, error, info};
 
 use crate::catalog;
 use crate::catalog::{ModelTableMetadata, TableMetadata};
+use crate::tables::ModelTable;
 use crate::storage::StorageEngine;
 use crate::Context;
 
@@ -252,10 +253,18 @@ impl FlightServiceHandler {
         save_model_table_to_database(database_path, &model_table_metadata, ipc_message.0)
             .map_err(|error| Status::internal(error.to_string()))?;
 
+        // Save the model table in the Apache Arrow Datafusion catalog.
+        let model_table_metadata = Arc::new(model_table_metadata);
+
+        self.context.session.register_table(
+            model_table_metadata.name.as_str(),
+            ModelTable::new(self.context.clone(), &model_table_metadata),
+        ).map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+        // Save the model table in the ModelarDB catalog.
+        catalog.model_table_metadata.push(model_table_metadata);
+
         info!("Created model table '{}'.", table_name);
-        catalog.model_table_metadata.push(Arc::new(model_table_metadata));
-
-
         Ok(())
     }
 }
