@@ -25,9 +25,7 @@
 
 use crate::models;
 use crate::models::ErrorBound;
-use crate::types::{
-    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueBuilder,
-};
+use crate::types::{TimeSeriesId, TimeSeriesIdBuilder, Timestamp, Value, ValueBuilder};
 
 /// The state the Swing model type needs while fitting a model to a time series
 /// segment.
@@ -556,37 +554,33 @@ mod tests {
             FINAL_TIMESTAMP,
             value as f64,
         );
-        let model = [slope.to_be_bytes(), intercept.to_be_bytes()].concat();
-        let length = (((FINAL_TIMESTAMP - FIRST_TIMESTAMP) / SAMPLING_INTERVAL) + 1) as usize;
-        let mut time_series_ids = TimeSeriesIdBuilder::with_capacity(length);
-        let mut timestamps = TimestampBuilder::with_capacity(length);
-        let mut values = ValueBuilder::with_capacity(length);
+        let timestamps: Vec<Timestamp> = (FIRST_TIMESTAMP ..= FINAL_TIMESTAMP)
+            .step_by(SAMPLING_INTERVAL as usize).collect();
+        let mut time_series_ids = TimeSeriesIdBuilder::with_capacity(timestamps.len());
+        let mut values = ValueBuilder::with_capacity(timestamps.len());
 
         grid(
             1,
             FIRST_TIMESTAMP,
             FINAL_TIMESTAMP,
-            SAMPLING_INTERVAL as i32,
-            &model,
+            value,
+            value,
             &mut time_series_ids,
-            &mut timestamps,
+            &timestamps,
             &mut values,
         );
 
         let time_series_ids = time_series_ids.finish();
-        let timestamps = timestamps.finish();
         let values = values.finish();
 
         prop_assert!(
-            time_series_ids.len() == length
-            && time_series_ids.len() == timestamps.len()
+            time_series_ids.len() == timestamps.len()
             && time_series_ids.len() == values.len()
         );
         prop_assert!(time_series_ids
              .iter()
              .all(|time_series_id_option| time_series_id_option.unwrap() == 1));
         prop_assert!(timestamps
-            .values()
             .windows(2)
             .all(|window| window[1] - window[0] == SAMPLING_INTERVAL));
         prop_assert!(values

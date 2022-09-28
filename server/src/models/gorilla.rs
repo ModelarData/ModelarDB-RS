@@ -26,9 +26,7 @@ use datafusion::arrow::compute::kernels::aggregate;
 
 use crate::models;
 use crate::models::bits::{BitReader, BitVecBuilder};
-use crate::types::{
-    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueArray, ValueBuilder,
-};
+use crate::types::{TimeSeriesId, TimeSeriesIdBuilder, Timestamp, Value, ValueArray, ValueBuilder};
 
 /// The state the Gorilla model type needs while compressing the values of a
 /// time series segment.
@@ -196,10 +194,41 @@ fn decompress_values_to_array(
     start_time: Timestamp,
     end_time: Timestamp,
     sampling_interval: i32,
-    model: &[u8],
+    values: &[u8],
 ) -> ValueArray {
-    let mut value_builder = ValueBuilder::new();
-    unimplemented!();
+    // TODO: Can decompress_values_to_array() be merged with decompress_values?
+    let length = models::length(start_time, end_time, sampling_interval);
+    let mut value_builder = ValueBuilder::with_capacity(length);
+
+    let mut bits = BitReader::try_new(values).unwrap();
+    let mut leading_zeros = u8::MAX;
+    let mut trailing_zeros: u8 = 0;
+    let mut last_value = bits.read_bits(models::VALUE_SIZE_IN_BITS);
+
+    // The first value is stored uncompressed using size_of::<Value> bits.
+    value_builder.append_value(Value::from_bits(last_value));
+
+    // Then values are stored using XOR and a variable length binary encoding.
+    for _ in 0..length - 1 {
+        if bits.read_bit() {
+            if bits.read_bit() {
+                // New leading and trailing zeros.
+                leading_zeros = bits.read_bits(5) as u8;
+                let meaningful_bits = bits.read_bits(6) as u8;
+                trailing_zeros = models::VALUE_SIZE_IN_BITS - meaningful_bits - leading_zeros;
+            }
+
+            // Decompress the value by reading its meaningful bits, restoring
+            // its trailing zeroes through shifting, and reversing the XOR.
+            let meaningful_bits = models::VALUE_SIZE_IN_BITS - leading_zeros - trailing_zeros;
+            let mut value = bits.read_bits(meaningful_bits);
+            value <<= trailing_zeros;
+            value ^= last_value;
+            last_value = value;
+        }
+        value_builder.append_value(Value::from_bits(last_value));
+    }
+    value_builder.finish()
 }
 
 /// Decompress values compressed using Gorilla's compression method for
@@ -342,34 +371,30 @@ mod tests {
     fn test_grid(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let compressed_values = compress_values_using_gorilla(&values);
-        let mut time_series_ids_builder = TimeSeriesIdBuilder::with_capacity(10);
-        let mut timestamps_builder = TimestampBuilder::with_capacity(10);
-        let mut values_builder = ValueBuilder::with_capacity(10);
 
+        let mut time_series_id_builder = TimeSeriesIdBuilder::with_capacity(values.len());
+        let timestamps: Vec<Timestamp> = (1 ..= values.len() as i64).step_by(1).collect();
+        let mut value_builder = ValueBuilder::with_capacity(values.len());
         grid(
             1,
-            1,
-            values.len() as i64,
-            1,
             &compressed_values,
-            &mut time_series_ids_builder,
-            &mut timestamps_builder,
-            &mut values_builder
+            &mut time_series_id_builder,
+            &timestamps,
+            &mut value_builder
         );
 
-        let time_series_ids_array = time_series_ids_builder.finish();
-        let timestamps_array = timestamps_builder.finish();
-        let values_array = values_builder.finish();
+        let time_series_ids_array = time_series_id_builder.finish();
+        let values_array = value_builder.finish();
 
         prop_assert!(
             time_series_ids_array.len() == values.len()
-            && time_series_ids_array.len() == timestamps_array.len()
+            && time_series_ids_array.len() == timestamps.len()
             && time_series_ids_array.len() == values_array.len()
         );
         prop_assert!(time_series_ids_array
              .iter()
              .all(|time_series_id_option| time_series_id_option.unwrap() == 1));
-        prop_assert!(timestamps_array.values().windows(2).all(|window| window[1] - window[0] == 1));
+        prop_assert!(timestamps.windows(2).all(|window| window[1] - window[0] == 1));
         prop_assert!(slice_of_value_equal(values_array.values(), &values));
     }
     }
@@ -381,12 +406,16 @@ mod tests {
         prop_assume!(!values.is_empty());
         let compressed_values = compress_values_using_gorilla(&values);
         let mut decompressed_values_builder = ValueBuilder::with_capacity(values.len());
+
+        let mut time_series_id_builder = TimeSeriesIdBuilder::with_capacity(values.len());
+        let timestamps = vec![0; values.len()];
+        let mut value_builder = ValueBuilder::with_capacity(values.len());
         decompress_values(
             1,
-            values.len() as i64,
-            1,
             &compressed_values,
-            &mut decompressed_values_builder
+            &mut time_series_id_builder,
+            &timestamps,
+            &mut value_builder
         );
         let decompressed_values = decompressed_values_builder.finish();
         prop_assert!(slice_of_value_equal(decompressed_values.values(), &values));

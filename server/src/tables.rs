@@ -41,7 +41,6 @@ use datafusion::physical_plan::{
     metrics::MetricsSet, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
     SendableRecordBatchStream, Statistics,
 };
-use datafusion::scalar::ScalarValue::{Int64, TimestampNanosecond};
 use datafusion_physical_expr::planner;
 use futures::stream::{Stream, StreamExt};
 use rusqlite::{Connection, Result as RusqliteResult};

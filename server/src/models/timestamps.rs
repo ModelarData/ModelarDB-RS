@@ -35,7 +35,7 @@
 use std::mem;
 
 use crate::models::bits::{BitReader, BitVecBuilder};
-use crate::types::{Timestamp, TimestampArray, TimestampBuilder};
+use crate::types::{Timestamp, TimestampBuilder};
 
 /// Compress the timestamps in `uncompressed_timestamps` from the second
 /// timestamp to the second to last timestamp. The first and last timestamp are
@@ -199,7 +199,7 @@ fn decompress_all_regular_timestamps(
     bytes_to_decode[..residual_timestamps.len()].copy_from_slice(residual_timestamps);
 
     let length = usize::from_le_bytes(bytes_to_decode);
-    let sampling_interval = (end_time - start_time) as usize / length;
+    let sampling_interval = (end_time - start_time) as usize / (length - 1);
     for timestamp in (start_time..=end_time).step_by(sampling_interval) {
         timestamp_builder.append_value(timestamp);
     }
@@ -323,12 +323,14 @@ mod tests {
 
         let compressed = compress_residual_timestamps(&uncompressed_timestamps.values());
         assert!(!compressed.is_empty());
-        let decompressed = decompress_all_timestamps(
+        let mut decompressed_timestamps = TimestampBuilder::with_capacity(10);
+        decompress_all_timestamps(
             uncompressed_timestamps.value(0),
             uncompressed_timestamps.value(uncompressed_timestamps.len() - 1),
             compressed.as_slice(),
+            &mut decompressed_timestamps,
         );
-        assert_eq!(uncompressed_timestamps, decompressed);
+        assert_eq!(uncompressed_timestamps, decompressed_timestamps.finish());
     }
 
     // Tests for are_timestamps_regular().

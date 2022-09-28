@@ -224,7 +224,7 @@ impl StorageEngine {
         // Create a reader that can be used to read an Apache Parquet file.
         let file = File::open(file_path).map_err(|_e| error.clone())?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-        let mut reader = builder.build()?;
+        let mut reader = builder.with_batch_size(usize::MAX).build()?;
 
         let record_batch = reader.next().ok_or_else(|| error)??;
         Ok(record_batch)

@@ -23,7 +23,7 @@
 use crate::models;
 use crate::models::ErrorBound;
 use crate::types::{
-    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueBuilder,
+    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, Value, ValueBuilder,
 };
 
 /// The state the PMC-Mean model type needs while fitting a model to a time
@@ -139,7 +139,7 @@ pub fn grid(
     timestamps: &[Timestamp],
     value_builder: &mut ValueBuilder,
 ) {
-    for timestamp in timestamps {
+    for _timestamp in timestamps {
         time_series_id_builder.append_value(time_series_id);
         value_builder.append_value(value);
     }
@@ -319,22 +319,18 @@ mod tests {
         let model = value.to_be_bytes();
         let sampling_interval: i64 = 60;
         let mut time_series_ids = TimeSeriesIdBuilder::with_capacity(10);
-        let mut timestamps = TimestampBuilder::with_capacity(10);
+        let timestamps: Vec<Timestamp> = (60..=600).step_by(60).collect();
         let mut values = ValueBuilder::with_capacity(10);
 
         grid(
             1,
-            1657734000,
-            1657734540,
-            sampling_interval as i32,
-            &model,
+            value,
             &mut time_series_ids,
-            &mut timestamps,
+            &timestamps,
             &mut values,
         );
 
         let time_series_ids = time_series_ids.finish();
-        let timestamps = timestamps.finish();
         let values = values.finish();
 
         prop_assert!(
@@ -346,7 +342,6 @@ mod tests {
              .iter()
              .all(|time_series_id_option| time_series_id_option.unwrap() == 1));
         prop_assert!(timestamps
-            .values()
             .windows(2)
             .all(|window| window[1] - window[0] == sampling_interval));
         prop_assert!(values
