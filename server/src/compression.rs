@@ -279,7 +279,7 @@ impl<'a> CompressedSegmentBuilder<'a> {
         let start_time = self.uncompressed_timestamps.value(self.start_index);
         let end_time = self.uncompressed_timestamps.value(end_index);
         let timestamps = timestamps::compress_residual_timestamps(
-            &self.uncompressed_timestamps.values()[self.start_index..end_index],
+            &self.uncompressed_timestamps.values()[self.start_index..=end_index],
         );
         let error = f32::NAN; // TODO: compute and store the actual error.
 
