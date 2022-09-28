@@ -23,7 +23,9 @@ use std::task::{Context as StdTaskContext, Poll};
 
 use async_trait::async_trait;
 use datafusion::arrow::array::{ArrayRef, BinaryArray, Float32Array, UInt64Array, UInt8Array};
-use datafusion::arrow::datatypes::{DataType, Field, Schema, SchemaRef, TimeUnit};
+use datafusion::arrow::datatypes::{
+    ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit,
+};
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::datasource::object_store::ObjectStoreUrl;
@@ -48,7 +50,9 @@ use crate::catalog;
 use crate::catalog::ModelTableMetadata;
 use crate::models;
 use crate::storage::StorageEngine;
-use crate::types::{TimeSeriesId, TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
+use crate::types::{
+    ArrowValue, TimeSeriesId, TimestampArray, TimestampBuilder, ValueArray, ValueBuilder,
+};
 use crate::Context;
 
 pub struct ModelTable {
@@ -56,12 +60,13 @@ pub struct ModelTable {
     object_store_url: ObjectStoreUrl,
     model_table_metadata: Arc<ModelTableMetadata>,
     schema: Arc<Schema>,
+    fallback_field_column: u64,
 }
 
 impl ModelTable {
     pub fn new(context: Arc<Context>, model_table_metadata: &Arc<ModelTableMetadata>) -> Arc<Self> {
         // TODO: support reconstructing the ingested multivariate time series.
-        let mut columns = vec![
+        let columns = vec![
             Field::new("tid", DataType::UInt64, false),
             Field::new(
                 "timestamp",
@@ -71,49 +76,48 @@ impl ModelTable {
             Field::new("value", DataType::Float32, false),
         ];
 
+        // Compute the column of the first field in schema. This column is used
+        // when a query is received that only requests timestamps and tags.
+        let fallback_field_column = {
+            model_table_metadata
+                .schema
+                .fields()
+                .iter()
+                .position(|field| field.data_type() == &ArrowValue::DATA_TYPE)
+                .unwrap() // unwrap() is safe as model tables contains fields.
+        };
+
         Arc::new(ModelTable {
             context,
             model_table_metadata: model_table_metadata.clone(),
             object_store_url: ObjectStoreUrl::local_filesystem(),
             schema: Arc::new(Schema::new(columns)),
+            fallback_field_column: fallback_field_column as u64,
         })
     }
 
     fn rewrite_and_combine_filters(&self, filters: &[Expr]) -> Option<Expr> {
-        // TODO: rewrite remaining filters for the remaining columns.
+        // TODO: rewrite the remaining filters for the remaining columns.
         let rewritten_filters: Vec<Expr> = filters
             .iter()
             .map(|filter| match filter {
                 Expr::BinaryExpr { left, op, right } => {
-                    if **left == col("tid") {
-                        // Assumes time series are not grouped so tids and gids are equivalent.
-                        self.binary_expr(col("gid"), *op, *right.clone())
-                    } else if **left == col("timestamp") {
+                    if **left == col("timestamp") {
                         match op {
-                            Operator::Gt => {
-                                self.binary_expr(col("end_time"), *op, self.to_i64(right))
-                            }
+                            Operator::Gt => self.binary_expr(col("end_time"), *op, *right.clone()),
                             Operator::GtEq => {
-                                self.binary_expr(col("end_time"), *op, self.to_i64(right))
+                                self.binary_expr(col("end_time"), *op, *right.clone())
                             }
                             Operator::Lt => {
-                                self.binary_expr(col("start_time"), *op, self.to_i64(right))
+                                self.binary_expr(col("start_time"), *op, *right.clone())
                             }
                             Operator::LtEq => {
-                                self.binary_expr(col("start_time"), *op, self.to_i64(right))
+                                self.binary_expr(col("start_time"), *op, *right.clone())
                             }
                             Operator::Eq => self.binary_expr(
-                                self.binary_expr(
-                                    col("start_time"),
-                                    Operator::LtEq,
-                                    self.to_i64(right),
-                                ),
+                                self.binary_expr(col("start_time"), Operator::LtEq, *right.clone()),
                                 Operator::And,
-                                self.binary_expr(
-                                    col("end_time"),
-                                    Operator::GtEq,
-                                    self.to_i64(right),
-                                ),
+                                self.binary_expr(col("end_time"), Operator::GtEq, *right.clone()),
                             ),
                             _ => filter.clone(),
                         }
@@ -132,22 +136,6 @@ impl ModelTable {
             left: Box::new(left),
             op,
             right: Box::new(right),
-        }
-    }
-
-    fn to_i64(&self, expr: &Expr) -> Expr {
-        // Assumes the expression is a literal with a timestamp at nanosecond resolution.
-        // TODO: add proper error handling if expr can be anything but TimestampNanosecond.
-        let nanoseconds_to_millisecond = 1_000_000;
-        if let Expr::Literal(value) = expr {
-            if let TimestampNanosecond(value, _timezone) = value {
-                // TODO: ensure timezone is handled correctly as part of the conversion to ms.
-                Expr::Literal(Int64(Some(value.unwrap() / nanoseconds_to_millisecond)))
-            } else {
-                panic!("Expr::Literal(value) is not a TimestampNanosecond");
-            }
-        } else {
-            panic!("the expression is not an Expr::Literal");
         }
     }
 
@@ -189,7 +177,6 @@ impl ModelTable {
         // Construct the two queries that extract the field columns in the table
         // being queried and the hashes of the multivariate time series in the
         // table with tag values that match the tag values in the user's query.
-        // TODO: compute the columns that intersect with the queries projections.
         let query_field_columns = if columns.is_none() {
             format!(
                 "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}'",
@@ -205,7 +192,8 @@ impl ModelTable {
 
             format!(
                 "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}' AND {}",
-                table_name, column.join(" OR ")
+                table_name,
+                column.join(" OR ")
             )
         };
 
@@ -249,6 +237,12 @@ impl ModelTable {
             field_columns.push(row.get::<usize, u64>(0)?);
         }
 
+        // Add the fallback field column if the query did not request data for
+        // any fields as the storage engine otherwise does not return any data.
+        if field_columns.is_empty() {
+            field_columns.push(self.fallback_field_column);
+        }
+
         // Retrieve the hashes and compute the keys;
         let mut select_statement = connection.prepare(&query_hashes)?;
         let mut rows = select_statement.query([])?;
@@ -259,7 +253,6 @@ impl ModelTable {
                 keys.push(row.get::<usize, u64>(0)? | field_column);
             }
         }
-        // TODO: which key to return if no fields were queried?
         Ok(keys)
     }
 }
@@ -289,7 +282,7 @@ impl TableProvider for ModelTable {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        // TODO:extract predicates that consist of tag = tag_value from the query.
+        // TODO: extract predicates that consist of tag = tag_value from the query.
         let tag_predicates = vec![];
         let keys = self.lookup_keys_from_tags(
             &self.model_table_metadata.name,
@@ -321,7 +314,7 @@ impl TableProvider for ModelTable {
             })
             .collect::<Vec<PartitionedFile>>();
 
-        //TODO: accumulate the size with filters
+        //TODO: accumulate the size out the input data after filtering.
         let statistics = Statistics {
             num_rows: None,
             total_byte_size: None,
@@ -329,7 +322,7 @@ impl TableProvider for ModelTable {
             is_exact: false,
         };
 
-        //TODO: partition and limit the number of rows read from the files properly
+        //TODO: partition and limit the number of rows read from the files.
         let file_scan_config = FileScanConfig {
             object_store_url: self.object_store_url.clone(),
             file_schema: Arc::new(StorageEngine::get_compressed_segment_schema()),
@@ -578,12 +571,16 @@ impl GridStream {
             );
         }
 
-        // Returns the batch of reconstructed data points.
-        let columns: Vec<ArrayRef> = vec![
-            Arc::new(key_builder.finish()),
-            Arc::new(timestamp_builder.finish()),
-            Arc::new(value_builder.finish()),
-        ];
+        // Returns the batch of reconstructed data points with metadata.
+        let mut columns: Vec<ArrayRef> = Vec::with_capacity(3);
+        for column in &self.projection {
+            match column {
+                0 => columns.push(Arc::new(key_builder.finish())),
+                1 => columns.push(Arc::new(timestamp_builder.finish())),
+                2 => columns.push(Arc::new(value_builder.finish())),
+                _ => unimplemented!("Tags currently cannot be added."),
+            }
+        }
         Ok(RecordBatch::try_new(self.schema_after_projection.clone(), columns).unwrap())
     }
 }
