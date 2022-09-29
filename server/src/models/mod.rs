@@ -27,13 +27,10 @@ pub mod timestamps;
 use std::cmp::{Ordering, PartialOrd};
 use std::mem;
 
-use datafusion::arrow::array::{Int32Array, Int64Array};
-
 use crate::errors::ModelarDBError;
 use crate::models::{gorilla::Gorilla, pmcmean::PMCMean, swing::Swing};
 use crate::types::{
-    TimeSeriesId, TimeSeriesIdArray, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value,
-    ValueArray, ValueBuilder,
+    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
 
 /// Unique ids for each model type. Constant values are used instead of an enum
@@ -193,90 +190,44 @@ impl SelectedModel {
     }
 }
 
-// TODO: rename `count` and return `Result` when refactoring query engine.
-// TODO: replace Int64Array with TimestampArray when refactoring query engine.
-// TODO: remove unused function parameters when refactoring query engine.
-/// Compute the number of data points in a batch of time series segments.
-/// `time_series_ids`, `start_times`, `end_times`, and `sampling_intervals` must
-/// all contain at least `num_rows` elements.
-pub fn count(
-    num_rows: usize,
-    time_series_ids: &TimeSeriesIdArray,
-    start_times: &Int64Array,
-    end_times: &Int64Array,
-    sampling_intervals: &Int32Array,
-) -> usize {
-    let mut data_points = 0;
-    for row_index in 0..num_rows {
-        let time_series_id = time_series_ids.value(row_index) as usize;
-        let sampling_interval = sampling_intervals.value(time_series_id);
-        data_points += length(
-            start_times.value(row_index),
-            end_times.value(row_index),
-            sampling_interval,
-        );
-    }
-    data_points
-}
-
 /// Compute the number of data points in a time series segment.
-pub fn length(start_time: Timestamp, end_time: Timestamp, sampling_interval: i32) -> usize {
-    (((end_time - start_time) / sampling_interval as i64) + 1) as usize
-}
-
-/// Compute the minimum value for a time series segment whose values are
-/// represented by a model.
-pub fn min(
-    _time_series_id: TimeSeriesId,
-    start_time: Timestamp,
-    end_time: Timestamp,
-    model_type_id: i32,
-    sampling_interval: i32,
-    model: &[u8],
-    _gaps: &[u8],
-) -> Value {
-    match model_type_id as u8 {
-        PMC_MEAN_ID => pmcmean::min(model),
-        SWING_ID => swing::min(start_time, end_time, model),
-        GORILLA_ID => gorilla::min(start_time, end_time, sampling_interval, model),
-        _ => panic!("Unknown model type."),
-    }
-}
-
-/// Compute the maximum value for a time series segment whose values are
-/// represented by a model.
-pub fn max(
-    _time_series_id: TimeSeriesId,
-    start_time: Timestamp,
-    end_time: Timestamp,
-    model_type_id: i32,
-    sampling_interval: i32,
-    model: &[u8],
-    _gaps: &[u8],
-) -> Value {
-    match model_type_id as u8 {
-        PMC_MEAN_ID => pmcmean::max(model),
-        SWING_ID => swing::max(start_time, end_time, model),
-        GORILLA_ID => gorilla::max(start_time, end_time, sampling_interval, model),
-        _ => panic!("Unknown model type."),
+pub fn length(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8]) -> usize {
+    if timestamps[0] & 128 == 0 {
+        // The flag bit is zero, so only the segment's length is stored as an
+        // integer with all the prefix zeros stripped from the integer.
+        let mut bytes_to_decode = [0; 8];
+        let bytes_to_decode_len = bytes_to_decode.len();
+        bytes_to_decode[bytes_to_decode_len - timestamps.len()..].copy_from_slice(timestamps);
+        usize::from_be_bytes(bytes_to_decode)
+    } else {
+        // The flag bit is one, so the timestamps are compressed as
+        // delta-of-deltas stored using a variable length binary encoding.
+        let mut timestamp_builder = TimestampBuilder::new();
+        timestamps::decompress_all_timestamps(
+            start_time,
+            end_time,
+            timestamps,
+            &mut timestamp_builder,
+        );
+        timestamp_builder.values_slice().len()
     }
 }
 
 /// Compute the sum of the values for a time series segment whose values are
 /// represented by a model.
 pub fn sum(
-    _time_series_id: TimeSeriesId,
+    model_type_id: u8,
     start_time: Timestamp,
     end_time: Timestamp,
-    model_type_id: i32,
-    sampling_interval: i32,
-    model: &[u8],
-    _gaps: &[u8],
+    timestamps: &[u8],
+    min_value: Value,
+    max_value: Value,
+    values: &[u8],
 ) -> Value {
     match model_type_id as u8 {
-        PMC_MEAN_ID => pmcmean::sum(start_time, end_time, sampling_interval, model),
-        SWING_ID => swing::sum(start_time, end_time, sampling_interval, model),
-        GORILLA_ID => gorilla::sum(start_time, end_time, sampling_interval, model),
+        PMC_MEAN_ID => pmcmean::sum(start_time, end_time, timestamps, min_value),
+        SWING_ID => swing::sum(start_time, end_time, timestamps, min_value, max_value),
+        GORILLA_ID => gorilla::sum(start_time, end_time, timestamps, values),
         _ => panic!("Unknown model type."),
     }
 }

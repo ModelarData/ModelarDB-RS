@@ -23,7 +23,7 @@
 //! [Swing and Slide paper]: https://dl.acm.org/doi/10.14778/1687627.1687645
 //! [ModelarDB paper]: https://www.vldb.org/pvldb/vol11/p1688-jensen.pdf
 
-use crate::models;
+use crate::models::{self, timestamps};
 use crate::models::ErrorBound;
 use crate::types::{TimeSeriesId, TimeSeriesIdBuilder, Timestamp, Value, ValueBuilder};
 
@@ -203,46 +203,35 @@ impl Swing {
     }
 }
 
-/// Compute the minimum value for a time series segment whose values are
-/// represented by a model of type Swing.
-pub fn min(start_time: Timestamp, end_time: Timestamp, model: &[u8]) -> Value {
-    let (slope, intercept) = decode_model(model);
-    if slope == 0.0 {
-        intercept as Value
-    } else if slope > 0.0 {
-        (slope * start_time as f64 + intercept) as Value
-    } else {
-        (slope * end_time as f64 + intercept) as Value
-    }
-}
-
-/// Compute the maximum value for a time series segment whose values are
-/// represented by a model of type Swing.
-pub fn max(start_time: Timestamp, end_time: Timestamp, model: &[u8]) -> Value {
-    let (slope, intercept) = decode_model(model);
-    if slope == 0.0 {
-        intercept as Value
-    } else if slope < 0.0 {
-        (slope * start_time as f64 + intercept) as Value
-    } else {
-        (slope * end_time as f64 + intercept) as Value
-    }
-}
-
 /// Compute the sum of the values for a time series segment whose values are
 /// represented by a model of type Swing.
 pub fn sum(
     start_time: Timestamp,
     end_time: Timestamp,
-    sampling_interval: i32,
-    model: &[u8],
+    timestamps: &[u8],
+    min_value: Value,
+    max_value: Value,
 ) -> Value {
-    let (slope, intercept) = decode_model(model);
-    let first = slope * start_time as f64 + intercept;
-    let last = slope * end_time as f64 + intercept;
-    let average = (first + last) / 2.0;
-    let length = models::length(start_time, end_time, sampling_interval);
-    (average * length as f64) as Value
+    if timestamps::are_compressed_timestamps_regular(timestamps) {
+        // TODO: how to encode if min or max is the first or last value?
+        let (slope, intercept) =
+            compute_slope_and_intercept(start_time, min_value as f64, end_time, max_value as f64);
+        let first = slope * start_time as f64 + intercept;
+        let last = slope * end_time as f64 + intercept;
+        let average = (first + last) / 2.0;
+        let length = models::length(start_time, end_time, timestamps);
+        (average * length as f64) as Value
+    } else {
+        // TODO: how to encode if min or max is the first or last value?
+        let (slope, intercept) =
+            compute_slope_and_intercept(start_time, min_value as f64, end_time, max_value as f64);
+
+        let mut sum: f64 = 0.0;
+        for timestamp in timestamps {
+            sum += slope * (*timestamp as f64) + intercept;
+        }
+        sum as Value
+    }
 }
 
 /// Reconstruct the values for the `timestamps` without matching values in
@@ -266,28 +255,6 @@ pub fn grid(
         time_series_ids.append_value(time_series_id);
         let value = (slope * (*timestamp as f64) + intercept) as Value;
         value_builder.append_value(value);
-    }
-}
-
-/// Read the coefficients for a model of type Swing from a slice of bytes. The
-/// coefficients are the slope and intercept of a linear function.
-fn decode_model(model: &[u8]) -> (f64, f64) {
-    // TODO: decode the output of Swing::get_model() when compression is done.
-    if model.len() == 16 {
-        (
-            f64::from_be_bytes(model[0..8].try_into().unwrap()),
-            f64::from_be_bytes(model[8..16].try_into().unwrap()),
-        )
-    } else if model.len() == 12 {
-        (
-            f32::from_be_bytes(model[0..4].try_into().unwrap()) as f64,
-            f64::from_be_bytes(model[4..12].try_into().unwrap()),
-        )
-    } else {
-        (
-            f32::from_be_bytes(model[0..4].try_into().unwrap()) as f64,
-            f32::from_be_bytes(model[4..8].try_into().unwrap()) as f64,
-        )
     }
 }
 
@@ -595,16 +562,5 @@ mod tests {
         // Ensure Value is always within a range that a model of type Swing can
         // aggregate. Within one million the aggregates are always correct.
         (index % 1_000_000) as Value
-    }
-
-    // Tests for the decode_model().
-    proptest! {
-    #[test]
-    fn test_decode_model(value in num::f64::ANY) {
-    let model = [value.to_be_bytes(), value.to_be_bytes()].concat();
-        let (slope, intercept) = decode_model(&model);
-        prop_assert!(models::equal_or_nan(slope, value));
-        prop_assert!(models::equal_or_nan(intercept, value));
-    }
     }
 }

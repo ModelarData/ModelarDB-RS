@@ -22,7 +22,7 @@ mod compression;
 mod errors;
 mod macros;
 mod models;
-//mod optimizer;
+mod optimizer;
 mod remote;
 mod storage;
 mod tables;
@@ -42,7 +42,7 @@ use tracing::error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::catalog::Catalog;
-//use crate::optimizer::model_simple_aggregates;
+use crate::optimizer::model_simple_aggregates;
 use crate::storage::StorageEngine;
 use crate::tables::ModelTable;
 
@@ -124,7 +124,7 @@ fn create_session_context() -> SessionContext {
     let config = SessionConfig::new();
     let runtime = Arc::new(RuntimeEnv::default());
     let state = SessionState::with_config_rt(config, runtime).with_physical_optimizer_rules(vec![
-        //Arc::new(model_simple_aggregates::ModelSimpleAggregatesPhysicalOptimizerRule {}),
+        Arc::new(model_simple_aggregates::ModelSimpleAggregatesPhysicalOptimizerRule {}),
     ]);
     SessionContext::with_state(state)
 }

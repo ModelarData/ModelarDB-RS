@@ -27,7 +27,7 @@ use std::str;
 use std::sync::Arc;
 
 use arrow_flight::IpcMessage;
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Schema};
 use rusqlite::types::Type::Blob;
 use rusqlite::Connection;
 use tracing::{error, info, warn};

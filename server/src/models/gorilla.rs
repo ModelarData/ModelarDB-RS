@@ -129,42 +129,10 @@ impl Gorilla {
     }
 }
 
-/// Compute the minimum value for a time series segment whose values are
-/// compressed using Gorilla's compression method for floating-point values.
-pub fn min(
-    start_time: Timestamp,
-    end_time: Timestamp,
-    sampling_interval: i32,
-    model: &[u8],
-) -> Value {
-    let decompressed_values =
-        decompress_values_to_array(start_time, end_time, sampling_interval, model);
-    aggregate::min(&decompressed_values).unwrap()
-}
-
-/// Compute the maximum value for a time series segment whose values are
-/// compressed using Gorilla's compression method for floating-point values.
-pub fn max(
-    start_time: Timestamp,
-    end_time: Timestamp,
-    sampling_interval: i32,
-    model: &[u8],
-) -> Value {
-    let decompressed_values =
-        decompress_values_to_array(start_time, end_time, sampling_interval, model);
-    aggregate::max(&decompressed_values).unwrap()
-}
-
 /// Compute the sum of the values for a time series segment whose values are
 /// compressed using Gorilla's compression method for floating-point values.
-pub fn sum(
-    start_time: Timestamp,
-    end_time: Timestamp,
-    sampling_interval: i32,
-    model: &[u8],
-) -> Value {
-    let decompressed_values =
-        decompress_values_to_array(start_time, end_time, sampling_interval, model);
+pub fn sum(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8], model: &[u8]) -> Value {
+    let decompressed_values = decompress_values_to_array(start_time, end_time, timestamps, model);
     aggregate::sum(&decompressed_values).unwrap()
 }
 
@@ -193,11 +161,11 @@ pub fn grid(
 fn decompress_values_to_array(
     start_time: Timestamp,
     end_time: Timestamp,
-    sampling_interval: i32,
+    timestamps: &[u8],
     values: &[u8],
 ) -> ValueArray {
     // TODO: Can decompress_values_to_array() be merged with decompress_values?
-    let length = models::length(start_time, end_time, sampling_interval);
+    let length = models::length(start_time, end_time, timestamps);
     let mut value_builder = ValueBuilder::with_capacity(length);
 
     let mut bits = BitReader::try_new(values).unwrap();

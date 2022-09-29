@@ -105,28 +105,15 @@ impl PMCMean {
     }
 }
 
-/// Compute the minimum value for a time series segment whose values are
-/// represented by a model of type PMC-Mean.
-pub fn min(model: &[u8]) -> Value {
-    decode_model(model)
-}
-
-/// Compute the maximum value for a time series segment whose values are
-/// represented by a model of type PMC-Mean.
-pub fn max(model: &[u8]) -> Value {
-    decode_model(model)
-}
-
 /// Compute the sum of the values for a time series segment whose values are
 /// represented by a model of type PMC-Mean.
 pub fn sum(
     start_time: Timestamp,
     end_time: Timestamp,
-    sampling_interval: i32,
-    model: &[u8],
+    timestamps: &[u8],
+    value: Value
 ) -> Value {
-    let length = models::length(start_time, end_time, sampling_interval);
-    length as Value * decode_model(model)
+    models::length(start_time, end_time, timestamps) as Value * value
 }
 
 /// Reconstruct the values for the `timestamps` without matching values in
@@ -143,13 +130,6 @@ pub fn grid(
         time_series_id_builder.append_value(time_series_id);
         value_builder.append_value(value);
     }
-}
-
-/// Read the coefficient for a model of type PMC-Mean from a slice of bytes. The
-/// coefficient is the average value of the time series segment whose vales are
-/// represented by the model.
-fn decode_model(model: &[u8]) -> Value {
-    Value::from_be_bytes(model.try_into().unwrap())
 }
 
 #[cfg(test)]

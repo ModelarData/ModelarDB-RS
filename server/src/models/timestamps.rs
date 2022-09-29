@@ -54,7 +54,7 @@ pub fn compress_residual_timestamps(uncompressed_timestamps: &[Timestamp]) -> Ve
 
     // Compress the residual timestamps using an optimized method depending on
     // if the segment the timestamps are from is regular or irregular.
-    if are_timestamps_regular(uncompressed_timestamps) {
+    if are_uncompressed_timestamps_regular(uncompressed_timestamps) {
         // The timestamps are regular, so only the segment's length is stored as
         // an integer with all the prefix zeros stripped from the integer.
         compress_regular_residual_timestamps(uncompressed_timestamps)
@@ -67,7 +67,7 @@ pub fn compress_residual_timestamps(uncompressed_timestamps: &[Timestamp]) -> Ve
 
 /// Return [`true`] if the timestamps in `uncompressed_timestamps` follow a
 /// regular sampling interval, otherwise [`false`].
-fn are_timestamps_regular(uncompressed_timestamps: &[Timestamp]) -> bool {
+fn are_uncompressed_timestamps_regular(uncompressed_timestamps: &[Timestamp]) -> bool {
     if uncompressed_timestamps.len() < 2 {
         return true;
     }
@@ -103,7 +103,6 @@ fn compress_regular_residual_timestamps(uncompressed_timestamps: &[Timestamp]) -
 /// bit followed by the timestamps' delta-of-deltas encode using a variable
 /// length binary encoding.
 fn compress_irregular_residual_timestamps(uncompressed_timestamps: &[Timestamp]) -> Vec<u8> {
-    // TODO: remove the casts when refactoring the query engine to use unsigned.
     let mut compressed_timestamps = BitVecBuilder::new();
     compressed_timestamps.append_a_one_bit();
 
@@ -165,7 +164,7 @@ pub fn decompress_all_timestamps(
         // Timestamps are assumed to be unique so the segment has two timestamp.
         timestamp_builder.append_value(start_time);
         timestamp_builder.append_value(end_time);
-    } else if residual_timestamps[0] & 128 == 0 {
+    } else if are_compressed_timestamps_regular(residual_timestamps) {
         // The flag bit is zero, so only the segment's length is stored as an
         // integer with all the prefix zeros stripped from the integer.
         decompress_all_regular_timestamps(
@@ -184,6 +183,13 @@ pub fn decompress_all_timestamps(
             timestamp_builder,
         )
     }
+}
+
+/// Return [`true`] if the timestamps in `residual_timestamps` follow a regular
+/// sampling interval, otherwise [`false`].
+pub fn are_compressed_timestamps_regular(residual_timestamps: &[u8]) -> bool {
+    // The flag bit is zero so the timestamps follow a regular interval.
+    residual_timestamps[0] & 128 == 0
 }
 
 /// Decompress all of a segment's timestamps, which for this segment are sampled
@@ -217,7 +223,6 @@ fn decompress_all_irregular_timestamps(
     residual_timestamps: &[u8],
     timestamp_builder: &mut TimestampBuilder,
 ) {
-    // TODO: remove the casts when refactoring the query engine to use unsigned.
     // Add the first timestamp stored as `start_time` in the segment.
     timestamp_builder.append_value(start_time);
 
@@ -338,22 +343,24 @@ mod tests {
     // Tests for are_timestamps_regular().
     #[test]
     fn test_time_series_with_one_data_point_is_regular() {
-        assert!(are_timestamps_regular(&[100]));
+        assert!(are_uncompressed_timestamps_regular(&[100]));
     }
 
     #[test]
     fn test_time_series_with_two_data_points_is_regular() {
-        assert!(are_timestamps_regular(&[100, 200]));
+        assert!(are_uncompressed_timestamps_regular(&[100, 200]));
     }
 
     #[test]
     fn test_regular_time_series_is_regular() {
-        assert!(are_timestamps_regular(&[100, 200, 300, 400, 500, 600, 700]))
+        assert!(are_uncompressed_timestamps_regular(&[
+            100, 200, 300, 400, 500, 600, 700
+        ]))
     }
 
     #[test]
     fn test_irregular_time_series_is_irregular() {
-        assert!(!are_timestamps_regular(&[
+        assert!(!are_uncompressed_timestamps_regular(&[
             100, 150, 300, 350, 700, 750, 1500
         ]))
     }

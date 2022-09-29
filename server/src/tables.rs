@@ -276,7 +276,7 @@ impl TableProvider for ModelTable {
 
     async fn scan(
         &self,
-        ctx: &SessionState,
+        _ctx: &SessionState,
         projection: &Option<Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
@@ -451,7 +451,6 @@ impl ExecutionPlan for GridExec {
         task_context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(GridStream::new(
-            self.model_table_metadata.clone(),
             self.projection.clone(),
             self.limit,
             self.schema_after_projection.clone(),
@@ -491,9 +490,8 @@ impl ExecutionPlan for GridExec {
 
 /* Stream */
 struct GridStream {
-    model_table_metadata: Arc<ModelTableMetadata>,
     projection: Vec<usize>,
-    limit: Option<usize>,
+    _limit: Option<usize>,
     schema_after_projection: SchemaRef,
     input: SendableRecordBatchStream,
     baseline_metrics: BaselineMetrics,
@@ -501,7 +499,6 @@ struct GridStream {
 
 impl GridStream {
     fn new(
-        model_table_metadata: Arc<ModelTableMetadata>,
         projection: Vec<usize>,
         limit: Option<usize>,
         schema_after_projection: SchemaRef,
@@ -509,9 +506,8 @@ impl GridStream {
         baseline_metrics: BaselineMetrics,
     ) -> Self {
         GridStream {
-            model_table_metadata,
             projection,
-            limit,
+            _limit: limit,
             schema_after_projection,
             input,
             baseline_metrics,
@@ -534,7 +530,7 @@ impl GridStream {
             values_array,
             min_value_array,
             max_value_array,
-            error_array
+            _error_array
         );
 
         // Each segments contains at least one data point.
