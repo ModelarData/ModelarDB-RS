@@ -332,8 +332,7 @@ impl UncompressedDataManager {
             error_bound
         ).unwrap();
 
-        //compression::merge_segments(compressed_segments)
-        compressed_segments
+        compression::merge_segments(compressed_segments)
     }
 
     /// Move `segment_builder` to the queue of [`FinishedSegments`](FinishedSegment).

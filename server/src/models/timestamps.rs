@@ -196,9 +196,11 @@ fn decompress_all_regular_timestamps(
     timestamp_builder: &mut TimestampBuilder,
 ) {
     let mut bytes_to_decode = [0; 8];
-    bytes_to_decode[..residual_timestamps.len()].copy_from_slice(residual_timestamps);
+    let bytes_to_decode_len = bytes_to_decode.len();
+    bytes_to_decode[bytes_to_decode_len - residual_timestamps.len()..]
+        .copy_from_slice(residual_timestamps);
 
-    let length = usize::from_le_bytes(bytes_to_decode);
+    let length = usize::from_be_bytes(bytes_to_decode);
     let sampling_interval = (end_time - start_time) as usize / (length - 1);
     for timestamp in (start_time..=end_time).step_by(sampling_interval) {
         timestamp_builder.append_value(timestamp);
