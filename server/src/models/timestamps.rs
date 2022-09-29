@@ -189,7 +189,7 @@ pub fn decompress_all_timestamps(
 /// sampling interval, otherwise [`false`].
 pub fn are_compressed_timestamps_regular(residual_timestamps: &[u8]) -> bool {
     // The flag bit is zero so the timestamps follow a regular interval.
-    residual_timestamps[0] & 128 == 0
+    residual_timestamps.is_empty() || residual_timestamps[0] & 128 == 0
 }
 
 /// Decompress all of a segment's timestamps, which for this segment are sampled

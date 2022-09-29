@@ -192,7 +192,13 @@ impl SelectedModel {
 
 /// Compute the number of data points in a time series segment.
 pub fn length(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8]) -> usize {
-    if timestamps[0] & 128 == 0 {
+    if timestamps.is_empty() && start_time == end_time {
+        // Timestamps are assumed to be unique so the segment has one timestamp.
+        1
+    } else if timestamps.is_empty() {
+        // Timestamps are assumed to be unique so the segment has two timestamp.
+        2
+    } else if timestamps::are_compressed_timestamps_regular(timestamps) {
         // The flag bit is zero, so only the segment's length is stored as an
         // integer with all the prefix zeros stripped from the integer.
         let mut bytes_to_decode = [0; 8];

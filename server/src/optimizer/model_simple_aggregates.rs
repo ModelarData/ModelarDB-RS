@@ -16,7 +16,7 @@ use std::any::Any;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
-use datafusion::arrow::array::{ArrayRef, BinaryArray, Float32Array, UInt64Array, UInt8Array};
+use datafusion::arrow::array::{ArrayRef, BinaryArray, Float32Array, Int64Array, UInt8Array};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::datatypes::Field;
 use datafusion::arrow::datatypes::Schema;
@@ -26,7 +26,6 @@ use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::aggregates::AggregateExec;
 use datafusion::physical_plan::expressions::format_state_name;
 use datafusion::physical_plan::expressions::{Avg, Count, Max, Min, Sum};
-use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::ColumnarValue;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
@@ -66,48 +65,33 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
         if let Some(hae) = plan.as_any().downcast_ref::<AggregateExec>() {
             let children = &hae.children();
             if children.len() == 1 {
-                if let Some(rp) = children[0].as_any().downcast_ref::<RepartitionExec>() {
-                    let children = &rp.children();
-                    if children.len() == 1 {
-                        let ae = hae.aggr_expr();
-                        if ae.len() == 1 {
-                            // TODO: simplify and factor out shared code using macros or functions.
-                            if ae[0].as_any().downcast_ref::<Count>().is_some() {
-                                if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                                    let mae = ModelAggregateExpr::new(
-                                        ModelAggregateType::Count,
-                                    );
-                                    return Some(new_aggregate(hae, mae, ge));
-                                }
-                            } else if ae[0].as_any().downcast_ref::<Min>().is_some() {
-                                if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                                    let mae = ModelAggregateExpr::new(
-                                        ModelAggregateType::Min,
-                                    );
-                                    return Some(new_aggregate(hae, mae, ge));
-                                }
-                            } else if ae[0].as_any().downcast_ref::<Max>().is_some() {
-                                if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                                    let mae = ModelAggregateExpr::new(
-                                        ModelAggregateType::Max,
-                                    );
-                                    return Some(new_aggregate(hae, mae, ge));
-                                }
-                            } else if ae[0].as_any().downcast_ref::<Sum>().is_some() {
-                                if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                                    let mae = ModelAggregateExpr::new(
-                                        ModelAggregateType::Sum,
-                                    );
-                                    return Some(new_aggregate(hae, mae, ge));
-                                }
-                            } else if ae[0].as_any().downcast_ref::<Avg>().is_some() {
-                                if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                                    let mae = ModelAggregateExpr::new(
-                                        ModelAggregateType::Avg,
-                                    );
-                                    return Some(new_aggregate(hae, mae, ge));
-                                }
-                            }
+                let ae = hae.aggr_expr();
+                if ae.len() == 1 {
+                    // TODO: simplify and factor out shared code using macros or functions.
+                    if ae[0].as_any().downcast_ref::<Count>().is_some() {
+                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
+                            let mae = ModelAggregateExpr::new(ModelAggregateType::Count);
+                            return Some(new_aggregate(hae, mae, ge));
+                        }
+                    } else if ae[0].as_any().downcast_ref::<Min>().is_some() {
+                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
+                            let mae = ModelAggregateExpr::new(ModelAggregateType::Min);
+                            return Some(new_aggregate(hae, mae, ge));
+                        }
+                    } else if ae[0].as_any().downcast_ref::<Max>().is_some() {
+                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
+                            let mae = ModelAggregateExpr::new(ModelAggregateType::Max);
+                            return Some(new_aggregate(hae, mae, ge));
+                        }
+                    } else if ae[0].as_any().downcast_ref::<Sum>().is_some() {
+                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
+                            let mae = ModelAggregateExpr::new(ModelAggregateType::Sum);
+                            return Some(new_aggregate(hae, mae, ge));
+                        }
+                    } else if ae[0].as_any().downcast_ref::<Avg>().is_some() {
+                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
+                            let mae = ModelAggregateExpr::new(ModelAggregateType::Avg);
+                            return Some(new_aggregate(hae, mae, ge));
                         }
                     }
                 }
@@ -162,11 +146,9 @@ pub struct ModelAggregateExpr {
 }
 
 impl ModelAggregateExpr {
-    fn new(
-        aggregate_type: ModelAggregateType,
-    ) -> Arc<Self> {
+    fn new(aggregate_type: ModelAggregateType) -> Arc<Self> {
         let data_type = match &aggregate_type {
-            ModelAggregateType::Count => DataType::UInt64,
+            ModelAggregateType::Count => DataType::Int64,
             ModelAggregateType::Min => DataType::Float32,
             ModelAggregateType::Max => DataType::Float32,
             ModelAggregateType::Sum => DataType::Float32,
@@ -208,16 +190,11 @@ impl AggregateExpr for ModelAggregateExpr {
 
     fn expressions(&self) -> Vec<Arc<dyn PhysicalExpr>> {
         let expr: Arc<dyn PhysicalExpr> = match &self.aggregate_type {
-            ModelAggregateType::Count => Arc::new(ModelCountPhysicalExpr {
-            }),
-            ModelAggregateType::Min => Arc::new(ModelMinPhysicalExpr {
-            }),
-            ModelAggregateType::Max => Arc::new(ModelMaxPhysicalExpr {
-            }),
-            ModelAggregateType::Sum => Arc::new(ModelSumPhysicalExpr {
-            }),
-            ModelAggregateType::Avg => Arc::new(ModelAvgPhysicalExpr {
-            }),
+            ModelAggregateType::Count => Arc::new(ModelCountPhysicalExpr {}),
+            ModelAggregateType::Min => Arc::new(ModelMinPhysicalExpr {}),
+            ModelAggregateType::Max => Arc::new(ModelMaxPhysicalExpr {}),
+            ModelAggregateType::Sum => Arc::new(ModelSumPhysicalExpr {}),
+            ModelAggregateType::Avg => Arc::new(ModelAvgPhysicalExpr {}),
         };
         vec![expr]
     }
@@ -240,12 +217,11 @@ impl AggregateExpr for ModelAggregateExpr {
 
 //Count
 #[derive(Debug)]
-pub struct ModelCountPhysicalExpr {
-}
+pub struct ModelCountPhysicalExpr {}
 
 impl Display for ModelCountPhysicalExpr {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "ModelCountPhysicalExpr(UInt64)")
+        write!(f, "ModelCountPhysicalExpr(Int64)")
     }
 }
 
@@ -255,7 +231,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
     }
 
     fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
-        Ok(DataType::UInt64)
+        Ok(DataType::Int64)
     }
 
     fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
@@ -275,17 +251,17 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
             _error_array
         );
 
-        let mut count: u64 = 0;
+        let mut count: i64 = 0;
         for row_index in 0..batch.num_rows() {
             let timestamps = timestamps_array.value(row_index);
             let start_time = start_time_array.value(row_index);
             let end_time = end_time_array.value(row_index);
 
-            count += models::length(start_time, end_time, timestamps) as u64;
+            count += models::length(start_time, end_time, timestamps) as i64;
         }
 
         // Returning an AggregateState::Scalar fills an array with the value.
-        let mut result = UInt64Array::builder(1);
+        let mut result = Int64Array::builder(1);
         result.append_value(count);
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
@@ -293,7 +269,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
 
 #[derive(Debug)]
 struct ModelCountAccumulator {
-    count: u64,
+    count: i64,
 }
 
 impl Accumulator for ModelCountAccumulator {
@@ -301,7 +277,7 @@ impl Accumulator for ModelCountAccumulator {
         for array in values {
             self.count += array
                 .as_any()
-                .downcast_ref::<UInt64Array>()
+                .downcast_ref::<Int64Array>()
                 .unwrap()
                 .value(0);
         }
@@ -313,7 +289,7 @@ impl Accumulator for ModelCountAccumulator {
     }
 
     fn state(&self) -> Result<Vec<AggregateState>> {
-        Ok(vec![AggregateState::Scalar(ScalarValue::UInt64(Some(
+        Ok(vec![AggregateState::Scalar(ScalarValue::Int64(Some(
             self.count,
         )))])
     }
@@ -325,8 +301,7 @@ impl Accumulator for ModelCountAccumulator {
 
 //Min
 #[derive(Debug)]
-pub struct ModelMinPhysicalExpr {
-}
+pub struct ModelMinPhysicalExpr {}
 
 impl Display for ModelMinPhysicalExpr {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
@@ -349,7 +324,7 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         let mut min = Value::MAX;
-        let min_value_array = crate::get_array!(batch, 6, ValueArray);
+        let min_value_array = crate::get_array!(batch, 5, ValueArray);
         for row_index in 0..batch.num_rows() {
             min = Value::min(min, min_value_array.value(row_index));
         }
@@ -398,8 +373,7 @@ impl Accumulator for ModelMinAccumulator {
 
 //Max
 #[derive(Debug)]
-pub struct ModelMaxPhysicalExpr {
-}
+pub struct ModelMaxPhysicalExpr {}
 
 impl Display for ModelMaxPhysicalExpr {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
@@ -422,7 +396,7 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         let mut max = Value::MIN;
-        let max_value_array = crate::get_array!(batch, 7, ValueArray);
+        let max_value_array = crate::get_array!(batch, 6, ValueArray);
         for row_index in 0..batch.num_rows() {
             max = Value::max(max, max_value_array.value(row_index));
         }
@@ -471,8 +445,7 @@ impl Accumulator for ModelMaxAccumulator {
 
 //Sum
 #[derive(Debug)]
-pub struct ModelSumPhysicalExpr {
-}
+pub struct ModelSumPhysicalExpr {}
 
 impl Display for ModelSumPhysicalExpr {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
@@ -568,8 +541,7 @@ impl Accumulator for ModelSumAccumulator {
 
 //Avg
 #[derive(Debug)]
-pub struct ModelAvgPhysicalExpr {
-}
+pub struct ModelAvgPhysicalExpr {}
 
 impl Display for ModelAvgPhysicalExpr {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {

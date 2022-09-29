@@ -22,11 +22,9 @@
 //!
 //! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 
-use datafusion::arrow::compute::kernels::aggregate;
-
 use crate::models;
 use crate::models::bits::{BitReader, BitVecBuilder};
-use crate::types::{TimeSeriesId, TimeSeriesIdBuilder, Timestamp, Value, ValueArray, ValueBuilder};
+use crate::types::{TimeSeriesId, TimeSeriesIdBuilder, Timestamp, Value, ValueBuilder};
 
 /// The state the Gorilla model type needs while compressing the values of a
 /// time series segment.
@@ -131,50 +129,15 @@ impl Gorilla {
 
 /// Compute the sum of the values for a time series segment whose values are
 /// compressed using Gorilla's compression method for floating-point values.
-pub fn sum(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8], model: &[u8]) -> Value {
-    let decompressed_values = decompress_values_to_array(start_time, end_time, timestamps, model);
-    aggregate::sum(&decompressed_values).unwrap()
-}
-
-/// Decompress the values in `values` for the `timestamps` without matching
-/// values in `value_builder`. The values in `values` are compressed using
-/// Gorilla's compression method for floating-point values. `time_series_ids`
-/// and `values` are appended to `time_series_id_builder` and `value_builder`.
-pub fn grid(
-    time_series_id: TimeSeriesId,
-    values: &[u8],
-    time_series_id_builder: &mut TimeSeriesIdBuilder,
-    timestamps: &[Timestamp],
-    value_builder: &mut ValueBuilder,
-) {
-    decompress_values(
-        time_series_id,
-        values,
-        time_series_id_builder,
-        timestamps,
-        value_builder,
-    );
-}
-
-/// Decompress values compressed using Gorilla's compression method for
-/// floating-point values and store them in a new Apache Arrow array.
-fn decompress_values_to_array(
-    start_time: Timestamp,
-    end_time: Timestamp,
-    timestamps: &[u8],
-    values: &[u8],
-) -> ValueArray {
-    // TODO: Can decompress_values_to_array() be merged with decompress_values?
+pub fn sum(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8], values: &[u8]) -> Value {
     let length = models::length(start_time, end_time, timestamps);
-    let mut value_builder = ValueBuilder::with_capacity(length);
-
     let mut bits = BitReader::try_new(values).unwrap();
     let mut leading_zeros = u8::MAX;
     let mut trailing_zeros: u8 = 0;
     let mut last_value = bits.read_bits(models::VALUE_SIZE_IN_BITS);
 
     // The first value is stored uncompressed using size_of::<Value> bits.
-    value_builder.append_value(Value::from_bits(last_value));
+    let mut sum = Value::from_bits(last_value);
 
     // Then values are stored using XOR and a variable length binary encoding.
     for _ in 0..length - 1 {
@@ -194,17 +157,19 @@ fn decompress_values_to_array(
             value ^= last_value;
             last_value = value;
         }
-        value_builder.append_value(Value::from_bits(last_value));
+        sum += Value::from_bits(last_value);
     }
-    value_builder.finish()
+    sum
 }
 
-/// Decompress values compressed using Gorilla's compression method for
-/// floating-point values and append them to `values`.
-fn decompress_values(
+/// Decompress the values in `values` for the `timestamps` without matching
+/// values in `value_builder`. The values in `values` are compressed using
+/// Gorilla's compression method for floating-point values. `time_series_ids`
+/// and `values` are appended to `time_series_id_builder` and `value_builder`.
+pub fn grid(
     time_series_id: TimeSeriesId,
     values: &[u8],
-    time_series_ids: &mut TimeSeriesIdBuilder,
+    time_series_id_builder: &mut TimeSeriesIdBuilder,
     timestamps: &[Timestamp],
     value_builder: &mut ValueBuilder,
 ) {
@@ -214,7 +179,7 @@ fn decompress_values(
     let mut last_value = bits.read_bits(models::VALUE_SIZE_IN_BITS);
 
     // The first value is stored uncompressed using size_of::<Value> bits.
-    time_series_ids.append_value(time_series_id);
+    time_series_id_builder.append_value(time_series_id);
     value_builder.append_value(Value::from_bits(last_value));
 
     // Then values are stored using XOR and a variable length binary encoding.
@@ -235,7 +200,7 @@ fn decompress_values(
             value ^= last_value;
             last_value = value;
         }
-        time_series_ids.append_value(time_series_id);
+        time_series_id_builder.append_value(time_series_id);
         value_builder.append_value(Value::from_bits(last_value));
     }
 }
