@@ -145,7 +145,7 @@ fn create_model_table_metadata_tables(data_folder_path: &Path) -> Result<(), rus
                 schema BLOB NOT NULL,
                 timestamp_column_index INTEGER NOT NULL,
                 tag_column_indices BLOB NOT NULL
-        )",
+        ) STRICT",
         (),
     )?;
 
@@ -157,7 +157,7 @@ fn create_model_table_metadata_tables(data_folder_path: &Path) -> Result<(), rus
                 column_name TEXT NOT NULL,
                 column_index INTEGER NOT NULL,
                 PRIMARY KEY (table_name, column_name)
-        )",
+        ) STRICT",
         (),
     )?;
 

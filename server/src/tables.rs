@@ -252,8 +252,12 @@ impl ModelTable {
 
         let mut keys = vec![];
         while let Some(row) = rows.next()? {
+            // SQLite use signed integers https://www.sqlite.org/datatype3.html.
+            let signed_tag_hash = row.get::<usize, i64>(0)?;
+            let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
+
             for field_column in &field_columns {
-                keys.push(row.get::<usize, u64>(0)? | field_column);
+                keys.push(tag_hash | field_column);
             }
         }
         Ok(keys)

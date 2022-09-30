@@ -225,11 +225,14 @@ impl UncompressedDataManager {
             let database_path = self.data_folder_path.join(catalog::METADATA_SQLITE_NAME);
             let connection = Connection::open(database_path)?;
 
+            // SQLite use signed integers https://www.sqlite.org/datatype3.html.
+            let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
+
             // OR IGNORE is used to silently fail when trying to insert an already existing hash.
             connection.execute(
                 format!(
                     "INSERT OR IGNORE INTO {}_tags (hash,{}) VALUES ({},{})",
-                    model_table.name, tag_columns, tag_hash, values
+                    model_table.name, tag_columns, signed_tag_hash, values
                 )
                 .as_str(),
                 (),
@@ -507,7 +510,7 @@ mod tests {
         // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
         connection.execute(
             format!(
-                "CREATE TABLE {}_tags (hash BIGINT PRIMARY KEY, {})",
+                "CREATE TABLE {}_tags (hash INTEGER PRIMARY KEY, {}) STRICT",
                 model_table_metadata.name, tag_columns
             )
             .as_str(),

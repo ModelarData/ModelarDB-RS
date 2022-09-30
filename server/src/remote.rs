@@ -582,7 +582,7 @@ fn save_model_table_to_database(
     // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
     transaction.execute(
         format!(
-            "CREATE TABLE {}_tags (hash BIGINT PRIMARY KEY, {})",
+            "CREATE TABLE {}_tags (hash INTEGER PRIMARY KEY, {}) STRICT",
             model_table_metadata.name, tag_columns
         )
         .as_str(),
