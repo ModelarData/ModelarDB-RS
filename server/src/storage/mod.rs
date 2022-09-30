@@ -120,10 +120,10 @@ impl StorageEngine {
         keys: &[u64],
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>
-    ) -> Result<Vec<ObjectMeta>, ModelarDBError> {
+    ) -> Result<Vec<(String, ObjectMeta)>, ModelarDBError> {
         let start_time = start_time.unwrap_or(0);
         let end_time = end_time.unwrap_or(Timestamp::MAX);
-        let mut compressed_files: Vec<ObjectMeta> = vec![];
+        let mut compressed_files: Vec<(String, ObjectMeta)> = vec![];
 
         if start_time > end_time {
             return Err(ModelarDBError::DataRetrievalError(format!(
@@ -144,11 +144,11 @@ impl StorageEngine {
                     let metadata = fs::metadata(&file_path).unwrap();
 
                     // Create an object that contains the file path and extra metadata about the file.
-                    Some(ObjectMeta {
+                    Some((key.to_string(), ObjectMeta {
                         location: ObjectStorePath::from(file_path.to_str().unwrap()),
                         last_modified: DateTime::from(metadata.modified().unwrap()),
                         size: metadata.len() as usize
-                    })
+                    }))
                 } else {
                     None
                 }

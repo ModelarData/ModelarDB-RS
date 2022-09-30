@@ -22,9 +22,12 @@ use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
 
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, BinaryArray, Float32Array, UInt64Array, UInt8Array};
+use datafusion::arrow::array::{
+    ArrayAccessor, ArrayRef, BinaryArray, DictionaryArray, Float32Array, StringArray, UInt64Array,
+    UInt8Array,
+};
 use datafusion::arrow::datatypes::{
-    ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit,
+    ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit, UInt16Type,
 };
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -41,6 +44,7 @@ use datafusion::physical_plan::{
     metrics::MetricsSet, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
     SendableRecordBatchStream, Statistics,
 };
+use datafusion::scalar::ScalarValue;
 use datafusion_physical_expr::planner;
 use futures::stream::{Stream, StreamExt};
 use rusqlite::{Connection, Result as RusqliteResult};
@@ -290,7 +294,7 @@ impl TableProvider for ModelTable {
         )?;
 
         // Request the matching files from the storage engine.
-        let mut object_metas = {
+        let mut key_object_metas = {
             // unwrap() is safe as read() only fails if the RwLock is poisoned.
             let mut storage_engines = self.context.storage_engine.write().unwrap();
 
@@ -303,11 +307,11 @@ impl TableProvider for ModelTable {
         };
 
         //Create the data source node. Assumes the ObjectStore already exists.
-        let partitioned_files: Vec<PartitionedFile> = object_metas
+        let partitioned_files: Vec<PartitionedFile> = key_object_metas
             .drain(0..)
-            .map(|object_meta| PartitionedFile {
-                object_meta,
-                partition_values: vec![],
+            .map(|key_object_meta| PartitionedFile {
+                object_meta: key_object_meta.1,
+                partition_values: vec![ScalarValue::Utf8(Some(key_object_meta.0))],
                 range: None,
                 extensions: None,
             })
@@ -329,7 +333,7 @@ impl TableProvider for ModelTable {
             statistics,
             projection: None,
             limit,
-            table_partition_cols: vec![],
+            table_partition_cols: vec!["storage_engine_key".to_owned()],
         };
 
         let predicate = self.rewrite_and_combine_filters(filters);
@@ -533,6 +537,14 @@ impl GridStream {
             _error_array
         );
 
+        let key_string_array = batch
+            .column(8)
+            .as_any()
+            .downcast_ref::<DictionaryArray<UInt16Type>>()
+            .unwrap()
+            .downcast_dict::<StringArray>()
+            .unwrap();
+
         // Each segments contains at least one data point.
         //TODO: can the specific amount of memory required for the arrays be
         // allocated without explicitly storing the length of the segment?
@@ -543,6 +555,8 @@ impl GridStream {
 
         //Reconstructs the data points from the segments
         for row_index in 0..num_rows {
+            // unwrap() is safe as the storage engine created the strings.
+            let tid: u64 = key_string_array.value(row_index).parse().unwrap();
             let model_type_id = model_type_id_array.value(row_index);
             let timestamps = timestamps_array.value(row_index);
             let start_time = start_time_array.value(row_index);
@@ -552,7 +566,7 @@ impl GridStream {
             let max_value = max_value_array.value(row_index);
 
             models::grid(
-                2550278706267027457, // TODO: how to make the keys available?
+                tid,
                 model_type_id,
                 timestamps,
                 start_time,
