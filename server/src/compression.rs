@@ -377,7 +377,6 @@ impl CompressedSegmentBatchBuilder {
 
 #[cfg(test)]
 mod tests {
-    // TODO: add tests for irregular time series when refactoring the query engine.
     use super::*;
 
     use datafusion::arrow::array::UInt8Array;

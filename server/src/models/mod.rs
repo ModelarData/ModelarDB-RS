@@ -18,7 +18,7 @@
 //! each type. The module itself contains general functionality used by the
 //! model types.
 
-// TODO: Expand all tests in models to include both regular and irregular time series.
+// TODO: Test irregular and regular time series in models/* and compression.rs.
 
 pub mod bits;
 pub mod gorilla;
