@@ -522,8 +522,6 @@ mod tests {
         compressed_record_batch: &RecordBatch,
         expected_model_type_ids: &[u8],
     ) {
-        let sampling_interval = uncompressed_timestamps.value(1) - uncompressed_timestamps.value(0);
-
         assert_eq!(
             expected_model_type_ids.len(),
             compressed_record_batch.num_rows()
@@ -532,28 +530,18 @@ mod tests {
         let mut total_compressed_length = 0;
         for segment in 0..expected_model_type_ids.len() {
             let expected_model_type_id = expected_model_type_ids[segment];
-            let model_type_id = compressed_record_batch
-                .column(0)
-                .as_any()
-                .downcast_ref::<UInt8Array>()
-                .unwrap()
-                .value(segment);
+            let model_type_id =
+                crate::get_array!(compressed_record_batch, 0, UInt8Array).value(segment);
             assert_eq!(expected_model_type_id, model_type_id);
 
-            let start_time = compressed_record_batch
-                .column(2)
-                .as_any()
-                .downcast_ref::<TimestampArray>()
-                .unwrap()
-                .value(segment);
-            let end_time = compressed_record_batch
-                .column(3)
-                .as_any()
-                .downcast_ref::<TimestampArray>()
-                .unwrap()
-                .value(segment);
-            total_compressed_length +=
-                models::length(start_time, end_time, sampling_interval as i32);
+            let timestamps =
+                crate::get_array!(compressed_record_batch, 1, BinaryArray).value(segment);
+            let start_time =
+                crate::get_array!(compressed_record_batch, 2, TimestampArray).value(segment);
+            let end_time =
+                crate::get_array!(compressed_record_batch, 3, TimestampArray).value(segment);
+
+            total_compressed_length += models::length(start_time, end_time, timestamps);
         }
         assert_eq!(uncompressed_timestamps.len(), total_compressed_length);
     }

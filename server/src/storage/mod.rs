@@ -292,7 +292,7 @@ mod tests {
         assert_eq!(files.len(), 1);
 
         // The path to the returned compressed file should contain the key of the second segment.
-        let file_path = files.get(0).unwrap().location.to_string();
+        let file_path = files.get(0).unwrap().1.location.to_string();
         assert!(file_path.contains("2/compressed"));
     }
 
@@ -311,7 +311,7 @@ mod tests {
         assert_eq!(files.len(), 1);
 
         // The path to the returned compressed file should contain the key of the first segment.
-        let file_path = files.get(0).unwrap().location.to_string();
+        let file_path = files.get(0).unwrap().1.location.to_string();
         assert!(file_path.contains("1/compressed"));
     }
 
@@ -336,10 +336,10 @@ mod tests {
         assert_eq!(files.len(), 2);
 
         // The paths to the returned compressed files should contain the key of the second and third segment.
-        let file_path = files.get(0).unwrap().location.to_string();
+        let file_path = files.get(0).unwrap().1.location.to_string();
         assert!(file_path.contains("2/compressed"));
 
-        let file_path = files.get(1).unwrap().location.to_string();
+        let file_path = files.get(1).unwrap().1.location.to_string();
         assert!(file_path.contains("3/compressed"));
     }
 

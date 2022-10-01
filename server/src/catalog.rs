@@ -389,7 +389,8 @@ impl ModelTableMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::datatypes::ArrowPrimitiveType;
+
+    use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field};
 
     use crate::types::{ArrowTimestamp, ArrowValue};
 

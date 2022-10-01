@@ -18,6 +18,8 @@
 //! each type. The module itself contains general functionality used by the
 //! model types.
 
+// TODO: Expand all tests in models to include both regular and irregular time series.
+
 pub mod bits;
 pub mod gorilla;
 pub mod pmcmean;
@@ -409,12 +411,12 @@ mod tests {
     // Tests for length().
     #[test]
     fn test_length_of_segment_with_one_data_point() {
-        assert_eq!(1, length(1658671178037, 1658671178037, 1000));
+        assert_eq!(1, length(1658671178037, 1658671178037, &[]));
     }
 
     #[test]
     fn test_length_of_segment_with_ten_data_points() {
-        assert_eq!(10, length(1658671178037, 1658671187037, 1000));
+        assert_eq!(10, length(1658671178037, 1658671187047, &[10]));
     }
 
     // Tests for equal_or_nan().

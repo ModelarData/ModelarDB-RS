@@ -262,32 +262,11 @@ mod tests {
         return fit_all_values;
     }
 
-    // Tests for min().
-    proptest! {
-    #[test]
-    fn test_min(value in ProptestValue::ANY) {
-        let model = value.to_be_bytes();
-        let min = min(&model);
-        prop_assert!(models::equal_or_nan(min as f64, value as f64));
-    }
-    }
-
-    // Tests for max().
-    proptest! {
-    #[test]
-    fn test_max(value in ProptestValue::ANY) {
-        let model = value.to_be_bytes();
-        let max = max(&model);
-        prop_assert!(models::equal_or_nan(max as f64, value as f64));
-    }
-    }
-
     // Tests for sum().
     proptest! {
     #[test]
     fn test_sum(value in ProptestValue::ANY) {
-        let model = value.to_be_bytes();
-        let sum = sum(1657734000, 1657734540, 60, &model);
+        let sum = sum(1657734000, 1657734540, &[10], value);
         prop_assert!(models::equal_or_nan(sum as f64, (10.0 * value) as f64));
     }
     }
@@ -327,15 +306,6 @@ mod tests {
         prop_assert!(values
             .iter()
             .all(|value_option| models::equal_or_nan(value_option.unwrap() as f64, value as f64)));
-    }
-    }
-
-    // Tests for the decode_model().
-    proptest! {
-    #[test]
-    fn test_decode_model(value in ProptestValue::ANY) {
-        let decoded = decode_model(&value.to_be_bytes());
-        prop_assert!(models::equal_or_nan(decoded as f64, value as f64));
     }
     }
 }

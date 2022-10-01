@@ -209,10 +209,12 @@ pub fn grid(
 mod tests {
     use super::*;
 
+    use datafusion::arrow::compute::kernels::aggregate;
     use proptest::{bool, collection, prop_assert, prop_assert_eq, prop_assume, proptest};
 
     use crate::models;
     use crate::types::tests::ProptestValue;
+    use crate::types::ValueArray;
 
     // Tests for Gorilla.
     #[test]
@@ -262,37 +264,13 @@ mod tests {
         assert_eq!(model_type.last_trailing_zero_bits, 17);
     }
 
-    // Tests for min().
-    proptest! {
-    #[test]
-    fn test_min(values in collection::vec(ProptestValue::ANY, 0..50)) {
-        prop_assume!(!values.is_empty());
-        let compressed_values = compress_values_using_gorilla(&values);
-        let min = min(1, values.len() as i64, 1, &compressed_values);
-        let expected_min = aggregate::min(&ValueArray::from_iter_values(values)).unwrap();
-        prop_assert!(models::equal_or_nan(expected_min as f64, min as f64));
-    }
-    }
-
-    // Tests for max().
-    proptest! {
-    #[test]
-    fn test_max(values in collection::vec(ProptestValue::ANY, 0..50)) {
-        prop_assume!(!values.is_empty());
-        let compressed_values = compress_values_using_gorilla(&values);
-        let max = max(1, values.len() as i64, 1, &compressed_values);
-        let expected_max = aggregate::max(&ValueArray::from_iter_values(values)).unwrap();
-        prop_assert!(models::equal_or_nan(expected_max as f64, max as f64));
-    }
-    }
-
     // Tests for sum().
     proptest! {
     #[test]
     fn test_sum(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let compressed_values = compress_values_using_gorilla(&values);
-        let sum = sum(1, values.len() as i64, 1, &compressed_values);
+        let sum = sum(1, values.len() as i64, &values.len().to_be_bytes(), &compressed_values);
         let expected_sum = aggregate::sum(&ValueArray::from_iter_values(values)).unwrap();
         prop_assert!(models::equal_or_nan(expected_sum as f64, sum as f64));
     }
@@ -329,29 +307,6 @@ mod tests {
              .all(|time_series_id_option| time_series_id_option.unwrap() == 1));
         prop_assert!(timestamps.windows(2).all(|window| window[1] - window[0] == 1));
         prop_assert!(slice_of_value_equal(values_array.values(), &values));
-    }
-    }
-
-    // Tests for the decompress_values().
-    proptest! {
-    #[test]
-    fn test_decode(values in collection::vec(ProptestValue::ANY, 0..50)) {
-        prop_assume!(!values.is_empty());
-        let compressed_values = compress_values_using_gorilla(&values);
-        let mut decompressed_values_builder = ValueBuilder::with_capacity(values.len());
-
-        let mut time_series_id_builder = TimeSeriesIdBuilder::with_capacity(values.len());
-        let timestamps = vec![0; values.len()];
-        let mut value_builder = ValueBuilder::with_capacity(values.len());
-        decompress_values(
-            1,
-            &compressed_values,
-            &mut time_series_id_builder,
-            &timestamps,
-            &mut value_builder
-        );
-        let decompressed_values = decompressed_values_builder.finish();
-        prop_assert!(slice_of_value_equal(decompressed_values.values(), &values));
     }
     }
 

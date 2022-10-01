@@ -267,16 +267,16 @@ fn compute_slope_and_intercept(
     final_timestamp: Timestamp,
     final_value: f64,
 ) -> (f64, f64) {
-    // An if expression is used as it seems that no values can be assigned to
-    // first_value and final_value so slope * timestamp + intercept = INFINITY
-    // or slope * timestamp + intercept = NEG_INFINITY.
-    if first_value.is_finite() && final_value.is_finite() {
+    // An if expression is used as it seems impossible to calculate the slope
+    // and intercept without creating INFINITY, NEG_INFINITY, or NaN values.
+    if models::equal_or_nan(first_value, final_value) {
+        (0.0, first_value)
+    } else {
+        debug_assert!(first_value.is_finite(), "First value is not finite.");
+        debug_assert!(final_value.is_finite(), "Second value is not finite.");
         let slope = (final_value - first_value) / (final_timestamp - first_timestamp) as f64;
         let intercept = first_value - slope * first_timestamp as f64;
         (slope, intercept)
-    } else {
-        debug_assert!(models::equal_or_nan(first_value, final_value));
-        (first_value, final_value)
     }
 }
 
@@ -333,7 +333,7 @@ mod tests {
             final_value as f64,
         );
         if value.is_nan() {
-            assert!(slope.is_nan() && intercept.is_nan());
+            assert!(slope == 0.0 && intercept.is_nan());
         } else {
             for timestamp in (FIRST_TIMESTAMP..final_timestamp).step_by(SAMPLING_INTERVAL as usize)
             {
@@ -452,44 +452,6 @@ mod tests {
         return fit_all_values;
     }
 
-    // Tests for min().
-    proptest! {
-    #[test]
-    fn test_min(
-        first_value in num::i32::ANY.prop_map(i32_to_value),
-        final_value in num::i32::ANY.prop_map(i32_to_value),
-    ) {
-        let (slope, intercept) = compute_slope_and_intercept(
-            FIRST_TIMESTAMP,
-            first_value as f64,
-            FINAL_TIMESTAMP,
-            final_value as f64,
-        );
-        let model = [slope.to_be_bytes(), intercept.to_be_bytes()].concat();
-        let min = min(FIRST_TIMESTAMP, FINAL_TIMESTAMP, &model);
-        prop_assert_eq!(min, Value::min(first_value, final_value));
-    }
-    }
-
-    // Tests for max().
-    proptest! {
-    #[test]
-    fn test_max(
-        first_value in num::i32::ANY.prop_map(i32_to_value),
-        final_value in num::i32::ANY.prop_map(i32_to_value),
-    ) {
-        let (slope, intercept) = compute_slope_and_intercept(
-            FIRST_TIMESTAMP,
-            first_value as f64,
-            FINAL_TIMESTAMP,
-            final_value as f64,
-        );
-        let model = [slope.to_be_bytes(), intercept.to_be_bytes()].concat();
-        let max = max(FIRST_TIMESTAMP, FINAL_TIMESTAMP, &model);
-        prop_assert_eq!(max, Value::max(first_value, final_value));
-    }
-    }
-
     // Tests for sum().
     proptest! {
     #[test]
@@ -497,16 +459,8 @@ mod tests {
         first_value in num::i32::ANY.prop_map(i32_to_value),
         final_value in num::i32::ANY.prop_map(i32_to_value),
     ) {
-        // A segment of length one is used to have a known sum.
-        let (slope, intercept) = compute_slope_and_intercept(
-            FIRST_TIMESTAMP,
-            first_value as f64,
-            FINAL_TIMESTAMP,
-            final_value as f64,
-        );
-        let model = [slope.to_be_bytes(), intercept.to_be_bytes()].concat();
-        let sum = sum( FIRST_TIMESTAMP, FIRST_TIMESTAMP, SAMPLING_INTERVAL as i32, &model);
-        prop_assert_eq!(sum, first_value);
+        let sum = sum(FIRST_TIMESTAMP, FINAL_TIMESTAMP, &[], first_value, final_value);
+        prop_assert_eq!(sum, first_value + final_value);
     }
     }
 
