@@ -13,6 +13,11 @@
  * limitations under the License.
  */
 
+//! Implementation of the types required to query model tables through Apache
+//! Arrow DataFusion. The types are [`ModelTable`] which implements
+//! [`TableProvider`], [`GridExec`] which implements [`ExecutionPlan`], and
+//! [`GridStream`] which implements [`Stream`] and [`RecordBatchStream`].
+
 use std::any::Any;
 use std::fmt;
 use std::fmt::Formatter;
@@ -26,9 +31,7 @@ use datafusion::arrow::array::{
     ArrayAccessor, ArrayRef, BinaryArray, DictionaryArray, Float32Array, StringArray, UInt64Array,
     UInt8Array,
 };
-use datafusion::arrow::datatypes::{
-    ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit, UInt16Type,
-};
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema, SchemaRef, UInt16Type};
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::datasource::object_store::ObjectStoreUrl;
@@ -54,33 +57,39 @@ use crate::catalog::ModelTableMetadata;
 use crate::models;
 use crate::storage::StorageEngine;
 use crate::types::{
-    ArrowValue, TimeSeriesId, TimestampArray, TimestampBuilder, ValueArray, ValueBuilder,
+    ArrowTimeSeriesId, ArrowTimestamp, ArrowValue, TimeSeriesId, TimestampArray, TimestampBuilder,
+    ValueArray, ValueBuilder,
 };
 use crate::Context;
 
+/// A queryable representation of a model table which stores multivariate time
+/// series as segments containing metadata and models. [`ModelTable`] implements
+/// [`TableProvider`] so it can be registered with Apache Arrow DataFusion and
+/// the multivariate time series queried as multiple univariate time series.
 pub struct ModelTable {
+    /// Access to the system's configuration and components.
     context: Arc<Context>,
+    /// Location of the object store used by the storage engine.
     object_store_url: ObjectStoreUrl,
+    /// Metadata required to query the model table.
     model_table_metadata: Arc<ModelTableMetadata>,
+    /// Schema of the model table registered with Apache Arrow DataFusion.
     schema: Arc<Schema>,
+    /// Field column to use for queries that do not include fields.
     fallback_field_column: u64,
 }
 
 impl ModelTable {
     pub fn new(context: Arc<Context>, model_table_metadata: &Arc<ModelTableMetadata>) -> Arc<Self> {
-        // TODO: support reconstructing the ingested multivariate time series.
+        // Columns in the model table registered with Apache Arrow DataFusion.
         let columns = vec![
-            Field::new("tid", DataType::UInt64, false),
-            Field::new(
-                "timestamp",
-                DataType::Timestamp(TimeUnit::Millisecond, None),
-                false,
-            ),
-            Field::new("value", DataType::Float32, false),
+            Field::new("tid", ArrowTimeSeriesId::DATA_TYPE, false),
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("value", ArrowValue::DATA_TYPE, false),
         ];
 
-        // Compute the column of the first field in schema. This column is used
-        // when a query is received that only requests timestamps and tags.
+        // Compute the index of the first field column in the model table's
+        // schema. This is used for queries that does not contain any fields.
         let fallback_field_column = {
             model_table_metadata
                 .schema
@@ -99,28 +108,41 @@ impl ModelTable {
         })
     }
 
+    /// Rewrite `filters` in terms of the model table's schema to filters in
+    /// terms of the schema used for compressed data by the storage engine. The
+    /// rewritten filters are then combined into a single [`Expr`]. A [`None`]
+    /// is returned if `filters` is empty.
     fn rewrite_and_combine_filters(&self, filters: &[Expr]) -> Option<Expr> {
-        // TODO: rewrite the remaining filters for the remaining columns.
         let rewritten_filters: Vec<Expr> = filters
             .iter()
             .map(|filter| match filter {
                 Expr::BinaryExpr { left, op, right } => {
                     if **left == col("timestamp") {
                         match op {
-                            Operator::Gt => self.binary_expr(col("end_time"), *op, *right.clone()),
+                            Operator::Gt => {
+                                self.new_binary_expr(col("end_time"), *op, *right.clone())
+                            }
                             Operator::GtEq => {
-                                self.binary_expr(col("end_time"), *op, *right.clone())
+                                self.new_binary_expr(col("end_time"), *op, *right.clone())
                             }
                             Operator::Lt => {
-                                self.binary_expr(col("start_time"), *op, *right.clone())
+                                self.new_binary_expr(col("start_time"), *op, *right.clone())
                             }
                             Operator::LtEq => {
-                                self.binary_expr(col("start_time"), *op, *right.clone())
+                                self.new_binary_expr(col("start_time"), *op, *right.clone())
                             }
-                            Operator::Eq => self.binary_expr(
-                                self.binary_expr(col("start_time"), Operator::LtEq, *right.clone()),
+                            Operator::Eq => self.new_binary_expr(
+                                self.new_binary_expr(
+                                    col("start_time"),
+                                    Operator::LtEq,
+                                    *right.clone(),
+                                ),
                                 Operator::And,
-                                self.binary_expr(col("end_time"), Operator::GtEq, *right.clone()),
+                                self.new_binary_expr(
+                                    col("end_time"),
+                                    Operator::GtEq,
+                                    *right.clone(),
+                                ),
                             ),
                             _ => filter.clone(),
                         }
@@ -131,10 +153,13 @@ impl ModelTable {
                 _ => filter.clone(),
             })
             .collect();
+
+        // Combine the rewritten filters into an expression.
         combine_filters(&rewritten_filters)
     }
 
-    fn binary_expr(&self, left: Expr, op: Operator, right: Expr) -> Expr {
+    /// Create a [`Expr::BinaryExpr`].
+    fn new_binary_expr(&self, left: Expr, op: Operator, right: Expr) -> Expr {
         Expr::BinaryExpr {
             left: Box::new(left),
             op,
@@ -142,7 +167,9 @@ impl ModelTable {
         }
     }
 
-    fn add_filter_exec(
+    /// Create a [`FilterExec`]. [`None`] is returned if `predicate` is
+    /// [`None`].
+    fn new_filter_exec(
         &self,
         predicate: &Option<Expr>,
         input: &Arc<ParquetExec>,
@@ -163,14 +190,18 @@ impl ModelTable {
         )?))
     }
 
-    // TODO:extract the field columns requested in the user's query.
-    fn lookup_keys_from_tags(
+    // TODO: Move to the metadata component when it exists.
+    /// Compute the 64-bit keys of the univariate time series to retrieve from
+    /// the storage engine using the fields, tag, and tag values in the query.
+    /// Returns a [`DataFusionError::Plan`] if the necessary data cannot be
+    /// retrieved from [`catalog::METADATA_SQLITE_NAME`].
+    fn compute_keys_using_fields_and_tags(
         &self,
         table_name: &str,
         columns: &Option<Vec<usize>>,
         tag_predicates: &[(&str, &str)],
     ) -> Result<Vec<TimeSeriesId>> {
-        // Open a connection to the database containing the metadata.
+        // Compute the location of the database containing the metadata.
         let database_path = {
             // unwrap() is safe as read() only fails if the RwLock is poisoned.
             let catalog = self.context.catalog.read().unwrap();
@@ -217,18 +248,23 @@ impl ModelTable {
             }
         };
 
-        // Retrieve the hashes using the query and reconstruct the keys.
-        self.lookup_keys_from_sqlite_database(&database_path, &query_field_columns, &query_hashes)
+        // Retrieve the hashes using the queries and reconstruct the keys.
+        self.compute_keys_using_sqlite_database(&database_path, &query_field_columns, &query_hashes)
             .map_err(|error| DataFusionError::Plan(error.to_string()))
     }
 
-    // TODO:extract the field columns requested in the user's query.
-    fn lookup_keys_from_sqlite_database(
+    // TODO: Move to the metadata component when it exists.
+    /// Compute the 64-bit keys of the univariate time series to retrieve from
+    /// the storage engine using the two queries constructed from the fields,
+    /// tag, and tag values in the user's query. Returns a [`RusqliteResult`] if
+    /// the data cannot be retrieved from [`catalog::METADATA_SQLITE_NAME`].
+    fn compute_keys_using_sqlite_database(
         &self,
         database_path: &PathBuf,
         query_field_columns: &str,
         query_hashes: &str,
     ) -> RusqliteResult<Vec<u64>> {
+        // Open a connection to the database containing the metadata.
         let connection = Connection::open(database_path)?;
 
         // Retrieve the field columns.
@@ -266,22 +302,30 @@ impl ModelTable {
 
 #[async_trait]
 impl TableProvider for ModelTable {
+    /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
     }
 
+    /// Return the schema of the model table registered with Apache Arrow
+    /// DataFusion.
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
     }
 
-    fn supports_filter_pushdown(&self, _filter: &Expr) -> Result<TableProviderFilterPushDown> {
-        Ok(TableProviderFilterPushDown::Inexact)
-    }
-
+    /// Specify that model tables are base tables and not views or temporary.
     fn table_type(&self) -> TableType {
         TableType::Base
     }
 
+    /// Specify that model tables performs inexact predicate push-down.
+    fn supports_filter_pushdown(&self, _filter: &Expr) -> Result<TableProviderFilterPushDown> {
+        Ok(TableProviderFilterPushDown::Inexact)
+    }
+
+    /// Create an [`ExecutionPlan`] that will scan the table. Returns a
+    /// [`DataFusionError::Plan`] if the necessary metadata cannot be retrieved
+    /// from [`catalog::METADATA_SQLITE_NAME`].
     async fn scan(
         &self,
         _ctx: &SessionState,
@@ -291,7 +335,7 @@ impl TableProvider for ModelTable {
     ) -> Result<Arc<dyn ExecutionPlan>> {
         // TODO: extract predicates that consist of tag = tag_value from the query.
         let tag_predicates = vec![];
-        let keys = self.lookup_keys_from_tags(
+        let keys = self.compute_keys_using_fields_and_tags(
             &self.model_table_metadata.name,
             projection,
             &tag_predicates,
@@ -299,18 +343,18 @@ impl TableProvider for ModelTable {
 
         // Request the matching files from the storage engine.
         let mut key_object_metas = {
+            // TODO: make the storage engine support multiple parallel readers.
             // unwrap() is safe as read() only fails if the RwLock is poisoned.
             let mut storage_engines = self.context.storage_engine.write().unwrap();
 
             // unwrap() is safe to use as get_compressed_files() only fails if a
             // non-existing hash is passed or if end time is before start time.
-            // TODO: change the storage engine to allow multiple readers.
             storage_engines
                 .get_compressed_files(&keys, None, None)
                 .unwrap()
         };
 
-        //Create the data source node. Assumes the ObjectStore already exists.
+        // Create the data source operator. Assumes the ObjectStore exists.
         let partitioned_files: Vec<PartitionedFile> = key_object_metas
             .drain(0..)
             .map(|key_object_meta| PartitionedFile {
@@ -321,7 +365,7 @@ impl TableProvider for ModelTable {
             })
             .collect::<Vec<PartitionedFile>>();
 
-        //TODO: accumulate the size out the input data after filtering.
+        // TODO: predict the accumulate size of the input data after filtering.
         let statistics = Statistics {
             num_rows: None,
             total_byte_size: None,
@@ -329,7 +373,7 @@ impl TableProvider for ModelTable {
             is_exact: false,
         };
 
-        //TODO: partition and limit the number of rows read from the files.
+        // TODO: partition the rows in the files to support parallel processing.
         let file_scan_config = FileScanConfig {
             object_store_url: self.object_store_url.clone(),
             file_schema: Arc::new(StorageEngine::get_compressed_segment_schema()),
@@ -342,11 +386,13 @@ impl TableProvider for ModelTable {
 
         let predicate = self.rewrite_and_combine_filters(filters);
         let parquet_exec = Arc::new(ParquetExec::new(file_scan_config, predicate.clone(), None));
+
+        // Create a filter operator if filters are not empty.
         let input = self
-            .add_filter_exec(&predicate, &parquet_exec)
+            .new_filter_exec(&predicate, &parquet_exec)
             .unwrap_or(parquet_exec);
 
-        //Create the grid node
+        // Create the gridding operator.
         let grid_exec: Arc<dyn ExecutionPlan> = GridExec::new(
             self.model_table_metadata.clone(),
             projection,
@@ -354,20 +400,27 @@ impl TableProvider for ModelTable {
             self.schema(),
             input,
         );
+
         Ok(grid_exec)
     }
 }
 
-/* ExecutionPlan */
-//GridExec is public so the physical optimizer rules can pattern match on it, and
-//model_table_metadata is public so the rules use it as context is not in their scope.
+/// An operator that reconstructs the data points stored as segments containing
+/// metadata and models. It is public so the additional rules added to Apache
+/// Arrow DataFusion's physical optimizer can pattern match on it.
 #[derive(Debug, Clone)]
 pub struct GridExec {
-    pub model_table_metadata: Arc<ModelTableMetadata>,
+    /// Metadata required to query the model table.
+    model_table_metadata: Arc<ModelTableMetadata>,
+    /// Columns requested by the query.
     projection: Vec<usize>,
+    /// Number of rows requested by the query.
     limit: Option<usize>,
+    /// Schema of the model table after projection.
     schema_after_projection: SchemaRef,
+    /// Operator to read batches of rows from.
     input: Arc<dyn ExecutionPlan>,
+    /// Metrics collected during execution for use by EXPLAIN ANALYZE.
     metrics: ExecutionPlanMetricsSet,
 }
 
@@ -379,14 +432,14 @@ impl GridExec {
         schema: SchemaRef,
         input: Arc<dyn ExecutionPlan>,
     ) -> Arc<Self> {
-        //Modifies the schema so it matches the passed projection
+        // Modifies the schema so it matches the passed projection.
         let schema_after_projection = if let Some(ref projection) = projection {
             Arc::new(schema.project(projection).unwrap())
         } else {
             schema
         };
 
-        //Ensures a projection is present for looking up members
+        // Ensures a projection is present for looking up columns to return.
         let projection: Vec<usize> = if let Some(projection) = projection {
             projection.to_vec()
         } else {
@@ -411,27 +464,37 @@ impl GridExec {
 
 #[async_trait]
 impl ExecutionPlan for GridExec {
+    /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
     }
 
+    /// Return the schema of the model table after projection.
     fn schema(&self) -> SchemaRef {
         self.schema_after_projection.clone()
     }
 
+    /// Return the single operator batches of rows are read from.
     fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
         vec![self.input.clone()]
     }
 
+    /// Return the partitioning of the single operator batches of rows are read
+    /// from as [`GridExec`] does not repartition the batches of rows.
     fn output_partitioning(&self) -> Partitioning {
         self.input.output_partitioning()
     }
 
+    /// Return `None` to indicate that `GridExec` does not guarantee a specific
+    /// ordering of the rows it produces.
     fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
         //TODO: is grid guaranteed to always output data ordered by tid and time?
         None
     }
 
+    /// Return a new instance of [`GridExec`] with the operator to read batches
+    /// of rows from replaced. [`DataFusionError::Plan`] is returned if
+    /// `children` does not contain a single element.
     fn with_new_children(
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
@@ -443,7 +506,7 @@ impl ExecutionPlan for GridExec {
                 limit: self.limit,
                 schema_after_projection: self.schema_after_projection.clone(),
                 input: children[0].clone(),
-                metrics: ExecutionPlanMetricsSet::new(),
+                metrics: self.metrics.clone(),
             }))
         } else {
             Err(DataFusionError::Plan(format!(
@@ -453,6 +516,9 @@ impl ExecutionPlan for GridExec {
         }
     }
 
+    /// Create a stream that read batches of rows with segments from the data
+    /// source operator, reconstructs the data points from the metadata and
+    /// models in the segments, and returns batches of rows with data points.
     fn execute(
         &self,
         partition: usize,
@@ -467,6 +533,7 @@ impl ExecutionPlan for GridExec {
         )))
     }
 
+    /// Specify that [`GridExec`] knows nothing about the data it will output.
     fn statistics(&self) -> Statistics {
         Statistics {
             num_rows: None,
@@ -476,10 +543,13 @@ impl ExecutionPlan for GridExec {
         }
     }
 
+    /// Return a snapshot of the set of metrics being collected by the operator.
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())
     }
 
+    /// Write a string-based representation of the operator to `f`. Returns
+    /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> fmt::Result {
         let columns: Vec<&String> = self
             .schema_after_projection
@@ -496,12 +566,19 @@ impl ExecutionPlan for GridExec {
     }
 }
 
-/* Stream */
+/// A stream that read batches of rows with segments from the data source
+/// operator, reconstructs the data points from the metadata and models in the
+/// segments, and returns batches of rows with data points.
 struct GridStream {
+    /// Columns requested by the query.
     projection: Vec<usize>,
+    /// Number of rows requested by the query.
     _limit: Option<usize>,
+    /// Schema of the model table after projection.
     schema_after_projection: SchemaRef,
+    /// Stream to read batches of rows from.
     input: SendableRecordBatchStream,
+    /// Metrics collected during execution for use by EXPLAIN ANALYZE.
     baseline_metrics: BaselineMetrics,
 }
 
@@ -522,9 +599,11 @@ impl GridStream {
         }
     }
 
-    //TODO: it is necessary to return batch_size data points to prevent skew?
-    //TODO: limit the batches of data points to only contain what is needed.
-    fn grid(&self, batch: &RecordBatch) -> ArrowResult<RecordBatch> {
+    // TODO: it is necessary to return batch_size data points to prevent skew?
+    // TODO: limit the batches of data points to only contain what is needed.
+    /// Reconstruct the data points from the metadata and models in the segments
+    /// in `batch`, and return batches of rows with data points.
+    fn grid(&self, batch: &RecordBatch) -> RecordBatch {
         // Record the time elapsed from the timer is created to it is dropped.
         let _timer = self.baseline_metrics.elapsed_compute().timer();
 
@@ -541,6 +620,7 @@ impl GridStream {
             _error_array
         );
 
+        // The get_array!() macro causes compile errors due to nested generics.
         let key_string_array = batch
             .column(8)
             .as_any()
@@ -549,15 +629,13 @@ impl GridStream {
             .downcast_dict::<StringArray>()
             .unwrap();
 
-        // Each segments contains at least one data point.
-        //TODO: can the specific amount of memory required for the arrays be
-        // allocated without explicitly storing the length of the segment?
+        // Each segments is guaranteed to contain at least one data point.
         let num_rows = batch.num_rows();
         let mut key_builder = UInt64Array::builder(num_rows);
         let mut timestamp_builder = TimestampBuilder::with_capacity(num_rows);
         let mut value_builder = ValueBuilder::with_capacity(num_rows);
 
-        //Reconstructs the data points from the segments
+        // Reconstructs the data points from the segments.
         for row_index in 0..num_rows {
             // unwrap() is safe as the storage engine created the strings.
             let tid: u64 = key_string_array.value(row_index).parse().unwrap();
@@ -584,8 +662,8 @@ impl GridStream {
             );
         }
 
-        // Returns the batch of reconstructed data points with metadata.
-        let mut columns: Vec<ArrayRef> = Vec::with_capacity(3);
+        // Returns the batch of reconstructed data points.
+        let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.projection.len());
         for column in &self.projection {
             match column {
                 0 => columns.push(Arc::new(key_builder.finish())),
@@ -594,19 +672,28 @@ impl GridStream {
                 _ => unimplemented!("Tags currently cannot be added."),
             }
         }
-        Ok(RecordBatch::try_new(self.schema_after_projection.clone(), columns).unwrap())
+
+        // unwrap() is safe as columns are constructed from self.projection.
+        RecordBatch::try_new(self.schema_after_projection.clone(), columns).unwrap()
     }
 }
 
 impl Stream for GridStream {
+
+    /// Specify that [`GridStream`] returns [`ArrowResult<RecordBatch>`] when
+    /// polled.
     type Item = ArrowResult<RecordBatch>;
 
+    /// Try to poll the next element from the [`GridStream`] and returns:
+    /// * `Poll::Pending` if the next element is not yet ready.
+    /// * `Poll::Ready(Some(Ok(batch)))` if an element is ready.
+    /// * `Poll::Ready(None)` if the stream is empty.
     fn poll_next(
         mut self: Pin<&mut Self>,
         cx: &mut StdTaskContext<'_>,
     ) -> Poll<Option<Self::Item>> {
         let poll = self.input.poll_next_unpin(cx).map(|x| match x {
-            Some(Ok(batch)) => Some(self.grid(&batch)),
+            Some(Ok(batch)) => Some(Ok(self.grid(&batch))),
             other => other,
         });
         self.baseline_metrics.record_poll(poll)
@@ -614,6 +701,8 @@ impl Stream for GridStream {
 }
 
 impl RecordBatchStream for GridStream {
+
+    /// Return the schema of the model table after projection.
     fn schema(&self) -> SchemaRef {
         self.schema_after_projection.clone()
     }
