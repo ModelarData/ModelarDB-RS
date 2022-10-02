@@ -108,88 +108,6 @@ impl ModelTable {
         })
     }
 
-    /// Rewrite `filters` in terms of the model table's schema to filters in
-    /// terms of the schema used for compressed data by the storage engine. The
-    /// rewritten filters are then combined into a single [`Expr`]. A [`None`]
-    /// is returned if `filters` is empty.
-    fn rewrite_and_combine_filters(&self, filters: &[Expr]) -> Option<Expr> {
-        let rewritten_filters: Vec<Expr> = filters
-            .iter()
-            .map(|filter| match filter {
-                Expr::BinaryExpr { left, op, right } => {
-                    if **left == col("timestamp") {
-                        match op {
-                            Operator::Gt => {
-                                self.new_binary_expr(col("end_time"), *op, *right.clone())
-                            }
-                            Operator::GtEq => {
-                                self.new_binary_expr(col("end_time"), *op, *right.clone())
-                            }
-                            Operator::Lt => {
-                                self.new_binary_expr(col("start_time"), *op, *right.clone())
-                            }
-                            Operator::LtEq => {
-                                self.new_binary_expr(col("start_time"), *op, *right.clone())
-                            }
-                            Operator::Eq => self.new_binary_expr(
-                                self.new_binary_expr(
-                                    col("start_time"),
-                                    Operator::LtEq,
-                                    *right.clone(),
-                                ),
-                                Operator::And,
-                                self.new_binary_expr(
-                                    col("end_time"),
-                                    Operator::GtEq,
-                                    *right.clone(),
-                                ),
-                            ),
-                            _ => filter.clone(),
-                        }
-                    } else {
-                        filter.clone()
-                    }
-                }
-                _ => filter.clone(),
-            })
-            .collect();
-
-        // Combine the rewritten filters into an expression.
-        combine_filters(&rewritten_filters)
-    }
-
-    /// Create a [`Expr::BinaryExpr`].
-    fn new_binary_expr(&self, left: Expr, op: Operator, right: Expr) -> Expr {
-        Expr::BinaryExpr {
-            left: Box::new(left),
-            op,
-            right: Box::new(right),
-        }
-    }
-
-    /// Create a [`FilterExec`]. [`None`] is returned if `predicate` is
-    /// [`None`].
-    fn new_filter_exec(
-        &self,
-        predicate: &Option<Expr>,
-        input: &Arc<ParquetExec>,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        let predicate = predicate
-            .as_ref()
-            .ok_or_else(|| DataFusionError::Plan("predicate is none".to_owned()))?;
-
-        let schema = StorageEngine::get_compressed_segment_schema();
-        let df_schema = schema.clone().to_dfschema()?;
-
-        let physical_predicate =
-            planner::create_physical_expr(predicate, &df_schema, &schema, &ExecutionProps::new())?;
-
-        Ok(Arc::new(FilterExec::try_new(
-            physical_predicate,
-            input.clone(),
-        )?))
-    }
-
     // TODO: Move to the metadata component when it exists.
     /// Compute the 64-bit keys of the univariate time series to retrieve from
     /// the storage engine using the fields, tag, and tag values in the query.
@@ -300,6 +218,71 @@ impl ModelTable {
     }
 }
 
+/// Rewrite `filters` in terms of the model table's schema to filters in
+/// terms of the schema used for compressed data by the storage engine. The
+/// rewritten filters are then combined into a single [`Expr`]. A [`None`]
+/// is returned if `filters` is empty.
+fn rewrite_and_combine_filters(filters: &[Expr]) -> Option<Expr> {
+    let rewritten_filters: Vec<Expr> = filters
+        .iter()
+        .map(|filter| match filter {
+            Expr::BinaryExpr { left, op, right } => {
+                if **left == col("timestamp") {
+                    match op {
+                        Operator::Gt => new_binary_expr(col("end_time"), *op, *right.clone()),
+                        Operator::GtEq => new_binary_expr(col("end_time"), *op, *right.clone()),
+                        Operator::Lt => new_binary_expr(col("start_time"), *op, *right.clone()),
+                        Operator::LtEq => new_binary_expr(col("start_time"), *op, *right.clone()),
+                        Operator::Eq => new_binary_expr(
+                            new_binary_expr(col("start_time"), Operator::LtEq, *right.clone()),
+                            Operator::And,
+                            new_binary_expr(col("end_time"), Operator::GtEq, *right.clone()),
+                        ),
+                        _ => filter.clone(),
+                    }
+                } else {
+                    filter.clone()
+                }
+            }
+            _ => filter.clone(),
+        })
+        .collect();
+
+    // Combine the rewritten filters into an expression.
+    combine_filters(&rewritten_filters)
+}
+
+/// Create a [`Expr::BinaryExpr`].
+fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
+    Expr::BinaryExpr {
+        left: Box::new(left),
+        op,
+        right: Box::new(right),
+    }
+}
+
+/// Create a [`FilterExec`]. [`None`] is returned if `predicate` is
+/// [`None`].
+fn new_filter_exec(
+    predicate: &Option<Expr>,
+    input: &Arc<ParquetExec>,
+) -> Result<Arc<dyn ExecutionPlan>> {
+    let predicate = predicate
+        .as_ref()
+        .ok_or_else(|| DataFusionError::Plan("predicate is None".to_owned()))?;
+
+    let schema = StorageEngine::get_compressed_segment_schema();
+    let df_schema = schema.clone().to_dfschema()?;
+
+    let physical_predicate =
+        planner::create_physical_expr(predicate, &df_schema, &schema, &ExecutionProps::new())?;
+
+    Ok(Arc::new(FilterExec::try_new(
+        physical_predicate,
+        input.clone(),
+    )?))
+}
+
 #[async_trait]
 impl TableProvider for ModelTable {
     /// Return `self` as [`Any`] so it can be downcast.
@@ -384,13 +367,11 @@ impl TableProvider for ModelTable {
             table_partition_cols: vec!["storage_engine_key".to_owned()],
         };
 
-        let predicate = self.rewrite_and_combine_filters(filters);
+        let predicate = rewrite_and_combine_filters(filters);
         let parquet_exec = Arc::new(ParquetExec::new(file_scan_config, predicate.clone(), None));
 
         // Create a filter operator if filters are not empty.
-        let input = self
-            .new_filter_exec(&predicate, &parquet_exec)
-            .unwrap_or(parquet_exec);
+        let input = new_filter_exec(&predicate, &parquet_exec).unwrap_or(parquet_exec);
 
         // Create the gridding operator.
         let grid_exec: Arc<dyn ExecutionPlan> = GridExec::new(
@@ -488,7 +469,7 @@ impl ExecutionPlan for GridExec {
     /// Return `None` to indicate that `GridExec` does not guarantee a specific
     /// ordering of the rows it produces.
     fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        //TODO: is grid guaranteed to always output data ordered by tid and time?
+        //TODO: can it be guaranteed that GridExec outputs ordered data?
         None
     }
 
@@ -679,7 +660,6 @@ impl GridStream {
 }
 
 impl Stream for GridStream {
-
     /// Specify that [`GridStream`] returns [`ArrowResult<RecordBatch>`] when
     /// polled.
     type Item = ArrowResult<RecordBatch>;
@@ -701,9 +681,107 @@ impl Stream for GridStream {
 }
 
 impl RecordBatchStream for GridStream {
-
     /// Return the schema of the model table after projection.
     fn schema(&self) -> SchemaRef {
         self.schema_after_projection.clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use datafusion::logical_plan::lit;
+    use datafusion::prelude::Expr;
+
+    // Tests for rewrite_and_combine_filters().
+    #[test]
+    fn test_rewrite_empty_vec() {
+        assert!(rewrite_and_combine_filters(&vec!()).is_none());
+    }
+
+    #[test]
+    fn test_rewrite_greater_than_timestamp() {
+        let filters = new_timestamp_filters(Operator::Gt);
+        let predicate = rewrite_and_combine_filters(&filters).unwrap();
+        assert_timestamp_expr(predicate, "end_time", Operator::Gt);
+    }
+
+    #[test]
+    fn test_rewrite_greater_than_or_equal_timestamp() {
+        let filters = new_timestamp_filters(Operator::GtEq);
+        let predicate = rewrite_and_combine_filters(&filters).unwrap();
+        assert_timestamp_expr(predicate, "end_time", Operator::GtEq);
+    }
+
+    #[test]
+    fn test_rewrite_less_than_timestamp() {
+        let filters = new_timestamp_filters(Operator::Lt);
+        let predicate = rewrite_and_combine_filters(&filters).unwrap();
+        assert_timestamp_expr(predicate, "start_time", Operator::Lt);
+    }
+
+    #[test]
+    fn test_rewrite_less_than_or_equal_timestamp() {
+        let filters = new_timestamp_filters(Operator::LtEq);
+        let predicate = rewrite_and_combine_filters(&filters).unwrap();
+        assert_timestamp_expr(predicate, "start_time", Operator::LtEq);
+    }
+
+    #[test]
+    fn test_rewrite_equal_timestamp() {
+        let filters = new_timestamp_filters(Operator::Eq);
+        let predicate = rewrite_and_combine_filters(&filters).unwrap();
+
+        if let Expr::BinaryExpr { left, op, right } = predicate {
+            assert_timestamp_expr(*left, "start_time", Operator::LtEq);
+            assert_eq!(op, Operator::And);
+            assert_timestamp_expr(*right, "end_time", Operator::GtEq);
+        } else {
+            panic!("Expr is not a BinaryExpr");
+        }
+    }
+
+    fn new_timestamp_filters(operator: Operator) -> Vec<Expr> {
+        vec![new_binary_expr(col("timestamp"), operator, lit(37))]
+    }
+
+    fn assert_timestamp_expr(expr: Expr, column: &str, operator: Operator) {
+        if let Expr::BinaryExpr { left, op, right } = expr {
+            assert_eq!(*left, col(column));
+            assert_eq!(op, operator);
+            assert_eq!(*right, lit(37));
+        } else {
+            panic!("Expr is not a BinaryExpr");
+        }
+    }
+
+    // Tests for new_filter_exec().
+    #[test]
+    fn test_new_filter_exec_without_predicates() {
+        let parquet_exec = new_parquet_exec();
+        assert!(new_filter_exec(&None, &parquet_exec).is_err());
+    }
+
+    #[test]
+    fn test_new_filter_exec_with_predicates() {
+        let filters = vec!(new_binary_expr(col("timestamp"), Operator::Eq, lit(37)));
+        let predicates = rewrite_and_combine_filters(&filters);
+        let parquet_exec = new_parquet_exec();
+
+        assert!(new_filter_exec(&predicates, &parquet_exec).is_ok());
+    }
+
+    fn new_parquet_exec() -> Arc<ParquetExec> {
+        let file_scan_config = FileScanConfig {
+            object_store_url: ObjectStoreUrl::local_filesystem(),
+            file_schema: Arc::new(Schema::empty()),
+            file_groups: vec!(),
+            statistics: Statistics::default(),
+            projection: None,
+            limit: None,
+            table_partition_cols: vec!(),
+        };
+        Arc::new(ParquetExec::new(file_scan_config, None, None))
     }
 }
