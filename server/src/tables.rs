@@ -765,9 +765,10 @@ mod tests {
 
     #[test]
     fn test_new_filter_exec_with_predicates() {
-        let filters = vec!(new_binary_expr(col("timestamp"), Operator::Eq, lit(37)));
+        let filters = vec!(new_binary_expr(col("model_type_id"), Operator::Eq, lit(1)));
         let predicates = rewrite_and_combine_filters(&filters);
         let parquet_exec = new_parquet_exec();
+        new_filter_exec(&predicates, &parquet_exec).unwrap();
 
         assert!(new_filter_exec(&predicates, &parquet_exec).is_ok());
     }
