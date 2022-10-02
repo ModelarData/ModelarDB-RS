@@ -98,7 +98,8 @@ impl Catalog {
     }
 
     /// If `dir_entry` is a table, the metadata required to query the table is
-    /// added to `table_metadata`. otherwise return
+    /// added to `table_metadata`, if not the function returns without changing
+    /// `table_metadata`. An `Error` is returned if `dir_entry` is not UTF-8.
     fn try_adding_table_metadata(
         dir_entry: &DirEntry,
         table_metadata: &mut Vec<TableMetadata>,
