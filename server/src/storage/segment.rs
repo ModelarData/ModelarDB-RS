@@ -74,7 +74,8 @@ impl SegmentBuilder {
             + (BUILDER_CAPACITY * mem::size_of::<Value>())
     }
 
-    /// Return `true` if the [`SegmentBuilder`] is full, meaning additional data points cannot be appended.
+    /// Return [`true`] if the [`SegmentBuilder`] is full, meaning additional
+    /// data points cannot be appended.
     pub(super) fn is_full(&self) -> bool {
         self.get_length() == self.get_capacity()
     }

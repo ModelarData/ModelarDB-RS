@@ -230,7 +230,8 @@ impl StorageEngine {
         Ok(record_batch)
     }
 
-    /// Return `true` if `file_path` is a readable Apache Parquet file, otherwise `false`.
+    /// Return [`true`] if `file_path` is a readable Apache Parquet file,
+    /// otherwise [`false`].
     pub fn is_path_an_apache_parquet_file(file_path: &Path) -> bool {
         if let Ok(mut file) = File::open(file_path) {
             let mut first_four_bytes = vec![0u8; 4];

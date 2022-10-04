@@ -100,7 +100,7 @@ fn main() -> Result<(), String> {
         // Register Tables.
         register_tables_and_model_tables(&mut context);
 
-        // Setup CTRL-C handler.
+        // Setup CTRL+C handler.
         setup_ctrl_c_handler(&context);
 
         // Start Interface.
@@ -203,7 +203,7 @@ fn register_tables_and_model_tables(context: &mut Arc<Context>) {
 
 /// Check if the `result` from a table or model table initialization is an
 /// `Error`, if so log an error message containing `table_type` and `name` and
-/// return `false`, otherwise return `true`.
+/// return [`false`], otherwise return [`true`].
 fn check_if_table_or_model_table_is_initialized_otherwise_log_error<T>(
     table_type: &str,
     name: &str,
@@ -222,7 +222,9 @@ fn check_if_table_or_model_table_is_initialized_otherwise_log_error<T>(
     }
 }
 
-/// Register a handler to execute when CTRL-C is pressed.
+/// Register a handler to execute when CTRL+C is pressed. The handler takes an
+/// exclusive lock for the storage engine, flushes the data the storage engine
+/// currently buffers, and terminates the system without releasing the lock.
 fn setup_ctrl_c_handler(context: &Arc<Context>) {
     let ctrl_c_context = context.clone();
     context.runtime.spawn(async move {

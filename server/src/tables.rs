@@ -112,30 +112,22 @@ impl ModelTable {
     /// Compute the 64-bit keys of the univariate time series to retrieve from
     /// the storage engine using the fields, tag, and tag values in the query.
     /// Returns a [`DataFusionError::Plan`] if the necessary data cannot be
-    /// retrieved from [`catalog::METADATA_SQLITE_NAME`].
+    /// retrieved from the metadata database.
     fn compute_keys_using_fields_and_tags(
         &self,
         table_name: &str,
         columns: &Option<Vec<usize>>,
         tag_predicates: &[(&str, &str)],
     ) -> Result<Vec<TimeSeriesId>> {
-        // Compute the location of the database containing the metadata.
-        let database_path = {
-            // unwrap() is safe as read() only fails if the RwLock is poisoned.
-            let catalog = self.context.catalog.read().unwrap();
-            catalog.data_folder_path.join(catalog::METADATA_SQLITE_NAME)
-        };
-
-        // Construct the two queries that extract the field columns in the table
-        // being queried and the hashes of the multivariate time series in the
-        // table with tag values that match the tag values in the user's query.
+        // Construct a query that extracts the field columns in the table being
+        // queried which overlaps with the columns being requested by the query.
         let query_field_columns = if columns.is_none() {
             format!(
                 "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}'",
                 table_name
             )
         } else {
-            let column: Vec<String> = columns
+            let column_predicates: Vec<String> = columns
                 .clone()
                 .unwrap()
                 .iter()
@@ -145,10 +137,12 @@ impl ModelTable {
             format!(
                 "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}' AND {}",
                 table_name,
-                column.join(" OR ")
+                column_predicates.join(" OR ")
             )
         };
 
+        // Construct a query that extracts the hashes of the multivariate time
+        // series in the table with tag values that match those in the query.
         let query_hashes = {
             if tag_predicates.is_empty() {
                 format!("SELECT hash FROM {}_tags", table_name)
@@ -167,21 +161,28 @@ impl ModelTable {
         };
 
         // Retrieve the hashes using the queries and reconstruct the keys.
-        self.compute_keys_using_sqlite_database(&database_path, &query_field_columns, &query_hashes)
+        self.compute_keys_using_metadata_database(&query_field_columns, &query_hashes)
             .map_err(|error| DataFusionError::Plan(error.to_string()))
     }
 
     // TODO: Move to the metadata component when it exists.
     /// Compute the 64-bit keys of the univariate time series to retrieve from
     /// the storage engine using the two queries constructed from the fields,
-    /// tag, and tag values in the user's query. Returns a [`RusqliteResult`] if
-    /// the data cannot be retrieved from [`catalog::METADATA_SQLITE_NAME`].
-    fn compute_keys_using_sqlite_database(
+    /// tag, and tag values in the user's query. Returns a [`RusqliteResult`]
+    /// with an [`Error`](rusqlite::Error) if the data cannot be retrieved from
+    /// the metadata database, otherwise the keys are returned.
+    fn compute_keys_using_metadata_database(
         &self,
-        database_path: &PathBuf,
         query_field_columns: &str,
         query_hashes: &str,
     ) -> RusqliteResult<Vec<u64>> {
+        // Compute the location of the database containing the metadata.
+        let database_path = {
+            // unwrap() is safe as read() only fails if the RwLock is poisoned.
+            let catalog = self.context.catalog.read().unwrap();
+            catalog.data_folder_path.join(catalog::METADATA_SQLITE_NAME)
+        };
+
         // Open a connection to the database containing the metadata.
         let connection = Connection::open(database_path)?;
 
@@ -308,7 +309,7 @@ impl TableProvider for ModelTable {
 
     /// Create an [`ExecutionPlan`] that will scan the table. Returns a
     /// [`DataFusionError::Plan`] if the necessary metadata cannot be retrieved
-    /// from [`catalog::METADATA_SQLITE_NAME`].
+    /// from the metadata database.
     async fn scan(
         &self,
         _ctx: &SessionState,
@@ -610,7 +611,7 @@ impl GridStream {
             .downcast_dict::<StringArray>()
             .unwrap();
 
-        // Each segments is guaranteed to contain at least one data point.
+        // Each segment is guaranteed to contain at least one data point.
         let num_rows = batch.num_rows();
         let mut key_builder = UInt64Array::builder(num_rows);
         let mut timestamp_builder = TimestampBuilder::with_capacity(num_rows);
@@ -738,7 +739,7 @@ mod tests {
             assert_eq!(op, Operator::And);
             assert_timestamp_expr(*right, "end_time", Operator::GtEq);
         } else {
-            panic!("Expr is not a BinaryExpr");
+            panic!("Expr is not a BinaryExpr.");
         }
     }
 
@@ -752,7 +753,7 @@ mod tests {
             assert_eq!(op, operator);
             assert_eq!(*right, lit(37));
         } else {
-            panic!("Expr is not a BinaryExpr");
+            panic!("Expr is not a BinaryExpr.");
         }
     }
 
@@ -765,7 +766,7 @@ mod tests {
 
     #[test]
     fn test_new_filter_exec_with_predicates() {
-        let filters = vec!(new_binary_expr(col("model_type_id"), Operator::Eq, lit(1)));
+        let filters = vec![new_binary_expr(col("model_type_id"), Operator::Eq, lit(1))];
         let predicates = rewrite_and_combine_filters(&filters);
         let parquet_exec = new_parquet_exec();
 
@@ -776,11 +777,11 @@ mod tests {
         let file_scan_config = FileScanConfig {
             object_store_url: ObjectStoreUrl::local_filesystem(),
             file_schema: Arc::new(Schema::empty()),
-            file_groups: vec!(),
+            file_groups: vec![],
             statistics: Statistics::default(),
             projection: None,
             limit: None,
-            table_partition_cols: vec!(),
+            table_partition_cols: vec![],
         };
         Arc::new(ParquetExec::new(file_scan_config, None, None))
     }

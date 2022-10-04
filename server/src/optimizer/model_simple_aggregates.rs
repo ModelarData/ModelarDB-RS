@@ -62,36 +62,37 @@ pub struct ModelSimpleAggregatesPhysicalOptimizerRule {}
 impl ModelSimpleAggregatesPhysicalOptimizerRule {
     fn optimize(&self, plan: &Arc<dyn ExecutionPlan>) -> Option<Arc<dyn ExecutionPlan>> {
         // Matches a simple aggregate performed without filtering out segments.
-        if let Some(hae) = plan.as_any().downcast_ref::<AggregateExec>() {
-            let children = &hae.children();
+        if let Some(aggregate_exec) = plan.as_any().downcast_ref::<AggregateExec>() {
+            let children = &aggregate_exec.children();
             if children.len() == 1 {
-                let ae = hae.aggr_expr();
-                if ae.len() == 1 {
+                let aggregate_expr = aggregate_exec.aggr_expr();
+                if aggregate_expr.len() == 1 {
                     // TODO: simplify and factor out shared code using macros or functions.
-                    if ae[0].as_any().downcast_ref::<Count>().is_some() {
-                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                            let mae = ModelAggregateExpr::new(ModelAggregateType::Count);
-                            return Some(new_aggregate(hae, mae, ge));
+                    if aggregate_expr[0].as_any().downcast_ref::<Count>().is_some() {
+                        if let Some(grid_exec) = children[0].as_any().downcast_ref::<GridExec>() {
+                            let model_aggregate =
+                                ModelAggregateExpr::new(ModelAggregateType::Count);
+                            return Some(new_aggregate(aggregate_exec, model_aggregate, grid_exec));
                         }
-                    } else if ae[0].as_any().downcast_ref::<Min>().is_some() {
-                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                            let mae = ModelAggregateExpr::new(ModelAggregateType::Min);
-                            return Some(new_aggregate(hae, mae, ge));
+                    } else if aggregate_expr[0].as_any().downcast_ref::<Min>().is_some() {
+                        if let Some(grid_exec) = children[0].as_any().downcast_ref::<GridExec>() {
+                            let model_aggregate = ModelAggregateExpr::new(ModelAggregateType::Min);
+                            return Some(new_aggregate(aggregate_exec, model_aggregate, grid_exec));
                         }
-                    } else if ae[0].as_any().downcast_ref::<Max>().is_some() {
-                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                            let mae = ModelAggregateExpr::new(ModelAggregateType::Max);
-                            return Some(new_aggregate(hae, mae, ge));
+                    } else if aggregate_expr[0].as_any().downcast_ref::<Max>().is_some() {
+                        if let Some(grid_exec) = children[0].as_any().downcast_ref::<GridExec>() {
+                            let model_aggregate = ModelAggregateExpr::new(ModelAggregateType::Max);
+                            return Some(new_aggregate(aggregate_exec, model_aggregate, grid_exec));
                         }
-                    } else if ae[0].as_any().downcast_ref::<Sum>().is_some() {
-                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                            let mae = ModelAggregateExpr::new(ModelAggregateType::Sum);
-                            return Some(new_aggregate(hae, mae, ge));
+                    } else if aggregate_expr[0].as_any().downcast_ref::<Sum>().is_some() {
+                        if let Some(grid_exec) = children[0].as_any().downcast_ref::<GridExec>() {
+                            let model_aggregate = ModelAggregateExpr::new(ModelAggregateType::Sum);
+                            return Some(new_aggregate(aggregate_exec, model_aggregate, grid_exec));
                         }
-                    } else if ae[0].as_any().downcast_ref::<Avg>().is_some() {
-                        if let Some(ge) = children[0].as_any().downcast_ref::<GridExec>() {
-                            let mae = ModelAggregateExpr::new(ModelAggregateType::Avg);
-                            return Some(new_aggregate(hae, mae, ge));
+                    } else if aggregate_expr[0].as_any().downcast_ref::<Avg>().is_some() {
+                        if let Some(grid_exec) = children[0].as_any().downcast_ref::<GridExec>() {
+                            let model_aggregate = ModelAggregateExpr::new(ModelAggregateType::Avg);
+                            return Some(new_aggregate(aggregate_exec, model_aggregate, grid_exec));
                         }
                     }
                 }

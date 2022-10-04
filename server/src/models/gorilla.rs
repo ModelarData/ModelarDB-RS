@@ -130,6 +130,9 @@ impl Gorilla {
 /// Compute the sum of the values for a time series segment whose values are
 /// compressed using Gorilla's compression method for floating-point values.
 pub fn sum(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8], values: &[u8]) -> Value {
+    // This function replicates code from gorilla::grid() as it isn't necessary
+    // to store the time series ids, timestamps, and values in arrays for a sum.
+    // So any changes to the decompression must be mirrored in gorilla::grid().
     let length = models::length(start_time, end_time, timestamps);
     let mut bits = BitReader::try_new(values).unwrap();
     let mut leading_zeros = u8::MAX;
@@ -173,6 +176,7 @@ pub fn grid(
     timestamps: &[Timestamp],
     value_builder: &mut ValueBuilder,
 ) {
+    // Changes to the decompression must be mirrored in gorilla::sum().
     let mut bits = BitReader::try_new(values).unwrap();
     let mut leading_zeros = u8::MAX;
     let mut trailing_zeros: u8 = 0;

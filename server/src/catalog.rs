@@ -50,9 +50,9 @@ pub struct Catalog {
 }
 
 impl Catalog {
-    /// Scan `data_folder` for tables and model tables and construct a `Catalog`
-    /// that contains the metadata necessary to query these tables. Returns
-    /// `Error` if the contents of `data_folder` cannot be read.
+    /// Scan `data_folder` for tables and model tables and construct a
+    /// [`Catalog`] that contains the metadata necessary to query these tables.
+    /// Returns [`Error`] if the contents of `data_folder` cannot be read.
     pub fn try_new(data_folder_path: &Path) -> Result<Self, Error> {
         if !Self::is_path_a_data_folder(data_folder_path) {
             warn!("The data folder is not empty and does not contain data from ModelarDB");
@@ -65,13 +65,12 @@ impl Catalog {
             // try_adding_table_metadata() as it does not seem possible to
             // return an error without also moving it out of a reference.
             if let Ok(ref dir_entry) = maybe_dir_entry {
-                if let Err(maybe_error) =
-                    Self::try_adding_table_metadata(dir_entry, &mut table_metadata)
+                if let Err(error) = Self::try_adding_table_metadata(dir_entry, &mut table_metadata)
                 {
                     error!(
                         "Cannot read metadata from '{}': {}",
                         dir_entry.path().to_string_lossy(),
-                        maybe_error,
+                        error,
                     );
                 }
             } else {
@@ -99,7 +98,7 @@ impl Catalog {
 
     /// If `dir_entry` is a table, the metadata required to query the table is
     /// added to `table_metadata`, if not the function returns without changing
-    /// `table_metadata`. An `Error` is returned if `dir_entry` is not UTF-8.
+    /// `table_metadata`. An [`Error`] is returned if `dir_entry` is not UTF-8.
     fn try_adding_table_metadata(
         dir_entry: &DirEntry,
         table_metadata: &mut Vec<TableMetadata>,
@@ -118,7 +117,7 @@ impl Catalog {
         // HACK: workaround for DataFusion converting table names to lowercase.
         let normalized_file_or_folder_name = file_name.to_ascii_lowercase();
 
-        // Check if the file or folder is METADATA_SQLITE_NAME, so it can be
+        // Check if the file or folder is the metadata database, so it can be
         // skipped without logging any errors, a table, or neither.
         if path.ends_with(METADATA_SQLITE_NAME) {
             // Skip without emitting any errors.
@@ -139,7 +138,7 @@ impl Catalog {
         Ok(())
     }
 
-    /// Return `true` if `path` is a data folder, otherwise `false`.
+    /// Return [`true`] if `path` is a data folder, otherwise [`false`].
     fn is_path_a_data_folder(path: &Path) -> bool {
         if let Ok(files_and_folders) = fs::read_dir(path) {
             files_and_folders.count() == 0 || path.join(METADATA_SQLITE_NAME).exists()
@@ -148,25 +147,26 @@ impl Catalog {
         }
     }
 
-    /// Return `true` if `path` is a readable table, otherwise `false`.
+    /// Return [`true`] if `path` is a readable table, otherwise [`false`].
     fn is_path_a_table(path: &Path) -> bool {
         if path.is_file() {
             StorageEngine::is_path_an_apache_parquet_file(&path)
         } else if path.is_dir() {
-            Self::count_apache_aparquet_file_in_folder(&path) > 0
+            Self::count_apache_parquet_files_in_folder(&path) > 0
         } else {
             false
         }
     }
 
-    /// Return `true` if `path` is a readable model table, otherwise `false`.
+    /// Return [`true`] if `path` is a readable model table, otherwise
+    /// [`false`].
     fn is_path_a_model_table(path: &Path) -> bool {
         let compressed_path = path.join("compressed");
-        compressed_path.exists() && Self::count_apache_aparquet_file_in_folder(&compressed_path) > 0
+        compressed_path.exists() && Self::count_apache_parquet_files_in_folder(&compressed_path) > 0
     }
 
     /// Return the number of Apache Parquet files in the folder at `path`.
-    fn count_apache_aparquet_file_in_folder(path: &Path) -> usize {
+    fn count_apache_parquet_files_in_folder(path: &Path) -> usize {
         let mut number_of_apache_parquet_files = 0;
 
         if let Ok(files_or_folders) = fs::read_dir(&path) {
@@ -391,9 +391,139 @@ impl ModelTableMetadata {
 mod tests {
     use super::*;
 
+    use std::{fs, io::Write};
+
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field};
+    use tempfile::{tempdir, TempDir};
 
     use crate::types::{ArrowTimestamp, ArrowValue};
+
+    // Tests for Catalog.
+    #[test]
+    fn test_a_non_empty_folder_without_metadata_is_not_data_folder() {
+        let temp_dir = tempdir().unwrap();
+        create_empty_folder(temp_dir.path(), "folder");
+        assert!(!Catalog::is_path_a_data_folder(temp_dir.path()));
+    }
+
+    #[test]
+    fn test_an_empty_folder_is_a_data_folder() {
+        let temp_dir = tempdir().unwrap();
+        assert!(Catalog::is_path_a_data_folder(temp_dir.path()));
+    }
+
+    #[test]
+    fn test_a_non_empty_folder_with_metadata_is_a_data_folder() {
+        let temp_dir = tempdir().unwrap();
+        create_empty_folder(temp_dir.path(), "table_folder");
+        fs::create_dir(temp_dir.path().join(METADATA_SQLITE_NAME)).unwrap();
+        assert!(Catalog::is_path_a_data_folder(temp_dir.path()));
+    }
+
+    #[test]
+    fn test_an_empty_file_is_not_a_table() {
+        let temp_dir = tempdir().unwrap();
+        let path_buf = temp_dir.path().join("file");
+        fs::File::create(&path_buf).unwrap();
+        assert!(!Catalog::is_path_a_table(&path_buf));
+    }
+
+    #[test]
+    fn test_an_apache_parquet_file_is_a_table() {
+        let temp_dir = tempdir().unwrap();
+        let path_buf = create_apache_parquet_file(temp_dir.path(), "file");
+        assert!(Catalog::is_path_a_table(&path_buf));
+    }
+
+    #[test]
+    fn test_an_empty_folder_is_not_a_table() {
+        let temp_dir = tempdir().unwrap();
+        let path_buf = create_empty_folder(temp_dir.path(), "folder");
+        assert!(!Catalog::is_path_a_table(&path_buf));
+    }
+
+    #[test]
+    fn test_a_folder_without_apache_parquet_files_is_not_a_table() {
+        let temp_dir = tempdir().unwrap();
+        let folder_path_buf = create_empty_folder(temp_dir.path(), "folder");
+        let file_path_buf = create_empty_folder(&folder_path_buf, "file");
+        assert!(!Catalog::is_path_a_table(&file_path_buf));
+    }
+
+    #[test]
+    fn test_a_folder_with_apache_parquet_files_is_a_table() {
+        let temp_dir = tempdir().unwrap();
+        let folder_path_buf = create_empty_folder(temp_dir.path(), "folder");
+        let file_path_buf = create_apache_parquet_file(&folder_path_buf, "file");
+        assert!(Catalog::is_path_a_table(&file_path_buf));
+    }
+
+    #[test]
+    fn test_an_empty_folder_is_not_a_model_table() {
+        let temp_dir = tempdir().unwrap();
+        let path_buf = create_empty_folder(temp_dir.path(), "folder");
+        assert!(!Catalog::is_path_a_model_table(&path_buf));
+    }
+
+    #[test]
+    fn test_a_folder_with_an_empty_compressed_folder_is_not_a_model_table() {
+        let temp_dir = tempdir().unwrap();
+        let root_path_buf = create_empty_folder(temp_dir.path(), "folder");
+        create_empty_folder(root_path_buf.as_path(), "compressed");
+        assert!(!Catalog::is_path_a_model_table(root_path_buf.as_path()));
+    }
+
+    #[test]
+    fn test_a_folder_with_a_compressed_folder_containing_apache_parquet_files_is_a_model_table() {
+        let temp_dir = tempdir().unwrap();
+        let root_path_buf = create_empty_folder(temp_dir.path(), "folder");
+        let compressed_path_buf = create_empty_folder(root_path_buf.as_path(), "compressed");
+        create_apache_parquet_file(&compressed_path_buf, "file");
+        assert!(Catalog::is_path_a_model_table(root_path_buf.as_path()));
+    }
+
+    #[test]
+    fn test_an_empty_folder_contains_zero_apache_parquet_files() {
+        let temp_dir = tempdir().unwrap();
+        assert_eq!(
+            Catalog::count_apache_parquet_files_in_folder(temp_dir.path()),
+            0
+        );
+    }
+
+    #[test]
+    fn test_a_folder_with_other_files_contains_zero_apache_parquet_files() {
+        let temp_dir = tempdir().unwrap();
+        fs::File::create(&temp_dir.path().join("file")).unwrap();
+        assert_eq!(
+            Catalog::count_apache_parquet_files_in_folder(temp_dir.path()),
+            0
+        );
+    }
+
+    #[test]
+    fn test_a_folder_with_apache_parquet_files_contains_apache_parquet_files() {
+        let temp_dir = tempdir().unwrap();
+        fs::File::create(&temp_dir.path().join("not_apache_parquet_file")).unwrap();
+        create_apache_parquet_file(temp_dir.path(), "apache_parquet_file");
+        assert_eq!(
+            Catalog::count_apache_parquet_files_in_folder(temp_dir.path()),
+            1
+        );
+    }
+
+    fn create_empty_folder(path: &Path, name: &str) -> PathBuf {
+        let path_buf = path.join(name);
+        fs::create_dir(&path_buf).unwrap();
+        path_buf
+    }
+
+    fn create_apache_parquet_file(path: &Path, name: &str) -> PathBuf {
+        let file_path = path.join(name);
+        let mut file = fs::File::create(&file_path).unwrap();
+        file.write_all(&[80, 65, 82, 49]).unwrap(); // PAR1
+        file_path
+    }
 
     // Tests for TableMetadata.
     #[test]
@@ -534,13 +664,8 @@ mod tests {
             .map(|i| Field::new(format!("field_{}", i).as_str(), DataType::Float32, false))
             .collect::<Vec<Field>>();
 
-        let schema = get_model_table_schema();
-        let result = ModelTableMetadata::try_new(
-            "table_name".to_owned(),
-            Schema::new(fields),
-            vec![0, 1, 2],
-            3,
-        );
+        let table_name = "table_name".to_owned();
+        let result = ModelTableMetadata::try_new(table_name, Schema::new(fields), vec![0, 1, 2], 3);
 
         assert!(result.is_err());
     }
