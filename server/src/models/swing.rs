@@ -468,18 +468,12 @@ mod tests {
     proptest! {
     #[test]
     fn test_grid(value in num::i32::ANY.prop_map(i32_to_value)) {
-        // The linear function represents a constant to have a known value.
-        let (slope, intercept) = compute_slope_and_intercept(
-            FIRST_TIMESTAMP,
-            value as f64,
-            FINAL_TIMESTAMP,
-            value as f64,
-        );
         let timestamps: Vec<Timestamp> = (FIRST_TIMESTAMP ..= FINAL_TIMESTAMP)
             .step_by(SAMPLING_INTERVAL as usize).collect();
         let mut time_series_ids = TimeSeriesIdBuilder::with_capacity(timestamps.len());
         let mut values = ValueBuilder::with_capacity(timestamps.len());
 
+        // The linear function represents a constant to have a known value.
         grid(
             1,
             FIRST_TIMESTAMP,

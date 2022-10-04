@@ -394,7 +394,7 @@ mod tests {
     use std::{fs, io::Write};
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field};
-    use tempfile::{tempdir, TempDir};
+    use tempfile::tempdir;
 
     use crate::types::{ArrowTimestamp, ArrowValue};
 

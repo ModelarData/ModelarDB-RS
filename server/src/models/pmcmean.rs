@@ -275,7 +275,6 @@ mod tests {
     proptest! {
     #[test]
     fn test_grid(value in ProptestValue::ANY) {
-        let model = value.to_be_bytes();
         let sampling_interval: i64 = 60;
         let mut time_series_ids = TimeSeriesIdBuilder::with_capacity(10);
         let timestamps: Vec<Timestamp> = (60..=600).step_by(60).collect();
