@@ -47,7 +47,7 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
 use crate::catalog;
-use crate::catalog::{ModelTableMetadata, TableMetadata};
+use crate::catalog::{Catalog, ModelTableMetadata, TableMetadata};
 use crate::storage::StorageEngine;
 use crate::tables::ModelTable;
 use crate::Context;
@@ -427,6 +427,7 @@ impl FlightService for FlightServiceHandler {
             .flight_descriptor
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
         let table_name = self.get_table_name_from_flight_descriptor(&flight_descriptor)?;
+        let normalized_table_name = Catalog::normalize_table_name(&table_name);
 
         // Check if it is a model table that can be found in the in-memory catalog.
         let maybe_model_table = {
@@ -435,7 +436,7 @@ impl FlightService for FlightServiceHandler {
             let mut model_tables = catalog.model_table_metadata.iter();
 
             model_tables
-                .find(|table| table.name == *table_name)
+                .find(|table| table.name == *normalized_table_name)
                 .cloned()
         };
 
@@ -445,8 +446,9 @@ impl FlightService for FlightServiceHandler {
                 .await?;
         } else {
             // If the table is not a model table, check if it can be found in the datafusion catalog.
-            let schema = self.get_schema_of_table_in_the_default_database_schema(&table_name)?;
-            self.ingest_into_table(table_name, schema, flight_data_stream);
+            let schema =
+                self.get_schema_of_table_in_the_default_database_schema(&normalized_table_name)?;
+            self.ingest_into_table(&normalized_table_name, schema, flight_data_stream);
         }
 
         // Confirm the data points were received.
@@ -484,21 +486,25 @@ impl FlightService for FlightServiceHandler {
             let (table_name_bytes, offset_data) = extract_argument_bytes(&action.body);
             let table_name = str::from_utf8(table_name_bytes)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            let normalized_table_name = Catalog::normalize_table_name(&table_name);
 
             // If the table already exists, return an error.
             if self
-                .get_schema_of_table_in_the_default_database_schema(&table_name)
+                .get_schema_of_table_in_the_default_database_schema(&normalized_table_name)
                 .is_ok()
             {
-                let message = format!("Table with name '{}' already exists.", table_name);
+                let message = format!(
+                    "Table with name '{}' already exists.",
+                    normalized_table_name
+                );
                 return Err(Status::already_exists(message));
             }
 
             // Check if the table name is a valid object_store path and database table name.
-            object_store::path::Path::parse(table_name)
+            object_store::path::Path::parse(&normalized_table_name)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            if table_name.contains(char::is_whitespace) {
+            if normalized_table_name.contains(char::is_whitespace) {
                 return Err(Status::invalid_argument(
                     "Table name cannot contain whitespace.".to_owned(),
                 ));
@@ -511,7 +517,8 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             if action.r#type == "CreateTable" {
-                self.create_table(table_name.to_owned(), schema).await?;
+                self.create_table(normalized_table_name.to_owned(), schema)
+                    .await?;
             } else {
                 // Extract the tag column indices from the action body. Note that since we assume
                 // each tag column index is one byte, we directly use the slice of bytes as the list
@@ -522,7 +529,7 @@ impl FlightService for FlightServiceHandler {
                 let (timestamp_index, _offset_data) = extract_argument_bytes(offset_data);
 
                 self.create_model_table(
-                    table_name.to_owned(),
+                    normalized_table_name.to_owned(),
                     schema,
                     tag_indices.to_vec(),
                     timestamp_index[0],

@@ -96,6 +96,11 @@ impl Catalog {
         })
     }
 
+    /// Normalize `table name` to allow direct comparisons between table names.
+    pub fn normalize_table_name(table_name: &str) -> String {
+        table_name.to_lowercase()
+    }
+
     /// If `dir_entry` is a table, the metadata required to query the table is
     /// added to `table_metadata`, if not the function returns without changing
     /// `table_metadata`. An [`Error`] is returned if `dir_entry` is not UTF-8.
@@ -109,13 +114,11 @@ impl Catalog {
         })?;
 
         // The extra let binding is required to create a longer lived value.
-        let file_name = dir_entry.file_name();
-        let file_name = file_name.to_str().ok_or_else(|| {
+        let file_or_folder_name = dir_entry.file_name();
+        let file_or_folder_name = file_or_folder_name.to_str().ok_or_else(|| {
             Error::new(ErrorKind::InvalidData, "File or folder name is not UTF-8.")
         })?;
-
-        // HACK: workaround for DataFusion converting table names to lowercase.
-        let normalized_file_or_folder_name = file_name.to_ascii_lowercase();
+        let normalized_file_or_folder_name = Catalog::normalize_table_name(&file_or_folder_name);
 
         // Check if the file or folder is the metadata database, so it can be
         // skipped without logging any errors, a table, or neither.
