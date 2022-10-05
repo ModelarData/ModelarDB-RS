@@ -23,15 +23,16 @@ use std::path::PathBuf;
 use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
 use rusqlite::Connection;
-use tracing::{info, info_span};
+use tracing::{debug, debug_span};
 
-use crate::catalog::NewModelTableMetadata;
+use crate::catalog;
+use crate::catalog::ModelTableMetadata;
 use crate::{compression, get_array};
 use crate::models::ErrorBound;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder, UncompressedSegment};
 use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
 
-const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
+const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 512 * 1024 * 1024; // 512 MiB
 
 /// Converts a batch of data to uncompressed data points and stores uncompressed data points
 /// temporarily in an in-memory buffer that spills to Apache Parquet files. When finished the data
@@ -73,11 +74,11 @@ impl UncompressedDataManager {
     /// successfully inserted, otherwise return [`Err`].
     pub(super) fn insert_data_points(
         &mut self,
-        model_table: &NewModelTableMetadata,
+        model_table: &ModelTableMetadata,
         data_points: &RecordBatch,
     ) -> Result<Vec<(u64, RecordBatch)>, String> {
-        let _span = info_span!("insert_data_points", table = model_table.name).entered();
-        info!(
+        let _span = debug_span!("insert_data_points", table = model_table.name).entered();
+        debug!(
             "Received record batch with {} data points for the table '{}'.",
             data_points.num_rows(),
             model_table.name
@@ -157,13 +158,30 @@ impl UncompressedDataManager {
         Ok(compressed_segments)
     }
 
+    // TODO: Update to handle finished segments when compress_full_segment is removed.
+    /// Compress the uncompressed data that the [`UncompressedDataManager`] is
+    /// currently managing, and return the compressed segments and their keys.
+    pub(super) fn flush(&mut self) -> Vec<(u64, RecordBatch)> {
+        // The keys are copied to not have multiple borrows to self at the same
+        // time, however, it is not clear if it necessary or can be removed.
+        let keys: Vec<u64> = self.uncompressed_data.keys().cloned().collect();
+
+        let mut compressed_segments = vec![];
+        for key in keys {
+            let segment = self.uncompressed_data.remove(&key).unwrap();
+            let record_batch = self.compress_full_segment(segment);
+            compressed_segments.push((key, record_batch));
+        }
+        compressed_segments
+    }
+
     /// Return the tag hash for the given list of tag values either by retrieving it from the cache
     /// or, if it is a new combination of tag values, generating a new hash. If a new hash is
     /// created, the hash is saved both in the cache and persisted to the model_table_tags table. If
     /// the table could not be accessed, return [`rusqlite::Error`].
     fn get_or_compute_tag_hash(
         &mut self,
-        model_table: &NewModelTableMetadata,
+        model_table: &ModelTableMetadata,
         tag_values: &Vec<String>,
     ) -> Result<u64, rusqlite::Error> {
         let cache_key = {
@@ -204,14 +222,17 @@ impl UncompressedDataManager {
                 .collect::<Vec<String>>()
                 .join(",");
 
-            let database_path = self.data_folder_path.join("metadata.sqlite3");
+            let database_path = self.data_folder_path.join(catalog::METADATA_SQLITE_NAME);
             let connection = Connection::open(database_path)?;
+
+            // SQLite use signed integers https://www.sqlite.org/datatype3.html.
+            let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
             // OR IGNORE is used to silently fail when trying to insert an already existing hash.
             connection.execute(
                 format!(
                     "INSERT OR IGNORE INTO {}_tags (hash,{}) VALUES ({},{})",
-                    model_table.name, tag_columns, tag_hash, values
+                    model_table.name, tag_columns, signed_tag_hash, values
                 )
                 .as_str(),
                 (),
@@ -230,18 +251,18 @@ impl UncompressedDataManager {
         timestamp: Timestamp,
         value: Value,
     ) -> Option<RecordBatch>  {
-        let _span = info_span!("insert_data_point", key = key).entered();
-        info!(
+        let _span = debug_span!("insert_data_point", key = key).entered();
+        debug!(
             "Inserting data point ({}, {}) into segment.",
             timestamp, value
         );
 
         if let Some(segment) = self.uncompressed_data.get_mut(&key) {
-            info!("Found existing segment.");
+            debug!("Found existing segment.");
             segment.insert_data(timestamp, value);
 
             if segment.is_full() {
-                info!("Segment is full, moving it to the queue of finished segments.");
+                debug!("Segment is full, moving it to the queue of finished segments.");
 
                 // Since this is only reachable if the segment exists in the HashMap, unwrap is safe to use.
                 let full_segment = self.uncompressed_data.remove(&key).unwrap();
@@ -256,7 +277,7 @@ impl UncompressedDataManager {
                 }
             }
         } else {
-            info!("Could not find segment. Creating segment.");
+            debug!("Could not find segment. Creating segment.");
 
             // If there is not enough memory for a new segment, spill a finished segment.
             if SegmentBuilder::get_memory_size() > self.uncompressed_remaining_memory_in_bytes {
@@ -267,7 +288,7 @@ impl UncompressedDataManager {
             let mut segment = SegmentBuilder::new();
             self.uncompressed_remaining_memory_in_bytes -= SegmentBuilder::get_memory_size();
 
-            info!(
+            debug!(
                 "Created segment. Remaining reserved bytes: {}.",
                 self.uncompressed_remaining_memory_in_bytes
             );
@@ -330,7 +351,7 @@ impl UncompressedDataManager {
     /// Spill the first in-memory [`FinishedSegment`] in the queue of [`FinishedSegments`](FinishedSegment).
     /// If no in-memory [`FinishedSegments`](FinishedSegment) could be found, [`panic`](std::panic).
     fn spill_finished_segment(&mut self) {
-        info!("Not enough memory to create segment. Spilling an already finished segment.");
+        debug!("Not enough memory to create segment. Spilling an already finished segment.");
 
         // Iterate through the finished segments to find a segment that is in memory.
         for finished in self.finished_queue.iter_mut() {
@@ -339,7 +360,7 @@ impl UncompressedDataManager {
                 // Add the size of the segment back to the remaining reserved bytes.
                 self.uncompressed_remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
 
-                info!(
+                debug!(
                     "Spilled the segment to '{}'. Remaining reserved bytes: {}.",
                     file_path.display(),
                     self.uncompressed_remaining_memory_in_bytes
@@ -407,7 +428,7 @@ mod tests {
         assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);
 
         // It should also be saved in the metadata database table.
-        let database_path = temp_dir.path().join("metadata.sqlite3");
+        let database_path = temp_dir.path().join(catalog::METADATA_SQLITE_NAME);
         let connection = Connection::open(database_path).unwrap();
 
         let mut statement = connection.prepare("SELECT * FROM model_table_tags").unwrap();
@@ -436,7 +457,7 @@ mod tests {
     /// Create a record batch with data that resembles uncompressed data with a single tag and two
     /// field columns. The returned data has `row_count` rows, with a different tag for each row.
     /// Also create model table metadata for a model table that matches the created data.
-    fn get_uncompressed_data(row_count: usize) -> (NewModelTableMetadata, RecordBatch) {
+    fn get_uncompressed_data(row_count: usize) -> (ModelTableMetadata, RecordBatch) {
         let tags: Vec<String> = (0..row_count).map(|tag| tag.to_string()).collect();
         let timestamps: Vec<Timestamp> = (0..row_count).map(|ts| ts as Timestamp).collect();
         let values: Vec<Value> = (0..row_count).map(|value| value as Value).collect();
@@ -458,7 +479,7 @@ mod tests {
             ],
         ).unwrap();
 
-        let model_table_metadata = NewModelTableMetadata::try_new(
+        let model_table_metadata = ModelTableMetadata::try_new(
             "model_table".to_owned(),
             schema,
             vec![0],
@@ -470,8 +491,8 @@ mod tests {
 
     // TODO: This is duplicated from a function in remote. Change this when the metadata component exists.
     /// Create the table in the metadata database that contains the tag hashes.
-    fn create_model_table_tags_table(model_table_metadata: &NewModelTableMetadata, path: &Path) {
-        let database_path = path.join("metadata.sqlite3");
+    fn create_model_table_tags_table(model_table_metadata: &ModelTableMetadata, path: &Path) {
+        let database_path = path.join(catalog::METADATA_SQLITE_NAME);
         let connection = Connection::open(database_path).unwrap();
 
         // Add a column definition for each tag field in the schema.
@@ -489,7 +510,7 @@ mod tests {
         // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
         connection.execute(
             format!(
-                "CREATE TABLE {}_tags (hash BIGINT PRIMARY KEY, {})",
+                "CREATE TABLE {}_tags (hash INTEGER PRIMARY KEY, {}) STRICT",
                 model_table_metadata.name, tag_columns
             )
             .as_str(),

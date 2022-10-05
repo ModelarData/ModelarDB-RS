@@ -28,6 +28,7 @@ mod storage;
 mod tables;
 mod types;
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
@@ -72,32 +73,37 @@ fn main() -> Result<(), String> {
     let mut args = std::env::args();
     args.next(); // Skip executable.
     if let Some(data_folder) = args.next() {
+        // Ensure the data folder exists before reading from it.
         let data_folder_path = PathBuf::from(&data_folder);
+        fs::create_dir_all(data_folder_path.as_path()).map_err(|error| error.to_string())?;
+
+        // Set up the metadata tables used for model tables.
+        create_model_table_metadata_tables(data_folder_path.as_path())
+            .map_err(|error| format!("Unable to create metadata tables: {}", error))?;
 
         // Build Context.
-        let mut catalog = Catalog::try_new(&data_folder_path).map_err(|error| {
+        let catalog = Catalog::try_new(&data_folder_path).map_err(|error| {
             format!("Unable to read data folder '{}': {}", &data_folder, &error)
         })?;
         let runtime = Runtime::new().unwrap();
-        let mut session = create_session_context();
-        let storage_engine = StorageEngine::new(data_folder_path.clone(), true);
+        let session = create_session_context();
+        let storage_engine = RwLock::new(StorageEngine::new(data_folder_path.clone(), true));
 
-        // Set up the metadata tables used for model tables.
-        create_model_table_metadata_tables(data_folder_path.as_path()).map_err(|error| {
-            format!("Unable to create metadata tables: {}", error)
-        })?;
-
-        // Register Tables.
-        register_tables_and_model_tables(&runtime, &mut session, &mut catalog);
-
-        // Start Interface.
-        let context = Arc::new(Context {
+        // Create Context.
+        let mut context = Arc::new(Context {
             catalog: RwLock::new(catalog),
             runtime,
             session,
-            storage_engine: RwLock::new(storage_engine)
+            storage_engine,
         });
 
+        // Register Tables.
+        register_tables_and_model_tables(&mut context);
+
+        // Setup CTRL+C handler.
+        setup_ctrl_c_handler(&context);
+
+        // Start Interface.
         remote::start_arrow_flight_server(context, 9999).map_err(|error| error.to_string())?
     } else {
         // The errors are consciously ignored as the program is terminating.
@@ -129,7 +135,7 @@ fn create_session_context() -> SessionContext {
 /// can save the index of field columns in specific tables is also created. If the tables already
 /// exist or were successfully created, return [`Ok`], otherwise return [`rusqlite::Error`].
 fn create_model_table_metadata_tables(data_folder_path: &Path) -> Result<(), rusqlite::Error> {
-    let database_path = data_folder_path.join("metadata.sqlite3");
+    let database_path = data_folder_path.join(catalog::METADATA_SQLITE_NAME);
     let connection = Connection::open(database_path)?;
 
     // Create the model_table_metadata SQLite table if it does not exist.
@@ -139,7 +145,7 @@ fn create_model_table_metadata_tables(data_folder_path: &Path) -> Result<(), rus
                 schema BLOB NOT NULL,
                 timestamp_column_index INTEGER NOT NULL,
                 tag_column_indices BLOB NOT NULL
-        )",
+        ) STRICT",
         (),
     )?;
 
@@ -151,27 +157,23 @@ fn create_model_table_metadata_tables(data_folder_path: &Path) -> Result<(), rus
                 column_name TEXT NOT NULL,
                 column_index INTEGER NOT NULL,
                 PRIMARY KEY (table_name, column_name)
-        )",
+        ) STRICT",
         (),
     )?;
 
     Ok(())
 }
 
-// TODO: Currently we load the model tables into the ModelarDB catalog when starting. We also just
-//       add the model tables to the ModelarDB catalog when creating tables. When querying should
-//       be supported, the new model tables should be registered with the DataFusion catalog.
 /// Register all tables and model tables in `catalog` with Apache Arrow
 /// DataFusion through `session_context`. If initialization fails the table or
 /// model table is removed from `catalog`.
-fn register_tables_and_model_tables(
-    runtime: &Runtime,
-    session_context: &mut SessionContext,
-    catalog: &mut Catalog,
-) {
+fn register_tables_and_model_tables(context: &mut Arc<Context>) {
+    // unwrap() is safe since read() only fails if the RwLock is poisoned.
+    let mut catalog = context.catalog.write().unwrap();
+
     // Initializes tables consisting of standard Apache Parquet files.
     catalog.table_metadata.retain(|table_metadata| {
-        let result = runtime.block_on(session_context.register_parquet(
+        let result = context.runtime.block_on(context.session.register_parquet(
             &table_metadata.name,
             &table_metadata.path,
             ParquetReadOptions::default(),
@@ -184,22 +186,24 @@ fn register_tables_and_model_tables(
     });
 
     // Initializes tables storing time series as models in Apache Parquet files.
-    catalog.model_table_metadata.retain(|model_table_metadata| {
-        let result = session_context.register_table(
-            model_table_metadata.name.as_str(),
-            ModelTable::new(model_table_metadata),
-        );
-        check_if_table_or_model_table_is_initialized_otherwise_log_error(
-            "model table",
-            &model_table_metadata.name,
-            result,
-        )
-    });
+    catalog
+        .model_table_metadata
+        .retain(|model_table_metadata| {
+            let result = context.session.register_table(
+                model_table_metadata.name.as_str(),
+                ModelTable::new(context.clone(), model_table_metadata),
+            );
+            check_if_table_or_model_table_is_initialized_otherwise_log_error(
+                "model table",
+                &model_table_metadata.name,
+                result,
+            )
+        });
 }
 
 /// Check if the `result` from a table or model table initialization is an
 /// `Error`, if so log an error message containing `table_type` and `name` and
-/// return `false`, otherwise return `true`.
+/// return [`false`], otherwise return [`true`].
 fn check_if_table_or_model_table_is_initialized_otherwise_log_error<T>(
     table_type: &str,
     name: &str,
@@ -216,4 +220,18 @@ fn check_if_table_or_model_table_is_initialized_otherwise_log_error<T>(
     } else {
         true
     }
+}
+
+/// Register a handler to execute when CTRL+C is pressed. The handler takes an
+/// exclusive lock for the storage engine, flushes the data the storage engine
+/// currently buffers, and terminates the system without releasing the lock.
+fn setup_ctrl_c_handler(context: &Arc<Context>) {
+    let ctrl_c_context = context.clone();
+    context.runtime.spawn(async move {
+        // Errors are consciously ignored as the program should terminate if the
+        // handler cannot be registered as buffers otherwise cannot be flushed.
+        tokio::signal::ctrl_c().await.unwrap();
+        ctrl_c_context.storage_engine.write().unwrap().flush();
+        std::process::exit(0)
+    });
 }

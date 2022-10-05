@@ -46,17 +46,19 @@ macro_rules! get_array {
 ///
 /// # Panics
 ///
-/// Panics if `batch` contains less than six columns or if the columns are not
-/// Int32Array, Int64Array, Int64Array, Int32Array, BinaryArray, and BinaryArray.
-// TODO: rename downcast_arrays and update the types when refactoring query engine.
+/// Panics if `batch` does not contain seven columns or if the columns are not
+/// UInt8Array, BinaryArray, TimestampArray, TimestampArray, BinaryArray,
+/// ValueArray, ValueArray, and Float32Array.
 #[macro_export]
-macro_rules! downcast_arrays {
-    ($gids:ident, $start_times:ident, $end_times:ident, $mtids:ident, $models:ident, $gaps:ident, $batch:ident) => {
-        let $gids = crate::get_array!($batch, 0, Int32Array);
-        let $start_times = crate::get_array!($batch, 1, Int64Array);
-        let $end_times = crate::get_array!($batch, 2, Int64Array);
-        let $mtids = crate::get_array!($batch, 3, Int32Array);
-        let $models = crate::get_array!($batch, 4, BinaryArray);
-        let $gaps = crate::get_array!($batch, 5, BinaryArray);
+macro_rules! get_arrays {
+    ($batch:ident, $model_type_id:ident, $timestamps:ident, $start_time:ident, $end_time:ident, $values:ident, $min_value:ident, $max_value:ident, $error:ident) => {
+        let $model_type_id = crate::get_array!($batch, 0, UInt8Array);
+        let $timestamps = crate::get_array!($batch, 1, BinaryArray);
+        let $start_time = crate::get_array!($batch, 2, TimestampArray);
+        let $end_time = crate::get_array!($batch, 3, TimestampArray);
+        let $values = crate::get_array!($batch, 4, BinaryArray);
+        let $min_value = crate::get_array!($batch, 5, ValueArray);
+        let $max_value = crate::get_array!($batch, 6, ValueArray);
+        let $error = crate::get_array!($batch, 7, Float32Array);
     };
 }

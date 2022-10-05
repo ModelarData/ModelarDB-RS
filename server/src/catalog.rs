@@ -18,30 +18,26 @@
 //! models.
 
 use std::collections::HashSet;
-use std::fs::{read_dir, DirEntry};
+use std::fs;
+use std::fs::DirEntry;
 use std::io::{Error, ErrorKind};
+use std::path::Path;
 use std::path::PathBuf;
 use std::str;
 use std::sync::Arc;
-use std::{fs::File, path::Path};
 
 use arrow_flight::IpcMessage;
-use datafusion::arrow::array::{
-    Array, ArrayRef, BinaryArray, Int32Array, Int32Builder, StringBuilder,
-};
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema, SchemaRef};
-use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::errors::ParquetError;
-use datafusion::parquet::file::reader::{FileReader, SerializedFileReader};
-use datafusion::parquet::record::RowAccessor;
-use object_store::path::Path as ObjectStorePath;
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Schema};
 use rusqlite::types::Type::Blob;
 use rusqlite::Connection;
 use tracing::{error, info, warn};
-use crate::errors::ModelarDBError;
 
+use crate::errors::ModelarDBError;
 use crate::storage::StorageEngine;
 use crate::types::{ArrowTimestamp, ArrowValue};
+
+/// Name used for the file containing the SQLite database storing the metadata.
+pub const METADATA_SQLITE_NAME: &str = "metadata.sqlite3";
 
 /// Metadata for the tables and model tables in the data folder.
 pub struct Catalog {
@@ -50,48 +46,31 @@ pub struct Catalog {
     /// Metadata for the tables in the data folder.
     pub table_metadata: Vec<TableMetadata>,
     /// Metadata for the model tables in the data folder.
-    pub new_model_table_metadata: Vec<NewModelTableMetadata>,
-    /// Metadata for the model tables in the data folder.
     pub model_table_metadata: Vec<Arc<ModelTableMetadata>>,
 }
 
 impl Catalog {
-    /// Scan `data_folder` for tables and model tables and construct a `Catalog`
-    /// that contains the metadata necessary to query these tables. Returns
-    /// `Error` if the contents of `data_folder` cannot be read.
+    /// Scan `data_folder` for tables and model tables and construct a
+    /// [`Catalog`] that contains the metadata necessary to query these tables.
+    /// Returns [`Error`] if the contents of `data_folder` cannot be read.
     pub fn try_new(data_folder_path: &Path) -> Result<Self, Error> {
-        let mut table_metadata = vec![];
-        let mut model_table_metadata = vec![];
-        let model_table_legacy_segment_file_schema = Arc::new(Schema::new(vec![
-            Field::new("gid", DataType::Int32, false),
-            Field::new("start_time", DataType::Int64, false),
-            Field::new("end_time", DataType::Int64, false),
-            Field::new("mtid", DataType::Int32, false),
-            Field::new("model", DataType::Binary, false),
-            Field::new("gaps", DataType::Binary, false),
-        ]));
-
-        if Self::is_path_a_table(data_folder_path) {
-            warn!("The data folder is a table, please use the parent directory.");
-        } else if Self::is_path_a_model_table(data_folder_path) {
-            warn!("The data folder is a model table, please use the parent directory.");
+        if !Self::is_path_a_data_folder(data_folder_path) {
+            warn!("The data folder is not empty and does not contain data from ModelarDB");
         }
 
-        for maybe_dir_entry in read_dir(data_folder_path)? {
-            // The check if maybe_dir_entry is an error is not performed in
-            // try_adding_table_or_model_table_metadata() as it does not seem
-            // possible to return an error without moving it out of a reference.
+        // Add tables that only exists as Apache Parquet files to the catalog.
+        let mut table_metadata = vec![];
+        for maybe_dir_entry in fs::read_dir(data_folder_path)? {
+            // The check for if maybe_dir_entry is an error is not performed in
+            // try_adding_table_metadata() as it does not seem possible to
+            // return an error without also moving it out of a reference.
             if let Ok(ref dir_entry) = maybe_dir_entry {
-                if let Err(maybe_error) = Self::try_adding_table_or_model_table_metadata(
-                    dir_entry,
-                    &mut table_metadata,
-                    &mut model_table_metadata,
-                    &model_table_legacy_segment_file_schema,
-                ) {
+                if let Err(error) = Self::try_adding_table_metadata(dir_entry, &mut table_metadata)
+                {
                     error!(
                         "Cannot read metadata from '{}': {}",
                         dir_entry.path().to_string_lossy(),
-                        maybe_error,
+                        error,
                     );
                 }
             } else {
@@ -100,9 +79,9 @@ impl Catalog {
             }
         }
 
-        // Add model tables using the data from the model_table_metadata metadata database table.
-        let new_model_table_metadata = Self::get_new_model_table_metadata(data_folder_path)
-            .unwrap_or_else(|error| {
+        // Add model tables to the catalog with data from the metadata database.
+        let model_table_metadata =
+            Self::get_model_table_metadata(data_folder_path).unwrap_or_else(|error| {
                 error!(
                     "Cannot register model tables from model_table_metadata: {}",
                     error
@@ -113,33 +92,21 @@ impl Catalog {
         Ok(Self {
             data_folder_path: data_folder_path.to_path_buf(),
             table_metadata,
-            new_model_table_metadata,
             model_table_metadata,
         })
     }
 
-    /// Return the name of all tables and model tables in the `Catalog`.
-    pub fn table_and_model_table_names(&self) -> Vec<String> {
-        let mut table_names: Vec<String> = vec![];
-        for table_metadata in &self.table_metadata {
-            table_names.push(table_metadata.name.clone());
-        }
-
-        for model_table_metadata in &self.model_table_metadata {
-            table_names.push(model_table_metadata.name.clone());
-        }
-        table_names
+    /// Normalize `table name` to allow direct comparisons between table names.
+    pub fn normalize_table_name(table_name: &str) -> String {
+        table_name.to_lowercase()
     }
 
-    /// Determine if `dir_entry` is a table, a model table, or neither. If
-    /// `dir_entry` is a table the metadata required to query the table is added
-    /// to `table_metadata`, and if `dir_entry` is a model table the metadata
-    /// required to query the model table is added to `model_table_metadata`.
-    fn try_adding_table_or_model_table_metadata(
+    /// If `dir_entry` is a table, the metadata required to query the table is
+    /// added to `table_metadata`, if not the function returns without changing
+    /// `table_metadata`. An [`Error`] is returned if `dir_entry` is not UTF-8.
+    fn try_adding_table_metadata(
         dir_entry: &DirEntry,
         table_metadata: &mut Vec<TableMetadata>,
-        model_table_metadata: &mut Vec<Arc<ModelTableMetadata>>,
-        model_table_legacy_segment_file_schema: &SchemaRef,
     ) -> Result<(), Error> {
         let path = dir_entry.path();
         let path_str = path.to_str().ok_or_else(|| {
@@ -147,28 +114,24 @@ impl Catalog {
         })?;
 
         // The extra let binding is required to create a longer lived value.
-        let file_name = dir_entry.file_name();
-        let file_name = file_name.to_str().ok_or_else(|| {
+        let file_or_folder_name = dir_entry.file_name();
+        let file_or_folder_name = file_or_folder_name.to_str().ok_or_else(|| {
             Error::new(ErrorKind::InvalidData, "File or folder name is not UTF-8.")
         })?;
+        let normalized_file_or_folder_name = Catalog::normalize_table_name(&file_or_folder_name);
 
-        // HACK: workaround for DataFusion converting table names to lowercase.
-        let normalized_file_or_folder_name = file_name.to_ascii_lowercase();
-
-        // Check if the file or folder is a table, a model table, or neither.
-        if Self::is_path_a_table(&path) {
+        // Check if the file or folder is the metadata database, so it can be
+        // skipped without logging any errors, a table, or neither.
+        if path.ends_with(METADATA_SQLITE_NAME) {
+            // Skip without emitting any errors.
+        } else if Self::is_path_a_table(&path) {
+            info!("Found table '{}'.", normalized_file_or_folder_name);
             table_metadata.push(TableMetadata::new(
                 normalized_file_or_folder_name,
                 path_str.to_owned(),
             ));
-            info!("Found table '{}'.", path_str);
         } else if Self::is_path_a_model_table(&path) {
-            model_table_metadata.push(ModelTableMetadata::try_new(
-                normalized_file_or_folder_name, // Only folder for model tables.
-                path_str.to_owned(),
-                &model_table_legacy_segment_file_schema,
-            )?);
-            info!("Found model table '{}'.", path_str);
+            // Skip without emitting any errors.
         } else {
             error!(
                 "File or folder '{}' is not a table or model table.",
@@ -178,61 +141,61 @@ impl Catalog {
         Ok(())
     }
 
-    /// Return `true` if `path` is a readable table, otherwise `false`.
+    /// Return [`true`] if `path` is a data folder, otherwise [`false`].
+    fn is_path_a_data_folder(path: &Path) -> bool {
+        if let Ok(files_and_folders) = fs::read_dir(path) {
+            files_and_folders.count() == 0 || path.join(METADATA_SQLITE_NAME).exists()
+        } else {
+            false
+        }
+    }
+
+    /// Return [`true`] if `path` is a readable table, otherwise [`false`].
     fn is_path_a_table(path: &Path) -> bool {
         if path.is_file() {
             StorageEngine::is_path_an_apache_parquet_file(&path)
         } else if path.is_dir() {
-            let table_folder = read_dir(&path);
-            table_folder.is_ok()
-                && table_folder.unwrap().all(|result| {
-                    result.is_ok()
-                        && StorageEngine::is_path_an_apache_parquet_file(&result.unwrap().path())
-                })
+            Self::count_apache_parquet_files_in_folder(&path) > 0
         } else {
             false
         }
     }
 
-    /// Return `true` if `path_to_folder` is a model table, otherwise `false`.
-    fn is_path_a_model_table(path_to_folder: &Path) -> bool {
-        if path_to_folder.is_dir() {
-            // Construction of the Paths is duplicated as it seems impossible to
-            // create a function that accepts a Path and returns a new Path.
-            let mut model_type = path_to_folder.to_path_buf();
-            model_type.push("model_type.parquet");
-            let model_type = model_type.as_path();
+    /// Return [`true`] if `path` is a readable model table, otherwise
+    /// [`false`].
+    fn is_path_a_model_table(path: &Path) -> bool {
+        let compressed_path = path.join("compressed");
+        compressed_path.exists() && Self::count_apache_parquet_files_in_folder(&compressed_path) > 0
+    }
 
-            let mut time_series = path_to_folder.to_path_buf();
-            time_series.push("time_series.parquet");
-            let time_series = time_series.as_path();
+    /// Return the number of Apache Parquet files in the folder at `path`.
+    fn count_apache_parquet_files_in_folder(path: &Path) -> usize {
+        let mut number_of_apache_parquet_files = 0;
 
-            let mut segment = path_to_folder.to_path_buf();
-            segment.push("segment");
-            let segment = segment.as_path();
-            let segment_folder = read_dir(&segment);
-
-            StorageEngine::is_path_an_apache_parquet_file(model_type)
-                && StorageEngine::is_path_an_apache_parquet_file(time_series)
-                && segment_folder.is_ok()
-                && segment_folder.unwrap().all(|result| {
-                    result.is_ok()
-                        && StorageEngine::is_path_an_apache_parquet_file(&result.unwrap().path())
-                })
-        } else {
-            false
+        if let Ok(files_or_folders) = fs::read_dir(&path) {
+            for file_or_folder in files_or_folders {
+                if let Ok(maybe_apache_parquet_file) = file_or_folder {
+                    if StorageEngine::is_path_an_apache_parquet_file(
+                        &maybe_apache_parquet_file.path(),
+                    ) {
+                        number_of_apache_parquet_files += 1;
+                    }
+                }
+            }
         }
+
+        number_of_apache_parquet_files
     }
 
     // TODO: Move to the metadata component when it exists.
-    // TODO: Rename to "get_model_table_metadata" when the old version is removed.
-    /// Convert the rows in the model_table_metadata table to a list of [`NewModelTableMetadata`]
-    /// and return it. If the metadata database could not be opened or the table could not be queried,
-    /// return [`rusqlite::Error`].
-    fn get_new_model_table_metadata(
+    // TODO: Store metadata about tables and models in METADATA_SQLITE_NAME.
+    /// Convert the rows in the model_table_metadata table to a list of
+    /// [`ModelTableMetadata`] and return it. If the metadata database could not
+    /// be opened or the table could not be queried, return [`rusqlite::Error`].
+    fn get_model_table_metadata(
         data_folder_path: &Path,
-    ) -> Result<Vec<NewModelTableMetadata>, rusqlite::Error> {
-        let database_path = data_folder_path.join("metadata.sqlite3");
+    ) -> Result<Vec<Arc<ModelTableMetadata>>, rusqlite::Error> {
+        let database_path = data_folder_path.join(METADATA_SQLITE_NAME);
         let connection = Connection::open(database_path)?;
 
         let mut select_statement = connection.prepare(
@@ -255,12 +218,12 @@ impl Catalog {
                 rusqlite::Error::InvalidColumnType(1, message, Blob)
             })?;
 
-            model_table_metadata.push(NewModelTableMetadata {
+            model_table_metadata.push(Arc::new(ModelTableMetadata {
                 name: name.clone(),
                 schema,
                 timestamp_column_index: row.get(2)?,
                 tag_column_indices: row.get(3)?,
-            });
+            }));
 
             info!("Found model table '{}'.", name);
         }
@@ -294,10 +257,9 @@ impl TableMetadata {
     }
 }
 
-// TODO: Change name to "ModelTableMetadata" when the old version is removed.
 /// Metadata required to ingest data into a model table and query a model table.
-#[derive(Clone)]
-pub struct NewModelTableMetadata {
+#[derive(Debug, Clone)]
+pub struct ModelTableMetadata {
     /// Name of the model table.
     pub name: String,
     /// Schema of the data in the model table.
@@ -308,7 +270,7 @@ pub struct NewModelTableMetadata {
     pub tag_column_indices: Vec<u8>,
 }
 
-impl NewModelTableMetadata {
+impl ModelTableMetadata {
     /// Create a new model table with the given metadata. If any of the following conditions are
     /// true, [`ConfigurationError`](ModelarDBError::ConfigurationError) is returned:
     /// * The timestamp or tag column indices does not match `schema`.
@@ -326,13 +288,16 @@ impl NewModelTableMetadata {
         // If the timestamp index is in the tag indices, return an error.
         if tag_column_indices.contains(&timestamp_column_index) {
             return Err(ModelarDBError::ConfigurationError(
-                "The timestamp column cannot be a tag column.".to_owned()
+                "The timestamp column cannot be a tag column.".to_owned(),
             ));
         };
 
         if let Some(timestamp_field) = schema.fields.get(timestamp_column_index as usize) {
             // If the field of the timestamp column is not of type ArrowTimestamp, return an error.
-            if !timestamp_field.data_type().equals_datatype(&ArrowTimestamp::DATA_TYPE) {
+            if !timestamp_field
+                .data_type()
+                .equals_datatype(&ArrowTimestamp::DATA_TYPE)
+            {
                 return Err(ModelarDBError::ConfigurationError(format!(
                     "The timestamp column with index '{}' is not of type '{}'.",
                     timestamp_column_index,
@@ -366,16 +331,18 @@ impl NewModelTableMetadata {
             }
         }
 
-        let field_column_indices: Vec<usize> = (0..schema.fields().len()).filter(|index| {
-            // TODO: Change this cast when indices in the action body are changed to use two bytes.
-            let index = *index as u8;
-            index != timestamp_column_index && !tag_column_indices.contains(&index)
-        }).collect();
+        let field_column_indices: Vec<usize> = (0..schema.fields().len())
+            .filter(|index| {
+                // TODO: Change this cast when indices in the action body are changed to use two bytes.
+                let index = *index as u8;
+                index != timestamp_column_index && !tag_column_indices.contains(&index)
+            })
+            .collect();
 
         // If there are no field columns, return an error.
         if field_column_indices.is_empty() {
             return Err(ModelarDBError::ConfigurationError(
-                "There needs to be at least one field column.".to_owned()
+                "There needs to be at least one field column.".to_owned(),
             ));
         } else {
             for field_column_index in &field_column_indices {
@@ -402,7 +369,7 @@ impl NewModelTableMetadata {
             .all(|x| uniq.insert(x))
         {
             return Err(ModelarDBError::ConfigurationError(
-                "The tag column indices cannot have duplicates.".to_owned()
+                "The tag column indices cannot have duplicates.".to_owned(),
             ));
         }
 
@@ -410,7 +377,7 @@ impl NewModelTableMetadata {
         // since 10 bits are used to identify the column index of the data in the 64-bit hash key.
         if schema.fields.len() > 1024 {
             return Err(ModelarDBError::ConfigurationError(
-                "There cannot be more than 1024 columns in the model table.".to_owned()
+                "There cannot be more than 1024 columns in the model table.".to_owned(),
             ));
         }
 
@@ -423,224 +390,142 @@ impl NewModelTableMetadata {
     }
 }
 
-// TODO: update after implementing the compression component.
-/// Metadata required to query a model table.
-#[derive(Debug)]
-pub struct ModelTableMetadata {
-    /// Name of the model table.
-    pub name: String,
-    /// Location of the model table's segment folder in an `ObjectStore`.
-    pub segment_path: ObjectStorePath,
-    // TODO: remove segment_file_legacy_schema when refactoring query engine.
-    /// Schema of the Apache Parquet files used by the [JVM-based version of
-    /// ModelarDB] for storing segments.
-    ///
-    /// [JVM-based version of ModelarDB]: https://github.com/modelardata/ModelarDB
-    pub segment_file_legacy_schema: SchemaRef,
-    /// Cache that maps from time series id to sampling interval for all time
-    /// series in the table.
-    pub sampling_intervals: Int32Array,
-    // TODO: rename dimension members to tags when refactoring query engine.
-    /// Cache that maps from time series id to data warehouse dimension members
-    /// for all time series in the table. Each `Array` in
-    /// `denormalized_dimensions` is a level in a dimension.
-    pub denormalized_dimensions: Vec<ArrayRef>,
-}
-
-impl ModelTableMetadata {
-    /// Read and check the metadata for a model table produced by the [JVM-based
-    /// version of ModelarDB]. Return `ParquetError` if the metadata cannot be
-    /// read or if the model table uses unsupported model types.
-    ///
-    /// [JVM-based version of ModelarDB]: https://github.com/modelardata/ModelarDB
-    fn try_new(
-        folder_name: String,
-        folder_path: String,
-        segment_file_legacy_schema: &SchemaRef,
-    ) -> Result<Arc<Self>, ParquetError> {
-        // Pre-compute the path to the segment folder in the object store.
-        let segment_path = Self::create_object_store_path_to_segment_folder(&folder_path)?;
-
-        // Ensure only supported model types are used.
-        Self::check_model_type_metadata(&folder_path)?;
-
-        // Read time series metadata. The sampling intervals and dimension
-        // members are shifted by one as the time series ids start at one.
-        let time_series_file = folder_path.clone() + "/time_series.parquet";
-        let path = Path::new(&time_series_file);
-        if let Ok(rows) = StorageEngine::read_entire_apache_parquet_file(path) {
-            let sampling_intervals = Self::extract_and_shift_int32_array(&rows, 2)?;
-            let denormalized_dimensions = // Columns with metadata as strings.
-                Self::extract_and_shift_denormalized_dimensions(&rows, 4)?;
-
-            Ok(Arc::new(Self {
-                name: folder_name,
-                segment_path,
-                segment_file_legacy_schema: segment_file_legacy_schema.clone(),
-                sampling_intervals,
-                denormalized_dimensions,
-            }))
-        } else {
-            Err(ParquetError::General(format!(
-                "Unable to read metadata for folder '{}'.",
-                folder_name
-            )))
-        }
-    }
-
-    /// Create an `ObjectStorePath` to the segment folder in
-    /// `model_table_folder`.
-    fn create_object_store_path_to_segment_folder(
-        model_table_folder: &str,
-    ) -> Result<ObjectStorePath, ParquetError> {
-        let segment_folder = model_table_folder.to_owned() + "/segment";
-        let path = Path::new(&segment_folder);
-        ObjectStorePath::from_filesystem_path(path)
-            .map_err(|error| ParquetError::General(error.to_string()))
-    }
-
-    /// Check that the model table only use supported model types.
-    fn check_model_type_metadata(table_folder: &String) -> Result<(), ParquetError> {
-        let model_types_file = table_folder.clone() + "/model_type.parquet";
-        let path = Path::new(&model_types_file);
-        if let Ok(file) = File::open(&path) {
-            let reader = SerializedFileReader::new(file)?;
-            let rows = reader.get_row_iter(None)?;
-            for row in rows {
-                let mtid = row.get_int(0)?;
-                let name = row.get_bytes(1)?.as_utf8()?;
-                match (mtid, name) {
-                    (1, "dk.aau.modelardb.core.models.UncompressedModelType") => (),
-                    (2, "dk.aau.modelardb.core.models.PMC_MeanModelType") => (),
-                    (3, "dk.aau.modelardb.core.models.SwingFilterModelType") => (),
-                    (4, "dk.aau.modelardb.core.models.FacebookGorillaModelType") => (),
-                    _ => return Err(ParquetError::General("Unsupported model type.".to_owned())),
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Read the array at `column_index` from `rows`, cast it to `Int32Array`,
-    /// and increase the index of all values in the array with one.
-    fn extract_and_shift_int32_array(
-        rows: &RecordBatch,
-        column_index: usize,
-    ) -> Result<Int32Array, ParquetError> {
-        let column = rows
-            .column(column_index)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .ok_or_else(|| {
-                ParquetError::ArrowError("Unable to read sampling intervals.".to_owned())
-            })?
-            .values();
-
-        // -1 is stored at index 0 as time series ids starting at 1 is used for
-        // lookup. Time series ids starting at 1 is used for compatibility with
-        // the JVM-based version of ModelarDB.
-        let mut shifted_column = Int32Builder::with_capacity(column.len() + 1);
-        shifted_column.append_value(-1);
-        shifted_column.append_slice(column);
-        Ok(shifted_column.finish())
-    }
-
-    /// Read the arrays from `first_column_index` to `rows.num_columns()` from
-    /// `rows`, cast them to `BinaryArray`, and increase the index of all values
-    /// in the arrays with one.
-    fn extract_and_shift_denormalized_dimensions(
-        rows: &RecordBatch,
-        first_column_index: usize,
-    ) -> Result<Vec<ArrayRef>, ParquetError> {
-        let mut denormalized_dimensions: Vec<ArrayRef> = vec![];
-        for level_column_index in first_column_index..rows.num_columns() {
-            let level = Self::extract_and_shift_string_array(rows, level_column_index)?;
-            denormalized_dimensions.push(level);
-        }
-        Ok(denormalized_dimensions)
-    }
-
-    /// Read the array at `column_index` from `rows`, cast it to `BinaryArray`,
-    /// and increase the index of all values in the array with one.
-    fn extract_and_shift_string_array(
-        rows: &RecordBatch,
-        column_index: usize,
-    ) -> Result<ArrayRef, ParquetError> {
-        let error_message = "Unable to read tags.";
-
-        let schema = rows.schema();
-        let name = schema.field(column_index).name();
-        let column = rows
-            .column(column_index)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .ok_or_else(|| ParquetError::ArrowError(error_message.to_owned()))?;
-
-        // The level's name is at index 0 as ids from 1 is used for lookup.
-        let mut shifted_column =
-            StringBuilder::with_capacity(column.len(), column.get_buffer_memory_size());
-        shifted_column.append_value(name);
-        for maybe_member_as_bytes in column {
-            let member_as_bytes = maybe_member_as_bytes
-                .ok_or_else(|| ParquetError::ArrowError(error_message.to_owned()))?;
-            let member_as_str = str::from_utf8(member_as_bytes)?;
-            shifted_column.append_value(member_as_str);
-        }
-        Ok(Arc::new(shifted_column.finish()))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::array::StringArray;
-    use datafusion::arrow::datatypes::ArrowPrimitiveType;
-    use proptest::num;
-    use proptest::string;
-    use proptest::{prop_assert, prop_assert_eq, proptest};
+
+    use std::{fs, io::Write};
+
+    use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field};
+    use tempfile::tempdir;
 
     use crate::types::{ArrowTimestamp, ArrowValue};
 
     // Tests for Catalog.
     #[test]
-    fn test_empty_catalog_table_and_model_table_names() {
-        let catalog = Catalog {
-            data_folder_path: PathBuf::from(""),
-            table_metadata: vec![],
-            new_model_table_metadata: vec![],
-            model_table_metadata: vec![],
-        };
-        assert!(catalog.table_and_model_table_names().is_empty())
+    fn test_a_non_empty_folder_without_metadata_is_not_data_folder() {
+        let temp_dir = tempdir().unwrap();
+        create_empty_folder(temp_dir.path(), "folder");
+        assert!(!Catalog::is_path_a_data_folder(temp_dir.path()));
     }
 
     #[test]
-    fn test_catalog_table_and_model_table_names() {
-        let mut catalog = Catalog {
-            data_folder_path: PathBuf::from(""),
-            table_metadata: vec![],
-            new_model_table_metadata: vec![],
-            model_table_metadata: vec![],
-        };
+    fn test_an_empty_folder_is_a_data_folder() {
+        let temp_dir = tempdir().unwrap();
+        assert!(Catalog::is_path_a_data_folder(temp_dir.path()));
+    }
 
-        catalog.table_metadata.push(TableMetadata {
-            name: "table".to_owned(),
-            path: "".to_owned(),
-        });
+    #[test]
+    fn test_a_non_empty_folder_with_metadata_is_a_data_folder() {
+        let temp_dir = tempdir().unwrap();
+        create_empty_folder(temp_dir.path(), "table_folder");
+        fs::create_dir(temp_dir.path().join(METADATA_SQLITE_NAME)).unwrap();
+        assert!(Catalog::is_path_a_data_folder(temp_dir.path()));
+    }
 
-        catalog
-            .model_table_metadata
-            .push(Arc::new(ModelTableMetadata {
-                name: "model_table".to_owned(),
-                segment_path: ObjectStorePath::parse("").unwrap(),
-                segment_file_legacy_schema: Arc::new(Schema::new(vec![])),
-                sampling_intervals: Int32Array::builder(0).finish(),
-                denormalized_dimensions: vec![],
-            }));
+    #[test]
+    fn test_an_empty_file_is_not_a_table() {
+        let temp_dir = tempdir().unwrap();
+        let path_buf = temp_dir.path().join("file");
+        fs::File::create(&path_buf).unwrap();
+        assert!(!Catalog::is_path_a_table(&path_buf));
+    }
 
+    #[test]
+    fn test_an_apache_parquet_file_is_a_table() {
+        let temp_dir = tempdir().unwrap();
+        let path_buf = create_apache_parquet_file(temp_dir.path(), "file");
+        assert!(Catalog::is_path_a_table(&path_buf));
+    }
+
+    #[test]
+    fn test_an_empty_folder_is_not_a_table() {
+        let temp_dir = tempdir().unwrap();
+        let path_buf = create_empty_folder(temp_dir.path(), "folder");
+        assert!(!Catalog::is_path_a_table(&path_buf));
+    }
+
+    #[test]
+    fn test_a_folder_without_apache_parquet_files_is_not_a_table() {
+        let temp_dir = tempdir().unwrap();
+        let folder_path_buf = create_empty_folder(temp_dir.path(), "folder");
+        let file_path_buf = create_empty_folder(&folder_path_buf, "file");
+        assert!(!Catalog::is_path_a_table(&file_path_buf));
+    }
+
+    #[test]
+    fn test_a_folder_with_apache_parquet_files_is_a_table() {
+        let temp_dir = tempdir().unwrap();
+        let folder_path_buf = create_empty_folder(temp_dir.path(), "folder");
+        let file_path_buf = create_apache_parquet_file(&folder_path_buf, "file");
+        assert!(Catalog::is_path_a_table(&file_path_buf));
+    }
+
+    #[test]
+    fn test_an_empty_folder_is_not_a_model_table() {
+        let temp_dir = tempdir().unwrap();
+        let path_buf = create_empty_folder(temp_dir.path(), "folder");
+        assert!(!Catalog::is_path_a_model_table(&path_buf));
+    }
+
+    #[test]
+    fn test_a_folder_with_an_empty_compressed_folder_is_not_a_model_table() {
+        let temp_dir = tempdir().unwrap();
+        let root_path_buf = create_empty_folder(temp_dir.path(), "folder");
+        create_empty_folder(root_path_buf.as_path(), "compressed");
+        assert!(!Catalog::is_path_a_model_table(root_path_buf.as_path()));
+    }
+
+    #[test]
+    fn test_a_folder_with_a_compressed_folder_containing_apache_parquet_files_is_a_model_table() {
+        let temp_dir = tempdir().unwrap();
+        let root_path_buf = create_empty_folder(temp_dir.path(), "folder");
+        let compressed_path_buf = create_empty_folder(root_path_buf.as_path(), "compressed");
+        create_apache_parquet_file(&compressed_path_buf, "file");
+        assert!(Catalog::is_path_a_model_table(root_path_buf.as_path()));
+    }
+
+    #[test]
+    fn test_an_empty_folder_contains_zero_apache_parquet_files() {
+        let temp_dir = tempdir().unwrap();
         assert_eq!(
-            vec!("table", "model_table"),
-            catalog.table_and_model_table_names()
-        )
+            Catalog::count_apache_parquet_files_in_folder(temp_dir.path()),
+            0
+        );
+    }
+
+    #[test]
+    fn test_a_folder_with_other_files_contains_zero_apache_parquet_files() {
+        let temp_dir = tempdir().unwrap();
+        fs::File::create(&temp_dir.path().join("file")).unwrap();
+        assert_eq!(
+            Catalog::count_apache_parquet_files_in_folder(temp_dir.path()),
+            0
+        );
+    }
+
+    #[test]
+    fn test_a_folder_with_apache_parquet_files_contains_apache_parquet_files() {
+        let temp_dir = tempdir().unwrap();
+        fs::File::create(&temp_dir.path().join("not_apache_parquet_file")).unwrap();
+        create_apache_parquet_file(temp_dir.path(), "apache_parquet_file");
+        assert_eq!(
+            Catalog::count_apache_parquet_files_in_folder(temp_dir.path()),
+            1
+        );
+    }
+
+    fn create_empty_folder(path: &Path, name: &str) -> PathBuf {
+        let path_buf = path.join(name);
+        fs::create_dir(&path_buf).unwrap();
+        path_buf
+    }
+
+    fn create_apache_parquet_file(path: &Path, name: &str) -> PathBuf {
+        let file_path = path.join(name);
+        let mut file = fs::File::create(&file_path).unwrap();
+        file.write_all(&[80, 65, 82, 49]).unwrap(); // PAR1
+        file_path
     }
 
     // Tests for TableMetadata.
@@ -666,16 +551,11 @@ mod tests {
         assert_eq!("file", table_metadata.name);
     }
 
-    // Tests for NewModelTableMetadata.
+    // Tests for ModelTableMetadata.
     #[test]
     fn test_can_create_model_table_metadata() {
         let schema = get_model_table_schema();
-        let result = NewModelTableMetadata::try_new(
-            "table_name".to_owned(),
-            schema,
-            vec![0, 1, 2],
-            3,
-        );
+        let result = ModelTableMetadata::try_new("table_name".to_owned(), schema, vec![0, 1, 2], 3);
 
         assert!(result.is_ok());
     }
@@ -683,12 +563,7 @@ mod tests {
     #[test]
     fn test_cannot_create_model_table_metadata_with_timestamp_index_in_tag_indices() {
         let schema = get_model_table_schema();
-        let result = NewModelTableMetadata::try_new(
-            "table_name".to_owned(),
-            schema,
-            vec![0, 1, 2],
-            0,
-        );
+        let result = ModelTableMetadata::try_new("table_name".to_owned(), schema, vec![0, 1, 2], 0);
 
         assert!(result.is_err());
     }
@@ -696,12 +571,8 @@ mod tests {
     #[test]
     fn test_cannot_create_model_table_metadata_with_invalid_timestamp_index() {
         let schema = get_model_table_schema();
-        let result = NewModelTableMetadata::try_new(
-            "table_name".to_owned(),
-            schema,
-            vec![0, 1, 2],
-            10,
-        );
+        let result =
+            ModelTableMetadata::try_new("table_name".to_owned(), schema, vec![0, 1, 2], 10);
 
         assert!(result.is_err());
     }
@@ -721,12 +592,8 @@ mod tests {
     #[test]
     fn test_cannot_create_model_table_metadata_with_invalid_tag_index() {
         let schema = get_model_table_schema();
-        let result = NewModelTableMetadata::try_new(
-            "table_name".to_owned(),
-            schema,
-            vec![0, 1, 10],
-            3,
-        );
+        let result =
+            ModelTableMetadata::try_new("table_name".to_owned(), schema, vec![0, 1, 10], 3);
 
         assert!(result.is_err());
     }
@@ -768,25 +635,15 @@ mod tests {
 
     /// Return metadata for a model table with one tag column and the timestamp column at index 1.
     fn create_simple_model_table_metadata(
-        schema: Schema
-    ) -> Result<NewModelTableMetadata, ModelarDBError> {
-        NewModelTableMetadata::try_new(
-            "table_name".to_owned(),
-            schema,
-            vec![0],
-            1,
-        )
+        schema: Schema,
+    ) -> Result<ModelTableMetadata, ModelarDBError> {
+        ModelTableMetadata::try_new("table_name".to_owned(), schema, vec![0], 1)
     }
 
     #[test]
     fn test_cannot_create_model_table_metadata_with_duplicate_tag_indices() {
         let schema = get_model_table_schema();
-        let result = NewModelTableMetadata::try_new(
-            "table_name".to_owned(),
-            schema,
-            vec![0, 1, 1],
-            3,
-        );
+        let result = ModelTableMetadata::try_new("table_name".to_owned(), schema, vec![0, 1, 1], 3);
 
         assert!(result.is_err());
     }
@@ -810,103 +667,9 @@ mod tests {
             .map(|i| Field::new(format!("field_{}", i).as_str(), DataType::Float32, false))
             .collect::<Vec<Field>>();
 
-        let schema = get_model_table_schema();
-        let result = NewModelTableMetadata::try_new(
-            "table_name".to_owned(),
-            Schema::new(fields),
-            vec![0, 1, 2],
-            3,
-        );
+        let table_name = "table_name".to_owned();
+        let result = ModelTableMetadata::try_new(table_name, Schema::new(fields), vec![0, 1, 2], 3);
 
         assert!(result.is_err());
-    }
-
-    // Tests for ModelTableMetadata.
-    #[test]
-    fn test_extract_and_shift_empty_int32_array() {
-        let array = Int32Array::from(vec![] as Vec<i32>);
-        assert_eq!(0, array.len());
-
-        let record_batch = create_record_batch_with_int32_array(array);
-        let maybe_shifted_array =
-            ModelTableMetadata::extract_and_shift_int32_array(&record_batch, 0);
-        assert!(maybe_shifted_array.is_ok());
-
-        let shifted_array = maybe_shifted_array.unwrap();
-        assert_eq!(1, shifted_array.len());
-        assert_eq!(-1, shifted_array.value(0));
-    }
-
-    proptest! {
-    #[test]
-    fn test_extract_and_shift_int32_array_with_value(value in num::i32::ANY) {
-        let array = Int32Array::from(vec![value]);
-        assert_eq!(1, array.len());
-
-        let record_batch = create_record_batch_with_int32_array(array);
-        let maybe_shifted_array =
-            ModelTableMetadata::extract_and_shift_int32_array(&record_batch, 0);
-        prop_assert!(maybe_shifted_array.is_ok());
-
-        let shifted_array = maybe_shifted_array.unwrap();
-        prop_assert_eq!(2, shifted_array.len());
-        assert_eq!(-1, shifted_array.value(0));
-        prop_assert_eq!(value, shifted_array.value(1));
-    }
-    }
-
-    fn create_record_batch_with_int32_array(array: Int32Array) -> RecordBatch {
-        let schema = Schema::new(vec![Field::new("array", DataType::Int32, false)]);
-        RecordBatch::try_new(Arc::new(schema), vec![Arc::new(array)]).unwrap()
-    }
-
-    #[test]
-    fn test_extract_and_shift_empty_text_array() {
-        let array = BinaryArray::from_vec(vec![]);
-        assert_eq!(0, array.len());
-
-        let record_batch = create_record_batch_with_string_array(array);
-        let maybe_shifted_array =
-            ModelTableMetadata::extract_and_shift_string_array(&record_batch, 0);
-        assert!(maybe_shifted_array.is_ok());
-
-        // The extra let binding is required to create a longer lived value.
-        let shifted_array = maybe_shifted_array.unwrap();
-        let shifted_array = shifted_array
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap();
-        assert_eq!(1, shifted_array.len());
-        assert_eq!("array", shifted_array.value(0));
-    }
-
-    proptest! {
-    #[test]
-    fn test_extract_and_shift_text_array_with_value(
-        value in string::string_regex("[a-zA-Z]+").unwrap()
-    ) {
-        let array = BinaryArray::from_vec(vec![value.as_bytes()]);
-        assert_eq!(1, array.len());
-
-        let record_batch = create_record_batch_with_string_array(array);
-        let maybe_shifted_array =
-            ModelTableMetadata::extract_and_shift_string_array(&record_batch, 0);
-        prop_assert!(maybe_shifted_array.is_ok());
-
-        // The extra let binding is required to create a longer lived value.
-        let shifted_array = maybe_shifted_array.unwrap();
-        let shifted_array = shifted_array
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap();
-        prop_assert_eq!(2, shifted_array.len());
-        assert_eq!("array", shifted_array.value(0));
-        prop_assert_eq!(value, shifted_array.value(1));
-    }
-    }
-
-    fn create_record_batch_with_string_array(array: BinaryArray) -> RecordBatch {
-        let schema = Schema::new(vec![Field::new("array", DataType::Binary, false)]);
-        RecordBatch::try_new(Arc::new(schema), vec![Arc::new(array)]).unwrap()
     }
 }

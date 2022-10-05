@@ -39,7 +39,7 @@ use object_store::ObjectMeta;
 use object_store::path::Path as ObjectStorePath;
 use chrono::DateTime;
 
-use crate::catalog::NewModelTableMetadata;
+use crate::catalog::ModelTableMetadata;
 use crate::errors::ModelarDBError;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::segment::FinishedSegment;
@@ -55,7 +55,7 @@ const APACHE_PARQUET_FILE_SIGNATURE: &[u8] = &[80, 65, 82, 49]; // PAR1.
 
 /// Note that the capacity has to be a multiple of 64 bytes to avoid the actual capacity
 /// being larger due to internal alignment when allocating memory for the builders.
-const BUILDER_CAPACITY: usize = 64;
+const BUILDER_CAPACITY: usize = 64 * 1024; // Each element is a Timestamp and a Value.
 
 /// Manages all uncompressed and compressed data, both while being built and when finished.
 pub struct StorageEngine {
@@ -77,7 +77,7 @@ impl StorageEngine {
     /// successfully inserted, otherwise return [`Err`].
     pub fn insert_data_points(
         &mut self,
-        model_table: &NewModelTableMetadata,
+        model_table: &ModelTableMetadata,
         data_points: &RecordBatch
     ) -> Result<(), String> {
         // TODO: When the compression component is changed, just insert the data points.
@@ -96,6 +96,17 @@ impl StorageEngine {
         self.uncompressed_data_manager.get_finished_segment()
     }
 
+    /// Flush all of the data the [`StorageEngine`] is managing to disk.
+    pub fn flush(&mut self) {
+        // Flush UncompressedDataManager.
+        for (key, segment) in self.uncompressed_data_manager.flush() {
+            self.compressed_data_manager.insert_compressed_segment(key, segment);
+        }
+
+        // Flush CompressedDataManager.
+        self.compressed_data_manager.flush();
+    }
+
     /// Pass `segment` to [`CompressedDataManager`].
     pub fn insert_compressed_segment(&mut self, key: u64, segment: RecordBatch) {
         self.compressed_data_manager.insert_compressed_segment(key, segment)
@@ -109,10 +120,10 @@ impl StorageEngine {
         keys: &[u64],
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>
-    ) -> Result<Vec<ObjectMeta>, ModelarDBError> {
+    ) -> Result<Vec<(String, ObjectMeta)>, ModelarDBError> {
         let start_time = start_time.unwrap_or(0);
-        let end_time = end_time.unwrap_or(i64::MAX);
-        let mut compressed_files: Vec<ObjectMeta> = vec![];
+        let end_time = end_time.unwrap_or(Timestamp::MAX);
+        let mut compressed_files: Vec<(String, ObjectMeta)> = vec![];
 
         if start_time > end_time {
             return Err(ModelarDBError::DataRetrievalError(format!(
@@ -133,11 +144,11 @@ impl StorageEngine {
                     let metadata = fs::metadata(&file_path).unwrap();
 
                     // Create an object that contains the file path and extra metadata about the file.
-                    Some(ObjectMeta {
+                    Some((key.to_string(), ObjectMeta {
                         location: ObjectStorePath::from(file_path.to_str().unwrap()),
                         last_modified: DateTime::from(metadata.modified().unwrap()),
                         size: metadata.len() as usize
-                    })
+                    }))
                 } else {
                     None
                 }
@@ -213,13 +224,14 @@ impl StorageEngine {
         // Create a reader that can be used to read an Apache Parquet file.
         let file = File::open(file_path).map_err(|_e| error.clone())?;
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-        let mut reader = builder.build()?;
+        let mut reader = builder.with_batch_size(usize::MAX).build()?;
 
         let record_batch = reader.next().ok_or_else(|| error)??;
         Ok(record_batch)
     }
 
-    /// Return `true` if `file_path` is a readable Apache Parquet file, otherwise `false`.
+    /// Return [`true`] if `file_path` is a readable Apache Parquet file,
+    /// otherwise [`false`].
     pub fn is_path_an_apache_parquet_file(file_path: &Path) -> bool {
         if let Ok(mut file) = File::open(file_path) {
             let mut first_four_bytes = vec![0u8; 4];
@@ -281,7 +293,7 @@ mod tests {
         assert_eq!(files.len(), 1);
 
         // The path to the returned compressed file should contain the key of the second segment.
-        let file_path = files.get(0).unwrap().location.to_string();
+        let file_path = files.get(0).unwrap().1.location.to_string();
         assert!(file_path.contains("2/compressed"));
     }
 
@@ -300,7 +312,7 @@ mod tests {
         assert_eq!(files.len(), 1);
 
         // The path to the returned compressed file should contain the key of the first segment.
-        let file_path = files.get(0).unwrap().location.to_string();
+        let file_path = files.get(0).unwrap().1.location.to_string();
         assert!(file_path.contains("1/compressed"));
     }
 
@@ -325,10 +337,10 @@ mod tests {
         assert_eq!(files.len(), 2);
 
         // The paths to the returned compressed files should contain the key of the second and third segment.
-        let file_path = files.get(0).unwrap().location.to_string();
+        let file_path = files.get(0).unwrap().1.location.to_string();
         assert!(file_path.contains("2/compressed"));
 
-        let file_path = files.get(1).unwrap().location.to_string();
+        let file_path = files.get(1).unwrap().1.location.to_string();
         assert!(file_path.contains("3/compressed"));
     }
 

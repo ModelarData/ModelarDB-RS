@@ -37,16 +37,19 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::{
     array::ArrayRef, datatypes::SchemaRef, error::ArrowError, ipc::writer::IpcWriteOptions,
 };
+use datafusion::catalog::schema::SchemaProvider;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
 use object_store;
 use rusqlite::{params, Connection};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
-use crate::catalog::{NewModelTableMetadata, TableMetadata};
+use crate::catalog;
+use crate::catalog::{Catalog, ModelTableMetadata, TableMetadata};
 use crate::storage::StorageEngine;
+use crate::tables::ModelTable;
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
@@ -89,9 +92,24 @@ struct FlightServiceHandler {
 
 impl FlightServiceHandler {
     /// Return the schema of `table_name` if the table exists in the default
-    /// catalog, otherwise a `Status` indicating at what level the lookup failed
-    /// is returned.
-    fn get_table_schema_from_default_catalog(&self, table_name: &str) -> Result<SchemaRef, Status> {
+    /// database schema, otherwise a `Status` indicating at what level the
+    /// lookup failed is returned.
+    fn get_schema_of_table_in_the_default_database_schema(
+        &self,
+        table_name: &str,
+    ) -> Result<SchemaRef, Status> {
+        let database_schema = self.get_default_database_schema()?;
+
+        let table = database_schema
+            .table(table_name)
+            .ok_or_else(|| Status::not_found("Table does not exist."))?;
+
+        Ok(table.schema())
+    }
+
+    /// Return the default database schema if it exists, otherwise a `Status`
+    /// indicating at what level the lookup failed is returned.
+    fn get_default_database_schema(&self) -> Result<Arc<dyn SchemaProvider>, Status> {
         let session = self.context.session.clone();
 
         let catalog = session
@@ -102,11 +120,7 @@ impl FlightServiceHandler {
             .schema("public")
             .ok_or_else(|| Status::internal("Default schema does not exist."))?;
 
-        let table = schema
-            .table(table_name)
-            .ok_or_else(|| Status::not_found("Table does not exist."))?;
-
-        Ok(table.schema())
+        Ok(schema)
     }
 
     /// Return the table stored as the first element in `FlightDescriptor.path`,
@@ -138,10 +152,10 @@ impl FlightServiceHandler {
     /// While there is still more data to receive, ingest the data into the storage engine.
     async fn ingest_into_model_table(
         &self,
-        model_table: &NewModelTableMetadata,
+        model_table: &ModelTableMetadata,
         flight_data_stream: &mut Streaming<FlightData>,
     ) -> Result<(), Status> {
-        info!("Ingesting data into model table '{}'.", model_table.name);
+        debug!("Ingesting data into model table '{}'.", model_table.name);
 
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
@@ -161,9 +175,11 @@ impl FlightServiceHandler {
 
             // Note that the storage engine returns when the data is stored in memory, which means
             // the data could be lost if the system crashes right after ingesting the data.
-            storage_engine.insert_data_points(&model_table, &data_points).map_err(|error| {
-                Status::internal(format!("Data could not be ingested: {}", error))
-            })?;
+            storage_engine
+                .insert_data_points(&model_table, &data_points)
+                .map_err(|error| {
+                    Status::internal(format!("Data could not be ingested: {}", error))
+                })?;
         }
 
         Ok(())
@@ -171,7 +187,7 @@ impl FlightServiceHandler {
 
     /// Create a normal table and add it to the catalog. If the table already exists or if the
     /// Apache Parquet file cannot be created, return [`Status`] error.
-    async fn create_table(&self, table_name: String, schema: Schema, ) -> Result<(), Status> {
+    async fn create_table(&self, table_name: String, schema: Schema) -> Result<(), Status> {
         // Modify the catalog in a separate scope to drop the RWLock as fast as possible.
         let file_path = {
             // Get the write lock for the catalog to ensure that multiple writes cannot happen at the
@@ -199,11 +215,15 @@ impl FlightServiceHandler {
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
         // Save the table in the Apache Arrow Datafusion catalog.
-        self.context.session.register_parquet(
-            &table_name,
-            file_path.to_str().unwrap(),
-            ParquetReadOptions::default(),
-        ).await.map_err(|error| Status::invalid_argument(error.to_string()))?;
+        self.context
+            .session
+            .register_parquet(
+                &table_name,
+                file_path.to_str().unwrap(),
+                ParquetReadOptions::default(),
+            )
+            .await
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
         info!("Created table '{}'.", table_name);
         Ok(())
@@ -223,12 +243,13 @@ impl FlightServiceHandler {
         // the same time. unwrap() is safe to use since write() only fails if the RwLock is poisoned.
         let mut catalog = self.context.catalog.write().unwrap();
 
-        let model_table_metadata = NewModelTableMetadata::try_new(
+        let model_table_metadata = ModelTableMetadata::try_new(
             table_name.clone(),
             schema.clone(),
             tag_column_indices,
             timestamp_column_index,
-        ).map_err(|error| Status::invalid_argument(error.to_string()))?;
+        )
+        .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
         // Convert the schema to bytes so it can be saved as a BLOB in the metadata database.
         let options = IpcWriteOptions::default();
@@ -238,13 +259,25 @@ impl FlightServiceHandler {
             .map_err(|error: ArrowError| Status::internal(error.to_string()))?;
 
         // Persist the new model table to the metadata database.
-        let database_path = catalog.data_folder_path.join("metadata.sqlite3");
+        let database_path = catalog.data_folder_path.join(catalog::METADATA_SQLITE_NAME);
         save_model_table_to_database(database_path, &model_table_metadata, ipc_message.0)
             .map_err(|error| Status::internal(error.to_string()))?;
 
-        info!("Created model table '{}'.", table_name);
-        catalog.new_model_table_metadata.push(model_table_metadata);
+        // Save the model table in the Apache Arrow Datafusion catalog.
+        let model_table_metadata = Arc::new(model_table_metadata);
 
+        self.context
+            .session
+            .register_table(
+                model_table_metadata.name.as_str(),
+                ModelTable::new(self.context.clone(), &model_table_metadata),
+            )
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+        // Save the model table in the ModelarDB catalog.
+        catalog.model_table_metadata.push(model_table_metadata);
+
+        info!("Created model table '{}'.", table_name);
         Ok(())
     }
 }
@@ -279,12 +312,7 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Criteria>,
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
-        let table_names = {
-            // unwrap() is safe to use since read() only fails if the RwLock is poisoned.
-            let catalog = self.context.catalog.read().unwrap();
-            catalog.table_and_model_table_names()
-        };
-
+        let table_names = self.get_default_database_schema()?.table_names();
         let flight_descriptor = FlightDescriptor::new_path(table_names);
         let flight_info =
             FlightInfo::new(IpcMessage(vec![]), Some(flight_descriptor), vec![], -1, -1);
@@ -309,7 +337,7 @@ impl FlightService for FlightServiceHandler {
     ) -> Result<Response<SchemaResult>, Status> {
         let flight_descriptor = request.into_inner();
         let table_name = self.get_table_name_from_flight_descriptor(&flight_descriptor)?;
-        let schema = self.get_table_schema_from_default_catalog(table_name)?;
+        let schema = self.get_schema_of_table_in_the_default_database_schema(table_name)?;
 
         // IpcMessages are transferred as SchemaResults for compatibility with
         // the return type of get_schema() and to ensure the SchemaResult match
@@ -399,23 +427,28 @@ impl FlightService for FlightServiceHandler {
             .flight_descriptor
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
         let table_name = self.get_table_name_from_flight_descriptor(&flight_descriptor)?;
+        let normalized_table_name = Catalog::normalize_table_name(&table_name);
 
         // Check if it is a model table that can be found in the in-memory catalog.
         let maybe_model_table = {
             // unwrap() is safe to use since read() only fails if the RwLock is poisoned.
             let catalog = self.context.catalog.read().unwrap();
-            let mut model_tables = catalog.new_model_table_metadata.iter();
+            let mut model_tables = catalog.model_table_metadata.iter();
 
-            model_tables.find(|table| table.name == *table_name).cloned()
+            model_tables
+                .find(|table| table.name == *normalized_table_name)
+                .cloned()
         };
 
         // Handle the data based on whether it is a normal table or a model table.
         if let Some(model_table) = maybe_model_table {
-            self.ingest_into_model_table(&model_table, &mut flight_data_stream).await?;
+            self.ingest_into_model_table(&model_table, &mut flight_data_stream)
+                .await?;
         } else {
             // If the table is not a model table, check if it can be found in the datafusion catalog.
-            let schema = self.get_table_schema_from_default_catalog(&table_name)?;
-            self.ingest_into_table(table_name, schema, flight_data_stream);
+            let schema =
+                self.get_schema_of_table_in_the_default_database_schema(&normalized_table_name)?;
+            self.ingest_into_table(&normalized_table_name, schema, flight_data_stream);
         }
 
         // Confirm the data points were received.
@@ -453,18 +486,25 @@ impl FlightService for FlightServiceHandler {
             let (table_name_bytes, offset_data) = extract_argument_bytes(&action.body);
             let table_name = str::from_utf8(table_name_bytes)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            let normalized_table_name = Catalog::normalize_table_name(&table_name);
 
             // If the table already exists, return an error.
-            if self.get_table_schema_from_default_catalog(&table_name).is_ok() {
-                let message = format!("Table with name '{}' already exists.", table_name);
+            if self
+                .get_schema_of_table_in_the_default_database_schema(&normalized_table_name)
+                .is_ok()
+            {
+                let message = format!(
+                    "Table with name '{}' already exists.",
+                    normalized_table_name
+                );
                 return Err(Status::already_exists(message));
             }
 
             // Check if the table name is a valid object_store path and database table name.
-            object_store::path::Path::parse(table_name)
+            object_store::path::Path::parse(&normalized_table_name)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            if table_name.contains(char::is_whitespace) {
+            if normalized_table_name.contains(char::is_whitespace) {
                 return Err(Status::invalid_argument(
                     "Table name cannot contain whitespace.".to_owned(),
                 ));
@@ -477,7 +517,8 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             if action.r#type == "CreateTable" {
-                self.create_table(table_name.to_owned(), schema).await?;
+                self.create_table(normalized_table_name.to_owned(), schema)
+                    .await?;
             } else {
                 // Extract the tag column indices from the action body. Note that since we assume
                 // each tag column index is one byte, we directly use the slice of bytes as the list
@@ -488,7 +529,7 @@ impl FlightService for FlightServiceHandler {
                 let (timestamp_index, _offset_data) = extract_argument_bytes(offset_data);
 
                 self.create_model_table(
-                    table_name.to_owned(),
+                    normalized_table_name.to_owned(),
                     schema,
                     tag_indices.to_vec(),
                     timestamp_index[0],
@@ -545,7 +586,7 @@ fn extract_argument_bytes(data: &[u8]) -> (&[u8], &[u8]) {
 /// model_table_field_columns table for each field column.
 fn save_model_table_to_database(
     database_path: PathBuf,
-    model_table_metadata: &NewModelTableMetadata,
+    model_table_metadata: &ModelTableMetadata,
     schema_bytes: Vec<u8>,
 ) -> Result<(), rusqlite::Error> {
     // Create a transaction to ensure the database state is consistent across tables.
@@ -567,7 +608,7 @@ fn save_model_table_to_database(
     // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
     transaction.execute(
         format!(
-            "CREATE TABLE {}_tags (hash BIGINT PRIMARY KEY, {})",
+            "CREATE TABLE {}_tags (hash INTEGER PRIMARY KEY, {}) STRICT",
             model_table_metadata.name, tag_columns
         )
         .as_str(),
