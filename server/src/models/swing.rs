@@ -23,8 +23,8 @@
 //! [Swing and Slide paper]: https://dl.acm.org/doi/10.14778/1687627.1687645
 //! [ModelarDB paper]: https://www.vldb.org/pvldb/vol11/p1688-jensen.pdf
 
-use crate::models::{self, timestamps};
 use crate::models::ErrorBound;
+use crate::models::{self, timestamps};
 use crate::types::{TimeSeriesId, TimeSeriesIdBuilder, Timestamp, Value, ValueBuilder};
 
 /// The state the Swing model type needs while fitting a model to a time series
@@ -211,21 +211,18 @@ pub fn sum(
     timestamps: &[u8],
     min_value: Value,
     max_value: Value,
+    values: &[u8],
 ) -> Value {
+    let (slope, intercept) =
+        decode_and_compute_slope_and_intercept(start_time, end_time, min_value, max_value, values);
+
     if timestamps::are_compressed_timestamps_regular(timestamps) {
-        // TODO: how to encode if min or max is the first or last value?
-        let (slope, intercept) =
-            compute_slope_and_intercept(start_time, min_value as f64, end_time, max_value as f64);
         let first = slope * start_time as f64 + intercept;
         let last = slope * end_time as f64 + intercept;
         let average = (first + last) / 2.0;
         let length = models::length(start_time, end_time, timestamps);
         (average * length as f64) as Value
     } else {
-        // TODO: how to encode if min or max is the first or last value?
-        let (slope, intercept) =
-            compute_slope_and_intercept(start_time, min_value as f64, end_time, max_value as f64);
-
         let mut sum: f64 = 0.0;
         for timestamp in timestamps {
             sum += slope * (*timestamp as f64) + intercept;
@@ -243,13 +240,13 @@ pub fn grid(
     end_time: Timestamp,
     min_value: Value,
     max_value: Value,
+    values: &[u8],
     time_series_ids: &mut TimeSeriesIdBuilder,
     timestamps: &[Timestamp],
     value_builder: &mut ValueBuilder,
 ) {
-    // TODO: how to encode if min or max is the first or last value?
     let (slope, intercept) =
-        compute_slope_and_intercept(start_time, min_value as f64, end_time, max_value as f64);
+        decode_and_compute_slope_and_intercept(start_time, end_time, min_value, max_value, values);
 
     for timestamp in timestamps {
         time_series_ids.append_value(time_series_id);
@@ -258,9 +255,31 @@ pub fn grid(
     }
 }
 
+/// Decode `values` to determine how `min_value` and `max_value` maps to the
+/// segments first value and final value. Then compute the slope and intercept
+/// of a linear function that intersects with the data points
+/// (`first_timestamp`, first value) and (`final_timestamp`, final value).
+fn decode_and_compute_slope_and_intercept(
+    first_timestamp: Timestamp,
+    final_timestamp: Timestamp,
+    min_value: Value,
+    max_value: Value,
+    values: &[u8],
+) -> (f64, f64) {
+    let min_value = min_value as f64;
+    let max_value = max_value as f64;
+
+    // Check if min value is the first value and max value is the final value.
+    if values[0] == 1 {
+        compute_slope_and_intercept(first_timestamp, min_value, final_timestamp, max_value)
+    } else {
+        compute_slope_and_intercept(first_timestamp, max_value, final_timestamp, min_value)
+    }
+}
+
 /// Compute the slope and intercept of a linear function that intersects with
-/// the data points (first_timestamp, first_value) and (final_timestamp,
-/// final_value).
+/// the data points (`first_timestamp`, `first_value`) and (`final_timestamp`,
+/// `final_value`).
 fn compute_slope_and_intercept(
     first_timestamp: Timestamp,
     first_value: f64,
@@ -283,10 +302,15 @@ fn compute_slope_and_intercept(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use datafusion::arrow::array::{BinaryArray, Float32Array, UInt8Array};
     use proptest::strategy::Strategy;
     use proptest::{num, prop_assert, prop_assert_eq, prop_assume, proptest};
 
-    use crate::types::tests::ProptestValue;
+    use crate::compression;
+    use crate::models::SWING_ID;
+    use crate::types::{
+        tests::ProptestValue, TimestampArray, TimestampBuilder, ValueArray, ValueBuilder,
+    };
 
     // Tests constants chosen to be realistic while minimizing the testing time.
     const SAMPLING_INTERVAL: Timestamp = 1000;
@@ -459,7 +483,11 @@ mod tests {
         first_value in num::i32::ANY.prop_map(i32_to_value),
         final_value in num::i32::ANY.prop_map(i32_to_value),
     ) {
-        let sum = sum(FIRST_TIMESTAMP, FINAL_TIMESTAMP, &[], first_value, final_value);
+        let min_value = f32::min(first_value, final_value);
+        let max_value = f32::max(first_value, final_value);
+        let value = (min_value < max_value) as u8;
+
+        let sum = sum(FIRST_TIMESTAMP, FINAL_TIMESTAMP, &[], min_value, max_value, &[value]);
         prop_assert_eq!(sum, first_value + final_value);
     }
     }
@@ -480,6 +508,7 @@ mod tests {
             FINAL_TIMESTAMP,
             value,
             value,
+            &[0],
             &mut time_series_ids,
             &timestamps,
             &mut values,
@@ -510,5 +539,69 @@ mod tests {
         // Ensure Value is always within a range that a model of type Swing can
         // aggregate. Within one million the aggregates are always correct.
         (index % 1_000_000) as Value
+    }
+
+    #[test]
+    fn test_can_reconstruct_sequence_of_linear_increasing_values_within_error_bound_zero() {
+        test_can_reconstruct_sequence_of_linear_values_within_error_bound_zero(vec![
+            42.0, 84.0, 126.0, 168.0, 210.0,
+        ])
+    }
+
+    #[test]
+    fn test_can_reconstruct_sequence_of_linear_decreasing_values_within_error_bound_zero() {
+        test_can_reconstruct_sequence_of_linear_values_within_error_bound_zero(vec![
+            210.0, 168.0, 126.0, 84.0, 42.0,
+        ])
+    }
+
+    fn test_can_reconstruct_sequence_of_linear_values_within_error_bound_zero(values: Vec<Value>) {
+        // Fit model of type Swing to perfectly linear sequence.
+        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let final_timestamp = FIRST_TIMESTAMP + values.len() as i64 * SAMPLING_INTERVAL;
+        let timestamps = TimestampArray::from_iter_values(
+            (FIRST_TIMESTAMP..final_timestamp).step_by(SAMPLING_INTERVAL as usize),
+        );
+        let values = ValueArray::from_iter_values(values);
+        let segments = compression::try_compress(&timestamps, &values, error_bound).unwrap();
+
+        // Extract the individual columns from the record batch.
+        crate::get_arrays!(
+            segments,
+            model_type_id_array,
+            timestamps_array,
+            start_time_array,
+            end_time_array,
+            values_array,
+            min_value_array,
+            max_value_array,
+            _error_array
+        );
+
+        // Verify that one model of type Swing was used.
+        assert_eq!(segments.num_rows(), 1);
+        assert_eq!(model_type_id_array.value(0), SWING_ID);
+
+        // Reconstruct all values from the segment.
+        let mut reconstructed_ids = TimeSeriesIdBuilder::with_capacity(timestamps.len());
+        let mut reconstructed_timestamps = TimestampBuilder::with_capacity(timestamps.len());
+        let mut reconstructed_values = ValueBuilder::with_capacity(timestamps.len());
+
+        models::grid(
+            0,
+            model_type_id_array.value(0),
+            timestamps_array.value(0),
+            start_time_array.value(0),
+            end_time_array.value(0),
+            values_array.value(0),
+            min_value_array.value(0),
+            max_value_array.value(0),
+            &mut reconstructed_ids,
+            &mut reconstructed_timestamps,
+            &mut reconstructed_values,
+        );
+
+        assert_eq!(timestamps, reconstructed_timestamps.finish());
+        assert_eq!(values, reconstructed_values.finish());
     }
 }
