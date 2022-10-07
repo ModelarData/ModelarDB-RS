@@ -21,6 +21,7 @@ mod catalog;
 mod compression;
 mod errors;
 mod macros;
+mod metadata;
 mod models;
 mod optimizer;
 mod remote;
@@ -42,6 +43,7 @@ use tracing::error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::catalog::Catalog;
+use crate::metadata::MetadataManager;
 use crate::optimizer::model_simple_aggregates;
 use crate::storage::StorageEngine;
 use crate::tables::ModelTable;
@@ -52,6 +54,7 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 /// Provides access to the system's configuration and components.
 pub struct Context {
     /// Metadata for the tables and model tables in the data folder.
+    metadata_manager: MetadataManager,
     catalog: RwLock<Catalog>,
     /// A Tokio runtime for executing asynchronous tasks.
     runtime: Runtime,
@@ -77,6 +80,9 @@ fn main() -> Result<(), String> {
         let data_folder_path = PathBuf::from(&data_folder);
         fs::create_dir_all(data_folder_path.as_path()).map_err(|error| error.to_string())?;
 
+        // Initialize the metadata manager with a path to the metadata database..
+        let metadata_manager = MetadataManager::new(&data_folder_path);
+
         // Set up the metadata tables used for model tables.
         create_model_table_metadata_tables(data_folder_path.as_path())
             .map_err(|error| format!("Unable to create metadata tables: {}", error))?;
@@ -87,10 +93,16 @@ fn main() -> Result<(), String> {
         })?;
         let runtime = Runtime::new().unwrap();
         let session = create_session_context();
-        let storage_engine = RwLock::new(StorageEngine::new(data_folder_path.clone(), true));
+        let storage_engine = RwLock::new(StorageEngine::new(
+            data_folder_path.clone(),
+            metadata_manager.get_uncompressed_schema(),
+            metadata_manager.get_compressed_schema(),
+            true,
+        ));
 
         // Create Context.
         let mut context = Arc::new(Context {
+            metadata_manager,
             catalog: RwLock::new(catalog),
             runtime,
             session,
@@ -186,19 +198,17 @@ fn register_tables_and_model_tables(context: &mut Arc<Context>) {
     });
 
     // Initializes tables storing time series as models in Apache Parquet files.
-    catalog
-        .model_table_metadata
-        .retain(|model_table_metadata| {
-            let result = context.session.register_table(
-                model_table_metadata.name.as_str(),
-                ModelTable::new(context.clone(), model_table_metadata),
-            );
-            check_if_table_or_model_table_is_initialized_otherwise_log_error(
-                "model table",
-                &model_table_metadata.name,
-                result,
-            )
-        });
+    catalog.model_table_metadata.retain(|model_table_metadata| {
+        let result = context.session.register_table(
+            model_table_metadata.name.as_str(),
+            ModelTable::new(context.clone(), model_table_metadata),
+        );
+        check_if_table_or_model_table_is_initialized_otherwise_log_error(
+            "model table",
+            &model_table_metadata.name,
+            result,
+        )
+    });
 }
 
 /// Check if the `result` from a table or model table initialization is an

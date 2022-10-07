@@ -27,10 +27,12 @@ use tracing::{debug, debug_span};
 
 use crate::catalog;
 use crate::catalog::ModelTableMetadata;
-use crate::{compression, get_array};
 use crate::models::ErrorBound;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder, UncompressedSegment};
-use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
+use crate::types::{
+    CompressedSchema, Timestamp, TimestampArray, UncompressedSchema, Value, ValueArray,
+};
+use crate::{compression, get_array};
 
 const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 512 * 1024 * 1024; // 512 MiB
 
@@ -48,13 +50,22 @@ pub(super) struct UncompressedDataManager {
     tag_value_hashes: HashMap<String, u64>,
     /// How many bytes of memory that are left for storing [`UncompressedSegments`](UncompressedSegment).
     uncompressed_remaining_memory_in_bytes: usize,
+    /// Reference to the schema for uncompressed segments.
+    uncompressed_schema: UncompressedSchema,
+    /// Reference to the schema for compressed segments.
+    compressed_schema: CompressedSchema,
     // TODO: This is a temporary field used to fix existing tests. Remove when configuration component is changed.
     /// If this is true, compress full segments directly instead of queueing them.
     compress_directly: bool,
 }
 
 impl UncompressedDataManager {
-    pub(super) fn new(data_folder_path: PathBuf, compress_directly: bool) -> Self {
+    pub(super) fn new(
+        data_folder_path: PathBuf,
+        uncompressed_schema: UncompressedSchema,
+        compressed_schema: CompressedSchema,
+        compress_directly: bool,
+    ) -> Self {
         Self {
             data_folder_path,
             // TODO: Maybe create with estimated capacity to avoid reallocation.
@@ -62,6 +73,8 @@ impl UncompressedDataManager {
             finished_queue: VecDeque::new(),
             tag_value_hashes: HashMap::new(),
             uncompressed_remaining_memory_in_bytes: UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            uncompressed_schema,
+            compressed_schema,
             compress_directly,
         }
     }
@@ -97,7 +110,8 @@ impl UncompressedDataManager {
             .tag_column_indices
             .iter()
             .map(|index| {
-                data_points.column(*index as usize)
+                data_points
+                    .column(*index as usize)
                     .as_any()
                     .downcast_ref()
                     .unwrap()
@@ -119,7 +133,11 @@ impl UncompressedDataManager {
                 if not_timestamp_column && not_tag_column {
                     Some((
                         index,
-                        data_points.column(index as usize).as_any().downcast_ref().unwrap(),
+                        data_points
+                            .column(index as usize)
+                            .as_any()
+                            .downcast_ref()
+                            .unwrap(),
                     ))
                 } else {
                     None
@@ -250,7 +268,7 @@ impl UncompressedDataManager {
         key: u64,
         timestamp: Timestamp,
         value: Value,
-    ) -> Option<RecordBatch>  {
+    ) -> Option<RecordBatch> {
         let _span = debug_span!("insert_data_point", key = key).entered();
         debug!(
             "Inserting data point ({}, {}) into segment.",
@@ -324,7 +342,9 @@ impl UncompressedDataManager {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
 
         // unwrap() is safe to use since get_record_batch() can only fail for spilled segments.
-        let data_points = segment_builder.get_record_batch().unwrap();
+        let data_points = segment_builder
+            .get_record_batch(&self.uncompressed_schema)
+            .unwrap();
         let uncompressed_timestamps = get_array!(data_points, 0, TimestampArray);
         let uncompressed_values = get_array!(data_points, 1, ValueArray);
 
@@ -332,8 +352,10 @@ impl UncompressedDataManager {
         let compressed_segments = compression::try_compress(
             &uncompressed_timestamps,
             &uncompressed_values,
-            error_bound
-        ).unwrap();
+            error_bound,
+            &self.compressed_schema,
+        )
+        .unwrap();
 
         compression::merge_segments(compressed_segments)
     }
@@ -355,7 +377,8 @@ impl UncompressedDataManager {
 
         // Iterate through the finished segments to find a segment that is in memory.
         for finished in self.finished_queue.iter_mut() {
-            if let Ok(file_path) = finished.spill_to_apache_parquet(self.data_folder_path.as_path())
+            if let Ok(file_path) = finished
+                .spill_to_apache_parquet(self.data_folder_path.as_path(), &self.uncompressed_schema)
             {
                 // Add the size of the segment back to the remaining reserved bytes.
                 self.uncompressed_remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
@@ -384,6 +407,7 @@ mod tests {
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
     use tempfile::{tempdir, TempDir};
 
+    use crate::metadata::test_util;
     use crate::storage::BUILDER_CAPACITY;
     use crate::types::{ArrowTimestamp, ArrowValue};
 
@@ -431,10 +455,19 @@ mod tests {
         let database_path = temp_dir.path().join(catalog::METADATA_SQLITE_NAME);
         let connection = Connection::open(database_path).unwrap();
 
-        let mut statement = connection.prepare("SELECT * FROM model_table_tags").unwrap();
+        let mut statement = connection
+            .prepare("SELECT * FROM model_table_tags")
+            .unwrap();
         let mut rows = statement.query(()).unwrap();
 
-        assert_eq!(rows.next().unwrap().unwrap().get::<usize, String>(1).unwrap(), "tag1");
+        assert_eq!(
+            rows.next()
+                .unwrap()
+                .unwrap()
+                .get::<usize, String>(1)
+                .unwrap(),
+            "tag1"
+        );
     }
 
     #[test]
@@ -477,14 +510,11 @@ mod tests {
                 Arc::new(ValueArray::from(values.clone())),
                 Arc::new(ValueArray::from(values)),
             ],
-        ).unwrap();
+        )
+        .unwrap();
 
-        let model_table_metadata = ModelTableMetadata::try_new(
-            "model_table".to_owned(),
-            schema,
-            vec![0],
-            1
-        ).unwrap();
+        let model_table_metadata =
+            ModelTableMetadata::try_new("model_table".to_owned(), schema, vec![0], 1).unwrap();
 
         (model_table_metadata, data)
     }
@@ -508,14 +538,16 @@ mod tests {
 
         // Create a table_name_tags SQLite table to save the 54-bit tag hashes when ingesting data.
         // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
-        connection.execute(
-            format!(
-                "CREATE TABLE {}_tags (hash INTEGER PRIMARY KEY, {}) STRICT",
-                model_table_metadata.name, tag_columns
+        connection
+            .execute(
+                format!(
+                    "CREATE TABLE {}_tags (hash INTEGER PRIMARY KEY, {}) STRICT",
+                    model_table_metadata.name, tag_columns
+                )
+                .as_str(),
+                (),
             )
-            .as_str(),
-            (),
-        ).unwrap();
+            .unwrap();
     }
 
     #[test]
@@ -690,6 +722,14 @@ mod tests {
         let temp_dir = tempdir().unwrap();
 
         let data_folder_path = temp_dir.path().to_path_buf();
-        (temp_dir, UncompressedDataManager::new(data_folder_path, false))
+        (
+            temp_dir,
+            UncompressedDataManager::new(
+                data_folder_path,
+                test_util::get_uncompressed_schema(),
+                test_util::get_compressed_schema(),
+                false,
+            ),
+        )
     }
 }

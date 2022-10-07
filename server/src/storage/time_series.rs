@@ -19,14 +19,13 @@ use std::fs;
 use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
 use std::path::Path;
-use std::sync::Arc;
 
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 
 use crate::get_array;
 use crate::storage::StorageEngine;
-use crate::types::TimestampArray;
+use crate::types::{CompressedSchema, TimestampArray};
 
 /// A single compressed time series, containing one or more compressed segments and providing
 /// functionality for appending segments and saving all segments to a single Apache Parquet file.
@@ -50,11 +49,6 @@ impl CompressedTimeSeries {
     pub(super) fn append_segment(&mut self, segment: RecordBatch) -> usize {
         let segment_size = Self::get_size_of_segment(&segment);
 
-        debug_assert!(
-            segment.schema() == Arc::new(StorageEngine::get_compressed_segment_schema()),
-            "Schema of RecordBatch does not match compressed segment schema."
-        );
-
         self.compressed_segments.push(segment);
         self.size_in_bytes += segment_size;
 
@@ -63,15 +57,18 @@ impl CompressedTimeSeries {
 
     /// If the compressed segments are successfully saved to an Apache Parquet file return [`Ok`],
     /// otherwise return [`IOError`].
-    pub(super) fn save_to_apache_parquet(&mut self, folder_path: &Path) -> Result<(), IOError> {
+    pub(super) fn save_to_apache_parquet(
+        &mut self,
+        folder_path: &Path,
+        compressed_schema: &CompressedSchema,
+    ) -> Result<(), IOError> {
         debug_assert!(
             !self.compressed_segments.is_empty(),
             "Cannot save CompressedTimeSeries with no data."
         );
 
         // Combine the segments into a single RecordBatch.
-        let schema = StorageEngine::get_compressed_segment_schema();
-        let batch = compute::concat_batches(&Arc::new(schema), &*self.compressed_segments).unwrap();
+        let batch = compute::concat_batches(&compressed_schema.0, &*self.compressed_segments).unwrap();
 
         // Create the folder structure if it does not already exist.
         let complete_folder_path = folder_path.join("compressed");
@@ -115,6 +112,7 @@ mod tests {
     use datafusion::arrow::array::Array;
     use tempfile::tempdir;
 
+    use crate::metadata::test_util as metadata_test_util;
     use crate::storage::test_util;
 
     #[test]
@@ -123,15 +121,6 @@ mod tests {
         time_series.append_segment(test_util::get_compressed_segment_record_batch());
 
         assert_eq!(time_series.compressed_segments.len(), 1)
-    }
-
-    #[test]
-    #[should_panic(expected = "Schema of RecordBatch does not match compressed segment schema.")]
-    fn test_panic_if_appending_invalid_compressed_segment() {
-        let invalid = test_util::get_invalid_compressed_segment_record_batch();
-
-        let mut time_series = CompressedTimeSeries::new();
-        time_series.append_segment(invalid);
     }
 
     #[test]
@@ -149,7 +138,10 @@ mod tests {
         time_series.append_segment(segment.clone());
 
         let temp_dir = tempdir().unwrap();
-        time_series.save_to_apache_parquet(temp_dir.path());
+        time_series.save_to_apache_parquet(
+            temp_dir.path(),
+            &metadata_test_util::get_compressed_schema(),
+        ).unwrap();
 
         // Data should be saved to a file with the first start time and last end time as the file name.
         let start_times = get_array!(segment, 2, TimestampArray);
@@ -168,7 +160,10 @@ mod tests {
     fn test_panic_if_saving_empty_compressed_segments_to_apache_parquet() {
         let mut empty_time_series = CompressedTimeSeries::new();
 
-        empty_time_series.save_to_apache_parquet(Path::new("key"));
+        empty_time_series.save_to_apache_parquet(
+            Path::new("key"),
+            &metadata_test_util::get_compressed_schema(),
+        ).unwrap();
     }
 
     #[test]
