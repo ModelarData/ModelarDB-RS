@@ -152,13 +152,14 @@ impl SelectedModel {
         let end_index = start_index + swing.get_length() - 1;
         let min_value = Value::min(start_value, end_value);
         let max_value = Value::max(start_value, end_value);
+        let values = vec!((start_value < end_value) as u8);
 
         Self {
             model_type_id: SWING_ID,
             end_index,
             min_value,
             max_value,
-            values: vec![],
+            values,
         }
     }
 
@@ -234,7 +235,7 @@ pub fn sum(
 ) -> Value {
     match model_type_id as u8 {
         PMC_MEAN_ID => pmcmean::sum(start_time, end_time, timestamps, min_value),
-        SWING_ID => swing::sum(start_time, end_time, timestamps, min_value, max_value),
+        SWING_ID => swing::sum(start_time, end_time, timestamps, min_value, max_value, values),
         GORILLA_ID => gorilla::sum(start_time, end_time, timestamps, values),
         _ => panic!("Unknown model type."),
     }
@@ -273,6 +274,7 @@ pub fn grid(
             end_time,
             min_value,
             max_value,
+            values,
             time_series_id_builder,
             new_timestamps,
             value_builder,
@@ -357,7 +359,7 @@ mod tests {
         assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
         assert_eq!(10.0, selected_model.min_value);
         assert_eq!(50.0, selected_model.max_value);
-        assert_eq!(0, selected_model.values.len());
+        assert_eq!(1, selected_model.values.len());
     }
 
     #[test]
@@ -370,7 +372,7 @@ mod tests {
         assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
         assert_eq!(10.0, selected_model.min_value);
         assert_eq!(50.0, selected_model.max_value);
-        assert_eq!(0, selected_model.values.len());
+        assert_eq!(1, selected_model.values.len());
     }
 
     #[test]
