@@ -51,7 +51,8 @@ impl MetadataManager {
     pub fn try_new(data_folder_path: &Path) -> Result<Self> {
         // Compute the path to the metadata database.
         let metadata_database_path = data_folder_path.join(catalog::METADATA_SQLITE_NAME);
-        Connection::open(&metadata_database_path)?;
+        let connection = Connection::open(&metadata_database_path)?;
+        MetadataManager::create_model_table_metadata_tables(&connection)?;
 
         // Initialize the schema for record batches containing data points.
         let uncompressed_schema = UncompressedSchema(Arc::new(Schema::new(vec![
@@ -196,6 +197,39 @@ impl MetadataManager {
             }
         }
         Ok(keys)
+    }
+
+    /// If they do not already exist, create the tables used for model table
+    /// metadata. A "model_table_metadata" table that can persist model tables
+    /// is created. A "columns" table that can save the index of field columns
+    /// in specific tables is also created. If the tables already exist or were
+    /// successfully created, return [`Ok`], otherwise return
+    /// [`rusqlite::Error`].
+    fn create_model_table_metadata_tables(connection: &Connection) -> Result<(), rusqlite::Error> {
+        // Create the model_table_metadata SQLite table if it does not exist.
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS model_table_metadata (
+                table_name TEXT PRIMARY KEY,
+                schema BLOB NOT NULL,
+                timestamp_column_index INTEGER NOT NULL,
+                tag_column_indices BLOB NOT NULL
+        ) STRICT",
+            (),
+        )?;
+
+        // Create the model_table_field_columns SQLite table if it does not
+        // exist. Note that column_index will only use a maximum of 10 bits.
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS model_table_field_columns (
+                table_name TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                column_index INTEGER NOT NULL,
+                PRIMARY KEY (table_name, column_name)
+        ) STRICT",
+            (),
+        )?;
+
+        Ok(())
     }
 }
 

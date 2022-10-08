@@ -30,14 +30,13 @@ mod tables;
 mod types;
 
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use datafusion::common::DataFusionError;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::options::ParquetReadOptions;
 use datafusion::execution::runtime_env::RuntimeEnv;
-use rusqlite::Connection;
 use tokio::runtime::Runtime;
 use tracing::error;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -80,14 +79,10 @@ fn main() -> Result<(), String> {
         let data_folder_path = PathBuf::from(&data_folder);
         fs::create_dir_all(data_folder_path.as_path()).map_err(|error| error.to_string())?;
 
-        // Initialize the metadata manager with a path to the metadata database.
-        let metadata_manager = MetadataManager::try_new(&data_folder_path)
-            .map_err(|error| error.to_string())?;
-
-
-        // Set up the metadata tables used for model tables.
-        create_model_table_metadata_tables(data_folder_path.as_path())
-            .map_err(|error| format!("Unable to create metadata tables: {}", error))?;
+        // Initialize the metadata manager with a path to the data folder,
+        // connect to the metadata database, and set up the necessary tables.
+        let metadata_manager =
+            MetadataManager::try_new(&data_folder_path).map_err(|error| error.to_string())?;
 
         // Build Context.
         let catalog = Catalog::try_new(&data_folder_path).map_err(|error| {
@@ -140,41 +135,6 @@ fn create_session_context() -> SessionContext {
         Arc::new(model_simple_aggregates::ModelSimpleAggregatesPhysicalOptimizerRule {}),
     ]);
     SessionContext::with_state(state)
-}
-
-// TODO: Move this function to the configuration/metadata component.
-/// If they do not already exist, create the tables used for model table metadata. A
-/// "model_table_metadata" table that can persist model tables is created. A "columns" table that
-/// can save the index of field columns in specific tables is also created. If the tables already
-/// exist or were successfully created, return [`Ok`], otherwise return [`rusqlite::Error`].
-fn create_model_table_metadata_tables(data_folder_path: &Path) -> Result<(), rusqlite::Error> {
-    let database_path = data_folder_path.join(catalog::METADATA_SQLITE_NAME);
-    let connection = Connection::open(database_path)?;
-
-    // Create the model_table_metadata SQLite table if it does not exist.
-    connection.execute(
-        "CREATE TABLE IF NOT EXISTS model_table_metadata (
-                table_name TEXT PRIMARY KEY,
-                schema BLOB NOT NULL,
-                timestamp_column_index INTEGER NOT NULL,
-                tag_column_indices BLOB NOT NULL
-        ) STRICT",
-        (),
-    )?;
-
-    // Create the model_table_field_columns SQLite table if it does not exist. Note that column_index
-    // will only use a maximum of 10 bits.
-    connection.execute(
-        "CREATE TABLE IF NOT EXISTS model_table_field_columns (
-                table_name TEXT NOT NULL,
-                column_name TEXT NOT NULL,
-                column_index INTEGER NOT NULL,
-                PRIMARY KEY (table_name, column_name)
-        ) STRICT",
-        (),
-    )?;
-
-    Ok(())
 }
 
 /// Register all tables and model tables in `catalog` with Apache Arrow
