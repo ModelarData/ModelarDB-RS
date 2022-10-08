@@ -45,9 +45,13 @@ pub struct MetadataManager {
 
 // TODO: is use of pub without getters and setters recommended in the Rust community?
 impl MetadataManager {
-    pub fn new(data_folder_path: &Path) -> Self {
+    /// Return [`MetadataManager`] if a connection can be made to the metadata
+    /// database in `data_folder_path`, otherwise [`Error`](rusqlite::Error) is
+    /// returned.
+    pub fn try_new(data_folder_path: &Path) -> Result<Self> {
         // Compute the path to the metadata database.
         let metadata_database_path = data_folder_path.join(catalog::METADATA_SQLITE_NAME);
+        Connection::open(&metadata_database_path)?;
 
         // Initialize the schema for record batches containing data points.
         let uncompressed_schema = UncompressedSchema(Arc::new(Schema::new(vec![
@@ -68,14 +72,14 @@ impl MetadataManager {
         ])));
 
         // Create the metadata manager with the default values.
-        Self {
+        Ok(Self {
             metadata_database_path,
             uncompressed_schema,
             compressed_schema,
             // Default values for parameters.
             uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
-            compressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
-        }
+            compressed_reserved_memory_in_bytes: 512 * 1024 * 1024,   // 512 MiB
+        })
     }
 
     /// Return the [`RecordBatch`] schema used for uncompressed segments.
@@ -200,21 +204,23 @@ impl MetadataManager {
 pub mod test_util {
     use super::*;
 
+    use tempfile;
+
     pub fn get_test_metadata_manager() -> MetadataManager {
-        // TODO: test connection to metadata database when created.
-        let mut metadata_manager = MetadataManager::new(Path::new(""));
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).unwrap();
 
         metadata_manager.uncompressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB
-        metadata_manager.compressed_reserved_memory_in_bytes =   5 * 1024 * 1024; // 5 MiB
+        metadata_manager.compressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB
 
         metadata_manager
     }
 
     pub fn get_uncompressed_schema() -> UncompressedSchema {
-        MetadataManager::new(Path::new("")).get_uncompressed_schema()
+        get_test_metadata_manager().get_uncompressed_schema()
     }
 
     pub fn get_compressed_schema() -> CompressedSchema {
-        MetadataManager::new(Path::new("")).get_compressed_schema()
+        get_test_metadata_manager().get_compressed_schema()
     }
 }

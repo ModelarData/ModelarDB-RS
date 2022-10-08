@@ -80,8 +80,10 @@ fn main() -> Result<(), String> {
         let data_folder_path = PathBuf::from(&data_folder);
         fs::create_dir_all(data_folder_path.as_path()).map_err(|error| error.to_string())?;
 
-        // Initialize the metadata manager with a path to the metadata database..
-        let metadata_manager = MetadataManager::new(&data_folder_path);
+        // Initialize the metadata manager with a path to the metadata database.
+        let metadata_manager = MetadataManager::try_new(&data_folder_path)
+            .map_err(|error| error.to_string())?;
+
 
         // Set up the metadata tables used for model tables.
         create_model_table_metadata_tables(data_folder_path.as_path())
