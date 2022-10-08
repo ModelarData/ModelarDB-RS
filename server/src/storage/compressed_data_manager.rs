@@ -28,10 +28,6 @@ use crate::storage::time_series::CompressedTimeSeries;
 use crate::types::{CompressedSchema, Timestamp};
 use crate::StorageEngine;
 
-/// Signed integer since compressed data is inserted first and the remaining bytes are checked after.
-/// This means that the remaining bytes can be negative briefly until compressed data is saved to disk.
-const COMPRESSED_RESERVED_MEMORY_IN_BYTES: isize = 512 * 1024 * 1024; // 512 MiB
-
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
 pub(super) struct CompressedDataManager {
@@ -42,19 +38,25 @@ pub(super) struct CompressedDataManager {
     /// FIFO queue of keys referring to [`CompressedTimeSeries`] that can be saved to persistent storage.
     compressed_queue: VecDeque<u64>,
     /// How many bytes of memory that are left for storing compressed segments.
+    /// Signed integer since compressed data is inserted first and the remaining bytes are checked after.
+    /// This means that the remaining bytes can be negative briefly until compressed data is saved to disk.
     compressed_remaining_memory_in_bytes: isize,
     /// Reference to the schema for compressed segments.
     compressed_schema: CompressedSchema,
 }
 
 impl CompressedDataManager {
-    pub(super) fn new(data_folder_path: PathBuf, compressed_schema: CompressedSchema) -> Self {
+    pub(super) fn new(
+        data_folder_path: PathBuf,
+        compressed_reserved_memory_in_bytes: usize,
+        compressed_schema: CompressedSchema,
+    ) -> Self {
         Self {
             data_folder_path,
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             compressed_data: HashMap::new(),
             compressed_queue: VecDeque::new(),
-            compressed_remaining_memory_in_bytes: COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            compressed_remaining_memory_in_bytes: compressed_reserved_memory_in_bytes as isize,
             compressed_schema,
         }
     }
@@ -304,13 +306,15 @@ mod tests {
     /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
     fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
         let temp_dir = tempdir().unwrap();
+        let metadata_manager = metadata_test_util::get_test_metadata_manager();
 
         let data_folder_path = temp_dir.path().to_path_buf();
         (
             temp_dir,
             CompressedDataManager::new(
                 data_folder_path,
-                metadata_test_util::get_compressed_schema(),
+                metadata_manager.compressed_reserved_memory_in_bytes,
+                metadata_manager.get_compressed_schema(),
             ),
         )
     }

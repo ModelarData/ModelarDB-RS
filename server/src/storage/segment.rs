@@ -252,11 +252,9 @@ impl FinishedSegment {
 mod tests {
     use super::*;
 
-    use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
     use tempfile::tempdir;
 
     use crate::metadata::test_util;
-    use crate::types::{ArrowValue, ValueArray};
 
     // Tests for SegmentBuilder.
     #[test]
@@ -324,7 +322,9 @@ mod tests {
     #[should_panic(expected = "Cannot get RecordBatch from SegmentBuilder that is not full.")]
     fn test_panic_if_getting_record_batch_when_not_full() {
         let mut segment_builder = SegmentBuilder::new();
-        segment_builder.get_record_batch(&test_util::get_uncompressed_schema());
+        segment_builder
+            .get_record_batch(&test_util::get_uncompressed_schema())
+            .unwrap();
     }
 
     #[test]
@@ -334,7 +334,8 @@ mod tests {
 
         let temp_dir = tempdir().unwrap();
         segment_builder
-            .spill_to_apache_parquet(temp_dir.path(), &test_util::get_uncompressed_schema());
+            .spill_to_apache_parquet(temp_dir.path(), &test_util::get_uncompressed_schema())
+            .unwrap();
 
         let uncompressed_path = temp_dir.path().join("uncompressed");
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
@@ -344,10 +345,12 @@ mod tests {
     #[should_panic(expected = "Cannot get RecordBatch from SegmentBuilder that is not full.")]
     fn test_panic_if_spilling_segment_builder_when_not_full() {
         let mut segment_builder = SegmentBuilder::new();
-        segment_builder.spill_to_apache_parquet(
-            Path::new("folder_path"),
-            &test_util::get_uncompressed_schema(),
-        );
+        segment_builder
+            .spill_to_apache_parquet(
+                Path::new("folder_path"),
+                &test_util::get_uncompressed_schema(),
+            )
+            .unwrap();
     }
 
     // Tests for SpilledSegment.

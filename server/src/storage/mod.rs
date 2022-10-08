@@ -40,10 +40,11 @@ use object_store::ObjectMeta;
 
 use crate::catalog::ModelTableMetadata;
 use crate::errors::ModelarDBError;
+use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::segment::FinishedSegment;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
-use crate::types::{CompressedSchema, Timestamp, UncompressedSchema};
+use crate::types::Timestamp;
 
 // TODO: Look into custom errors for all errors in storage engine.
 
@@ -67,20 +68,21 @@ pub struct StorageEngine {
 impl StorageEngine {
     pub fn new(
         data_folder_path: PathBuf,
-        uncompressed_schema: UncompressedSchema,
-        compressed_schema: CompressedSchema,
+        metadata_manager: &MetadataManager,
         compress_directly: bool,
     ) -> Self {
         Self {
             uncompressed_data_manager: UncompressedDataManager::new(
                 data_folder_path.clone(),
-                uncompressed_schema,
-                compressed_schema.clone(),
+                metadata_manager.uncompressed_reserved_memory_in_bytes,
+                metadata_manager.get_uncompressed_schema(),
+                metadata_manager.get_compressed_schema(),
                 compress_directly,
             ),
             compressed_data_manager: CompressedDataManager::new(
                 data_folder_path,
-                compressed_schema,
+                metadata_manager.compressed_reserved_memory_in_bytes,
+                metadata_manager.get_compressed_schema(),
             ),
         }
     }
@@ -393,8 +395,7 @@ mod tests {
             temp_dir,
             StorageEngine::new(
                 data_folder_path,
-                metadata_test_util::get_uncompressed_schema(),
-                metadata_test_util::get_compressed_schema(),
+                &metadata_test_util::get_test_metadata_manager(),
                 false,
             ),
         )
@@ -407,7 +408,7 @@ mod tests {
         let batch = test_util::get_compressed_segment_record_batch();
 
         let parquet_path = temp_dir.path().join("test.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path());
+        StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path()).unwrap();
 
         assert!(parquet_path.exists());
     }
@@ -419,7 +420,7 @@ mod tests {
 
         let temp_dir = tempdir().unwrap();
         let parquet_path = temp_dir.path().join("empty.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path());
+        StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path()).unwrap();
 
         assert!(parquet_path.exists());
     }
@@ -495,7 +496,8 @@ mod tests {
         let batch = test_util::get_compressed_segment_record_batch();
 
         let parquet_path = temp_dir.path().join(file_name);
-        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path());
+        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path())
+            .unwrap();
 
         (temp_dir, parquet_path, batch)
     }

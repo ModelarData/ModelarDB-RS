@@ -35,8 +35,15 @@ pub struct MetadataManager {
     metadata_database_path: PathBuf,
     uncompressed_schema: UncompressedSchema,
     compressed_schema: CompressedSchema,
+    //
+    /// Amount of memory to reserve for storing
+    /// [`UncompressedSegments`](crate::storage::segment::UncompressedSegment).
+    pub uncompressed_reserved_memory_in_bytes: usize,
+    /// Amount of memory to reserve for storing compressed segments.
+    pub compressed_reserved_memory_in_bytes: usize,
 }
 
+// TODO: is use of pub without getters and setters recommended in the Rust community?
 impl MetadataManager {
     pub fn new(data_folder_path: &Path) -> Self {
         // Compute the path to the metadata database.
@@ -60,10 +67,14 @@ impl MetadataManager {
             Field::new("error", DataType::Float32, false),
         ])));
 
+        // Create the metadata manager with the default values.
         Self {
             metadata_database_path,
             uncompressed_schema,
             compressed_schema,
+            // Default values for parameters.
+            uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
+            compressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
         }
     }
 
@@ -188,6 +199,16 @@ impl MetadataManager {
 /// Module with utility functions that return the metadata needed by unit tests.
 pub mod test_util {
     use super::*;
+
+    pub fn get_test_metadata_manager() -> MetadataManager {
+        // TODO: test connection to metadata database when created.
+        let mut metadata_manager = MetadataManager::new(Path::new(""));
+
+        metadata_manager.uncompressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB
+        metadata_manager.compressed_reserved_memory_in_bytes =   5 * 1024 * 1024; // 5 MiB
+
+        metadata_manager
+    }
 
     pub fn get_uncompressed_schema() -> UncompressedSchema {
         MetadataManager::new(Path::new("")).get_uncompressed_schema()

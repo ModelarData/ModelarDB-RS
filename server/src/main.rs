@@ -95,8 +95,7 @@ fn main() -> Result<(), String> {
         let session = create_session_context();
         let storage_engine = RwLock::new(StorageEngine::new(
             data_folder_path.clone(),
-            metadata_manager.get_uncompressed_schema(),
-            metadata_manager.get_compressed_schema(),
+            &metadata_manager,
             true,
         ));
 

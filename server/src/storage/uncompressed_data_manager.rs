@@ -34,8 +34,6 @@ use crate::types::{
 };
 use crate::{compression, get_array};
 
-const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 512 * 1024 * 1024; // 512 MiB
-
 /// Converts a batch of data to uncompressed data points and stores uncompressed data points
 /// temporarily in an in-memory buffer that spills to Apache Parquet files. When finished the data
 /// is made available for compression.
@@ -62,6 +60,7 @@ pub(super) struct UncompressedDataManager {
 impl UncompressedDataManager {
     pub(super) fn new(
         data_folder_path: PathBuf,
+        uncompressed_reserved_memory_in_bytes: usize,
         uncompressed_schema: UncompressedSchema,
         compressed_schema: CompressedSchema,
         compress_directly: bool,
@@ -72,7 +71,7 @@ impl UncompressedDataManager {
             uncompressed_data: HashMap::new(),
             finished_queue: VecDeque::new(),
             tag_value_hashes: HashMap::new(),
-            uncompressed_remaining_memory_in_bytes: UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            uncompressed_remaining_memory_in_bytes: uncompressed_reserved_memory_in_bytes,
             uncompressed_schema,
             compressed_schema,
             compress_directly,
@@ -419,7 +418,7 @@ mod tests {
 
         let (model_table, data) = get_uncompressed_data(1);
         create_model_table_tags_table(&model_table, temp_dir.path());
-        data_manager.insert_data_points(&model_table, &data);
+        data_manager.insert_data_points(&model_table, &data).unwrap();
 
         // Two separate builders are created since the inserted data has two field columns.
         assert_eq!(data_manager.uncompressed_data.keys().len(), 2)
@@ -432,7 +431,7 @@ mod tests {
         let (model_table, data) = get_uncompressed_data(2);
         create_model_table_tags_table(&model_table, temp_dir.path());
 
-        data_manager.insert_data_points(&model_table, &data);
+        data_manager.insert_data_points(&model_table, &data).unwrap();
 
         // Since the tag is different for each data point, 4 separate builders should be created.
         assert_eq!(data_manager.uncompressed_data.keys().len(), 4)
@@ -477,7 +476,7 @@ mod tests {
         let (model_table, _data) = get_uncompressed_data(1);
         create_model_table_tags_table(&model_table, temp_dir.path());
 
-        data_manager.get_or_compute_tag_hash(&model_table, &vec!["tag1".to_owned()]);
+        data_manager.get_or_compute_tag_hash(&model_table, &vec!["tag1".to_owned()]).unwrap();
         assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);
 
         // When getting the same tag hash again, it should just be retrieved from the cache.
@@ -720,14 +719,16 @@ mod tests {
     /// Create an [`UncompressedDataManager`] with a folder that is deleted once the test is finished.
     fn create_uncompressed_data_manager() -> (TempDir, UncompressedDataManager) {
         let temp_dir = tempdir().unwrap();
+        let metadata_manager = test_util::get_test_metadata_manager();
 
         let data_folder_path = temp_dir.path().to_path_buf();
         (
             temp_dir,
             UncompressedDataManager::new(
                 data_folder_path,
-                test_util::get_uncompressed_schema(),
-                test_util::get_compressed_schema(),
+                metadata_manager.uncompressed_reserved_memory_in_bytes,
+                metadata_manager.get_uncompressed_schema(),
+                metadata_manager.get_compressed_schema(),
                 false,
             ),
         )
