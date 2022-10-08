@@ -21,15 +21,18 @@
 //! while this module stores the system's configuration and the metadata for the
 //! model tables that cannot be stored in Apache Arrow DataFusion's catalog.
 
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
-use rusqlite::{Connection, Result};
+use rusqlite::{params, Connection, Result};
 
 use crate::catalog;
-use crate::types::TimeSeriesId;
-use crate::types::{ArrowTimestamp, ArrowValue, CompressedSchema, UncompressedSchema};
+use crate::catalog::ModelTableMetadata;
+use crate::types::{
+    ArrowTimestamp, ArrowValue, CompressedSchema, TimeSeriesId, UncompressedSchema,
+};
 
 pub struct MetadataManager {
     metadata_database_path: PathBuf,
@@ -51,8 +54,7 @@ impl MetadataManager {
     pub fn try_new(data_folder_path: &Path) -> Result<Self> {
         // Compute the path to the metadata database.
         let metadata_database_path = data_folder_path.join(catalog::METADATA_SQLITE_NAME);
-        let connection = Connection::open(&metadata_database_path)?;
-        MetadataManager::create_model_table_metadata_tables(&connection)?;
+        MetadataManager::create_model_table_metadata_tables(&metadata_database_path)?;
 
         // Initialize the schema for record batches containing data points.
         let uncompressed_schema = UncompressedSchema(Arc::new(Schema::new(vec![
@@ -84,6 +86,12 @@ impl MetadataManager {
     }
 
     /// Return the [`RecordBatch`] schema used for uncompressed segments.
+    pub fn get_data_folder_path(&self) -> &Path {
+        // unwrap() is safe as metadata_database_path is created by self.
+        self.metadata_database_path.parent().unwrap()
+    }
+
+    /// Return the [`RecordBatch`] schema used for uncompressed segments.
     pub fn get_uncompressed_schema(&self) -> UncompressedSchema {
         self.uncompressed_schema.clone()
     }
@@ -91,6 +99,81 @@ impl MetadataManager {
     /// Return the [`RecordBatch`] schema used for compressed segments.
     pub fn get_compressed_schema(&self) -> CompressedSchema {
         self.compressed_schema.clone()
+    }
+
+    /// Save the created model table to the metadata database. This includes
+    /// creating a tags table for the model table, adding a row to the
+    /// model_table_metadata table, and adding a row to the
+    /// model_table_field_columns table for each field column.
+    pub fn save_model_table_to_database(
+        &self,
+        model_table_metadata: &ModelTableMetadata,
+        schema_bytes: Vec<u8>,
+    ) -> Result<()> {
+        // Create a transaction to ensure the database state is consistent across tables.
+        let mut connection = Connection::open(&self.metadata_database_path)?;
+        let transaction = connection.transaction()?;
+
+        // Add a column definition for each tag field in the schema.
+        let tag_columns: String = model_table_metadata
+            .tag_column_indices
+            .iter()
+            .map(|index| {
+                let field = model_table_metadata.schema.field(*index as usize);
+                format!("{} TEXT NOT NULL", field.name())
+            })
+            .collect::<Vec<String>>()
+            .join(",");
+
+        // Create a table_name_tags SQLite table to save the 54-bit tag hashes when ingesting data.
+        // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
+        transaction.execute(
+            format!(
+                "CREATE TABLE {}_tags (hash INTEGER PRIMARY KEY, {}) STRICT",
+                model_table_metadata.name, tag_columns
+            )
+            .as_str(),
+            (),
+        )?;
+
+        // Add a new row in the model_table_metadata table to persist the model table.
+        transaction.execute(
+            "INSERT INTO model_table_metadata (table_name, schema, timestamp_column_index, tag_column_indices)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                model_table_metadata.name,
+                schema_bytes,
+                model_table_metadata.timestamp_column_index,
+                model_table_metadata.tag_column_indices
+            ]
+        )?;
+
+        // Add a row for each field column to the model_table_field_columns table.
+        let mut insert_statement = transaction.prepare(
+            "INSERT INTO model_table_field_columns (table_name, column_name, column_index)
+        VALUES (?1, ?2, ?3)",
+        )?;
+
+        for (index, field) in model_table_metadata.schema.fields().iter().enumerate() {
+            // Only add a row for the field if it is not the timestamp or a tag.
+            let is_timestamp = index == model_table_metadata.timestamp_column_index as usize;
+            let in_tag_indices = model_table_metadata
+                .tag_column_indices
+                .contains(&(index as u8));
+
+            if !is_timestamp && !in_tag_indices {
+                insert_statement.execute(params![
+                    model_table_metadata.name,
+                    field.name(),
+                    index
+                ])?;
+            }
+        }
+
+        // Explicitly drop the statement to drop the borrow of "transaction" before the commit.
+        mem::drop(insert_statement);
+
+        transaction.commit()
     }
 
     /// Compute the 64-bit keys of the univariate time series to retrieve from
@@ -205,7 +288,9 @@ impl MetadataManager {
     /// in specific tables is also created. If the tables already exist or were
     /// successfully created, return [`Ok`], otherwise return
     /// [`rusqlite::Error`].
-    fn create_model_table_metadata_tables(connection: &Connection) -> Result<(), rusqlite::Error> {
+    fn create_model_table_metadata_tables(metadata_database_path: &Path) -> Result<()> {
+        let connection = Connection::open(&metadata_database_path)?;
+
         // Create the model_table_metadata SQLite table if it does not exist.
         connection.execute(
             "CREATE TABLE IF NOT EXISTS model_table_metadata (
@@ -240,9 +325,8 @@ pub mod test_util {
 
     use tempfile;
 
-    pub fn get_test_metadata_manager() -> MetadataManager {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).unwrap();
+    pub fn get_test_metadata_manager(path: &Path) -> MetadataManager {
+        let mut metadata_manager = MetadataManager::try_new(path).unwrap();
 
         metadata_manager.uncompressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB
         metadata_manager.compressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB
@@ -251,10 +335,12 @@ pub mod test_util {
     }
 
     pub fn get_uncompressed_schema() -> UncompressedSchema {
-        get_test_metadata_manager().get_uncompressed_schema()
+        let temp_dir = tempfile::tempdir().unwrap();
+        get_test_metadata_manager(temp_dir.path()).get_uncompressed_schema()
     }
 
     pub fn get_compressed_schema() -> CompressedSchema {
-        get_test_metadata_manager().get_compressed_schema()
+        let temp_dir = tempfile::tempdir().unwrap();
+        get_test_metadata_manager(temp_dir.path()).get_compressed_schema()
     }
 }

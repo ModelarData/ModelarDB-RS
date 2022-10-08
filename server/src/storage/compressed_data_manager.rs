@@ -306,7 +306,7 @@ mod tests {
     /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
     fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
         let temp_dir = tempdir().unwrap();
-        let metadata_manager = metadata_test_util::get_test_metadata_manager();
+        let metadata_manager = metadata_test_util::get_test_metadata_manager(temp_dir.path());
 
         let data_folder_path = temp_dir.path().to_path_buf();
         (

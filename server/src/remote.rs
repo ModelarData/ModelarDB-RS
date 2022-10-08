@@ -21,10 +21,9 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
-use std::path::PathBuf;
 use std::pin::Pin;
+use std::str;
 use std::sync::Arc;
-use std::{mem, str};
 
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::utils;
@@ -41,12 +40,10 @@ use datafusion::catalog::schema::SchemaProvider;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
 use object_store;
-use rusqlite::{params, Connection};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
-use crate::catalog;
 use crate::catalog::{Catalog, ModelTableMetadata, TableMetadata};
 use crate::storage::StorageEngine;
 use crate::tables::ModelTable;
@@ -259,8 +256,9 @@ impl FlightServiceHandler {
             .map_err(|error: ArrowError| Status::internal(error.to_string()))?;
 
         // Persist the new model table to the metadata database.
-        let database_path = catalog.data_folder_path.join(catalog::METADATA_SQLITE_NAME);
-        save_model_table_to_database(database_path, &model_table_metadata, ipc_message.0)
+        self.context
+            .metadata_manager
+            .save_model_table_to_database(&model_table_metadata, ipc_message.0)
             .map_err(|error| Status::internal(error.to_string()))?;
 
         // Save the model table in the Apache Arrow Datafusion catalog.
@@ -570,75 +568,4 @@ fn extract_argument_bytes(data: &[u8]) -> (&[u8], &[u8]) {
     let remaining_bytes = &data[(size + 2)..];
 
     (argument_bytes, remaining_bytes)
-}
-
-// TODO: Move this to the metadata component when it exists.
-/// Save the created model table to the metadata database. This includes creating a tags table for the
-/// model table, adding a row to the model_table_metadata table, and adding a row to the
-/// model_table_field_columns table for each field column.
-fn save_model_table_to_database(
-    database_path: PathBuf,
-    model_table_metadata: &ModelTableMetadata,
-    schema_bytes: Vec<u8>,
-) -> Result<(), rusqlite::Error> {
-    // Create a transaction to ensure the database state is consistent across tables.
-    let mut connection = Connection::open(database_path)?;
-    let transaction = connection.transaction()?;
-
-    // Add a column definition for each tag field in the schema.
-    let tag_columns: String = model_table_metadata
-        .tag_column_indices
-        .iter()
-        .map(|index| {
-            let field = model_table_metadata.schema.field(*index as usize);
-            format!("{} TEXT NOT NULL", field.name())
-        })
-        .collect::<Vec<String>>()
-        .join(",");
-
-    // Create a table_name_tags SQLite table to save the 54-bit tag hashes when ingesting data.
-    // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
-    transaction.execute(
-        format!(
-            "CREATE TABLE {}_tags (hash INTEGER PRIMARY KEY, {}) STRICT",
-            model_table_metadata.name, tag_columns
-        )
-        .as_str(),
-        (),
-    )?;
-
-    // Add a new row in the model_table_metadata table to persist the model table.
-    transaction.execute(
-        "INSERT INTO model_table_metadata (table_name, schema, timestamp_column_index, tag_column_indices)
-             VALUES (?1, ?2, ?3, ?4)",
-        params![
-            model_table_metadata.name,
-            schema_bytes,
-            model_table_metadata.timestamp_column_index,
-            model_table_metadata.tag_column_indices
-        ]
-    )?;
-
-    // Add a row for each field column to the model_table_field_columns table.
-    let mut insert_statement = transaction.prepare(
-        "INSERT INTO model_table_field_columns (table_name, column_name, column_index)
-        VALUES (?1, ?2, ?3)",
-    )?;
-
-    for (index, field) in model_table_metadata.schema.fields().iter().enumerate() {
-        // Only add a row for the field if it is not the timestamp or a tag.
-        let is_timestamp = index == model_table_metadata.timestamp_column_index as usize;
-        let in_tag_indices = model_table_metadata
-            .tag_column_indices
-            .contains(&(index as u8));
-
-        if !is_timestamp && !in_tag_indices {
-            insert_statement.execute(params![model_table_metadata.name, field.name(), index])?;
-        }
-    }
-
-    // Explicitly drop the statement to drop the borrow of "transaction" before the commit.
-    mem::drop(insert_statement);
-
-    transaction.commit()
 }

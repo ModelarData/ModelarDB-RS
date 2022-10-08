@@ -389,13 +389,14 @@ mod tests {
     /// Create a [`StorageEngine`] with a folder that is deleted once the test is finished.
     fn create_storage_engine() -> (TempDir, StorageEngine) {
         let temp_dir = tempdir().unwrap();
+        let data_folder_path_buf = temp_dir.path().to_path_buf();
+        let data_folder_path = data_folder_path_buf.clone();
 
-        let data_folder_path = temp_dir.path().to_path_buf();
         (
             temp_dir,
             StorageEngine::new(
-                data_folder_path,
-                &metadata_test_util::get_test_metadata_manager(),
+                data_folder_path_buf,
+                &metadata_test_util::get_test_metadata_manager(data_folder_path.as_path()),
                 false,
             ),
         )
