@@ -22,7 +22,7 @@ use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
 use tracing::{debug, debug_span};
 
-use crate::catalog::ModelTableMetadata;
+use crate::metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::models::ErrorBound;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder, UncompressedSegment};
@@ -347,7 +347,7 @@ mod tests {
 
         let (model_table_metadata, data) = get_uncompressed_data(1);
         metadata_manager
-            .save_model_table_to_database(&model_table_metadata, vec![])
+            .save_model_table_metadata(&model_table_metadata, vec![])
             .unwrap();
         data_manager
             .insert_data_points(&mut metadata_manager, &model_table_metadata, &data)
@@ -364,7 +364,7 @@ mod tests {
 
         let (model_table_metadata, data) = get_uncompressed_data(2);
         metadata_manager
-            .save_model_table_to_database(&model_table_metadata, vec![])
+            .save_model_table_metadata(&model_table_metadata, vec![])
             .unwrap();
         data_manager
             .insert_data_points(&mut metadata_manager, &model_table_metadata, &data)

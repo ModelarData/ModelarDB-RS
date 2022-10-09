@@ -50,7 +50,7 @@ use datafusion::scalar::ScalarValue;
 use datafusion_physical_expr::planner;
 use futures::stream::{Stream, StreamExt};
 
-use crate::catalog::ModelTableMetadata;
+use crate::metadata::ModelTableMetadata;
 use crate::models;
 use crate::types::{
     ArrowTimeSeriesId, ArrowTimestamp, ArrowValue, CompressedSchema, TimestampArray,
@@ -67,7 +67,7 @@ pub struct ModelTable {
     context: Arc<Context>,
     /// Location of the object store used by the storage engine.
     object_store_url: ObjectStoreUrl,
-    /// Metadata required to query the model table.
+    /// Metadata required to read from and write to the model table.
     model_table_metadata: Arc<ModelTableMetadata>,
     /// Schema of the model table registered with Apache Arrow DataFusion.
     schema: Arc<Schema>,
@@ -76,7 +76,7 @@ pub struct ModelTable {
 }
 
 impl ModelTable {
-    pub fn new(context: Arc<Context>, model_table_metadata: &Arc<ModelTableMetadata>) -> Arc<Self> {
+    pub fn new(context: Arc<Context>, model_table_metadata: Arc<ModelTableMetadata>) -> Arc<Self> {
         // Columns in the model table registered with Apache Arrow DataFusion.
         let columns = vec![
             Field::new("tid", ArrowTimeSeriesId::DATA_TYPE, false),
@@ -102,6 +102,11 @@ impl ModelTable {
             schema: Arc::new(Schema::new(columns)),
             fallback_field_column: fallback_field_column as u64,
         })
+    }
+
+    /// Return the [`ModelTableMetadata`] for the table.
+    pub fn get_model_table_metadata(&self) -> Arc<ModelTableMetadata> {
+        self.model_table_metadata.clone()
     }
 }
 
