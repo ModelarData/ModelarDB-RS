@@ -21,6 +21,9 @@
 //! while this module stores the system's configuration and the metadata for the
 //! model tables that cannot be stored in Apache Arrow DataFusion's catalog.
 
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
+use std::hash::Hasher;
 use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -34,10 +37,13 @@ use crate::types::{
     ArrowTimestamp, ArrowValue, CompressedSchema, TimeSeriesId, UncompressedSchema,
 };
 
+#[derive(Clone)]
 pub struct MetadataManager {
     metadata_database_path: PathBuf,
     uncompressed_schema: UncompressedSchema,
     compressed_schema: CompressedSchema,
+    /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
+    tag_value_hashes: HashMap<String, u64>,
     //
     /// Amount of memory to reserve for storing
     /// [`UncompressedSegments`](crate::storage::segment::UncompressedSegment).
@@ -79,6 +85,7 @@ impl MetadataManager {
             metadata_database_path,
             uncompressed_schema,
             compressed_schema,
+            tag_value_hashes: HashMap::new(),
             // Default values for parameters.
             uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
             compressed_reserved_memory_in_bytes: 512 * 1024 * 1024,   // 512 MiB
@@ -99,6 +106,74 @@ impl MetadataManager {
     /// Return the [`RecordBatch`] schema used for compressed segments.
     pub fn get_compressed_schema(&self) -> CompressedSchema {
         self.compressed_schema.clone()
+    }
+
+    /// Return the tag hash for the given list of tag values either by
+    /// retrieving it from a cache or, if the combination of tag values is not
+    /// in the cache, by computing a new hash. If the hash is not in the cache,
+    /// it is both saved to the cache and persisted to the model_table_tags
+    /// table if it does not already contain it. If the model_table_tags table
+    /// cannot be accessed, [`rusqlite::Error`] is returned.
+    pub fn get_or_compute_tag_hash(
+        &mut self,
+        model_table: &ModelTableMetadata,
+        tag_values: &Vec<String>,
+    ) -> Result<u64, rusqlite::Error> {
+        let cache_key = {
+            let mut cache_key_list = tag_values.clone();
+            cache_key_list.push(model_table.name.clone());
+
+            cache_key_list.join(";")
+        };
+
+        // Check if the tag hash is in the cache. If it is, retrieve it. If it is not, create a new
+        // one and save it both in the cache and in the model_table_tags table.
+        if let Some(tag_hash) = self.tag_value_hashes.get(&cache_key) {
+            Ok(*tag_hash)
+        } else {
+            // Generate the 54-bit tag hash based on the tag values of the record batch and model table name.
+            let tag_hash = {
+                let mut hasher = DefaultHasher::new();
+                hasher.write(cache_key.as_bytes());
+
+                // The 64-bit hash is shifted to make the 10 least significant bits 0.
+                hasher.finish() << 10
+            };
+
+            // Save the tag hash in the cache and in the metadata database model_table_tags table.
+            self.tag_value_hashes.insert(cache_key, tag_hash);
+
+            // TODO: Move this to the metadata component when it exists.
+            let tag_columns: String = model_table
+                .tag_column_indices
+                .iter()
+                .map(|index| model_table.schema.field(*index as usize).name().clone())
+                .collect::<Vec<String>>()
+                .join(",");
+
+            let values = tag_values
+                .iter()
+                .map(|value| format!("'{}'", value))
+                .collect::<Vec<String>>()
+                .join(",");
+
+            let connection = Connection::open(&self.metadata_database_path)?;
+
+            // SQLite use signed integers https://www.sqlite.org/datatype3.html.
+            let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
+
+            // OR IGNORE is used to silently fail when trying to insert an already existing hash.
+            connection.execute(
+                format!(
+                    "INSERT OR IGNORE INTO {}_tags (hash,{}) VALUES ({},{})",
+                    model_table.name, tag_columns, signed_tag_hash, values
+                )
+                .as_str(),
+                (),
+            )?;
+
+            Ok(tag_hash)
+        }
     }
 
     /// Save the created model table to the metadata database. This includes
@@ -319,6 +394,75 @@ impl MetadataManager {
 }
 
 #[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::metadata::test_util;
+
+    // Tests for get_or_compute_tag_hash().
+    #[test]
+    fn test_get_new_tag_hash() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+
+        let model_table_metadata = test_util::get_model_table_metadata();
+        metadata_manager
+            .save_model_table_to_database(&model_table_metadata, vec![])
+            .unwrap();
+
+        let result = metadata_manager
+            .get_or_compute_tag_hash(&model_table_metadata, &vec!["tag1".to_owned()]);
+        assert!(result.is_ok());
+
+        // When a new tag hash is retrieved, the hash should be saved in the cache.
+        assert_eq!(metadata_manager.tag_value_hashes.keys().len(), 1);
+
+        // It should also be saved in the metadata database table.
+        let database_path = metadata_manager
+            .get_data_folder_path()
+            .join(catalog::METADATA_SQLITE_NAME);
+        let connection = Connection::open(database_path).unwrap();
+
+        let mut statement = connection
+            .prepare("SELECT * FROM model_table_tags")
+            .unwrap();
+        let mut rows = statement.query(()).unwrap();
+
+        assert_eq!(
+            rows.next()
+                .unwrap()
+                .unwrap()
+                .get::<usize, String>(1)
+                .unwrap(),
+            "tag1"
+        );
+    }
+
+    #[test]
+    fn test_get_existing_tag_hash() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+
+        let model_table_metadata = test_util::get_model_table_metadata();
+        metadata_manager
+            .save_model_table_to_database(&model_table_metadata, vec![])
+            .unwrap();
+
+        metadata_manager
+            .get_or_compute_tag_hash(&model_table_metadata, &vec!["tag1".to_owned()])
+            .unwrap();
+        assert_eq!(metadata_manager.tag_value_hashes.keys().len(), 1);
+
+        // When getting the same tag hash again, it should just be retrieved from the cache.
+        let result = metadata_manager
+            .get_or_compute_tag_hash(&model_table_metadata, &vec!["tag1".to_owned()]);
+
+        assert!(result.is_ok());
+        assert_eq!(metadata_manager.tag_value_hashes.keys().len(), 1);
+    }
+}
+
+#[cfg(test)]
 /// Module with utility functions that return the metadata needed by unit tests.
 pub mod test_util {
     use super::*;
@@ -332,6 +476,17 @@ pub mod test_util {
         metadata_manager.compressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB
 
         metadata_manager
+    }
+
+    pub fn get_model_table_metadata() -> ModelTableMetadata {
+        let schema = Schema::new(vec![
+            Field::new("tag", DataType::Utf8, false),
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("value_1", ArrowValue::DATA_TYPE, false),
+            Field::new("value_2", ArrowValue::DATA_TYPE, false),
+        ]);
+
+        ModelTableMetadata::try_new("model_table".to_owned(), schema, vec![0], 1).unwrap()
     }
 
     pub fn get_uncompressed_schema() -> UncompressedSchema {

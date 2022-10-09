@@ -59,6 +59,10 @@ const BUILDER_CAPACITY: usize = 64 * 1024; // Each element is a Timestamp and a 
 
 /// Manages all uncompressed and compressed data, both while being built and when finished.
 pub struct StorageEngine {
+    // TODO: is it better to use MetadataManager from context to share caches
+    // with tables or a separate MetadataManager to not require taking a lock?
+    /// Manager that controls all metadata for uncompressed and compressed data.
+    metadata_manager: MetadataManager,
     /// Manager that contains and controls all uncompressed data.
     uncompressed_data_manager: UncompressedDataManager,
     /// Manager that contains and controls all compressed data.
@@ -68,22 +72,27 @@ pub struct StorageEngine {
 impl StorageEngine {
     pub fn new(
         data_folder_path: PathBuf,
-        metadata_manager: &MetadataManager,
+        metadata_manager: MetadataManager,
         compress_directly: bool,
     ) -> Self {
+        let uncompressed_data_manager = UncompressedDataManager::new(
+            data_folder_path.clone(),
+            metadata_manager.uncompressed_reserved_memory_in_bytes,
+            metadata_manager.get_uncompressed_schema(),
+            metadata_manager.get_compressed_schema(),
+            compress_directly,
+        );
+
+        let compressed_data_manager = CompressedDataManager::new(
+            data_folder_path,
+            metadata_manager.compressed_reserved_memory_in_bytes,
+            metadata_manager.get_compressed_schema(),
+        );
+
         Self {
-            uncompressed_data_manager: UncompressedDataManager::new(
-                data_folder_path.clone(),
-                metadata_manager.uncompressed_reserved_memory_in_bytes,
-                metadata_manager.get_uncompressed_schema(),
-                metadata_manager.get_compressed_schema(),
-                compress_directly,
-            ),
-            compressed_data_manager: CompressedDataManager::new(
-                data_folder_path,
-                metadata_manager.compressed_reserved_memory_in_bytes,
-                metadata_manager.get_compressed_schema(),
-            ),
+            metadata_manager,
+            uncompressed_data_manager,
+            compressed_data_manager,
         }
     }
 
@@ -95,9 +104,11 @@ impl StorageEngine {
         data_points: &RecordBatch,
     ) -> Result<(), String> {
         // TODO: When the compression component is changed, just insert the data points.
-        let compressed_segments = self
-            .uncompressed_data_manager
-            .insert_data_points(model_table, data_points)?;
+        let compressed_segments = self.uncompressed_data_manager.insert_data_points(
+            &mut self.metadata_manager,
+            model_table,
+            data_points,
+        )?;
 
         for (key, segment) in compressed_segments {
             self.compressed_data_manager
@@ -396,7 +407,7 @@ mod tests {
             temp_dir,
             StorageEngine::new(
                 data_folder_path_buf,
-                &metadata_test_util::get_test_metadata_manager(data_folder_path.as_path()),
+                metadata_test_util::get_test_metadata_manager(data_folder_path.as_path()),
                 false,
             ),
         )

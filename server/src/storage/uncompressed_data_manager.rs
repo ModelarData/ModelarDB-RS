@@ -15,18 +15,15 @@
 
 //! Support for managing all uncompressed data that is ingested into the [`StorageEngine`].
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, VecDeque};
-use std::hash::Hasher;
 use std::path::PathBuf;
 
 use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
-use rusqlite::Connection;
 use tracing::{debug, debug_span};
 
-use crate::catalog;
 use crate::catalog::ModelTableMetadata;
+use crate::metadata::MetadataManager;
 use crate::models::ErrorBound;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder, UncompressedSegment};
 use crate::types::{
@@ -44,8 +41,6 @@ pub(super) struct UncompressedDataManager {
     uncompressed_data: HashMap<u64, SegmentBuilder>,
     /// FIFO queue of [`FinishedSegments`](FinishedSegment) that are ready for compression.
     finished_queue: VecDeque<FinishedSegment>,
-    /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
-    tag_value_hashes: HashMap<String, u64>,
     /// How many bytes of memory that are left for storing [`UncompressedSegments`](UncompressedSegment).
     uncompressed_remaining_memory_in_bytes: usize,
     /// Reference to the schema for uncompressed segments.
@@ -70,7 +65,6 @@ impl UncompressedDataManager {
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             uncompressed_data: HashMap::new(),
             finished_queue: VecDeque::new(),
-            tag_value_hashes: HashMap::new(),
             uncompressed_remaining_memory_in_bytes: uncompressed_reserved_memory_in_bytes,
             uncompressed_schema,
             compressed_schema,
@@ -86,6 +80,7 @@ impl UncompressedDataManager {
     /// successfully inserted, otherwise return [`Err`].
     pub(super) fn insert_data_points(
         &mut self,
+        metadata_manager: &mut MetadataManager,
         model_table: &ModelTableMetadata,
         data_points: &RecordBatch,
     ) -> Result<Vec<(u64, RecordBatch)>, String> {
@@ -154,7 +149,7 @@ impl UncompressedDataManager {
                 .map(|array| array.value(index).to_string())
                 .collect();
 
-            let tag_hash = self
+            let tag_hash = metadata_manager
                 .get_or_compute_tag_hash(&model_table, &tag_values)
                 .map_err(|error| format!("Tag hash could not be saved: {}", error.to_string()))?;
 
@@ -190,73 +185,6 @@ impl UncompressedDataManager {
             compressed_segments.push((key, record_batch));
         }
         compressed_segments
-    }
-
-    /// Return the tag hash for the given list of tag values either by retrieving it from the cache
-    /// or, if it is a new combination of tag values, generating a new hash. If a new hash is
-    /// created, the hash is saved both in the cache and persisted to the model_table_tags table. If
-    /// the table could not be accessed, return [`rusqlite::Error`].
-    fn get_or_compute_tag_hash(
-        &mut self,
-        model_table: &ModelTableMetadata,
-        tag_values: &Vec<String>,
-    ) -> Result<u64, rusqlite::Error> {
-        let cache_key = {
-            let mut cache_key_list = tag_values.clone();
-            cache_key_list.push(model_table.name.clone());
-
-            cache_key_list.join(";")
-        };
-
-        // Check if the tag hash is in the cache. If it is, retrieve it. If it is not, create a new
-        // one and save it both in the cache and in the model_table_tags table.
-        if let Some(tag_hash) = self.tag_value_hashes.get(&cache_key) {
-            Ok(*tag_hash)
-        } else {
-            // Generate the 54-bit tag hash based on the tag values of the record batch and model table name.
-            let tag_hash = {
-                let mut hasher = DefaultHasher::new();
-                hasher.write(cache_key.as_bytes());
-
-                // The 64-bit hash is shifted to make the 10 least significant bits 0.
-                hasher.finish() << 10
-            };
-
-            // Save the tag hash in the cache and in the metadata database model_table_tags table.
-            self.tag_value_hashes.insert(cache_key, tag_hash);
-
-            // TODO: Move this to the metadata component when it exists.
-            let tag_columns: String = model_table
-                .tag_column_indices
-                .iter()
-                .map(|index| model_table.schema.field(*index as usize).name().clone())
-                .collect::<Vec<String>>()
-                .join(",");
-
-            let values = tag_values
-                .iter()
-                .map(|value| format!("'{}'", value))
-                .collect::<Vec<String>>()
-                .join(",");
-
-            let database_path = self.data_folder_path.join(catalog::METADATA_SQLITE_NAME);
-            let connection = Connection::open(database_path)?;
-
-            // SQLite use signed integers https://www.sqlite.org/datatype3.html.
-            let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
-
-            // OR IGNORE is used to silently fail when trying to insert an already existing hash.
-            connection.execute(
-                format!(
-                    "INSERT OR IGNORE INTO {}_tags (hash,{}) VALUES ({},{})",
-                    model_table.name, tag_columns, signed_tag_hash, values
-                )
-                .as_str(),
-                (),
-            )?;
-
-            Ok(tag_hash)
-        }
     }
 
     // TODO: When the compression component is changed, this function should return Ok or Err.
@@ -415,14 +343,14 @@ mod tests {
     #[test]
     fn test_can_insert_record_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (mut metadata_manager, mut data_manager) = create_managers(temp_dir.path());
 
         let (model_table_metadata, data) = get_uncompressed_data(1);
         metadata_manager
             .save_model_table_to_database(&model_table_metadata, vec![])
             .unwrap();
         data_manager
-            .insert_data_points(&model_table_metadata, &data)
+            .insert_data_points(&mut metadata_manager, &model_table_metadata, &data)
             .unwrap();
 
         // Two separate builders are created since the inserted data has two field columns.
@@ -432,79 +360,18 @@ mod tests {
     #[test]
     fn test_can_insert_record_batch_with_multiple_data_points() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (mut metadata_manager, mut data_manager) = create_managers(temp_dir.path());
 
         let (model_table_metadata, data) = get_uncompressed_data(2);
         metadata_manager
             .save_model_table_to_database(&model_table_metadata, vec![])
             .unwrap();
         data_manager
-            .insert_data_points(&model_table_metadata, &data)
+            .insert_data_points(&mut metadata_manager, &model_table_metadata, &data)
             .unwrap();
 
         // Since the tag is different for each data point, 4 separate builders should be created.
         assert_eq!(data_manager.uncompressed_data.keys().len(), 4)
-    }
-
-    #[test]
-    fn test_get_new_tag_hash() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let (metadata_manager, mut data_manager) = create_managers(temp_dir.path());
-
-        let (model_table_metadata, _data) = get_uncompressed_data(2);
-        metadata_manager
-            .save_model_table_to_database(&model_table_metadata, vec![])
-            .unwrap();
-
-        let result =
-            data_manager.get_or_compute_tag_hash(&model_table_metadata, &vec!["tag1".to_owned()]);
-        assert!(result.is_ok());
-
-        // When a new tag hash is retrieved, the hash should be saved in the cache.
-        assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);
-
-        // It should also be saved in the metadata database table.
-        let database_path = metadata_manager
-            .get_data_folder_path()
-            .join(catalog::METADATA_SQLITE_NAME);
-        let connection = Connection::open(database_path).unwrap();
-
-        let mut statement = connection
-            .prepare("SELECT * FROM model_table_tags")
-            .unwrap();
-        let mut rows = statement.query(()).unwrap();
-
-        assert_eq!(
-            rows.next()
-                .unwrap()
-                .unwrap()
-                .get::<usize, String>(1)
-                .unwrap(),
-            "tag1"
-        );
-    }
-
-    #[test]
-    fn test_get_existing_tag_hash() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let (metadata_manager, mut data_manager) = create_managers(temp_dir.path());
-
-        let (model_table_metadata, _data) = get_uncompressed_data(1);
-        metadata_manager
-            .save_model_table_to_database(&model_table_metadata, vec![])
-            .unwrap();
-
-        data_manager
-            .get_or_compute_tag_hash(&model_table_metadata, &vec!["tag1".to_owned()])
-            .unwrap();
-        assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);
-
-        // When getting the same tag hash again, it should just be retrieved from the cache.
-        let result =
-            data_manager.get_or_compute_tag_hash(&model_table_metadata, &vec!["tag1".to_owned()]);
-
-        assert!(result.is_ok());
-        assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);
     }
 
     /// Create a record batch with data that resembles uncompressed data with a single tag and two

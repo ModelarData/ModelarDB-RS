@@ -92,7 +92,7 @@ fn main() -> Result<(), String> {
         let session = create_session_context();
         let storage_engine = RwLock::new(StorageEngine::new(
             data_folder_path.clone(),
-            &metadata_manager,
+            metadata_manager.clone(),
             true,
         ));
 
