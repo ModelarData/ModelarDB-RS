@@ -1,35 +1,38 @@
 [package]
-name = "mdbd"
+name = "modelardbd"
 version = "0.1.0"
 license = "Apache-2.0"
 edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
-datafusion = "10.0.0"
-datafusion-physical-expr = "10.0.0"
-object_store = "0.3.0"
+datafusion = "12.0.0"
+datafusion-expr = "12.0.0"
+datafusion-physical-expr = "12.0.0"
+object_store = "0.5.0"
 
 # Log is a dependency so the compile time filters for log and tracing can be set to the same value
 log = { version = "0.4.17", features = ["max_level_debug", "release_max_level_info"] }
-tracing = { version = "0.1.35", features = ["max_level_debug", "release_max_level_info"] }
+tracing = { version = "0.1.36", features = ["max_level_debug", "release_max_level_info"] }
 tracing-subscriber = "0.3.15"
 tracing-futures = "0.2.5"
 
-tokio = { version = "1.20.0", features = ["rt-multi-thread"] }
+tokio = { version = "1.21.1", features = ["rt-multi-thread", "signal"] }
 
-async-trait = "0.1.56"
-futures = "0.3.21"
+async-trait = "0.1.57"
+futures = "0.3.24"
 
-arrow-flight = "18.0.0"
-tonic = "0.7.2"
+arrow-flight = "22.0.0"
+tonic = "0.8.1"
 
 snmalloc-rs = "0.3.3"
 
-paho-mqtt = { version = "0.11", default-features = false, features = ["bundled"] }
+rusqlite = { version = "0.28.0", features = ["bundled"] }
+
+chrono = "0.4"
 
 [dev-dependencies]
 proptest = "1.0.0"
-tempfile = "3"
+tempfile = "3.3.0"
 rand = "0.8.4"
 assert_cmd = "2.0.4"

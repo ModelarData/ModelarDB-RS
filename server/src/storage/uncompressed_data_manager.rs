@@ -15,65 +15,269 @@
 
 //! Support for managing all uncompressed data that is ingested into the [`StorageEngine`].
 
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, VecDeque};
+use std::hash::Hasher;
 use std::path::PathBuf;
 
-use paho_mqtt::Message;
-use tracing::{info, info_span};
+use datafusion::arrow::array::{Array, StringArray};
+use datafusion::arrow::record_batch::RecordBatch;
+use rusqlite::Connection;
+use tracing::{debug, debug_span};
 
-use crate::storage::data_point::DataPoint;
-use crate::storage::segment::{FinishedSegment, SegmentBuilder};
+use crate::catalog;
+use crate::catalog::ModelTableMetadata;
+use crate::{compression, get_array};
+use crate::models::ErrorBound;
+use crate::storage::segment::{FinishedSegment, SegmentBuilder, UncompressedSegment};
+use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
 
-const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5000;
+const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 512 * 1024 * 1024; // 512 MiB
 
-/// Converts raw MQTT messages to uncompressed data points and stores uncompressed data points
+/// Converts a batch of data to uncompressed data points and stores uncompressed data points
 /// temporarily in an in-memory buffer that spills to Apache Parquet files. When finished the data
 /// is made available for compression.
-pub struct UncompressedDataManager {
+pub(super) struct UncompressedDataManager {
     /// Path to the folder containing all uncompressed data managed by the [`StorageEngine`].
     data_folder_path: PathBuf,
     /// The [`UncompressedSegments`](UncompressedSegment) while they are being built.
-    uncompressed_data: HashMap<String, SegmentBuilder>,
+    uncompressed_data: HashMap<u64, SegmentBuilder>,
     /// FIFO queue of [`FinishedSegments`](FinishedSegment) that are ready for compression.
     finished_queue: VecDeque<FinishedSegment>,
+    /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
+    tag_value_hashes: HashMap<String, u64>,
     /// How many bytes of memory that are left for storing [`UncompressedSegments`](UncompressedSegment).
     uncompressed_remaining_memory_in_bytes: usize,
+    // TODO: This is a temporary field used to fix existing tests. Remove when configuration component is changed.
+    /// If this is true, compress full segments directly instead of queueing them.
+    compress_directly: bool,
 }
 
 impl UncompressedDataManager {
-    pub fn new(data_folder_path: PathBuf) -> Self {
+    pub(super) fn new(data_folder_path: PathBuf, compress_directly: bool) -> Self {
         Self {
             data_folder_path,
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             uncompressed_data: HashMap::new(),
             finished_queue: VecDeque::new(),
+            tag_value_hashes: HashMap::new(),
             uncompressed_remaining_memory_in_bytes: UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            compress_directly,
         }
     }
 
-    /// Parse `message` and insert it into the in-memory buffer. Return [`Ok`] if the message was
+    // TODO: When the compression component is changed, this function should return Ok or Err.
+    /// Parse `data_points` and insert it into the in-memory buffer. The data points are first parsed
+    /// into multiple univariate time series based on `model_table`. These individual time series
+    /// are then inserted into the storage engine. Return a list of segments that were compressed
+    /// as a result of inserting the data points with their corresponding keys if the data was
     /// successfully inserted, otherwise return [`Err`].
-    pub fn insert_message(&mut self, message: Message) -> Result<(), String> {
-        let data_point = DataPoint::from_message(&message)?;
-        let key = data_point.generate_unique_key();
-        let _span = info_span!("insert_message", key = key.clone()).entered();
+    pub(super) fn insert_data_points(
+        &mut self,
+        model_table: &ModelTableMetadata,
+        data_points: &RecordBatch,
+    ) -> Result<Vec<(u64, RecordBatch)>, String> {
+        let _span = debug_span!("insert_data_points", table = model_table.name).entered();
+        debug!(
+            "Received record batch with {} data points for the table '{}'.",
+            data_points.num_rows(),
+            model_table.name
+        );
 
-        info!("Inserting data point '{}' into segment.", data_point);
+        // Prepare the timestamp column for iteration.
+        let timestamp_index = model_table.timestamp_column_index as usize;
+        let timestamps: &TimestampArray = data_points
+            .column(timestamp_index)
+            .as_any()
+            .downcast_ref()
+            .unwrap();
+
+        // Prepare the tag columns for iteration.
+        let tag_column_arrays: Vec<&StringArray> = model_table
+            .tag_column_indices
+            .iter()
+            .map(|index| {
+                data_points.column(*index as usize)
+                    .as_any()
+                    .downcast_ref()
+                    .unwrap()
+            })
+            .collect();
+
+        // Prepare the field columns for iteration. The column index is saved with the corresponding array.
+        let field_column_arrays: Vec<(usize, &ValueArray)> = model_table
+            .schema
+            .fields()
+            .iter()
+            .filter_map(|field| {
+                let index = model_table.schema.index_of(field.name().as_str()).unwrap();
+
+                // Field columns are the columns that are not the timestamp column or one of the tag columns.
+                let not_timestamp_column = index != model_table.timestamp_column_index as usize;
+                let not_tag_column = !model_table.tag_column_indices.contains(&(index as u8));
+
+                if not_timestamp_column && not_tag_column {
+                    Some((
+                        index,
+                        data_points.column(index as usize).as_any().downcast_ref().unwrap(),
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let mut compressed_segments = vec![];
+
+        // For each row in the data, generate a tag hash, extract the individual measurements,
+        // and insert them into the storage engine.
+        for (index, timestamp) in timestamps.iter().enumerate() {
+            let tag_values: Vec<String> = tag_column_arrays
+                .iter()
+                .map(|array| array.value(index).to_string())
+                .collect();
+
+            let tag_hash = self
+                .get_or_compute_tag_hash(&model_table, &tag_values)
+                .map_err(|error| format!("Tag hash could not be saved: {}", error.to_string()))?;
+
+            // For each field column, generate the 64-bit key, create a single data point, and
+            // insert the data point into the in-memory buffer.
+            for (field_index, field_column_array) in &field_column_arrays {
+                let key = tag_hash | *field_index as u64;
+                let value = field_column_array.value(index);
+
+                // TODO: When the compression component is changed, just insert the data points.
+                // unwrap() is safe to use since the timestamps array cannot contain null values.
+                if let Some(segment) = self.insert_data_point(key, timestamp.unwrap(), value) {
+                    compressed_segments.push((key, segment));
+                };
+            }
+        }
+
+        Ok(compressed_segments)
+    }
+
+    // TODO: Update to handle finished segments when compress_full_segment is removed.
+    /// Compress the uncompressed data that the [`UncompressedDataManager`] is
+    /// currently managing, and return the compressed segments and their keys.
+    pub(super) fn flush(&mut self) -> Vec<(u64, RecordBatch)> {
+        // The keys are copied to not have multiple borrows to self at the same
+        // time, however, it is not clear if it necessary or can be removed.
+        let keys: Vec<u64> = self.uncompressed_data.keys().cloned().collect();
+
+        let mut compressed_segments = vec![];
+        for key in keys {
+            let segment = self.uncompressed_data.remove(&key).unwrap();
+            let record_batch = self.compress_full_segment(segment);
+            compressed_segments.push((key, record_batch));
+        }
+        compressed_segments
+    }
+
+    /// Return the tag hash for the given list of tag values either by retrieving it from the cache
+    /// or, if it is a new combination of tag values, generating a new hash. If a new hash is
+    /// created, the hash is saved both in the cache and persisted to the model_table_tags table. If
+    /// the table could not be accessed, return [`rusqlite::Error`].
+    fn get_or_compute_tag_hash(
+        &mut self,
+        model_table: &ModelTableMetadata,
+        tag_values: &Vec<String>,
+    ) -> Result<u64, rusqlite::Error> {
+        let cache_key = {
+            let mut cache_key_list = tag_values.clone();
+            cache_key_list.push(model_table.name.clone());
+
+            cache_key_list.join(";")
+        };
+
+        // Check if the tag hash is in the cache. If it is, retrieve it. If it is not, create a new
+        // one and save it both in the cache and in the model_table_tags table.
+        if let Some(tag_hash) = self.tag_value_hashes.get(&cache_key) {
+            Ok(*tag_hash)
+        } else {
+            // Generate the 54-bit tag hash based on the tag values of the record batch and model table name.
+            let tag_hash = {
+                let mut hasher = DefaultHasher::new();
+                hasher.write(cache_key.as_bytes());
+
+                // The 64-bit hash is shifted to make the 10 least significant bits 0.
+                hasher.finish() << 10
+            };
+
+            // Save the tag hash in the cache and in the metadata database model_table_tags table.
+            self.tag_value_hashes.insert(cache_key, tag_hash);
+
+            // TODO: Move this to the metadata component when it exists.
+            let tag_columns: String = model_table
+                .tag_column_indices
+                .iter()
+                .map(|index| model_table.schema.field(*index as usize).name().clone())
+                .collect::<Vec<String>>()
+                .join(",");
+
+            let values = tag_values
+                .iter()
+                .map(|value| format!("'{}'", value))
+                .collect::<Vec<String>>()
+                .join(",");
+
+            let database_path = self.data_folder_path.join(catalog::METADATA_SQLITE_NAME);
+            let connection = Connection::open(database_path)?;
+
+            // SQLite use signed integers https://www.sqlite.org/datatype3.html.
+            let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
+
+            // OR IGNORE is used to silently fail when trying to insert an already existing hash.
+            connection.execute(
+                format!(
+                    "INSERT OR IGNORE INTO {}_tags (hash,{}) VALUES ({},{})",
+                    model_table.name, tag_columns, signed_tag_hash, values
+                )
+                .as_str(),
+                (),
+            )?;
+
+            Ok(tag_hash)
+        }
+    }
+
+    // TODO: When the compression component is changed, this function should return Ok or Err.
+    /// Insert a single data point into the in-memory buffer. Return the compressed segment if
+    /// the inserted data point made the segment full, otherwise return [`None`].
+    fn insert_data_point(
+        &mut self,
+        key: u64,
+        timestamp: Timestamp,
+        value: Value,
+    ) -> Option<RecordBatch>  {
+        let _span = debug_span!("insert_data_point", key = key).entered();
+        debug!(
+            "Inserting data point ({}, {}) into segment.",
+            timestamp, value
+        );
 
         if let Some(segment) = self.uncompressed_data.get_mut(&key) {
-            info!("Found existing segment.");
-
-            segment.insert_data(&data_point);
+            debug!("Found existing segment.");
+            segment.insert_data(timestamp, value);
 
             if segment.is_full() {
-                info!("Segment is full, moving it to the queue of finished segments.");
+                debug!("Segment is full, moving it to the queue of finished segments.");
 
                 // Since this is only reachable if the segment exists in the HashMap, unwrap is safe to use.
                 let full_segment = self.uncompressed_data.remove(&key).unwrap();
-                self.enqueue_segment(key, full_segment)
+
+                // TODO: Currently we directly compress a segment when it is finished. This
+                //       should be changed to queue the segment and let the compression component
+                //       retrieve the finished segment and insert it back when compressed.
+                if self.compress_directly {
+                    return Some(self.compress_full_segment(full_segment));
+                } else {
+                    self.enqueue_segment(key, full_segment);
+                }
             }
         } else {
-            info!("Could not find segment. Creating segment.");
+            debug!("Could not find segment. Creating segment.");
 
             // If there is not enough memory for a new segment, spill a finished segment.
             if SegmentBuilder::get_memory_size() > self.uncompressed_remaining_memory_in_bytes {
@@ -84,21 +288,21 @@ impl UncompressedDataManager {
             let mut segment = SegmentBuilder::new();
             self.uncompressed_remaining_memory_in_bytes -= SegmentBuilder::get_memory_size();
 
-            info!(
+            debug!(
                 "Created segment. Remaining reserved bytes: {}.",
                 self.uncompressed_remaining_memory_in_bytes
             );
 
-            segment.insert_data(&data_point);
+            segment.insert_data(timestamp, value);
             self.uncompressed_data.insert(key, segment);
         }
 
-        Ok(())
+        None
     }
 
     /// Remove the oldest [`FinishedSegment`] from the queue and return it. Return [`None`] if the
     /// queue of [`FinishedSegments`](FinishedSegment) is empty.
-    pub fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
+    pub(super) fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
         if let Some(finished_segment) = self.finished_queue.pop_front() {
             // Add the memory size of the removed FinishedSegment back to the remaining bytes.
             self.uncompressed_remaining_memory_in_bytes +=
@@ -110,8 +314,32 @@ impl UncompressedDataManager {
         }
     }
 
+    // TODO: Remove this when compression component is changed.
+    /// Compress the given full `segment_builder` and return the compressed and merged segment.
+    fn compress_full_segment(&mut self, mut segment_builder: SegmentBuilder) -> RecordBatch {
+        // Add the size of the segment back to the remaining reserved bytes.
+        self.uncompressed_remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
+
+        // unwrap() is safe to use since the error bound is not negative, infinite, or NAN.
+        let error_bound = ErrorBound::try_new(0.0).unwrap();
+
+        // unwrap() is safe to use since get_record_batch() can only fail for spilled segments.
+        let data_points = segment_builder.get_record_batch().unwrap();
+        let uncompressed_timestamps = get_array!(data_points, 0, TimestampArray);
+        let uncompressed_values = get_array!(data_points, 1, ValueArray);
+
+        // unwrap() is safe to use since uncompressed_timestamps and uncompressed_values have the same length.
+        let compressed_segments = compression::try_compress(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            error_bound
+        ).unwrap();
+
+        compression::merge_segments(compressed_segments)
+    }
+
     /// Move `segment_builder` to the queue of [`FinishedSegments`](FinishedSegment).
-    fn enqueue_segment(&mut self, key: String, segment_builder: SegmentBuilder) {
+    fn enqueue_segment(&mut self, key: u64, segment_builder: SegmentBuilder) {
         let finished_segment = FinishedSegment {
             key,
             uncompressed_segment: Box::new(segment_builder),
@@ -123,17 +351,19 @@ impl UncompressedDataManager {
     /// Spill the first in-memory [`FinishedSegment`] in the queue of [`FinishedSegments`](FinishedSegment).
     /// If no in-memory [`FinishedSegments`](FinishedSegment) could be found, [`panic`](std::panic).
     fn spill_finished_segment(&mut self) {
-        info!("Not enough memory to create segment. Spilling an already finished segment.");
+        debug!("Not enough memory to create segment. Spilling an already finished segment.");
 
         // Iterate through the finished segments to find a segment that is in memory.
         for finished in self.finished_queue.iter_mut() {
-            if let Ok(file_path) = finished.spill_to_apache_parquet(self.data_folder_path.as_path()) {
+            if let Ok(file_path) = finished.spill_to_apache_parquet(self.data_folder_path.as_path())
+            {
                 // Add the size of the segment back to the remaining reserved bytes.
                 self.uncompressed_remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
 
-                info!(
+                debug!(
                     "Spilled the segment to '{}'. Remaining reserved bytes: {}.",
-                    file_path.display(), self.uncompressed_remaining_memory_in_bytes
+                    file_path.display(),
+                    self.uncompressed_remaining_memory_in_bytes
                 );
                 return ();
             }
@@ -149,44 +379,181 @@ impl UncompressedDataManager {
 mod tests {
     use super::*;
     use std::path::Path;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::sync::Arc;
 
-    use tempfile::{TempDir, tempdir};
+    use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
+    use tempfile::{tempdir, TempDir};
 
-    use crate::storage::{BUILDER_CAPACITY, StorageEngine};
+    use crate::storage::BUILDER_CAPACITY;
+    use crate::types::{ArrowTimestamp, ArrowValue};
+
+    const KEY: u64 = 1;
 
     #[test]
-    fn test_cannot_insert_invalid_message() {
-        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
+    fn test_can_insert_record_batch() {
+        let (temp_dir, mut data_manager) = create_uncompressed_data_manager();
 
-        let message = Message::new("ModelarDB/test", "invalid", 1);
-        data_manager.insert_message(message.clone());
+        let (model_table, data) = get_uncompressed_data(1);
+        create_model_table_tags_table(&model_table, temp_dir.path());
+        data_manager.insert_data_points(&model_table, &data);
 
-        assert!(data_manager.uncompressed_data.is_empty());
+        // Two separate builders are created since the inserted data has two field columns.
+        assert_eq!(data_manager.uncompressed_data.keys().len(), 2)
     }
 
     #[test]
-    fn test_can_insert_message_into_new_segment() {
-        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        let key = insert_generated_message(&mut data_manager, "ModelarDB/test".to_owned());
+    fn test_can_insert_record_batch_with_multiple_data_points() {
+        let (temp_dir, mut data_manager) = create_uncompressed_data_manager();
 
-        assert!(data_manager.uncompressed_data.contains_key(&key));
-        assert_eq!(data_manager.uncompressed_data.get(&key).unwrap().get_length(), 1);
+        let (model_table, data) = get_uncompressed_data(2);
+        create_model_table_tags_table(&model_table, temp_dir.path());
+
+        data_manager.insert_data_points(&model_table, &data);
+
+        // Since the tag is different for each data point, 4 separate builders should be created.
+        assert_eq!(data_manager.uncompressed_data.keys().len(), 4)
+    }
+
+    #[test]
+    fn test_get_new_tag_hash() {
+        let (temp_dir, mut data_manager) = create_uncompressed_data_manager();
+
+        let (model_table, _data) = get_uncompressed_data(2);
+        create_model_table_tags_table(&model_table, temp_dir.path());
+
+        let result = data_manager.get_or_compute_tag_hash(&model_table, &vec!["tag1".to_owned()]);
+        assert!(result.is_ok());
+
+        // When a new tag hash is retrieved, the hash should be saved in the cache.
+        assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);
+
+        // It should also be saved in the metadata database table.
+        let database_path = temp_dir.path().join(catalog::METADATA_SQLITE_NAME);
+        let connection = Connection::open(database_path).unwrap();
+
+        let mut statement = connection.prepare("SELECT * FROM model_table_tags").unwrap();
+        let mut rows = statement.query(()).unwrap();
+
+        assert_eq!(rows.next().unwrap().unwrap().get::<usize, String>(1).unwrap(), "tag1");
+    }
+
+    #[test]
+    fn test_get_existing_tag_hash() {
+        let (temp_dir, mut data_manager) = create_uncompressed_data_manager();
+
+        let (model_table, _data) = get_uncompressed_data(1);
+        create_model_table_tags_table(&model_table, temp_dir.path());
+
+        data_manager.get_or_compute_tag_hash(&model_table, &vec!["tag1".to_owned()]);
+        assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);
+
+        // When getting the same tag hash again, it should just be retrieved from the cache.
+        let result = data_manager.get_or_compute_tag_hash(&model_table, &vec!["tag1".to_owned()]);
+
+        assert!(result.is_ok());
+        assert_eq!(data_manager.tag_value_hashes.keys().len(), 1);
+    }
+
+    /// Create a record batch with data that resembles uncompressed data with a single tag and two
+    /// field columns. The returned data has `row_count` rows, with a different tag for each row.
+    /// Also create model table metadata for a model table that matches the created data.
+    fn get_uncompressed_data(row_count: usize) -> (ModelTableMetadata, RecordBatch) {
+        let tags: Vec<String> = (0..row_count).map(|tag| tag.to_string()).collect();
+        let timestamps: Vec<Timestamp> = (0..row_count).map(|ts| ts as Timestamp).collect();
+        let values: Vec<Value> = (0..row_count).map(|value| value as Value).collect();
+
+        let schema = Schema::new(vec![
+            Field::new("tag", DataType::Utf8, false),
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("value_1", ArrowValue::DATA_TYPE, false),
+            Field::new("value_2", ArrowValue::DATA_TYPE, false),
+        ]);
+
+        let data = RecordBatch::try_new(
+            Arc::new(schema.clone()),
+            vec![
+                Arc::new(StringArray::from(tags)),
+                Arc::new(TimestampArray::from(timestamps)),
+                Arc::new(ValueArray::from(values.clone())),
+                Arc::new(ValueArray::from(values)),
+            ],
+        ).unwrap();
+
+        let model_table_metadata = ModelTableMetadata::try_new(
+            "model_table".to_owned(),
+            schema,
+            vec![0],
+            1
+        ).unwrap();
+
+        (model_table_metadata, data)
+    }
+
+    // TODO: This is duplicated from a function in remote. Change this when the metadata component exists.
+    /// Create the table in the metadata database that contains the tag hashes.
+    fn create_model_table_tags_table(model_table_metadata: &ModelTableMetadata, path: &Path) {
+        let database_path = path.join(catalog::METADATA_SQLITE_NAME);
+        let connection = Connection::open(database_path).unwrap();
+
+        // Add a column definition for each tag field in the schema.
+        let tag_columns: String = model_table_metadata
+            .tag_column_indices
+            .iter()
+            .map(|index| {
+                let field = model_table_metadata.schema.field(*index as usize);
+                format!("{} TEXT NOT NULL", field.name())
+            })
+            .collect::<Vec<String>>()
+            .join(",");
+
+        // Create a table_name_tags SQLite table to save the 54-bit tag hashes when ingesting data.
+        // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
+        connection.execute(
+            format!(
+                "CREATE TABLE {}_tags (hash INTEGER PRIMARY KEY, {}) STRICT",
+                model_table_metadata.name, tag_columns
+            )
+            .as_str(),
+            (),
+        ).unwrap();
+    }
+
+    #[test]
+    fn test_can_insert_data_point_into_new_segment() {
+        let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
+        insert_data_points(1, &mut data_manager, KEY);
+
+        assert!(data_manager.uncompressed_data.contains_key(&KEY));
+        assert_eq!(
+            data_manager
+                .uncompressed_data
+                .get(&KEY)
+                .unwrap()
+                .get_length(),
+            1
+        );
     }
 
     #[test]
     fn test_can_insert_message_into_existing_segment() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        let key = insert_multiple_messages(2, &mut data_manager);
+        insert_data_points(2, &mut data_manager, KEY);
 
-        assert!(data_manager.uncompressed_data.contains_key(&key));
-        assert_eq!(data_manager.uncompressed_data.get(&key).unwrap().get_length(), 2);
+        assert!(data_manager.uncompressed_data.contains_key(&KEY));
+        assert_eq!(
+            data_manager
+                .uncompressed_data
+                .get(&KEY)
+                .unwrap()
+                .get_length(),
+            2
+        );
     }
 
     #[test]
     fn test_can_get_finished_segment_when_finished() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut data_manager);
+        insert_data_points(BUILDER_CAPACITY, &mut data_manager, KEY);
 
         assert!(data_manager.get_finished_segment().is_some());
     }
@@ -194,7 +561,7 @@ mod tests {
     #[test]
     fn test_can_get_multiple_finished_segments_when_multiple_finished() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        let key = insert_multiple_messages(BUILDER_CAPACITY * 2, &mut data_manager);
+        insert_data_points(BUILDER_CAPACITY * 2, &mut data_manager, KEY);
 
         assert!(data_manager.get_finished_segment().is_some());
         assert!(data_manager.get_finished_segment().is_some());
@@ -216,7 +583,7 @@ mod tests {
         // If there is enough memory to hold n full segments, we need n + 1 to spill a segment.
         let max_full_segments = reserved_memory / SegmentBuilder::get_memory_size();
         let message_count = (max_full_segments * BUILDER_CAPACITY) + 1;
-        insert_multiple_messages(message_count, &mut data_manager);
+        insert_data_points(message_count, &mut data_manager, KEY);
 
         // The first FinishedSegment should have a memory size of 0 since it is spilled to disk.
         let first_finished = data_manager.finished_queue.pop_front().unwrap();
@@ -224,14 +591,14 @@ mod tests {
 
         // The FinishedSegment should be spilled to the "uncompressed" folder under the key.
         let data_folder_path = Path::new(&data_manager.data_folder_path);
-        let uncompressed_path = data_folder_path.join("modelardb-test/uncompressed");
+        let uncompressed_path = data_folder_path.join(format!("{}/uncompressed", KEY));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1);
     }
 
     #[test]
     fn test_ignore_already_spilled_segments_when_spilling() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        insert_multiple_messages(BUILDER_CAPACITY * 2, &mut data_manager);
+        insert_data_points(BUILDER_CAPACITY * 2, &mut data_manager, KEY);
 
         data_manager.spill_finished_segment();
         // When spilling one more, the first FinishedSegment should be ignored since it is already spilled.
@@ -244,7 +611,7 @@ mod tests {
 
         // The finished segments should be spilled to the "uncompressed" folder under the key.
         let data_folder_path = Path::new(&data_manager.data_folder_path);
-        let uncompressed_path = data_folder_path.join("modelardb-test/uncompressed");
+        let uncompressed_path = data_folder_path.join(format!("{}/uncompressed", KEY));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 2);
     }
 
@@ -252,7 +619,7 @@ mod tests {
     fn test_remaining_memory_incremented_when_spilling_finished_segment() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
 
-        insert_multiple_messages(BUILDER_CAPACITY, &mut data_manager);
+        insert_data_points(BUILDER_CAPACITY, &mut data_manager, KEY);
         let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
         data_manager.spill_finished_segment();
 
@@ -264,7 +631,7 @@ mod tests {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
         let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
 
-        insert_generated_message(&mut data_manager, "ModelarDB/test".to_owned());
+        insert_data_points(1, &mut data_manager, KEY);
 
         assert!(reserved_memory > data_manager.uncompressed_remaining_memory_in_bytes);
     }
@@ -272,7 +639,7 @@ mod tests {
     #[test]
     fn test_remaining_memory_incremented_when_popping_in_memory() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut data_manager);
+        insert_data_points(BUILDER_CAPACITY, &mut data_manager, KEY);
 
         let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
         data_manager.get_finished_segment();
@@ -283,7 +650,7 @@ mod tests {
     #[test]
     fn test_remaining_memory_not_incremented_when_popping_spilled() {
         let (_temp_dir, mut data_manager) = create_uncompressed_data_manager();
-        let key = insert_multiple_messages(BUILDER_CAPACITY, &mut data_manager);
+        insert_data_points(BUILDER_CAPACITY, &mut data_manager, KEY);
 
         data_manager.spill_finished_segment();
         let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
@@ -291,7 +658,10 @@ mod tests {
         // Since the FinishedSegment is not in memory, the remaining memory should not increase when popped.
         data_manager.get_finished_segment();
 
-        assert_eq!(remaining_memory, data_manager.uncompressed_remaining_memory_in_bytes);
+        assert_eq!(
+            remaining_memory,
+            data_manager.uncompressed_remaining_memory_in_bytes
+        );
     }
 
     #[test]
@@ -302,37 +672,17 @@ mod tests {
 
         // If there is enough reserved memory to hold n builders, we need to create n + 1 to panic.
         for i in 0..(reserved_memory / SegmentBuilder::get_memory_size()) + 1 {
-            insert_generated_message(&mut data_manager, i.to_string());
+            insert_data_points(1, &mut data_manager, i as u64);
         }
     }
 
-    /// Generate `count` data points for the same time series and insert them into `data_manager`.
-    /// Return the key, which is the same for all generated data points.
-    fn insert_multiple_messages(count: usize, data_manager: &mut UncompressedDataManager) -> String {
-        let mut key = String::new();
+    /// Insert `count` data points into `data_manager`.
+    fn insert_data_points(count: usize, data_manager: &mut UncompressedDataManager, key: u64) {
+        let value: Value = 30.0;
 
-        for _ in 0..count {
-            key = insert_generated_message(data_manager, "ModelarDB/test".to_owned());
+        for i in 0..count {
+            data_manager.insert_data_point(key, i as i64, value);
         }
-
-        key
-    }
-
-    /// Generate a [`DataPoint`] and insert it into `data_manager`. Return the [`DataPoint`] key.
-    fn insert_generated_message(data_manager: &mut UncompressedDataManager, topic: String) -> String {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_micros();
-
-        let payload = format!("[{}, 30]", timestamp);
-        let message = Message::new(topic, payload, 1);
-
-        data_manager.insert_message(message.clone());
-
-        DataPoint::from_message(&message)
-            .unwrap()
-            .generate_unique_key()
     }
 
     /// Create an [`UncompressedDataManager`] with a folder that is deleted once the test is finished.
@@ -340,6 +690,6 @@ mod tests {
         let temp_dir = tempdir().unwrap();
 
         let data_folder_path = temp_dir.path().to_path_buf();
-        (temp_dir, UncompressedDataManager::new(data_folder_path))
+        (temp_dir, UncompressedDataManager::new(data_folder_path, false))
     }
 }

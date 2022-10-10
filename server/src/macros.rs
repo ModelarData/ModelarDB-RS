@@ -13,38 +13,52 @@
  * limitations under the License.
  */
 
+/// Extract an [`array`](arrow::array) from a
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) and cast it to the
+/// specified type:
+///
+/// ```
+/// let array = crate::get_array!(record_batch, 0, UInt8Array);
+/// ```
+///
+/// # Panics
+///
+/// Panics if `column` is not in `batch` or if it cannot be cast to `type`.
 #[macro_export]
-macro_rules! downcast_arrays {
-    ($gids:ident, $start_times:ident, $end_times:ident, $mtids:ident, $models:ident, $gaps:ident, $batch:ident) => {
-        let $gids = $batch
-            .column(0)
+macro_rules! get_array {
+    ($batch:ident, $column:literal, $type:ident) => {
+        $batch
+            .column($column)
             .as_any()
-            .downcast_ref::<Int32Array>()
-            .unwrap();
-        let $start_times = $batch
-            .column(1)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let $end_times = $batch
-            .column(2)
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap();
-        let $mtids = $batch
-            .column(3)
-            .as_any()
-            .downcast_ref::<Int32Array>()
-            .unwrap();
-        let $models = $batch
-            .column(4)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
-        let $gaps = $batch
-            .column(5)
-            .as_any()
-            .downcast_ref::<BinaryArray>()
-            .unwrap();
+            .downcast_ref::<$type>()
+            .unwrap()
+    };
+}
+
+/// Extract the [`arrays`](arrow::array) required to execute queries against a
+/// model table from a [`RecordBatch`](arrow::record_batch::RecordBatch), cast
+/// them to the required type, and assign the resulting arrays to the specified
+/// variables:
+///
+/// ```
+/// crate::downcast_arrays!(gids, start_times, end_times, mtids, models, gaps, batch);
+/// ```
+///
+/// # Panics
+///
+/// Panics if `batch` does not contain seven columns or if the columns are not
+/// UInt8Array, BinaryArray, TimestampArray, TimestampArray, BinaryArray,
+/// ValueArray, ValueArray, and Float32Array.
+#[macro_export]
+macro_rules! get_arrays {
+    ($batch:ident, $model_type_id:ident, $timestamps:ident, $start_time:ident, $end_time:ident, $values:ident, $min_value:ident, $max_value:ident, $error:ident) => {
+        let $model_type_id = crate::get_array!($batch, 0, UInt8Array);
+        let $timestamps = crate::get_array!($batch, 1, BinaryArray);
+        let $start_time = crate::get_array!($batch, 2, TimestampArray);
+        let $end_time = crate::get_array!($batch, 3, TimestampArray);
+        let $values = crate::get_array!($batch, 4, BinaryArray);
+        let $min_value = crate::get_array!($batch, 5, ValueArray);
+        let $max_value = crate::get_array!($batch, 6, ValueArray);
+        let $error = crate::get_array!($batch, 7, Float32Array);
     };
 }

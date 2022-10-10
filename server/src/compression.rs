@@ -14,17 +14,21 @@
  */
 
 //! Compress `UncompressedSegments` provided by [`StorageEngine`] using the
-//! model types in [`models`] to produce compressed segments which are returned
-//! to [`StorageEngine`].
+//! model types in [`models`](crate::models) to produce compressed segments
+//! which are returned to [`StorageEngine`].
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use datafusion::arrow::array::{BinaryBuilder, Float32Builder, UInt8Builder};
+use datafusion::arrow::array::{
+    BinaryArray, BinaryBuilder, Float32Array, Float32Builder, UInt8Array, UInt8Builder,
+};
 use datafusion::arrow::record_batch::RecordBatch;
 
 use crate::errors::ModelarDBError;
-use crate::models;
-use crate::models::{gorilla::Gorilla, pmcmean::PMCMean, swing::Swing, ErrorBound, SelectedModel};
+use crate::models::{
+    gorilla::Gorilla, pmcmean::PMCMean, swing::Swing, timestamps, ErrorBound, SelectedModel,
+};
 use crate::storage::StorageEngine;
 use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder};
 
@@ -32,11 +36,14 @@ use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArra
 /// Maximum number of data points that models of type Gorilla can represent per
 /// compressed segment. As models of type Gorilla use lossless compression they
 /// will never exceed the user-defined error bounds.
-const GORILLA_MAXIMUM_LENGTH: usize = 50;
+pub const GORILLA_MAXIMUM_LENGTH: usize = 50;
 
-/// Compress the regular `uncompressed_timestamps` using a start time, end time,
-/// and a sampling interval, and `uncompressed_values` within `error_bound`
-/// using the model types in [`models`]. Returns
+/// Compress `uncompressed_timestamps` using a start time, end time, and a
+/// sampling interval if regular and delta-of-deltas followed by a variable
+/// length binary encoding if irregular. `uncompressed_values` is compressed
+/// within `error_bound` using the model types in [`models`](crate::models).
+/// Assumes `uncompressed_timestamps` and `uncompressed_values` are sorted
+/// according to `uncompressed_timestamps`. Returns
 /// [`CompressionError`](ModelarDBError::CompressionError) if
 /// `uncompressed_timestamps` and `uncompressed_values` have different lengths,
 /// otherwise the resulting compressed segments are returned as a
@@ -73,15 +80,95 @@ pub fn try_compress(
             &uncompressed_values,
             error_bound,
         );
-        current_index += compressed_segment_builder.finish(&mut compressed_record_batch_builder);
+        current_index = compressed_segment_builder.finish(&mut compressed_record_batch_builder);
     }
     Ok(compressed_record_batch_builder.finish())
 }
 
+/// Merges the segments in `compressed_segments` that contain equivalent models.
+/// Assumes that the segments in `compressed_segments` are all from the same
+/// time series and that the segments are all sorted according to time.
+pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
+    // TODO: merge segments with none equivalent models.
+
+    // Extract the columns from the RecordBatch.
+    let model_type_ids = crate::get_array!(compressed_segments, 0, UInt8Array);
+    let timestamps = crate::get_array!(compressed_segments, 1, BinaryArray);
+    let start_times = crate::get_array!(compressed_segments, 2, TimestampArray);
+    let end_times = crate::get_array!(compressed_segments, 3, TimestampArray);
+    let values = crate::get_array!(compressed_segments, 4, BinaryArray);
+    let min_values = crate::get_array!(compressed_segments, 5, ValueArray);
+    let max_values = crate::get_array!(compressed_segments, 6, ValueArray);
+    let errors = crate::get_array!(compressed_segments, 7, Float32Array);
+
+    // For each segment, check if it can be merged with another segment.
+    let num_rows = compressed_segments.num_rows();
+    let mut compressed_segments_to_merge = HashMap::with_capacity(num_rows);
+
+    for index in 0..num_rows {
+        // f32 are converted to u32 with the same bitwise representation as f32
+        // and f64 does not implement std::hash::Hash and thus cannot be hashed.
+        let model = (
+            model_type_ids.value(index),
+            values.value(index),
+            min_values.value(index).to_bits(),
+            max_values.value(index).to_bits(),
+        );
+
+        // Lookup the entry in the HashMap for model, create an empty Vec if an
+        // entry for model did not exist, and append index to the entry's Vec.
+        compressed_segments_to_merge
+            .entry(model)
+            .or_insert_with(|| Vec::new())
+            .push(index);
+    }
+
+    // If none of the segments can be merged return the original compressed
+    // segments, otherwise return the smaller set of merged compressed segments.
+    if compressed_segments_to_merge.len() < num_rows {
+        let mut merged_compressed_segments = CompressedSegmentBatchBuilder::new(num_rows);
+        for (_, indices) in compressed_segments_to_merge {
+            // Merge timestamps.
+            let mut timestamp_builder = TimestampBuilder::new();
+            for index in &indices {
+                let start_time = start_times.value(*index);
+                let end_time = end_times.value(*index);
+                let timestamps = timestamps.value(*index);
+                timestamps::decompress_all_timestamps(
+                    start_time,
+                    end_time,
+                    timestamps,
+                    &mut timestamp_builder,
+                );
+            }
+            let timestamps = timestamp_builder.finish();
+            let compressed_timestamps =
+                timestamps::compress_residual_timestamps(timestamps.values());
+
+            // Merge segments. The first segment's model is used for the merged
+            // segment as all of the segments contain the exact same model.
+            let index = indices[0];
+            merged_compressed_segments.append_compressed_segment(
+                model_type_ids.value(index),
+                &compressed_timestamps,
+                timestamps.value(0),
+                timestamps.value(timestamps.len() - 1),
+                values.value(index),
+                min_values.value(index),
+                max_values.value(index),
+                errors.value(index),
+            );
+        }
+        merged_compressed_segments.finish()
+    } else {
+        compressed_segments
+    }
+}
+
 /// A compressed segment being built from an uncompressed segment using the
-/// model types in [`models`]. Each of the model types is used to fit models to
-/// the data points, and then the model that uses the fewest number of bytes per
-/// value is selected.
+/// model types in [`models`](crate::models). Each of the model types is used to
+/// fit models to the data points, and then the model that uses the fewest
+/// number of bytes per value is selected.
 struct CompressedSegmentBuilder<'a> {
     /// The regular timestamps of the uncompressed segment the compressed
     /// segment is being built from.
@@ -124,7 +211,7 @@ impl<'a> CompressedSegmentBuilder<'a> {
         let mut compressed_segment_builder = Self {
             uncompressed_timestamps,
             uncompressed_values,
-            start_index: 0,
+            start_index,
             pmc_mean: PMCMean::new(error_bound),
             pmc_mean_could_fit_all: true,
             swing: Swing::new(error_bound),
@@ -139,7 +226,6 @@ impl<'a> CompressedSegmentBuilder<'a> {
             compressed_segment_builder.try_to_update_models(timestamp, value);
             current_index += 1;
         }
-
         compressed_segment_builder
     }
 
@@ -192,12 +278,14 @@ impl<'a> CompressedSegmentBuilder<'a> {
         // Add timestamps and error.
         let start_time = self.uncompressed_timestamps.value(self.start_index);
         let end_time = self.uncompressed_timestamps.value(end_index);
-        let timestamps = &[]; // TODO: compress irregular timestamps.
+        let timestamps = timestamps::compress_residual_timestamps(
+            &self.uncompressed_timestamps.values()[self.start_index..=end_index],
+        );
         let error = f32::NAN; // TODO: compute and store the actual error.
 
         compressed_record_batch_builder.append_compressed_segment(
             model_type_id,
-            timestamps,
+            &timestamps,
             start_time,
             end_time,
             &values,
@@ -235,14 +323,14 @@ struct CompressedSegmentBatchBuilder {
 impl CompressedSegmentBatchBuilder {
     fn new(capacity: usize) -> Self {
         Self {
-            model_type_ids: UInt8Builder::new(capacity),
-            timestamps: BinaryBuilder::new(capacity),
-            start_times: TimestampBuilder::new(capacity),
-            end_times: TimestampBuilder::new(capacity),
-            values: BinaryBuilder::new(capacity),
-            min_values: ValueBuilder::new(capacity),
-            max_values: ValueBuilder::new(capacity),
-            error: Float32Builder::new(capacity),
+            model_type_ids: UInt8Builder::with_capacity(capacity),
+            timestamps: BinaryBuilder::with_capacity(capacity, capacity),
+            start_times: TimestampBuilder::with_capacity(capacity),
+            end_times: TimestampBuilder::with_capacity(capacity),
+            values: BinaryBuilder::with_capacity(capacity, capacity),
+            min_values: ValueBuilder::with_capacity(capacity),
+            max_values: ValueBuilder::with_capacity(capacity),
+            error: Float32Builder::with_capacity(capacity),
         }
     }
 
@@ -258,16 +346,14 @@ impl CompressedSegmentBatchBuilder {
         max_value: Value,
         error: f32,
     ) {
-        // unwrap() is used as append_value() never returns Error for
-        // PrimitiveBuilder.
-        self.model_type_ids.append_value(model_type_id).unwrap();
-        self.timestamps.append_value(timestamps).unwrap();
-        self.start_times.append_value(start_time).unwrap();
-        self.end_times.append_value(end_time).unwrap();
-        self.values.append_value(values).unwrap();
-        self.min_values.append_value(min_value).unwrap();
-        self.max_values.append_value(max_value).unwrap();
-        self.error.append_value(error).unwrap();
+        self.model_type_ids.append_value(model_type_id);
+        self.timestamps.append_value(timestamps);
+        self.start_times.append_value(start_time);
+        self.end_times.append_value(end_time);
+        self.values.append_value(values);
+        self.min_values.append_value(min_value);
+        self.max_values.append_value(max_value);
+        self.error.append_value(error);
     }
 
     /// Return [`RecordBatch`] of compressed segments and consume the builder.
@@ -292,7 +378,10 @@ impl CompressedSegmentBatchBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use datafusion::arrow::array::UInt8Array;
+
+    use crate::models;
 
     // Tests for try_compress().
     #[test]
@@ -420,10 +509,10 @@ mod tests {
         timestamps: &[Timestamp],
         values: &[Value],
     ) -> (TimestampArray, ValueArray) {
-        let mut timestamps_builder = TimestampBuilder::new(timestamps.len());
-        timestamps_builder.append_slice(timestamps).unwrap();
-        let mut values_builder = ValueBuilder::new(values.len());
-        values_builder.append_slice(values).unwrap();
+        let mut timestamps_builder = TimestampBuilder::with_capacity(timestamps.len());
+        timestamps_builder.append_slice(timestamps);
+        let mut values_builder = ValueBuilder::with_capacity(values.len());
+        values_builder.append_slice(values);
         (timestamps_builder.finish(), values_builder.finish())
     }
 
@@ -432,8 +521,6 @@ mod tests {
         compressed_record_batch: &RecordBatch,
         expected_model_type_ids: &[u8],
     ) {
-        let sampling_interval = uncompressed_timestamps.value(1) - uncompressed_timestamps.value(0);
-
         assert_eq!(
             expected_model_type_ids.len(),
             compressed_record_batch.num_rows()
@@ -442,29 +529,115 @@ mod tests {
         let mut total_compressed_length = 0;
         for segment in 0..expected_model_type_ids.len() {
             let expected_model_type_id = expected_model_type_ids[segment];
-            let model_type_id = compressed_record_batch
-                .column(0)
-                .as_any()
-                .downcast_ref::<UInt8Array>()
-                .unwrap()
-                .value(segment);
+            let model_type_id =
+                crate::get_array!(compressed_record_batch, 0, UInt8Array).value(segment);
             assert_eq!(expected_model_type_id, model_type_id);
 
-            let start_time = compressed_record_batch
-                .column(2)
-                .as_any()
-                .downcast_ref::<TimestampArray>()
-                .unwrap()
-                .value(segment);
-            let end_time = compressed_record_batch
-                .column(3)
-                .as_any()
-                .downcast_ref::<TimestampArray>()
-                .unwrap()
-                .value(segment);
-            total_compressed_length +=
-                models::length(start_time, end_time, sampling_interval as i32);
+            let timestamps =
+                crate::get_array!(compressed_record_batch, 1, BinaryArray).value(segment);
+            let start_time =
+                crate::get_array!(compressed_record_batch, 2, TimestampArray).value(segment);
+            let end_time =
+                crate::get_array!(compressed_record_batch, 3, TimestampArray).value(segment);
+
+            total_compressed_length += models::length(start_time, end_time, timestamps);
         }
         assert_eq!(uncompressed_timestamps.len(), total_compressed_length);
+    }
+
+    // Tests for merge_segments().
+    #[test]
+    fn test_merge_compressed_segments_empty_batch() {
+        let merged_record_batch = merge_segments(CompressedSegmentBatchBuilder::new(0).finish());
+        assert_eq!(0, merged_record_batch.num_rows())
+    }
+
+    #[test]
+    fn test_merge_compressed_segments_batch() {
+        // merge_segments() currently merge segments with equivalent models.
+        let model_type_id = 1;
+        let values = &[];
+        let min_value = 5.0;
+        let max_value = 5.0;
+
+        // Add a mix of different segments that can be merged into two segments.
+        let mut compressed_record_batch_builder = CompressedSegmentBatchBuilder::new(10);
+
+        for start_time in (100..2000).step_by(400) {
+            compressed_record_batch_builder.append_compressed_segment(
+                model_type_id,
+                &[],
+                start_time,
+                start_time + 100,
+                values,
+                min_value,
+                max_value,
+                0.0,
+            );
+
+            compressed_record_batch_builder.append_compressed_segment(
+                model_type_id + 1,
+                &[],
+                start_time + 200,
+                start_time + 300,
+                &[],
+                -min_value,
+                -max_value,
+                10.0,
+            );
+        }
+
+        let compressed_record_batch = compressed_record_batch_builder.finish();
+        let merged_record_batch = merge_segments(compressed_record_batch);
+
+        // Extract the columns from the RecordBatch.
+        let timestamps = crate::get_array!(merged_record_batch, 1, BinaryArray);
+        let start_times = crate::get_array!(merged_record_batch, 2, TimestampArray);
+        let end_times = crate::get_array!(merged_record_batch, 3, TimestampArray);
+        let values = crate::get_array!(merged_record_batch, 4, BinaryArray);
+        let min_values = crate::get_array!(merged_record_batch, 5, ValueArray);
+        let max_values = crate::get_array!(merged_record_batch, 6, ValueArray);
+        let errors = crate::get_array!(merged_record_batch, 7, Float32Array);
+
+        // Assert that the number of segments are correct.
+        assert_eq!(2, merged_record_batch.num_rows());
+
+        // Assert that the timestamps are correct.
+        let mut decompressed_timestamps = TimestampBuilder::with_capacity(10);
+        timestamps::decompress_all_timestamps(
+            start_times.value(0),
+            end_times.value(0),
+            timestamps.value(0),
+            &mut decompressed_timestamps,
+        );
+        assert_eq!(10, decompressed_timestamps.finish().len());
+
+        timestamps::decompress_all_timestamps(
+            start_times.value(1),
+            end_times.value(1),
+            timestamps.value(1),
+            &mut decompressed_timestamps,
+        );
+        assert_eq!(10, decompressed_timestamps.finish().len());
+
+        // Assert that the models are correct.
+        let (positive, negative) = if start_times.value(0) == 100 {
+            (0, 1)
+        } else {
+            (1, 0)
+        };
+
+        let value: &[u8] = &[];
+        assert_eq!(value, values.value(positive));
+        assert_eq!(min_value, min_values.value(positive));
+        assert_eq!(max_value, max_values.value(positive));
+
+        assert_eq!(value, values.value(negative));
+        assert_eq!(-min_value, min_values.value(negative));
+        assert_eq!(-max_value, max_values.value(negative));
+
+        // Assert that the errors are correct.
+        assert_eq!(0.0, errors.value(positive));
+        assert_eq!(10.0, errors.value(negative));
     }
 }

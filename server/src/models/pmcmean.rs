@@ -18,12 +18,12 @@
 //! as described in the [ModelarDB paper].
 //!
 //! [Poor Man’s Compression paper]: https://ieeexplore.ieee.org/document/1260811
-//! [ModelarDB paper]: https://dl.acm.org/doi/abs/10.14778/3236187.3236215
+//! [ModelarDB paper]: https://www.vldb.org/pvldb/vol11/p1688-jensen.pdf
 
 use crate::models;
 use crate::models::ErrorBound;
 use crate::types::{
-    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueBuilder,
+    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, Value, ValueBuilder,
 };
 
 /// The state the PMC-Mean model type needs while fitting a model to a time
@@ -105,58 +105,31 @@ impl PMCMean {
     }
 }
 
-/// Compute the minimum value for a time series segment whose values are
-/// represented by a model of type PMC-Mean.
-pub fn min(model: &[u8]) -> Value {
-    decode_model(model)
-}
-
-/// Compute the maximum value for a time series segment whose values are
-/// represented by a model of type PMC-Mean.
-pub fn max(model: &[u8]) -> Value {
-    decode_model(model)
-}
-
 /// Compute the sum of the values for a time series segment whose values are
 /// represented by a model of type PMC-Mean.
 pub fn sum(
     start_time: Timestamp,
     end_time: Timestamp,
-    sampling_interval: i32,
-    model: &[u8],
+    timestamps: &[u8],
+    value: Value
 ) -> Value {
-    let length = models::length(start_time, end_time, sampling_interval);
-    length as Value * decode_model(model)
+    models::length(start_time, end_time, timestamps) as Value * value
 }
 
-/// Reconstruct the data points for a time series segment whose values are
-/// represented by a model of type PMC-Mean. Each data point is split into its
-/// three components and appended to `time_series_ids`, `timestamps`, and
-/// `values`.
+/// Reconstruct the values for the `timestamps` without matching values in
+/// `value_builder` using a model of type PMC-Mean. The `time_series_ids` and
+/// `values` are appended to `time_series_id_builder` and `value_builder`.
 pub fn grid(
     time_series_id: TimeSeriesId,
-    start_time: Timestamp,
-    end_time: Timestamp,
-    sampling_interval: i32,
-    model: &[u8],
-    time_series_ids: &mut TimeSeriesIdBuilder,
-    timestamps: &mut TimestampBuilder,
-    values: &mut ValueBuilder,
+    value: Value,
+    time_series_id_builder: &mut TimeSeriesIdBuilder,
+    timestamps: &[Timestamp],
+    value_builder: &mut ValueBuilder,
 ) {
-    let value = decode_model(model);
-    let sampling_interval = sampling_interval as usize;
-    for timestamp in (start_time..=end_time).step_by(sampling_interval) {
-        time_series_ids.append_value(time_series_id).unwrap();
-        timestamps.append_value(timestamp).unwrap();
-        values.append_value(value).unwrap();
+    for _timestamp in timestamps {
+        time_series_id_builder.append_value(time_series_id);
+        value_builder.append_value(value);
     }
-}
-
-/// Read the coefficient for a model of type PMC-Mean from a slice of bytes. The
-/// coefficient is the average value of the time series segment whose vales are
-/// represented by the model.
-fn decode_model(model: &[u8]) -> Value {
-    Value::from_be_bytes(model.try_into().unwrap())
 }
 
 #[cfg(test)]
@@ -289,32 +262,11 @@ mod tests {
         return fit_all_values;
     }
 
-    // Tests for min().
-    proptest! {
-    #[test]
-    fn test_min(value in ProptestValue::ANY) {
-        let model = value.to_be_bytes();
-        let min = min(&model);
-        prop_assert!(models::equal_or_nan(min as f64, value as f64));
-    }
-    }
-
-    // Tests for max().
-    proptest! {
-    #[test]
-    fn test_max(value in ProptestValue::ANY) {
-        let model = value.to_be_bytes();
-        let max = max(&model);
-        prop_assert!(models::equal_or_nan(max as f64, value as f64));
-    }
-    }
-
     // Tests for sum().
     proptest! {
     #[test]
     fn test_sum(value in ProptestValue::ANY) {
-        let model = value.to_be_bytes();
-        let sum = sum(1657734000, 1657734540, 60, &model);
+        let sum = sum(1657734000, 1657734540, &[10], value);
         prop_assert!(models::equal_or_nan(sum as f64, (10.0 * value) as f64));
     }
     }
@@ -323,25 +275,20 @@ mod tests {
     proptest! {
     #[test]
     fn test_grid(value in ProptestValue::ANY) {
-        let model = value.to_be_bytes();
         let sampling_interval: i64 = 60;
-        let mut time_series_ids = TimeSeriesIdBuilder::new(10);
-        let mut timestamps = TimestampBuilder::new(10);
-        let mut values = ValueBuilder::new(10);
+        let mut time_series_ids = TimeSeriesIdBuilder::with_capacity(10);
+        let timestamps: Vec<Timestamp> = (60..=600).step_by(60).collect();
+        let mut values = ValueBuilder::with_capacity(10);
 
         grid(
             1,
-            1657734000,
-            1657734540,
-            sampling_interval as i32,
-            &model,
+            value,
             &mut time_series_ids,
-            &mut timestamps,
+            &timestamps,
             &mut values,
         );
 
         let time_series_ids = time_series_ids.finish();
-        let timestamps = timestamps.finish();
         let values = values.finish();
 
         prop_assert!(
@@ -353,21 +300,11 @@ mod tests {
              .iter()
              .all(|time_series_id_option| time_series_id_option.unwrap() == 1));
         prop_assert!(timestamps
-            .values()
             .windows(2)
             .all(|window| window[1] - window[0] == sampling_interval));
         prop_assert!(values
             .iter()
             .all(|value_option| models::equal_or_nan(value_option.unwrap() as f64, value as f64)));
-    }
-    }
-
-    // Tests for the decode_model().
-    proptest! {
-    #[test]
-    fn test_decode_model(value in ProptestValue::ANY) {
-        let decoded = decode_model(&value.to_be_bytes());
-        prop_assert!(models::equal_or_nan(decoded as f64, value as f64));
     }
     }
 }

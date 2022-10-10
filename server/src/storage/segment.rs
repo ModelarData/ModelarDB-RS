@@ -18,24 +18,28 @@
 //! provides support for storing uncompressed data in Apache Parquet files.
 
 use std::fmt::Formatter;
-use std::io::ErrorKind::Other;
 use std::io::Error as IOError;
+use std::io::ErrorKind::Other;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{fmt, fs, mem};
-use std::path::{Path, PathBuf};
 
-use datafusion::arrow::array::ArrayBuilder;
+use datafusion::arrow::array::{Array, ArrayBuilder};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
-use tracing::info;
+use tracing::debug;
 
-use crate::storage::data_point::DataPoint;
-use crate::storage::{BUILDER_CAPACITY, StorageEngine};
+use crate::get_array;
+use crate::storage::{StorageEngine, BUILDER_CAPACITY};
 use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
 
 /// Shared functionality between different types of uncompressed segments, such as [`SegmentBuilder`]
-/// and [`SpilledSegment`].
-pub trait UncompressedSegment {
+/// and [`SpilledSegment`]. Since the uncompressed segments are part of the storage engine, which
+/// is part of the context controlled by the asynchronous [`FlightServiceHandler`](crate::remote::FlightServiceHandler),
+/// uncompressed segments have to adhere to [`Sync`] and [`Send`]. Both [`SegmentBuilder`] and
+/// [`SpilledSegment`] automatically implements [`Sync`] and [`Send`] as they only contain types
+/// that implements [`Sync`] and [`Send`].
+pub trait UncompressedSegment: Sync + Send {
     fn get_record_batch(&mut self) -> Result<RecordBatch, ParquetError>;
 
     fn get_memory_size(&self) -> usize;
@@ -49,7 +53,7 @@ pub trait UncompressedSegment {
 /// A single segment being built, consisting of an ordered sequence of timestamps and values. Note
 /// that since [`ArrayBuilder`] is used, the data can only be read once the builders are finished.
 /// The builders cannot be further appended to once finished.
-pub struct SegmentBuilder {
+pub(super) struct SegmentBuilder {
     /// Builder consisting of timestamps.
     timestamps: TimestampBuilder,
     /// Builder consisting of float values.
@@ -57,28 +61,42 @@ pub struct SegmentBuilder {
 }
 
 impl SegmentBuilder {
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
-            timestamps: TimestampBuilder::new(BUILDER_CAPACITY),
-            values: ValueBuilder::new(BUILDER_CAPACITY),
+            timestamps: TimestampBuilder::with_capacity(BUILDER_CAPACITY),
+            values: ValueBuilder::with_capacity(BUILDER_CAPACITY),
         }
     }
 
     /// Return the total size of the [`SegmentBuilder`] in bytes. Note that this is constant.
-    pub fn get_memory_size() -> usize {
+    pub(super) fn get_memory_size() -> usize {
         (BUILDER_CAPACITY * mem::size_of::<Timestamp>())
             + (BUILDER_CAPACITY * mem::size_of::<Value>())
     }
 
-    /// Return `true` if the [`SegmentBuilder`] is full, meaning additional data points cannot be appended.
-    pub fn is_full(&self) -> bool {
+    /// Return [`true`] if the [`SegmentBuilder`] is full, meaning additional
+    /// data points cannot be appended.
+    pub(super) fn is_full(&self) -> bool {
         self.get_length() == self.get_capacity()
     }
 
     /// Return how many data points the [`SegmentBuilder`] currently contains.
-    pub fn get_length(&self) -> usize {
+    pub(super) fn get_length(&self) -> usize {
         // The length is always the same for both builders.
         self.timestamps.len()
+    }
+
+    /// Add `timestamp` and `value` to the [`SegmentBuilder`].
+    pub(super) fn insert_data(&mut self, timestamp: Timestamp, value: Value) {
+        debug_assert!(
+            !self.is_full(),
+            "Cannot insert data into full SegmentBuilder."
+        );
+
+        self.timestamps.append_value(timestamp);
+        self.values.append_value(value);
+
+        debug!("Inserted data point into segment with {}.", self)
     }
 
     /// Return how many data points the [`SegmentBuilder`] can contain.
@@ -86,24 +104,16 @@ impl SegmentBuilder {
         // The capacity is always the same for both builders.
         self.timestamps.capacity()
     }
-
-    /// Add the timestamp and value from `data_point` to the [`SegmentBuilder`].
-    pub fn insert_data(&mut self, data_point: &DataPoint) {
-        debug_assert!(
-            !self.is_full(),
-            "Cannot insert data into full SegmentBuilder."
-        );
-
-        self.timestamps.append_value(data_point.timestamp);
-        self.values.append_value(data_point.value);
-
-        info!("Inserted data point into segment with {}.", self)
-    }
 }
 
 impl fmt::Display for SegmentBuilder {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{} data point(s) (Capacity: {})", self.get_length(), self.get_capacity())
+        write!(
+            f,
+            "{} data point(s) (Capacity: {})",
+            self.get_length(),
+            self.get_capacity()
+        )
     }
 }
 
@@ -123,7 +133,8 @@ impl UncompressedSegment for SegmentBuilder {
         Ok(RecordBatch::try_new(
             Arc::new(schema),
             vec![Arc::new(timestamps), Arc::new(values)],
-        ).unwrap())
+        )
+        .unwrap())
     }
 
     /// Return the total size of the [`SegmentBuilder`] in bytes.
@@ -150,7 +161,7 @@ pub struct SpilledSegment {
 impl SpilledSegment {
     /// Spill the data in `segment` to an Apache Parquet file, and return a [`SpilledSegment`]
     /// containing the file path.
-    pub fn new(folder_path: &Path, segment: RecordBatch) -> Self {
+    pub(super) fn new(folder_path: &Path, segment: RecordBatch) -> Self {
         debug_assert!(
             segment.schema() == Arc::new(StorageEngine::get_uncompressed_segment_schema()),
             "Schema of RecordBatch does not match uncompressed segment schema."
@@ -160,7 +171,7 @@ impl SpilledSegment {
         fs::create_dir_all(complete_folder_path.as_path());
 
         // Create a path that uses the first timestamp as the filename.
-        let timestamps: &TimestampArray = segment.column(0).as_any().downcast_ref().unwrap();
+        let timestamps = get_array!(segment, 0, TimestampArray);
         let file_name = format!("{}.parquet", timestamps.value(0));
         let file_path = complete_folder_path.join(file_name);
 
@@ -175,7 +186,7 @@ impl UncompressedSegment for SpilledSegment {
     fn get_record_batch(&mut self) -> Result<RecordBatch, ParquetError> {
         let segment = StorageEngine::read_entire_apache_parquet_file(self.file_path.as_path())?;
 
-		debug_assert!(
+        debug_assert!(
             segment.schema() == Arc::new(StorageEngine::get_uncompressed_segment_schema()),
             "Schema of RecordBatch does not match uncompressed segment schema."
         );
@@ -192,7 +203,10 @@ impl UncompressedSegment for SpilledSegment {
     fn spill_to_apache_parquet(&mut self, _folder_path: &Path) -> Result<SpilledSegment, IOError> {
         Err(IOError::new(
             Other,
-            format!("The segment has already been spilled to '{}'.", self.file_path.display()),
+            format!(
+                "The segment has already been spilled to '{}'.",
+                self.file_path.display()
+            ),
         ))
     }
 }
@@ -200,7 +214,7 @@ impl UncompressedSegment for SpilledSegment {
 /// Representing either a [`SegmentBuilder`] or [`SpilledSegment`] that is finished and ready for compression.
 pub struct FinishedSegment {
     /// Key that uniquely identifies the time series the [`FinishedSegment`] belongs to.
-    pub key: String,
+    pub key: u64,
     /// Either a finished [`SegmentBuilder`] or a [`SpilledSegment`].
     pub uncompressed_segment: Box<dyn UncompressedSegment>,
 }
@@ -208,11 +222,8 @@ pub struct FinishedSegment {
 impl FinishedSegment {
     /// If in memory, spill the segment to an Apache Parquet file and return the file path,
     /// otherwise return [`IOError`].
-    pub fn spill_to_apache_parquet(
-        &mut self,
-        data_folder_path: &Path,
-    ) -> Result<PathBuf, IOError> {
-        let folder_path = data_folder_path.join(self.key.clone());
+    pub(super) fn spill_to_apache_parquet(&mut self, data_folder_path: &Path) -> Result<PathBuf, IOError> {
+        let folder_path = data_folder_path.join(self.key.to_string());
         let spilled = self
             .uncompressed_segment
             .spill_to_apache_parquet(folder_path.as_path())?;
@@ -229,7 +240,6 @@ mod tests {
     use super::*;
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
-    use paho_mqtt::Message;
     use tempfile::tempdir;
 
     use crate::storage::test_util;
@@ -238,7 +248,7 @@ mod tests {
     // Tests for SegmentBuilder.
     #[test]
     fn test_get_segment_builder_memory_size() {
-        let mut segment_builder = SegmentBuilder::new();
+        let segment_builder = SegmentBuilder::new();
 
         let expected = (segment_builder.timestamps.capacity() * mem::size_of::<Timestamp>())
             + (segment_builder.values.capacity() * mem::size_of::<Value>());
@@ -248,17 +258,15 @@ mod tests {
 
     #[test]
     fn test_get_length() {
-        let mut segment_builder = SegmentBuilder::new();
+        let segment_builder = SegmentBuilder::new();
 
         assert_eq!(segment_builder.get_length(), 0);
     }
 
     #[test]
     fn test_can_insert_data_point() {
-        let data_point = get_data_point();
         let mut segment_builder = SegmentBuilder::new();
-
-        segment_builder.insert_data(&data_point);
+        insert_data_points(1, &mut segment_builder);
 
         assert_eq!(segment_builder.get_length(), 1);
     }
@@ -266,14 +274,14 @@ mod tests {
     #[test]
     fn test_check_segment_is_full() {
         let mut segment_builder = SegmentBuilder::new();
-        insert_multiple_data_points(segment_builder.get_capacity(), &mut segment_builder);
+        insert_data_points(segment_builder.get_capacity(), &mut segment_builder);
 
         assert!(segment_builder.is_full());
     }
 
     #[test]
     fn test_check_segment_is_not_full() {
-        let mut segment_builder = SegmentBuilder::new();
+        let segment_builder = SegmentBuilder::new();
 
         assert!(!segment_builder.is_full());
     }
@@ -283,13 +291,13 @@ mod tests {
     fn test_panic_if_inserting_data_point_when_full() {
         let mut segment_builder = SegmentBuilder::new();
 
-        insert_multiple_data_points(segment_builder.get_capacity() + 1, &mut segment_builder);
+        insert_data_points(segment_builder.get_capacity() + 1, &mut segment_builder);
     }
 
     #[test]
     fn test_get_record_batch_from_segment_builder() {
         let mut segment_builder = SegmentBuilder::new();
-        insert_multiple_data_points(segment_builder.get_capacity(), &mut segment_builder);
+        insert_data_points(segment_builder.get_capacity(), &mut segment_builder);
 
         let capacity = segment_builder.get_capacity();
         let data = segment_builder.get_record_batch().unwrap();
@@ -308,7 +316,7 @@ mod tests {
     #[test]
     fn test_can_spill_full_segment_builder() {
         let mut segment_builder = SegmentBuilder::new();
-        insert_multiple_data_points(segment_builder.get_capacity(), &mut segment_builder);
+        insert_data_points(segment_builder.get_capacity(), &mut segment_builder);
 
         let temp_dir = tempdir().unwrap();
         segment_builder.spill_to_apache_parquet(temp_dir.path());
@@ -322,21 +330,6 @@ mod tests {
     fn test_panic_if_spilling_segment_builder_when_not_full() {
         let mut segment_builder = SegmentBuilder::new();
         segment_builder.spill_to_apache_parquet(Path::new("folder_path"));
-    }
-
-    /// Insert `count` generated data points into `segment_builder`.
-    fn insert_multiple_data_points(count: usize, segment_builder: &mut SegmentBuilder) {
-        let data_point = get_data_point();
-
-        for _ in 0..count {
-            segment_builder.insert_data(&data_point);
-        }
-    }
-
-    /// Create a [`DataPoint`] with a constant timestamp and value.
-    fn get_data_point() -> DataPoint {
-        let message = Message::new("ModelarDB/test", "[1657878396943245, 30]", 1);
-        DataPoint::from_message(&message).unwrap()
     }
 
     // Tests for SpilledSegment.
@@ -364,14 +357,26 @@ mod tests {
     fn test_get_record_batch_from_spilled_segment() {
         let mut segment_builder = SegmentBuilder::new();
         let capacity = segment_builder.get_capacity();
-        insert_multiple_data_points(capacity, &mut segment_builder);
+        insert_data_points(capacity, &mut segment_builder);
 
         let temp_dir = tempdir().unwrap();
-        let mut spilled_segment = segment_builder.spill_to_apache_parquet(temp_dir.path()).unwrap();
+        let mut spilled_segment = segment_builder
+            .spill_to_apache_parquet(temp_dir.path())
+            .unwrap();
 
         let data = spilled_segment.get_record_batch().unwrap();
         assert_eq!(data.num_columns(), 2);
         assert_eq!(data.num_rows(), capacity);
+    }
+
+    /// Insert `count` generated data points into `segment_builder`.
+    fn insert_data_points(count: usize, segment_builder: &mut SegmentBuilder) {
+        let timestamp: Timestamp = 1234567890123;
+        let value: Value = 30.0;
+
+        for _ in 0..count {
+            segment_builder.insert_data(timestamp, value);
+        }
     }
 
     #[test]
