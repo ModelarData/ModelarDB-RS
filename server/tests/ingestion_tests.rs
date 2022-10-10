@@ -1,28 +1,41 @@
+use std::{env, io};
 use std::fs;
+use std::io::Write;
 use std::path;
+use std::process;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rand::Rng;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::FlightDescriptor;
 use assert_cmd::Command;
 use datafusion::arrow::array;
-use datafusion::arrow::array::{Float32Array, PrimitiveArray, StringArray, TimestampMillisecondArray};
-use datafusion::arrow::datatypes::{DataType, Field, Schema, TimestampMillisecondType};
+use datafusion::arrow::array::{
+    Float32Array, PrimitiveArray, StringArray, TimestampMillisecondArray,
+};
 use datafusion::arrow::datatypes::TimeUnit::Millisecond;
+use datafusion::arrow::datatypes::{DataType, Field, Schema, TimestampMillisecondType};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::executor::block_on;
+use rand::Rng;
 use tonic::transport::Channel;
 
 #[test]
 fn test_ingest_message_into_storage_engine() {
-    start_arrow_flight_server();
-    let mut client = create_flight_service_client().unwrap();
+    create_directory().expect("Failed to create directory");
+
+    let flight_server = start_arrow_flight_server();
+
+    let mut f = fs::File::create("tests/ArrowFlight.log").expect("Failed to create log file");
+    io::copy(&mut flight_server.stdout.unwrap(), &mut f).expect("Failed to write to log file");
+
+    //let mut client = create_flight_service_client().unwrap();
 
     // TODO: Send a single message to do_put.
     //send_messages_to_arrow_flight_server(client,1, "key".to_owned())
     // TODO: Assert that a new segment has been created in the storage engine.
+
+    remove_directory().expect("Failed to remove directory");
 }
 
 #[test]
@@ -74,31 +87,30 @@ fn test_can_query_ingested_uncompressed_and_compressed_data() {
     // TODO: Ensure that the uncompressed message is part of the query result.
 }
 
-fn get_bin_dir() -> path::PathBuf {
-    let current_exe =
-        std::env::current_exe().expect("Failed to get the path of the binary");
+fn get_binary_directory() -> path::PathBuf {
+    let current_executable = env::current_exe().expect("Failed to get the path of the binary");
 
-    println!("{}", current_exe.display());
-    let current_dir = current_exe
+    let parent_directory = current_executable
+        .parent()
+        .expect("Failed to get the parent directory");
+
+    let binary_directory = parent_directory
         .parent()
         .expect("Failed to get the directory of the binary");
 
-    let bin_dir = current_dir
-        .parent()
-        .expect("Failed to get the binary folder");
-    bin_dir.to_owned()
+    binary_directory.to_owned()
 }
 
-fn start_bin(bin_name: &str) -> std::process::Command {
+fn start_binary(binary: &str) -> process::Command {
     // Create path to binary
-    let mut path = get_bin_dir();
-    path.push(bin_name);
-    path.set_extension(std::env::consts::EXE_EXTENSION);
+    let mut path = get_binary_directory();
+    path.push(binary);
+    path.set_extension(env::consts::EXE_EXTENSION);
 
     assert!(path.exists());
 
     // Create command process
-    std::process::Command::new(path.into_os_string())
+    process::Command::new(path.into_os_string())
 }
 
 fn create_directory() -> std::io::Result<()> {
@@ -106,23 +118,23 @@ fn create_directory() -> std::io::Result<()> {
     Ok(())
 }
 
+fn remove_directory() -> std::io::Result<()> {
+    fs::remove_dir_all("tests/data")?;
+    Ok(())
+}
 
-fn start_arrow_flight_server() {
-    // TODO: It might be necessary to create a temporary data folder.
-    create_directory().expect("Failed to create directory");
+fn start_arrow_flight_server() -> process::Child  {
 
-    let output = start_bin("modelardbd")
-    .arg("tests/data")
-    .output()
-    .expect("Failed to start Arrow Flight Server");
+    let output = start_binary("modelardbd")
+        .arg("tests/data")
+        .stdout(process::Stdio::piped())
+        .spawn()
+        .expect("Failed to start Arrow Flight Server");
 
-    println!("{}", String::from_utf8_lossy(&output.stdout));
-
+    return output
 }
 
 fn create_flight_service_client() -> Result<FlightServiceClient<Channel>, ()> {
-
-    
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let address = format!("grpc://0.0.0.0:9999");
 
@@ -134,7 +146,11 @@ fn create_flight_service_client() -> Result<FlightServiceClient<Channel>, ()> {
 
 /// Generate `count` random messages for the time series referenced by `key` and send it to the
 /// ModelarDB server with Arrow Flight through the `do_put()` endpoint.
-fn send_messages_to_arrow_flight_server(mut client: FlightServiceClient<Channel>, count: usize, key: String) {
+fn send_messages_to_arrow_flight_server(
+    mut client: FlightServiceClient<Channel>,
+    count: usize,
+    key: String,
+) {
     for _ in 0..count {
         let message = generate_random_message(key.clone());
 
@@ -155,7 +171,7 @@ fn generate_random_message(key: String) -> RecordBatch {
     let message_schema = Schema::new(vec![
         Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
         Field::new("value", DataType::Float32, false),
-        Field::new("key",DataType::Utf8, false),
+        Field::new("key", DataType::Utf8, false),
     ]);
 
     RecordBatch::try_new(
@@ -164,6 +180,7 @@ fn generate_random_message(key: String) -> RecordBatch {
             Arc::new(TimestampMillisecondArray::from(vec![timestamp])),
             Arc::new(Float32Array::from(vec![value])),
             Arc::new(StringArray::from(vec![key])),
-        ]
-    ).unwrap()
+        ],
+    )
+    .unwrap()
 }
