@@ -1,3 +1,5 @@
+use std::fs;
+use std::path;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -72,13 +74,14 @@ fn test_can_query_ingested_uncompressed_and_compressed_data() {
     // TODO: Ensure that the uncompressed message is part of the query result.
 }
 
-fn get_bin_dir() -> std::path::PathBuf {
-    // Cargo puts the integration test binary in target/debug/deps
+fn get_bin_dir() -> path::PathBuf {
     let current_exe =
-        std::env::current_exe().expect("Failed to get the path of the integration test binary");
+        std::env::current_exe().expect("Failed to get the path of the binary");
+
+    println!("{}", current_exe.display());
     let current_dir = current_exe
         .parent()
-        .expect("Failed to get the directory of the integration test binary");
+        .expect("Failed to get the directory of the binary");
 
     let bin_dir = current_dir
         .parent()
@@ -87,21 +90,29 @@ fn get_bin_dir() -> std::path::PathBuf {
 }
 
 fn start_bin(bin_name: &str) -> std::process::Command {
-    // Create full path to binary
+    // Create path to binary
     let mut path = get_bin_dir();
     path.push(bin_name);
     path.set_extension(std::env::consts::EXE_EXTENSION);
 
     assert!(path.exists());
 
-    // Create command
+    // Create command process
     std::process::Command::new(path.into_os_string())
 }
 
+fn create_directory() -> std::io::Result<()> {
+    fs::create_dir("tests/data")?;
+    Ok(())
+}
+
+
 fn start_arrow_flight_server() {
     // TODO: It might be necessary to create a temporary data folder.
+    create_directory().expect("Failed to create directory");
+
     let output = start_bin("modelardbd")
-    .arg("c:/data")
+    .arg("tests/data")
     .output()
     .expect("Failed to start Arrow Flight Server");
 
