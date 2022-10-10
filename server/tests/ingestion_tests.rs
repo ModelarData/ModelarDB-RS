@@ -19,7 +19,7 @@ fn test_ingest_message_into_storage_engine() {
     let mut client = create_flight_service_client().unwrap();
 
     // TODO: Send a single message to do_put.
-    send_messages_to_arrow_flight_server(client,1, "key".to_owned())
+    //send_messages_to_arrow_flight_server(client,1, "key".to_owned())
     // TODO: Assert that a new segment has been created in the storage engine.
 }
 
@@ -72,15 +72,48 @@ fn test_can_query_ingested_uncompressed_and_compressed_data() {
     // TODO: Ensure that the uncompressed message is part of the query result.
 }
 
+fn get_bin_dir() -> std::path::PathBuf {
+    // Cargo puts the integration test binary in target/debug/deps
+    let current_exe =
+        std::env::current_exe().expect("Failed to get the path of the integration test binary");
+    let current_dir = current_exe
+        .parent()
+        .expect("Failed to get the directory of the integration test binary");
+
+    let bin_dir = current_dir
+        .parent()
+        .expect("Failed to get the binary folder");
+    bin_dir.to_owned()
+}
+
+fn start_bin(bin_name: &str) -> std::process::Command {
+    // Create full path to binary
+    let mut path = get_bin_dir();
+    path.push(bin_name);
+    path.set_extension(std::env::consts::EXE_EXTENSION);
+
+    assert!(path.exists());
+
+    // Create command
+    std::process::Command::new(path.into_os_string())
+}
+
 fn start_arrow_flight_server() {
     // TODO: It might be necessary to create a temporary data folder.
-    let mut cmd = Command::cargo_bin("mdbd").unwrap();
-    cmd.unwrap();
+    let output = start_bin("modelardbd")
+    .arg("c:/data")
+    .output()
+    .expect("Failed to start Arrow Flight Server");
+
+    println!("{}", String::from_utf8_lossy(&output.stdout));
+
 }
 
 fn create_flight_service_client() -> Result<FlightServiceClient<Channel>, ()> {
+
+    
     let runtime = tokio::runtime::Runtime::new().unwrap();
-    let address = format!("grpc://127.0.0.1:9999");
+    let address = format!("grpc://0.0.0.0:9999");
 
     runtime.block_on(async {
         let fsc = FlightServiceClient::connect(address).await;

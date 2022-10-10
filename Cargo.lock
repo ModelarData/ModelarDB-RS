@@ -136,6 +136,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "assert_cmd"
+version = "2.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "93ae1ddd39efd67689deb1979d80bad3bf7f2b09c6e6117c8d1f2443b5e2f83e"
+dependencies = [
+ "bstr",
+ "doc-comment",
+ "predicates",
+ "predicates-core",
+ "predicates-tree",
+ "wait-timeout",
+]
+
+[[package]]
 name = "async-stream"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1337,6 +1351,7 @@ name = "modelardbd"
 version = "0.1.0"
 dependencies = [
  "arrow-flight",
+ "assert_cmd",
  "async-trait",
  "chrono",
  "datafusion",
@@ -1346,6 +1361,7 @@ dependencies = [
  "log",
  "object_store",
  "proptest",
+ "rand",
  "rusqlite",
  "snmalloc-rs",
  "tempfile",
