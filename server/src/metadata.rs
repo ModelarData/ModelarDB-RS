@@ -235,7 +235,7 @@ impl MetadataManager {
             } else {
                 let predicates: Vec<String> = tag_predicates
                     .iter()
-                    .map(|(tag, tag_value)| format!("{} = {}", tag, tag_value))
+                    .map(|(tag, tag_value)| format!("{} = '{}'", tag, tag_value))
                     .collect();
 
                 format!(
@@ -262,7 +262,7 @@ impl MetadataManager {
     /// Save the created table to the metadata database. This mainly includes
     /// adding a row to the table_metadata table with both the name and schema.
     pub fn save_table_metadata(&self, name: &str) -> Result<()> {
-        // Add a new row in the model_table_metadata table to persist the model table.
+        // Add a new row in the table_metadata table to persist the table.
         let connection = Connection::open(&self.metadata_database_path)?;
         connection.execute(
             "INSERT INTO table_metadata (table_name) VALUES (?1)",
@@ -277,8 +277,7 @@ impl MetadataManager {
     pub fn register_tables(&self, context: &Arc<Context>) -> Result<(), rusqlite::Error> {
         let connection = Connection::open(&self.metadata_database_path)?;
 
-        let mut select_statement =
-            connection.prepare("SELECT table_name, schema, FROM table_metadata")?;
+        let mut select_statement = connection.prepare("SELECT table_name FROM table_metadata")?;
 
         let mut rows = select_statement.query(())?;
 
@@ -689,8 +688,10 @@ mod tests {
 
     use std::fs;
 
+    use arrow_flight::{IpcMessage, SchemaAsIpc};
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field};
-    use tempfile::tempdir;
+    use datafusion::arrow::ipc::writer::IpcWriteOptions;
+    use tempfile;
 
     use crate::metadata::test_util;
     use crate::types::{ArrowTimestamp, ArrowValue};
@@ -785,34 +786,325 @@ mod tests {
         assert_eq!(metadata_manager.tag_value_hashes.keys().len(), 1);
     }
 
-    // TODO: add tests for compute_keys_using_fields_and_tags.
-    // TODO: add tests for normalize_table_name.
-    // TODO: add tests for save_table_metadata.
-    // TODO: add tests for register_tables.
-    // TODO: add tests for register_table.
-    // TODO: add tests for save_model_table_metadata.
-    // TODO: add tests for register_model_tables.
-    // TODO: add tests for register_model_table.
-    // TODO: add tests for blob_to_schema.
-    // TODO: add tests for compute_keys_using_metadata_database.
-    // TODO: add tests for create_metadata_database_tables.
+    #[test]
+    fn test_normalize_table_name_lowercase_no_effect() {
+        assert_eq!(
+            "table_name",
+            MetadataManager::normalize_table_name("table_name")
+        );
+    }
+
+    #[test]
+    fn test_normalize_table_name_uppercase() {
+        assert_eq!(
+            "table_name",
+            MetadataManager::normalize_table_name("TABLE_NAME")
+        );
+    }
+
+    #[test]
+    fn test_save_table_metadata() {
+        // Save a table to the metadata database.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+
+        let table_name = "table_name";
+        metadata_manager.save_table_metadata(table_name).unwrap();
+
+        // Retrieve the table from the metadata database.
+        let connection =
+            Connection::open(metadata_manager.metadata_database_path.to_str().unwrap()).unwrap();
+        let mut select_statement = connection
+            .prepare("SELECT table_name FROM table_metadata")
+            .unwrap();
+        let mut rows = select_statement.query(()).unwrap();
+
+        let row = rows.next().unwrap().unwrap();
+        let retrieved_table_name = row.get::<usize, String>(0).unwrap();
+        assert_eq!(table_name, retrieved_table_name);
+
+        assert!(rows.next().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_register_tables() {
+        // Save a table to the metadata database.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = test_util::get_test_context(temp_dir.path());
+
+        context
+            .metadata_manager
+            .save_table_metadata("table_name")
+            .unwrap();
+
+        // Register the table with Apache Arrow DataFusion.
+        context.metadata_manager.register_tables(&context).unwrap();
+    }
+
+    #[test]
+    fn test_save_model_table_metadata() {
+        // Save a model table to the metadata database.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+
+        let model_table_metadata = test_util::get_model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, vec![1, 2, 4, 8])
+            .unwrap();
+
+        // Retrieve the model table from the metadata database.
+        let connection =
+            Connection::open(metadata_manager.metadata_database_path.to_str().unwrap()).unwrap();
+
+        // Check that an empty model_table_tags exists in the metadata database.
+        let mut select_statement = connection
+            .prepare("SELECT hash FROM model_table_tags")
+            .unwrap();
+        let mut rows = select_statement.query(()).unwrap();
+        assert!(rows.next().unwrap().is_none());
+
+        // Retrieve the rows in model_table_metadata from the metadata database.
+        let mut select_statement = connection
+            .prepare(
+                "SELECT table_name, schema, timestamp_column_index,
+                      tag_column_indices FROM model_table_metadata",
+            )
+            .unwrap();
+        let mut rows = select_statement.query(()).unwrap();
+
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
+        assert_eq!(vec![1, 2, 4, 8], row.get::<usize, Vec<u8>>(1).unwrap());
+        assert_eq!(1, row.get::<usize, i32>(2).unwrap());
+        assert_eq!(vec![0], row.get::<usize, Vec<u8>>(3).unwrap());
+
+        assert!(rows.next().unwrap().is_none());
+
+        // Retrieve the rows in model_table_field_columns from the metadata
+        // database.
+        let mut select_statement = connection
+            .prepare(
+                "SELECT table_name, column_name, column_index
+                      FROM model_table_field_columns",
+            )
+            .unwrap();
+        let mut rows = select_statement.query(()).unwrap();
+
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
+        assert_eq!("value_1", row.get::<usize, String>(1).unwrap());
+        assert_eq!(2, row.get::<usize, i32>(2).unwrap());
+
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
+        assert_eq!("value_2", row.get::<usize, String>(1).unwrap());
+        assert_eq!(3, row.get::<usize, i32>(2).unwrap());
+
+        assert!(rows.next().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_register_model_tables() {
+        // Save a model table to the metadata database.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = test_util::get_test_context(temp_dir.path());
+
+        let model_table_metadata = test_util::get_model_table_metadata();
+        context
+            .metadata_manager
+            .save_model_table_metadata(&model_table_metadata, vec![1, 2, 4, 8])
+            .unwrap();
+
+        // Register the model table with Apache Arrow DataFusion.
+        context
+            .metadata_manager
+            .register_model_tables(&context)
+            .unwrap();
+    }
+
+    #[test]
+    fn test_blob_to_schema_empty() {
+        assert!(MetadataManager::blob_to_schema(vec!(1, 2, 4, 8)).is_err());
+    }
+
+    #[test]
+    fn test_blob_to_schema_model_table() {
+        // Serialize a schema to bytes.
+        let model_table_metadata = test_util::get_model_table_metadata();
+        let schema = model_table_metadata.schema;
+
+        let options = IpcWriteOptions::default();
+        let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
+        let ipc_message: IpcMessage = schema_as_ipc.try_into().unwrap();
+
+        // Deserialize the bytes to a schema.
+        let retrieved_schema = MetadataManager::blob_to_schema(ipc_message.0).unwrap();
+        assert_eq!(*schema, retrieved_schema);
+    }
+
+    #[test]
+    fn test_compute_keys_using_fields_and_tags_for_missing_model_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+
+        assert!(metadata_manager
+            .compute_keys_using_fields_and_tags("model_table", &None, 10, &[])
+            .is_err());
+    }
+
+    #[test]
+    fn test_compute_keys_using_fields_and_tags_for_empty_model_table() {
+        // Save a model table to the metadata database.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+
+        let model_table_metadata = test_util::get_model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, vec![1, 2, 4, 8])
+            .unwrap();
+
+        // Lookup keys using fields and tags for an empty table.
+        let keys = metadata_manager
+            .compute_keys_using_fields_and_tags("model_table", &None, 10, &[])
+            .unwrap();
+        assert!(keys.is_empty());
+    }
+
+    #[test]
+    fn test_compute_keys_using_no_fields_and_tags_for_model_table() {
+        // Save a model table to the metadata database.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]);
+
+        // Lookup all keys for the table by not passing any fields or tags.
+        let keys = metadata_manager
+            .compute_keys_using_fields_and_tags("model_table", &None, 10, &[])
+            .unwrap();
+        assert_eq!(2, keys.len());
+    }
+
+    #[test]
+    fn test_compute_keys_for_the_fallback_column_using_only_a_tag_column_for_model_table() {
+        // Save a model table to the metadata database.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]);
+
+        // Lookup the keys for the fallback column by only requesting tag columns.
+        let keys = metadata_manager
+            .compute_keys_using_fields_and_tags("model_table", &Some(vec![0]), 10, &[])
+            .unwrap();
+        assert_eq!(1, keys.len());
+    }
+
+    #[test]
+    fn test_compute_the_keys_for_a_specific_field_column_for_model_table() {
+        // Save a model table to the metadata database.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        initialize_model_table_with_tag_values(
+            &mut metadata_manager,
+            &["tag_value1", "tag_value2"],
+        );
+
+        // Lookup all keys for the table by not requesting keys for columns.
+        let keys = metadata_manager
+            .compute_keys_using_fields_and_tags("model_table", &None, 10, &[])
+            .unwrap();
+        assert_eq!(4, keys.len());
+
+        // Lookup keys for the table by requesting keys for a specific field column.
+        let keys = metadata_manager
+            .compute_keys_using_fields_and_tags("model_table", &Some(vec![1]), 10, &[])
+            .unwrap();
+        assert_eq!(2, keys.len());
+    }
+
+    #[test]
+    fn test_compute_the_keys_for_a_specific_tag_value_for_model_table() {
+        // Save a model table to the metadata database.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        initialize_model_table_with_tag_values(
+            &mut metadata_manager,
+            &["tag_value1", "tag_value2"],
+        );
+
+        // Lookup all keys for the table by not requesting keys for a tag value.
+        let keys = metadata_manager
+            .compute_keys_using_fields_and_tags("model_table", &None, 10, &[])
+            .unwrap();
+        assert_eq!(4, keys.len());
+
+        // Lookup keys for the table by requesting keys for a specific tag value.
+        let keys = metadata_manager
+            .compute_keys_using_fields_and_tags("model_table", &None, 10, &[("tag", "tag_value1")])
+            .unwrap();
+        assert_eq!(2, keys.len());
+    }
+
+    fn initialize_model_table_with_tag_values(
+        metadata_manager: &mut MetadataManager,
+        tag_values: &[&str],
+    ) {
+        let model_table_metadata = test_util::get_model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, vec![1, 2, 4, 8])
+            .unwrap();
+
+        for tag_value in tag_values {
+            let tag_value = tag_value.to_string();
+            metadata_manager
+                .get_or_compute_tag_hash(&model_table_metadata, &vec![tag_value])
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn create_metadata_database_tables() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        let metadata_database_path = metadata_manager.metadata_database_path;
+
+        // Verify that the tables were created and has the expected columns.
+        let connection = Connection::open(&metadata_database_path).unwrap();
+        connection
+            .execute("SELECT table_name FROM table_metadata", params![])
+            .unwrap();
+
+        connection
+            .execute(
+                "SELECT table_name, schema, timestamp_column_index,
+                 tag_column_indices FROM model_table_metadata",
+                params![],
+            )
+            .unwrap();
+
+        connection
+            .execute(
+                "SELECT table_name, column_name, column_index FROM model_table_field_columns",
+                params![],
+            )
+            .unwrap();
+    }
 
     #[test]
     fn test_a_non_empty_folder_without_metadata_is_not_a_data_folder() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         create_empty_folder(temp_dir.path(), "folder");
         assert!(!MetadataManager::is_path_a_data_folder(temp_dir.path()));
     }
 
     #[test]
     fn test_an_empty_folder_is_a_data_folder() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         assert!(MetadataManager::is_path_a_data_folder(temp_dir.path()));
     }
 
     #[test]
     fn test_a_non_empty_folder_with_metadata_is_a_data_folder() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         create_empty_folder(temp_dir.path(), "table_folder");
         fs::create_dir(temp_dir.path().join(METADATA_SQLITE_NAME)).unwrap();
         assert!(MetadataManager::is_path_a_data_folder(temp_dir.path()));
@@ -952,7 +1244,32 @@ mod tests {
 pub mod test_util {
     use super::*;
 
+    use std::sync::RwLock;
+
+    use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
+    use datafusion::execution::runtime_env::RuntimeEnv;
     use tempfile;
+    use tokio::runtime::Runtime;
+
+    use crate::storage::StorageEngine;
+
+    pub fn get_test_context(path: &Path) -> Arc<Context> {
+        let metadata_manager = get_test_metadata_manager(path);
+        let runtime = Runtime::new().unwrap();
+        let session = get_test_session_context();
+        let storage_engine = RwLock::new(StorageEngine::new(
+            path.to_owned(),
+            metadata_manager.clone(),
+            true,
+        ));
+
+        Arc::new(Context {
+            metadata_manager,
+            runtime,
+            session,
+            storage_engine,
+        })
+    }
 
     pub fn get_test_metadata_manager(path: &Path) -> MetadataManager {
         let mut metadata_manager = MetadataManager::try_new(path).unwrap();
@@ -961,6 +1278,13 @@ pub mod test_util {
         metadata_manager.compressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB
 
         metadata_manager
+    }
+
+    pub fn get_test_session_context() -> SessionContext {
+        let config = SessionConfig::new();
+        let runtime = Arc::new(RuntimeEnv::default());
+        let state = SessionState::with_config_rt(config, runtime);
+        SessionContext::with_state(state)
     }
 
     pub fn get_model_table_metadata() -> ModelTableMetadata {
