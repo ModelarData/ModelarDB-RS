@@ -421,7 +421,7 @@ impl FlightService for FlightServiceHandler {
             .await
             .ok_or_else(|| Status::invalid_argument("Missing FlightData."))??;
 
-        debug_assert_eq!(flight_data.data_body.len(), 0);
+       // debug_assert_eq!(flight_data.data_body.len(), 0);
 
         let flight_descriptor = flight_data
             .flight_descriptor

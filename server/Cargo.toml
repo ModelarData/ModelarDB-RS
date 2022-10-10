@@ -36,3 +36,7 @@ proptest = "1.0.0"
 tempfile = "3.3.0"
 rand = "0.8.4"
 assert_cmd = "2.0.4"
+
+[[test]]
+name = "integration"
+path = "tests/ingestion_tests.rs"

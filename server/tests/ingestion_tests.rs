@@ -1,4 +1,6 @@
 use std::{env, io};
+use std::error::Error;
+
 use std::fs;
 use std::io::Write;
 use std::path;
@@ -7,35 +9,57 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::FlightDescriptor;
+use arrow_flight::{FlightData, FlightDescriptor, FlightInfo, PutResult};
+use arrow_flight::utils::flight_data_from_arrow_batch;
 use assert_cmd::Command;
-use datafusion::arrow::array;
+use assert_cmd::output::OutputError;
+use datafusion::arrow::{array, ipc};
 use datafusion::arrow::array::{
     Float32Array, PrimitiveArray, StringArray, TimestampMillisecondArray,
 };
 use datafusion::arrow::datatypes::TimeUnit::Millisecond;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimestampMillisecondType};
+use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::executor::block_on;
+use futures::stream;
+use log::error;
 use rand::Rng;
+use tokio::runtime::Runtime;
+use tonic::{IntoStreamingRequest, Request};
 use tonic::transport::Channel;
+
+pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 #[test]
 fn test_ingest_message_into_storage_engine() {
-    create_directory().expect("Failed to create directory");
+    //create_directory().expect("Failed to create directory");
 
-    let flight_server = start_arrow_flight_server();
+   // let mut flight_server = start_arrow_flight_server();
 
     let mut f = fs::File::create("tests/ArrowFlight.log").expect("Failed to create log file");
-    io::copy(&mut flight_server.stdout.unwrap(), &mut f).expect("Failed to write to log file");
+   // io::copy(&mut flight_server.stdout.unwrap(), &mut f).expect("Failed to write to log file");
 
-    //let mut client = create_flight_service_client().unwrap();
+    if let Ok(rt) = Runtime::new() {
+        let address = ("127.0.0.1".to_string());
+        match create_flight_service_client(&rt, &address, 9999) {
+            Ok(fsc) => {
+                let result = send_messages_to_arrow_flight_server(fsc, 1, "location".to_owned());
 
-    // TODO: Send a single message to do_put.
-    //send_messages_to_arrow_flight_server(client,1, "key".to_owned())
+                // Print error.
+               // match result {
+                  //  Ok(_) => (),
+                 //   Err(message) => eprintln!("{}", message),
+                //};
+            }
+            Err(message) => eprintln!("error: cannot connect to {} due to a {}", address, message),
+        }
+    } else {
+        eprintln!("error: unable to initialize run-time");
+    }
     // TODO: Assert that a new segment has been created in the storage engine.
 
-    remove_directory().expect("Failed to remove directory");
+    //remove_directory().expect("Failed to remove directory");
 }
 
 #[test]
@@ -134,33 +158,58 @@ fn start_arrow_flight_server() -> process::Child  {
     return output
 }
 
-fn create_flight_service_client() -> Result<FlightServiceClient<Channel>, ()> {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    let address = format!("grpc://0.0.0.0:9999");
+fn create_flight_service_client(rt: &Runtime, host: &str, port: u16) -> Result<FlightServiceClient<Channel>> {
+    let address = format!("grpc://{}:{}", host, port);
 
-    runtime.block_on(async {
-        let fsc = FlightServiceClient::connect(address).await;
-        Ok(fsc.unwrap())
+    rt.block_on(async{
+        let fsc = FlightServiceClient::connect(address).await?;
+        Ok(fsc)
     })
 }
 
-/// Generate `count` random messages for the time series referenced by `key` and send it to the
+fn create_table_in_folder(){
+
+}
+
+/// Generate `count` random messages for the time series referenced by `tag` and send it to the
 /// ModelarDB server with Arrow Flight through the `do_put()` endpoint.
 fn send_messages_to_arrow_flight_server(
     mut client: FlightServiceClient<Channel>,
     count: usize,
-    key: String,
-) {
-    for _ in 0..count {
-        let message = generate_random_message(key.clone());
+    tag: String,
+) -> std::result::Result<(), ()> {
+
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let message = generate_random_message(tag.clone());
 
         // TODO: Send the message.
-        let flight_descriptor = FlightDescriptor::new_path(vec![]);
-    }
+        let flight_descriptor = FlightDescriptor::new_path(vec![String::from("data")]);
+
+        let (_ , mut flight_data) = flight_data_from_arrow_batch(&message, &ipc::writer::IpcWriteOptions::default());
+
+        let mut flight_data_vec = vec![FlightData{
+            flight_descriptor: None,
+            data_header: vec![],
+            app_metadata: vec![],
+            data_body: vec![]
+        }];
+
+        flight_data_vec[0] = flight_data;
+
+        flight_data_vec[0].flight_descriptor = Some(flight_descriptor);
+
+        runtime.block_on(async {
+
+            let mut streaming = client.do_put(stream::iter(flight_data_vec))
+                .await;
+
+            Ok(())
+
+        })
 }
 
-/// Generate a [`RecordBatch`] with the current timestamp, a random value, and `key`.
-fn generate_random_message(key: String) -> RecordBatch {
+/// Generate a [`RecordBatch`] with the current timestamp, a random value, and a tag.
+fn generate_random_message(tag: String) -> RecordBatch {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -171,7 +220,7 @@ fn generate_random_message(key: String) -> RecordBatch {
     let message_schema = Schema::new(vec![
         Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
         Field::new("value", DataType::Float32, false),
-        Field::new("key", DataType::Utf8, false),
+        Field::new("location", DataType::Utf8, false),
     ]);
 
     RecordBatch::try_new(
@@ -179,8 +228,12 @@ fn generate_random_message(key: String) -> RecordBatch {
         vec![
             Arc::new(TimestampMillisecondArray::from(vec![timestamp])),
             Arc::new(Float32Array::from(vec![value])),
-            Arc::new(StringArray::from(vec![key])),
+            Arc::new(StringArray::from(vec![tag])),
         ],
     )
     .unwrap()
+}
+
+pub fn status_to_arrow_error(status: tonic::Status) -> ArrowError {
+    ArrowError::IoError(format!("{:?}", status))
 }
