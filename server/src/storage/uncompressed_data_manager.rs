@@ -22,7 +22,7 @@ use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
 use tracing::{debug, debug_span};
 
-use crate::metadata::ModelTableMetadata;
+use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::models::ErrorBound;
 use crate::storage::segment::{FinishedSegment, SegmentBuilder, UncompressedSegment};

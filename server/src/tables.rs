@@ -50,7 +50,7 @@ use datafusion::scalar::ScalarValue;
 use datafusion_physical_expr::planner;
 use futures::stream::{Stream, StreamExt};
 
-use crate::metadata::ModelTableMetadata;
+use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::models;
 use crate::types::{
     ArrowTimeSeriesId, ArrowTimestamp, ArrowValue, CompressedSchema, TimestampArray,

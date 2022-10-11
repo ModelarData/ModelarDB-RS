@@ -44,7 +44,8 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
-use crate::metadata::{MetadataManager, ModelTableMetadata};
+use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::metadata::MetadataManager;
 use crate::storage::StorageEngine;
 use crate::tables::ModelTable;
 use crate::Context;
@@ -91,7 +92,7 @@ impl FlightServiceHandler {
     /// Return the schema of `table_name` if the table exists in the default
     /// database schema, otherwise a [`Status`] indicating at what level the
     /// lookup failed is returned.
-    fn get_schema_of_table_in_the_default_database_schema(
+    fn get_schema_of_table_in_default_database_schema(
         &self,
         table_name: &str,
     ) -> Result<SchemaRef, Status> {
@@ -133,10 +134,15 @@ impl FlightServiceHandler {
             .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
     }
 
-    /// Return [`ModelTableMetadata`] if `table_name` is the name of a model
-    /// table, otherwise [`None`]. A [`Status`] that specifies that the table
-    /// name is missing is returned if the table does not exits.
-    fn get_model_table_metadata_from_the_default_database_schema(
+    /// Lookup the [`ModelTableMetadata`] of the model table with name
+    /// `table_name` if it exists, specifically:
+    /// * A [`ModelTableMetadata`] is returned if a model table with the name
+    /// `table_name` exists.
+    /// * A `[`None`] is returned if a table with the name `table_name` exists.
+    /// * A [`Status`] is returned if the default catalog, the default schema, a
+    /// table with the name `table_name`, or a model table with the name
+    /// `table_name` does not exists.
+    fn get_model_table_metadata_from_default_database_schema(
         &self,
         table_name: &str,
     ) -> Result<Option<Arc<ModelTableMetadata>>, Status> {
@@ -229,7 +235,7 @@ impl FlightServiceHandler {
             .await
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-        // Persist the new model table to the metadata database.
+        // Persist the new table to the metadata database.
         self.context
             .metadata_manager
             .save_table_metadata(&table_name)
@@ -341,7 +347,7 @@ impl FlightService for FlightServiceHandler {
     ) -> Result<Response<SchemaResult>, Status> {
         let flight_descriptor = request.into_inner();
         let table_name = self.get_table_name_from_flight_descriptor(&flight_descriptor)?;
-        let schema = self.get_schema_of_table_in_the_default_database_schema(table_name)?;
+        let schema = self.get_schema_of_table_in_default_database_schema(table_name)?;
 
         let options = IpcWriteOptions::default();
         let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
@@ -427,7 +433,7 @@ impl FlightService for FlightServiceHandler {
 
         // Handle the data based on whether it is a normal table or a model table.
         if let Some(model_table_metadata) =
-            self.get_model_table_metadata_from_the_default_database_schema(&normalized_table_name)?
+            self.get_model_table_metadata_from_default_database_schema(&normalized_table_name)?
         {
             debug!("Writing data to model table '{}'.", normalized_table_name);
             self.ingest_into_model_table(&*model_table_metadata, &mut flight_data_stream)
@@ -435,7 +441,7 @@ impl FlightService for FlightServiceHandler {
         } else {
             debug!("Writing data to table '{}'.", normalized_table_name);
             let schema =
-                self.get_schema_of_table_in_the_default_database_schema(&normalized_table_name)?;
+                self.get_schema_of_table_in_default_database_schema(&normalized_table_name)?;
             self.ingest_into_table(&normalized_table_name, schema, flight_data_stream);
         }
 
@@ -478,7 +484,7 @@ impl FlightService for FlightServiceHandler {
 
             // If the table already exists, return an error.
             if self
-                .get_schema_of_table_in_the_default_database_schema(&normalized_table_name)
+                .get_schema_of_table_in_default_database_schema(&normalized_table_name)
                 .is_ok()
             {
                 let message = format!(

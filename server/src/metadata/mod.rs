@@ -21,8 +21,10 @@
 //! while this module stores the system's configuration and the metadata for the
 //! model tables that cannot be stored in Apache Arrow DataFusion's catalog.
 
+pub mod model_table_metadata;
+
 use std::collections::hash_map::DefaultHasher;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::hash::Hasher;
@@ -38,7 +40,7 @@ use rusqlite::types::Type::Blob;
 use rusqlite::{params, Connection, Result, Row};
 use tracing::{error, info, warn};
 
-use crate::errors::ModelarDBError;
+use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::tables::ModelTable;
 use crate::types::{
     ArrowTimestamp, ArrowValue, CompressedSchema, TimeSeriesId, UncompressedSchema,
@@ -46,16 +48,22 @@ use crate::types::{
 use crate::Context;
 
 /// Name used for the file containing the SQLite database storing the metadata.
-pub const METADATA_SQLITE_NAME: &str = "metadata.sqlite3";
+pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
 
+/// Store's the system's configuration and the metadata required for reading
+/// from and writing to the tables and model tables. The data that needs to be
+/// persisted are stored in the metadata database.
 #[derive(Clone)]
 pub struct MetadataManager {
+    /// Location of the metadata database.
     metadata_database_path: PathBuf,
+    /// [`RecordBatch`] schema used for uncompressed segments.
     uncompressed_schema: UncompressedSchema,
+    /// [`RecordBatch`] schema used for compressed segments.
     compressed_schema: CompressedSchema,
-    /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
+    /// Cache of tag value hashes used to signify when to persist new unsaved
+    /// tag combinations.
     tag_value_hashes: HashMap<String, u64>,
-    //
     /// Amount of memory to reserve for storing
     /// [`UncompressedSegments`](crate::storage::segment::UncompressedSegment).
     pub uncompressed_reserved_memory_in_bytes: usize,
@@ -73,7 +81,7 @@ impl MetadataManager {
         }
 
         // Compute the path to the metadata database.
-        let metadata_database_path = data_folder_path.join(METADATA_SQLITE_NAME);
+        let metadata_database_path = data_folder_path.join(METADATA_DATABASE_NAME);
 
         // Initialize the schema for record batches containing data points.
         let uncompressed_schema = UncompressedSchema(Arc::new(Schema::new(vec![
@@ -109,6 +117,59 @@ impl MetadataManager {
 
         // Return the metadata manager.
         Ok(metadata_manager)
+    }
+
+    /// Return [`true`] if `path` is a data folder, otherwise [`false`].
+    fn is_path_a_data_folder(path: &Path) -> bool {
+        if let Ok(files_and_folders) = fs::read_dir(path) {
+            files_and_folders.count() == 0 || path.join(METADATA_DATABASE_NAME).exists()
+        } else {
+            false
+        }
+    }
+
+    /// If they do not already exist, create the tables used for table and model
+    /// table metadata. A "table_metadata" table that can persist tables is
+    /// created, a "model_table_metadata" table that can persist model tables is
+    /// created, and a "model_table_field_columns" table that can save the index
+    /// of field columns in specific model tables is created. If the tables
+    /// exist or were created, return [`Ok`], otherwise return
+    /// [`rusqlite::Error`].
+    fn create_metadata_database_tables(&self) -> Result<()> {
+        let connection = Connection::open(&self.metadata_database_path)?;
+
+        // Create the table_metadata SQLite table if it does not exist.
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS table_metadata (
+                table_name TEXT PRIMARY KEY
+        ) STRICT",
+            (),
+        )?;
+
+        // Create the model_table_metadata SQLite table if it does not exist.
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS model_table_metadata (
+                table_name TEXT PRIMARY KEY,
+                schema BLOB NOT NULL,
+                timestamp_column_index INTEGER NOT NULL,
+                tag_column_indices BLOB NOT NULL
+        ) STRICT",
+            (),
+        )?;
+
+        // Create the model_table_field_columns SQLite table if it does not
+        // exist. Note that column_index will only use a maximum of 10 bits.
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS model_table_field_columns (
+                table_name TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                column_index INTEGER NOT NULL,
+                PRIMARY KEY (table_name, column_name)
+        ) STRICT",
+            (),
+        )?;
+
+        Ok(())
     }
 
     /// Return the path of the data folder.
@@ -254,13 +315,59 @@ impl MetadataManager {
         )
     }
 
-    /// Normalize `table name` to allow direct comparisons between table names.
+    /// Compute the 64-bit keys of the univariate time series to retrieve from
+    /// the storage engine using the two queries constructed from the fields,
+    /// tag, and tag values in the user's query. Returns a [`RusqliteResult`]
+    /// with an [`Error`](rusqlite::Error) if the data cannot be retrieved from
+    /// the metadata database, otherwise the keys are returned.
+    fn compute_keys_using_metadata_database(
+        &self,
+        query_field_columns: &str,
+        fallback_field_column: u64,
+        query_hashes: &str,
+    ) -> Result<Vec<u64>> {
+        // Open a connection to the database containing the metadata.
+        let connection = Connection::open(&self.metadata_database_path)?;
+
+        // Retrieve the field columns.
+        let mut select_statement = connection.prepare(query_field_columns)?;
+        let mut rows = select_statement.query([])?;
+
+        let mut field_columns = vec![];
+        while let Some(row) = rows.next()? {
+            field_columns.push(row.get::<usize, u64>(0)?);
+        }
+
+        // Add the fallback field column if the query did not request data for
+        // any fields as the storage engine otherwise does not return any data.
+        if field_columns.is_empty() {
+            field_columns.push(fallback_field_column);
+        }
+
+        // Retrieve the hashes and compute the keys;
+        let mut select_statement = connection.prepare(&query_hashes)?;
+        let mut rows = select_statement.query([])?;
+
+        let mut keys = vec![];
+        while let Some(row) = rows.next()? {
+            // SQLite use signed integers https://www.sqlite.org/datatype3.html.
+            let signed_tag_hash = row.get::<usize, i64>(0)?;
+            let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
+
+            for field_column in &field_columns {
+                keys.push(tag_hash | field_column);
+            }
+        }
+        Ok(keys)
+    }
+
+    /// Normalize `table_name` to allow direct comparisons between table names.
     pub fn normalize_table_name(table_name: &str) -> String {
         table_name.to_lowercase()
     }
 
-    /// Save the created table to the metadata database. This mainly includes
-    /// adding a row to the table_metadata table with both the name and schema.
+    /// Save the created table to the metadata database. This consists of adding
+    /// a row to the table_metadata table with the `name` of the created table.
     pub fn save_table_metadata(&self, name: &str) -> Result<()> {
         // Add a new row in the table_metadata table to persist the table.
         let connection = Connection::open(&self.metadata_database_path)?;
@@ -287,6 +394,29 @@ impl MetadataManager {
             }
         }
 
+        Ok(())
+    }
+
+    /// Use a row from the table_metadata table to register the table in Apache
+    /// Arrow DataFusion. If the metadata database could not be opened or the
+    /// table could not be queried, return [`Error`].
+    fn register_table(&self, row: &Row, context: &Arc<Context>) -> Result<(), Box<dyn Error>> {
+        let name = row.get::<usize, String>(0)?;
+
+        // Compute the path to the folder containing data for the table.
+        let table_folder_path = self.get_data_folder_path().join(&name);
+        let table_folder = table_folder_path
+            .to_str()
+            .ok_or_else(|| format!("Path for table is not UTF-8: '{}'", name))?;
+
+        // Register table.
+        context.runtime.block_on(context.session.register_parquet(
+            &name,
+            table_folder,
+            ParquetReadOptions::default(),
+        ))?;
+
+        info!("Registered table '{}'.", name);
         Ok(())
     }
 
@@ -388,29 +518,6 @@ impl MetadataManager {
         Ok(())
     }
 
-    /// Use a row from the table_metadata table to register the table in Apache
-    /// Arrow DataFusion. If the metadata database could not be opened or the
-    /// table could not be queried, return [`Error`].
-    fn register_table(&self, row: &Row, context: &Arc<Context>) -> Result<(), Box<dyn Error>> {
-        let name = row.get::<usize, String>(0)?;
-
-        // Compute the path to the folder containing data for the table.
-        let table_folder_path = self.get_data_folder_path().join(&name);
-        let table_folder = table_folder_path
-            .to_str()
-            .ok_or_else(|| format!("Path for table is not UTF-8: '{}'", name))?;
-
-        // Register model table.
-        context.runtime.block_on(context.session.register_parquet(
-            &name,
-            table_folder,
-            ParquetReadOptions::default(),
-        ))?;
-
-        info!("Registered model table '{}'.", name);
-        Ok(())
-    }
-
     /// Convert a row from the model_table_metadata table to a
     /// [`ModelTableMetadata`] and use it to register model tables in Apache
     /// Arrow DataFusion. If the metadata database could not be opened or the
@@ -449,237 +556,6 @@ impl MetadataManager {
             rusqlite::Error::InvalidColumnType(1, message, Blob)
         })
     }
-
-    /// Compute the 64-bit keys of the univariate time series to retrieve from
-    /// the storage engine using the two queries constructed from the fields,
-    /// tag, and tag values in the user's query. Returns a [`RusqliteResult`]
-    /// with an [`Error`](rusqlite::Error) if the data cannot be retrieved from
-    /// the metadata database, otherwise the keys are returned.
-    fn compute_keys_using_metadata_database(
-        &self,
-        query_field_columns: &str,
-        fallback_field_column: u64,
-        query_hashes: &str,
-    ) -> Result<Vec<u64>> {
-        // Open a connection to the database containing the metadata.
-        let connection = Connection::open(&self.metadata_database_path)?;
-
-        // Retrieve the field columns.
-        let mut select_statement = connection.prepare(query_field_columns)?;
-        let mut rows = select_statement.query([])?;
-
-        let mut field_columns = vec![];
-        while let Some(row) = rows.next()? {
-            field_columns.push(row.get::<usize, u64>(0)?);
-        }
-
-        // Add the fallback field column if the query did not request data for
-        // any fields as the storage engine otherwise does not return any data.
-        if field_columns.is_empty() {
-            field_columns.push(fallback_field_column);
-        }
-
-        // Retrieve the hashes and compute the keys;
-        let mut select_statement = connection.prepare(&query_hashes)?;
-        let mut rows = select_statement.query([])?;
-
-        let mut keys = vec![];
-        while let Some(row) = rows.next()? {
-            // SQLite use signed integers https://www.sqlite.org/datatype3.html.
-            let signed_tag_hash = row.get::<usize, i64>(0)?;
-            let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
-
-            for field_column in &field_columns {
-                keys.push(tag_hash | field_column);
-            }
-        }
-        Ok(keys)
-    }
-
-    /// If they do not already exist, create the tables used for table and model
-    /// table metadata. A "table_metadata" that can persist tables is created, a
-    /// "model_table_metadata" table that can persist model tables is created,
-    /// and a "columns" table that can save the index of field columns in
-    /// specific model tables is created. If the tables exist or were created,
-    /// return [`Ok`], otherwise return [`rusqlite::Error`].
-    fn create_metadata_database_tables(&self) -> Result<()> {
-        let connection = Connection::open(&self.metadata_database_path)?;
-
-        // Create the table_metadata SQLite table if it does not exist.
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS table_metadata (
-                table_name TEXT PRIMARY KEY
-        ) STRICT",
-            (),
-        )?;
-
-        // Create the model_table_metadata SQLite table if it does not exist.
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS model_table_metadata (
-                table_name TEXT PRIMARY KEY,
-                schema BLOB NOT NULL,
-                timestamp_column_index INTEGER NOT NULL,
-                tag_column_indices BLOB NOT NULL
-        ) STRICT",
-            (),
-        )?;
-
-        // Create the model_table_field_columns SQLite table if it does not
-        // exist. Note that column_index will only use a maximum of 10 bits.
-        connection.execute(
-            "CREATE TABLE IF NOT EXISTS model_table_field_columns (
-                table_name TEXT NOT NULL,
-                column_name TEXT NOT NULL,
-                column_index INTEGER NOT NULL,
-                PRIMARY KEY (table_name, column_name)
-        ) STRICT",
-            (),
-        )?;
-
-        Ok(())
-    }
-
-    /// Return [`true`] if `path` is a data folder, otherwise [`false`].
-    fn is_path_a_data_folder(path: &Path) -> bool {
-        if let Ok(files_and_folders) = fs::read_dir(path) {
-            files_and_folders.count() == 0 || path.join(METADATA_SQLITE_NAME).exists()
-        } else {
-            false
-        }
-    }
-}
-
-/// Metadata required to ingest data into a model table and query a model table.
-#[derive(Debug, Clone)]
-pub struct ModelTableMetadata {
-    /// Name of the model table.
-    pub name: String,
-    /// Schema of the data in the model table.
-    pub schema: Arc<Schema>,
-    /// Index of the timestamp column in the schema.
-    pub timestamp_column_index: u8,
-    /// Indices of the tag columns in the schema.
-    pub tag_column_indices: Vec<u8>,
-}
-
-impl ModelTableMetadata {
-    /// Create a new model table with the given metadata. If any of the following conditions are
-    /// true, [`ConfigurationError`](ModelarDBError::ConfigurationError) is returned:
-    /// * The timestamp or tag column indices does not match `schema`.
-    /// * The types of the fields are not correct.
-    /// * The timestamp column index is in the tag column indices.
-    /// * There are duplicates in the tag column indices.
-    /// * There are more than 1024 columns.
-    /// * There are no field columns.
-    pub fn try_new(
-        name: String,
-        schema: Schema,
-        tag_column_indices: Vec<u8>,
-        timestamp_column_index: u8,
-    ) -> Result<Self, ModelarDBError> {
-        // If the timestamp index is in the tag indices, return an error.
-        if tag_column_indices.contains(&timestamp_column_index) {
-            return Err(ModelarDBError::ConfigurationError(
-                "The timestamp column cannot be a tag column.".to_owned(),
-            ));
-        };
-
-        if let Some(timestamp_field) = schema.fields.get(timestamp_column_index as usize) {
-            // If the field of the timestamp column is not of type ArrowTimestamp, return an error.
-            if !timestamp_field
-                .data_type()
-                .equals_datatype(&ArrowTimestamp::DATA_TYPE)
-            {
-                return Err(ModelarDBError::ConfigurationError(format!(
-                    "The timestamp column with index '{}' is not of type '{}'.",
-                    timestamp_column_index,
-                    ArrowTimestamp::DATA_TYPE
-                )));
-            }
-        } else {
-            // If the index of the timestamp column does not match the schema, return an error.
-            return Err(ModelarDBError::ConfigurationError(format!(
-                "The timestamp column index '{}' does not match a field in the schema.",
-                timestamp_column_index
-            )));
-        }
-
-        for tag_column_index in &tag_column_indices {
-            if let Some(tag_field) = schema.fields.get(*tag_column_index as usize) {
-                // If the fields of the tag columns is not of type Utf8, return an error.
-                if !tag_field.data_type().equals_datatype(&DataType::Utf8) {
-                    return Err(ModelarDBError::ConfigurationError(format!(
-                        "The tag column with index '{}' is not of type '{}'.",
-                        tag_column_index,
-                        DataType::Utf8
-                    )));
-                }
-            } else {
-                // If the indices for the tag columns does not match the schema, return an error.
-                return Err(ModelarDBError::ConfigurationError(format!(
-                    "The tag column index '{}' does not match a field in the schema.",
-                    tag_column_index
-                )));
-            }
-        }
-
-        let field_column_indices: Vec<usize> = (0..schema.fields().len())
-            .filter(|index| {
-                // TODO: Change this cast when indices in the action body are changed to use two bytes.
-                let index = *index as u8;
-                index != timestamp_column_index && !tag_column_indices.contains(&index)
-            })
-            .collect();
-
-        // If there are no field columns, return an error.
-        if field_column_indices.is_empty() {
-            return Err(ModelarDBError::ConfigurationError(
-                "There needs to be at least one field column.".to_owned(),
-            ));
-        } else {
-            for field_column_index in &field_column_indices {
-                // unwrap() is safe to use since the indices are collected from the schema fields.
-                let field = schema.fields.get(*field_column_index).unwrap();
-
-                // If the fields of the field columns is not of type ArrowValue, return an error.
-                if !field.data_type().equals_datatype(&ArrowValue::DATA_TYPE) {
-                    return Err(ModelarDBError::ConfigurationError(format!(
-                        "The field column with index '{}' is not of type '{}'.",
-                        field_column_index,
-                        ArrowValue::DATA_TYPE
-                    )));
-                }
-            }
-        }
-
-        // If there are duplicate tag columns, return an error. HashSet.insert() can be used to check
-        // for uniqueness since it returns true or false depending on if the inserted element already exists.
-        let mut uniq = HashSet::new();
-        if !tag_column_indices
-            .clone()
-            .into_iter()
-            .all(|x| uniq.insert(x))
-        {
-            return Err(ModelarDBError::ConfigurationError(
-                "The tag column indices cannot have duplicates.".to_owned(),
-            ));
-        }
-
-        // If there are more than 1024 columns, return an error. This limitation is necessary
-        // since 10 bits are used to identify the column index of the data in the 64-bit hash key.
-        if schema.fields.len() > 1024 {
-            return Err(ModelarDBError::ConfigurationError(
-                "There cannot be more than 1024 columns in the model table.".to_owned(),
-            ));
-        }
-
-        Ok(Self {
-            name,
-            schema: Arc::new(schema.clone()),
-            timestamp_column_index,
-            tag_column_indices,
-        })
-    }
 }
 
 #[cfg(test)]
@@ -689,14 +565,67 @@ mod tests {
     use std::fs;
 
     use arrow_flight::{IpcMessage, SchemaAsIpc};
-    use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field};
     use datafusion::arrow::ipc::writer::IpcWriteOptions;
     use tempfile;
 
     use crate::metadata::test_util;
-    use crate::types::{ArrowTimestamp, ArrowValue};
 
     // Tests for MetadataManager.
+    #[test]
+    fn test_a_non_empty_folder_without_metadata_is_not_a_data_folder() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        create_empty_folder(temp_dir.path(), "folder");
+        assert!(!MetadataManager::is_path_a_data_folder(temp_dir.path()));
+    }
+
+    #[test]
+    fn test_an_empty_folder_is_a_data_folder() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        assert!(MetadataManager::is_path_a_data_folder(temp_dir.path()));
+    }
+
+    #[test]
+    fn test_a_non_empty_folder_with_metadata_is_a_data_folder() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        create_empty_folder(temp_dir.path(), "table_folder");
+        fs::create_dir(temp_dir.path().join(METADATA_DATABASE_NAME)).unwrap();
+        assert!(MetadataManager::is_path_a_data_folder(temp_dir.path()));
+    }
+
+    fn create_empty_folder(path: &Path, name: &str) -> PathBuf {
+        let path_buf = path.join(name);
+        fs::create_dir(&path_buf).unwrap();
+        path_buf
+    }
+
+    #[test]
+    fn test_create_metadata_database_tables() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        let metadata_database_path = metadata_manager.metadata_database_path;
+
+        // Verify that the tables were created and has the expected columns.
+        let connection = Connection::open(&metadata_database_path).unwrap();
+        connection
+            .execute("SELECT table_name FROM table_metadata", params![])
+            .unwrap();
+
+        connection
+            .execute(
+                "SELECT table_name, schema, timestamp_column_index,
+                 tag_column_indices FROM model_table_metadata",
+                params![],
+            )
+            .unwrap();
+
+        connection
+            .execute(
+                "SELECT table_name, column_name, column_index FROM model_table_field_columns",
+                params![],
+            )
+            .unwrap();
+    }
+
     #[test]
     fn test_get_data_folder_path() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -745,7 +674,7 @@ mod tests {
         // It should also be saved in the metadata database table.
         let database_path = metadata_manager
             .get_data_folder_path()
-            .join(METADATA_SQLITE_NAME);
+            .join(METADATA_DATABASE_NAME);
         let connection = Connection::open(database_path).unwrap();
 
         let mut statement = connection
@@ -784,162 +713,6 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(metadata_manager.tag_value_hashes.keys().len(), 1);
-    }
-
-    #[test]
-    fn test_normalize_table_name_lowercase_no_effect() {
-        assert_eq!(
-            "table_name",
-            MetadataManager::normalize_table_name("table_name")
-        );
-    }
-
-    #[test]
-    fn test_normalize_table_name_uppercase() {
-        assert_eq!(
-            "table_name",
-            MetadataManager::normalize_table_name("TABLE_NAME")
-        );
-    }
-
-    #[test]
-    fn test_save_table_metadata() {
-        // Save a table to the metadata database.
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
-
-        let table_name = "table_name";
-        metadata_manager.save_table_metadata(table_name).unwrap();
-
-        // Retrieve the table from the metadata database.
-        let connection =
-            Connection::open(metadata_manager.metadata_database_path.to_str().unwrap()).unwrap();
-        let mut select_statement = connection
-            .prepare("SELECT table_name FROM table_metadata")
-            .unwrap();
-        let mut rows = select_statement.query(()).unwrap();
-
-        let row = rows.next().unwrap().unwrap();
-        let retrieved_table_name = row.get::<usize, String>(0).unwrap();
-        assert_eq!(table_name, retrieved_table_name);
-
-        assert!(rows.next().unwrap().is_none());
-    }
-
-    #[test]
-    fn test_register_tables() {
-        // Save a table to the metadata database.
-        let temp_dir = tempfile::tempdir().unwrap();
-        let context = test_util::get_test_context(temp_dir.path());
-
-        context
-            .metadata_manager
-            .save_table_metadata("table_name")
-            .unwrap();
-
-        // Register the table with Apache Arrow DataFusion.
-        context.metadata_manager.register_tables(&context).unwrap();
-    }
-
-    #[test]
-    fn test_save_model_table_metadata() {
-        // Save a model table to the metadata database.
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
-
-        let model_table_metadata = test_util::get_model_table_metadata();
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata, vec![1, 2, 4, 8])
-            .unwrap();
-
-        // Retrieve the model table from the metadata database.
-        let connection =
-            Connection::open(metadata_manager.metadata_database_path.to_str().unwrap()).unwrap();
-
-        // Check that an empty model_table_tags exists in the metadata database.
-        let mut select_statement = connection
-            .prepare("SELECT hash FROM model_table_tags")
-            .unwrap();
-        let mut rows = select_statement.query(()).unwrap();
-        assert!(rows.next().unwrap().is_none());
-
-        // Retrieve the rows in model_table_metadata from the metadata database.
-        let mut select_statement = connection
-            .prepare(
-                "SELECT table_name, schema, timestamp_column_index,
-                      tag_column_indices FROM model_table_metadata",
-            )
-            .unwrap();
-        let mut rows = select_statement.query(()).unwrap();
-
-        let row = rows.next().unwrap().unwrap();
-        assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
-        assert_eq!(vec![1, 2, 4, 8], row.get::<usize, Vec<u8>>(1).unwrap());
-        assert_eq!(1, row.get::<usize, i32>(2).unwrap());
-        assert_eq!(vec![0], row.get::<usize, Vec<u8>>(3).unwrap());
-
-        assert!(rows.next().unwrap().is_none());
-
-        // Retrieve the rows in model_table_field_columns from the metadata
-        // database.
-        let mut select_statement = connection
-            .prepare(
-                "SELECT table_name, column_name, column_index
-                      FROM model_table_field_columns",
-            )
-            .unwrap();
-        let mut rows = select_statement.query(()).unwrap();
-
-        let row = rows.next().unwrap().unwrap();
-        assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
-        assert_eq!("value_1", row.get::<usize, String>(1).unwrap());
-        assert_eq!(2, row.get::<usize, i32>(2).unwrap());
-
-        let row = rows.next().unwrap().unwrap();
-        assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
-        assert_eq!("value_2", row.get::<usize, String>(1).unwrap());
-        assert_eq!(3, row.get::<usize, i32>(2).unwrap());
-
-        assert!(rows.next().unwrap().is_none());
-    }
-
-    #[test]
-    fn test_register_model_tables() {
-        // Save a model table to the metadata database.
-        let temp_dir = tempfile::tempdir().unwrap();
-        let context = test_util::get_test_context(temp_dir.path());
-
-        let model_table_metadata = test_util::get_model_table_metadata();
-        context
-            .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, vec![1, 2, 4, 8])
-            .unwrap();
-
-        // Register the model table with Apache Arrow DataFusion.
-        context
-            .metadata_manager
-            .register_model_tables(&context)
-            .unwrap();
-    }
-
-    #[test]
-    fn test_blob_to_schema_empty() {
-        assert!(MetadataManager::blob_to_schema(vec!(1, 2, 4, 8)).is_err());
-    }
-
-    #[test]
-    fn test_blob_to_schema_model_table() {
-        // Serialize a schema to bytes.
-        let model_table_metadata = test_util::get_model_table_metadata();
-        let schema = model_table_metadata.schema;
-
-        let options = IpcWriteOptions::default();
-        let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
-        let ipc_message: IpcMessage = schema_as_ipc.try_into().unwrap();
-
-        // Deserialize the bytes to a schema.
-        let retrieved_schema = MetadataManager::blob_to_schema(ipc_message.0).unwrap();
-        assert_eq!(*schema, retrieved_schema);
     }
 
     #[test]
@@ -1062,180 +835,163 @@ mod tests {
     }
 
     #[test]
-    fn create_metadata_database_tables() {
+    fn test_normalize_table_name_lowercase_no_effect() {
+        assert_eq!(
+            "table_name",
+            MetadataManager::normalize_table_name("table_name")
+        );
+    }
+
+    #[test]
+    fn test_normalize_table_name_uppercase() {
+        assert_eq!(
+            "table_name",
+            MetadataManager::normalize_table_name("TABLE_NAME")
+        );
+    }
+
+    #[test]
+    fn test_save_table_metadata() {
+        // Save a table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
-        let metadata_database_path = metadata_manager.metadata_database_path;
 
-        // Verify that the tables were created and has the expected columns.
-        let connection = Connection::open(&metadata_database_path).unwrap();
-        connection
-            .execute("SELECT table_name FROM table_metadata", params![])
+        let table_name = "table_name";
+        metadata_manager.save_table_metadata(table_name).unwrap();
+
+        // Retrieve the table from the metadata database.
+        let connection =
+            Connection::open(metadata_manager.metadata_database_path.to_str().unwrap()).unwrap();
+        let mut select_statement = connection
+            .prepare("SELECT table_name FROM table_metadata")
+            .unwrap();
+        let mut rows = select_statement.query(()).unwrap();
+
+        let row = rows.next().unwrap().unwrap();
+        let retrieved_table_name = row.get::<usize, String>(0).unwrap();
+        assert_eq!(table_name, retrieved_table_name);
+
+        assert!(rows.next().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_register_tables() {
+        // The test succeeds if none of the unwrap()s fails.
+
+        // Save a table to the metadata database.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = test_util::get_test_context(temp_dir.path());
+
+        context
+            .metadata_manager
+            .save_table_metadata("table_name")
             .unwrap();
 
-        connection
-            .execute(
+        // Register the table with Apache Arrow DataFusion.
+        context.metadata_manager.register_tables(&context).unwrap();
+    }
+
+    #[test]
+    fn test_save_model_table_metadata() {
+        // Save a model table to the metadata database.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+
+        let model_table_metadata = test_util::get_model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, vec![1, 2, 4, 8])
+            .unwrap();
+
+        // Retrieve the model table from the metadata database.
+        let connection =
+            Connection::open(metadata_manager.metadata_database_path.to_str().unwrap()).unwrap();
+
+        // Check that an empty model_table_tags exists in the metadata database.
+        let mut select_statement = connection
+            .prepare("SELECT hash FROM model_table_tags")
+            .unwrap();
+        let mut rows = select_statement.query(()).unwrap();
+        assert!(rows.next().unwrap().is_none());
+
+        // Retrieve the rows in model_table_metadata from the metadata database.
+        let mut select_statement = connection
+            .prepare(
                 "SELECT table_name, schema, timestamp_column_index,
-                 tag_column_indices FROM model_table_metadata",
-                params![],
+                      tag_column_indices FROM model_table_metadata",
             )
             .unwrap();
+        let mut rows = select_statement.query(()).unwrap();
 
-        connection
-            .execute(
-                "SELECT table_name, column_name, column_index FROM model_table_field_columns",
-                params![],
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
+        assert_eq!(vec![1, 2, 4, 8], row.get::<usize, Vec<u8>>(1).unwrap());
+        assert_eq!(1, row.get::<usize, i32>(2).unwrap());
+        assert_eq!(vec![0], row.get::<usize, Vec<u8>>(3).unwrap());
+
+        assert!(rows.next().unwrap().is_none());
+
+        // Retrieve the rows in model_table_field_columns from the metadata
+        // database.
+        let mut select_statement = connection
+            .prepare(
+                "SELECT table_name, column_name, column_index
+                      FROM model_table_field_columns",
             )
+            .unwrap();
+        let mut rows = select_statement.query(()).unwrap();
+
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
+        assert_eq!("field_1", row.get::<usize, String>(1).unwrap());
+        assert_eq!(2, row.get::<usize, i32>(2).unwrap());
+
+        let row = rows.next().unwrap().unwrap();
+        assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
+        assert_eq!("field_2", row.get::<usize, String>(1).unwrap());
+        assert_eq!(3, row.get::<usize, i32>(2).unwrap());
+
+        assert!(rows.next().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_register_model_tables() {
+        // The test succeeds if none of the unwrap()s fails.
+
+        // Save a model table to the metadata database.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = test_util::get_test_context(temp_dir.path());
+
+        let model_table_metadata = test_util::get_model_table_metadata();
+        context
+            .metadata_manager
+            .save_model_table_metadata(&model_table_metadata, vec![1, 2, 4, 8])
+            .unwrap();
+
+        // Register the model table with Apache Arrow DataFusion.
+        context
+            .metadata_manager
+            .register_model_tables(&context)
             .unwrap();
     }
 
     #[test]
-    fn test_a_non_empty_folder_without_metadata_is_not_a_data_folder() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        create_empty_folder(temp_dir.path(), "folder");
-        assert!(!MetadataManager::is_path_a_data_folder(temp_dir.path()));
+    fn test_blob_to_schema_empty() {
+        assert!(MetadataManager::blob_to_schema(vec!(1, 2, 4, 8)).is_err());
     }
 
     #[test]
-    fn test_an_empty_folder_is_a_data_folder() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        assert!(MetadataManager::is_path_a_data_folder(temp_dir.path()));
-    }
+    fn test_blob_to_schema_model_table() {
+        // Serialize a schema to bytes.
+        let model_table_metadata = test_util::get_model_table_metadata();
+        let schema = model_table_metadata.schema;
 
-    #[test]
-    fn test_a_non_empty_folder_with_metadata_is_a_data_folder() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        create_empty_folder(temp_dir.path(), "table_folder");
-        fs::create_dir(temp_dir.path().join(METADATA_SQLITE_NAME)).unwrap();
-        assert!(MetadataManager::is_path_a_data_folder(temp_dir.path()));
-    }
+        let options = IpcWriteOptions::default();
+        let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
+        let ipc_message: IpcMessage = schema_as_ipc.try_into().unwrap();
 
-    fn create_empty_folder(path: &Path, name: &str) -> PathBuf {
-        let path_buf = path.join(name);
-        fs::create_dir(&path_buf).unwrap();
-        path_buf
-    }
-
-    // Tests for ModelTableMetadata.
-    #[test]
-    fn test_can_create_model_table_metadata() {
-        let schema = get_model_table_schema();
-        let result = ModelTableMetadata::try_new("table_name".to_owned(), schema, vec![0, 1, 2], 3);
-
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_cannot_create_model_table_metadata_with_timestamp_index_in_tag_indices() {
-        let schema = get_model_table_schema();
-        let result = ModelTableMetadata::try_new("table_name".to_owned(), schema, vec![0, 1, 2], 0);
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_cannot_create_model_table_metadata_with_invalid_timestamp_index() {
-        let schema = get_model_table_schema();
-        let result =
-            ModelTableMetadata::try_new("table_name".to_owned(), schema, vec![0, 1, 2], 10);
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_cannot_create_model_table_metadata_with_invalid_timestamp_type() {
-        let schema = Schema::new(vec![
-            Field::new("tag", DataType::Utf8, false),
-            Field::new("timestamp", DataType::UInt8, false),
-            Field::new("value", ArrowValue::DATA_TYPE, false),
-        ]);
-
-        let result = create_simple_model_table_metadata(schema);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_cannot_create_model_table_metadata_with_invalid_tag_index() {
-        let schema = get_model_table_schema();
-        let result =
-            ModelTableMetadata::try_new("table_name".to_owned(), schema, vec![0, 1, 10], 3);
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_cannot_create_model_table_metadata_with_invalid_tag_type() {
-        let schema = Schema::new(vec![
-            Field::new("tag", DataType::UInt8, false),
-            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("value", ArrowValue::DATA_TYPE, false),
-        ]);
-
-        let result = create_simple_model_table_metadata(schema);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_cannot_create_model_table_metadata_with_no_fields() {
-        let schema = Schema::new(vec![
-            Field::new("tag", DataType::Utf8, false),
-            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-        ]);
-
-        let result = create_simple_model_table_metadata(schema);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_cannot_create_model_table_metadata_with_invalid_field_type() {
-        let schema = Schema::new(vec![
-            Field::new("tag", DataType::Utf8, false),
-            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("value", DataType::UInt8, false),
-        ]);
-
-        let result = create_simple_model_table_metadata(schema);
-        assert!(result.is_err());
-    }
-
-    /// Return metadata for a model table with one tag column and the timestamp column at index 1.
-    fn create_simple_model_table_metadata(
-        schema: Schema,
-    ) -> Result<ModelTableMetadata, ModelarDBError> {
-        ModelTableMetadata::try_new("table_name".to_owned(), schema, vec![0], 1)
-    }
-
-    #[test]
-    fn test_cannot_create_model_table_metadata_with_duplicate_tag_indices() {
-        let schema = get_model_table_schema();
-        let result = ModelTableMetadata::try_new("table_name".to_owned(), schema, vec![0, 1, 1], 3);
-
-        assert!(result.is_err());
-    }
-
-    fn get_model_table_schema() -> Schema {
-        Schema::new(vec![
-            Field::new("location", DataType::Utf8, false),
-            Field::new("install_year", DataType::Utf8, false),
-            Field::new("model", DataType::Utf8, false),
-            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("power_output", ArrowValue::DATA_TYPE, false),
-            Field::new("wind_speed", ArrowValue::DATA_TYPE, false),
-            Field::new("temperature", ArrowValue::DATA_TYPE, false),
-        ])
-    }
-
-    #[test]
-    fn test_cannot_create_model_table_metadata_with_too_many_fields() {
-        // Create 1025 fields that can be used to initialize a schema.
-        let fields = (0..1025)
-            .map(|i| Field::new(format!("field_{}", i).as_str(), DataType::Float32, false))
-            .collect::<Vec<Field>>();
-
-        let table_name = "table_name".to_owned();
-        let result = ModelTableMetadata::try_new(table_name, Schema::new(fields), vec![0, 1, 2], 3);
-
-        assert!(result.is_err());
+        // Deserialize the bytes to a schema.
+        let retrieved_schema = MetadataManager::blob_to_schema(ipc_message.0).unwrap();
+        assert_eq!(*schema, retrieved_schema);
     }
 }
 
@@ -1253,6 +1009,8 @@ pub mod test_util {
 
     use crate::storage::StorageEngine;
 
+    /// Return a [`Context`] with the metadata manager created by
+    /// `get_test_metadata_manager()` and the data folder set to `path`.
     pub fn get_test_context(path: &Path) -> Arc<Context> {
         let metadata_manager = get_test_metadata_manager(path);
         let runtime = Runtime::new().unwrap();
@@ -1271,6 +1029,9 @@ pub mod test_util {
         })
     }
 
+    /// Return a [`MetadataManager`] with 5 MiBs reserved for uncompressed data,
+    /// 5 MiBs reserved for compressed data, and the data folder set to `path`.
+    /// Reducing the amount of reserved memory makes it faster to run unit tests.
     pub fn get_test_metadata_manager(path: &Path) -> MetadataManager {
         let mut metadata_manager = MetadataManager::try_new(path).unwrap();
 
@@ -1280,6 +1041,7 @@ pub mod test_util {
         metadata_manager
     }
 
+    /// Return a [`SessionContext`] without any additional optimizer rules.
     pub fn get_test_session_context() -> SessionContext {
         let config = SessionConfig::new();
         let runtime = Arc::new(RuntimeEnv::default());
@@ -1287,22 +1049,26 @@ pub mod test_util {
         SessionContext::with_state(state)
     }
 
+    /// Return a [`ModelTableMetadata`] for a model table with a schema
+    /// containing a tag column, a timestamp column, and two field columns.
     pub fn get_model_table_metadata() -> ModelTableMetadata {
         let schema = Schema::new(vec![
             Field::new("tag", DataType::Utf8, false),
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("value_1", ArrowValue::DATA_TYPE, false),
-            Field::new("value_2", ArrowValue::DATA_TYPE, false),
+            Field::new("field_1", ArrowValue::DATA_TYPE, false),
+            Field::new("field_2", ArrowValue::DATA_TYPE, false),
         ]);
 
         ModelTableMetadata::try_new("model_table".to_owned(), schema, vec![0], 1).unwrap()
     }
 
+    /// Return the [`RecordBatch`] schema used for uncompressed segments.
     pub fn get_uncompressed_schema() -> UncompressedSchema {
         let temp_dir = tempfile::tempdir().unwrap();
         get_test_metadata_manager(temp_dir.path()).get_uncompressed_schema()
     }
 
+    /// Return the [`RecordBatch`] schema used for compressed segments.
     pub fn get_compressed_schema() -> CompressedSchema {
         let temp_dir = tempfile::tempdir().unwrap();
         get_test_metadata_manager(temp_dir.path()).get_compressed_schema()

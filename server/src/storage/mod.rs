@@ -38,7 +38,7 @@ use datafusion::parquet::file::properties::WriterProperties;
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
 
-use crate::metadata::ModelTableMetadata;
+use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::errors::ModelarDBError;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
