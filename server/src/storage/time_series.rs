@@ -21,6 +21,7 @@ use std::io::ErrorKind::Other;
 use std::path::Path;
 use std::sync::Arc;
 
+use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 
 use crate::get_array;
@@ -70,7 +71,7 @@ impl CompressedTimeSeries {
 
         // Combine the segments into a single RecordBatch.
         let schema = StorageEngine::get_compressed_segment_schema();
-        let batch = RecordBatch::concat(&Arc::new(schema), &*self.compressed_segments).unwrap();
+        let batch = compute::concat_batches(&Arc::new(schema), &*self.compressed_segments).unwrap();
 
         // Create the folder structure if it does not already exist.
         let complete_folder_path = folder_path.join("compressed");

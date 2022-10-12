@@ -339,19 +339,11 @@ impl FlightService for FlightServiceHandler {
         let table_name = self.get_table_name_from_flight_descriptor(&flight_descriptor)?;
         let schema = self.get_schema_of_table_in_the_default_database_schema(table_name)?;
 
-        // IpcMessages are transferred as SchemaResults for compatibility with
-        // the return type of get_schema() and to ensure the SchemaResult match
-        // what is expected by the other Arrow Flight implementations until
-        // https://github.com/apache/arrow-rs/issues/2445 is fixed.
         let options = IpcWriteOptions::default();
         let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
-        let ipc_message: IpcMessage = schema_as_ipc
+        let schema_result = schema_as_ipc
             .try_into()
             .map_err(|error: ArrowError| Status::internal(error.to_string()))?;
-
-        let schema_result = SchemaResult {
-            schema: ipc_message.0,
-        };
         Ok(Response::new(schema_result))
     }
 

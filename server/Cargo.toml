@@ -6,30 +6,30 @@ edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
-datafusion = "12.0.0"
-datafusion-expr = "12.0.0"
-datafusion-physical-expr = "12.0.0"
+datafusion = "13.0.0"
+datafusion-expr = "13.0.0"
+datafusion-physical-expr = "13.0.0"
 object_store = "0.5.0"
 
 # Log is a dependency so the compile time filters for log and tracing can be set to the same value
 log = { version = "0.4.17", features = ["max_level_debug", "release_max_level_info"] }
-tracing = { version = "0.1.36", features = ["max_level_debug", "release_max_level_info"] }
-tracing-subscriber = "0.3.15"
+tracing = { version = "0.1.37", features = ["max_level_debug", "release_max_level_info"] }
+tracing-subscriber = "0.3.16"
 tracing-futures = "0.2.5"
 
-tokio = { version = "1.21.1", features = ["rt-multi-thread", "signal"] }
+tokio = { version = "1.21.2", features = ["rt-multi-thread", "signal"] }
 
 async-trait = "0.1.57"
 futures = "0.3.24"
 
-arrow-flight = "22.0.0"
-tonic = "0.8.1"
+arrow-flight = "24.0.0"
+tonic = "0.8.2"
 
 snmalloc-rs = "0.3.3"
 
 rusqlite = { version = "0.28.0", features = ["bundled"] }
 
-chrono = "0.4"
+chrono = "0.4.22"
 
 [dev-dependencies]
 proptest = "1.0.0"
