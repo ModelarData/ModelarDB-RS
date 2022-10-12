@@ -691,6 +691,7 @@ impl RecordBatchStream for GridStream {
 mod tests {
     use super::*;
 
+    use datafusion::arrow::datatypes::DataType;
     use datafusion::logical_plan::lit;
     use datafusion::prelude::Expr;
 
@@ -765,7 +766,11 @@ mod tests {
 
     #[test]
     fn test_new_filter_exec_with_predicates() {
-        let filters = vec![new_binary_expr(col("model_type_id"), Operator::Eq, lit(1))];
+        let filters = vec![new_binary_expr(
+            col("model_type_id"),
+            Operator::Eq,
+            lit(1_u8),
+        )];
         let predicates = rewrite_and_combine_filters(&filters);
         let parquet_exec = new_parquet_exec();
 
@@ -775,7 +780,11 @@ mod tests {
     fn new_parquet_exec() -> Arc<ParquetExec> {
         let file_scan_config = FileScanConfig {
             object_store_url: ObjectStoreUrl::local_filesystem(),
-            file_schema: Arc::new(Schema::empty()),
+            file_schema: Arc::new(Schema::new(vec![Field::new(
+                "model_type_id",
+                DataType::UInt8,
+                false,
+            )])),
             file_groups: vec![],
             statistics: Statistics::default(),
             projection: None,
