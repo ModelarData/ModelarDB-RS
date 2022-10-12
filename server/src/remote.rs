@@ -135,13 +135,13 @@ impl FlightServiceHandler {
     }
 
     /// Lookup the [`ModelTableMetadata`] of the model table with name
-    /// `table_name` if it exists, specifically:
-    /// * A [`ModelTableMetadata`] is returned if a model table with the name
-    /// `table_name` exists.
-    /// * A `[`None`] is returned if a table with the name `table_name` exists.
-    /// * A [`Status`] is returned if the default catalog, the default schema, a
-    /// table with the name `table_name`, or a model table with the name
-    /// `table_name` does not exists.
+    /// `table_name` if it exists. Specifically, the method returns:
+    /// * [`ModelTableMetadata`] if a model table with the name `table_name`
+    /// exists.
+    /// * [`None`] if a table with the name `table_name` exists.
+    /// * [`Status`] if the default catalog, the default schema, a table with
+    /// the name `table_name`, or a model table with the name `table_name` does
+    /// not exists.
     fn get_model_table_metadata_from_default_database_schema(
         &self,
         table_name: &str,

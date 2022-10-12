@@ -16,10 +16,12 @@
 //! Management of the metadata database which stores the system's configuration
 //! and the metadata required for the tables and model tables. Tables can store
 //! arbitrary data, while model tables can only store time series as segments
-//! containing metadata and models. At runtime the location of the data for the
-//! tables and models tables are stored in Apache Arrow DataFusion's catalog,
-//! while this module stores the system's configuration and the metadata for the
-//! model tables that cannot be stored in Apache Arrow DataFusion's catalog.
+//! containing metadata and models. At runtime, the location of the data for the
+//! tables and the model table metadata are stored in Apache Arrow DataFusion's
+//! catalog, while this module stores the system's configuration and a mapping
+//! from model table name and tag values to hashes. These hashes can be combined
+//! with the corresponding model table's field column indexes to uniquely
+//! identify each univariate time series stored in the storage engine.
 
 pub mod model_table_metadata;
 
