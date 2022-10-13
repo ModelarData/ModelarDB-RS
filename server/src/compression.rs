@@ -29,8 +29,9 @@ use crate::errors::ModelarDBError;
 use crate::models::{
     gorilla::Gorilla, pmcmean::PMCMean, swing::Swing, timestamps, ErrorBound, SelectedModel,
 };
-use crate::storage::StorageEngine;
-use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder};
+use crate::types::{
+    CompressedSchema, Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
+};
 
 // TODO: use Gorilla as a fallback to remove GORILLA_MAXIMUM_LENGTH.
 /// Maximum number of data points that models of type Gorilla can represent per
@@ -53,6 +54,7 @@ pub fn try_compress(
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
     error_bound: ErrorBound,
+    compressed_schema: &CompressedSchema,
 ) -> Result<RecordBatch, ModelarDBError> {
     // The uncompressed data must be passed as arrays instead of a RecordBatch
     // as a TimestampArray and a ValueArray is the only supported input.
@@ -82,7 +84,7 @@ pub fn try_compress(
         );
         current_index = compressed_segment_builder.finish(&mut compressed_record_batch_builder);
     }
-    Ok(compressed_record_batch_builder.finish())
+    Ok(compressed_record_batch_builder.finish(compressed_schema))
 }
 
 /// Merges the segments in `compressed_segments` that contain equivalent models.
@@ -159,7 +161,7 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
                 errors.value(index),
             );
         }
-        merged_compressed_segments.finish()
+        merged_compressed_segments.finish(&CompressedSchema(compressed_segments.schema()))
     } else {
         compressed_segments
     }
@@ -357,9 +359,9 @@ impl CompressedSegmentBatchBuilder {
     }
 
     /// Return [`RecordBatch`] of compressed segments and consume the builder.
-    fn finish(mut self) -> RecordBatch {
+    fn finish(mut self, compressed_schema: &CompressedSchema) -> RecordBatch {
         RecordBatch::try_new(
-            Arc::new(StorageEngine::get_compressed_segment_schema()),
+            compressed_schema.0.clone(),
             vec![
                 Arc::new(self.model_type_ids.finish()),
                 Arc::new(self.timestamps.finish()),
@@ -381,6 +383,7 @@ mod tests {
 
     use datafusion::arrow::array::UInt8Array;
 
+    use crate::metadata::test_util;
     use crate::models;
 
     // Tests for try_compress().
@@ -390,8 +393,13 @@ mod tests {
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&[], &[]);
 
-        let compressed_record_batch =
-            try_compress(&uncompressed_timestamps, &uncompressed_values, error_bound).unwrap();
+        let compressed_record_batch = try_compress(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            error_bound,
+            &test_util::get_compressed_schema(),
+        )
+        .unwrap();
         assert_eq!(0, compressed_record_batch.num_rows())
     }
 
@@ -403,8 +411,13 @@ mod tests {
             create_uncompressed_time_series(&timestamps, &values);
         let error_bound = ErrorBound::try_new(0.0).unwrap();
 
-        let compressed_record_batch =
-            try_compress(&uncompressed_timestamps, &uncompressed_values, error_bound).unwrap();
+        let compressed_record_batch = try_compress(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            error_bound,
+            &test_util::get_compressed_schema(),
+        )
+        .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
             &compressed_record_batch,
@@ -420,8 +433,13 @@ mod tests {
             create_uncompressed_time_series(&timestamps, &values);
         let error_bound = ErrorBound::try_new(5.0).unwrap();
 
-        let compressed_record_batch =
-            try_compress(&uncompressed_timestamps, &uncompressed_values, error_bound).unwrap();
+        let compressed_record_batch = try_compress(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            error_bound,
+            &test_util::get_compressed_schema(),
+        )
+        .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
             &compressed_record_batch,
@@ -437,8 +455,13 @@ mod tests {
             create_uncompressed_time_series(&timestamps, &values);
         let error_bound = ErrorBound::try_new(0.0).unwrap();
 
-        let compressed_record_batch =
-            try_compress(&uncompressed_timestamps, &uncompressed_values, error_bound).unwrap();
+        let compressed_record_batch = try_compress(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            error_bound,
+            &test_util::get_compressed_schema(),
+        )
+        .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
             &compressed_record_batch,
@@ -454,8 +477,13 @@ mod tests {
             create_uncompressed_time_series(&timestamps, &values);
         let error_bound = ErrorBound::try_new(5.0).unwrap();
 
-        let compressed_record_batch =
-            try_compress(&uncompressed_timestamps, &uncompressed_values, error_bound).unwrap();
+        let compressed_record_batch = try_compress(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            error_bound,
+            &test_util::get_compressed_schema(),
+        )
+        .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
             &compressed_record_batch,
@@ -471,8 +499,13 @@ mod tests {
             create_uncompressed_time_series(&timestamps, &values);
         let error_bound = ErrorBound::try_new(0.0).unwrap();
 
-        let compressed_record_batch =
-            try_compress(&uncompressed_timestamps, &uncompressed_values, error_bound).unwrap();
+        let compressed_record_batch = try_compress(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            error_bound,
+            &test_util::get_compressed_schema(),
+        )
+        .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
             &compressed_record_batch,
@@ -496,8 +529,13 @@ mod tests {
             create_uncompressed_time_series(&timestamps, &values);
 
         let error_bound = ErrorBound::try_new(0.0).unwrap();
-        let compressed_record_batch =
-            try_compress(&uncompressed_timestamps, &uncompressed_values, error_bound).unwrap();
+        let compressed_record_batch = try_compress(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            error_bound,
+            &test_util::get_compressed_schema(),
+        )
+        .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
             &compressed_record_batch,
@@ -548,7 +586,9 @@ mod tests {
     // Tests for merge_segments().
     #[test]
     fn test_merge_compressed_segments_empty_batch() {
-        let merged_record_batch = merge_segments(CompressedSegmentBatchBuilder::new(0).finish());
+        let merged_record_batch = merge_segments(
+            CompressedSegmentBatchBuilder::new(0).finish(&test_util::get_compressed_schema()),
+        );
         assert_eq!(0, merged_record_batch.num_rows())
     }
 
@@ -587,7 +627,8 @@ mod tests {
             );
         }
 
-        let compressed_record_batch = compressed_record_batch_builder.finish();
+        let compressed_record_batch =
+            compressed_record_batch_builder.finish(&test_util::get_compressed_schema());
         let merged_record_batch = merge_segments(compressed_record_batch);
 
         // Extract the columns from the RecordBatch.

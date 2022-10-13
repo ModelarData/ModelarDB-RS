@@ -17,10 +17,10 @@
 //! in an in-memory buffer that spills to Apache Parquet files, and stores data points compressed as
 //! models in memory to batch compressed data before saving it to Apache Parquet files.
 
+mod compressed_data_manager;
 mod segment;
 mod time_series;
 mod uncompressed_data_manager;
-mod compressed_data_manager;
 
 use std::ffi::OsStr;
 use std::fs;
@@ -28,23 +28,23 @@ use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
+use chrono::DateTime;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Encoding;
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::WriterProperties;
-use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
-use object_store::ObjectMeta;
 use object_store::path::Path as ObjectStorePath;
-use chrono::DateTime;
+use object_store::ObjectMeta;
 
-use crate::catalog::ModelTableMetadata;
+use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::errors::ModelarDBError;
+use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::segment::FinishedSegment;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
-use crate::types::{ArrowTimestamp, ArrowValue, Timestamp};
+use crate::types::Timestamp;
 
 // TODO: Look into custom errors for all errors in storage engine.
 
@@ -59,6 +59,10 @@ const BUILDER_CAPACITY: usize = 64 * 1024; // Each element is a Timestamp and a 
 
 /// Manages all uncompressed and compressed data, both while being built and when finished.
 pub struct StorageEngine {
+    // TODO: is it better to use MetadataManager from context to share caches
+    // with tables or a separate MetadataManager to not require taking a lock?
+    /// Manager that controls all metadata for uncompressed and compressed data.
+    metadata_manager: MetadataManager,
     /// Manager that contains and controls all uncompressed data.
     uncompressed_data_manager: UncompressedDataManager,
     /// Manager that contains and controls all compressed data.
@@ -66,10 +70,29 @@ pub struct StorageEngine {
 }
 
 impl StorageEngine {
-    pub fn new(data_folder_path: PathBuf, compress_directly: bool) -> Self {
+    pub fn new(
+        data_folder_path: PathBuf,
+        metadata_manager: MetadataManager,
+        compress_directly: bool,
+    ) -> Self {
+        let uncompressed_data_manager = UncompressedDataManager::new(
+            data_folder_path.clone(),
+            metadata_manager.uncompressed_reserved_memory_in_bytes,
+            metadata_manager.get_uncompressed_schema(),
+            metadata_manager.get_compressed_schema(),
+            compress_directly,
+        );
+
+        let compressed_data_manager = CompressedDataManager::new(
+            data_folder_path,
+            metadata_manager.compressed_reserved_memory_in_bytes,
+            metadata_manager.get_compressed_schema(),
+        );
+
         Self {
-            uncompressed_data_manager: UncompressedDataManager::new(data_folder_path.clone(), compress_directly),
-            compressed_data_manager: CompressedDataManager::new(data_folder_path),
+            metadata_manager,
+            uncompressed_data_manager,
+            compressed_data_manager,
         }
     }
 
@@ -78,14 +101,19 @@ impl StorageEngine {
     pub fn insert_data_points(
         &mut self,
         model_table: &ModelTableMetadata,
-        data_points: &RecordBatch
+        data_points: &RecordBatch,
     ) -> Result<(), String> {
         // TODO: When the compression component is changed, just insert the data points.
-        let compressed_segments = self.uncompressed_data_manager.insert_data_points(model_table, data_points)?;
+        let compressed_segments = self.uncompressed_data_manager.insert_data_points(
+            &mut self.metadata_manager,
+            model_table,
+            data_points,
+        )?;
 
         for (key, segment) in compressed_segments {
-            self.compressed_data_manager.insert_compressed_segment(key, segment);
-        };
+            self.compressed_data_manager
+                .insert_compressed_segment(key, segment);
+        }
 
         Ok(())
     }
@@ -100,7 +128,8 @@ impl StorageEngine {
     pub fn flush(&mut self) {
         // Flush UncompressedDataManager.
         for (key, segment) in self.uncompressed_data_manager.flush() {
-            self.compressed_data_manager.insert_compressed_segment(key, segment);
+            self.compressed_data_manager
+                .insert_compressed_segment(key, segment);
         }
 
         // Flush CompressedDataManager.
@@ -109,7 +138,8 @@ impl StorageEngine {
 
     /// Pass `segment` to [`CompressedDataManager`].
     pub fn insert_compressed_segment(&mut self, key: u64, segment: RecordBatch) {
-        self.compressed_data_manager.insert_compressed_segment(key, segment)
+        self.compressed_data_manager
+            .insert_compressed_segment(key, segment)
     }
 
     /// Retrieve the compressed files that correspond to `keys` within the given range of time.
@@ -119,7 +149,7 @@ impl StorageEngine {
         &mut self,
         keys: &[u64],
         start_time: Option<Timestamp>,
-        end_time: Option<Timestamp>
+        end_time: Option<Timestamp>,
     ) -> Result<Vec<(String, ObjectMeta)>, ModelarDBError> {
         let start_time = start_time.unwrap_or(0);
         let end_time = end_time.unwrap_or(Timestamp::MAX);
@@ -128,60 +158,42 @@ impl StorageEngine {
         if start_time > end_time {
             return Err(ModelarDBError::DataRetrievalError(format!(
                 "Start time '{}' cannot be after end time '{}'.",
-                start_time,
-                end_time
+                start_time, end_time
             )));
         };
 
         for key in keys {
             // For each key, list the files that contain compressed data.
-            let key_files = self.compressed_data_manager.save_and_get_saved_compressed_files(key)?;
+            let key_files = self
+                .compressed_data_manager
+                .save_and_get_saved_compressed_files(key)?;
 
             // Prune the files based on the time range the file covers and convert to object meta.
             let pruned_files = key_files.iter().filter_map(|file_path| {
-                if compressed_data_manager::is_compressed_file_within_time_range(file_path, start_time, end_time) {
+                if compressed_data_manager::is_compressed_file_within_time_range(
+                    file_path, start_time, end_time,
+                ) {
                     // unwrap() is safe since we already know the file exists.
                     let metadata = fs::metadata(&file_path).unwrap();
 
                     // Create an object that contains the file path and extra metadata about the file.
-                    Some((key.to_string(), ObjectMeta {
-                        location: ObjectStorePath::from(file_path.to_str().unwrap()),
-                        last_modified: DateTime::from(metadata.modified().unwrap()),
-                        size: metadata.len() as usize
-                    }))
+                    Some((
+                        key.to_string(),
+                        ObjectMeta {
+                            location: ObjectStorePath::from(file_path.to_str().unwrap()),
+                            last_modified: DateTime::from(metadata.modified().unwrap()),
+                            size: metadata.len() as usize,
+                        },
+                    ))
                 } else {
                     None
                 }
             });
 
             compressed_files.extend(pruned_files);
-        };
+        }
 
         Ok(compressed_files)
-    }
-
-    // TODO: Move to configuration struct and have a single Arc.
-    /// Return the [`RecordBatch`] schema used for uncompressed segments.
-    pub fn get_uncompressed_segment_schema() -> Schema {
-        Schema::new(vec![
-            Field::new("timestamps", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("values", ArrowValue::DATA_TYPE, false),
-        ])
-    }
-
-    // TODO: Move to configuration struct and have a single Arc.
-    /// Return the [`RecordBatch`] schema used for compressed segments.
-    pub fn get_compressed_segment_schema() -> Schema {
-        Schema::new(vec![
-            Field::new("model_type_id", DataType::UInt8, false),
-            Field::new("timestamps", DataType::Binary, false),
-            Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("values", DataType::Binary, false),
-            Field::new("min_value", ArrowValue::DATA_TYPE, false),
-            Field::new("max_value", ArrowValue::DATA_TYPE, false),
-            Field::new("error", DataType::Float32, false),
-        ])
     }
 
     // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
@@ -192,9 +204,10 @@ impl StorageEngine {
         batch: RecordBatch,
         file_path: &Path,
     ) -> Result<(), ParquetError> {
-        let error = ParquetError::General(
-            format!("Apache Parquet file at path '{}' could not be created.", file_path.display())
-        );
+        let error = ParquetError::General(format!(
+            "Apache Parquet file at path '{}' could not be created.",
+            file_path.display()
+        ));
 
         // Check if the extension of the given path is correct.
         if file_path.extension().and_then(OsStr::to_str) == Some("parquet") {
@@ -217,9 +230,10 @@ impl StorageEngine {
     /// Read all rows from the Apache Parquet file at the location given by `file_path` and return them
     /// in a [`RecordBatch`]. If the file could not be read successfully, [`ParquetError`] is returned.
     pub fn read_entire_apache_parquet_file(file_path: &Path) -> Result<RecordBatch, ParquetError> {
-        let error = ParquetError::General(
-            format!("Apache Parquet file at path '{}' could not be read.", file_path.display())
-        );
+        let error = ParquetError::General(format!(
+            "Apache Parquet file at path '{}' could not be read.",
+            file_path.display()
+        ));
 
         // Create a reader that can be used to read an Apache Parquet file.
         let file = File::open(file_path).map_err(|_e| error.clone())?;
@@ -249,9 +263,11 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    use datafusion::arrow::datatypes::Schema;
     use tempfile::{tempdir, TempDir};
 
     use crate::get_array;
+    use crate::metadata::test_util as metadata_test_util;
     use crate::types::TimestampArray;
 
     // Tests for get_compressed_files().
@@ -261,8 +277,12 @@ mod tests {
 
         // Insert compressed segments with multiple different keys.
         let segment = test_util::get_compressed_segment_record_batch();
-        storage_engine.compressed_data_manager.insert_compressed_segment(1, segment.clone());
-        storage_engine.compressed_data_manager.insert_compressed_segment(2, segment);
+        storage_engine
+            .compressed_data_manager
+            .insert_compressed_segment(1, segment.clone());
+        storage_engine
+            .compressed_data_manager
+            .insert_compressed_segment(2, segment);
 
         let result = storage_engine.get_compressed_files(&[1, 2], None, None);
 
@@ -352,10 +372,14 @@ mod tests {
         start_time: i64,
     ) -> (RecordBatch, RecordBatch) {
         let segment_1 = test_util::get_compressed_segment_record_batch_with_time(1000 + start_time);
-        storage_engine.compressed_data_manager.insert_compressed_segment(key_1, segment_1.clone());
+        storage_engine
+            .compressed_data_manager
+            .insert_compressed_segment(key_1, segment_1.clone());
 
         let segment_2 = test_util::get_compressed_segment_record_batch_with_time(2000 + start_time);
-        storage_engine.compressed_data_manager.insert_compressed_segment(key_2, segment_2.clone());
+        storage_engine
+            .compressed_data_manager
+            .insert_compressed_segment(key_2, segment_2.clone());
 
         (segment_1, segment_2)
     }
@@ -365,7 +389,9 @@ mod tests {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
 
         let segment = test_util::get_compressed_segment_record_batch();
-        storage_engine.compressed_data_manager.insert_compressed_segment(1, segment);
+        storage_engine
+            .compressed_data_manager
+            .insert_compressed_segment(1, segment);
 
         let result = storage_engine.get_compressed_files(&[1], Some(10), Some(1));
         assert!(result.is_err());
@@ -374,9 +400,17 @@ mod tests {
     /// Create a [`StorageEngine`] with a folder that is deleted once the test is finished.
     fn create_storage_engine() -> (TempDir, StorageEngine) {
         let temp_dir = tempdir().unwrap();
+        let data_folder_path_buf = temp_dir.path().to_path_buf();
+        let data_folder_path = data_folder_path_buf.clone();
 
-        let data_folder_path = temp_dir.path().to_path_buf();
-        (temp_dir, StorageEngine::new(data_folder_path, false))
+        (
+            temp_dir,
+            StorageEngine::new(
+                data_folder_path_buf,
+                metadata_test_util::get_test_metadata_manager(data_folder_path.as_path()),
+                false,
+            ),
+        )
     }
 
     // Tests for writing and reading Apache Parquet files.
@@ -386,7 +420,7 @@ mod tests {
         let batch = test_util::get_compressed_segment_record_batch();
 
         let parquet_path = temp_dir.path().join("test.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path());
+        StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path()).unwrap();
 
         assert!(parquet_path.exists());
     }
@@ -398,7 +432,7 @@ mod tests {
 
         let temp_dir = tempdir().unwrap();
         let parquet_path = temp_dir.path().join("empty.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path());
+        StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path()).unwrap();
 
         assert!(parquet_path.exists());
     }
@@ -461,16 +495,21 @@ mod tests {
         let file_name = "test.parquet".to_owned();
         let (_temp_dir, path, _batch) = create_apache_parquet_file_in_temp_dir(file_name);
 
-        assert!(StorageEngine::is_path_an_apache_parquet_file(path.as_path()));
+        assert!(StorageEngine::is_path_an_apache_parquet_file(
+            path.as_path()
+        ));
     }
 
     /// Create an Apache Parquet file in the [`TempDir`] from a generated [`RecordBatch`].
-    fn create_apache_parquet_file_in_temp_dir(file_name: String) -> (TempDir, PathBuf, RecordBatch) {
+    fn create_apache_parquet_file_in_temp_dir(
+        file_name: String,
+    ) -> (TempDir, PathBuf, RecordBatch) {
         let temp_dir = tempdir().unwrap();
         let batch = test_util::get_compressed_segment_record_batch();
 
         let parquet_path = temp_dir.path().join(file_name);
-        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path());
+        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path())
+            .unwrap();
 
         (temp_dir, parquet_path, batch)
     }
@@ -482,7 +521,9 @@ mod tests {
         File::create(path.clone()).unwrap();
 
         assert!(path.exists());
-        assert!(!StorageEngine::is_path_an_apache_parquet_file(path.as_path()));
+        assert!(!StorageEngine::is_path_an_apache_parquet_file(
+            path.as_path()
+        ));
     }
 }
 
@@ -493,23 +534,12 @@ pub mod test_util {
     use std::sync::Arc;
 
     use datafusion::arrow::array::{BinaryArray, Float32Array, UInt8Array};
-    use datafusion::arrow::datatypes::DataType::UInt8;
-    use datafusion::arrow::datatypes::{Field, Schema};
     use datafusion::arrow::record_batch::RecordBatch;
 
-    use crate::storage::StorageEngine;
+    use crate::metadata::test_util as metadata_test_util;
     use crate::types::{TimestampArray, ValueArray};
 
     pub const COMPRESSED_SEGMENT_SIZE: usize = 2176;
-
-    /// Return a [`RecordBatch`] that only has a single column, and therefore does not match the
-    /// compressed segment schema.
-    pub fn get_invalid_compressed_segment_record_batch() -> RecordBatch {
-        let model_type_id = UInt8Array::from(vec![2, 3, 3]);
-        let schema = Schema::new(vec![Field::new("model_type_id", UInt8, false)]);
-
-        RecordBatch::try_new(Arc::new(schema), vec![Arc::new(model_type_id)]).unwrap()
-    }
 
     /// Return a generated compressed segment with three model segments.
     pub fn get_compressed_segment_record_batch() -> RecordBatch {
@@ -531,10 +561,10 @@ pub mod test_util {
         let max_value = ValueArray::from(vec![20.2, 12.2, 34.2]);
         let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
 
-        let schema = StorageEngine::get_compressed_segment_schema();
+        let schema = metadata_test_util::get_compressed_schema();
 
         RecordBatch::try_new(
-            Arc::new(schema),
+            schema.0,
             vec![
                 Arc::new(model_type_id),
                 Arc::new(timestamps),
@@ -545,6 +575,7 @@ pub mod test_util {
                 Arc::new(max_value),
                 Arc::new(error),
             ],
-        ).unwrap()
+        )
+        .unwrap()
     }
 }
