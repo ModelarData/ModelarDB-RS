@@ -307,6 +307,7 @@ mod tests {
     use proptest::{num, prop_assert, prop_assert_eq, prop_assume, proptest};
 
     use crate::compression;
+    use crate::metadata::test_util;
     use crate::models::SWING_ID;
     use crate::types::{
         tests::ProptestValue, TimestampArray, TimestampBuilder, ValueArray, ValueBuilder,
@@ -563,7 +564,13 @@ mod tests {
             (FIRST_TIMESTAMP..final_timestamp).step_by(SAMPLING_INTERVAL as usize),
         );
         let values = ValueArray::from_iter_values(values);
-        let segments = compression::try_compress(&timestamps, &values, error_bound).unwrap();
+        let segments = compression::try_compress(
+            &timestamps,
+            &values,
+            error_bound,
+            &test_util::get_compressed_schema(),
+        )
+        .unwrap();
 
         // Extract the individual columns from the record batch.
         crate::get_arrays!(

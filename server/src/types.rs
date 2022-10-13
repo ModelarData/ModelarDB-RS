@@ -26,7 +26,6 @@ pub type ArrowTimeSeriesId = datafusion::arrow::datatypes::UInt64Type;
 
 // Types used for a collection of time series ids.
 pub type TimeSeriesIdBuilder = datafusion::arrow::array::PrimitiveBuilder<ArrowTimeSeriesId>;
-pub type TimeSeriesIdArray = datafusion::arrow::array::PrimitiveArray<ArrowTimeSeriesId>;
 
 // Types used for a single timestamp.
 pub type Timestamp = std::primitive::i64; // It is signed to match TimestampMillisecondType.
@@ -51,3 +50,10 @@ pub mod tests {
 // Types used for a collection of values.
 pub type ValueBuilder = datafusion::arrow::array::PrimitiveBuilder<ArrowValue>;
 pub type ValueArray = datafusion::arrow::array::PrimitiveArray<ArrowValue>;
+
+// Types used for the schema of uncompressed and compressed data.
+#[derive(Clone)]
+pub struct UncompressedSchema(pub datafusion::arrow::datatypes::SchemaRef);
+
+#[derive(Clone)]
+pub struct CompressedSchema(pub datafusion::arrow::datatypes::SchemaRef);

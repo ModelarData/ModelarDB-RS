@@ -49,15 +49,12 @@ use datafusion::physical_plan::{
 use datafusion::scalar::ScalarValue;
 use datafusion_physical_expr::planner;
 use futures::stream::{Stream, StreamExt};
-use rusqlite::{Connection, Result as RusqliteResult};
 
-use crate::catalog;
-use crate::catalog::ModelTableMetadata;
+use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::models;
-use crate::storage::StorageEngine;
 use crate::types::{
-    ArrowTimeSeriesId, ArrowTimestamp, ArrowValue, TimeSeriesId, TimestampArray, TimestampBuilder,
-    ValueArray, ValueBuilder,
+    ArrowTimeSeriesId, ArrowTimestamp, ArrowValue, CompressedSchema, TimestampArray,
+    TimestampBuilder, ValueArray, ValueBuilder,
 };
 use crate::Context;
 
@@ -70,7 +67,7 @@ pub struct ModelTable {
     context: Arc<Context>,
     /// Location of the object store used by the storage engine.
     object_store_url: ObjectStoreUrl,
-    /// Metadata required to query the model table.
+    /// Metadata required to read from and write to the model table.
     model_table_metadata: Arc<ModelTableMetadata>,
     /// Schema of the model table registered with Apache Arrow DataFusion.
     schema: Arc<Schema>,
@@ -79,7 +76,7 @@ pub struct ModelTable {
 }
 
 impl ModelTable {
-    pub fn new(context: Arc<Context>, model_table_metadata: &Arc<ModelTableMetadata>) -> Arc<Self> {
+    pub fn new(context: Arc<Context>, model_table_metadata: Arc<ModelTableMetadata>) -> Arc<Self> {
         // Columns in the model table registered with Apache Arrow DataFusion.
         let columns = vec![
             Field::new("tid", ArrowTimeSeriesId::DATA_TYPE, false),
@@ -107,114 +104,9 @@ impl ModelTable {
         })
     }
 
-    // TODO: Move to the metadata component when it exists.
-    /// Compute the 64-bit keys of the univariate time series to retrieve from
-    /// the storage engine using the fields, tag, and tag values in the query.
-    /// Returns a [`DataFusionError::Plan`] if the necessary data cannot be
-    /// retrieved from the metadata database.
-    fn compute_keys_using_fields_and_tags(
-        &self,
-        table_name: &str,
-        columns: &Option<Vec<usize>>,
-        tag_predicates: &[(&str, &str)],
-    ) -> Result<Vec<TimeSeriesId>> {
-        // Construct a query that extracts the field columns in the table being
-        // queried which overlaps with the columns being requested by the query.
-        let query_field_columns = if columns.is_none() {
-            format!(
-                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}'",
-                table_name
-            )
-        } else {
-            let column_predicates: Vec<String> = columns
-                .clone()
-                .unwrap()
-                .iter()
-                .map(|column| format!("column_index = {}", column))
-                .collect();
-
-            format!(
-                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}' AND {}",
-                table_name,
-                column_predicates.join(" OR ")
-            )
-        };
-
-        // Construct a query that extracts the hashes of the multivariate time
-        // series in the table with tag values that match those in the query.
-        let query_hashes = {
-            if tag_predicates.is_empty() {
-                format!("SELECT hash FROM {}_tags", table_name)
-            } else {
-                let predicates: Vec<String> = tag_predicates
-                    .iter()
-                    .map(|(tag, tag_value)| format!("{} = {}", tag, tag_value))
-                    .collect();
-
-                format!(
-                    "SELECT hash FROM {}_tags WHERE {}",
-                    table_name,
-                    predicates.join(" AND ")
-                )
-            }
-        };
-
-        // Retrieve the hashes using the queries and reconstruct the keys.
-        self.compute_keys_using_metadata_database(&query_field_columns, &query_hashes)
-            .map_err(|error| DataFusionError::Plan(error.to_string()))
-    }
-
-    // TODO: Move to the metadata component when it exists.
-    /// Compute the 64-bit keys of the univariate time series to retrieve from
-    /// the storage engine using the two queries constructed from the fields,
-    /// tag, and tag values in the user's query. Returns a [`RusqliteResult`]
-    /// with an [`Error`](rusqlite::Error) if the data cannot be retrieved from
-    /// the metadata database, otherwise the keys are returned.
-    fn compute_keys_using_metadata_database(
-        &self,
-        query_field_columns: &str,
-        query_hashes: &str,
-    ) -> RusqliteResult<Vec<u64>> {
-        // Compute the location of the database containing the metadata.
-        let database_path = {
-            // unwrap() is safe as read() only fails if the RwLock is poisoned.
-            let catalog = self.context.catalog.read().unwrap();
-            catalog.data_folder_path.join(catalog::METADATA_SQLITE_NAME)
-        };
-
-        // Open a connection to the database containing the metadata.
-        let connection = Connection::open(database_path)?;
-
-        // Retrieve the field columns.
-        let mut select_statement = connection.prepare(query_field_columns)?;
-        let mut rows = select_statement.query([])?;
-
-        let mut field_columns = vec![];
-        while let Some(row) = rows.next()? {
-            field_columns.push(row.get::<usize, u64>(0)?);
-        }
-
-        // Add the fallback field column if the query did not request data for
-        // any fields as the storage engine otherwise does not return any data.
-        if field_columns.is_empty() {
-            field_columns.push(self.fallback_field_column);
-        }
-
-        // Retrieve the hashes and compute the keys;
-        let mut select_statement = connection.prepare(&query_hashes)?;
-        let mut rows = select_statement.query([])?;
-
-        let mut keys = vec![];
-        while let Some(row) = rows.next()? {
-            // SQLite use signed integers https://www.sqlite.org/datatype3.html.
-            let signed_tag_hash = row.get::<usize, i64>(0)?;
-            let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
-
-            for field_column in &field_columns {
-                keys.push(tag_hash | field_column);
-            }
-        }
-        Ok(keys)
+    /// Return the [`ModelTableMetadata`] for the table.
+    pub fn get_model_table_metadata(&self) -> Arc<ModelTableMetadata> {
+        self.model_table_metadata.clone()
     }
 }
 
@@ -266,12 +158,13 @@ fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
 fn new_filter_exec(
     predicate: &Option<Expr>,
     input: &Arc<ParquetExec>,
+    compressed_schema: &CompressedSchema,
 ) -> Result<Arc<dyn ExecutionPlan>> {
     let predicate = predicate
         .as_ref()
         .ok_or_else(|| DataFusionError::Plan("predicate is None".to_owned()))?;
 
-    let schema = StorageEngine::get_compressed_segment_schema();
+    let schema = &compressed_schema.0;
     let df_schema = schema.clone().to_dfschema()?;
 
     let physical_predicate =
@@ -318,11 +211,16 @@ impl TableProvider for ModelTable {
     ) -> Result<Arc<dyn ExecutionPlan>> {
         // TODO: extract predicates that consist of tag = tag_value from the query.
         let tag_predicates = vec![];
-        let keys = self.compute_keys_using_fields_and_tags(
-            &self.model_table_metadata.name,
-            projection,
-            &tag_predicates,
-        )?;
+        let keys = self
+            .context
+            .metadata_manager
+            .compute_keys_using_fields_and_tags(
+                &self.model_table_metadata.name,
+                projection,
+                self.fallback_field_column,
+                &tag_predicates,
+            )
+            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         // Request the matching files from the storage engine.
         let mut key_object_metas = {
@@ -359,7 +257,7 @@ impl TableProvider for ModelTable {
         // TODO: partition the rows in the files to support parallel processing.
         let file_scan_config = FileScanConfig {
             object_store_url: self.object_store_url.clone(),
-            file_schema: Arc::new(StorageEngine::get_compressed_segment_schema()),
+            file_schema: self.context.metadata_manager.get_compressed_schema().0,
             file_groups: vec![partitioned_files],
             statistics,
             projection: None,
@@ -371,7 +269,9 @@ impl TableProvider for ModelTable {
         let parquet_exec = Arc::new(ParquetExec::new(file_scan_config, predicate.clone(), None));
 
         // Create a filter operator if filters are not empty.
-        let input = new_filter_exec(&predicate, &parquet_exec).unwrap_or(parquet_exec);
+        let compressed_schema = self.context.metadata_manager.get_compressed_schema();
+        let input =
+            new_filter_exec(&predicate, &parquet_exec, &compressed_schema).unwrap_or(parquet_exec);
 
         // Create the gridding operator.
         let grid_exec: Arc<dyn ExecutionPlan> = GridExec::new(
@@ -695,6 +595,8 @@ mod tests {
     use datafusion::logical_plan::lit;
     use datafusion::prelude::Expr;
 
+    use crate::metadata::test_util;
+
     // Tests for rewrite_and_combine_filters().
     #[test]
     fn test_rewrite_empty_vec() {
@@ -761,7 +663,9 @@ mod tests {
     #[test]
     fn test_new_filter_exec_without_predicates() {
         let parquet_exec = new_parquet_exec();
-        assert!(new_filter_exec(&None, &parquet_exec).is_err());
+        assert!(
+            new_filter_exec(&None, &parquet_exec, &test_util::get_compressed_schema()).is_err()
+        );
     }
 
     #[test]
@@ -774,7 +678,12 @@ mod tests {
         let predicates = rewrite_and_combine_filters(&filters);
         let parquet_exec = new_parquet_exec();
 
-        assert!(new_filter_exec(&predicates, &parquet_exec).is_ok());
+        assert!(new_filter_exec(
+            &predicates,
+            &parquet_exec,
+            &test_util::get_compressed_schema()
+        )
+        .is_ok());
     }
 
     fn new_parquet_exec() -> Arc<ParquetExec> {
