@@ -24,6 +24,7 @@
 //! identify each univariate time series stored in the storage engine.
 
 pub mod model_table_metadata;
+pub mod parser;
 
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;

@@ -1382,6 +1382,7 @@ dependencies = [
  "proptest",
  "rusqlite",
  "snmalloc-rs",
+ "sqlparser",
  "tempfile",
  "tokio",
  "tonic",
