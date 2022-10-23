@@ -33,7 +33,7 @@ use arrow::util::pretty;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::utils::flight_data_to_arrow_batch;
-use arrow_flight::{Criteria, FlightDescriptor};
+use arrow_flight::{Action, Criteria, FlightDescriptor};
 
 use rustyline::Editor;
 
@@ -124,7 +124,7 @@ fn file(rt: Runtime, mut fsc: FlightServiceClient<Channel>, queries_path: &str) 
         // Executes the query.
         if !query.is_empty() {
             println!("{}", query);
-            if let Err(message) = execute_and_print_query_or_command(&rt, &mut fsc, &query) {
+            if let Err(message) = execute_and_print_action_command_or_query(&rt, &mut fsc, &query) {
                 eprintln!("{}", message);
             }
             println!(); // Formatting newline.
@@ -145,7 +145,7 @@ fn repl(rt: Runtime, mut fsc: FlightServiceClient<Channel>) -> Result<()> {
 
     while let Ok(line) = editor.readline("ModelarDB> ") {
         editor.add_history_entry(line.as_str());
-        if let Err(message) = execute_and_print_query_or_command(&rt, &mut fsc, &line) {
+        if let Err(message) = execute_and_print_action_command_or_query(&rt, &mut fsc, &line) {
             eprintln!("{}", message);
         }
     }
@@ -157,18 +157,37 @@ fn repl(rt: Runtime, mut fsc: FlightServiceClient<Channel>) -> Result<()> {
     Ok(())
 }
 
-fn execute_and_print_query_or_command(
+fn execute_and_print_action_command_or_query(
     rt: &Runtime,
     fsc: &mut FlightServiceClient<Channel>,
-    query_or_command: &str,
+    action_command_or_query: &str,
 ) -> Result<()> {
-    if query_or_command.starts_with('\\') {
-        execute_command(rt, fsc, query_or_command)?;
+    if action_command_or_query.starts_with("CREATE") {
+        execute_action(rt, fsc, action_command_or_query)?;
+    } else if action_command_or_query.starts_with('\\') {
+        execute_command(rt, fsc, action_command_or_query)?;
     } else {
-        let df = execute_query(rt, fsc, query_or_command)?;
+        let df = execute_query(rt, fsc, action_command_or_query)?;
         pretty::print_batches(&df)?;
     }
     Ok(())
+}
+
+fn execute_action(
+    rt: &Runtime,
+    fsc: &mut FlightServiceClient<Channel>,
+    action_body: &str,
+) -> Result<()> {
+    let action = Action {
+        r#type: "CommandStatementUpdate".to_owned(),
+        body: action_body.to_owned().into_bytes(),
+    };
+    let request = Request::new(action);
+
+    rt.block_on(async {
+        fsc.do_action(request).await?.into_inner().message().await?;
+        Ok(())
+    })
 }
 
 fn execute_command(

@@ -22,8 +22,8 @@ use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
 use datafusion::common::DataFusionError;
 use datafusion_sql::planner;
 use sqlparser::ast::{
-    ColumnDef, ColumnOption, ColumnOptionDef, DataType, HiveDistributionStyle, Ident, ObjectName,
-    Statement, TimezoneInfo,
+    ColumnDef, ColumnOption, ColumnOptionDef, DataType, HiveDistributionStyle, HiveFormat, Ident,
+    ObjectName, Statement, TimezoneInfo,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::keywords::Keyword;
@@ -189,6 +189,8 @@ impl ModelarDbDialect {
         table_name: ObjectName,
         columns: Vec<ColumnDef>,
     ) -> Statement {
+        // Designed to match the Statement::CreateTable created by sqlparser for
+        // CREATE TABLE as closely as possible so semantic checks can be shared.
         Statement::CreateTable {
             or_replace: false,
             temporary: false,
@@ -199,7 +201,11 @@ impl ModelarDbDialect {
             columns,
             constraints: vec![],
             hive_distribution: HiveDistributionStyle::NONE,
-            hive_formats: None,
+            hive_formats: Some(HiveFormat {
+                row_format: None,
+                storage: None,
+                location: None,
+            }),
             table_properties: vec![],
             with_options: vec![],
             file_format: None,
@@ -410,7 +416,15 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
             hive_distribution != &HiveDistributionStyle::NONE,
             "Hive distribution",
         )?;
-        check_unsupported_feature_is_disabled(hive_formats.is_some(), "Hive formats")?;
+        check_unsupported_feature_is_disabled(
+            *hive_formats
+                != Some(HiveFormat {
+                    row_format: None,
+                    storage: None,
+                    location: None,
+                }),
+            "Hive formats",
+        )?;
         check_unsupported_feature_is_disabled(!table_properties.is_empty(), "Table properties")?;
         check_unsupported_feature_is_disabled(!with_options.is_empty(), "OPTIONS")?;
         check_unsupported_feature_is_disabled(file_format.is_some(), "File format")?;
