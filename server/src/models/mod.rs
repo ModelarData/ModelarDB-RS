@@ -55,7 +55,7 @@ const VALUE_SIZE_IN_BITS: u8 = 8 * VALUE_SIZE_IN_BYTES as u8;
 /// For [`PMCMean`] and [`Swing`] the error bound is interpreted as a relative
 /// per value error bound in percentage, while [`Gorilla`] uses lossless
 /// compression.
-#[derive(Copy, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct ErrorBound(f32);
 
 impl ErrorBound {
@@ -69,6 +69,12 @@ impl ErrorBound {
         } else {
             Ok(Self(error_bound))
         }
+    }
+
+    /// Return the memory representation of the error bound as a byte array in
+    /// little-endian byte order.
+    pub fn to_le_bytes(&self) -> [u8; 4] {
+        self.0.to_le_bytes()
     }
 }
 

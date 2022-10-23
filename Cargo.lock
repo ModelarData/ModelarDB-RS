@@ -1376,6 +1376,7 @@ dependencies = [
  "datafusion",
  "datafusion-expr",
  "datafusion-physical-expr",
+ "datafusion-sql",
  "futures",
  "log",
  "object_store",

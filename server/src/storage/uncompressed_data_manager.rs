@@ -122,7 +122,7 @@ impl UncompressedDataManager {
 
                 // Field columns are the columns that are not the timestamp column or one of the tag columns.
                 let not_timestamp_column = index != model_table.timestamp_column_index as usize;
-                let not_tag_column = !model_table.tag_column_indices.contains(&(index as u8));
+                let not_tag_column = !model_table.tag_column_indices.contains(&index);
 
                 if not_timestamp_column && not_tag_column {
                     Some((
@@ -347,7 +347,7 @@ mod tests {
 
         let (model_table_metadata, data) = get_uncompressed_data(1);
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, vec![])
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
         data_manager
             .insert_data_points(&mut metadata_manager, &model_table_metadata, &data)
@@ -364,7 +364,7 @@ mod tests {
 
         let (model_table_metadata, data) = get_uncompressed_data(2);
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, vec![])
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
         data_manager
             .insert_data_points(&mut metadata_manager, &model_table_metadata, &data)
@@ -400,8 +400,14 @@ mod tests {
         )
         .unwrap();
 
+        let error_bounds = vec![
+            ErrorBound::try_new(0.0).unwrap(),
+            ErrorBound::try_new(0.0).unwrap(),
+        ];
+
         let model_table_metadata =
-            ModelTableMetadata::try_new("model_table".to_owned(), schema, vec![0], 1).unwrap();
+            ModelTableMetadata::try_new("model_table".to_owned(), schema, 1, vec![0], error_bounds)
+                .unwrap();
 
         (model_table_metadata, data)
     }

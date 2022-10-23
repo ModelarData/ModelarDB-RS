@@ -18,13 +18,23 @@
 //!
 //! [sqlparser]: https://crates.io/crates/sqlparser
 
+use datafusion::arrow::datatypes::{Field, Schema};
+use datafusion::common::DataFusionError;
+use datafusion_sql::planner;
 use sqlparser::ast::{
-    ColumnDef, DataType, HiveDistributionStyle, Ident, ObjectName, Statement, TimezoneInfo,
+    ColumnDef, ColumnOption, ColumnOptionDef, DataType, HiveDistributionStyle, Ident, ObjectName,
+    Statement, TimezoneInfo,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::keywords::Keyword;
 use sqlparser::parser::{Parser, ParserError};
-use sqlparser::tokenizer::{Token, Tokenizer};
+use sqlparser::tokenizer::Token;
+
+use crate::metadata::{model_table_metadata::ModelTableMetadata, MetadataManager};
+use crate::models::ErrorBound;
+
+/// Constant specifying that a model table should be created.
+pub const CREATE_MODEL_TABLE_ENGINE: &str = "ModelTable";
 
 /// SQL dialect that extends `sqlparsers's` [`GenericDialect`] with support for
 /// parsing CREATE MODEL TABLE table_name DDL commands.
@@ -78,7 +88,9 @@ impl ModelarDbDialect {
 
         // Return Statement::CreateTable with the extracted information.
         let name = ObjectName(vec![Ident::new(table_name)]);
-        Ok(ModelarDbDialect::new_create_table_statement(name, columns))
+        Ok(ModelarDbDialect::new_create_model_table_statement(
+            name, columns,
+        ))
     }
 
     /// Parse (column name and type*) to a [`Vec<ColumnDef>`]. A [`ParserError`]
@@ -89,10 +101,11 @@ impl ModelarDbDialect {
         parser.expect_token(&Token::LParen)?;
 
         while !parsed_all_columns {
-            let column_name = self.parse_word_value(parser)?;
-            let column_type = self.parse_word_value(parser)?;
+            let name = self.parse_word_value(parser)?;
+            let data_type = self.parse_word_value(parser)?;
+            let mut options = vec![];
 
-            let data_type = match column_type.to_uppercase().as_str() {
+            let data_type = match data_type.to_uppercase().as_str() {
                 "TIMESTAMP" => DataType::Timestamp(TimezoneInfo::None),
                 "FIELD" => {
                     // An error bound may also be specified for field columns.
@@ -105,7 +118,12 @@ impl ModelarDbDialect {
                         0
                     };
 
-                    DataType::Float(Some(error_bound))
+                    options.push(ColumnOptionDef {
+                        name: None,
+                        option: ColumnOption::Comment(error_bound.to_string()),
+                    });
+
+                    DataType::Real
                 }
                 "TAG" => DataType::Text,
                 column_type => {
@@ -116,7 +134,7 @@ impl ModelarDbDialect {
                 }
             };
 
-            columns.push(ModelarDbDialect::new_column_def(column_name, data_type));
+            columns.push(ModelarDbDialect::new_column_def(name, data_type, options));
 
             if parser.peek_token() == Token::RParen {
                 parser.expect_token(&Token::RParen)?;
@@ -151,18 +169,25 @@ impl ModelarDbDialect {
 
     /// Create a new [`ColumnDef`] with the provided `column_name` and
     /// `data_type`.
-    fn new_column_def(column_name: String, data_type: DataType) -> ColumnDef {
+    fn new_column_def(
+        column_name: String,
+        data_type: DataType,
+        options: Vec<ColumnOptionDef>,
+    ) -> ColumnDef {
         ColumnDef {
             name: Ident::new(column_name),
             data_type,
             collation: None,
-            options: vec![],
+            options,
         }
     }
 
     /// Create a new [`Statement::CreateTable`] with the provided `table_name`
-    /// and `columns`.
-    fn new_create_table_statement(table_name: ObjectName, columns: Vec<ColumnDef>) -> Statement {
+    /// and `columns`, and with `engine` set to [`CREATE_MODEL_TABLE_ENGINE`].
+    fn new_create_model_table_statement(
+        table_name: ObjectName,
+        columns: Vec<ColumnDef>,
+    ) -> Statement {
         Statement::CreateTable {
             or_replace: false,
             temporary: false,
@@ -182,7 +207,7 @@ impl ModelarDbDialect {
             without_rowid: false,
             like: None,
             clone: None,
-            engine: None,
+            engine: Some(CREATE_MODEL_TABLE_ENGINE.to_owned()),
             default_charset: None,
             collation: None,
             on_commit: None,
@@ -237,6 +262,243 @@ pub fn tokenize_and_parse_sql(sql: &str) -> Result<Statement, ParserError> {
     }
 }
 
+/// A top-level statement (SELECT, INSERT, CREATE, Update, etc.) that have been
+/// tokenized, parsed, and for which semantics checks have verified that it is
+/// compatible with ModelarDB. CREATE TABLE and CREATE MODEL TABLE is supported.
+pub enum ValidStatement {
+    /// CREATE TABLE.
+    CreateTable { name: String, schema: Schema },
+    /// CREATE MODEL TABLE.
+    CreateModelTable(ModelTableMetadata),
+}
+
+/// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL
+/// TABLE command in `statement` was correct. A [`ParserError`] is returned if
+/// `statement` is not a [`Statement::CreateTable`] or a semantic check fails.
+/// If all semantics checks are successful a [`ValidStatement`] is returned.
+pub fn semantic_checks_for_create_table(
+    statement: &Statement,
+) -> Result<ValidStatement, ParserError> {
+    // Ensure it is a create table and only supported features are enabled.
+    check_unsupported_features_are_disabled(statement)?;
+
+    // An else-clause is not required as statement's type was checked above.
+    if let Statement::CreateTable {
+        name,
+        columns,
+        engine,
+        ..
+    } = statement
+    {
+        // Extract the table name from the Statement::CreateTable.
+        if name.0.len() > 1 {
+            let message = "Multi-part table names are not supported";
+            return Err(ParserError::ParserError(message.to_owned()));
+        }
+
+        // Check if the table name contains whitespace, e.g., spaces or tabs.
+        let normalized_name = MetadataManager::normalize_name(&name.0[0].value);
+        if normalized_name.contains(char::is_whitespace) {
+            let message = "Table name cannot contain whitespace.";
+            return Err(ParserError::ParserError(message.to_owned()));
+        }
+
+        // Check if the table name is a valid object_store path and database table name.
+        object_store::path::Path::parse(&normalized_name)
+            .map_err(|error| ParserError::ParserError(error.to_string()))?;
+
+        // Check if the columns can be converted to a schema.
+        let schema = column_defs_to_schema(&columns)
+            .map_err(|error| ParserError::ParserError(error.to_string()))?;
+
+        // Create a ValidStatement with the information for creating the table.
+        let _expected_engine = CREATE_MODEL_TABLE_ENGINE.to_owned();
+        if let Some(_expected_engine) = engine {
+            return Ok(ValidStatement::CreateModelTable(
+                semantic_checks_for_create_model_table(normalized_name, columns)?,
+            ));
+        } else {
+            return Ok(ValidStatement::CreateTable {
+                name: normalized_name,
+                schema,
+            });
+        }
+    } else {
+        let message = "Expected CREATE TABLE or CREATE MODEL TABLE";
+        return Err(ParserError::ParserError(message.to_owned()));
+    };
+}
+
+/// Perform additional semantic checks to ensure that the CREATE MODEL TABLE
+/// command in `statement` was correct. A [`ParserError`] is returned if
+/// `statement` is not a [`Statement::CreateTable`] or a semantic check fails.
+fn semantic_checks_for_create_model_table(
+    name: String,
+    column_defs: &Vec<ColumnDef>,
+) -> Result<ModelTableMetadata, ParserError> {
+    // Convert column definitions to a schema.
+    let schema = column_defs_to_schema(column_defs)
+        .map_err(|error| ParserError::ParserError(error.to_string()))?;
+
+    // Check that one timestamp column exists.
+    let timestamp_column_indices = compute_indices_of_columns_with_data_type(
+        &column_defs,
+        DataType::Timestamp(TimezoneInfo::None),
+    );
+
+    if timestamp_column_indices.len() != 1 {
+        return Err(ParserError::ParserError(
+            "A model table must contain one timestamp column.".to_owned(),
+        ));
+    }
+
+    // Compute the indices of the tag columns.
+    let tag_column_indices =
+        compute_indices_of_columns_with_data_type(&column_defs, DataType::Text);
+
+    // Extract the error bounds for the field columns.
+    let error_bounds = extract_error_bounds_for_field_columns(column_defs)?;
+
+    // Return the metadata required to create a model table.
+    ModelTableMetadata::try_new(
+        name,
+        schema,
+        timestamp_column_indices[0],
+        tag_column_indices,
+        error_bounds,
+    )
+    .map_err(|error| ParserError::ParserError(error.to_string()))
+}
+
+/// Return [`ParserError`] if [`Statement`] is not a [`Statement::CreateTable`]
+/// or if an unsupported feature is set.
+fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), ParserError> {
+    if let Statement::CreateTable {
+        or_replace,
+        temporary,
+        external,
+        global,
+        if_not_exists,
+        name: _name,
+        columns: _columns,
+        constraints,
+        hive_distribution,
+        hive_formats,
+        table_properties,
+        with_options,
+        file_format,
+        location,
+        query,
+        without_rowid,
+        like,
+        clone,
+        engine: _engine,
+        default_charset,
+        collation,
+        on_commit,
+        on_cluster,
+    } = statement
+    {
+        check_unsupported_feature_is_disabled(*or_replace, "OR REPLACE")?;
+        check_unsupported_feature_is_disabled(*temporary, "TEMPORARY")?;
+        check_unsupported_feature_is_disabled(*external, "EXTERNAL")?;
+        check_unsupported_feature_is_disabled(global.is_some(), "GLOBAL")?;
+        check_unsupported_feature_is_disabled(*if_not_exists, "IF NOT EXISTS")?;
+        check_unsupported_feature_is_disabled(!constraints.is_empty(), "CONSTRAINTS")?;
+        check_unsupported_feature_is_disabled(
+            hive_distribution == &HiveDistributionStyle::NONE,
+            "Hive distribution",
+        )?;
+        check_unsupported_feature_is_disabled(hive_formats.is_some(), "Hive formats")?;
+        check_unsupported_feature_is_disabled(!table_properties.is_empty(), "Table properties")?;
+        check_unsupported_feature_is_disabled(!with_options.is_empty(), "OPTIONS")?;
+        check_unsupported_feature_is_disabled(file_format.is_some(), "File format")?;
+        check_unsupported_feature_is_disabled(location.is_some(), "Location")?;
+        check_unsupported_feature_is_disabled(query.is_some(), "Query")?;
+        check_unsupported_feature_is_disabled(*without_rowid, "Without ROWID")?;
+        check_unsupported_feature_is_disabled(like.is_some(), "LIKE")?;
+        check_unsupported_feature_is_disabled(clone.is_some(), "CLONE")?;
+        check_unsupported_feature_is_disabled(default_charset.is_some(), "Charset")?;
+        check_unsupported_feature_is_disabled(collation.is_some(), "Collation")?;
+        check_unsupported_feature_is_disabled(on_commit.is_some(), "ON COMMIT")?;
+        check_unsupported_feature_is_disabled(on_cluster.is_some(), "ON CLUSTER")?;
+        Ok(())
+    } else {
+        let message = "Expected CREATE TABLE or CREATE MODEL TABLE";
+        Err(ParserError::ParserError(message.to_owned()))
+    }
+}
+
+/// Return [`ParserError`] specifying that the functionality with the name
+/// `feature` is not supported if `enabled` is [`True`].
+fn check_unsupported_feature_is_disabled(enabled: bool, feature: &str) -> Result<(), ParserError> {
+    if enabled {
+        let message = format!("{} is not supported.", feature);
+        Err(ParserError::ParserError(message))
+    } else {
+        Ok(())
+    }
+}
+
+/// Compute the indices of all columns in `column_defs` with `data_type`.
+fn compute_indices_of_columns_with_data_type(
+    column_defs: &Vec<ColumnDef>,
+    data_type: DataType,
+) -> Vec<usize> {
+    column_defs
+        .iter()
+        .enumerate()
+        .filter(|(_index, column_def)| column_def.data_type == data_type)
+        .map(|(index, _column_def)| index)
+        .collect()
+}
+
+/// Return [`Schema`] if the types of the `column_defs` are supported, otherwise
+/// a [`DataFusionError`] is returned.
+fn column_defs_to_schema(column_defs: &Vec<ColumnDef>) -> Result<Schema, DataFusionError> {
+    let mut fields = Vec::with_capacity(column_defs.len());
+
+    for column in column_defs {
+        let data_type = planner::convert_simple_data_type(&column.data_type)?;
+        fields.push(Field::new(
+            &MetadataManager::normalize_name(&&column.name.value),
+            data_type,
+            false,
+        ));
+    }
+
+    Ok(Schema::new(fields))
+}
+
+/// Compute the error bounds from the fields columns in `column_defs`.
+fn extract_error_bounds_for_field_columns(
+    column_defs: &Vec<ColumnDef>,
+) -> Result<Vec<ErrorBound>, ParserError> {
+    let field_column_indices =
+        compute_indices_of_columns_with_data_type(column_defs, DataType::Real);
+    let mut error_bounds = vec![];
+
+    for field_column_index in field_column_indices {
+        let column_def = &column_defs[field_column_index];
+
+        let error_bound_value = match &column_def.options[0].option {
+            ColumnOption::Comment(error_bound_string) => error_bound_string.parse::<f32>().unwrap(),
+            _ => {
+                return Err(ParserError::ParserError(format!(
+                    "No error bound is defined for {}.",
+                    column_def.name.value
+                )));
+            }
+        };
+
+        let error_bound = ErrorBound::try_new(error_bound_value)
+            .map_err(|error| ParserError::ParserError(error.to_string()))?;
+
+        error_bounds.push(error_bound);
+    }
+    Ok(error_bounds)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,10 +516,18 @@ mod tests {
         {
             assert!(name == new_object_name("table_name"));
             let expected_columns = vec![
-                new_column_def("timestamp", DataType::Timestamp(TimezoneInfo::None)),
-                new_column_def("field_one", DataType::Float(Some(0))),
-                new_column_def("field_two", DataType::Float(Some(10))),
-                new_column_def("tag", DataType::Text),
+                new_column_def("timestamp", DataType::Timestamp(TimezoneInfo::None), vec![]),
+                new_column_def(
+                    "field_one",
+                    DataType::Real,
+                    new_column_option_def_error_bound(0),
+                ),
+                new_column_def(
+                    "field_two",
+                    DataType::Real,
+                    new_column_option_def_error_bound(10),
+                ),
+                new_column_def("tag", DataType::Text, vec![]),
             ];
             assert!(columns == expected_columns);
         } else {
@@ -307,7 +577,7 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_without_table__table_name_space() {
+    fn test_tokenize_and_parse_create_model_table_without_table_table_name_space() {
         assert!(tokenize_and_parse_sql(
             "CREATE MODEL TABLEtable_name(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
@@ -388,12 +658,19 @@ mod tests {
         ObjectName(vec![Ident::new(name)])
     }
 
-    fn new_column_def(name: &str, data_type: DataType) -> ColumnDef {
+    fn new_column_def(name: &str, data_type: DataType, options: Vec<ColumnOptionDef>) -> ColumnDef {
         ColumnDef {
             name: Ident::new(name),
             data_type,
             collation: None,
-            options: vec![],
+            options,
         }
+    }
+
+    fn new_column_option_def_error_bound(error_bound: usize) -> Vec<ColumnOptionDef> {
+        vec![ColumnOptionDef {
+            name: None,
+            option: ColumnOption::Comment(error_bound.to_string()),
+        }]
     }
 }

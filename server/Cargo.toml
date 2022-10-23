@@ -9,6 +9,7 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 datafusion = "13.0.0"
 datafusion-expr = "13.0.0"
 datafusion-physical-expr = "13.0.0"
+datafusion-sql = "13.0.0"
 object_store = "0.5.0"
 sqlparser = "0.25.0"
 
