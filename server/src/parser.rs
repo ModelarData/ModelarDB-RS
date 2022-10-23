@@ -18,7 +18,7 @@
 //!
 //! [sqlparser]: https://crates.io/crates/sqlparser
 
-use datafusion::arrow::datatypes::{Field, Schema};
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
 use datafusion::common::DataFusionError;
 use datafusion_sql::planner;
 use sqlparser::ast::{
@@ -32,6 +32,7 @@ use sqlparser::tokenizer::Token;
 
 use crate::metadata::{model_table_metadata::ModelTableMetadata, MetadataManager};
 use crate::models::ErrorBound;
+use crate::types::ArrowTimestamp;
 
 /// Constant specifying that a model table should be created.
 pub const CREATE_MODEL_TABLE_ENGINE: &str = "ModelTable";
@@ -406,7 +407,7 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
         check_unsupported_feature_is_disabled(*if_not_exists, "IF NOT EXISTS")?;
         check_unsupported_feature_is_disabled(!constraints.is_empty(), "CONSTRAINTS")?;
         check_unsupported_feature_is_disabled(
-            hive_distribution == &HiveDistributionStyle::NONE,
+            hive_distribution != &HiveDistributionStyle::NONE,
             "Hive distribution",
         )?;
         check_unsupported_feature_is_disabled(hive_formats.is_some(), "Hive formats")?;
@@ -458,10 +459,16 @@ fn compute_indices_of_columns_with_data_type(
 fn column_defs_to_schema(column_defs: &Vec<ColumnDef>) -> Result<Schema, DataFusionError> {
     let mut fields = Vec::with_capacity(column_defs.len());
 
-    for column in column_defs {
-        let data_type = planner::convert_simple_data_type(&column.data_type)?;
+    for column_def in column_defs {
+        let data_type = if column_def.data_type == DataType::Timestamp(TimezoneInfo::None) {
+            // TIMESTAMP is manually converted as planner uses TimeUnit::Nanosecond.
+            ArrowTimestamp::DATA_TYPE
+        } else {
+            planner::convert_simple_data_type(&column_def.data_type)?
+        };
+
         fields.push(Field::new(
-            &MetadataManager::normalize_name(&&column.name.value),
+            &MetadataManager::normalize_name(&column_def.name.value),
             data_type,
             false,
         ));

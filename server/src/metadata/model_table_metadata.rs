@@ -64,7 +64,7 @@ impl ModelTableMetadata {
             ));
         };
 
-        if let Some(timestamp_field) = schema.fields.get(timestamp_column_index as usize) {
+        if let Some(timestamp_field) = schema.fields.get(timestamp_column_index) {
             // If the field of the timestamp column is not of type ArrowTimestamp, return an error.
             if !timestamp_field
                 .data_type()
@@ -85,7 +85,7 @@ impl ModelTableMetadata {
         }
 
         for tag_column_index in &tag_column_indices {
-            if let Some(tag_field) = schema.fields.get(*tag_column_index as usize) {
+            if let Some(tag_field) = schema.fields.get(*tag_column_index) {
                 // If the fields of the tag columns is not of type Utf8, return an error.
                 if !tag_field.data_type().equals_datatype(&DataType::Utf8) {
                     return Err(ModelarDBError::ConfigurationError(format!(
