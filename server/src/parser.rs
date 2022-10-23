@@ -84,7 +84,7 @@ impl ModelarDbDialect {
         parser.expect_keyword(Keyword::TABLE)?;
         let table_name = self.parse_word_value(parser)?;
 
-        // (column name and column type*)
+        // (column name and column type*).
         let columns = self.parse_columns(parser)?;
 
         // Return Statement::CreateTable with the extracted information.
@@ -119,6 +119,8 @@ impl ModelarDbDialect {
                         0
                     };
 
+                    // An error bound column option does not exist, so
+                    // ColumnOption::Comment is used as a substitute.
                     options.push(ColumnOptionDef {
                         name: None,
                         option: ColumnOption::Comment(error_bound.to_string()),
@@ -135,7 +137,11 @@ impl ModelarDbDialect {
                 }
             };
 
-            columns.push(ModelarDbDialect::new_column_def(name, data_type, options));
+            columns.push(ModelarDbDialect::new_column_def(
+                name.as_str(),
+                data_type,
+                options,
+            ));
 
             if parser.peek_token() == Token::RParen {
                 parser.expect_token(&Token::RParen)?;
@@ -168,10 +174,10 @@ impl ModelarDbDialect {
         }
     }
 
-    /// Create a new [`ColumnDef`] with the provided `column_name` and
-    /// `data_type`.
+    /// Create a new [`ColumnDef`] with the provided `column_name`, `data_type`,
+    /// and `options`.
     fn new_column_def(
-        column_name: String,
+        column_name: &str,
         data_type: DataType,
         options: Vec<ColumnOptionDef>,
     ) -> ColumnDef {
@@ -237,7 +243,7 @@ impl Dialect for ModelarDbDialect {
     }
 
     /// Check if the next tokens are CREATE TABLE TABLE, if so, attempt to parse
-    /// the token stream as a CREATE MODEL TABLE DDL command. If parsing is
+    /// the token stream as a CREATE MODEL TABLE DDL command. If parsing
     /// succeeds, a [`Statement`] is returned, and if not, a [`ParseError`] is
     /// returned. If the next tokens are not CREATE TABLE TABLE, [`None`] is
     /// returned so sqlparser uses its parsing methods for all other commands.
@@ -250,7 +256,7 @@ impl Dialect for ModelarDbDialect {
     }
 }
 
-/// Tokenize and parse the first SQL command in `sql` and return its parsed
+/// Tokenize and parse the SQL command in `sql` and return its parsed
 /// representation in the form of [`Statements`](Statement).
 pub fn tokenize_and_parse_sql(sql: &str) -> Result<Statement, ParserError> {
     let mut statements = Parser::parse_sql(&ModelarDbDialect::new(), sql)?;
@@ -337,8 +343,8 @@ pub fn semantic_checks_for_create_table(
 }
 
 /// Perform additional semantic checks to ensure that the CREATE MODEL TABLE
-/// command in `statement` was correct. A [`ParserError`] is returned if
-/// `statement` is not a [`Statement::CreateTable`] or a semantic check fails.
+/// command from which `name` and `column_defs` was extracted was correct. A
+/// [`ParserError`] is returned if any of the additional semantic checks fails.
 fn semantic_checks_for_create_model_table(
     name: String,
     column_defs: &Vec<ColumnDef>,
@@ -491,7 +497,7 @@ fn column_defs_to_schema(column_defs: &Vec<ColumnDef>) -> Result<Schema, DataFus
     Ok(Schema::new(fields))
 }
 
-/// Compute the error bounds from the fields columns in `column_defs`.
+/// Extract the error bounds from the fields columns in `column_defs`.
 fn extract_error_bounds_for_field_columns(
     column_defs: &Vec<ColumnDef>,
 ) -> Result<Vec<ErrorBound>, ParserError> {
@@ -537,18 +543,22 @@ mod tests {
         {
             assert!(name == new_object_name("table_name"));
             let expected_columns = vec![
-                new_column_def("timestamp", DataType::Timestamp(TimezoneInfo::None), vec![]),
-                new_column_def(
+                ModelarDbDialect::new_column_def(
+                    "timestamp",
+                    DataType::Timestamp(TimezoneInfo::None),
+                    vec![],
+                ),
+                ModelarDbDialect::new_column_def(
                     "field_one",
                     DataType::Real,
                     new_column_option_def_error_bound(0),
                 ),
-                new_column_def(
+                ModelarDbDialect::new_column_def(
                     "field_two",
                     DataType::Real,
                     new_column_option_def_error_bound(10),
                 ),
-                new_column_def("tag", DataType::Text, vec![]),
+                ModelarDbDialect::new_column_def("tag", DataType::Text, vec![]),
             ];
             assert!(columns == expected_columns);
         } else {
@@ -677,15 +687,6 @@ mod tests {
 
     fn new_object_name(name: &str) -> ObjectName {
         ObjectName(vec![Ident::new(name)])
-    }
-
-    fn new_column_def(name: &str, data_type: DataType, options: Vec<ColumnOptionDef>) -> ColumnDef {
-        ColumnDef {
-            name: Ident::new(name),
-            data_type,
-            collation: None,
-            options,
-        }
     }
 
     fn new_column_option_def_error_bound(error_bound: usize) -> Vec<ColumnOptionDef> {

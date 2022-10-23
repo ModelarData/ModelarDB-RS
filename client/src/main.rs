@@ -162,13 +162,13 @@ fn execute_and_print_action_command_or_query(
     fsc: &mut FlightServiceClient<Channel>,
     action_command_or_query: &str,
 ) -> Result<()> {
-    if action_command_or_query.starts_with("CREATE") {
-        execute_action(rt, fsc, action_command_or_query)?;
-    } else if action_command_or_query.starts_with('\\') {
+    if action_command_or_query.starts_with('\\') {
         execute_command(rt, fsc, action_command_or_query)?;
-    } else {
+    } else if action_command_or_query.starts_with("SELECT") {
         let df = execute_query(rt, fsc, action_command_or_query)?;
         pretty::print_batches(&df)?;
+    } else {
+        execute_action(rt, fsc, action_command_or_query)?;
     }
     Ok(())
 }

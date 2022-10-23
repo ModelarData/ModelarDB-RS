@@ -531,7 +531,7 @@ impl MetadataManager {
     fn register_model_table(row: &Row, context: &Arc<Context>) -> Result<(), Box<dyn Error>> {
         let name = row.get::<usize, String>(0)?;
 
-        // Convert the Blobs to the concrete types.
+        // Convert the BLOBs to the concrete types.
         let schema_bytes = row.get::<usize, Vec<u8>>(1)?;
         let schema = MetadataManager::convert_blob_to_schema(schema_bytes)?;
 
@@ -644,8 +644,6 @@ mod tests {
 
     use std::fs;
 
-    use arrow_flight::{IpcMessage, SchemaAsIpc};
-    use datafusion::arrow::ipc::writer::IpcWriteOptions;
     use proptest::{collection, num, prop_assert_eq, proptest};
     use tempfile;
 
@@ -1065,17 +1063,15 @@ mod tests {
     }
 
     #[test]
-    fn test_blob_to_schema_model_table() {
-        // Serialize a schema to bytes.
+    fn test_blob_to_schema_and_blob_to_schema() {
         let model_table_metadata = test_util::get_model_table_metadata();
         let schema = model_table_metadata.schema;
 
-        let options = IpcWriteOptions::default();
-        let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
-        let ipc_message: IpcMessage = schema_as_ipc.try_into().unwrap();
+        // Serialize a schema to bytes.
+        let bytes = MetadataManager::convert_schema_to_blob(&schema).unwrap();
 
         // Deserialize the bytes to a schema.
-        let retrieved_schema = MetadataManager::convert_blob_to_schema(ipc_message.0).unwrap();
+        let retrieved_schema = MetadataManager::convert_blob_to_schema(bytes).unwrap();
         assert_eq!(*schema, retrieved_schema);
     }
 
