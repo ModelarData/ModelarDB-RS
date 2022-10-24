@@ -453,10 +453,11 @@ impl MetadataManager {
 
         // Create a table_name_tags SQLite table to save the 54-bit tag hashes when ingesting data.
         // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
+        let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
         transaction.execute(
             format!(
-                "CREATE TABLE {}_tags (hash INTEGER PRIMARY KEY, {}) STRICT",
-                model_table_metadata.name, tag_columns
+                "CREATE TABLE {}_tags (hash INTEGER PRIMARY KEY{}{}) STRICT",
+                model_table_metadata.name, maybe_separator, tag_columns
             )
             .as_str(),
             (),
