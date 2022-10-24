@@ -29,7 +29,7 @@ pub mod timestamps;
 use std::cmp::{Ordering, PartialOrd};
 use std::mem;
 
-use crate::errors::ModelarDBError;
+use crate::errors::ModelarDbError;
 use crate::models::{gorilla::Gorilla, pmcmean::PMCMean, swing::Swing};
 use crate::types::{
     TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueArray, ValueBuilder,
@@ -60,10 +60,10 @@ pub struct ErrorBound(f32);
 
 impl ErrorBound {
     /// Return [`ErrorBound`] if `error_bound` is a positive finite value,
-    /// otherwise [`CompressionError`](ModelarDBError::CompressionError).
-    pub fn try_new(error_bound: f32) -> Result<Self, ModelarDBError> {
+    /// otherwise [`CompressionError`](ModelarDbError::CompressionError).
+    pub fn try_new(error_bound: f32) -> Result<Self, ModelarDbError> {
         if error_bound < 0.0 || error_bound.is_infinite() || error_bound.is_nan() {
-            Err(ModelarDBError::CompressionError(
+            Err(ModelarDbError::CompressionError(
                 "Error bound cannot be negative, infinite, or NAN.".to_owned(),
             ))
         } else {

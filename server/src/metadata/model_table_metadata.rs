@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Schema};
 
-use crate::errors::ModelarDBError;
+use crate::errors::ModelarDbError;
 use crate::models::ErrorBound;
 use crate::types::{ArrowTimestamp, ArrowValue};
 
@@ -42,7 +42,7 @@ pub struct ModelTableMetadata {
 
 impl ModelTableMetadata {
     /// Create a new model table with the given metadata. If any of the following conditions are
-    /// true, [`ConfigurationError`](ModelarDBError::ConfigurationError) is returned:
+    /// true, [`ConfigurationError`](ModelarDbError::ConfigurationError) is returned:
     /// * The timestamp or tag column indices does not match `schema`.
     /// * The types of the fields are not correct.
     /// * The timestamp column index is in the tag column indices.
@@ -56,10 +56,10 @@ impl ModelTableMetadata {
         timestamp_column_index: usize,
         tag_column_indices: Vec<usize>,
         error_bounds: Vec<ErrorBound>,
-    ) -> Result<Self, ModelarDBError> {
+    ) -> Result<Self, ModelarDbError> {
         // If the timestamp index is in the tag indices, return an error.
         if tag_column_indices.contains(&timestamp_column_index) {
-            return Err(ModelarDBError::ConfigurationError(
+            return Err(ModelarDbError::ConfigurationError(
                 "The timestamp column cannot be a tag column.".to_owned(),
             ));
         };
@@ -70,7 +70,7 @@ impl ModelTableMetadata {
                 .data_type()
                 .equals_datatype(&ArrowTimestamp::DATA_TYPE)
             {
-                return Err(ModelarDBError::ConfigurationError(format!(
+                return Err(ModelarDbError::ConfigurationError(format!(
                     "The timestamp column with index '{}' is not of type '{}'.",
                     timestamp_column_index,
                     ArrowTimestamp::DATA_TYPE
@@ -78,7 +78,7 @@ impl ModelTableMetadata {
             }
         } else {
             // If the index of the timestamp column does not match the schema, return an error.
-            return Err(ModelarDBError::ConfigurationError(format!(
+            return Err(ModelarDbError::ConfigurationError(format!(
                 "The timestamp column index '{}' does not match a field in the schema.",
                 timestamp_column_index
             )));
@@ -88,7 +88,7 @@ impl ModelTableMetadata {
             if let Some(tag_field) = schema.fields.get(*tag_column_index) {
                 // If the fields of the tag columns is not of type Utf8, return an error.
                 if !tag_field.data_type().equals_datatype(&DataType::Utf8) {
-                    return Err(ModelarDBError::ConfigurationError(format!(
+                    return Err(ModelarDbError::ConfigurationError(format!(
                         "The tag column with index '{}' is not of type '{}'.",
                         tag_column_index,
                         DataType::Utf8
@@ -96,7 +96,7 @@ impl ModelTableMetadata {
                 }
             } else {
                 // If the indices for the tag columns does not match the schema, return an error.
-                return Err(ModelarDBError::ConfigurationError(format!(
+                return Err(ModelarDbError::ConfigurationError(format!(
                     "The tag column index '{}' does not match a field in the schema.",
                     tag_column_index
                 )));
@@ -111,7 +111,7 @@ impl ModelTableMetadata {
 
         // If there are no field columns, return an error.
         if field_column_indices.is_empty() {
-            return Err(ModelarDBError::ConfigurationError(
+            return Err(ModelarDbError::ConfigurationError(
                 "There needs to be at least one field column.".to_owned(),
             ));
         } else {
@@ -121,7 +121,7 @@ impl ModelTableMetadata {
 
                 // If the fields of the field columns is not of type ArrowValue, return an error.
                 if !field.data_type().equals_datatype(&ArrowValue::DATA_TYPE) {
-                    return Err(ModelarDBError::ConfigurationError(format!(
+                    return Err(ModelarDbError::ConfigurationError(format!(
                         "The field column with index '{}' is not of type '{}'.",
                         field_column_index,
                         ArrowValue::DATA_TYPE
@@ -132,7 +132,7 @@ impl ModelTableMetadata {
 
         // If an error bound is not defined for each field, return an error.
         if field_column_indices.len() != error_bounds.len() {
-            return Err(ModelarDBError::ConfigurationError(
+            return Err(ModelarDbError::ConfigurationError(
                 "An error bound must be defined for each field column.".to_owned(),
             ));
         }
@@ -145,7 +145,7 @@ impl ModelTableMetadata {
             .into_iter()
             .all(|x| uniq.insert(x))
         {
-            return Err(ModelarDBError::ConfigurationError(
+            return Err(ModelarDbError::ConfigurationError(
                 "The tag column indices cannot have duplicates.".to_owned(),
             ));
         }
@@ -153,7 +153,7 @@ impl ModelTableMetadata {
         // If there are more than 1024 columns, return an error. This limitation is necessary
         // since 10 bits are used to identify the column index of the data in the 64-bit hash key.
         if schema.fields.len() > 1024 {
-            return Err(ModelarDBError::ConfigurationError(
+            return Err(ModelarDbError::ConfigurationError(
                 "There cannot be more than 1024 columns in the model table.".to_owned(),
             ));
         }
@@ -283,7 +283,7 @@ mod test {
     /// Return metadata for a model table with one tag column and the timestamp column at index 1.
     fn create_simple_model_table_metadata(
         schema: Schema,
-    ) -> Result<ModelTableMetadata, ModelarDBError> {
+    ) -> Result<ModelTableMetadata, ModelarDbError> {
         ModelTableMetadata::try_new(
             "table_name".to_owned(),
             schema,
@@ -294,7 +294,7 @@ mod test {
     }
 
     #[test]
-    fn test_cannot_create_model_table_metadata_with_missing_or_too_many_error_bounds() {
+    fn test_cannot_create_model_table_metadata_with_duplicate_tag_indices() {
         let (schema, error_bounds) = get_model_table_schema_and_error_bounds();
         let result = ModelTableMetadata::try_new(
             "table_name".to_owned(),
@@ -308,10 +308,10 @@ mod test {
     }
 
     #[test]
-    fn test_cannot_create_model_table_metadata_with_duplicate_tag_indices() {
-        let (schema, _) = get_model_table_schema_and_error_bounds();
+    fn test_cannot_create_model_table_metadata_with_missing_or_too_many_error_bounds() {
+        let (schema, _error_bounds) = get_model_table_schema_and_error_bounds();
         let result =
-            ModelTableMetadata::try_new("table_name".to_owned(), schema, 3, vec![0, 1, 1], vec![]);
+            ModelTableMetadata::try_new("table_name".to_owned(), schema, 3, vec![0, 1, 2], vec![]);
 
         assert!(result.is_err());
     }

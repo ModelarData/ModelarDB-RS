@@ -25,7 +25,7 @@ use datafusion::arrow::array::{
 };
 use datafusion::arrow::record_batch::RecordBatch;
 
-use crate::errors::ModelarDBError;
+use crate::errors::ModelarDbError;
 use crate::models::{
     gorilla::Gorilla, pmcmean::PMCMean, swing::Swing, timestamps, ErrorBound, SelectedModel,
 };
@@ -45,7 +45,7 @@ pub const GORILLA_MAXIMUM_LENGTH: usize = 50;
 /// within `error_bound` using the model types in [`models`](crate::models).
 /// Assumes `uncompressed_timestamps` and `uncompressed_values` are sorted
 /// according to `uncompressed_timestamps`. Returns
-/// [`CompressionError`](ModelarDBError::CompressionError) if
+/// [`CompressionError`](ModelarDbError::CompressionError) if
 /// `uncompressed_timestamps` and `uncompressed_values` have different lengths,
 /// otherwise the resulting compressed segments are returned as a
 /// [`RecordBatch`] with the schema provided by
@@ -55,12 +55,12 @@ pub fn try_compress(
     uncompressed_values: &ValueArray,
     error_bound: ErrorBound,
     compressed_schema: &CompressedSchema,
-) -> Result<RecordBatch, ModelarDBError> {
+) -> Result<RecordBatch, ModelarDbError> {
     // The uncompressed data must be passed as arrays instead of a RecordBatch
     // as a TimestampArray and a ValueArray is the only supported input.
     // However, as a result it is necessary to verify they have the same length.
     if uncompressed_timestamps.len() != uncompressed_values.len() {
-        return Err(ModelarDBError::CompressionError(
+        return Err(ModelarDbError::CompressionError(
             "Uncompressed timestamps and uncompressed values have different lengths.".to_owned(),
         ));
     }

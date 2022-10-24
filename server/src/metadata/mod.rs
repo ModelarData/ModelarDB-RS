@@ -470,8 +470,12 @@ impl MetadataManager {
                 model_table_metadata.name,
                 schema_bytes,
                 model_table_metadata.timestamp_column_index,
-                MetadataManager::slice_usize_to_vec_u8(&model_table_metadata.tag_column_indices),
-                MetadataManager::slice_error_bounds_to_vec_u8(&model_table_metadata.error_bounds)
+                MetadataManager::convert_slice_usize_to_vec_u8(
+                    &model_table_metadata.tag_column_indices
+                ),
+                MetadataManager::convert_slice_error_bounds_to_vec_u8(
+                    &model_table_metadata.error_bounds
+                )
             ],
         )?;
 
@@ -536,10 +540,12 @@ impl MetadataManager {
         let schema = MetadataManager::convert_blob_to_schema(schema_bytes)?;
 
         let tag_column_indices_bytes = row.get::<usize, Vec<u8>>(3)?;
-        let tag_column_indices = MetadataManager::slice_u8_to_vec_usize(&tag_column_indices_bytes)?;
+        let tag_column_indices =
+            MetadataManager::convert_slice_u8_to_vec_usize(&tag_column_indices_bytes)?;
 
         let error_bounds_bytes = row.get::<usize, Vec<u8>>(4)?;
-        let error_bounds = MetadataManager::slice_u8_to_vec_error_bounds(&error_bounds_bytes)?;
+        let error_bounds =
+            MetadataManager::convert_slice_u8_to_vec_error_bounds(&error_bounds_bytes)?;
 
         // Create model table metadata.
         let model_table_metadata = Arc::new(ModelTableMetadata {
@@ -580,15 +586,15 @@ impl MetadataManager {
         })
     }
 
-    /// Convert a [`Vec<usize>`] to a [`Vec<u8>`].
-    fn slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
+    /// Convert a [`&[usize]`] to a [`Vec<u8>`].
+    fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
         usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
     }
 
-    /// Convert a [`Vec<u8>`] to a [`Vec<usize>`] if the length of `bytes`
-    /// divides cleanly by [`mem::size_of::<usize>()`], otherwise
+    /// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides
+    /// evenly by [`mem::size_of::<usize>()`], otherwise
     /// [`Error`](rusqlite::Error) is returned.
-    fn slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>> {
+    fn convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>> {
         if bytes.len() % mem::size_of::<usize>() != 0 {
             // rusqlite defines UNKNOWN_COLUMN as usize::MAX;
             Err(rusqlite::Error::InvalidColumnType(
@@ -597,7 +603,7 @@ impl MetadataManager {
                 Blob,
             ))
         } else {
-            // unwrap() is safe as bytes divides by mem::size_of::<usize>().
+            // unwrap() is safe as bytes divides evenly by mem::size_of::<usize>().
             Ok(bytes
                 .chunks(mem::size_of::<usize>())
                 .map(|byte_slice| usize::from_le_bytes(byte_slice.try_into().unwrap()))
@@ -605,18 +611,18 @@ impl MetadataManager {
         }
     }
 
-    /// Convert a [`Vec<ErrorBound>`] to a [`Vec<u8>`].
-    fn slice_error_bounds_to_vec_u8(error_bounds: &[ErrorBound]) -> Vec<u8> {
+    /// Convert a [`&[ErrorBound]`] to a [`Vec<u8>`].
+    fn convert_slice_error_bounds_to_vec_u8(error_bounds: &[ErrorBound]) -> Vec<u8> {
         error_bounds
             .iter()
             .flat_map(|eb| eb.to_le_bytes())
             .collect()
     }
 
-    /// Convert a [`Vec<u8>`] to a [`Vec<ErrorBound>`] if the length of `bytes`
-    /// divides cleanly by [`mem::size_of::<f32>()`], otherwise
+    /// Convert a [`&[u8]`] to a [`Vec<ErrorBound>`] if the length of `bytes`
+    /// divides evenly by [`mem::size_of::<f32>()`], otherwise
     /// [`Error`](rusqlite::Error) is returned.
-    fn slice_u8_to_vec_error_bounds(bytes: &[u8]) -> Result<Vec<ErrorBound>> {
+    fn convert_slice_u8_to_vec_error_bounds(bytes: &[u8]) -> Result<Vec<ErrorBound>> {
         if bytes.len() % mem::size_of::<f32>() != 0 {
             // rusqlite defines UNKNOWN_COLUMN as usize::MAX;
             Err(rusqlite::Error::InvalidColumnType(
@@ -628,7 +634,7 @@ impl MetadataManager {
             Ok(bytes
                 .chunks(mem::size_of::<f32>())
                 .map(|byte_slice| {
-                    // unwrap() is safe as bytes divides by mem::size_of::<f32>().
+                    // unwrap() is safe as bytes divides evenly by mem::size_of::<f32>().
                     let error_bound_value = f32::from_le_bytes(byte_slice.try_into().unwrap());
                     // unwrap() is safe as the error bound was checked on write.
                     ErrorBound::try_new(error_bound_value).unwrap()
@@ -1063,7 +1069,7 @@ mod tests {
     }
 
     #[test]
-    fn test_blob_to_schema_and_blob_to_schema() {
+    fn test_blob_to_schema_and_schema_to_blob() {
         let model_table_metadata = test_util::get_model_table_metadata();
         let schema = model_table_metadata.schema;
 
@@ -1078,8 +1084,8 @@ mod tests {
     proptest! {
         #[test]
         fn test_usize_to_u8_and_u8_to_usize(values in collection::vec(num::usize::ANY, 0..50)) {
-            let bytes = MetadataManager::slice_usize_to_vec_u8(&values);
-            let usizes = MetadataManager::slice_u8_to_vec_usize(&bytes).unwrap();
+            let bytes = MetadataManager::convert_slice_usize_to_vec_u8(&values);
+            let usizes = MetadataManager::convert_slice_u8_to_vec_usize(&bytes).unwrap();
             prop_assert_eq!(values, usizes);
         }
 
@@ -1089,8 +1095,8 @@ mod tests {
                 .iter()
                 .map(|value| ErrorBound::try_new(*value).unwrap())
                 .collect();
-            let bytes = MetadataManager::slice_error_bounds_to_vec_u8(&error_bounds);
-            let usizes = MetadataManager::slice_u8_to_vec_error_bounds(&bytes).unwrap();
+            let bytes = MetadataManager::convert_slice_error_bounds_to_vec_u8(&error_bounds);
+            let usizes = MetadataManager::convert_slice_u8_to_vec_error_bounds(&bytes).unwrap();
             prop_assert_eq!(values, usizes);
         }
     }

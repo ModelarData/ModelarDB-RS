@@ -159,7 +159,7 @@ impl FlightServiceHandler {
         }
     }
 
-    /// Return [`Status`] if a table `name` exists in the default catalog.
+    /// Return [`Status`] if a table named `table_name` exists in the default catalog.
     fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
         let maybe_schema = self.get_schema_of_table_in_default_database_schema(table_name);
         if maybe_schema.is_ok() {
@@ -457,13 +457,19 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`.
     /// Currently only the action `CommandStatementUpdate` is supported which
-    /// executes a SQL query containing a single command that does not return a
-    /// result. These commands can be `CREATE TABLE table_name(name type*)`
-    /// which creates a normal table in the catalog, and `CREATE MODEL TABLE
-    /// table_name(name_one TIMESTAMP, name_two FIELD*, name_three,
-    /// FIELD(error_bound)*, name_four TAG*)` which creates a model table in the
-    /// catalog. A model table is a specialized table for efficiently storing
-    /// multivariate time series with tags within a per field error bound.
+    /// executes a SQL query containing a command that does not return a result.
+    /// These commands can be `CREATE TABLE table_name(...` which creates a
+    /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a
+    /// model table. A model table is a specialized table for efficiently
+    /// storing multivariate time series with tags within a per field error
+    /// bound. Thus, model tables can only contain a single timestamp column,
+    /// field columns, and tag columns. If no error bound is defined for a field
+    /// column it defaults to an error bound of 0% (lossless compression).
+    ///
+    /// Examples of CREATE TABLE and CREATE MODEL TABLE commands:
+    /// * CREATE TABLE company(id INTEGER, name TEXT)
+    /// * CREATE MODEL TABLE wind_turbines(timestamp TIMESTAMP,
+    ///   field_lossless FIELD, field_lossy FIELD(5),  tag_one TAG, tag_two TAG)
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -481,7 +487,7 @@ impl FlightService for FlightServiceHandler {
             let statement = parser::tokenize_and_parse_sql(sql)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            // Perform semantics checks to ensure the parsed SQL is supported.
+            // Perform semantic checks to ensure the parsed SQL is supported.
             let valid_statement = parser::semantic_checks_for_create_table(&statement)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 

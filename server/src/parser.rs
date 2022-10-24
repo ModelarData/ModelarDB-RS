@@ -131,7 +131,7 @@ impl ModelarDbDialect {
                 "TAG" => DataType::Text,
                 column_type => {
                     return Err(ParserError::ParserError(format!(
-                        "Expected TIMESTAMP, FIELD, or TAG, found: {}",
+                        "Expected TIMESTAMP, FIELD, or TAG, found: {}.",
                         column_type
                     )))
                 }
@@ -154,7 +154,7 @@ impl ModelarDbDialect {
         Ok(columns)
     }
 
-    /// Return [`()`] if the next [`Token`] is a [`Token::Word`] with the value
+    /// Return [`Ok`] if the next [`Token`] is a [`Token::Word`] with the value
     /// `expected`, otherwise a [`ParseError`] is returned.
     fn expect_word_value(&self, parser: &mut Parser, expected: &str) -> Result<(), ParserError> {
         if let Ok(string) = self.parse_word_value(parser) {
@@ -275,7 +275,7 @@ pub fn tokenize_and_parse_sql(sql: &str) -> Result<Statement, ParserError> {
     }
 }
 
-/// A top-level statement (SELECT, INSERT, CREATE, Update, etc.) that have been
+/// A top-level statement (SELECT, INSERT, CREATE, UPDATE, etc.) that have been
 /// tokenized, parsed, and for which semantics checks have verified that it is
 /// compatible with ModelarDB. CREATE TABLE and CREATE MODEL TABLE is supported.
 pub enum ValidStatement {
@@ -305,7 +305,7 @@ pub fn semantic_checks_for_create_table(
     {
         // Extract the table name from the Statement::CreateTable.
         if name.0.len() > 1 {
-            let message = "Multi-part table names are not supported";
+            let message = "Multi-part table names are not supported.";
             return Err(ParserError::ParserError(message.to_owned()));
         }
 
@@ -337,7 +337,7 @@ pub fn semantic_checks_for_create_table(
             });
         }
     } else {
-        let message = "Expected CREATE TABLE or CREATE MODEL TABLE";
+        let message = "Expected CREATE TABLE or CREATE MODEL TABLE.";
         return Err(ParserError::ParserError(message.to_owned()));
     };
 }
@@ -445,7 +445,7 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
         check_unsupported_feature_is_disabled(on_cluster.is_some(), "ON CLUSTER")?;
         Ok(())
     } else {
-        let message = "Expected CREATE TABLE or CREATE MODEL TABLE";
+        let message = "Expected CREATE TABLE or CREATE MODEL TABLE.";
         Err(ParserError::ParserError(message.to_owned()))
     }
 }
@@ -562,8 +562,19 @@ mod tests {
             ];
             assert!(columns == expected_columns);
         } else {
-            panic!("CREATE TABLE DDL did not parse to a Statement::CreateTable");
+            panic!("CREATE TABLE DDL did not parse to a Statement::CreateTable.");
         }
+    }
+
+    fn new_object_name(name: &str) -> ObjectName {
+        ObjectName(vec![Ident::new(name)])
+    }
+
+    fn new_column_option_def_error_bound(error_bound: usize) -> Vec<ColumnOptionDef> {
+        vec![ColumnOptionDef {
+            name: None,
+            option: ColumnOption::Comment(error_bound.to_string()),
+        }]
     }
 
     #[test]
@@ -683,16 +694,5 @@ mod tests {
         let expected_error =
             ParserError::ParserError("Multiple SQL commands are not supported.".to_owned());
         assert!(error.unwrap_err() == expected_error);
-    }
-
-    fn new_object_name(name: &str) -> ObjectName {
-        ObjectName(vec![Ident::new(name)])
-    }
-
-    fn new_column_option_def_error_bound(error_bound: usize) -> Vec<ColumnOptionDef> {
-        vec![ColumnOptionDef {
-            name: None,
-            option: ColumnOption::Comment(error_bound.to_string()),
-        }]
     }
 }
