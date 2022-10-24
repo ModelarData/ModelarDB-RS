@@ -520,7 +520,7 @@ impl MetadataManager {
         let connection = Connection::open(&self.metadata_database_path)?;
 
         let mut select_statement = connection.prepare(
-            "SELECT table_name, schema, timestamp_column_index, tag_column_indices
+            "SELECT table_name, schema, timestamp_column_index, tag_column_indices, error_bounds
             FROM model_table_metadata",
         )?;
 
