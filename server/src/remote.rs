@@ -469,7 +469,7 @@ impl FlightService for FlightServiceHandler {
     /// Examples of CREATE TABLE and CREATE MODEL TABLE commands:
     /// * CREATE TABLE company(id INTEGER, name TEXT)
     /// * CREATE MODEL TABLE wind_turbines(timestamp TIMESTAMP,
-    ///   field_lossless FIELD, field_lossy FIELD(5),  tag_one TAG, tag_two TAG)
+    ///   field_lossless FIELD, field_lossy FIELD(5), tag_one TAG, tag_two TAG)
     async fn do_action(
         &self,
         request: Request<Action>,
