@@ -231,7 +231,7 @@ impl MetadataManager {
             let tag_columns: String = model_table
                 .tag_column_indices
                 .iter()
-                .map(|index| model_table.schema.field(*index as usize).name().clone())
+                .map(|index| model_table.schema.field(*index).name().clone())
                 .collect::<Vec<String>>()
                 .join(",");
 
@@ -445,7 +445,7 @@ impl MetadataManager {
             .tag_column_indices
             .iter()
             .map(|index| {
-                let field = model_table_metadata.schema.field(*index as usize);
+                let field = model_table_metadata.schema.field(*index);
                 format!("{} TEXT NOT NULL", field.name())
             })
             .collect::<Vec<String>>()
@@ -488,7 +488,7 @@ impl MetadataManager {
 
         for (index, field) in model_table_metadata.schema.fields().iter().enumerate() {
             // Only add a row for the field if it is not the timestamp or a tag.
-            let is_timestamp = index == model_table_metadata.timestamp_column_index as usize;
+            let is_timestamp = index == model_table_metadata.timestamp_column_index;
             let in_tag_indices = model_table_metadata.tag_column_indices.contains(&index);
 
             if !is_timestamp && !in_tag_indices {

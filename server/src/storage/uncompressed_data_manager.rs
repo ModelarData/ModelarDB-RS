@@ -92,7 +92,7 @@ impl UncompressedDataManager {
         );
 
         // Prepare the timestamp column for iteration.
-        let timestamp_index = model_table.timestamp_column_index as usize;
+        let timestamp_index = model_table.timestamp_column_index;
         let timestamps: &TimestampArray = data_points
             .column(timestamp_index)
             .as_any()
@@ -103,13 +103,7 @@ impl UncompressedDataManager {
         let tag_column_arrays: Vec<&StringArray> = model_table
             .tag_column_indices
             .iter()
-            .map(|index| {
-                data_points
-                    .column(*index as usize)
-                    .as_any()
-                    .downcast_ref()
-                    .unwrap()
-            })
+            .map(|index| data_points.column(*index).as_any().downcast_ref().unwrap())
             .collect();
 
         // Prepare the field columns for iteration. The column index is saved with the corresponding array.
@@ -121,17 +115,13 @@ impl UncompressedDataManager {
                 let index = model_table.schema.index_of(field.name().as_str()).unwrap();
 
                 // Field columns are the columns that are not the timestamp column or one of the tag columns.
-                let not_timestamp_column = index != model_table.timestamp_column_index as usize;
+                let not_timestamp_column = index != model_table.timestamp_column_index;
                 let not_tag_column = !model_table.tag_column_indices.contains(&index);
 
                 if not_timestamp_column && not_tag_column {
                     Some((
                         index,
-                        data_points
-                            .column(index as usize)
-                            .as_any()
-                            .downcast_ref()
-                            .unwrap(),
+                        data_points.column(index).as_any().downcast_ref().unwrap(),
                     ))
                 } else {
                     None
