@@ -247,10 +247,16 @@ impl MetadataManager {
             let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
             // OR IGNORE is used to silently fail when trying to insert an already existing hash.
+            let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
             connection.execute(
                 format!(
-                    "INSERT OR IGNORE INTO {}_tags (hash,{}) VALUES ({},{})",
-                    model_table.name, tag_columns, signed_tag_hash, values
+                    "INSERT OR IGNORE INTO {}_tags (hash{}{}) VALUES ({}{}{})",
+                    model_table.name,
+                    maybe_separator,
+                    tag_columns,
+                    signed_tag_hash,
+                    maybe_separator,
+                    values
                 )
                 .as_str(),
                 (),
