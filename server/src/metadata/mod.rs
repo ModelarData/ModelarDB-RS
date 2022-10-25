@@ -35,14 +35,16 @@ use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::Arc;
 
-use arrow_flight::IpcMessage;
+use arrow_flight::{IpcMessage, SchemaAsIpc};
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
+use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use datafusion::execution::options::ParquetReadOptions;
 use rusqlite::types::Type::Blob;
 use rusqlite::{params, Connection, Result, Row};
 use tracing::{error, info, warn};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::models::ErrorBound;
 use crate::tables::ModelTable;
 use crate::types::{
     ArrowTimestamp, ArrowValue, CompressedSchema, TimeSeriesId, UncompressedSchema,
@@ -154,7 +156,8 @@ impl MetadataManager {
                 table_name TEXT PRIMARY KEY,
                 schema BLOB NOT NULL,
                 timestamp_column_index INTEGER NOT NULL,
-                tag_column_indices BLOB NOT NULL
+                tag_column_indices BLOB NOT NULL,
+                error_bounds BLOB NOT NULL
         ) STRICT",
             (),
         )?;
@@ -228,7 +231,7 @@ impl MetadataManager {
             let tag_columns: String = model_table
                 .tag_column_indices
                 .iter()
-                .map(|index| model_table.schema.field(*index as usize).name().clone())
+                .map(|index| model_table.schema.field(*index).name().clone())
                 .collect::<Vec<String>>()
                 .join(",");
 
@@ -244,10 +247,16 @@ impl MetadataManager {
             let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
             // OR IGNORE is used to silently fail when trying to insert an already existing hash.
+            let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
             connection.execute(
                 format!(
-                    "INSERT OR IGNORE INTO {}_tags (hash,{}) VALUES ({},{})",
-                    model_table.name, tag_columns, signed_tag_hash, values
+                    "INSERT OR IGNORE INTO {}_tags (hash{}{}) VALUES ({}{}{})",
+                    model_table.name,
+                    maybe_separator,
+                    tag_columns,
+                    signed_tag_hash,
+                    maybe_separator,
+                    values
                 )
                 .as_str(),
                 (),
@@ -363,9 +372,9 @@ impl MetadataManager {
         Ok(keys)
     }
 
-    /// Normalize `table_name` to allow direct comparisons between table names.
-    pub fn normalize_table_name(table_name: &str) -> String {
-        table_name.to_lowercase()
+    /// Normalize `name` to allow direct comparisons between names.
+    pub fn normalize_name(name: &str) -> String {
+        name.to_lowercase()
     }
 
     /// Save the created table to the metadata database. This consists of adding
@@ -429,8 +438,10 @@ impl MetadataManager {
     pub fn save_model_table_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
-        schema_bytes: Vec<u8>,
     ) -> Result<()> {
+        // Convert the schema to bytes so it can be saved as a BLOB in the metadata database.
+        let schema_bytes = MetadataManager::convert_schema_to_blob(&model_table_metadata.schema)?;
+
         // Create a transaction to ensure the database state is consistent across tables.
         let mut connection = Connection::open(&self.metadata_database_path)?;
         let transaction = connection.transaction()?;
@@ -440,7 +451,7 @@ impl MetadataManager {
             .tag_column_indices
             .iter()
             .map(|index| {
-                let field = model_table_metadata.schema.field(*index as usize);
+                let field = model_table_metadata.schema.field(*index);
                 format!("{} TEXT NOT NULL", field.name())
             })
             .collect::<Vec<String>>()
@@ -448,10 +459,11 @@ impl MetadataManager {
 
         // Create a table_name_tags SQLite table to save the 54-bit tag hashes when ingesting data.
         // The query is executed with a formatted string since CREATE TABLE cannot take parameters.
+        let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
         transaction.execute(
             format!(
-                "CREATE TABLE {}_tags (hash INTEGER PRIMARY KEY, {}) STRICT",
-                model_table_metadata.name, tag_columns
+                "CREATE TABLE {}_tags (hash INTEGER PRIMARY KEY{}{}) STRICT",
+                model_table_metadata.name, maybe_separator, tag_columns
             )
             .as_str(),
             (),
@@ -459,14 +471,19 @@ impl MetadataManager {
 
         // Add a new row in the model_table_metadata table to persist the model table.
         transaction.execute(
-            "INSERT INTO model_table_metadata (table_name, schema, timestamp_column_index, tag_column_indices)
-             VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO model_table_metadata (table_name, schema, timestamp_column_index,
+             tag_column_indices, error_bounds) VALUES (?1, ?2, ?3, ?4, ?5)",
             params![
                 model_table_metadata.name,
                 schema_bytes,
                 model_table_metadata.timestamp_column_index,
-                model_table_metadata.tag_column_indices
-            ]
+                MetadataManager::convert_slice_usize_to_vec_u8(
+                    &model_table_metadata.tag_column_indices
+                ),
+                MetadataManager::convert_slice_error_bounds_to_vec_u8(
+                    &model_table_metadata.error_bounds
+                )
+            ],
         )?;
 
         // Add a row for each field column to the model_table_field_columns table.
@@ -477,10 +494,8 @@ impl MetadataManager {
 
         for (index, field) in model_table_metadata.schema.fields().iter().enumerate() {
             // Only add a row for the field if it is not the timestamp or a tag.
-            let is_timestamp = index == model_table_metadata.timestamp_column_index as usize;
-            let in_tag_indices = model_table_metadata
-                .tag_column_indices
-                .contains(&(index as u8));
+            let is_timestamp = index == model_table_metadata.timestamp_column_index;
+            let in_tag_indices = model_table_metadata.tag_column_indices.contains(&index);
 
             if !is_timestamp && !in_tag_indices {
                 insert_statement.execute(params![
@@ -505,7 +520,7 @@ impl MetadataManager {
         let connection = Connection::open(&self.metadata_database_path)?;
 
         let mut select_statement = connection.prepare(
-            "SELECT table_name, schema, timestamp_column_index, tag_column_indices
+            "SELECT table_name, schema, timestamp_column_index, tag_column_indices, error_bounds
             FROM model_table_metadata",
         )?;
 
@@ -527,16 +542,25 @@ impl MetadataManager {
     fn register_model_table(row: &Row, context: &Arc<Context>) -> Result<(), Box<dyn Error>> {
         let name = row.get::<usize, String>(0)?;
 
-        // Convert the BLOB to an Apache Arrow Schema.
+        // Convert the BLOBs to the concrete types.
         let schema_bytes = row.get::<usize, Vec<u8>>(1)?;
-        let schema = MetadataManager::blob_to_schema(schema_bytes)?;
+        let schema = MetadataManager::convert_blob_to_schema(schema_bytes)?;
+
+        let tag_column_indices_bytes = row.get::<usize, Vec<u8>>(3)?;
+        let tag_column_indices =
+            MetadataManager::convert_slice_u8_to_vec_usize(&tag_column_indices_bytes)?;
+
+        let error_bounds_bytes = row.get::<usize, Vec<u8>>(4)?;
+        let error_bounds =
+            MetadataManager::convert_slice_u8_to_vec_error_bounds(&error_bounds_bytes)?;
 
         // Create model table metadata.
         let model_table_metadata = Arc::new(ModelTableMetadata {
             name: name.clone(),
             schema: Arc::new(schema),
             timestamp_column_index: row.get(2)?,
-            tag_column_indices: row.get(3)?,
+            tag_column_indices,
+            error_bounds,
         });
 
         // Register model table.
@@ -549,14 +573,81 @@ impl MetadataManager {
         Ok(())
     }
 
+    /// Convert a [`Schema`] to [`Vec<u8>`].
+    fn convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>> {
+        let options = IpcWriteOptions::default();
+        let schema_as_ipc = SchemaAsIpc::new(schema, &options);
+        let ipc_message: IpcMessage = schema_as_ipc.try_into().map_err(|error: ArrowError| {
+            rusqlite::Error::InvalidColumnType(1, error.to_string(), Blob)
+        })?;
+        Ok(ipc_message.0)
+    }
+
     /// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow
     /// schema, otherwise [`Error`](rusqlite::Error).
-    fn blob_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
+    fn convert_blob_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
         let ipc_message = IpcMessage(schema_bytes);
         Schema::try_from(ipc_message).map_err(|error| {
             let message = format!("Blob is not a valid Schema: {}", error);
             rusqlite::Error::InvalidColumnType(1, message, Blob)
         })
+    }
+
+    /// Convert a [`&[usize]`] to a [`Vec<u8>`].
+    fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
+        usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    /// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides
+    /// evenly by [`mem::size_of::<usize>()`], otherwise
+    /// [`Error`](rusqlite::Error) is returned.
+    fn convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>> {
+        if bytes.len() % mem::size_of::<usize>() != 0 {
+            // rusqlite defines UNKNOWN_COLUMN as usize::MAX;
+            Err(rusqlite::Error::InvalidColumnType(
+                usize::MAX,
+                "Blob is not a vector of usizes".to_owned(),
+                Blob,
+            ))
+        } else {
+            // unwrap() is safe as bytes divides evenly by mem::size_of::<usize>().
+            Ok(bytes
+                .chunks(mem::size_of::<usize>())
+                .map(|byte_slice| usize::from_le_bytes(byte_slice.try_into().unwrap()))
+                .collect())
+        }
+    }
+
+    /// Convert a [`&[ErrorBound]`] to a [`Vec<u8>`].
+    fn convert_slice_error_bounds_to_vec_u8(error_bounds: &[ErrorBound]) -> Vec<u8> {
+        error_bounds
+            .iter()
+            .flat_map(|eb| eb.to_le_bytes())
+            .collect()
+    }
+
+    /// Convert a [`&[u8]`] to a [`Vec<ErrorBound>`] if the length of `bytes`
+    /// divides evenly by [`mem::size_of::<f32>()`], otherwise
+    /// [`Error`](rusqlite::Error) is returned.
+    fn convert_slice_u8_to_vec_error_bounds(bytes: &[u8]) -> Result<Vec<ErrorBound>> {
+        if bytes.len() % mem::size_of::<f32>() != 0 {
+            // rusqlite defines UNKNOWN_COLUMN as usize::MAX;
+            Err(rusqlite::Error::InvalidColumnType(
+                usize::MAX,
+                "Blob is not a vector of error bounds".to_owned(),
+                Blob,
+            ))
+        } else {
+            Ok(bytes
+                .chunks(mem::size_of::<f32>())
+                .map(|byte_slice| {
+                    // unwrap() is safe as bytes divides evenly by mem::size_of::<f32>().
+                    let error_bound_value = f32::from_le_bytes(byte_slice.try_into().unwrap());
+                    // unwrap() is safe as the error bound was checked on write.
+                    ErrorBound::try_new(error_bound_value).unwrap()
+                })
+                .collect())
+        }
     }
 }
 
@@ -566,8 +657,7 @@ mod tests {
 
     use std::fs;
 
-    use arrow_flight::{IpcMessage, SchemaAsIpc};
-    use datafusion::arrow::ipc::writer::IpcWriteOptions;
+    use proptest::{collection, num, prop_assert_eq, proptest};
     use tempfile;
 
     use crate::metadata::test_util;
@@ -663,7 +753,7 @@ mod tests {
 
         let model_table_metadata = test_util::get_model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, vec![])
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         let result = metadata_manager
@@ -701,7 +791,7 @@ mod tests {
 
         let model_table_metadata = test_util::get_model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, vec![])
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         metadata_manager
@@ -735,7 +825,7 @@ mod tests {
 
         let model_table_metadata = test_util::get_model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, vec![1, 2, 4, 8])
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         // Lookup keys using fields and tags for an empty table.
@@ -825,7 +915,7 @@ mod tests {
     ) {
         let model_table_metadata = test_util::get_model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, vec![1, 2, 4, 8])
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         for tag_value in tag_values {
@@ -838,18 +928,12 @@ mod tests {
 
     #[test]
     fn test_normalize_table_name_lowercase_no_effect() {
-        assert_eq!(
-            "table_name",
-            MetadataManager::normalize_table_name("table_name")
-        );
+        assert_eq!("table_name", MetadataManager::normalize_name("table_name"));
     }
 
     #[test]
     fn test_normalize_table_name_uppercase() {
-        assert_eq!(
-            "table_name",
-            MetadataManager::normalize_table_name("TABLE_NAME")
-        );
+        assert_eq!("table_name", MetadataManager::normalize_name("TABLE_NAME"));
     }
 
     #[test]
@@ -901,7 +985,7 @@ mod tests {
 
         let model_table_metadata = test_util::get_model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, vec![1, 2, 4, 8])
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         // Retrieve the model table from the metadata database.
@@ -919,16 +1003,26 @@ mod tests {
         let mut select_statement = connection
             .prepare(
                 "SELECT table_name, schema, timestamp_column_index,
-                      tag_column_indices FROM model_table_metadata",
+                        tag_column_indices, error_bounds FROM model_table_metadata",
             )
             .unwrap();
         let mut rows = select_statement.query(()).unwrap();
 
         let row = rows.next().unwrap().unwrap();
         assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
-        assert_eq!(vec![1, 2, 4, 8], row.get::<usize, Vec<u8>>(1).unwrap());
+        assert_eq!(
+            MetadataManager::convert_schema_to_blob(&model_table_metadata.schema).unwrap(),
+            row.get::<usize, Vec<u8>>(1).unwrap()
+        );
         assert_eq!(1, row.get::<usize, i32>(2).unwrap());
-        assert_eq!(vec![0], row.get::<usize, Vec<u8>>(3).unwrap());
+        assert_eq!(
+            vec![0, 0, 0, 0, 0, 0, 0, 0],
+            row.get::<usize, Vec<u8>>(3).unwrap()
+        );
+        assert_eq!(
+            vec![0, 0, 0, 0, 0, 0, 0, 0],
+            row.get::<usize, Vec<u8>>(4).unwrap()
+        );
 
         assert!(rows.next().unwrap().is_none());
 
@@ -966,7 +1060,7 @@ mod tests {
         let model_table_metadata = test_util::get_model_table_metadata();
         context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, vec![1, 2, 4, 8])
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         // Register the model table with Apache Arrow DataFusion.
@@ -978,22 +1072,40 @@ mod tests {
 
     #[test]
     fn test_blob_to_schema_empty() {
-        assert!(MetadataManager::blob_to_schema(vec!(1, 2, 4, 8)).is_err());
+        assert!(MetadataManager::convert_blob_to_schema(vec!(1, 2, 4, 8)).is_err());
     }
 
     #[test]
-    fn test_blob_to_schema_model_table() {
-        // Serialize a schema to bytes.
+    fn test_blob_to_schema_and_schema_to_blob() {
         let model_table_metadata = test_util::get_model_table_metadata();
         let schema = model_table_metadata.schema;
 
-        let options = IpcWriteOptions::default();
-        let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
-        let ipc_message: IpcMessage = schema_as_ipc.try_into().unwrap();
+        // Serialize a schema to bytes.
+        let bytes = MetadataManager::convert_schema_to_blob(&schema).unwrap();
 
         // Deserialize the bytes to a schema.
-        let retrieved_schema = MetadataManager::blob_to_schema(ipc_message.0).unwrap();
+        let retrieved_schema = MetadataManager::convert_blob_to_schema(bytes).unwrap();
         assert_eq!(*schema, retrieved_schema);
+    }
+
+    proptest! {
+        #[test]
+        fn test_usize_to_u8_and_u8_to_usize(values in collection::vec(num::usize::ANY, 0..50)) {
+            let bytes = MetadataManager::convert_slice_usize_to_vec_u8(&values);
+            let usizes = MetadataManager::convert_slice_u8_to_vec_usize(&bytes).unwrap();
+            prop_assert_eq!(values, usizes);
+        }
+
+        #[test]
+        fn test_error_bound_to_u8_and_u8_to_error_bound(values in collection::vec(num::f32::POSITIVE, 0..50)) {
+            let error_bounds: Vec<ErrorBound> = values
+                .iter()
+                .map(|value| ErrorBound::try_new(*value).unwrap())
+                .collect();
+            let bytes = MetadataManager::convert_slice_error_bounds_to_vec_u8(&error_bounds);
+            let usizes = MetadataManager::convert_slice_u8_to_vec_error_bounds(&bytes).unwrap();
+            prop_assert_eq!(values, usizes);
+        }
     }
 }
 
@@ -1009,6 +1121,7 @@ pub mod test_util {
     use tempfile;
     use tokio::runtime::Runtime;
 
+    use crate::models::ErrorBound;
     use crate::storage::StorageEngine;
 
     /// Return a [`Context`] with the metadata manager created by
@@ -1061,7 +1174,13 @@ pub mod test_util {
             Field::new("field_2", ArrowValue::DATA_TYPE, false),
         ]);
 
-        ModelTableMetadata::try_new("model_table".to_owned(), schema, vec![0], 1).unwrap()
+        let error_bounds = vec![
+            ErrorBound::try_new(0.0).unwrap(),
+            ErrorBound::try_new(0.0).unwrap(),
+        ];
+
+        ModelTableMetadata::try_new("model_table".to_owned(), schema, 1, vec![0], error_bounds)
+            .unwrap()
     }
 
     /// Return the [`RecordBatch`] schema used for uncompressed segments.
