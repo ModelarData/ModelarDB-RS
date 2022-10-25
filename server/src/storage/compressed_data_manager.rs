@@ -23,7 +23,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use tracing::info;
 use tracing::{debug, debug_span};
 
-use crate::errors::ModelarDBError;
+use crate::errors::ModelarDbError;
 use crate::storage::time_series::CompressedTimeSeries;
 use crate::types::{CompressedSchema, Timestamp};
 use crate::StorageEngine;
@@ -97,11 +97,11 @@ impl CompressedDataManager {
 
     /// Return the file path to each on-disk compressed file that corresponds to `key`. If some
     /// compressed data that corresponds to `key` is still in memory, save the data to disk first.
-    /// If `key` does not correspond to any data, [`DataRetrievalError`](ModelarDBError::DataRetrievalError) is returned.
+    /// If `key` does not correspond to any data, [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned.
     pub(super) fn save_and_get_saved_compressed_files(
         &mut self,
         key: &u64,
-    ) -> Result<Vec<PathBuf>, ModelarDBError> {
+    ) -> Result<Vec<PathBuf>, ModelarDbError> {
         // If there is any compressed data in memory, save it first.
         if self.compressed_data.contains_key(key) {
             // Remove the data from the queue of compressed time series that are ready to be saved.
@@ -115,7 +115,7 @@ impl CompressedDataManager {
         // Read the directory that contains the compressed data corresponding to the key.
         let key_path = self.data_folder_path.join(format!("{}/compressed", key));
         let dir = fs::read_dir(key_path).map_err(|error| {
-            ModelarDBError::DataRetrievalError(format!(
+            ModelarDbError::DataRetrievalError(format!(
                 "Compressed data could not be found for key '{}': {}",
                 key,
                 error.to_string()

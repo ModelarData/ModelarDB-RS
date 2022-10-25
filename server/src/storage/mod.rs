@@ -39,7 +39,7 @@ use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
-use crate::errors::ModelarDBError;
+use crate::errors::ModelarDbError;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::segment::FinishedSegment;
@@ -144,19 +144,19 @@ impl StorageEngine {
 
     /// Retrieve the compressed files that correspond to `keys` within the given range of time.
     /// If `keys` contain a key that does not exist or the end time is before the start time,
-    /// [`DataRetrievalError`](ModelarDBError::DataRetrievalError) is returned.
+    /// [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned.
     pub fn get_compressed_files(
         &mut self,
         keys: &[u64],
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>,
-    ) -> Result<Vec<(String, ObjectMeta)>, ModelarDBError> {
+    ) -> Result<Vec<(String, ObjectMeta)>, ModelarDbError> {
         let start_time = start_time.unwrap_or(0);
         let end_time = end_time.unwrap_or(Timestamp::MAX);
         let mut compressed_files: Vec<(String, ObjectMeta)> = vec![];
 
         if start_time > end_time {
-            return Err(ModelarDBError::DataRetrievalError(format!(
+            return Err(ModelarDbError::DataRetrievalError(format!(
                 "Start time '{}' cannot be after end time '{}'.",
                 start_time, end_time
             )));

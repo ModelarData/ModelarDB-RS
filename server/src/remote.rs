@@ -39,13 +39,13 @@ use datafusion::arrow::{
 use datafusion::catalog::schema::SchemaProvider;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
-use object_store;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
+use crate::parser::{self, ValidStatement};
 use crate::storage::StorageEngine;
 use crate::tables::ModelTable;
 use crate::Context;
@@ -159,6 +159,16 @@ impl FlightServiceHandler {
         }
     }
 
+    /// Return [`Status`] if a table named `table_name` exists in the default catalog.
+    fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
+        let maybe_schema = self.get_schema_of_table_in_default_database_schema(table_name);
+        if maybe_schema.is_ok() {
+            let message = format!("Table with name '{}' already exists.", table_name);
+            return Err(Status::already_exists(message));
+        }
+        Ok(())
+    }
+
     /// While there is still more data to receive, ingest the data into the
     /// table.
     fn ingest_into_table(
@@ -209,10 +219,15 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// Create a normal table, add it to the metadata database table, and add
-    /// it to the catalog. If the table already exists or if the Apache Parquet
-    /// file cannot be created, return [`Status`] error.
-    async fn create_table(&self, table_name: String, schema: Schema) -> Result<(), Status> {
+    /// Create a normal table, register it with Apache Arrow DataFusion's
+    /// catalog, and save it to the [`MetadataManager`]. If the table exists,
+    /// the Apache Parquet file cannot be created, or if the table cannot be
+    /// saved to the [`MetadataManager`], return [`Status`] error.
+    async fn register_and_save_table(
+        &self,
+        table_name: String,
+        schema: Schema,
+    ) -> Result<(), Status> {
         // Ensure the folder for storing the table data exists.
         let metadata_manager = &self.context.metadata_manager;
         let folder_path = metadata_manager.get_data_folder_path().join(&table_name);
@@ -245,25 +260,15 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// Create a model table, add it to the metadata database tables, and add it to the catalog.
-    /// If the table already exists or if the metadata cannot be written to the metadata database,
-    /// return [`Status`] error.
-    fn create_model_table(
+    /// Create a model table, register it with Apache Arrow DataFusion's
+    /// catalog, and save it to the [`MetadataManager`]. If the table exists or
+    /// if the table cannot be saved to the [`MetadataManager`], return
+    /// [`Status`] error.
+    fn register_and_save_model_table(
         &self,
-        table_name: String,
-        schema: Schema,
-        tag_column_indices: Vec<u8>,
-        timestamp_column_index: u8,
+        model_table_metadata: ModelTableMetadata,
     ) -> Result<(), Status> {
-        let model_table_metadata = ModelTableMetadata::try_new(
-            table_name.clone(),
-            schema.clone(),
-            tag_column_indices,
-            timestamp_column_index,
-        )
-        .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-        // Save the model table in the Apache Arrow Datafusion catalog.
+        // Save the model table in the Apache Arrow DataFusion catalog.
         let model_table_metadata = Arc::new(model_table_metadata);
 
         self.context
@@ -274,20 +279,13 @@ impl FlightServiceHandler {
             )
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-        // Convert the schema to bytes so it can be saved as a BLOB in the metadata database.
-        let options = IpcWriteOptions::default();
-        let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
-        let ipc_message: IpcMessage = schema_as_ipc
-            .try_into()
-            .map_err(|error: ArrowError| Status::internal(error.to_string()))?;
-
         // Persist the new model table to the metadata database.
         self.context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, ipc_message.0)
+            .save_model_table_metadata(&model_table_metadata)
             .map_err(|error| Status::internal(error.to_string()))?;
 
-        info!("Created model table '{}'.", table_name);
+        info!("Created model table '{}'.", model_table_metadata.name);
         Ok(())
     }
 }
@@ -429,7 +427,7 @@ impl FlightService for FlightServiceHandler {
             .flight_descriptor
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
         let table_name = self.get_table_name_from_flight_descriptor(&flight_descriptor)?;
-        let normalized_table_name = MetadataManager::normalize_table_name(&table_name);
+        let normalized_table_name = MetadataManager::normalize_name(&table_name);
 
         // Handle the data based on whether it is a normal table or a model table.
         if let Some(model_table_metadata) =
@@ -457,17 +455,21 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// Perform a specific action based on the type of the action in `request`. Currently supports
-    /// two actions: `CreateTable` and `CreateModelTable`. `CreateTable` creates a normal table
-    /// in the catalog when given a table name and schema. `CreateModelTable` creates a table
-    /// that is specialized for efficiently storing multivariate time series with tags within
-    /// a user-defined error bound. This action takes a table name, a schema, a list of indices
-    /// specifying which columns are metadata tag columns, and an index specifying which column
-    /// is the timestamp column.
+    /// Perform a specific action based on the type of the action in `request`.
+    /// Currently only the action `CommandStatementUpdate` is supported which
+    /// executes a SQL query containing a command that does not return a result.
+    /// These commands can be `CREATE TABLE table_name(...` which creates a
+    /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a
+    /// model table. A model table is a specialized table for efficiently
+    /// storing multivariate time series with tags within a per field error
+    /// bound. Thus, model tables can only contain a single timestamp column,
+    /// field columns, and tag columns. If no error bound is defined for a field
+    /// column it defaults to an error bound of 0% (lossless compression).
     ///
-    /// The data is given in the action body and must have the following format:
-    /// The first two bytes are the length x of the first argument. The next x bytes are the first
-    /// argument. This pattern repeats until all arguments are consumed.
+    /// Examples of CREATE TABLE and CREATE MODEL TABLE commands:
+    /// * CREATE TABLE company(id INTEGER, name TEXT)
+    /// * CREATE MODEL TABLE wind_turbines(timestamp TIMESTAMP,
+    ///   field_lossless FIELD, field_lossy FIELD(5), tag_one TAG, tag_two TAG)
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -475,60 +477,31 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        if action.r#type == "CreateTable" || action.r#type == "CreateModelTable" {
-            // Extract the table name from the action body.
-            let (table_name_bytes, offset_data) = extract_argument_bytes(&action.body);
-            let table_name = str::from_utf8(table_name_bytes)
+        if action.r#type == "CommandStatementUpdate" {
+            // Read the SQL from the action.
+            let sql = str::from_utf8(&action.body)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
-            let normalized_table_name = MetadataManager::normalize_table_name(&table_name);
+            info!("Received request to execute '{}'.", sql);
 
-            // If the table already exists, return an error.
-            if self
-                .get_schema_of_table_in_default_database_schema(&normalized_table_name)
-                .is_ok()
-            {
-                let message = format!(
-                    "Table with name '{}' already exists.",
-                    normalized_table_name
-                );
-                return Err(Status::already_exists(message));
-            }
-
-            // Check if the table name is a valid object_store path and database table name.
-            object_store::path::Path::parse(&normalized_table_name)
+            // Parse the SQL.
+            let statement = parser::tokenize_and_parse_sql(sql)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            if normalized_table_name.contains(char::is_whitespace) {
-                return Err(Status::invalid_argument(
-                    "Table name cannot contain whitespace.".to_owned(),
-                ));
-            }
-
-            // Extract the schema from the action body.
-            let (schema_bytes, offset_data) = extract_argument_bytes(offset_data);
-            let ipc_message = IpcMessage(Vec::from(schema_bytes));
-            let schema = Schema::try_from(ipc_message)
+            // Perform semantic checks to ensure the parsed SQL is supported.
+            let valid_statement = parser::semantic_checks_for_create_table(&statement)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            if action.r#type == "CreateTable" {
-                self.create_table(normalized_table_name.to_owned(), schema)
-                    .await?;
-            } else {
-                // Extract the tag column indices from the action body. Note that since we assume
-                // each tag column index is one byte, we directly use the slice of bytes as the list
-                // of tag column indices.
-                let (tag_indices, offset_data) = extract_argument_bytes(offset_data);
-
-                // Extract the timestamp column index from the action body.
-                let (timestamp_index, _offset_data) = extract_argument_bytes(offset_data);
-
-                self.create_model_table(
-                    normalized_table_name.to_owned(),
-                    schema,
-                    tag_indices.to_vec(),
-                    timestamp_index[0],
-                )?;
-            }
+            // Create the table or model table if it does not already exists.
+            match valid_statement {
+                ValidStatement::CreateTable { name, schema } => {
+                    self.check_if_table_exists(&name)?;
+                    self.register_and_save_table(name, schema).await?;
+                }
+                ValidStatement::CreateModelTable(model_table_metadata) => {
+                    self.check_if_table_exists(&model_table_metadata.name)?;
+                    self.register_and_save_model_table(model_table_metadata)?;
+                }
+            };
 
             // Confirm the table was created.
             Ok(Response::new(Box::pin(stream::empty())))
@@ -542,34 +515,13 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::ListActionsStream>, Status> {
-        let create_table_action = ActionType {
-            r#type: "CreateTable".to_owned(),
-            description: "Given a table name and a schema, create a table and add it to the \
-            catalog."
+        let create_command_statement_update_action = ActionType {
+            r#type: "CommandStatementUpdate".to_owned(),
+            description: "Execute a SQL query containing a single command that produce no results."
                 .to_owned(),
         };
 
-        let create_model_table_action = ActionType {
-            r#type: "CreateModelTable".to_owned(),
-            description: "Given a table name, a schema, a list of tag column indices, and the \
-            timestamp column index, create a model table and add it to the catalog."
-                .to_owned(),
-        };
-
-        let output = stream::iter(vec![Ok(create_table_action), Ok(create_model_table_action)]);
+        let output = stream::iter(vec![Ok(create_command_statement_update_action)]);
         Ok(Response::new(Box::pin(output)))
     }
-}
-
-/// Assumes `data` is a slice containing one or more arguments for an Action stored using the following
-/// format: size of argument (2 bytes) followed by argument (length bytes). Returns a tuple containing
-/// the first argument's bytes and `data` with the extracted argument's bytes removed.
-fn extract_argument_bytes(data: &[u8]) -> (&[u8], &[u8]) {
-    let size_bytes: [u8; 2] = data[..2].try_into().expect("Slice with incorrect length.");
-    let size = u16::from_be_bytes(size_bytes) as usize;
-
-    let argument_bytes = &data[2..(size + 2)];
-    let remaining_bytes = &data[(size + 2)..];
-
-    (argument_bytes, remaining_bytes)
 }

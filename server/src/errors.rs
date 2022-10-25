@@ -25,7 +25,7 @@ use std::fmt::{Display, Formatter};
 
 /// Error type used throughout the system.
 #[derive(Debug)]
-pub enum ModelarDBError {
+pub enum ModelarDbError {
     /// Error returned by the model types.
     CompressionError(String),
     /// Error returned when failing to create a new instance of a struct.
@@ -34,14 +34,18 @@ pub enum ModelarDBError {
     DataRetrievalError(String),
 }
 
-impl Error for ModelarDBError {}
+impl Error for ModelarDbError {}
 
-impl Display for ModelarDBError {
+impl Display for ModelarDbError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            ModelarDBError::CompressionError(reason) => write!(f, "Compression Error: {}", reason),
-            ModelarDBError::ConfigurationError(reason) => write!(f, "Configuration Error: {}", reason),
-            ModelarDBError::DataRetrievalError(reason) => write!(f, "Data Retrieval Error: {}", reason)
+            ModelarDbError::CompressionError(reason) => write!(f, "Compression Error: {}", reason),
+            ModelarDbError::ConfigurationError(reason) => {
+                write!(f, "Configuration Error: {}", reason)
+            }
+            ModelarDbError::DataRetrievalError(reason) => {
+                write!(f, "Data Retrieval Error: {}", reason)
+            }
         }
     }
 }

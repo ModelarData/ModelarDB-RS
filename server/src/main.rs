@@ -22,6 +22,7 @@ mod macros;
 mod metadata;
 mod models;
 mod optimizer;
+mod parser;
 mod remote;
 mod storage;
 mod tables;
@@ -95,10 +96,14 @@ fn main() -> Result<(), String> {
         });
 
         // Register tables and model tables.
-        context.metadata_manager.register_tables(&context)
+        context
+            .metadata_manager
+            .register_tables(&context)
             .map_err(|error| format!("Unable to register tables: {}", error))?;
 
-        context.metadata_manager.register_model_tables(&context)
+        context
+            .metadata_manager
+            .register_model_tables(&context)
             .map_err(|error| format!("Unable to register model tables: {}", error))?;
 
         // Setup CTRL+C handler.
