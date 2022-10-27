@@ -1,15 +1,16 @@
 use std::{env, io};
+use std::borrow::Borrow;
 use std::error::Error;
 
 use std::fs;
-use std::io::Write;
+use std::io::{BufRead, Write};
 use std::path;
 use std::process;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::{FlightData, FlightDescriptor, FlightInfo, PutResult};
+use arrow_flight::{Action, FlightData, FlightDescriptor, FlightInfo, PutResult};
 use arrow_flight::utils::flight_data_from_arrow_batch;
 use assert_cmd::Command;
 use assert_cmd::output::OutputError;
@@ -24,10 +25,13 @@ use datafusion::arrow::record_batch::RecordBatch;
 use futures::executor::block_on;
 use futures::stream;
 use log::error;
+use prost::Message;
 use rand::Rng;
+use tokio::io::BufReader;
 use tokio::runtime::Runtime;
 use tonic::{IntoStreamingRequest, Request};
 use tonic::transport::Channel;
+use crate::array::Array;
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
@@ -35,16 +39,20 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 fn test_ingest_message_into_storage_engine() {
     //create_directory().expect("Failed to create directory");
 
-   // let mut flight_server = start_arrow_flight_server();
+    //let mut flight_server = start_arrow_flight_server();
 
-    let mut f = fs::File::create("tests/ArrowFlight.log").expect("Failed to create log file");
-   // io::copy(&mut flight_server.stdout.unwrap(), &mut f).expect("Failed to write to log file");
+
+    //let mut f = fs::File::create("tests/ArrowFlight.log").expect("Failed to create log file");
+    //io::copy(&mut flight_server.stdout.unwrap(), &mut f).expect("Failed to write to stdout");
 
     if let Ok(rt) = Runtime::new() {
         let address = ("127.0.0.1".to_string());
         match create_flight_service_client(&rt, &address, 9999) {
-            Ok(fsc) => {
-                let result = send_messages_to_arrow_flight_server(fsc, 1, "location".to_owned());
+            Ok(mut fsc) => {
+
+                let _result_create_table = create_table_in_folder(&mut fsc);
+
+                let _result = send_messages_to_arrow_flight_server(&mut fsc, 1, "location".to_owned());
 
                 // Print error.
                // match result {
@@ -167,44 +175,54 @@ fn create_flight_service_client(rt: &Runtime, host: &str, port: u16) -> Result<F
     })
 }
 
-fn create_table_in_folder(){
+fn create_table_in_folder(mut client: &mut FlightServiceClient<Channel>) -> std::result::Result<(), ()> {
+    let runtime = tokio::runtime::Runtime::new().expect("Failed to start runtime(create_table_in_folder)");
 
+    let cmd = "CREATE MODEL TABLE data(timestamp TIMESTAMP, value FIELD, location TAG)".to_string();
+    let action = Action{
+        r#type: "CommandStatementUpdate".to_string(),
+        body: cmd.into_bytes(),
+    };
+    runtime.block_on(async{
+        let mut _result = client.do_action(tonic::Request::new(action)).await;
+
+        Ok(())
+    })
 }
 
 /// Generate `count` random messages for the time series referenced by `tag` and send it to the
 /// ModelarDB server with Arrow Flight through the `do_put()` endpoint.
 fn send_messages_to_arrow_flight_server(
-    mut client: FlightServiceClient<Channel>,
+    mut client: &mut FlightServiceClient<Channel>,
     count: usize,
     tag: String,
 ) -> std::result::Result<(), ()> {
 
-        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let runtime = tokio::runtime::Runtime::new().expect("Failed to start runtime(send_messages_to_arrow_flight_server)");
         let message = generate_random_message(tag.clone());
 
         // TODO: Send the message.
         let flight_descriptor = FlightDescriptor::new_path(vec![String::from("data")]);
 
-        let (_ , mut flight_data) = flight_data_from_arrow_batch(&message, &ipc::writer::IpcWriteOptions::default());
+        let (_ , flight_data) = flight_data_from_arrow_batch(&message, &ipc::writer::IpcWriteOptions::default());
 
         let mut flight_data_vec = vec![FlightData{
-            flight_descriptor: None,
+            flight_descriptor: Some(flight_descriptor),
             data_header: vec![],
             app_metadata: vec![],
             data_body: vec![]
         }];
 
-        flight_data_vec[0] = flight_data;
-
-        flight_data_vec[0].flight_descriptor = Some(flight_descriptor);
+        flight_data_vec.push(flight_data);
 
         runtime.block_on(async {
 
-            let mut streaming = client.do_put(stream::iter(flight_data_vec))
+            let flight_data_stream = stream::(&flight_data_vec);
+
+            let mut _streaming = client.do_put(flight_data_stream)
                 .await;
 
             Ok(())
-
         })
 }
 

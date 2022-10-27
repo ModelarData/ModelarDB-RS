@@ -42,6 +42,7 @@ use futures::{stream, Stream, StreamExt};
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
+use tracing::field::debug;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
@@ -191,6 +192,8 @@ impl FlightServiceHandler {
         model_table_metadata: &ModelTableMetadata,
         flight_data_stream: &mut Streaming<FlightData>,
     ) -> Result<(), Status> {
+
+        debug!("reached");
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
             let flight_data = flight_data?;
