@@ -5,7 +5,6 @@ use std::error::Error;
 
 use std::fs;
 use std::io::{BufRead, Write};
-use std::os::linux::process::PidFd;
 use std::path;
 use std::path::Path;
 use std::process;
@@ -29,9 +28,6 @@ use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::executor::block_on;
 use futures::stream;
-use nix::unistd::Pid;
-use nix::sys::signal::{self, Signal};
-use libc;
 use log::error;
 use prost::Message;
 use rand::Rng;
@@ -45,14 +41,14 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 #[test]
 fn test_ingest_message_into_storage_engine() {
-    create_directory();
+    //create_directory();
 
     //let mut f = fs::File::create("tests/ArrowFlight.log").expect("Failed to create log file");
     //io::copy(&mut flight_server.stdout.unwrap(), &mut f).expect("Failed to write to stdout");
 
     let message = generate_random_message("location".to_string());
 
-    let mut flight_server = start_arrow_flight_server();
+    //let mut flight_server = start_arrow_flight_server();
 
     if let Ok(rt) = Runtime::new() {
         let address = ("127.0.0.1".to_string());
@@ -78,29 +74,16 @@ fn test_ingest_message_into_storage_engine() {
 
                 flight_data_vec.push(flight_data);
 
-                let _result = send_messages_to_arrow_flight_server(&mut fsc, flight_data_vec);
+                let _ = send_messages_to_arrow_flight_server(&mut fsc, flight_data_vec);
 
-            }
-            Err(message) => eprintln!("error: cannot connect to {} due to a {}", address, message),
-        }
-    } else {
-        eprintln!("error: unable to initialize run-time");
-    }
-    // TODO: Assert that a new segment has been created in the storage engine.
-
-    let mut flight_server_2 = start_arrow_flight_server();
-
-    if let Ok(rt) = Runtime::new() {
-        let address = ("127.0.0.1".to_string());
-        match create_flight_service_client(&rt, &address, 9999) {
-            Ok(mut fsc) => {
+                let _ = flush_data_to_disk(&rt, &mut fsc);
 
                 let query_result = execute_query(&mut fsc,"SELECT * FROM data");
 
                 let result = query_result.expect("Could not execute query.");
 
-
                 assert_eq!(result[0], message);
+
             }
             Err(message) => eprintln!("error: cannot connect to {} due to a {}", address, message),
         }
@@ -108,9 +91,7 @@ fn test_ingest_message_into_storage_engine() {
         eprintln!("error: unable to initialize run-time");
     }
 
-    flight_server_2.kill().expect("Could not kill process.");
-
-    remove_directory().expect("Failed to remove directory");
+    //remove_directory().expect("Failed to remove directory");
 }
 
 #[test]
@@ -280,6 +261,22 @@ fn generate_random_message(tag: String) -> RecordBatch {
         ],
     )
     .unwrap()
+}
+
+fn flush_data_to_disk(
+    rt: &Runtime,
+    fsc: &mut FlightServiceClient<Channel>,
+) -> Result<()> {
+    let action = Action {
+        r#type: "Flush".to_owned(),
+        body: vec![],
+    };
+    let request = Request::new(action);
+
+    rt.block_on(async {
+        fsc.do_action(request).await?.into_inner().message().await?;
+        Ok(())
+    })
 }
 
 fn execute_query(

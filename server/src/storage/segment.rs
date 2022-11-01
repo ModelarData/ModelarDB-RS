@@ -132,10 +132,6 @@ impl UncompressedSegment for SegmentBuilder {
         &mut self,
         uncompressed_schema: &UncompressedSchema,
     ) -> Result<RecordBatch, ParquetError> {
-        //debug_assert!(
-        //    self.is_full(),
-        //    "Cannot get RecordBatch from SegmentBuilder that is not full."
-        //);
 
         let timestamps = self.timestamps.finish();
         let values = self.values.finish();

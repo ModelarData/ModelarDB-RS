@@ -18,6 +18,7 @@
 //! using `FlightServiceHandler` can be started with
 //! `start_arrow_flight_server()`.
 
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
@@ -48,6 +49,7 @@ use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::storage::StorageEngine;
+use crate::storage::uncompressed_data_manager;
 use crate::tables::ModelTable;
 use crate::Context;
 
@@ -291,6 +293,15 @@ impl FlightServiceHandler {
         info!("Created model table '{}'.", model_table_metadata.name);
         Ok(())
     }
+    fn flush_data_to_disk(
+        &self
+    ) -> Result<(), Status> {
+        let context = self.context.clone();
+
+        context.storage_engine.write().unwrap().flush();
+
+        Ok(())
+    }
 }
 
 #[tonic::async_trait]
@@ -480,6 +491,10 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
+        if action.r#type == "Flush"{
+            self.flush_data_to_disk().expect("Failed to flush data to disk.");
+        }
+
         if action.r#type == "CommandStatementUpdate" {
             // Read the SQL from the action.
             let sql = str::from_utf8(&action.body)
@@ -524,7 +539,13 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let output = stream::iter(vec![Ok(create_command_statement_update_action)]);
+        let flush_data_to_disk = ActionType{
+            r#type: "Flush".to_owned(),
+            description: "Flush the uncompressed data to disk by compressing and saving the data."
+                .to_owned()
+        };
+
+        let output = stream::iter(vec![Ok(create_command_statement_update_action), Ok(flush_data_to_disk)]);
         Ok(Response::new(Box::pin(output)))
     }
 }

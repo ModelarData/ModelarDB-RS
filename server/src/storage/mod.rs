@@ -18,9 +18,9 @@
 //! models in memory to batch compressed data before saving it to Apache Parquet files.
 
 mod compressed_data_manager;
-mod segment;
+pub(crate) mod segment;
 mod time_series;
-mod uncompressed_data_manager;
+pub(crate) mod uncompressed_data_manager;
 
 use std::ffi::OsStr;
 use std::fs;
