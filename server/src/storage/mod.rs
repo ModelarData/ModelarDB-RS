@@ -21,6 +21,7 @@ mod compressed_data_manager;
 mod segment;
 mod time_series;
 mod uncompressed_data_manager;
+mod data_transfer;
 
 use std::ffi::OsStr;
 use std::fs;

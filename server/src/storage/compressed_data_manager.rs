@@ -161,6 +161,7 @@ impl CompressedDataManager {
         }
     }
 
+    // TODO: After saving, the file location should be given to the data transfer component.
     /// Save the compressed data corresponding to `key` to disk. The size of the saved compressed
     /// data is added back to the remaining reserved memory.
     fn save_compressed_data(&mut self, key: &u64) {
