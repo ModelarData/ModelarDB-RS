@@ -24,9 +24,15 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Arc;
+
+use object_store::ObjectStore;
+
 use crate::errors::ModelarDbError;
 
 pub(super) struct DataTransfer {
+    /// The object store that the data should be transferred to.
+    target_object_store: Arc<dyn ObjectStore>,
     /// Map from keys to the combined size in bytes of the compressed files saved under the key.
     compressed_files: HashMap<u64, u64>,
     /// The number of bytes that is required before transferring a batch of data to the blob store.
@@ -34,9 +40,14 @@ pub(super) struct DataTransfer {
 }
 
 impl DataTransfer {
-    // TODO: This should look through local storage to retrieve files that should be transferred.
-    pub(super) fn new(transfer_batch_size_in_bytes: usize) -> Self {
+    pub(super) fn new(
+        target_object_store: Arc<dyn ObjectStore>,
+        transfer_batch_size_in_bytes: usize
+    ) -> Self {
+        // TODO: Parse through storage to retrieve already existing files that should be transferred.
+
         Self {
+            target_object_store,
             compressed_files: HashMap::new(),
             transfer_batch_size_in_bytes,
         }
@@ -61,6 +72,13 @@ impl DataTransfer {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use object_store::local::LocalFileSystem;
+    use tempfile::TempDir;
+
+    use crate::storage::data_transfer::DataTransfer;
+
     #[test]
     fn test_include_existing_files_on_start_up() {
 
@@ -91,8 +109,15 @@ mod tests {
         // TODO: Check that the files have been deleted.
     }
 
-    fn create_data_transfer_component() {
-        // TODO: Create a target object store.
-        // TODO: Create a data transfer component.
+    /// Create a data transfer component with a target object store that is deleted once the test is finished.
+    fn create_data_transfer_component() -> (TempDir, DataTransfer) {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create the target object store.
+        let local_fs = LocalFileSystem::new_with_prefix(temp_dir.path())
+            .expect("Error creating local file system.");
+        let object_store = Arc::new(local_fs);
+
+        (temp_dir, DataTransfer::new(object_store, 64))
     }
 }
