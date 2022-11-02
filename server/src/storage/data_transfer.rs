@@ -42,9 +42,9 @@ impl DataTransfer {
         }
     }
 
-    /// Insert the location of the compressed file into the files to be transferred. Also retrieve
-    /// the size of the file and add it to the total size of the current local files under the key.
-    pub(super) fn insert_compressed_file() {
+    /// Insert the compressed file into the files to be transferred. Retrieve the size of the file
+    /// and add it to the total size of the current local files under the key.
+    pub(super) fn add_compressed_file() {
         // TODO: If the combined size of the files is larger than the batch size, transfer the data to the blob store.
     }
 
@@ -54,5 +54,45 @@ impl DataTransfer {
         // TODO: Read all files that correspond to the key.
         // TODO: Transfer the read data to the blob store.
         // TODO: Delete the transferred files from local storage.
+
+        // TODO: Handle the base where a connection can not be established.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_include_existing_files_on_start_up() {
+
+    }
+
+    #[test]
+    fn test_add_compressed_file_into_new_key() {
+
+    }
+
+    #[test]
+    fn test_add_compressed_file_into_existing_key() {
+
+    }
+
+    #[test]
+    fn test_transfer_when_reaching_batch_size() {
+
+    }
+
+    #[test]
+    fn test_transfer_single_file() {
+        // TODO: Check that the file has been deleted.
+    }
+
+    #[test]
+    fn test_transfer_multiple_files() {
+        // TODO: Check that the files have been deleted.
+    }
+
+    fn create_data_transfer_component() {
+        // TODO: Create a target object store.
+        // TODO: Create a data transfer component.
     }
 }
