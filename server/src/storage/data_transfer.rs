@@ -23,14 +23,16 @@
 // TODO: Add a user configuration in the metadata component that makes it possible to change the batch size of when to send.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::fs;
+use std::io::Error as IOError;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use object_store::ObjectStore;
 
-use crate::errors::ModelarDbError;
-
 pub(super) struct DataTransfer {
+    /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
+    data_folder_path: PathBuf,
     /// The object store that the data should be transferred to.
     target_object_store: Arc<dyn ObjectStore>,
     /// Map from keys to the combined size in bytes of the compressed files saved under the key.
@@ -40,17 +42,25 @@ pub(super) struct DataTransfer {
 }
 
 impl DataTransfer {
-    pub(super) fn new(
+    /// Create a new data transfer instance and initialize it with the compressed files already
+    /// existing in `data_folder_path`. If `data_folder_path` or a path within `data_folder_path`
+    /// could not be read, return [`IOError`].
+    pub(super) fn try_new(
+        data_folder_path: PathBuf,
         target_object_store: Arc<dyn ObjectStore>,
         transfer_batch_size_in_bytes: usize
-    ) -> Self {
-        // TODO: Parse through storage to retrieve already existing files that should be transferred.
+    ) -> Result<Self, IOError> {
+        let compressed_files = HashMap::new();
 
-        Self {
+        // Parse through the data folder to retrieve already existing files that should be transferred.
+        let dir = fs::read_dir(data_folder_path.clone())?;
+
+        Ok(Self {
+            data_folder_path,
             target_object_store,
-            compressed_files: HashMap::new(),
+            compressed_files,
             transfer_batch_size_in_bytes,
-        }
+        })
     }
 
     /// Insert the compressed file into the files to be transferred. Retrieve the size of the file
@@ -68,10 +78,16 @@ impl DataTransfer {
 
         // TODO: Handle the base where a connection can not be established.
     }
+
+    /// Return [`true`] if `path` is a key folder containing compressed data, otherwise [`false`].
+    fn path_contains_compressed_files(path: &Path) -> bool {
+        true
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
     use std::sync::Arc;
 
     use object_store::local::LocalFileSystem;
@@ -81,6 +97,26 @@ mod tests {
 
     #[test]
     fn test_include_existing_files_on_start_up() {
+
+    }
+
+    #[test]
+    fn test_file_contains_compressed_files() {
+
+    }
+
+    #[test]
+    fn test_empty_folder_contains_compressed_files() {
+
+    }
+
+    #[test]
+    fn test_non_empty_folder_without_compressed_folder_contains_compressed_files() {
+
+    }
+
+    #[test]
+    fn test_compressed_folder_contains_compressed_files() {
 
     }
 
@@ -110,14 +146,14 @@ mod tests {
     }
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
-    fn create_data_transfer_component() -> (TempDir, DataTransfer) {
-        let temp_dir = tempfile::tempdir().unwrap();
+    fn create_data_transfer_component(data_folder_path: PathBuf) -> (TempDir, DataTransfer) {
+        let target_dir = tempfile::tempdir().unwrap();
 
         // Create the target object store.
-        let local_fs = LocalFileSystem::new_with_prefix(temp_dir.path())
+        let local_fs = LocalFileSystem::new_with_prefix(target_dir.path())
             .expect("Error creating local file system.");
         let object_store = Arc::new(local_fs);
 
-        (temp_dir, DataTransfer::new(object_store, 64))
+        (target_dir, DataTransfer::new(data_folder_path, object_store, 64))
     }
 }
