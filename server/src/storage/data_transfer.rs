@@ -96,8 +96,8 @@ impl DataTransfer {
     /// Return the key if `path` is a key folder containing compressed data, otherwise [`None`].
     fn path_contains_compressed_files(path: &Path) -> Option<u64> {
         if path.is_dir() && path.join("compressed").is_dir() {
-            // Convert the path name to the 64-bit key and return it if possible.
-            let key = path.to_string_lossy().to_string();
+            // Convert the directory name to the 64-bit key and return it if possible.
+            let key = path.file_name().unwrap().to_string_lossy().to_string();
             key.parse::<u64>().ok()
         } else {
             None
@@ -112,6 +112,8 @@ impl DataTransfer {
 
 #[cfg(test)]
 mod tests {
+    use std::fs;
+    use std::fs::File;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -131,23 +133,38 @@ mod tests {
     }
 
     #[test]
-    fn test_file_contains_compressed_files() {
+    fn test_file_does_not_contain_compressed_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("test.txt");
+        File::create(path.clone()).unwrap();
 
+        assert!(DataTransfer::path_contains_compressed_files(path.as_path()).is_none());
     }
 
     #[test]
-    fn test_empty_folder_contains_compressed_files() {
-
+    fn test_empty_folder_does_not_contain_compressed_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        assert!(DataTransfer::path_contains_compressed_files(temp_dir.path()).is_none());
     }
 
     #[test]
-    fn test_non_empty_folder_without_compressed_folder_contains_compressed_files() {
+    fn test_non_empty_folder_without_compressed_folder_does_not_contain_compressed_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("1668574317311628292/uncompressed");
+        fs::create_dir_all(path.clone()).unwrap();
 
+        let key_path = temp_dir.path().join("1668574317311628292");
+        assert!(DataTransfer::path_contains_compressed_files(key_path.as_path()).is_none());
     }
 
     #[test]
     fn test_compressed_folder_contains_compressed_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("1668574317311628292/compressed");
+        fs::create_dir_all(path.clone()).unwrap();
 
+        let key_path = temp_dir.path().join("1668574317311628292");
+        assert!(DataTransfer::path_contains_compressed_files(key_path.as_path()).is_some());
     }
 
     #[test]
