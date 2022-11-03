@@ -57,11 +57,12 @@ impl DataTransfer {
         // item that does contain compressed files, return a tuple with the key and the size in bytes.
         let compressed_files = dir.filter_map(|maybe_dir_entry| {
             if let Ok(dir_entry) = maybe_dir_entry {
-                if Self::path_contains_compressed_files(dir_entry.path().as_path()) {
-                    let key = dir_entry.path().to_string_lossy().to_string();
-                    let size = Self::get_total_compressed_files_size(dir_entry.path().as_path());
+                let path = dir_entry.path();
 
-                    return Some((key.parse::<u64>().unwrap(), size))
+                if let Some(key) = Self::path_contains_compressed_files(path.as_path()) {
+                    let size = Self::get_total_compressed_files_size(path.as_path());
+
+                    return Some((key, size))
                 }
             }
 
@@ -92,9 +93,15 @@ impl DataTransfer {
         // TODO: Handle the base where a connection can not be established.
     }
 
-    /// Return [`true`] if `path` is a key folder containing compressed data, otherwise [`false`].
-    fn path_contains_compressed_files(path: &Path) -> bool {
-        true
+    /// Return the key if `path` is a key folder containing compressed data, otherwise [`None`].
+    fn path_contains_compressed_files(path: &Path) -> Option<u64> {
+        if path.is_dir() && path.join("compressed").is_dir() {
+            // Convert the path name to the 64-bit key and return it if possible.
+            let key = path.to_string_lossy().to_string();
+            key.parse::<u64>().ok()
+        } else {
+            None
+        }
     }
 
     /// Return the total combined size in bytes of the compressed files in `path`.
