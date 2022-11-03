@@ -36,7 +36,7 @@ pub(super) struct DataTransfer {
     /// The object store that the data should be transferred to.
     target_object_store: Arc<dyn ObjectStore>,
     /// Map from keys to the combined size in bytes of the compressed files saved under the key.
-    compressed_files: HashMap<u64, u64>,
+    compressed_files: HashMap<u64, usize>,
     /// The number of bytes that is required before transferring a batch of data to the blob store.
     transfer_batch_size_in_bytes: usize,
 }
@@ -50,10 +50,23 @@ impl DataTransfer {
         target_object_store: Arc<dyn ObjectStore>,
         transfer_batch_size_in_bytes: usize
     ) -> Result<Self, IOError> {
-        let compressed_files = HashMap::new();
-
         // Parse through the data folder to retrieve already existing files that should be transferred.
         let dir = fs::read_dir(data_folder_path.clone())?;
+
+        // Use a filter map to remove all dir entries that does not contain compressed files. For each
+        // item that does contain compressed files, return a tuple with the key and the size in bytes.
+        let compressed_files = dir.filter_map(|maybe_dir_entry| {
+            if let Ok(dir_entry) = maybe_dir_entry {
+                if Self::path_contains_compressed_files(dir_entry.path().as_path()) {
+                    let key = dir_entry.path().to_string_lossy().to_string();
+                    let size = Self::get_total_compressed_files_size(dir_entry.path().as_path());
+
+                    return Some((key.parse::<u64>().unwrap(), size))
+                }
+            }
+
+            None
+        }).into_iter().collect();
 
         Ok(Self {
             data_folder_path,
@@ -83,6 +96,11 @@ impl DataTransfer {
     fn path_contains_compressed_files(path: &Path) -> bool {
         true
     }
+
+    /// Return the total combined size in bytes of the compressed files in `path`.
+    fn get_total_compressed_files_size(path: &Path) -> usize {
+        10
+    }
 }
 
 #[cfg(test)]
@@ -97,6 +115,11 @@ mod tests {
 
     #[test]
     fn test_include_existing_files_on_start_up() {
+
+    }
+
+    #[test]
+    fn test_transfer_if_reaching_batch_size_on_start_up() {
 
     }
 
@@ -121,6 +144,11 @@ mod tests {
     }
 
     #[test]
+    fn test_get_total_compressed_files_size() {
+
+    }
+
+    #[test]
     fn test_add_compressed_file_into_new_key() {
 
     }
@@ -131,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn test_transfer_when_reaching_batch_size() {
+    fn test_transfer_if_reaching_batch_size_when_adding() {
 
     }
 
@@ -152,8 +180,8 @@ mod tests {
         // Create the target object store.
         let local_fs = LocalFileSystem::new_with_prefix(target_dir.path())
             .expect("Error creating local file system.");
-        let object_store = Arc::new(local_fs);
+        let target_object_store = Arc::new(local_fs);
 
-        (target_dir, DataTransfer::new(data_folder_path, object_store, 64))
+        (target_dir, DataTransfer::try_new(data_folder_path, target_object_store, 64).unwrap())
     }
 }
