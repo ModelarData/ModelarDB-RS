@@ -32,14 +32,14 @@ use chrono::DateTime;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use datafusion::parquet::arrow::ArrowWriter;
-use datafusion::parquet::basic::Encoding;
+use datafusion::parquet::basic::Compression;
 use datafusion::parquet::errors::ParquetError;
-use datafusion::parquet::file::properties::WriterProperties;
+use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
 
-use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::errors::ModelarDbError;
+use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::segment::FinishedSegment;
@@ -196,7 +196,6 @@ impl StorageEngine {
         Ok(compressed_files)
     }
 
-    // TODO: Test using more efficient encoding. Plain encoding makes it easier to read the files externally.
     /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`
     /// must use the extension '.parquet'. Return [`Ok`] if the file was written successfully,
     /// otherwise [`ParquetError`].
@@ -213,8 +212,9 @@ impl StorageEngine {
         if file_path.extension().and_then(OsStr::to_str) == Some("parquet") {
             let file = File::create(file_path).map_err(|_e| error)?;
             let props = WriterProperties::builder()
+                .set_compression(Compression::ZSTD)
                 .set_dictionary_enabled(false)
-                .set_encoding(Encoding::PLAIN)
+                .set_statistics_enabled(EnabledStatistics::Page)
                 .build();
 
             let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))?;
