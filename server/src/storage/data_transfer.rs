@@ -29,6 +29,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use object_store::ObjectStore;
+use crate::StorageEngine;
 
 pub(super) struct DataTransfer {
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
@@ -48,7 +49,7 @@ impl DataTransfer {
     pub(super) fn try_new(
         data_folder_path: PathBuf,
         target_object_store: Arc<dyn ObjectStore>,
-        transfer_batch_size_in_bytes: usize
+        transfer_batch_size_in_bytes: usize,
     ) -> Result<Self, IOError> {
         // Parse through the data folder to retrieve already existing files that should be transferred.
         let dir = fs::read_dir(data_folder_path.clone())?;
@@ -60,9 +61,10 @@ impl DataTransfer {
                 let path = dir_entry.path();
 
                 if let Some(key) = Self::path_contains_compressed_files(path.as_path()) {
-                    let size = Self::get_total_compressed_files_size(path.as_path());
+                    let compressed_path = path.join("compressed");
+                    let size = Self::get_total_compressed_files_size(compressed_path.as_path());
 
-                    return Some((key, size))
+                    return Some((key, size));
                 }
             }
 
@@ -106,14 +108,24 @@ impl DataTransfer {
 
     /// Return the total combined size in bytes of the compressed files in `path`.
     fn get_total_compressed_files_size(path: &Path) -> usize {
-        10
+        // Unwrap is safe since the directory is checked before calculating the files size.
+        let dir = fs::read_dir(path).unwrap();
+
+        dir.filter_map(|maybe_dir_entry| {
+            if let Ok(dir_entry) = maybe_dir_entry {
+                if StorageEngine::is_path_an_apache_parquet_file(dir_entry.path().as_path()) {
+                    return Some(dir_entry.metadata().unwrap().len() as usize)
+                }
+            }
+
+            None
+        }).sum()
     }
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::fs::File;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -123,20 +135,16 @@ mod tests {
     use crate::storage::data_transfer::DataTransfer;
 
     #[test]
-    fn test_include_existing_files_on_start_up() {
-
-    }
+    fn test_include_existing_files_on_start_up() {}
 
     #[test]
-    fn test_transfer_if_reaching_batch_size_on_start_up() {
-
-    }
+    fn test_transfer_if_reaching_batch_size_on_start_up() {}
 
     #[test]
     fn test_file_does_not_contain_compressed_files() {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
-        File::create(path.clone()).unwrap();
+        fs::File::create(path.clone()).unwrap();
 
         assert!(DataTransfer::path_contains_compressed_files(path.as_path()).is_none());
     }
@@ -173,19 +181,13 @@ mod tests {
     }
 
     #[test]
-    fn test_add_compressed_file_into_new_key() {
-
-    }
+    fn test_add_compressed_file_into_new_key() {}
 
     #[test]
-    fn test_add_compressed_file_into_existing_key() {
-
-    }
+    fn test_add_compressed_file_into_existing_key() {}
 
     #[test]
-    fn test_transfer_if_reaching_batch_size_when_adding() {
-
-    }
+    fn test_transfer_if_reaching_batch_size_when_adding() {}
 
     #[test]
     fn test_transfer_single_file() {
