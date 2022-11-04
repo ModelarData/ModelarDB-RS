@@ -17,11 +17,6 @@
 //! disk is managed here until it is of a sufficient size to be transferred efficiently. Furthermore,
 //! the component ensures that local data is kept on disk until a reliable connection is established.
 
-// TODO: Files should be combined when transferring data.
-// TODO: When data is done transferring, the files should be deleted from local storage.
-// TODO: A system should be in place to keep track of the location of certain data to avoid duplicate data between edge and cloud.
-// TODO: Add a user configuration in the metadata component that makes it possible to change the batch size of when to send.
-
 use std::collections::HashMap;
 use std::fs;
 use std::io::Error as IOError;
@@ -42,7 +37,6 @@ pub(super) struct DataTransfer {
     transfer_batch_size_in_bytes: usize,
 }
 
-// TODO: Add function and tests for flushing the instance of compressed data saved locally.
 impl DataTransfer {
     /// Create a new data transfer instance and initialize it with the compressed files already
     /// existing in `data_folder_path`. If `data_folder_path` or a path within `data_folder_path`
@@ -92,6 +86,11 @@ impl DataTransfer {
         }
 
         Ok(())
+    }
+
+    /// Transfer all compressed files currently in the data folder to the target blob store.
+    pub(super) fn flush_compressed_files(&mut self) {
+        // TODO: Iterate over the keys in the compressed files hashmap and call the transfer data function for each key.
     }
 
     /// Transfer the data corresponding to `key` to the blob store. Once successfully transferred,
@@ -164,7 +163,9 @@ mod tests {
     }
 
     #[test]
-    fn test_transfer_if_reaching_batch_size_on_start_up() {}
+    fn test_transfer_if_reaching_batch_size_on_start_up() {
+
+    }
 
     #[test]
     fn test_file_does_not_contain_compressed_files() {
@@ -266,7 +267,14 @@ mod tests {
     }
 
     #[test]
-    fn test_transfer_if_reaching_batch_size_when_adding() {}
+    fn test_flush_compressed_files() {
+
+    }
+
+    #[test]
+    fn test_transfer_if_reaching_batch_size_when_adding() {
+
+    }
 
     #[test]
     fn test_transfer_single_file() {
