@@ -136,9 +136,20 @@ mod tests {
     use crate::storage::test_util;
     use crate::StorageEngine;
 
+    const KEY: u64 = 1668574317311628292;
+
     #[test]
     fn test_include_existing_files_on_start_up() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join(format!("{}/compressed", KEY));
+        fs::create_dir_all(path.clone()).unwrap();
 
+        let batch = test_util::get_compressed_segment_record_batch();
+        let parquet_path = path.join("test_parquet.parquet");
+        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path()).unwrap();
+
+        let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.into_path());
+        assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), 2503 as usize)
     }
 
     #[test]
@@ -162,20 +173,20 @@ mod tests {
     #[test]
     fn test_non_empty_folder_without_compressed_folder_does_not_contain_compressed_files() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("1668574317311628292/uncompressed");
+        let path = temp_dir.path().join(format!("{}/uncompressed", KEY));
         fs::create_dir_all(path.clone()).unwrap();
 
-        let key_path = temp_dir.path().join("1668574317311628292");
+        let key_path = temp_dir.path().join(KEY.to_string());
         assert!(DataTransfer::path_contains_compressed_files(key_path.as_path()).is_none());
     }
 
     #[test]
     fn test_compressed_folder_contains_compressed_files() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("1668574317311628292/compressed");
+        let path = temp_dir.path().join(format!("{}/compressed", KEY));
         fs::create_dir_all(path.clone()).unwrap();
 
-        let key_path = temp_dir.path().join("1668574317311628292");
+        let key_path = temp_dir.path().join(KEY.to_string());
         assert!(DataTransfer::path_contains_compressed_files(key_path.as_path()).is_some());
     }
 
