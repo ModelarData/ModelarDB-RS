@@ -134,7 +134,7 @@ impl DataTransfer {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
     use object_store::local::LocalFileSystem;
@@ -147,18 +147,12 @@ mod tests {
     const KEY: u64 = 1668574317311628292;
     const COMPRESSED_FILE_SIZE: usize = 2503;
 
-    // TODO: Add a util method to setup a data folder with a key folder that has a single compressed file in it.
     #[test]
     fn test_include_existing_files_on_start_up() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join(format!("{}/compressed", KEY));
-        fs::create_dir_all(path.clone()).unwrap();
+        let parquet_path = set_up_data_folder(temp_dir.path());
+        let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
 
-        let batch = test_util::get_compressed_segment_record_batch();
-        let parquet_path = path.join("test_parquet.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path()).unwrap();
-
-        let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.into_path());
         assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), COMPRESSED_FILE_SIZE)
     }
 
@@ -223,14 +217,8 @@ mod tests {
     #[test]
     fn test_add_compressed_file_into_new_key() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join(format!("{}/compressed", KEY));
-        fs::create_dir_all(path.clone()).unwrap();
-
-        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.into_path());
-
-        let batch = test_util::get_compressed_segment_record_batch();
-        let parquet_path = path.join("test_parquet.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path()).unwrap();
+        let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
+        let parquet_path = set_up_data_folder(temp_dir.path());
 
         assert!(data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).is_ok());
         assert_eq!(data_transfer.compressed_files.get(&KEY).unwrap(), &COMPRESSED_FILE_SIZE);
@@ -239,19 +227,26 @@ mod tests {
     #[test]
     fn test_add_compressed_file_into_existing_key() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join(format!("{}/compressed", KEY));
-        fs::create_dir_all(path.clone()).unwrap();
-
-        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.into_path());
-
-        let batch = test_util::get_compressed_segment_record_batch();
-        let parquet_path = path.join("test_parquet.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path()).unwrap();
+        let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
+        let parquet_path = set_up_data_folder(temp_dir.path());
 
         data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).unwrap();
         data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).unwrap();
 
         assert_eq!(data_transfer.compressed_files.get(&KEY).unwrap(), &(COMPRESSED_FILE_SIZE * 2));
+    }
+
+    /// Set up a data folder with a key folder that has a single compressed file in it.
+    /// Return the path to the created Apache Parquet file.
+    fn set_up_data_folder(data_folder_path: &Path) -> PathBuf {
+        let path = data_folder_path.join(format!("{}/compressed", KEY));
+        fs::create_dir_all(path.clone()).unwrap();
+
+        let batch = test_util::get_compressed_segment_record_batch();
+        let parquet_path = path.join("test_parquet.parquet");
+        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path()).unwrap();
+
+        parquet_path
     }
 
     #[test]
@@ -260,7 +255,7 @@ mod tests {
         let path = temp_dir.path().join(format!("{}/compressed", KEY));
         fs::create_dir_all(path.clone()).unwrap();
 
-        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.into_path());
+        let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
 
         let parquet_path = path.join("test_parquet.parquet");
         assert!(data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).is_err())
@@ -287,7 +282,7 @@ mod tests {
     }
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
-    fn create_data_transfer_component(data_folder_path: PathBuf) -> (TempDir, DataTransfer) {
+    fn create_data_transfer_component(data_folder_path: &Path) -> (TempDir, DataTransfer) {
         let target_dir = tempfile::tempdir().unwrap();
 
         // Create the target object store.
@@ -295,6 +290,6 @@ mod tests {
             .expect("Error creating local file system.");
         let target_object_store = Arc::new(local_fs);
 
-        (target_dir, DataTransfer::try_new(data_folder_path, target_object_store, 64).unwrap())
+        (target_dir, DataTransfer::try_new(data_folder_path.to_path_buf(), target_object_store, 64).unwrap())
     }
 }
