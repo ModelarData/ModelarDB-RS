@@ -133,9 +133,13 @@ mod tests {
     use tempfile::TempDir;
 
     use crate::storage::data_transfer::DataTransfer;
+    use crate::storage::test_util;
+    use crate::StorageEngine;
 
     #[test]
-    fn test_include_existing_files_on_start_up() {}
+    fn test_include_existing_files_on_start_up() {
+
+    }
 
     #[test]
     fn test_transfer_if_reaching_batch_size_on_start_up() {}
@@ -177,7 +181,20 @@ mod tests {
 
     #[test]
     fn test_get_total_compressed_files_size() {
+        let temp_dir = tempfile::tempdir().unwrap();
 
+        // Create a folder with a text file and an Apache Parquet file.
+        let txt_path = temp_dir.path().join("test.txt");
+        fs::write(txt_path.clone(), "test content").unwrap();
+
+        assert_eq!(DataTransfer::get_total_compressed_files_size(temp_dir.path()), 0);
+
+        let batch = test_util::get_compressed_segment_record_batch();
+        let parquet_path = temp_dir.path().join("test_parquet.parquet");
+        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path()).unwrap();
+
+        // Only the size of the Apache Parquet file should be counted.
+        assert_eq!(DataTransfer::get_total_compressed_files_size(temp_dir.path()), 2503);
     }
 
     #[test]
