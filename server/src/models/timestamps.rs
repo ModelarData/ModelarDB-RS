@@ -313,13 +313,23 @@ mod tests {
     #[test]
     fn compress_and_decompress_timestamps_for_a_regular_time_series() {
         compress_and_decompress_timestamps_for_a_time_series(&[
-            100, 200, 300, 400, 500, 600, 700, 800,
+            1579701905500,
+            1579701905600,
+            1579701905700,
+            1579701905800,
+            1579701905900,
         ]);
     }
 
     #[test]
     fn compress_and_decompress_timestamps_for_an_irregular_time_series() {
-        compress_and_decompress_timestamps_for_a_time_series(&[100, 150, 300, 350, 700, 750, 1500]);
+        compress_and_decompress_timestamps_for_a_time_series(&[
+            1579694400057,
+            1579694400197,
+            1579694400353,
+            1579694400493,
+            1579694400650,
+        ]);
     }
 
     fn compress_and_decompress_timestamps_for_a_time_series(uncompressed_timestamps: &[Timestamp]) {

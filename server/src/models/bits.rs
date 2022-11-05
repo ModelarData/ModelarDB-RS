@@ -120,7 +120,8 @@ impl BitVecBuilder {
             } else {
                 // Write the remaining number_of_bits bits from bits to self.current_byte.
                 let shift = self.remaining_bits - number_of_bits;
-                self.current_byte |= (bits << shift) as u8;
+                let mask = (u8::MAX >> (8 - self.remaining_bits)) as u32;
+                self.current_byte |= ((bits << shift) & mask) as u8;
                 number_of_bits
             };
             number_of_bits -= bits_written;
