@@ -48,8 +48,6 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 pub struct Context {
     /// Metadata for the tables and model tables in the data folder.
     pub metadata_manager: MetadataManager,
-    /// A Tokio runtime for executing asynchronous tasks.
-    pub runtime: Runtime,
     /// Main interface for Apache Arrow DataFusion.
     pub session: SessionContext,
     /// Manages all uncompressed and compressed data in the system.
@@ -75,11 +73,13 @@ fn main() -> Result<(), String> {
         fs::create_dir_all(data_folder_path.as_path())
             .map_err(|error| format!("Unable to create {}: {}", &data_folder, error))?;
 
+        // Create a tokio runtime for executing asynchronous tasks.
+        let runtime = Arc::new(Runtime::new()
+            .map_err(|error| format!("Unable to create a Tokio Runtime: {}", error))?);
+
         // Create Context components.
         let metadata_manager = MetadataManager::try_new(&data_folder_path)
             .map_err(|error| format!("Unable to create a MetadataManager: {}", error))?;
-        let runtime = Runtime::new()
-            .map_err(|error| format!("Unable to create a Tokio Runtime: {}", error))?;
         let session = create_session_context();
         let storage_engine = RwLock::new(StorageEngine::new(
             data_folder_path.clone(),
@@ -90,7 +90,6 @@ fn main() -> Result<(), String> {
         // Create Context.
         let context = Arc::new(Context {
             metadata_manager,
-            runtime,
             session,
             storage_engine,
         });
@@ -98,7 +97,7 @@ fn main() -> Result<(), String> {
         // Register tables and model tables.
         context
             .metadata_manager
-            .register_tables(&context)
+            .register_tables(&runtime)
             .map_err(|error| format!("Unable to register tables: {}", error))?;
 
         context
