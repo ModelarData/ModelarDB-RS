@@ -56,7 +56,7 @@ use crate::Context;
 pub fn start_arrow_flight_server(
     context: Arc<Context>,
     runtime: &Arc<Runtime>,
-    port: i16
+    port: i16,
 ) -> Result<(), Box<dyn Error>> {
     let localhost_with_port = "0.0.0.0:".to_owned() + &port.to_string();
     let localhost_with_port: SocketAddr = localhost_with_port.parse()?;

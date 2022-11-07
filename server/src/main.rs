@@ -109,7 +109,7 @@ fn main() -> Result<(), String> {
         setup_ctrl_c_handler(&context, &runtime);
 
         // Start Interface.
-        remote::start_arrow_flight_server(context, &runtime,9999).map_err(|error| error.to_string())?
+        remote::start_arrow_flight_server(context, &runtime, 9999).map_err(|error| error.to_string())?
     } else {
         // The errors are consciously ignored as the program is terminating.
         let binary_path = std::env::current_exe().unwrap();

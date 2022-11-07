@@ -396,7 +396,7 @@ impl MetadataManager {
     pub fn register_tables(
         &self,
         context: &Arc<Context>,
-        runtime: &Arc<Runtime>
+        runtime: &Arc<Runtime>,
     ) -> Result<(), rusqlite::Error> {
         let connection = Connection::open(&self.metadata_database_path)?;
 
@@ -420,7 +420,7 @@ impl MetadataManager {
         &self,
         row: &Row,
         context: &Arc<Context>,
-        runtime: &Arc<Runtime>
+        runtime: &Arc<Runtime>,
     ) -> Result<(), Box<dyn Error>> {
         let name = row.get::<usize, String>(0)?;
 
