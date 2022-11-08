@@ -175,7 +175,10 @@ impl AggregateExpr for ModelAggregateExpr {
 
     fn state_fields(&self) -> Result<Vec<Field>> {
         let fields = match &self.aggregate_type {
-            ModelAggregateType::Sum => vec![Field::new("SUM", DataType::Float32, false)],
+            ModelAggregateType::Sum => vec![
+                Field::new("SUM", DataType::Float32, false),
+                Field::new("COUNT", DataType::UInt64, false),
+            ],
             ModelAggregateType::Avg => vec![
                 Field::new("COUNT", DataType::UInt64, false),
                 Field::new("SUM", DataType::Float32, false),
@@ -205,7 +208,7 @@ impl AggregateExpr for ModelAggregateExpr {
             ModelAggregateType::Count => Box::new(ModelCountAccumulator { count: 0 }),
             ModelAggregateType::Min => Box::new(ModelMinAccumulator { min: f32::MAX }),
             ModelAggregateType::Max => Box::new(ModelMaxAccumulator { max: f32::MIN }),
-            ModelAggregateType::Sum => Box::new(ModelSumAccumulator { sum: 0.0 }),
+            ModelAggregateType::Sum => Box::new(ModelSumAccumulator { sum: 0.0, count: 0 }),
             ModelAggregateType::Avg => Box::new(ModelAvgAccumulator { sum: 0.0, count: 0 }),
         };
         Ok(accum)
@@ -511,6 +514,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
 #[derive(Debug)]
 struct ModelSumAccumulator {
     sum: f32,
+    count: u64,
 }
 
 impl Accumulator for ModelSumAccumulator {
@@ -520,7 +524,8 @@ impl Accumulator for ModelSumAccumulator {
                 .as_any()
                 .downcast_ref::<Float32Array>()
                 .unwrap()
-                .value(0)
+                .value(0);
+            self.count += 1;
         }
         Ok(())
     }
@@ -530,9 +535,10 @@ impl Accumulator for ModelSumAccumulator {
     }
 
     fn state(&self) -> Result<Vec<AggregateState>> {
-        Ok(vec![AggregateState::Scalar(ScalarValue::Float32(Some(
-            self.sum,
-        )))])
+        Ok(vec![
+            AggregateState::Scalar(ScalarValue::Float32(Some(self.sum))),
+            AggregateState::Scalar(ScalarValue::from(self.count)),
+        ])
     }
 
     fn evaluate(&self) -> Result<ScalarValue> {

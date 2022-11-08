@@ -164,7 +164,9 @@ fn execute_and_print_action_command_or_query(
 ) -> Result<()> {
     if action_command_or_query.starts_with('\\') {
         execute_command(rt, fsc, action_command_or_query)?;
-    } else if action_command_or_query.starts_with("SELECT") {
+    } else if action_command_or_query.starts_with("SELECT")
+        || action_command_or_query.starts_with("EXPLAIN")
+    {
         let df = execute_query(rt, fsc, action_command_or_query)?;
         pretty::print_batches(&df)?;
     } else {

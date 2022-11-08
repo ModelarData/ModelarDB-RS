@@ -176,7 +176,7 @@ impl SelectedModel {
         uncompressed_values: &ValueArray,
     ) -> Self {
         let end_index = start_index + gorilla.get_length() - 1;
-        let uncompressed_values = &uncompressed_values.values()[start_index..end_index];
+        let uncompressed_values = &uncompressed_values.values()[start_index..=end_index];
         let min_value = uncompressed_values
             .iter()
             .fold(Value::NAN, |current_min, value| {
