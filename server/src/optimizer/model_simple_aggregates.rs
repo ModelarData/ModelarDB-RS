@@ -13,6 +13,7 @@
  * limitations under the License.
  */
 use std::any::Any;
+use std::cmp::PartialEq;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 
@@ -229,6 +230,12 @@ impl Display for ModelCountPhysicalExpr {
     }
 }
 
+impl PartialEq<dyn Any> for ModelCountPhysicalExpr {
+    fn eq(&self, other: &dyn Any) -> bool {
+        self == other
+    }
+}
+
 impl PhysicalExpr for ModelCountPhysicalExpr {
     fn as_any(&self) -> &dyn Any {
         self
@@ -268,6 +275,17 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
         let mut result = Int64Array::builder(1);
         result.append_value(count);
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
+    }
+
+    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+        vec![]
+    }
+
+    fn with_new_children(
+        self: Arc<Self>,
+        _children: Vec<Arc<dyn PhysicalExpr>>,
+    ) -> Result<Arc<dyn PhysicalExpr>> {
+        Ok(self)
     }
 }
 
@@ -313,6 +331,12 @@ impl Display for ModelMinPhysicalExpr {
     }
 }
 
+impl PartialEq<dyn Any> for ModelMinPhysicalExpr {
+    fn eq(&self, other: &dyn Any) -> bool {
+        self == other
+    }
+}
+
 impl PhysicalExpr for ModelMinPhysicalExpr {
     fn as_any(&self) -> &dyn Any {
         self
@@ -337,6 +361,17 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
         let mut result = ValueArray::builder(1);
         result.append_value(min);
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
+    }
+
+    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+        vec![]
+    }
+
+    fn with_new_children(
+        self: Arc<Self>,
+        _children: Vec<Arc<dyn PhysicalExpr>>,
+    ) -> Result<Arc<dyn PhysicalExpr>> {
+        Ok(self)
     }
 }
 
@@ -385,6 +420,12 @@ impl Display for ModelMaxPhysicalExpr {
     }
 }
 
+impl PartialEq<dyn Any> for ModelMaxPhysicalExpr {
+    fn eq(&self, other: &dyn Any) -> bool {
+        self == other
+    }
+}
+
 impl PhysicalExpr for ModelMaxPhysicalExpr {
     fn as_any(&self) -> &dyn Any {
         self
@@ -409,6 +450,17 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
         let mut result = ValueArray::builder(1);
         result.append_value(max);
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
+    }
+
+    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+        vec![]
+    }
+
+    fn with_new_children(
+        self: Arc<Self>,
+        _children: Vec<Arc<dyn PhysicalExpr>>,
+    ) -> Result<Arc<dyn PhysicalExpr>> {
+        Ok(self)
     }
 }
 
@@ -454,6 +506,12 @@ pub struct ModelSumPhysicalExpr {}
 impl Display for ModelSumPhysicalExpr {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "ModelSumPhysicalExpr(Float32)")
+    }
+}
+
+impl PartialEq<dyn Any> for ModelSumPhysicalExpr {
+    fn eq(&self, other: &dyn Any) -> bool {
+        self == other
     }
 }
 
@@ -509,6 +567,17 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
         result.append_value(sum as f32);
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
+
+    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+        vec![]
+    }
+
+    fn with_new_children(
+        self: Arc<Self>,
+        _children: Vec<Arc<dyn PhysicalExpr>>,
+    ) -> Result<Arc<dyn PhysicalExpr>> {
+        Ok(self)
+    }
 }
 
 #[derive(Debug)]
@@ -553,6 +622,12 @@ pub struct ModelAvgPhysicalExpr {}
 impl Display for ModelAvgPhysicalExpr {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         write!(f, "ModelAvgPhysicalExpr(Float32)")
+    }
+}
+
+impl PartialEq<dyn Any> for ModelAvgPhysicalExpr {
+    fn eq(&self, other: &dyn Any) -> bool {
+        self == other
     }
 }
 
@@ -611,6 +686,17 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
         result.append_value(sum as Value);
         result.append_value(count as Value);
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
+    }
+
+    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+        vec![]
+    }
+
+    fn with_new_children(
+        self: Arc<Self>,
+        _children: Vec<Arc<dyn PhysicalExpr>>,
+    ) -> Result<Arc<dyn PhysicalExpr>> {
+        Ok(self)
     }
 }
 

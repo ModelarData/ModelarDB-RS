@@ -33,13 +33,13 @@ use datafusion::arrow::array::{
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema, SchemaRef, UInt16Type};
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::config::ConfigOptions;
 use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::datasource::{
     datasource::TableProviderFilterPushDown, listing::PartitionedFile, TableProvider, TableType,
 };
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::{ExecutionProps, SessionState, TaskContext};
-use datafusion::logical_plan::{col, combine_filters, Expr, Operator, ToDFSchema};
 use datafusion::physical_plan::{
     expressions::PhysicalSortExpr, file_format::FileScanConfig, file_format::ParquetExec,
     filter::FilterExec, metrics::BaselineMetrics, metrics::ExecutionPlanMetricsSet,
@@ -47,8 +47,12 @@ use datafusion::physical_plan::{
     SendableRecordBatchStream, Statistics,
 };
 use datafusion::scalar::ScalarValue;
+use datafusion_common::ToDFSchema;
+use datafusion_expr::{col, BinaryExpr, Expr, Operator};
+use datafusion_optimizer::utils;
 use datafusion_physical_expr::planner;
 use futures::stream::{Stream, StreamExt};
+use parking_lot::RwLock;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::models;
@@ -73,6 +77,8 @@ pub struct ModelTable {
     schema: Arc<Schema>,
     /// Field column to use for queries that do not include fields.
     fallback_field_column: u64,
+    /// Configuration options to use for reading Apache Parquet files.
+    config_options: Arc<RwLock<ConfigOptions>>,
 }
 
 impl ModelTable {
@@ -101,6 +107,7 @@ impl ModelTable {
             object_store_url: ObjectStoreUrl::local_filesystem(),
             schema: Arc::new(Schema::new(columns)),
             fallback_field_column: fallback_field_column as u64,
+            config_options: Arc::new(RwLock::new(ConfigOptions::new())),
         })
     }
 
@@ -118,7 +125,7 @@ fn rewrite_and_combine_filters(filters: &[Expr]) -> Option<Expr> {
     let rewritten_filters: Vec<Expr> = filters
         .iter()
         .map(|filter| match filter {
-            Expr::BinaryExpr { left, op, right } => {
+            Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
                 if **left == col("timestamp") {
                     match op {
                         Operator::Gt => new_binary_expr(col("end_time"), *op, *right.clone()),
@@ -141,16 +148,16 @@ fn rewrite_and_combine_filters(filters: &[Expr]) -> Option<Expr> {
         .collect();
 
     // Combine the rewritten filters into an expression.
-    combine_filters(&rewritten_filters)
+    utils::conjunction(rewritten_filters)
 }
 
 /// Create a [`Expr::BinaryExpr`].
 fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
-    Expr::BinaryExpr {
+    Expr::BinaryExpr(BinaryExpr {
         left: Box::new(left),
         op,
         right: Box::new(right),
-    }
+    })
 }
 
 /// Create a [`FilterExec`]. [`None`] is returned if `predicate` is
@@ -263,6 +270,7 @@ impl TableProvider for ModelTable {
             projection: None,
             limit,
             table_partition_cols: vec!["storage_engine_key".to_owned()],
+            config_options: self.config_options.clone(),
         };
 
         let predicate = rewrite_and_combine_filters(filters);
@@ -592,8 +600,8 @@ mod tests {
     use super::*;
 
     use datafusion::arrow::datatypes::DataType;
-    use datafusion::logical_plan::lit;
     use datafusion::prelude::Expr;
+    use datafusion_expr::lit;
 
     use crate::metadata::test_util;
 
@@ -636,7 +644,7 @@ mod tests {
         let filters = new_timestamp_filters(Operator::Eq);
         let predicate = rewrite_and_combine_filters(&filters).unwrap();
 
-        if let Expr::BinaryExpr { left, op, right } = predicate {
+        if let Expr::BinaryExpr(BinaryExpr { left, op, right }) = predicate {
             assert_timestamp_expr(*left, "start_time", Operator::LtEq);
             assert_eq!(op, Operator::And);
             assert_timestamp_expr(*right, "end_time", Operator::GtEq);
@@ -650,7 +658,7 @@ mod tests {
     }
 
     fn assert_timestamp_expr(expr: Expr, column: &str, operator: Operator) {
-        if let Expr::BinaryExpr { left, op, right } = expr {
+        if let Expr::BinaryExpr(BinaryExpr { left, op, right }) = expr {
             assert_eq!(*left, col(column));
             assert_eq!(op, operator);
             assert_eq!(*right, lit(37));
@@ -699,6 +707,7 @@ mod tests {
             projection: None,
             limit: None,
             table_partition_cols: vec![],
+            config_options: Arc::new(RwLock::new(ConfigOptions::new())),
         };
         Arc::new(ParquetExec::new(file_scan_config, None, None))
     }
