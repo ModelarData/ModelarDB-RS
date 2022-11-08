@@ -73,7 +73,8 @@ fn main() -> Result<(), String> {
         fs::create_dir_all(data_folder_path.as_path())
             .map_err(|error| format!("Unable to create {}: {}", &data_folder, error))?;
 
-        // Create a tokio runtime for executing asynchronous tasks.
+        // Create a Tokio runtime for executing asynchronous tasks. The runtime is not part of the
+        // context to make it easier to pass the runtime to components in the context.
         let runtime = Arc::new(Runtime::new()
             .map_err(|error| format!("Unable to create a Tokio Runtime: {}", error))?);
 
