@@ -232,8 +232,7 @@ impl TableProvider for ModelTable {
         // Request the matching files from the storage engine.
         let mut key_object_metas = {
             // TODO: make the storage engine support multiple parallel readers.
-            // unwrap() is safe as read() only fails if the RwLock is poisoned.
-            let mut storage_engines = self.context.storage_engine.write().unwrap();
+            let mut storage_engines = self.context.storage_engine.write();
 
             // unwrap() is safe to use as get_compressed_files() only fails if a
             // non-existing hash is passed or if end time is before start time.

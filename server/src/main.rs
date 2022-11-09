@@ -30,10 +30,11 @@ mod types;
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
+use parking_lot::RwLock;
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -75,8 +76,10 @@ fn main() -> Result<(), String> {
 
         // Create a Tokio runtime for executing asynchronous tasks. The runtime is not part of the
         // context to make it easier to pass the runtime to components in the context.
-        let runtime = Arc::new(Runtime::new()
-            .map_err(|error| format!("Unable to create a Tokio Runtime: {}", error))?);
+        let runtime = Arc::new(
+            Runtime::new()
+                .map_err(|error| format!("Unable to create a Tokio Runtime: {}", error))?,
+        );
 
         // Create Context components.
         let metadata_manager = MetadataManager::try_new(&data_folder_path)
@@ -110,7 +113,8 @@ fn main() -> Result<(), String> {
         setup_ctrl_c_handler(&context, &runtime);
 
         // Start Interface.
-        remote::start_arrow_flight_server(context, &runtime, 9999).map_err(|error| error.to_string())?
+        remote::start_arrow_flight_server(context, &runtime, 9999)
+            .map_err(|error| error.to_string())?
     } else {
         // The errors are consciously ignored as the program is terminating.
         let binary_path = std::env::current_exe().unwrap();
@@ -144,7 +148,7 @@ fn setup_ctrl_c_handler(context: &Arc<Context>, runtime: &Arc<Runtime>) {
         // Errors are consciously ignored as the program should terminate if the
         // handler cannot be registered as buffers otherwise cannot be flushed.
         tokio::signal::ctrl_c().await.unwrap();
-        ctrl_c_context.storage_engine.write().unwrap().flush();
+        ctrl_c_context.storage_engine.write().flush();
         std::process::exit(0)
     });
 }
