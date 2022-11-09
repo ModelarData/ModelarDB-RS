@@ -301,7 +301,7 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         let context = self.context.clone();
 
-        context.storage_engine.write().unwrap().flush();
+        context.storage_engine.write().flush();
 
         Ok(())
     }
@@ -494,10 +494,6 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        if action.r#type == "Flush"{
-            self.flush_data_to_disk().expect("Failed to flush data to disk.");
-        }
-
         if action.r#type == "CommandStatementUpdate" {
             // Read the SQL from the action.
             let sql = str::from_utf8(&action.body)
@@ -525,6 +521,11 @@ impl FlightService for FlightServiceHandler {
             };
 
             // Confirm the table was created.
+            Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "Flush"{
+            self.flush_data_to_disk().expect("Failed to flush data to disk.");
+
+            // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
         } else {
             Err(Status::unimplemented("Action not implemented."))

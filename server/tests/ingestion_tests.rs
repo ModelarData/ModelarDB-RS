@@ -2,9 +2,10 @@ use std::borrow::Borrow;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::error::Error;
-use std::{env, io};
+use std::{env, io, time};
 
 use std::fs;
+use std::fs::canonicalize;
 use std::io::{BufRead, Write};
 use std::path;
 use std::path::Path;
@@ -34,12 +35,11 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::{array, ipc};
 use futures::executor::block_on;
 use futures::stream;
-use libc::time;
 use log::{error, Record};
 use prost::Message;
 use rand::Rng;
 use rusqlite::ffi::sqlite3_uint64;
-use sqlparser::ast::DataType::{Time};
+use sqlparser::ast::DataType::Time;
 use sqlparser::test_utils::table;
 use tokio::io::BufReader;
 use tokio::runtime::Runtime;
@@ -52,13 +52,14 @@ pub type TimeSeriesId = std::primitive::u64;
 pub type ArrowTimeSeriesId = datafusion::arrow::datatypes::UInt64Type;
 pub type ArrowTimestamp = TimestampMillisecondType;
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
-
+use serial_test::serial;
 
 #[test]
+#[serial]
 fn test_can_create_table() {
-    //create_directory();
+    create_directory();
 
-    //let mut flight_server = start_arrow_flight_server();
+    let mut flight_server = start_arrow_flight_server();
 
     let table_name = "data".to_string();
 
@@ -72,22 +73,24 @@ fn test_can_create_table() {
                     assert_eq!(tables[0], table_name)
                 }
             }
-            Err(message) => eprintln!("error: cannot connect to {} due to a {}", address, message),
+            Err(message) => {
+                eprintln!("error: cannot connect to {} due to a {}", address, message);
+                assert!(false);
+            }
         }
     } else {
-        eprintln!("error: unable to initialize run-time");
+        panic!("error: Unable to initialize run-time");
     }
 
-    //flight_server.kill().expect("Failed to kill server");
-
-    //remove_directory();
+    remove_directory();
 }
 
 #[test]
+#[serial]
 fn test_can_create_model_table() {
-    //create_directory();
+    create_directory();
 
-    //let mut flight_server = start_arrow_flight_server();
+    let mut flight_server = start_arrow_flight_server();
 
     let table_name = "data".to_string();
 
@@ -101,24 +104,28 @@ fn test_can_create_model_table() {
                     assert_eq!(tables[0], table_name)
                 }
             }
-            Err(message) => eprintln!("error: cannot connect to {} due to a {}", address, message),
+            Err(message) => {
+                eprintln!("error: cannot connect to {} due to a {}", address, message);
+                assert!(false);
+            }
         }
     } else {
-        eprintln!("error: unable to initialize run-time");
+        panic!("error: Unable to initialize run-time");
     }
 
-    //flight_server.kill().expect("Failed to kill server");
-
-    //remove_directory();
+    remove_directory();
 }
 
 #[test]
+#[serial]
 fn test_can_ingest_message_with_tags() {
-    //create_directory();
+    create_directory();
+
+    let mut flight_server;
 
     let tag = "location".to_string();
 
-    let (message, schema) = generate_random_message(Some(tag.clone()));
+    let message = generate_random_message(Some(tag.clone()));
 
     let options = ipc::writer::IpcWriteOptions::default();
 
@@ -133,13 +140,10 @@ fn test_can_ingest_message_with_tags() {
         data_body: vec![],
     }];
 
-    let (_, flight_data) = flight_data_from_arrow_batch(&message, &options);
-
-    flight_data_vec.push(flight_data);
-
-    //let mut flight_server = start_arrow_flight_server();
+    flight_data_vec.push((flight_data_from_arrow_batch(&message, &options)).1);
 
     if let Ok(rt) = Runtime::new() {
+        flight_server = start_arrow_flight_server();
         let address = ("127.0.0.1".to_string());
         match create_flight_service_client(&rt, &address, 9999) {
             Ok(mut fsc) => {
@@ -152,27 +156,29 @@ fn test_can_ingest_message_with_tags() {
                 let query = execute_query(&rt, &mut fsc, "SELECT * FROM data")
                     .expect("Could not execute query.");
 
-                let reconstructed_recordbatch = reconstruct_recordbatch(message.clone(), query);
+                let reconstructed_recordbatch =
+                    reconstruct_recordbatch(message.clone(), query[0].clone());
 
                 assert_eq!(message, reconstructed_recordbatch);
             }
-            Err(message) => eprintln!("error: cannot connect to {} due to a {}", address, message),
+            Err(message) => {
+                eprintln!("error: cannot connect to {} due to a {}", address, message);
+                assert!(false);
+            }
         }
     } else {
-        eprintln!("error: unable to initialize run-time");
+        panic!("error: unable to initialize run-time");
     }
 
-    //flight_server.kill().expect("Failed to kill server");
-
-    //remove_directory();
+    remove_directory();
 }
 
-
 #[test]
+#[serial]
 fn test_can_ingest_message_without_tags() {
-    //create_directory();
+    create_directory();
 
-    let (message, schema) = generate_random_message(None);
+    let message = generate_random_message(None);
 
     let options = ipc::writer::IpcWriteOptions::default();
 
@@ -187,11 +193,9 @@ fn test_can_ingest_message_without_tags() {
         data_body: vec![],
     }];
 
-    let (_, flight_data) = flight_data_from_arrow_batch(&message, &options);
+    flight_data_vec.push((flight_data_from_arrow_batch(&message, &options)).1);
 
-    flight_data_vec.push(flight_data);
-
-    //let mut flight_server = start_arrow_flight_server();
+    let mut flight_server = start_arrow_flight_server();
 
     if let Ok(rt) = Runtime::new() {
         let address = ("127.0.0.1".to_string());
@@ -207,30 +211,28 @@ fn test_can_ingest_message_without_tags() {
                 let query = execute_query(&rt, &mut fsc, "SELECT * FROM data")
                     .expect("Could not execute query.");
 
-                let TimestampValue = query[0]
-                    .column(1)
-                    .as_any()
-                    .downcast_ref::<TimestampMillisecondArray>()
-                    .expect("Cannot downcast value.");
+                let reconstructed_recordbatch =
+                    reconstruct_recordbatch(message.clone(), query[0].clone());
 
-                let Value = query[0]
-                    .column(2)
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .expect("Cannot downcast value.");
+                assert_eq!(message, reconstructed_recordbatch);
             }
-            Err(message) => eprintln!("error: cannot connect to {} due to a {}", address, message),
+            Err(message) => {
+                eprintln!("error: cannot connect to {} due to a {}", address, message);
+                assert!(false);
+            }
         }
     } else {
         eprintln!("error: unable to initialize run-time");
+        assert!(false);
     }
 
-    //remove_directory();
+    remove_directory();
 }
 
 #[test]
+#[serial]
 fn test_can_ingest_multiple_time_series_with_different_tags() {
-    //create_directory();
+    create_directory();
 
     let options = ipc::writer::IpcWriteOptions::default();
 
@@ -255,17 +257,19 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
 
     let mut record_batch_vec = vec![];
 
-    for tag in tags {
-        for _ in 1..5 {
-            let (message, schema) = generate_random_message(Some(tag.clone()));
+    for tag in tags.clone() {
+        record_batch_vec.push(generate_random_message(Some(tag.clone())));
 
-            record_batch_vec.push(message.clone());
-
-            flight_data_vec.push(flight_data_from_arrow_batch(&message, &options).1);
-        }
+        flight_data_vec.push(
+            flight_data_from_arrow_batch(
+                &record_batch_vec[tags.iter().position(|p| p == &tag).unwrap()],
+                &options,
+            )
+            .1,
+        );
     }
 
-    //let mut flight_server = start_arrow_flight_server();
+    let mut flight_server = start_arrow_flight_server();
 
     if let Ok(rt) = Runtime::new() {
         let address = ("127.0.0.1".to_string());
@@ -277,28 +281,54 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
 
                 let _ = flush_data_to_disk(&rt, &mut fsc);
 
-                let query = execute_query(&rt, &mut fsc, "SELECT * FROM data").expect("Could not execute query.");
+                let query = execute_query(&rt, &mut fsc, "SELECT * FROM data")
+                    .expect("Could not execute query.");
 
-                for record_batch in query{
+                for record_batch in query.clone() {
+                    for message in record_batch_vec.clone() {
+                        let message_timestamp_value = message
+                            .clone()
+                            .column(0)
+                            .as_any()
+                            .downcast_ref::<TimestampMillisecondArray>()
+                            .expect("Cannot downcast value.")
+                            .value(0);
+
+                        let batch_timestamp_value = record_batch
+                            .clone()
+                            .column(1)
+                            .as_any()
+                            .downcast_ref::<TimestampMillisecondArray>()
+                            .expect("Cannot downcast value.")
+                            .value(0);
+
+                        if message_timestamp_value == batch_timestamp_value {
+                            let reconstructed_recordbatch =
+                                reconstruct_recordbatch(message.clone(), record_batch.clone());
+                            assert_eq!(message, reconstructed_recordbatch);
+                        }
+                    }
                 }
-
-
-                //assert_eq!(result, record_batch_vec);
             }
-            Err(message) => eprintln!("error: cannot connect to {} due to a {}", address, message),
+            Err(message) => {
+                eprintln!("error: cannot connect to {} due to a {}", address, message);
+                assert!(false);
+            }
         }
     } else {
         eprintln!("error: unable to initialize run-time");
+        assert!(false);
     }
 
-    //remove_directory();
+    remove_directory();
 }
 
 #[test]
+#[serial]
 fn test_cannot_ingest_invalid_message() {
     create_directory();
 
-    let (message, _schema) = generate_random_message(None);
+    let message = generate_random_message(None);
 
     let options = ipc::writer::IpcWriteOptions::default();
 
@@ -313,9 +343,7 @@ fn test_cannot_ingest_invalid_message() {
         data_body: vec![],
     }];
 
-    let (_, flight_data) = flight_data_from_arrow_batch(&message, &options);
-
-    flight_data_vec.push(flight_data);
+    flight_data_vec.push((flight_data_from_arrow_batch(&message, &options)).1);
 
     let mut flight_server = start_arrow_flight_server();
 
@@ -334,10 +362,14 @@ fn test_cannot_ingest_invalid_message() {
 
                 assert!(query.is_empty());
             }
-            Err(message) => eprintln!("error: cannot connect to {} due to a {}", address, message),
+            Err(message) => {
+                eprintln!("error: cannot connect to {} due to a {}", address, message);
+                assert!(false);
+            }
         }
     } else {
         eprintln!("error: unable to initialize run-time");
+        assert!(false);
     }
 
     remove_directory();
@@ -345,23 +377,19 @@ fn test_cannot_ingest_invalid_message() {
 
 /// Create a directory to be used by the Arrow Flight server.
 fn create_directory() {
-    if !Path::new("tests/data")
-        .exists()
-    {
+    if !Path::new("tests/data").exists() {
         fs::create_dir("tests/data").expect("Could not create directory.");
     } else {
-        return
+        return;
     }
 }
 
 /// Remove the created directory used by the Arrow Flight Server.
 fn remove_directory() {
-    if Path::new("tests/data")
-        .exists()
-    {
+    if Path::new("tests/data").exists() {
         fs::remove_dir_all("tests/data").expect("Could not remove directory.");
     } else {
-        return
+        return;
     }
 }
 
@@ -394,12 +422,17 @@ fn start_binary(binary: &str) -> process::Command {
 }
 
 /// Start a new Arrow Flight Server to simulate a server for the integration tests.
-fn start_arrow_flight_server() -> process::Child {
+fn start_arrow_flight_server() -> Child {
+
+    let absolute_path = canonicalize("tests/data").expect("Could not retrieve absolute path of data folder").into_os_string();
+
     let output = start_binary("modelardbd")
-        .arg("tests/data")
+        .arg(absolute_path)
         .stdout(process::Stdio::piped())
         .spawn()
         .expect("Failed to start Arrow Flight Server");
+
+    std::thread::sleep(time::Duration::from_secs(1));
 
     return output;
 }
@@ -434,7 +467,7 @@ fn create_model_table(
     };
 
     rt.block_on(async {
-        let mut _result = client.do_action(tonic::Request::new(action)).await;
+        let mut _result = client.do_action(Request::new(action)).await;
 
         Ok(())
     })
@@ -456,7 +489,7 @@ fn create_model_table_without_tags(
     };
 
     rt.block_on(async {
-        let mut _result = client.do_action(tonic::Request::new(action)).await;
+        let mut _result = client.do_action(Request::new(action)).await;
 
         Ok(())
     })
@@ -478,15 +511,14 @@ fn create_table(
     };
 
     rt.block_on(async {
-        let mut _result = client.do_action(tonic::Request::new(action)).await;
+        let mut _result = client.do_action(Request::new(action)).await;
 
         Ok(())
     })
 }
 
 /// Generate a [`RecordBatch`] with the current timestamp, a random value and an optional tag.
-fn generate_random_message(tag: Option<String>) -> (RecordBatch, Schema) {
-
+fn generate_random_message(tag: Option<String>) -> (RecordBatch) {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("Can't generate the time.")
@@ -500,17 +532,14 @@ fn generate_random_message(tag: Option<String>) -> (RecordBatch, Schema) {
             Field::new("value", DataType::Float32, false),
         ]);
 
-        (
-            RecordBatch::try_new(
-                Arc::new(message_schema.clone()),
-                vec![
-                    Arc::new(TimestampMillisecondArray::from(vec![timestamp])),
-                    Arc::new(Float32Array::from(vec![value])),
-                ],
-            )
-            .expect("Could not generate RecordBatch."),
-            message_schema
+        (RecordBatch::try_new(
+            Arc::new(message_schema.clone()),
+            vec![
+                Arc::new(TimestampMillisecondArray::from(vec![timestamp])),
+                Arc::new(Float32Array::from(vec![value])),
+            ],
         )
+        .expect("Could not generate RecordBatch."))
     } else {
         let message_schema = Schema::new(vec![
             Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
@@ -518,18 +547,15 @@ fn generate_random_message(tag: Option<String>) -> (RecordBatch, Schema) {
             Field::new("tag", DataType::Utf8, false),
         ]);
 
-        (
-            RecordBatch::try_new(
-                Arc::new(message_schema.clone()),
-                vec![
-                    Arc::new(TimestampMillisecondArray::from(vec![timestamp])),
-                    Arc::new(Float32Array::from(vec![value])),
-                    Arc::new(StringArray::from(vec![tag.unwrap()])),
-                ],
-            )
-            .expect("Could not generate RecordBatch."),
-            message_schema
+        (RecordBatch::try_new(
+            Arc::new(message_schema.clone()),
+            vec![
+                Arc::new(TimestampMillisecondArray::from(vec![timestamp])),
+                Arc::new(Float32Array::from(vec![value])),
+                Arc::new(StringArray::from(vec![tag.unwrap()])),
+            ],
         )
+        .expect("Could not generate RecordBatch."))
     }
 }
 
@@ -620,29 +646,33 @@ fn retrieve_table_names(
     })
 }
 
-
 /// Reconstructs the record_batch based on the queried RecordBatch and the tag and schema from the generated RecordBatch.
-fn reconstruct_recordbatch(message: RecordBatch, query: Vec<RecordBatch>) -> RecordBatch {
+fn reconstruct_recordbatch(original: RecordBatch, query: RecordBatch) -> RecordBatch {
+    let schema = original.schema();
 
-    let tag = message
-        .column(2)
-        .as_any()
-        .downcast_ref::<StringArray>()
-        .unwrap_or(&StringArray::from(vec![""]))
-        .value(0)
-        .to_string();
+    let tag;
 
-    let schema= message.schema();
+    if query.num_columns() == 3 {
+        tag = original
+            .column(2)
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap_or(&StringArray::from(vec![""]))
+            .value(0)
+            .to_string();
+    } else {
+        tag = "".to_string();
+    }
 
-    if tag == ""{
-        let timestamp_value = query[0]
+    if tag == "" {
+        let timestamp_value = query
             .column(1)
             .as_any()
             .downcast_ref::<TimestampMillisecondArray>()
             .expect("Cannot downcast value.")
             .value(0);
 
-        let value = query[0]
+        let value = query
             .column(2)
             .as_any()
             .downcast_ref::<Float32Array>()
@@ -655,18 +685,18 @@ fn reconstruct_recordbatch(message: RecordBatch, query: Vec<RecordBatch>) -> Rec
                 Arc::new(TimestampMillisecondArray::from(vec![timestamp_value])),
                 Arc::new(Float32Array::from(vec![value])),
             ],
-        ).expect("Could not create a Record Batch from query.");
+        )
+        .expect("Could not create a Record Batch from query.");
         reconstructed_recordbatch
-    }
-    else {
-        let timestamp_value = query[0]
+    } else {
+        let timestamp_value = query
             .column(1)
             .as_any()
             .downcast_ref::<TimestampMillisecondArray>()
             .expect("Cannot downcast value.")
             .value(0);
 
-        let value = query[0]
+        let value = query
             .column(2)
             .as_any()
             .downcast_ref::<Float32Array>()
@@ -680,7 +710,8 @@ fn reconstruct_recordbatch(message: RecordBatch, query: Vec<RecordBatch>) -> Rec
                 Arc::new(Float32Array::from(vec![value])),
                 Arc::new(StringArray::from(vec![tag])),
             ],
-        ).expect("Could not create a Record Batch from query.");
+        )
+        .expect("Could not create a Record Batch from query.");
         reconstructed_recordbatch
     }
 }
