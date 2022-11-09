@@ -232,11 +232,11 @@ impl TableProvider for ModelTable {
         // Request the matching files from the storage engine.
         let mut key_object_metas = {
             // TODO: make the storage engine support multiple parallel readers.
-            let mut storage_engines = self.context.storage_engine.write();
+            let mut storage_engine = self.context.storage_engine.write();
 
             // unwrap() is safe to use as get_compressed_files() only fails if a
             // non-existing hash is passed or if end time is before start time.
-            storage_engines
+            storage_engine
                 .get_compressed_files(&keys, None, None)
                 .unwrap()
         };
