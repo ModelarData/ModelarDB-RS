@@ -39,6 +39,7 @@ use datafusion::arrow::{
 use datafusion::catalog::schema::SchemaProvider;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
+use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
@@ -52,7 +53,11 @@ use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
-pub fn start_arrow_flight_server(context: Arc<Context>, port: i16) -> Result<(), Box<dyn Error>> {
+pub fn start_arrow_flight_server(
+    context: Arc<Context>,
+    runtime: &Arc<Runtime>,
+    port: i16,
+) -> Result<(), Box<dyn Error>> {
     let localhost_with_port = "0.0.0.0:".to_owned() + &port.to_string();
     let localhost_with_port: SocketAddr = localhost_with_port.parse()?;
     let handler = FlightServiceHandler {
@@ -61,8 +66,7 @@ pub fn start_arrow_flight_server(context: Arc<Context>, port: i16) -> Result<(),
     };
     let flight_service_server = FlightServiceServer::new(handler);
     info!("Starting Apache Arrow Flight on {}.", localhost_with_port);
-    context
-        .runtime
+    runtime
         .block_on(async {
             Server::builder()
                 .add_service(flight_service_server)
