@@ -28,6 +28,7 @@ use std::fs;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use chrono::DateTime;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -36,13 +37,16 @@ use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Compression;
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
+use object_store::local::LocalFileSystem;
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
+use tokio::runtime::Runtime;
 
 use crate::errors::ModelarDbError;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
+use crate::storage::data_transfer::DataTransfer;
 use crate::storage::segment::FinishedSegment;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::types::Timestamp;
@@ -68,10 +72,13 @@ pub struct StorageEngine {
     uncompressed_data_manager: UncompressedDataManager,
     /// Manager that contains and controls all compressed data.
     compressed_data_manager: CompressedDataManager,
+    /// Component to manage the quantity of saved compressed data and transfer the data when necessary.
+    data_transfer: DataTransfer,
 }
 
 impl StorageEngine {
     pub fn new(
+        runtime : Arc<Runtime>,
         data_folder_path: PathBuf,
         metadata_manager: MetadataManager,
         compress_directly: bool,
@@ -85,15 +92,22 @@ impl StorageEngine {
         );
 
         let compressed_data_manager = CompressedDataManager::new(
-            data_folder_path,
+            data_folder_path.clone(),
             metadata_manager.compressed_reserved_memory_in_bytes,
             metadata_manager.get_compressed_schema(),
         );
+
+        // TODO: Maybe change the unwrap here.
+        let local_fs = LocalFileSystem::new();
+        let target_object_store = Arc::new(local_fs);
+        let data_transfer = DataTransfer::try_new(runtime, data_folder_path,
+                                                  target_object_store, 64).unwrap();
 
         Self {
             metadata_manager,
             uncompressed_data_manager,
             compressed_data_manager,
+            data_transfer,
         }
     }
 

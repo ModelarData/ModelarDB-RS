@@ -23,12 +23,17 @@ use std::io::Error as IOError;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use object_store::ObjectStore;
+use object_store::{ObjectStore};
+use object_store::local::LocalFileSystem;
+use tokio::runtime::Runtime;
+
 use crate::StorageEngine;
 
 pub(super) struct DataTransfer {
-    /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
-    data_folder_path: PathBuf,
+    /// Tokio runtime for executing asynchronous tasks.
+    runtime: Arc<Runtime>,
+    /// The object store containing all compressed data managed by the [`StorageEngine`].
+    data_folder_object_store: Arc<dyn ObjectStore>,
     /// The object store that the data should be transferred to.
     target_object_store: Arc<dyn ObjectStore>,
     /// Map from keys to the combined size in bytes of the compressed files saved under the key.
@@ -42,10 +47,16 @@ impl DataTransfer {
     /// existing in `data_folder_path`. If `data_folder_path` or a path within `data_folder_path`
     /// could not be read, return [`IOError`].
     pub(super) fn try_new(
+        runtime: Arc<Runtime>,
         data_folder_path: PathBuf,
         target_object_store: Arc<dyn ObjectStore>,
         transfer_batch_size_in_bytes: usize,
     ) -> Result<Self, IOError> {
+        // TODO: When the storage engine is changed to use object store for everything, receive
+        //       the object store directly through the parameters instead.
+        let local_fs = LocalFileSystem::new_with_prefix(data_folder_path.clone())?;
+        let data_folder_object_store = Arc::new(local_fs);
+
         // Parse through the data folder to retrieve already existing files that should be transferred.
         let dir = fs::read_dir(data_folder_path.clone())?;
 
@@ -67,7 +78,8 @@ impl DataTransfer {
         }).into_iter().collect();
 
         Ok(Self {
-            data_folder_path,
+            runtime,
+            data_folder_object_store,
             target_object_store,
             compressed_files,
             transfer_batch_size_in_bytes,
@@ -139,13 +151,14 @@ mod tests {
 
     use object_store::local::LocalFileSystem;
     use tempfile::TempDir;
+    use tokio::runtime::Runtime;
 
     use crate::storage::data_transfer::DataTransfer;
     use crate::storage::test_util;
     use crate::StorageEngine;
 
     const KEY: u64 = 1668574317311628292;
-    const COMPRESSED_FILE_SIZE: usize = 2503;
+    const COMPRESSED_FILE_SIZE: usize = 2576;
 
     #[test]
     fn test_include_existing_files_on_start_up() {
@@ -157,9 +170,7 @@ mod tests {
     }
 
     #[test]
-    fn test_transfer_if_reaching_batch_size_on_start_up() {
-
-    }
+    fn test_transfer_if_reaching_batch_size_on_start_up() {}
 
     #[test]
     fn test_file_does_not_contain_compressed_files() {
@@ -262,14 +273,10 @@ mod tests {
     }
 
     #[test]
-    fn test_flush_compressed_files() {
-
-    }
+    fn test_flush_compressed_files() {}
 
     #[test]
-    fn test_transfer_if_reaching_batch_size_when_adding() {
-
-    }
+    fn test_transfer_if_reaching_batch_size_when_adding() {}
 
     #[test]
     fn test_transfer_single_file() {
@@ -284,12 +291,14 @@ mod tests {
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
     fn create_data_transfer_component(data_folder_path: &Path) -> (TempDir, DataTransfer) {
         let target_dir = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(Runtime::new().unwrap());
 
         // Create the target object store.
         let local_fs = LocalFileSystem::new_with_prefix(target_dir.path())
             .expect("Error creating local file system.");
         let target_object_store = Arc::new(local_fs);
 
-        (target_dir, DataTransfer::try_new(data_folder_path.to_path_buf(), target_object_store, 64).unwrap())
+        (target_dir, DataTransfer::try_new(runtime, data_folder_path.to_path_buf(),
+                                           target_object_store, 64).unwrap())
     }
 }
