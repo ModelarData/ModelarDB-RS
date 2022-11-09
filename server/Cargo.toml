@@ -12,7 +12,7 @@ datafusion-optimizer = "14.0.0"
 datafusion-expr = "14.0.0"
 datafusion-physical-expr = "14.0.0"
 datafusion-sql = "14.0.0"
-object_store = "0.5.1"
+object_store = { version = "0.5.1", features = ["aws"] }
 sqlparser = "0.26.0"
 
 # Log is a dependency so the compile time filters for log and tracing can be set to the same value
