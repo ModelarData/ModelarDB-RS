@@ -41,6 +41,7 @@ use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use datafusion::execution::options::ParquetReadOptions;
 use rusqlite::types::Type::Blob;
 use rusqlite::{params, Connection, Result, Row};
+use tokio::runtime::Runtime;
 use tracing::{error, info, warn};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
@@ -392,7 +393,11 @@ impl MetadataManager {
     /// Read the rows in the table_metadata table and use these to register
     /// tables in Apache Arrow DataFusion. If the metadata database could not be
     /// opened or the table could not be queried, return [`rusqlite::Error`].
-    pub fn register_tables(&self, context: &Arc<Context>) -> Result<(), rusqlite::Error> {
+    pub fn register_tables(
+        &self,
+        context: &Arc<Context>,
+        runtime: &Arc<Runtime>,
+    ) -> Result<(), rusqlite::Error> {
         let connection = Connection::open(&self.metadata_database_path)?;
 
         let mut select_statement = connection.prepare("SELECT table_name FROM table_metadata")?;
@@ -400,7 +405,7 @@ impl MetadataManager {
         let mut rows = select_statement.query(())?;
 
         while let Some(row) = rows.next()? {
-            if let Err(error) = self.register_table(row, &context) {
+            if let Err(error) = self.register_table(row, &context, &runtime) {
                 error!("Failed to register table due to: {}.", error);
             }
         }
@@ -411,7 +416,12 @@ impl MetadataManager {
     /// Use a row from the table_metadata table to register the table in Apache
     /// Arrow DataFusion. If the metadata database could not be opened or the
     /// table could not be queried, return [`Error`].
-    fn register_table(&self, row: &Row, context: &Arc<Context>) -> Result<(), Box<dyn Error>> {
+    fn register_table(
+        &self,
+        row: &Row,
+        context: &Arc<Context>,
+        runtime: &Arc<Runtime>,
+    ) -> Result<(), Box<dyn Error>> {
         let name = row.get::<usize, String>(0)?;
 
         // Compute the path to the folder containing data for the table.
@@ -421,7 +431,7 @@ impl MetadataManager {
             .ok_or_else(|| format!("Path for table is not UTF-8: '{}'", name))?;
 
         // Register table.
-        context.runtime.block_on(context.session.register_parquet(
+        runtime.block_on(context.session.register_parquet(
             &name,
             table_folder,
             ParquetReadOptions::default(),
@@ -966,6 +976,7 @@ mod tests {
 
         // Save a table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(Runtime::new().unwrap());
         let context = test_util::get_test_context(temp_dir.path());
 
         context
@@ -974,7 +985,7 @@ mod tests {
             .unwrap();
 
         // Register the table with Apache Arrow DataFusion.
-        context.metadata_manager.register_tables(&context).unwrap();
+        context.metadata_manager.register_tables(&context, &runtime).unwrap();
     }
 
     #[test]
@@ -1119,7 +1130,6 @@ pub mod test_util {
     use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
     use datafusion::execution::runtime_env::RuntimeEnv;
     use tempfile;
-    use tokio::runtime::Runtime;
 
     use crate::models::ErrorBound;
     use crate::storage::StorageEngine;
@@ -1128,7 +1138,6 @@ pub mod test_util {
     /// `get_test_metadata_manager()` and the data folder set to `path`.
     pub fn get_test_context(path: &Path) -> Arc<Context> {
         let metadata_manager = get_test_metadata_manager(path);
-        let runtime = Runtime::new().unwrap();
         let session = get_test_session_context();
         let storage_engine = RwLock::new(StorageEngine::new(
             path.to_owned(),
@@ -1138,7 +1147,6 @@ pub mod test_util {
 
         Arc::new(Context {
             metadata_manager,
-            runtime,
             session,
             storage_engine,
         })
