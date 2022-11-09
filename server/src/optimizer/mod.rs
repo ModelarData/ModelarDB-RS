@@ -20,13 +20,13 @@ use async_trait::async_trait;
 
 use datafusion::error::Result;
 use datafusion::execution::context::{QueryPlanner, SessionState};
-use datafusion::logical_plan::LogicalPlan;
 use datafusion::optimizer::optimizer::OptimizerRule;
 use datafusion::optimizer::OptimizerConfig;
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::planner::DefaultPhysicalPlanner;
 use datafusion::physical_plan::{ExecutionPlan, PhysicalPlanner};
 use datafusion::prelude::SessionConfig;
+use datafusion_expr::logical_plan::LogicalPlan;
 use tracing::debug;
 
 pub struct LogOptimizerRule {}
