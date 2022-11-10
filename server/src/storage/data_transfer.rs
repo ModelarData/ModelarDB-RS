@@ -23,9 +23,12 @@ use std::io::Error as IOError;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use object_store::{ObjectStore};
+use datafusion::arrow::compute;
+use datafusion::arrow::record_batch::RecordBatch;
+use object_store::{GetResult, ObjectStore};
 use object_store::local::LocalFileSystem;
 use tokio::runtime::Runtime;
+use futures::StreamExt;
 
 use crate::StorageEngine;
 
@@ -107,8 +110,32 @@ impl DataTransfer {
 
     /// Transfer the data corresponding to `key` to the blob store. Once successfully transferred,
     /// delete the data from local storage.
-    fn transfer_data(&mut self, key: &u64) {
-        // TODO: Read all files that correspond to the key.
+    pub fn transfer_data(&mut self, key: &u64) {
+        // Read all files that correspond to the key.
+        let file_paths = self.runtime.block_on(async {
+            let path: object_store::path::Path = format!("{}/compressed", key).try_into().unwrap();
+            let list_stream = self.data_folder_object_store
+                .list(Some(&path)).await.expect("Error listing files");
+
+            list_stream.filter_map(|maybe_meta| async {
+                if let Ok(meta) = maybe_meta {
+                    if let GetResult::File(_, path) = self.data_folder_object_store
+                        .get(&meta.location).await.unwrap() {
+                        return Some(path);
+                    }
+                }
+
+                None
+            }).collect::<Vec<_>>().await.into_iter()
+        });
+
+        // Combine the Apache Parquet files into a single RecordBatch.
+        let record_batches = file_paths.filter_map(|file_path| {
+            StorageEngine::read_entire_apache_parquet_file(file_path.as_path()).ok()
+        }).collect::<Vec<RecordBatch>>();
+
+        let combined_data = compute::concat_batches(&record_batches[0].schema(), &record_batches).unwrap();
+        println!("{:?}", combined_data);
         // TODO: Transfer the read data to the blob store.
         // TODO: Delete the transferred files from local storage.
 
