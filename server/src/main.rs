@@ -34,9 +34,9 @@ use std::sync::Arc;
 
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
-use object_store::{aws::AmazonS3Builder, local::LocalFileSystem, ObjectStore};
-use parking_lot::RwLock;
+use object_store::{aws::AmazonS3Builder, local::LocalFileSystem, path::Path, ObjectStore};
 use tokio::runtime::Runtime;
+use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::metadata::MetadataManager;
@@ -45,6 +45,19 @@ use crate::storage::StorageEngine;
 
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
+
+/// Folders for storing metadata and Apache Parquet files.
+pub struct DataFolders {
+    /// Folder for storing metadata and Apache Parquet files on the local file
+    /// system.
+    pub local_data_folder: PathBuf, // PathBuf to support complex operations.
+    /// Folder for storing Apache Parquet files in a remote object store.
+    pub remote_data_folder: Option<Arc<dyn ObjectStore>>,
+    /// Folder from which Apache Parquet files will be read during query
+    /// execution. It is equivalent to `local_data_folder` when deployed on the
+    /// edge and `remote_data_folder` when deployed in the cloud.
+    pub query_data_folder: Arc<dyn ObjectStore>,
+}
 
 /// Provides access to the system's configuration and components.
 pub struct Context {
@@ -56,52 +69,65 @@ pub struct Context {
     pub storage_engine: RwLock<StorageEngine>,
 }
 
-/// Setup tracing, construct a `Context`, initialize tables and model tables in
-/// the path given by the first command line argument, initialize a CTRL+C
-/// handler that flushes the data in memory to disk, and start the Apache Arrow
-/// Flight interface. Returns [`Error`] formatted as a [`String`] if metadata
-/// cannot be read or the Apache Arrow Flight interface cannot be started.
+/// Setup tracing that prints to stdout, parse the command line arguments to a
+/// [`DataFolders`], construct a [`Context`] with the systems components,
+/// initialize the tables and model tables in the metadata database, initialize
+/// a CTRL+C handler that flushes the data in memory to disk, and start the
+/// Apache Arrow Flight interface. Returns [`Error`] formatted as a [`String`]
+/// if the command line arguments cannot be parsed, the metadata cannot be read
+/// from the database or the Apache Arrow Flight interface cannot be started.
 fn main() -> Result<(), String> {
-    // A layer that logs events to stdout.
+    // Initialize a tracing layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();
     tracing_subscriber::registry().with(stdout_log).init();
 
     let mut args = std::env::args();
-    args.next(); // Skip executable.
+    args.next(); // Skip the executable.
 
     // Collect at most the maximum number of command line arguments plus one.
     // The plus one argument is collected to trigger the default pattern in
     // parse_command_line_arguments() if too many arguments are passed without
     // collecting more command line arguments than required for that pattern.
-    let arguments_required: Vec<String> = args.by_ref().take(4).collect();
-    let arguments_required: Vec<&str> = arguments_required.iter().map(|arg| arg.as_str()).collect();
-    let (local_data_folder, maybe_blob_store_data_folder, query_data_folder) =
-        parse_command_line_arguments(&arguments_required)?;
-
-    // Ensure the local data folder exists before making it a LocalFileSystem.
-    let data_folder_path = PathBuf::from(local_data_folder);
-    fs::create_dir_all(data_folder_path.as_path())
-        .map_err(|error| format!("Unable to create {}: {}", local_data_folder, error))?;
-    let local_data_folder = command_line_argument_to_local_folder(local_data_folder);
+    let arguments: Vec<String> = args.by_ref().take(4).collect();
+    let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
+    let data_folders = parse_command_line_arguments(&arguments)?;
 
     // Create a Tokio runtime for executing asynchronous tasks. The runtime is
-    // not part of the context to make it easier to pass the runtime to the
-    // components in the context.
+    // not in the context so it can be passed to the components in the context.
     let runtime = Arc::new(
         Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {}", error))?,
     );
 
-    // Create Context components.
-    let metadata_manager = MetadataManager::try_new(&data_folder_path)
+    // Ensure the local data folder can be accessed.
+    fs::create_dir_all(&data_folders.local_data_folder).map_err(|error| {
+        format!(
+            "Unable to create {}: {}",
+            data_folders.local_data_folder.to_string_lossy(),
+            error
+        )
+    })?;
+
+    // Ensure the remote data folder can be accessed.
+    if let Some(remote_data_folder) = data_folders.remote_data_folder {
+        runtime.block_on(async {
+            remote_data_folder
+                .get(&Path::from(""))
+                .await
+                .map_err(|error| error.to_string())
+        })?;
+    }
+
+    // Create the components for the Context.
+    let metadata_manager = MetadataManager::try_new(&data_folders.local_data_folder)
         .map_err(|error| format!("Unable to create a MetadataManager: {}", error))?;
-    let session = create_session_context();
+    let session = create_session_context(data_folders.query_data_folder);
     let storage_engine = RwLock::new(StorageEngine::new(
-        data_folder_path.clone(),
+        data_folders.local_data_folder,
         metadata_manager.clone(),
         true,
     ));
 
-    // Create Context.
+    // Create the Context.
     let context = Arc::new(Context {
         metadata_manager,
         session,
@@ -122,85 +148,92 @@ fn main() -> Result<(), String> {
     // Setup CTRL+C handler.
     setup_ctrl_c_handler(&context, &runtime);
 
-    // Start Interface.
+    // Start the Apache Arrow Flight interface.
     remote::start_arrow_flight_server(context, &runtime, 9999)
         .map_err(|error| error.to_string())?;
 
     Ok(())
 }
 
-/// Parse the command lines arguments into a triple containing the data folder
-/// to use on the local file system, the data folder to use on blob store if it
-/// was specified, and the data folder to use when executing queries. If the
-/// necessary command line arguments are not provided, too many arguments are
-/// provided, or if the provided arguments are malformed, [`None`] is returned.
-fn parse_command_line_arguments<'a>(
-    arguments: &'a [&'a str],
-) -> Result<(&'a str, Option<Box<dyn ObjectStore>>, Box<dyn ObjectStore>), String> {
+/// Parse the command lines arguments into an instance of [`DataFolders`]. If
+/// the necessary command line arguments are not provided, too many arguments
+/// are provided, or if the arguments are malformed, [`Error`] is returned.
+fn parse_command_line_arguments(arguments: &[&str]) -> Result<DataFolders, String> {
     // Match the provided command line arguments to the supported inputs.
     match arguments {
-        &["cloud", local_data_folder, blob_store_data_folder] => Ok((
-            local_data_folder,
-            Some(command_line_argument_to_blob_store(blob_store_data_folder)?),
-            command_line_argument_to_blob_store(blob_store_data_folder)?,
-        )),
-        &["edge", local_data_folder, blob_store_data_folder] => Ok((
-            local_data_folder,
-            Some(command_line_argument_to_blob_store(blob_store_data_folder)?),
-            command_line_argument_to_local_folder(local_data_folder)?,
-        )),
-        &["edge", local_data_folder] => Ok((
-            local_data_folder,
-            None,
-            command_line_argument_to_local_folder(local_data_folder)?,
-        )),
-        &[local_data_folder] => Ok((
-            local_data_folder,
-            None,
-            command_line_argument_to_local_folder(local_data_folder)?,
-        )),
+        &["cloud", local_data_folder, remote_data_folder] => Ok(DataFolders {
+            local_data_folder: PathBuf::from(local_data_folder),
+            remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
+            query_data_folder: argument_to_remote_object_store(remote_data_folder)?,
+        }),
+        &["edge", local_data_folder, remote_data_folder] => Ok(DataFolders {
+            local_data_folder: PathBuf::from(local_data_folder),
+            remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
+            query_data_folder: argument_to_local_object_store(local_data_folder)?,
+        }),
+        &["edge", local_data_folder] => Ok(DataFolders {
+            local_data_folder: PathBuf::from(local_data_folder),
+            remote_data_folder: None,
+            query_data_folder: argument_to_local_object_store(local_data_folder)?,
+        }),
+        &[local_data_folder] => Ok(DataFolders {
+            local_data_folder: PathBuf::from(local_data_folder),
+            remote_data_folder: None,
+            query_data_folder: argument_to_local_object_store(local_data_folder)?,
+        }),
         _ => {
             // The errors are consciously ignored as the program is terminating.
             let binary_path = std::env::current_exe().unwrap();
             let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
             Err(format!(
-                "Usage: {} [mode] local_data_folder [blob_store_data_folder].",
+                "Usage: {} [mode] local_data_folder [remote_data_folder].",
                 binary_name
             ))
         }
     }
 }
 
-fn command_line_argument_to_local_folder(argument: &str) -> Result<Box<dyn ObjectStore>, String> {
+/// Create an [`ObjectStore`] that represents the local path in `argument`.
+fn argument_to_local_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>, String> {
     let object_store =
         LocalFileSystem::new_with_prefix(argument).map_err(|error| error.to_string())?;
-    Ok(Box::new(object_store))
+    Ok(Arc::new(object_store))
 }
 
-fn command_line_argument_to_blob_store(argument: &str) -> Result<Box<dyn ObjectStore>, String> {
+/// Create an [`ObjectStore`] that represents the remote path in `argument`.
+fn argument_to_remote_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>, String> {
     if let Some(bucket_name) = argument.strip_prefix("s3://") {
         let object_store = AmazonS3Builder::from_env()
             .with_bucket_name(bucket_name)
             .build()
             .map_err(|error| error.to_string())?;
-        Ok(Box::new(object_store))
+        Ok(Arc::new(object_store))
     } else {
-        Err("Blob store must be s3://.".to_owned())
+        Err("Remote data folder must be s3://bucket-name.".to_owned())
     }
 }
 
-/// Create a new `SessionContext` for interacting with Apache Arrow
-/// DataFusion. The `SessionContext` is constructed with the default
-/// configuration, default resource managers, the local file system as the
-/// only object store, and additional optimizer rules that rewrite simple
-/// aggregate queries to be executed directly on the models instead of on
-/// reconstructed data points for model tables.
-fn create_session_context() -> SessionContext {
+/// Create a new [`SessionContext`] for interacting with Apache Arrow
+/// DataFusion. The [`SessionContext`] is constructed with the default
+/// configuration, default resource managers, the local file system and if
+/// provided the remote object store as [`ObjectStores`](ObjectStore), and
+/// additional optimizer rules that rewrite simple aggregate queries to be
+/// executed directly on the segments containing metadata and models instead of
+/// on reconstructed data points created from the segments for model tables.
+fn create_session_context(query_data_folder: Arc<dyn ObjectStore>) -> SessionContext {
     let config = SessionConfig::new();
+
     let runtime = Arc::new(RuntimeEnv::default());
+    runtime.register_object_store(
+        storage::QUERY_DATA_FOLDER_SCHEME_AND_HOST,
+        storage::QUERY_DATA_FOLDER_SCHEME_AND_HOST,
+        query_data_folder,
+    );
+
     let state = SessionState::with_config_rt(config, runtime).with_physical_optimizer_rules(vec![
         Arc::new(model_simple_aggregates::ModelSimpleAggregatesPhysicalOptimizerRule {}),
     ]);
+
     SessionContext::with_state(state)
 }
 
@@ -213,7 +246,7 @@ fn setup_ctrl_c_handler(context: &Arc<Context>, runtime: &Arc<Runtime>) {
         // Errors are consciously ignored as the program should terminate if the
         // handler cannot be registered as buffers otherwise cannot be flushed.
         tokio::signal::ctrl_c().await.unwrap();
-        ctrl_c_context.storage_engine.write().flush();
+        ctrl_c_context.storage_engine.write().await.flush();
         std::process::exit(0)
     });
 }
@@ -239,12 +272,15 @@ mod tests {
         let tempdir_str = tempdir.path().to_str().unwrap();
         let input = &["cloud", tempdir_str, "s3://bucket"];
 
-        let (local_data_folder, blob_store_data_folder, _query_data_folder) =
-            parse_command_line_arguments(input).unwrap();
+        let DataFolders {
+            local_data_folder,
+            remote_data_folder,
+            query_data_folder,
+        } = parse_command_line_arguments(input).unwrap();
 
         // Equals cannot be applied to type dyn object_store::ObjectStore.
-        assert_eq!(local_data_folder, tempdir_str);
-        blob_store_data_folder.unwrap();
+        assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
+        remote_data_folder.unwrap();
     }
 
     #[test]
@@ -259,12 +295,15 @@ mod tests {
         let tempdir_str = tempdir.path().to_str().unwrap();
         let input = &["edge", tempdir_str, "s3://bucket"];
 
-        let (local_data_folder, blob_store_data_folder, _query_data_folder) =
-            parse_command_line_arguments(input).unwrap();
+        let DataFolders {
+            local_data_folder,
+            remote_data_folder,
+            query_data_folder,
+        } = parse_command_line_arguments(input).unwrap();
 
         // Equals cannot be applied to type dyn object_store::ObjectStore.
-        assert_eq!(local_data_folder, tempdir_str);
-        blob_store_data_folder.unwrap();
+        assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
+        remote_data_folder.unwrap();
     }
 
     #[test]
@@ -274,12 +313,15 @@ mod tests {
         let tempdir_str = tempdir.path().to_str().unwrap();
         let input = &["edge", tempdir_str];
 
-        let (local_data_folder, blob_store_data_folder, _query_data_folder) =
-            parse_command_line_arguments(input).unwrap();
+        let DataFolders {
+            local_data_folder,
+            remote_data_folder,
+            query_data_folder,
+        } = parse_command_line_arguments(input).unwrap();
 
         // Equals cannot be applied to type dyn object_store::ObjectStore.
-        assert_eq!(local_data_folder, tempdir_str);
-        assert!(blob_store_data_folder.is_none());
+        assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
+        assert!(remote_data_folder.is_none());
     }
 
     #[test]
@@ -289,12 +331,15 @@ mod tests {
         let tempdir_str = tempdir.path().to_str().unwrap();
         let input = &[tempdir_str];
 
-        let (local_data_folder, blob_store_data_folder, _query_data_folder) =
-            parse_command_line_arguments(input).unwrap();
+        let DataFolders {
+            local_data_folder,
+            remote_data_folder,
+            query_data_folder,
+        } = parse_command_line_arguments(input).unwrap();
 
         // Equals cannot be applied to type dyn object_store::ObjectStore.
-        assert_eq!(local_data_folder, tempdir_str);
-        assert!(blob_store_data_folder.is_none());
+        assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
+        assert!(remote_data_folder.is_none());
     }
 
     #[test]

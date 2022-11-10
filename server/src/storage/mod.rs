@@ -27,6 +27,7 @@ use std::fs;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use chrono::DateTime;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -35,8 +36,9 @@ use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Compression;
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
+use futures::StreamExt;
 use object_store::path::Path as ObjectStorePath;
-use object_store::ObjectMeta;
+use object_store::{ObjectMeta, ObjectStore};
 
 use crate::errors::ModelarDbError;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
@@ -47,6 +49,12 @@ use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::types::Timestamp;
 
 // TODO: Look into custom errors for all errors in storage engine.
+
+/// The scheme and host at which the query data folder is stored.
+pub const QUERY_DATA_FOLDER_SCHEME_AND_HOST: &str = "query";
+
+/// The scheme with host at which the query data folder is stored.
+pub const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
 
 /// The expected [first four bytes of any Apache Parquet file].
 ///
@@ -145,8 +153,9 @@ impl StorageEngine {
     /// Retrieve the compressed files that correspond to `keys` within the given range of time.
     /// If `keys` contain a key that does not exist or the end time is before the start time,
     /// [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned.
-    pub fn get_compressed_files(
+    pub async fn get_compressed_files(
         &mut self,
+        query_data_folder: Arc<dyn ObjectStore>,
         keys: &[u64],
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>,
@@ -162,37 +171,18 @@ impl StorageEngine {
             )));
         };
 
+        // TODO: prune by timestamps, use old code and call compressed.
         for key in keys {
-            // For each key, list the files that contain compressed data.
-            let key_files = self
-                .compressed_data_manager
-                .save_and_get_saved_compressed_files(key)?;
-
-            // Prune the files based on the time range the file covers and convert to object meta.
-            let pruned_files = key_files.iter().filter_map(|file_path| {
-                if compressed_data_manager::is_compressed_file_within_time_range(
-                    file_path, start_time, end_time,
-                ) {
-                    // unwrap() is safe since we already know the file exists.
-                    let metadata = fs::metadata(&file_path).unwrap();
-
-                    // Create an object that contains the file path and extra metadata about the file.
-                    Some((
-                        key.to_string(),
-                        ObjectMeta {
-                            location: ObjectStorePath::from(file_path.to_str().unwrap()),
-                            last_modified: DateTime::from(metadata.modified().unwrap()),
-                            size: metadata.len() as usize,
-                        },
-                    ))
-                } else {
-                    None
-                }
-            });
-
-            compressed_files.extend(pruned_files);
+            let prefix = ObjectStorePath::from(format!("Data/{}/compressed/", key));
+            let key_files: Vec<(String, ObjectMeta)> = query_data_folder // TODO: are these unwrap safe?
+                .list(Some(&prefix))
+                .await
+                .unwrap()
+                .then(|meta| async { (key.to_string(), meta.unwrap()) })
+                .collect::<Vec<(String, ObjectMeta)>>()
+                .await;
+            compressed_files.extend(key_files);
         }
-
         Ok(compressed_files)
     }
 
@@ -264,6 +254,7 @@ mod tests {
     use std::sync::Arc;
 
     use datafusion::arrow::datatypes::Schema;
+    use object_store::local::LocalFileSystem;
     use tempfile::{tempdir, TempDir};
 
     use crate::get_array;
@@ -271,8 +262,8 @@ mod tests {
     use crate::types::TimestampArray;
 
     // Tests for get_compressed_files().
-    #[test]
-    fn test_can_get_compressed_files_for_keys() {
+    #[tokio::test]
+    async fn test_can_get_compressed_files_for_keys() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
 
         // Insert compressed segments with multiple different keys.
@@ -284,22 +275,26 @@ mod tests {
             .compressed_data_manager
             .insert_compressed_segment(2, segment);
 
-        let result = storage_engine.get_compressed_files(&[1, 2], None, None);
+        let object_store = Arc::new(LocalFileSystem::new());
+        let result = storage_engine
+            .get_compressed_files(object_store, &[1, 2], None, None)
+            .await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 2);
     }
 
-    #[test]
-    fn test_cannot_get_compressed_files_for_non_existent_key() {
+    #[tokio::test]
+    async fn test_cannot_get_compressed_files_for_non_existent_key() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
 
-        let result = storage_engine.get_compressed_files(&[1], None, None);
-        assert!(result.is_err());
+        let object_store = Arc::new(LocalFileSystem::new());
+        let result = storage_engine.get_compressed_files(object_store, &[1], None, None);
+        assert!(result.await.is_err());
     }
 
-    #[test]
-    fn test_can_get_compressed_files_with_start_time() {
+    #[tokio::test]
+    async fn test_can_get_compressed_files_with_start_time() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
         let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 1, 2, 0);
 
@@ -308,8 +303,9 @@ mod tests {
         let end_times = get_array!(segment_1, 3, TimestampArray);
         let start_time = Some(end_times.value(end_times.len() - 1) + 100);
 
-        let result = storage_engine.get_compressed_files(&[1, 2], start_time, None);
-        let files = result.unwrap();
+        let object_store = Arc::new(LocalFileSystem::new());
+        let result = storage_engine.get_compressed_files(object_store, &[1, 2], start_time, None);
+        let files = result.await.unwrap();
         assert_eq!(files.len(), 1);
 
         // The path to the returned compressed file should contain the key of the second segment.
@@ -317,8 +313,8 @@ mod tests {
         assert!(file_path.contains("2/compressed"));
     }
 
-    #[test]
-    fn test_can_get_compressed_files_with_end_time() {
+    #[tokio::test]
+    async fn test_can_get_compressed_files_with_end_time() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
         let (_segment_1, segment_2) = insert_separated_segments(&mut storage_engine, 1, 2, 0);
 
@@ -327,8 +323,9 @@ mod tests {
         let start_times = get_array!(segment_2, 2, TimestampArray);
         let end_time = Some(start_times.value(1) - 100);
 
-        let result = storage_engine.get_compressed_files(&[1, 2], None, end_time);
-        let files = result.unwrap();
+        let object_store = Arc::new(LocalFileSystem::new());
+        let result = storage_engine.get_compressed_files(object_store, &[1, 2], None, end_time);
+        let files = result.await.unwrap();
         assert_eq!(files.len(), 1);
 
         // The path to the returned compressed file should contain the key of the first segment.
@@ -336,8 +333,8 @@ mod tests {
         assert!(file_path.contains("1/compressed"));
     }
 
-    #[test]
-    fn test_can_get_compressed_files_with_start_time_and_end_time() {
+    #[tokio::test]
+    async fn test_can_get_compressed_files_with_start_time_and_end_time() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
 
         // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
@@ -352,8 +349,10 @@ mod tests {
         let start_time = Some(end_times.value(end_times.len() - 1) + 100);
         let end_time = Some(start_times.value(1) - 100);
 
-        let result = storage_engine.get_compressed_files(&[1, 2, 3, 4], start_time, end_time);
-        let files = result.unwrap();
+        let object_store = Arc::new(LocalFileSystem::new());
+        let result =
+            storage_engine.get_compressed_files(object_store, &[1, 2, 3, 4], start_time, end_time);
+        let files = result.await.unwrap();
         assert_eq!(files.len(), 2);
 
         // The paths to the returned compressed files should contain the key of the second and third segment.
@@ -384,8 +383,8 @@ mod tests {
         (segment_1, segment_2)
     }
 
-    #[test]
-    fn test_cannot_get_compressed_files_where_end_time_is_before_start_time() {
+    #[tokio::test]
+    async fn test_cannot_get_compressed_files_where_end_time_is_before_start_time() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
 
         let segment = test_util::get_compressed_segment_record_batch();
@@ -393,8 +392,9 @@ mod tests {
             .compressed_data_manager
             .insert_compressed_segment(1, segment);
 
-        let result = storage_engine.get_compressed_files(&[1], Some(10), Some(1));
-        assert!(result.is_err());
+        let object_store = Arc::new(LocalFileSystem::new());
+        let result = storage_engine.get_compressed_files(object_store, &[1], Some(10), Some(1));
+        assert!(result.await.is_err());
     }
 
     /// Create a [`StorageEngine`] with a folder that is deleted once the test is finished.
