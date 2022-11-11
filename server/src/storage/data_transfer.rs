@@ -26,7 +26,7 @@ use std::sync::Arc;
 use bytes::BufMut;
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
-use object_store::{GetResult, ObjectStore};
+use object_store::{ObjectStore};
 use object_store::local::LocalFileSystem;
 use tokio::runtime::Runtime;
 use futures::StreamExt;
@@ -38,6 +38,8 @@ use crate::types::{TimestampArray};
 pub(super) struct DataTransfer {
     /// Tokio runtime for executing asynchronous tasks.
     runtime: Arc<Runtime>,
+    /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
+    data_folder_path: PathBuf,
     /// The object store containing all compressed data managed by the [`StorageEngine`].
     data_folder_object_store: Arc<dyn ObjectStore>,
     /// The object store that the data should be transferred to.
@@ -85,6 +87,7 @@ impl DataTransfer {
 
         Ok(Self {
             runtime,
+            data_folder_path,
             data_folder_object_store,
             target_object_store,
             compressed_files,
@@ -117,20 +120,17 @@ impl DataTransfer {
     pub fn transfer_data(&mut self, key: &u64) {
         // Read all files that correspond to the key.
         let file_paths = self.runtime.block_on(async {
-            let path: object_store::path::Path = format!("{}/compressed", key).try_into().unwrap();
+            let path = format!("{}/compressed", key).into();
             let list_stream = self.data_folder_object_store
                 .list(Some(&path)).await.expect("Error listing files");
 
             list_stream.filter_map(|maybe_meta| async {
                 if let Ok(meta) = maybe_meta {
-                    // TODO: Maybe just use the location in the object meta directly.
-                    if let GetResult::File(_, path) = self.data_folder_object_store
-                        .get(&meta.location).await.unwrap() {
-                        return Some(path);
-                    }
+                    let path = self.data_folder_path.to_string_lossy();
+                    Some(PathBuf::from(format!("{}/{}", path, meta.location)))
+                } else {
+                    None
                 }
-
-                None
             }).collect::<Vec<_>>().await.into_iter()
         });
 
@@ -165,7 +165,6 @@ impl DataTransfer {
         });
 
         // TODO: Delete the transferred files from local storage.
-
         // TODO: Handle the case where a connection can not be established.
     }
 
