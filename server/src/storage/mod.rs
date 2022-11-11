@@ -26,11 +26,12 @@ mod data_transfer;
 use std::ffi::OsStr;
 use std::fs;
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::DateTime;
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use datafusion::parquet::arrow::ArrowWriter;
@@ -98,10 +99,9 @@ impl StorageEngine {
         );
 
         // TODO: Maybe change the unwrap here.
-        let local_fs = LocalFileSystem::new();
+        let local_fs = LocalFileSystem::new_with_prefix(data_folder_path.clone()).unwrap();
         let target_object_store = Arc::new(local_fs);
-        let data_transfer = DataTransfer::try_new(runtime, data_folder_path,
-                                                  target_object_store, 64).unwrap();
+        let data_transfer = DataTransfer::try_new(runtime, data_folder_path, target_object_store, 64).unwrap();
 
         Self {
             metadata_manager,
@@ -226,13 +226,7 @@ impl StorageEngine {
         // Check if the extension of the given path is correct.
         if file_path.extension().and_then(OsStr::to_str) == Some("parquet") {
             let file = File::create(file_path).map_err(|_e| error)?;
-            let props = WriterProperties::builder()
-                .set_compression(Compression::ZSTD)
-                .set_dictionary_enabled(false)
-                .set_statistics_enabled(EnabledStatistics::Page)
-                .build();
-
-            let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))?;
+            let mut writer = create_apache_arrow_writer(file, batch.schema())?;
             writer.write(&batch)?;
             writer.close()?;
 
@@ -270,6 +264,22 @@ impl StorageEngine {
             false
         }
     }
+}
+
+/// Create an Apache ArrowWriter that writes to `writer`. If the writer could not be created
+/// return [`ParquetError`].
+pub fn create_apache_arrow_writer<W: Write>(
+    writer: W,
+    schema: SchemaRef
+) -> Result<ArrowWriter<W>, ParquetError> {
+    let props = WriterProperties::builder()
+        .set_compression(Compression::ZSTD)
+        .set_dictionary_enabled(false)
+        .set_statistics_enabled(EnabledStatistics::Page)
+        .build();
+
+    let writer = ArrowWriter::try_new(writer, schema, Some(props))?;
+    Ok(writer)
 }
 
 #[cfg(test)]
@@ -417,10 +427,12 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let data_folder_path_buf = temp_dir.path().to_path_buf();
         let data_folder_path = data_folder_path_buf.clone();
+        let runtime = Arc::new(Runtime::new().unwrap());
 
         (
             temp_dir,
             StorageEngine::new(
+                runtime,
                 data_folder_path_buf,
                 metadata_test_util::get_test_metadata_manager(data_folder_path.as_path()),
                 false,

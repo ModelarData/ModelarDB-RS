@@ -1139,7 +1139,10 @@ pub mod test_util {
     pub fn get_test_context(path: &Path) -> Arc<Context> {
         let metadata_manager = get_test_metadata_manager(path);
         let session = get_test_session_context();
+        let runtime = Arc::new(Runtime::new().unwrap());
+
         let storage_engine = RwLock::new(StorageEngine::new(
+            runtime,
             path.to_owned(),
             metadata_manager.clone(),
             true,

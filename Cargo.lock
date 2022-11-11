@@ -1372,6 +1372,7 @@ version = "0.1.0"
 dependencies = [
  "arrow-flight",
  "async-trait",
+ "bytes",
  "chrono",
  "datafusion",
  "datafusion-expr",

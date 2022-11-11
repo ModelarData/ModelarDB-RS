@@ -11,6 +11,7 @@ datafusion-expr = "13.0.0"
 datafusion-physical-expr = "13.0.0"
 datafusion-sql = "13.0.0"
 object_store = "0.5.0"
+bytes = "1"
 sqlparser = "0.25.0"
 
 # Log is a dependency so the compile time filters for log and tracing can be set to the same value
