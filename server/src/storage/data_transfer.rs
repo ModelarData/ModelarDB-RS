@@ -20,12 +20,14 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::Error as IOError;
+use std::io::ErrorKind::Other;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bytes::BufMut;
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::parquet::errors::ParquetError;
 use object_store::{ObjectStore};
 use object_store::local::LocalFileSystem;
 use tokio::runtime::Runtime;
@@ -103,7 +105,7 @@ impl DataTransfer {
 
         // If the combined size of the files is larger than the batch size, transfer the data to the blob store.
         if self.compressed_files.get(key).unwrap() >= &self.transfer_batch_size_in_bytes {
-            self.transfer_data(key);
+            self.transfer_data(key).map_err(|err| IOError::new(Other, err.to_string()))?;
         }
 
         Ok(())
@@ -115,14 +117,14 @@ impl DataTransfer {
     }
 
     /// Transfer the data corresponding to `key` to the blob store. Once successfully transferred,
-    /// the data is deleted from local storage.
-    // TODO: Change the error handling to not use unwrap and except.
-    pub fn transfer_data(&mut self, key: &u64) {
+    /// the data is deleted from local storage. Return [`Ok`] if the file was written successfully,
+    /// otherwise [`ParquetError`].
+    pub fn transfer_data(&mut self, key: &u64) -> Result<(), ParquetError> {
         // Read all files that correspond to the key.
         let file_paths = self.runtime.block_on(async {
             let path = format!("{}/compressed", key).into();
             let list_stream = self.data_folder_object_store
-                .list(Some(&path)).await.expect("Error listing files");
+                .list(Some(&path)).await.unwrap();
 
             list_stream.filter_map(|maybe_meta| async {
                 if let Ok(meta) = maybe_meta {
@@ -140,13 +142,13 @@ impl DataTransfer {
         }).collect::<Vec<RecordBatch>>();
 
         let schema = record_batches[0].schema();
-        let combined = compute::concat_batches(&schema, &record_batches).unwrap();
+        let combined = compute::concat_batches(&schema, &record_batches)?;
 
         // Write the combined RecordBatch to a bytes buffer.
         let mut buf = vec![].writer();
-        let mut arrow_writer = storage::create_apache_arrow_writer(&mut buf, schema).unwrap();
-        arrow_writer.write(&combined).unwrap();
-        arrow_writer.close().unwrap();
+        let mut arrow_writer = storage::create_apache_arrow_writer(&mut buf, schema)?;
+        arrow_writer.write(&combined)?;
+        arrow_writer.close()?;
 
         // Transfer the read data to the blob store.
         self.runtime.block_on(async {
@@ -166,6 +168,8 @@ impl DataTransfer {
 
         // TODO: Delete the transferred files from local storage.
         // TODO: Handle the case where a connection can not be established.
+
+        Ok(())
     }
 
     /// Return the key if `path` is a key folder containing compressed data, otherwise [`None`].
