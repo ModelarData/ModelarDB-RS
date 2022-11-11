@@ -34,8 +34,6 @@ snmalloc-rs = "0.3.3"
 
 rusqlite = { version = "0.28.0", features = ["bundled"] }
 
-chrono = "0.4.22"
-
 [dev-dependencies]
 proptest = "1.0.0"
 tempfile = "3.3.0"

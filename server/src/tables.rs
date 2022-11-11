@@ -235,7 +235,7 @@ impl TableProvider for ModelTable {
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         // Request the matching files from the storage engine.
-        let mut key_object_metas = {
+        let key_object_metas = {
             // TODO: make the storage engine support multiple parallel readers.
             let mut storage_engine = self.context.storage_engine.write().await;
 
@@ -248,14 +248,14 @@ impl TableProvider for ModelTable {
             // unwrap() is safe to use as get_compressed_files() only fails if a
             // non-existing hash is passed or if end time is before start time.
             storage_engine
-                .get_compressed_files(query_object_store, &keys, None, None)
+                .get_compressed_files(&keys, None, None, &query_object_store)
                 .await
                 .unwrap()
         };
 
         // Create the data source operator. Assumes the ObjectStore exists.
         let partitioned_files: Vec<PartitionedFile> = key_object_metas
-            .drain(0..)
+            .into_iter()
             .map(|key_object_meta| PartitionedFile {
                 object_meta: key_object_meta.1,
                 partition_values: vec![ScalarValue::Utf8(Some(key_object_meta.0))],

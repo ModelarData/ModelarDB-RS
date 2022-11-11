@@ -23,20 +23,16 @@ mod time_series;
 mod uncompressed_data_manager;
 
 use std::ffi::OsStr;
-use std::fs;
 use std::fs::File;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use chrono::DateTime;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Compression;
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
-use futures::StreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
 
@@ -155,10 +151,10 @@ impl StorageEngine {
     /// [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned.
     pub async fn get_compressed_files(
         &mut self,
-        query_data_folder: Arc<dyn ObjectStore>,
         keys: &[u64],
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>,
+        query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<(String, ObjectMeta)>, ModelarDbError> {
         let start_time = start_time.unwrap_or(0);
         let end_time = end_time.unwrap_or(Timestamp::MAX);
@@ -171,17 +167,24 @@ impl StorageEngine {
             )));
         };
 
-        // TODO: prune by timestamps, use old code and call compressed.
         for key in keys {
-            let prefix = ObjectStorePath::from(format!("Data/{}/compressed/", key));
-            let key_files: Vec<(String, ObjectMeta)> = query_data_folder // TODO: are these unwrap safe?
-                .list(Some(&prefix))
-                .await
-                .unwrap()
-                .then(|meta| async { (key.to_string(), meta.unwrap()) })
-                .collect::<Vec<(String, ObjectMeta)>>()
-                .await;
-            compressed_files.extend(key_files);
+            // For each key, list the files that contain compressed data.
+            let key_files = self
+                .compressed_data_manager
+                .save_and_get_saved_compressed_files(key, &query_data_folder)
+                .await?;
+
+            // Prune the files based on the time range the file covers.
+            let pruned_key_files = key_files.into_iter().filter(|(_, object_meta)| {
+                let last_file_part = object_meta.location.parts().last().unwrap();
+                compressed_data_manager::is_compressed_file_within_time_range(
+                    last_file_part.as_ref(),
+                    start_time,
+                    end_time,
+                )
+            });
+
+            compressed_files.extend(pruned_key_files)
         }
         Ok(compressed_files)
     }
@@ -236,11 +239,12 @@ impl StorageEngine {
 
     /// Return [`true`] if `file_path` is a readable Apache Parquet file,
     /// otherwise [`false`].
-    pub fn is_path_an_apache_parquet_file(file_path: &Path) -> bool {
-        if let Ok(mut file) = File::open(file_path) {
-            let mut first_four_bytes = vec![0u8; 4];
-            let _ = file.read_exact(&mut first_four_bytes);
-            first_four_bytes == APACHE_PARQUET_FILE_SIGNATURE
+    pub async fn is_path_an_apache_parquet_file(
+        object_store: &Arc<dyn ObjectStore>,
+        file_path: &ObjectStorePath,
+    ) -> bool {
+        if let Ok(bytes) = object_store.get_range(file_path, 0..4).await {
+            bytes == crate::storage::APACHE_PARQUET_FILE_SIGNATURE
         } else {
             false
         }
@@ -275,9 +279,9 @@ mod tests {
             .compressed_data_manager
             .insert_compressed_segment(2, segment);
 
-        let object_store = Arc::new(LocalFileSystem::new());
+        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
         let result = storage_engine
-            .get_compressed_files(object_store, &[1, 2], None, None)
+            .get_compressed_files(&[1, 2], None, None, &object_store)
             .await;
 
         assert!(result.is_ok());
@@ -288,8 +292,8 @@ mod tests {
     async fn test_cannot_get_compressed_files_for_non_existent_key() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
 
-        let object_store = Arc::new(LocalFileSystem::new());
-        let result = storage_engine.get_compressed_files(object_store, &[1], None, None);
+        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let result = storage_engine.get_compressed_files(&[1], None, None, &object_store);
         assert!(result.await.is_err());
     }
 
@@ -303,8 +307,8 @@ mod tests {
         let end_times = get_array!(segment_1, 3, TimestampArray);
         let start_time = Some(end_times.value(end_times.len() - 1) + 100);
 
-        let object_store = Arc::new(LocalFileSystem::new());
-        let result = storage_engine.get_compressed_files(object_store, &[1, 2], start_time, None);
+        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let result = storage_engine.get_compressed_files(&[1, 2], start_time, None, &object_store);
         let files = result.await.unwrap();
         assert_eq!(files.len(), 1);
 
@@ -323,8 +327,8 @@ mod tests {
         let start_times = get_array!(segment_2, 2, TimestampArray);
         let end_time = Some(start_times.value(1) - 100);
 
-        let object_store = Arc::new(LocalFileSystem::new());
-        let result = storage_engine.get_compressed_files(object_store, &[1, 2], None, end_time);
+        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let result = storage_engine.get_compressed_files(&[1, 2], None, end_time, &object_store);
         let files = result.await.unwrap();
         assert_eq!(files.len(), 1);
 
@@ -349,9 +353,9 @@ mod tests {
         let start_time = Some(end_times.value(end_times.len() - 1) + 100);
         let end_time = Some(start_times.value(1) - 100);
 
-        let object_store = Arc::new(LocalFileSystem::new());
+        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
         let result =
-            storage_engine.get_compressed_files(object_store, &[1, 2, 3, 4], start_time, end_time);
+            storage_engine.get_compressed_files(&[1, 2, 3, 4], start_time, end_time, &object_store);
         let files = result.await.unwrap();
         assert_eq!(files.len(), 2);
 
@@ -392,8 +396,8 @@ mod tests {
             .compressed_data_manager
             .insert_compressed_segment(1, segment);
 
-        let object_store = Arc::new(LocalFileSystem::new());
-        let result = storage_engine.get_compressed_files(object_store, &[1], Some(10), Some(1));
+        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let result = storage_engine.get_compressed_files(&[1], Some(10), Some(1), &object_store);
         assert!(result.await.is_err());
     }
 
@@ -490,14 +494,17 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_is_parquet_path_apache_parquet_file() {
+    #[tokio::test]
+    async fn test_is_parquet_path_apache_parquet_file() {
         let file_name = "test.parquet".to_owned();
         let (_temp_dir, path, _batch) = create_apache_parquet_file_in_temp_dir(file_name);
 
-        assert!(StorageEngine::is_path_an_apache_parquet_file(
-            path.as_path()
-        ));
+        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let object_store_path = ObjectStorePath::from_filesystem_path(path).unwrap();
+
+        assert!(
+            !StorageEngine::is_path_an_apache_parquet_file(&object_store, &object_store_path).await
+        );
     }
 
     /// Create an Apache Parquet file in the [`TempDir`] from a generated [`RecordBatch`].
@@ -514,16 +521,19 @@ mod tests {
         (temp_dir, parquet_path, batch)
     }
 
-    #[test]
-    fn test_is_non_parquet_path_apache_parquet_file() {
+    #[tokio::test]
+    async fn test_is_non_parquet_path_apache_parquet_file() {
         let temp_dir = tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
         File::create(path.clone()).unwrap();
 
+        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let object_store_path = ObjectStorePath::from_filesystem_path(&path).unwrap();
+
         assert!(path.exists());
-        assert!(!StorageEngine::is_path_an_apache_parquet_file(
-            path.as_path()
-        ));
+        assert!(
+            !StorageEngine::is_path_an_apache_parquet_file(&object_store, &object_store_path).await
+        );
     }
 }
 
