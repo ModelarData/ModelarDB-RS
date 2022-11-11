@@ -211,7 +211,7 @@ mod tests {
 
     use tempfile::{tempdir, TempDir};
 
-    use crate::get_array;
+    use crate::{get_array, storage};
     use crate::metadata::test_util as metadata_test_util;
     use crate::storage::test_util;
     use crate::types::TimestampArray;
@@ -336,15 +336,8 @@ mod tests {
         assert_eq!(files.len(), 1);
 
         // The file should have the first start time and the last end time as the file name.
-        let start_times = get_array!(segment, 2, TimestampArray);
-        let end_times = get_array!(segment, 3, TimestampArray);
-        let expected_file_path = format!(
-            "{}/compressed/{}-{}.parquet",
-            KEY,
-            start_times.value(0),
-            end_times.value(end_times.len() - 1)
-        );
-
+        let file_name = storage::create_time_range_file_name(&segment);
+        let expected_file_path = format!("{}/compressed/{}", KEY, file_name);
         let expected_full_path = data_manager.data_folder_path.join(expected_file_path);
         assert_eq!(*files.get(0).unwrap(), expected_full_path)
     }

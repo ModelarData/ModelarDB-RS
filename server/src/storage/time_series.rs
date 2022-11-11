@@ -23,9 +23,9 @@ use std::path::Path;
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 
-use crate::get_array;
+use crate::storage;
 use crate::storage::StorageEngine;
-use crate::types::{CompressedSchema, TimestampArray};
+use crate::types::{CompressedSchema};
 
 /// A single compressed time series, containing one or more compressed segments and providing
 /// functionality for appending segments and saving all segments to a single Apache Parquet file.
@@ -76,15 +76,7 @@ impl CompressedTimeSeries {
 
         // Create a path that uses the first start timestamp and the last end timestamp as the file
         // name to better support pruning data that is too new or too old when executing a specific query.
-        let start_times = get_array!(batch, 2, TimestampArray);
-        let end_times = get_array!(batch, 3, TimestampArray);
-
-        let file_name = format!(
-            "{}-{}.parquet",
-            start_times.value(0),
-            end_times.value(end_times.len() - 1)
-        );
-
+        let file_name = storage::create_time_range_file_name(&batch);
         let file_path = complete_folder_path.join(file_name);
         StorageEngine::write_batch_to_apache_parquet_file(batch, file_path.as_path())
             .map_err(|error| IOError::new(Other, error.to_string()))?;
@@ -144,14 +136,7 @@ mod tests {
         ).unwrap();
 
         // Data should be saved to a file with the first start time and last end time as the file name.
-        let start_times = get_array!(segment, 2, TimestampArray);
-        let end_times = get_array!(segment, 3, TimestampArray);
-        let file_path = format!(
-            "compressed/{}-{}.parquet",
-            start_times.value(0),
-            end_times.value(end_times.len() - 1)
-        );
-
+        let file_path = format!("compressed/{}", storage::create_time_range_file_name(&segment));
         assert!(temp_dir.path().join(file_path).exists());
     }
 

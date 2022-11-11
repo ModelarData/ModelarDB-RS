@@ -44,13 +44,14 @@ use object_store::ObjectMeta;
 use tokio::runtime::Runtime;
 
 use crate::errors::ModelarDbError;
+use crate::get_array;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::segment::FinishedSegment;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
-use crate::types::Timestamp;
+use crate::types::{Timestamp, TimestampArray};
 
 // TODO: Look into custom errors for all errors in storage engine.
 
@@ -280,6 +281,19 @@ pub fn create_apache_arrow_writer<W: Write>(
 
     let writer = ArrowWriter::try_new(writer, schema, Some(props))?;
     Ok(writer)
+}
+
+// TODO: Maybe add error handling to this.
+/// Create a file name that uses the first start timestamp and the last end timestamp from `batch`.
+pub fn create_time_range_file_name(batch: &RecordBatch) -> String {
+    let start_times = get_array!(batch, 2, TimestampArray);
+    let end_times = get_array!(batch, 3, TimestampArray);
+
+    format!(
+        "{}-{}.parquet",
+        start_times.value(0),
+        end_times.value(end_times.len() - 1)
+    )
 }
 
 #[cfg(test)]

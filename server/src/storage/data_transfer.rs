@@ -34,8 +34,7 @@ use tokio::runtime::Runtime;
 use futures::StreamExt;
 use tonic::codegen::Bytes;
 
-use crate::{get_array, storage, StorageEngine};
-use crate::types::{TimestampArray};
+use crate::{storage, StorageEngine};
 
 pub(super) struct DataTransfer {
     /// Tokio runtime for executing asynchronous tasks.
@@ -150,20 +149,11 @@ impl DataTransfer {
         arrow_writer.write(&combined)?;
         arrow_writer.close()?;
 
+        // TODO: Fix the tests.
         self.runtime.block_on(async {
-            // TODO: Create a free function to do this instead.
-            // Create a path that uses the first start timestamp and the last end timestamp as the file name.
-            let start_times = get_array!(combined, 2, TimestampArray);
-            let end_times = get_array!(combined, 3, TimestampArray);
-
-            let path = format!(
-                "{}/compressed/{}-{}.parquet",
-                key,
-                start_times.value(0),
-                end_times.value(end_times.len() - 1)
-            ).into();
-
             // Transfer the read data to the blob store.
+            let file_name = storage::create_time_range_file_name(&combined);
+            let path = format!("{}/compressed/{}", key, file_name).into();
             self.target_object_store.put(&path, Bytes::from(buf.into_inner())).await.unwrap();
 
             // Delete the transferred files from local storage.
