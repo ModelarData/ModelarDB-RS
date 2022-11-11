@@ -23,14 +23,17 @@ use std::io::Error as IOError;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use bytes::BufMut;
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use object_store::{GetResult, ObjectStore};
 use object_store::local::LocalFileSystem;
 use tokio::runtime::Runtime;
 use futures::StreamExt;
+use tonic::codegen::Bytes;
 
-use crate::StorageEngine;
+use crate::{get_array, storage, StorageEngine};
+use crate::types::{TimestampArray};
 
 pub(super) struct DataTransfer {
     /// Tokio runtime for executing asynchronous tasks.
@@ -109,7 +112,8 @@ impl DataTransfer {
     }
 
     /// Transfer the data corresponding to `key` to the blob store. Once successfully transferred,
-    /// delete the data from local storage.
+    /// the data is deleted from local storage.
+    // TODO: Change the error handling to not use unwrap and except.
     pub fn transfer_data(&mut self, key: &u64) {
         // Read all files that correspond to the key.
         let file_paths = self.runtime.block_on(async {
@@ -119,6 +123,7 @@ impl DataTransfer {
 
             list_stream.filter_map(|maybe_meta| async {
                 if let Ok(meta) = maybe_meta {
+                    // TODO: Maybe just use the location in the object meta directly.
                     if let GetResult::File(_, path) = self.data_folder_object_store
                         .get(&meta.location).await.unwrap() {
                         return Some(path);
@@ -134,12 +139,34 @@ impl DataTransfer {
             StorageEngine::read_entire_apache_parquet_file(file_path.as_path()).ok()
         }).collect::<Vec<RecordBatch>>();
 
-        let combined_data = compute::concat_batches(&record_batches[0].schema(), &record_batches).unwrap();
-        println!("{:?}", combined_data);
-        // TODO: Transfer the read data to the blob store.
+        let schema = record_batches[0].schema();
+        let combined = compute::concat_batches(&schema, &record_batches).unwrap();
+
+        // Write the combined RecordBatch to a bytes buffer.
+        let mut buf = vec![].writer();
+        let mut arrow_writer = storage::create_apache_arrow_writer(&mut buf, schema).unwrap();
+        arrow_writer.write(&combined).unwrap();
+        arrow_writer.close().unwrap();
+
+        // Transfer the read data to the blob store.
+        self.runtime.block_on(async {
+            // Create a path that uses the first start timestamp and the last end timestamp as the file name.
+            let start_times = get_array!(combined, 2, TimestampArray);
+            let end_times = get_array!(combined, 3, TimestampArray);
+
+            let path = format!(
+                "{}/compressed/{}-{}.parquet",
+                key,
+                start_times.value(0),
+                end_times.value(end_times.len() - 1)
+            ).into();
+
+            self.target_object_store.put(&path, Bytes::from(buf.into_inner())).await.unwrap();
+        });
+
         // TODO: Delete the transferred files from local storage.
 
-        // TODO: Handle the base where a connection can not be established.
+        // TODO: Handle the case where a connection can not be established.
     }
 
     /// Return the key if `path` is a key folder containing compressed data, otherwise [`None`].
