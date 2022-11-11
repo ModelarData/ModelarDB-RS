@@ -116,28 +116,28 @@ impl DataTransfer {
         // TODO: Iterate over the keys in the compressed files hashmap and call the transfer data function for each key.
     }
 
+    // TODO: Handle the case where a connection can not be established.
+    // TODO: Handle the unwraps on the object store calls.
     /// Transfer the data corresponding to `key` to the blob store. Once successfully transferred,
     /// the data is deleted from local storage. Return [`Ok`] if the file was written successfully,
     /// otherwise [`ParquetError`].
     pub fn transfer_data(&mut self, key: &u64) -> Result<(), ParquetError> {
         // Read all files that correspond to the key.
-        let file_paths = self.runtime.block_on(async {
+        let object_metas = self.runtime.block_on(async {
             let path = format!("{}/compressed", key).into();
             let list_stream = self.data_folder_object_store
                 .list(Some(&path)).await.unwrap();
 
             list_stream.filter_map(|maybe_meta| async {
-                if let Ok(meta) = maybe_meta {
-                    let path = self.data_folder_path.to_string_lossy();
-                    Some(PathBuf::from(format!("{}/{}", path, meta.location)))
-                } else {
-                    None
-                }
+                maybe_meta.ok()
             }).collect::<Vec<_>>().await.into_iter()
         });
 
         // Combine the Apache Parquet files into a single RecordBatch.
-        let record_batches = file_paths.filter_map(|file_path| {
+        let record_batches = object_metas.clone().filter_map(|meta| {
+            let path = self.data_folder_path.to_string_lossy();
+            let file_path = PathBuf::from(format!("{}/{}", path, meta.location));
+
             StorageEngine::read_entire_apache_parquet_file(file_path.as_path()).ok()
         }).collect::<Vec<RecordBatch>>();
 
@@ -150,8 +150,8 @@ impl DataTransfer {
         arrow_writer.write(&combined)?;
         arrow_writer.close()?;
 
-        // Transfer the read data to the blob store.
         self.runtime.block_on(async {
+            // TODO: Create a free function to do this instead.
             // Create a path that uses the first start timestamp and the last end timestamp as the file name.
             let start_times = get_array!(combined, 2, TimestampArray);
             let end_times = get_array!(combined, 3, TimestampArray);
@@ -163,11 +163,14 @@ impl DataTransfer {
                 end_times.value(end_times.len() - 1)
             ).into();
 
+            // Transfer the read data to the blob store.
             self.target_object_store.put(&path, Bytes::from(buf.into_inner())).await.unwrap();
-        });
 
-        // TODO: Delete the transferred files from local storage.
-        // TODO: Handle the case where a connection can not be established.
+            // Delete the transferred files from local storage.
+            for meta in object_metas {
+                self.target_object_store.delete(&meta.location).await.unwrap();
+            }
+        });
 
         Ok(())
     }
