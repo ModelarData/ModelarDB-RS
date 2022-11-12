@@ -45,9 +45,8 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 
 ### Windows
 1. Install a supported version of [Visual Studio](https://visualstudio.microsoft.com/vs/older-downloads/) with Visual C++:
-   * Visual Studio 2017 ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
-   * Visual Studio 2019 ([Supported](https://github.com/microsoft/snmalloc/issues/525#issuecomment-1128901104))
-   * Note that Visual Studio 2022 is **not** supported.
+   * Visual Studio 2019 ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
+   * Visual Studio 2022 ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
 2. Install [CMake](https://cmake.org/) and select one of the following options during installation:
    * _Add CMake to the system PATH for all users_
    * _Add CMake to the system PATH for current user_
