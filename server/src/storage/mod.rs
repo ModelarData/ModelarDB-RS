@@ -292,9 +292,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_no_compressed_files_for_non_existent_key() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let (temp_dir, mut storage_engine) = create_storage_engine();
 
-        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = storage_engine.get_compressed_files(&[1], None, None, &object_store);
 
         assert!(result.await.unwrap().is_empty());
