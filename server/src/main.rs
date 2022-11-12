@@ -275,7 +275,7 @@ mod tests {
         let DataFolders {
             local_data_folder,
             remote_data_folder,
-            query_data_folder,
+            query_data_folder: _query_data_folder,
         } = parse_command_line_arguments(input).unwrap();
 
         // Equals cannot be applied to type dyn object_store::ObjectStore.
@@ -298,7 +298,7 @@ mod tests {
         let DataFolders {
             local_data_folder,
             remote_data_folder,
-            query_data_folder,
+            query_data_folder: _query_data_folder,
         } = parse_command_line_arguments(input).unwrap();
 
         // Equals cannot be applied to type dyn object_store::ObjectStore.
@@ -316,7 +316,7 @@ mod tests {
         let DataFolders {
             local_data_folder,
             remote_data_folder,
-            query_data_folder,
+            query_data_folder: _query_data_folder,
         } = parse_command_line_arguments(input).unwrap();
 
         // Equals cannot be applied to type dyn object_store::ObjectStore.
@@ -334,7 +334,7 @@ mod tests {
         let DataFolders {
             local_data_folder,
             remote_data_folder,
-            query_data_folder,
+            query_data_folder: _query_data_folder,
         } = parse_command_line_arguments(input).unwrap();
 
         // Equals cannot be applied to type dyn object_store::ObjectStore.
