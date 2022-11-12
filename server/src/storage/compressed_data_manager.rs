@@ -338,12 +338,13 @@ mod tests {
     #[tokio::test]
     async fn test_can_get_saved_compressed_files() {
         let segment = test_util::get_compressed_segment_record_batch();
-        let (_temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
         data_manager.insert_compressed_segment(KEY, segment.clone());
         data_manager.save_compressed_data(&KEY);
 
-        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
             .save_and_get_saved_compressed_files(&KEY, &object_store)
             .await;
@@ -362,15 +363,16 @@ mod tests {
             end_times.value(end_times.len() - 1)
         );
 
-        let expected_full_path = data_manager.data_folder_path.join(expected_file_path);
-        let expected_full_path = ObjectStorePath::from_filesystem_path(expected_full_path).unwrap();
-        assert_eq!(files.get(0).unwrap().1.location, expected_full_path)
+        assert_eq!(
+            files.get(0).unwrap().1.location,
+            ObjectStorePath::parse(expected_file_path).unwrap()
+        )
     }
 
     #[tokio::test]
     async fn test_save_in_memory_compressed_data_when_getting_saved_compressed_files() {
         let segment = test_util::get_compressed_segment_record_batch_with_time(1000);
-        let (_temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
         data_manager.insert_compressed_segment(KEY, segment);
         data_manager.save_compressed_data(&KEY);
@@ -379,7 +381,8 @@ mod tests {
         let segment_2 = test_util::get_compressed_segment_record_batch_with_time(2000);
         data_manager.insert_compressed_segment(KEY, segment_2.clone());
 
-        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
             .save_and_get_saved_compressed_files(&KEY, &object_store)
             .await;
@@ -389,18 +392,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cannot_get_saved_compressed_files_from_non_existent_key() {
+    async fn test_get_no_saved_compressed_files_from_non_existent_key() {
         let segment = test_util::get_compressed_segment_record_batch();
-        let (_temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
         data_manager.insert_compressed_segment(KEY, segment);
         data_manager.save_compressed_data(&KEY);
 
-        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
             .save_and_get_saved_compressed_files(&999, &object_store)
             .await;
-        assert!(result.is_err());
+        assert!(result.unwrap().is_empty());
     }
 
     // Tests for is_compressed_file_within_time_range().

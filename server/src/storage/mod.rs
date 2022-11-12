@@ -254,6 +254,7 @@ impl StorageEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use std::path::PathBuf;
     use std::sync::Arc;
 
@@ -268,7 +269,7 @@ mod tests {
     // Tests for get_compressed_files().
     #[tokio::test]
     async fn test_can_get_compressed_files_for_keys() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let (temp_dir, mut storage_engine) = create_storage_engine();
 
         // Insert compressed segments with multiple different keys.
         let segment = test_util::get_compressed_segment_record_batch();
@@ -279,7 +280,8 @@ mod tests {
             .compressed_data_manager
             .insert_compressed_segment(2, segment);
 
-        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = storage_engine
             .get_compressed_files(&[1, 2], None, None, &object_store)
             .await;
@@ -289,17 +291,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cannot_get_compressed_files_for_non_existent_key() {
+    async fn test_get_no_compressed_files_for_non_existent_key() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
 
         let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
         let result = storage_engine.get_compressed_files(&[1], None, None, &object_store);
-        assert!(result.await.is_err());
+
+        assert!(result.await.unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn test_can_get_compressed_files_with_start_time() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let (temp_dir, mut storage_engine) = create_storage_engine();
         let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 1, 2, 0);
 
         // If we have a start time after the first segments ends, only the file from the second
@@ -307,7 +310,8 @@ mod tests {
         let end_times = get_array!(segment_1, 3, TimestampArray);
         let start_time = Some(end_times.value(end_times.len() - 1) + 100);
 
-        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = storage_engine.get_compressed_files(&[1, 2], start_time, None, &object_store);
         let files = result.await.unwrap();
         assert_eq!(files.len(), 1);
@@ -319,7 +323,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_get_compressed_files_with_end_time() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let (temp_dir, mut storage_engine) = create_storage_engine();
         let (_segment_1, segment_2) = insert_separated_segments(&mut storage_engine, 1, 2, 0);
 
         // If we have an end time before the second segment starts, only the file from the first
@@ -327,7 +331,8 @@ mod tests {
         let start_times = get_array!(segment_2, 2, TimestampArray);
         let end_time = Some(start_times.value(1) - 100);
 
-        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = storage_engine.get_compressed_files(&[1, 2], None, end_time, &object_store);
         let files = result.await.unwrap();
         assert_eq!(files.len(), 1);
@@ -339,7 +344,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_get_compressed_files_with_start_time_and_end_time() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let (temp_dir, mut storage_engine) = create_storage_engine();
 
         // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
         let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 1, 2, 0);
@@ -353,7 +358,8 @@ mod tests {
         let start_time = Some(end_times.value(end_times.len() - 1) + 100);
         let end_time = Some(start_times.value(1) - 100);
 
-        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result =
             storage_engine.get_compressed_files(&[1, 2, 3, 4], start_time, end_time, &object_store);
         let files = result.await.unwrap();
@@ -503,7 +509,7 @@ mod tests {
         let object_store_path = ObjectStorePath::from_filesystem_path(path).unwrap();
 
         assert!(
-            !StorageEngine::is_path_an_apache_parquet_file(&object_store, &object_store_path).await
+            StorageEngine::is_path_an_apache_parquet_file(&object_store, &object_store_path).await
         );
     }
 
@@ -523,6 +529,25 @@ mod tests {
 
     #[tokio::test]
     async fn test_is_non_parquet_path_apache_parquet_file() {
+        let temp_dir = tempdir().unwrap();
+        let path = temp_dir.path().join("test.txt");
+
+        let mut file = File::create(path.clone()).unwrap();
+        let mut signature = APACHE_PARQUET_FILE_SIGNATURE.to_vec();
+        signature.reverse();
+        file.write_all(&signature).unwrap();
+
+        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let object_store_path = ObjectStorePath::from_filesystem_path(&path).unwrap();
+
+        assert!(path.exists());
+        assert!(
+            !StorageEngine::is_path_an_apache_parquet_file(&object_store, &object_store_path).await
+        );
+    }
+
+    #[tokio::test]
+    async fn test_is_empty_parquet_path_apache_parquet_file() {
         let temp_dir = tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
         File::create(path.clone()).unwrap();
