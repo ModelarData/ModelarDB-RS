@@ -178,33 +178,6 @@ impl DataTransfer {
 
         None
     }
-
-    /// Return the key if `path` is a key folder containing compressed data, otherwise [`None`].
-    fn path_contains_compressed_files(path: &Path) -> Option<u64> {
-        if path.is_dir() && path.join("compressed").is_dir() {
-            // Convert the directory name to the 64-bit key and return it if possible.
-            let key = path.file_name().unwrap().to_string_lossy().to_string();
-            key.parse::<u64>().ok()
-        } else {
-            None
-        }
-    }
-
-    /// Return the total combined size in bytes of the compressed files in `path`.
-    fn get_total_compressed_files_size(path: &Path) -> usize {
-        // Unwrap is safe since the directory is checked before calculating the files size.
-        let dir = fs::read_dir(path).unwrap();
-
-        dir.filter_map(|maybe_dir_entry| {
-            if let Ok(dir_entry) = maybe_dir_entry {
-                if StorageEngine::is_path_an_apache_parquet_file(dir_entry.path().as_path()) {
-                    return Some(dir_entry.metadata().unwrap().len() as usize);
-                }
-            }
-
-            None
-        }).sum()
-    }
 }
 
 #[cfg(test)]
@@ -235,59 +208,6 @@ mod tests {
 
     #[test]
     fn test_transfer_if_reaching_batch_size_on_start_up() {}
-
-    #[test]
-    fn test_file_does_not_contain_compressed_files() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("test.txt");
-        fs::File::create(path.clone()).unwrap();
-
-        assert!(DataTransfer::path_contains_compressed_files(path.as_path()).is_none());
-    }
-
-    #[test]
-    fn test_empty_folder_does_not_contain_compressed_files() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        assert!(DataTransfer::path_contains_compressed_files(temp_dir.path()).is_none());
-    }
-
-    #[test]
-    fn test_non_empty_folder_without_compressed_folder_does_not_contain_compressed_files() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join(format!("{}/uncompressed", KEY));
-        fs::create_dir_all(path.clone()).unwrap();
-
-        let key_path = temp_dir.path().join(KEY.to_string());
-        assert!(DataTransfer::path_contains_compressed_files(key_path.as_path()).is_none());
-    }
-
-    #[test]
-    fn test_compressed_folder_contains_compressed_files() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join(format!("{}/compressed", KEY));
-        fs::create_dir_all(path.clone()).unwrap();
-
-        let key_path = temp_dir.path().join(KEY.to_string());
-        assert!(DataTransfer::path_contains_compressed_files(key_path.as_path()).is_some());
-    }
-
-    #[test]
-    fn test_get_total_compressed_files_size() {
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        // Create a folder with a text file and an Apache Parquet file.
-        let txt_path = temp_dir.path().join("test.txt");
-        fs::write(txt_path.clone(), "test content").unwrap();
-
-        assert_eq!(DataTransfer::get_total_compressed_files_size(temp_dir.path()), 0);
-
-        let batch = test_util::get_compressed_segment_record_batch();
-        let parquet_path = temp_dir.path().join("test_parquet.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path()).unwrap();
-
-        // Only the size of the Apache Parquet file should be counted.
-        assert_eq!(DataTransfer::get_total_compressed_files_size(temp_dir.path()), COMPRESSED_FILE_SIZE);
-    }
 
     #[test]
     fn test_add_compressed_file_into_new_key() {
