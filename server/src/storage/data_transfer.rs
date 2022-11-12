@@ -210,6 +210,42 @@ mod tests {
     fn test_transfer_if_reaching_batch_size_on_start_up() {}
 
     #[test]
+    fn test_empty_path_is_not_compressed_file() {
+        let path = object_store::path::Path::from("");
+        assert!(DataTransfer::path_is_compressed_file(path).is_none());
+    }
+
+    #[test]
+    fn test_folder_path_is_not_compressed_file() {
+        let path = object_store::path::Path::from("4330327753845164038/compressed");
+        assert!(DataTransfer::path_is_compressed_file(path).is_none());
+    }
+
+    #[test]
+    fn test_non_key_folder_is_not_compressed_file() {
+        let path = object_store::path::Path::from("test/compressed/test.parquet");
+        assert!(DataTransfer::path_is_compressed_file(path).is_none());
+    }
+
+    #[test]
+    fn test_key_folder_without_compressed_folder_is_not_compressed_file() {
+        let path = object_store::path::Path::from("4330327753845164038/test/test.parquet");
+        assert!(DataTransfer::path_is_compressed_file(path).is_none());
+    }
+
+    #[test]
+    fn test_non_parquet_file_is_not_compressed_file() {
+        let path = object_store::path::Path::from("4330327753845164038/compressed/test.txt");
+        assert!(DataTransfer::path_is_compressed_file(path).is_none());
+    }
+
+    #[test]
+    fn test_compressed_file_is_compressed_file() {
+        let path = object_store::path::Path::from("4330327753845164038/compressed/test.parquet");
+        assert_eq!(DataTransfer::path_is_compressed_file(path), Some(4330327753845164038));
+    }
+
+    #[test]
     fn test_add_compressed_file_into_new_key() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
