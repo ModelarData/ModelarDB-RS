@@ -67,24 +67,21 @@ impl DataTransfer {
         let data_folder_object_store = Arc::new(local_fs);
 
         // Parse through the data folder to retrieve already existing files that should be transferred.
-        let dir = fs::read_dir(data_folder_path.clone())?;
+        let mut compressed_files = HashMap::new();
+        runtime.block_on(async {
+            let list_stream = data_folder_object_store.list(None).await.unwrap();
 
-        // Use a filter map to remove all dir entries that does not contain compressed files. For each
-        // item that does contain compressed files, return a tuple with the key and the size in bytes.
-        let compressed_files = dir.filter_map(|maybe_dir_entry| {
-            if let Ok(dir_entry) = maybe_dir_entry {
-                let path = dir_entry.path();
-
-                if let Some(key) = Self::path_contains_compressed_files(path.as_path()) {
-                    let compressed_path = path.join("compressed");
-                    let size = Self::get_total_compressed_files_size(compressed_path.as_path());
-
-                    return Some((key, size));
+            list_stream.map(|maybe_meta| {
+                if let Ok(meta) = maybe_meta {
+                    // If the file is a compressed file, add it to the compressed files.
+                    if let Some(key) = Self::path_is_compressed_file(meta.location) {
+                        *compressed_files.entry(key).or_insert(0) += meta.size;
+                    }
                 }
-            }
+            }).collect::<Vec<_>>().await;
+        });
 
-            None
-        }).into_iter().collect();
+        // TODO: Check if data should be transferred.
 
         Ok(Self {
             runtime,
@@ -149,7 +146,6 @@ impl DataTransfer {
         arrow_writer.write(&combined)?;
         arrow_writer.close()?;
 
-        // TODO: Fix the tests.
         self.runtime.block_on(async {
             // Transfer the read data to the blob store.
             let file_name = storage::create_time_range_file_name(&combined);
@@ -163,6 +159,24 @@ impl DataTransfer {
         });
 
         Ok(())
+    }
+
+    /// Return the key if `path` is an Apache Parquet file with compressed data, otherwise [`None`].
+    fn path_is_compressed_file(path: object_store::path::Path) -> Option<u64> {
+        let string_path = path.to_string();
+        let split_path = string_path.split("/").collect::<Vec<&str>>();
+
+        if let Some(string_key) = split_path.get(0) {
+            if let Ok(key) = string_key.parse::<u64>() {
+                if let Some(file_name) = split_path.get(2) {
+                    if Some(&"compressed") == split_path.get(1) && file_name.ends_with(".parquet") {
+                        return Some(key);
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     /// Return the key if `path` is a key folder containing compressed data, otherwise [`None`].
@@ -348,7 +362,8 @@ mod tests {
             .expect("Error creating local file system.");
         let target_object_store = Arc::new(local_fs);
 
+        let transfer_batch_size_in_bytes = COMPRESSED_FILE_SIZE * 3 - 1;
         (target_dir, DataTransfer::try_new(runtime, data_folder_path.to_path_buf(),
-                                           target_object_store, 64).unwrap())
+                                           target_object_store, transfer_batch_size_in_bytes).unwrap())
     }
 }
