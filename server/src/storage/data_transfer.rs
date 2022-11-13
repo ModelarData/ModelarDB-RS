@@ -81,16 +81,23 @@ impl DataTransfer {
             }).collect::<Vec<_>>().await;
         });
 
-        // TODO: Check if data should be transferred.
-
-        Ok(Self {
+        let mut data_transfer = Self {
             runtime,
             data_folder_path,
             data_folder_object_store,
             target_object_store,
-            compressed_files,
+            compressed_files: compressed_files.clone(),
             transfer_batch_size_in_bytes,
-        })
+        };
+
+        // Check if data should be transferred immediately.
+        for (key, size_in_bytes) in compressed_files.iter() {
+            if size_in_bytes >= &transfer_batch_size_in_bytes {
+                data_transfer.transfer_data(key).map_err(|err| IOError::new(Other, err.to_string()))?;
+            }
+        }
+
+        Ok(data_transfer)
     }
 
     /// Insert the compressed file into the files to be transferred. Retrieve the size of the file
@@ -148,9 +155,13 @@ impl DataTransfer {
             self.target_object_store.put(&path, Bytes::from(buf.into_inner())).await.unwrap();
 
             // Delete the transferred files from local storage.
-            for meta in object_metas {
+            for meta in object_metas.clone() {
                 self.target_object_store.delete(&meta.location).await.unwrap();
             }
+
+            // Delete the transferred files from the in-memory tracking of compressed files.
+            let transferred_bytes: usize = object_metas.map(|meta| meta.size).sum();
+            *self.compressed_files.get_mut(key).unwrap() -= transferred_bytes;
         });
 
         Ok(())
