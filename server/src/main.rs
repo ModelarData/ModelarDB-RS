@@ -99,16 +99,8 @@ fn main() -> Result<(), String> {
         Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {}", error))?,
     );
 
-    // Ensure the local data folder can be accessed.
-    fs::create_dir_all(&data_folders.local_data_folder).map_err(|error| {
-        format!(
-            "Unable to create {}: {}",
-            data_folders.local_data_folder.to_string_lossy(),
-            error
-        )
-    })?;
-
-    // Ensure the remote data folder can be accessed.
+    // Ensure the remote data folder can be accessed. The check is performed
+    // after parse_command_line_arguments() as the Tokio Runtime is required.
     if let Some(remote_data_folder) = data_folders.remote_data_folder {
         runtime.block_on(async {
             remote_data_folder
@@ -163,17 +155,17 @@ fn parse_command_line_arguments(arguments: &[&str]) -> Result<DataFolders, Strin
     // Match the provided command line arguments to the supported inputs.
     match arguments {
         &["cloud", local_data_folder, remote_data_folder] => Ok(DataFolders {
-            local_data_folder: PathBuf::from(local_data_folder),
+            local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
             remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
             query_data_folder: argument_to_remote_object_store(remote_data_folder)?,
         }),
         &["edge", local_data_folder, remote_data_folder] => Ok(DataFolders {
-            local_data_folder: PathBuf::from(local_data_folder),
+            local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
             remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
             query_data_folder: argument_to_local_object_store(local_data_folder)?,
         }),
         &["edge", local_data_folder] | &[local_data_folder] => Ok(DataFolders {
-            local_data_folder: PathBuf::from(local_data_folder),
+            local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
             remote_data_folder: None,
             query_data_folder: argument_to_local_object_store(local_data_folder)?,
         }),
@@ -187,6 +179,24 @@ fn parse_command_line_arguments(arguments: &[&str]) -> Result<DataFolders, Strin
             ))
         }
     }
+}
+
+/// Create a [`PathBuf`] that represents the path to the local data folder in
+/// `argument` and ensure that the folder exists.
+fn argument_to_local_data_folder_path_buf(argument: &str) -> Result<PathBuf, String> {
+    let local_data_folder = PathBuf::from(argument);
+
+    // Ensure the local data folder can be accessed as LocalFileSystem cannot
+    // canonicalize the folder to the filesystem root if it does not exist.
+    fs::create_dir_all(&local_data_folder).map_err(|error| {
+        format!(
+            "Unable to create {}: {}",
+            local_data_folder.to_string_lossy(),
+            error
+        )
+    })?;
+
+    Ok(local_data_folder)
 }
 
 /// Create an [`ObjectStore`] that represents the local path in `argument`.
