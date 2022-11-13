@@ -18,7 +18,6 @@
 //! the component ensures that local data is kept on disk until a reliable connection is established.
 
 use std::collections::HashMap;
-use std::fs;
 use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
 use std::path::{Path, PathBuf};
@@ -28,6 +27,7 @@ use bytes::BufMut;
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
+use object_store::path::{Path as ObjectStorePath, PathPart};
 use object_store::{ObjectStore};
 use object_store::local::LocalFileSystem;
 use tokio::runtime::Runtime;
@@ -107,17 +107,12 @@ impl DataTransfer {
         Ok(())
     }
 
-    /// Transfer all compressed files currently in the data folder to the target blob store.
-    pub(super) fn flush_compressed_files(&mut self) {
-        // TODO: Iterate over the keys in the compressed files hashmap and call the transfer data function for each key.
-    }
-
     // TODO: Handle the case where a connection can not be established.
     // TODO: Handle the unwraps on the object store calls.
     /// Transfer the data corresponding to `key` to the blob store. Once successfully transferred,
     /// the data is deleted from local storage. Return [`Ok`] if the file was written successfully,
     /// otherwise [`ParquetError`].
-    pub fn transfer_data(&mut self, key: &u64) -> Result<(), ParquetError> {
+    fn transfer_data(&mut self, key: &u64) -> Result<(), ParquetError> {
         // Read all files that correspond to the key.
         let object_metas = self.runtime.block_on(async {
             let path = format!("{}/compressed", key).into();
@@ -162,14 +157,15 @@ impl DataTransfer {
     }
 
     /// Return the key if `path` is an Apache Parquet file with compressed data, otherwise [`None`].
-    fn path_is_compressed_file(path: object_store::path::Path) -> Option<u64> {
-        let string_path = path.to_string();
-        let split_path = string_path.split("/").collect::<Vec<&str>>();
+    fn path_is_compressed_file(path: ObjectStorePath) -> Option<u64> {
+        let path_parts: Vec<PathPart> = path.parts().collect();
 
-        if let Some(string_key) = split_path.get(0) {
-            if let Ok(key) = string_key.parse::<u64>() {
-                if let Some(file_name) = split_path.get(2) {
-                    if Some(&"compressed") == split_path.get(1) && file_name.ends_with(".parquet") {
+        if let Some(key_part) = path_parts.get(0) {
+            if let Ok(key) = key_part.as_ref().parse::<u64>() {
+                if let Some(file_name_part) = path_parts.get(2) {
+                    // TODO: Use is_path_an_apache_parquet_file when merged.
+                    if Some(&PathPart::from("compressed")) == path_parts.get(1)
+                        && file_name_part.as_ref().ends_with(".parquet") {
                         return Some(key);
                     }
                 }
@@ -186,6 +182,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
+    use object_store::path::Path as ObjectStorePath;
     use object_store::local::LocalFileSystem;
     use tempfile::TempDir;
     use tokio::runtime::Runtime;
@@ -211,37 +208,37 @@ mod tests {
 
     #[test]
     fn test_empty_path_is_not_compressed_file() {
-        let path = object_store::path::Path::from("");
+        let path = ObjectStorePath::from("");
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_folder_path_is_not_compressed_file() {
-        let path = object_store::path::Path::from("4330327753845164038/compressed");
+        let path = ObjectStorePath::from("4330327753845164038/compressed");
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_non_key_folder_is_not_compressed_file() {
-        let path = object_store::path::Path::from("test/compressed/test.parquet");
+        let path = ObjectStorePath::from("test/compressed/test.parquet");
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_key_folder_without_compressed_folder_is_not_compressed_file() {
-        let path = object_store::path::Path::from("4330327753845164038/test/test.parquet");
+        let path = ObjectStorePath::from("4330327753845164038/test/test.parquet");
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_non_parquet_file_is_not_compressed_file() {
-        let path = object_store::path::Path::from("4330327753845164038/compressed/test.txt");
+        let path = ObjectStorePath::from("4330327753845164038/compressed/test.txt");
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_compressed_file_is_compressed_file() {
-        let path = object_store::path::Path::from("4330327753845164038/compressed/test.parquet");
+        let path = ObjectStorePath::from("4330327753845164038/compressed/test.parquet");
         assert_eq!(DataTransfer::path_is_compressed_file(path), Some(4330327753845164038));
     }
 
@@ -291,9 +288,6 @@ mod tests {
         let parquet_path = path.join("test_parquet.parquet");
         assert!(data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).is_err())
     }
-
-    #[test]
-    fn test_flush_compressed_files() {}
 
     #[test]
     fn test_transfer_if_reaching_batch_size_when_adding() {}
