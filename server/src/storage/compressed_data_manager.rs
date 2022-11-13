@@ -98,9 +98,12 @@ impl CompressedDataManager {
         }
     }
 
-    /// Return the file path to each on-disk compressed file that corresponds to `key`. If some
-    /// compressed data that corresponds to `key` is still in memory, save the data to disk first.
-    /// If `key` does not correspond to any data, [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned.
+    /// Return an [`ObjectMeta`] for each compressed file in `query_data_folder`
+    /// that corresponds to `key`. If some compressed data that corresponds to
+    /// `key` is still in memory, save the data to disk first. If `key` does not
+    /// correspond to any compressed files, an empty [`Vec`] is returned, while
+    /// a [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned
+    /// if the compressed files could not be listed.
     pub(super) async fn save_and_get_saved_compressed_files(
         &mut self,
         key: &u64,
@@ -123,7 +126,7 @@ impl CompressedDataManager {
             .await
             .map_err(|error| {
                 ModelarDbError::DataRetrievalError(format!(
-                    "Compressed data could not be found for key '{}': {}",
+                    "Compressed data could not be listed for key '{}': {}",
                     key,
                     error.to_string()
                 ))

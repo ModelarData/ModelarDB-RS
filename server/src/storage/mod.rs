@@ -550,7 +550,7 @@ mod tests {
     #[tokio::test]
     async fn test_is_empty_parquet_path_apache_parquet_file() {
         let temp_dir = tempdir().unwrap();
-        let path = temp_dir.path().join("test.txt");
+        let path = temp_dir.path().join("test.parquet");
         File::create(path.clone()).unwrap();
 
         let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());

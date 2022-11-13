@@ -69,13 +69,14 @@ pub struct Context {
     pub storage_engine: RwLock<StorageEngine>,
 }
 
-/// Setup tracing that prints to stdout, parse the command line arguments to a
-/// [`DataFolders`], construct a [`Context`] with the systems components,
-/// initialize the tables and model tables in the metadata database, initialize
-/// a CTRL+C handler that flushes the data in memory to disk, and start the
-/// Apache Arrow Flight interface. Returns [`Error`] formatted as a [`String`]
-/// if the command line arguments cannot be parsed, the metadata cannot be read
-/// from the database or the Apache Arrow Flight interface cannot be started.
+/// Setup tracing that prints to stdout, parse the command line arguments to
+/// extract [`DataFolders`], construct a [`Context`] with the systems
+/// components, initialize the tables and model tables in the metadata database,
+/// initialize a CTRL+C handler that flushes the data in memory to disk, and
+/// start the Apache Arrow Flight interface. Returns [`Error`] formatted as a
+/// [`String`] if the command line arguments cannot be parsed, the metadata
+/// cannot be read from the database or the Apache Arrow Flight interface cannot
+/// be started.
 fn main() -> Result<(), String> {
     // Initialize a tracing layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();
@@ -171,12 +172,7 @@ fn parse_command_line_arguments(arguments: &[&str]) -> Result<DataFolders, Strin
             remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
             query_data_folder: argument_to_local_object_store(local_data_folder)?,
         }),
-        &["edge", local_data_folder] => Ok(DataFolders {
-            local_data_folder: PathBuf::from(local_data_folder),
-            remote_data_folder: None,
-            query_data_folder: argument_to_local_object_store(local_data_folder)?,
-        }),
-        &[local_data_folder] => Ok(DataFolders {
+        &["edge", local_data_folder] | &[local_data_folder] => Ok(DataFolders {
             local_data_folder: PathBuf::from(local_data_folder),
             remote_data_folder: None,
             query_data_folder: argument_to_local_object_store(local_data_folder)?,
@@ -221,20 +217,21 @@ fn argument_to_remote_object_store(argument: &str) -> Result<Arc<dyn ObjectStore
 /// executed directly on the segments containing metadata and models instead of
 /// on reconstructed data points created from the segments for model tables.
 fn create_session_context(query_data_folder: Arc<dyn ObjectStore>) -> SessionContext {
-    let config = SessionConfig::new();
+    let session_config = SessionConfig::new();
 
-    let runtime = Arc::new(RuntimeEnv::default());
-    runtime.register_object_store(
+    let session_runtime = Arc::new(RuntimeEnv::default());
+    session_runtime.register_object_store(
         storage::QUERY_DATA_FOLDER_SCHEME_AND_HOST,
         storage::QUERY_DATA_FOLDER_SCHEME_AND_HOST,
         query_data_folder,
     );
 
-    let state = SessionState::with_config_rt(config, runtime).with_physical_optimizer_rules(vec![
-        Arc::new(model_simple_aggregates::ModelSimpleAggregatesPhysicalOptimizerRule {}),
-    ]);
+    let session_state = SessionState::with_config_rt(session_config, session_runtime)
+        .with_physical_optimizer_rules(vec![Arc::new(
+            model_simple_aggregates::ModelSimpleAggregatesPhysicalOptimizerRule {},
+        )]);
 
-    SessionContext::with_state(state)
+    SessionContext::with_state(session_state)
 }
 
 /// Register a handler to execute when CTRL+C is pressed. The handler takes an
@@ -270,13 +267,8 @@ mod tests {
         setup_environment();
         let tempdir = tempfile::tempdir().unwrap();
         let tempdir_str = tempdir.path().to_str().unwrap();
-        let input = &["cloud", tempdir_str, "s3://bucket"];
-
-        let DataFolders {
-            local_data_folder,
-            remote_data_folder,
-            query_data_folder: _query_data_folder,
-        } = parse_command_line_arguments(input).unwrap();
+        let (local_data_folder, remote_data_folder) =
+            new_data_folders(&["cloud", tempdir_str, "s3://bucket"]);
 
         // Equals cannot be applied to type dyn object_store::ObjectStore.
         assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
@@ -293,13 +285,8 @@ mod tests {
         setup_environment();
         let tempdir = tempfile::tempdir().unwrap();
         let tempdir_str = tempdir.path().to_str().unwrap();
-        let input = &["edge", tempdir_str, "s3://bucket"];
-
-        let DataFolders {
-            local_data_folder,
-            remote_data_folder,
-            query_data_folder: _query_data_folder,
-        } = parse_command_line_arguments(input).unwrap();
+        let (local_data_folder, remote_data_folder) =
+            new_data_folders(&["edge", tempdir_str, "s3://bucket"]);
 
         // Equals cannot be applied to type dyn object_store::ObjectStore.
         assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
@@ -311,13 +298,7 @@ mod tests {
         setup_environment();
         let tempdir = tempfile::tempdir().unwrap();
         let tempdir_str = tempdir.path().to_str().unwrap();
-        let input = &["edge", tempdir_str];
-
-        let DataFolders {
-            local_data_folder,
-            remote_data_folder,
-            query_data_folder: _query_data_folder,
-        } = parse_command_line_arguments(input).unwrap();
+        let (local_data_folder, remote_data_folder) = new_data_folders(&["edge", tempdir_str]);
 
         // Equals cannot be applied to type dyn object_store::ObjectStore.
         assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
@@ -329,13 +310,7 @@ mod tests {
         setup_environment();
         let tempdir = tempfile::tempdir().unwrap();
         let tempdir_str = tempdir.path().to_str().unwrap();
-        let input = &[tempdir_str];
-
-        let DataFolders {
-            local_data_folder,
-            remote_data_folder,
-            query_data_folder: _query_data_folder,
-        } = parse_command_line_arguments(input).unwrap();
+        let (local_data_folder, remote_data_folder) = new_data_folders(&[tempdir_str]);
 
         // Equals cannot be applied to type dyn object_store::ObjectStore.
         assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
@@ -353,5 +328,15 @@ mod tests {
 
     fn setup_environment() {
         env::set_var("AWS_DEFAULT_REGION", "");
+    }
+
+    fn new_data_folders(input: &[&str]) -> (PathBuf, Option<Arc<dyn ObjectStore>>) {
+        let DataFolders {
+            local_data_folder,
+            remote_data_folder,
+            query_data_folder: _query_data_folder,
+        } = parse_command_line_arguments(input).unwrap();
+
+        (local_data_folder, remote_data_folder)
     }
 }
