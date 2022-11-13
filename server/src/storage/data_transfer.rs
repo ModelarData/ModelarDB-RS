@@ -156,7 +156,7 @@ impl DataTransfer {
 
             // Delete the transferred files from local storage.
             for meta in object_metas.clone() {
-                self.target_object_store.delete(&meta.location).await.unwrap();
+                self.data_folder_object_store.delete(&meta.location).await.unwrap();
             }
 
             // Delete the transferred files from the in-memory tracking of compressed files.
@@ -208,14 +208,11 @@ mod tests {
     #[test]
     fn test_include_existing_files_on_start_up() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let parquet_path = set_up_data_folder(temp_dir.path());
+        let parquet_path = create_compressed_file(temp_dir.path(), "test");
         let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
 
         assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), COMPRESSED_FILE_SIZE)
     }
-
-    #[test]
-    fn test_transfer_if_reaching_batch_size_on_start_up() {}
 
     #[test]
     fn test_empty_path_is_not_compressed_file() {
@@ -257,7 +254,7 @@ mod tests {
     fn test_add_compressed_file_into_new_key() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
-        let parquet_path = set_up_data_folder(temp_dir.path());
+        let parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         assert!(data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).is_ok());
         assert_eq!(data_transfer.compressed_files.get(&KEY).unwrap(), &COMPRESSED_FILE_SIZE);
@@ -267,25 +264,12 @@ mod tests {
     fn test_add_compressed_file_into_existing_key() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
-        let parquet_path = set_up_data_folder(temp_dir.path());
+        let parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).unwrap();
         data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).unwrap();
 
         assert_eq!(data_transfer.compressed_files.get(&KEY).unwrap(), &(COMPRESSED_FILE_SIZE * 2));
-    }
-
-    /// Set up a data folder with a key folder that has a single compressed file in it.
-    /// Return the path to the created Apache Parquet file.
-    fn set_up_data_folder(data_folder_path: &Path) -> PathBuf {
-        let path = data_folder_path.join(format!("{}/compressed", KEY));
-        fs::create_dir_all(path.clone()).unwrap();
-
-        let batch = test_util::get_compressed_segment_record_batch();
-        let parquet_path = path.join("test_parquet.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path()).unwrap();
-
-        parquet_path
     }
 
     #[test]
@@ -301,16 +285,81 @@ mod tests {
     }
 
     #[test]
-    fn test_transfer_if_reaching_batch_size_when_adding() {}
-
-    #[test]
     fn test_transfer_single_file() {
-        // TODO: Check that the file has been deleted.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
+        let parquet_path = create_compressed_file(temp_dir.path(), "test");
+
+        data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).unwrap();
+        data_transfer.transfer_data(&KEY).unwrap();
+
+        // The transferred file should have a time range file name that matches the compressed data.
+        assert!(target_dir.path().join(format!("{}/compressed/0-3.parquet", KEY)).exists());
+        assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), 0 as usize);
     }
 
     #[test]
     fn test_transfer_multiple_files() {
-        // TODO: Check that the files have been deleted.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
+        let path_1 = create_compressed_file(temp_dir.path(), "test_1");
+        let path_2 = create_compressed_file(temp_dir.path(), "test_2");
+
+        data_transfer.add_compressed_file(&KEY, path_1.as_path()).unwrap();
+        data_transfer.add_compressed_file(&KEY, path_2.as_path()).unwrap();
+        data_transfer.transfer_data(&KEY).unwrap();
+
+        assert!(!path_1.exists());
+        assert!(!path_2.exists());
+
+        let target_path = target_dir.path().join(format!("{}/compressed/0-3.parquet", KEY));
+        assert!(target_path.exists());
+        assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), 0 as usize);
+
+        // The transferred file should have 6 rows since each compressed file has 3.
+        let batch = StorageEngine::read_entire_apache_parquet_file(target_path.as_path()).unwrap();
+        assert_eq!(batch.num_rows(), 6);
+    }
+
+    #[test]
+    fn test_transfer_if_reaching_batch_size_when_adding() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
+        let parquet_path = create_compressed_file(temp_dir.path(), "test");
+
+        // Set the max batch size to ensure that the file is transferred immediately.
+        data_transfer.transfer_batch_size_in_bytes = COMPRESSED_FILE_SIZE - 1;
+        data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).unwrap();
+
+        assert!(target_dir.path().join(format!("{}/compressed/0-3.parquet", KEY)).exists());
+        assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), 0 as usize);
+    }
+
+    #[test]
+    fn test_transfer_if_reaching_batch_size_on_start_up() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path_1 = create_compressed_file(temp_dir.path(), "test_1");
+        let path_2 = create_compressed_file(temp_dir.path(), "test_2");
+        let path_3 = create_compressed_file(temp_dir.path(), "test_3");
+
+        // Since the max batch size is 1 byte smaller than 3 compressed files, the data should be transferred immediately.
+        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
+
+        assert!(target_dir.path().join(format!("{}/compressed/0-3.parquet", KEY)).exists());
+        assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), 0 as usize);
+    }
+
+    /// Set up a data folder with a key folder that has a single compressed file in it.
+    /// Return the path to the created Apache Parquet file.
+    fn create_compressed_file(data_folder_path: &Path, file_name: &str) -> PathBuf {
+        let path = data_folder_path.join(format!("{}/compressed", KEY));
+        fs::create_dir_all(path.clone()).unwrap();
+
+        let batch = test_util::get_compressed_segment_record_batch();
+        let parquet_path = path.join(format!("{}.parquet", file_name));
+        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path()).unwrap();
+
+        parquet_path
     }
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
