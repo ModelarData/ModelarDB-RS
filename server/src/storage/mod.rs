@@ -28,7 +28,6 @@ use std::fs;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use chrono::DateTime;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -38,10 +37,8 @@ use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Compression;
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
-use object_store::local::LocalFileSystem;
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
-use tokio::runtime::Runtime;
 
 use crate::errors::ModelarDbError;
 use crate::get_array;
@@ -75,12 +72,11 @@ pub struct StorageEngine {
     /// Manager that contains and controls all compressed data.
     compressed_data_manager: CompressedDataManager,
     /// Component to manage the quantity of saved compressed data and transfer the data when necessary.
-    data_transfer: DataTransfer,
+    data_transfer: Option<DataTransfer>,
 }
 
 impl StorageEngine {
     pub fn new(
-        runtime : Arc<Runtime>,
         data_folder_path: PathBuf,
         metadata_manager: MetadataManager,
         compress_directly: bool,
@@ -99,16 +95,11 @@ impl StorageEngine {
             metadata_manager.get_compressed_schema(),
         );
 
-        // TODO: Maybe change the unwrap here.
-        let local_fs = LocalFileSystem::new_with_prefix(data_folder_path.clone()).unwrap();
-        let target_object_store = Arc::new(local_fs);
-        let data_transfer = DataTransfer::try_new(runtime, data_folder_path, target_object_store, 64).unwrap();
-
         Self {
             metadata_manager,
             uncompressed_data_manager,
             compressed_data_manager,
-            data_transfer,
+            data_transfer: None,
         }
     }
 

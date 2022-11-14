@@ -36,6 +36,13 @@ use tonic::codegen::Bytes;
 
 use crate::{storage, StorageEngine};
 
+// TODO: When the storage engine is changed to use object store for everything, receive
+//       the object store directly through the parameters instead.
+// TODO: Set up the data transfer component based on whether the system is running on edge or cloud.
+// TODO: When a compressed file is saved, add the file to the data transfer component.
+// TODO: Handle the case where a connection can not be established when transferring data.
+// TODO: Use is_path_an_apache_parquet_file when merged.
+
 pub(super) struct DataTransfer {
     /// Tokio runtime for executing asynchronous tasks.
     runtime: Arc<Runtime>,
@@ -61,15 +68,13 @@ impl DataTransfer {
         target_object_store: Arc<dyn ObjectStore>,
         transfer_batch_size_in_bytes: usize,
     ) -> Result<Self, IOError> {
-        // TODO: When the storage engine is changed to use object store for everything, receive
-        //       the object store directly through the parameters instead.
         let local_fs = LocalFileSystem::new_with_prefix(data_folder_path.clone())?;
         let data_folder_object_store = Arc::new(local_fs);
 
         // Parse through the data folder to retrieve already existing files that should be transferred.
         let mut compressed_files = HashMap::new();
         runtime.block_on(async {
-            let list_stream = data_folder_object_store.list(None).await.unwrap();
+            let list_stream = data_folder_object_store.list(None).await?;
 
             list_stream.map(|maybe_meta| {
                 if let Ok(meta) = maybe_meta {
@@ -79,7 +84,9 @@ impl DataTransfer {
                     }
                 }
             }).collect::<Vec<_>>().await;
-        });
+
+            Ok(())
+        }).map_err(|error: object_store::Error| IOError::new(Other, error.to_string()))?;
 
         let mut data_transfer = Self {
             runtime,
@@ -114,8 +121,6 @@ impl DataTransfer {
         Ok(())
     }
 
-    // TODO: Handle the case where a connection can not be established.
-    // TODO: Handle the unwraps on the object store calls.
     /// Transfer the data corresponding to `key` to the blob store. Once successfully transferred,
     /// the data is deleted from local storage. Return [`Ok`] if the file was written successfully,
     /// otherwise [`ParquetError`].
@@ -124,12 +129,13 @@ impl DataTransfer {
         let object_metas = self.runtime.block_on(async {
             let path = format!("{}/compressed", key).into();
             let list_stream = self.data_folder_object_store
-                .list(Some(&path)).await.unwrap();
+                .list(Some(&path))
+                .await?;
 
-            list_stream.filter_map(|maybe_meta| async {
+            Ok(list_stream.filter_map(|maybe_meta| async {
                 maybe_meta.ok()
-            }).collect::<Vec<_>>().await.into_iter()
-        });
+            }).collect::<Vec<_>>().await.into_iter())
+        }).map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
 
         // Combine the Apache Parquet files into a single RecordBatch.
         let record_batches = object_metas.clone().filter_map(|meta| {
@@ -152,19 +158,19 @@ impl DataTransfer {
             // Transfer the read data to the blob store.
             let file_name = storage::create_time_range_file_name(&combined);
             let path = format!("{}/compressed/{}", key, file_name).into();
-            self.target_object_store.put(&path, Bytes::from(buf.into_inner())).await.unwrap();
+            self.target_object_store.put(&path, Bytes::from(buf.into_inner())).await?;
 
             // Delete the transferred files from local storage.
             for meta in object_metas.clone() {
-                self.data_folder_object_store.delete(&meta.location).await.unwrap();
+                self.data_folder_object_store.delete(&meta.location).await?;
             }
 
             // Delete the transferred files from the in-memory tracking of compressed files.
             let transferred_bytes: usize = object_metas.map(|meta| meta.size).sum();
             *self.compressed_files.get_mut(key).unwrap() -= transferred_bytes;
-        });
 
-        Ok(())
+            Ok(())
+        }).map_err(|error: object_store::Error| ParquetError::General(error.to_string()))
     }
 
     /// Return the key if `path` is an Apache Parquet file with compressed data, otherwise [`None`].
@@ -174,7 +180,6 @@ impl DataTransfer {
         if let Some(key_part) = path_parts.get(0) {
             if let Ok(key) = key_part.as_ref().parse::<u64>() {
                 if let Some(file_name_part) = path_parts.get(2) {
-                    // TODO: Use is_path_an_apache_parquet_file when merged.
                     if Some(&PathPart::from("compressed")) == path_parts.get(1)
                         && file_name_part.as_ref().ends_with(".parquet") {
                         return Some(key);
