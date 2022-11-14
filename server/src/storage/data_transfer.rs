@@ -33,6 +33,7 @@ use object_store::local::LocalFileSystem;
 use tokio::runtime::Runtime;
 use futures::StreamExt;
 use tonic::codegen::Bytes;
+use tracing::{debug, debug_span};
 
 use crate::{storage, StorageEngine};
 
@@ -125,6 +126,8 @@ impl DataTransfer {
     /// the data is deleted from local storage. Return [`Ok`] if the file was written successfully,
     /// otherwise [`ParquetError`].
     fn transfer_data(&mut self, key: &u64) -> Result<(), ParquetError> {
+        let _span = debug_span!("transfer_data", key = key).entered();
+
         // Read all files that correspond to the key.
         let object_metas = self.runtime.block_on(async {
             let path = format!("{}/compressed", key).into();
@@ -137,6 +140,8 @@ impl DataTransfer {
             }).collect::<Vec<_>>().await.into_iter())
         }).map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
 
+        debug!("Transferring {} compressed files.", object_metas.len());
+
         // Combine the Apache Parquet files into a single RecordBatch.
         let record_batches = object_metas.clone().filter_map(|meta| {
             let path = self.data_folder_path.to_string_lossy();
@@ -147,6 +152,8 @@ impl DataTransfer {
 
         let schema = record_batches[0].schema();
         let combined = compute::concat_batches(&schema, &record_batches)?;
+
+        debug!("Combined compressed files into single record batch with {} rows.", combined.num_rows());
 
         // Write the combined RecordBatch to a bytes buffer.
         let mut buf = vec![].writer();
@@ -168,6 +175,12 @@ impl DataTransfer {
             // Delete the transferred files from the in-memory tracking of compressed files.
             let transferred_bytes: usize = object_metas.map(|meta| meta.size).sum();
             *self.compressed_files.get_mut(key).unwrap() -= transferred_bytes;
+
+            debug!(
+                "Transferred {} bytes of compressed data to path '{}' in remote blob store.",
+                transferred_bytes,
+                path,
+            );
 
             Ok(())
         }).map_err(|error: object_store::Error| ParquetError::General(error.to_string()))
