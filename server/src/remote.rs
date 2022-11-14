@@ -296,12 +296,12 @@ impl FlightServiceHandler {
         info!("Created model table '{}'.", model_table_metadata.name);
         Ok(())
     }
-    fn flush_data_to_disk(
+    async fn flush_data_to_disk(
         &self
     ) -> Result<(), Status> {
         let context = self.context.clone();
 
-        context.storage_engine.write().flush();
+        context.storage_engine.write().await.flush();
 
         Ok(())
     }
@@ -523,7 +523,7 @@ impl FlightService for FlightServiceHandler {
             // Confirm the table was created.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "Flush"{
-            self.flush_data_to_disk().expect("Failed to flush data to disk.");
+            self.flush_data_to_disk().await.expect("Failed to flush data to disk.");
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))

@@ -6,7 +6,7 @@ use std::{env, io, time};
 
 use std::fs;
 use std::fs::canonicalize;
-use std::io::{BufRead, Read, Write, BufReader};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path;
 use std::path::Path;
 use std::process;
@@ -33,21 +33,20 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema, TimestampMillisecond
 use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::{array, ipc};
+use datafusion::arrow::ipc::convert::try_schema_from_ipc_buffer;
 use futures::executor::block_on;
 use futures::stream;
-use log::{error, Record};
+use log::{error, Log, Record};
 use prost::Message;
 use rand::Rng;
 use rusqlite::ffi::sqlite3_uint64;
 use serial_test::serial;
 use sqlparser::ast::DataType::Time;
 use sqlparser::test_utils::table;
-use tokio::io::{AsyncBufReadExt};
+use tokio::io::AsyncBufReadExt;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
 use tonic::{IntoStreamingRequest, Request};
-
-
 
 pub type ArrowValue = datafusion::arrow::datatypes::Float32Type;
 pub type ValueArray = PrimitiveArray<ArrowValue>;
@@ -57,7 +56,7 @@ pub type ArrowTimestamp = TimestampMillisecondType;
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 #[test]
-#[serial(timeout_ms = 1000)]
+#[serial]
 fn test_can_create_table() {
     create_directory();
 
@@ -81,7 +80,8 @@ fn test_can_create_table() {
             }
         }
     } else {
-        panic!("error: Unable to initialize run-time");
+        eprintln!("error: unable to initialize run-time");
+        assert!(false);
     }
 
     flight_server.kill().expect("Could not kill server.");
@@ -90,7 +90,7 @@ fn test_can_create_table() {
 }
 
 #[test]
-#[serial(timeout_ms = 1000)]
+#[serial]
 fn test_can_create_model_table() {
     create_directory();
 
@@ -114,7 +114,8 @@ fn test_can_create_model_table() {
             }
         }
     } else {
-        panic!("error: Unable to initialize run-time");
+        eprintln!("error: unable to initialize run-time");
+        assert!(false);
     }
 
     flight_server.kill().expect("Could not kill server.");
@@ -123,7 +124,101 @@ fn test_can_create_model_table() {
 }
 
 #[test]
-#[serial(timeout_ms = 1000)]
+#[serial]
+fn test_creating_and_listing_multiple_tables() {
+    create_directory();
+
+    let mut flight_server = start_arrow_flight_server();
+
+    let created_tables = vec![
+        "data1".to_string(),
+        "data2".to_string(),
+        "data3".to_string(),
+        "data4".to_string(),
+        "data5".to_string(),
+    ];
+
+    if let Ok(rt) = Runtime::new() {
+        let address = ("127.0.0.1".to_string());
+        match create_flight_service_client(&rt, &address, 9999) {
+            Ok(mut fsc) => {
+                for table in created_tables.clone() {
+                    let _result_create_table = create_model_table(&rt, &mut fsc, table.to_string());
+                }
+
+                if let Ok(queried_tables) = retrieve_table_names(&rt, &mut fsc) {
+                    for table in created_tables.clone() {
+                        assert!(queried_tables.contains(&table))
+                    }
+                }
+            }
+            Err(message) => {
+                eprintln!("error: cannot connect to {} due to a {}", address, message);
+                assert!(false);
+            }
+        }
+    } else {
+        eprintln!("error: unable to initialize run-time");
+        assert!(false);
+    }
+
+    flight_server.kill().expect("Could not kill server.");
+
+    remove_directory();
+}
+
+#[test]
+#[serial]
+fn test_get_schema() {
+    create_directory();
+
+    let mut flight_server = start_arrow_flight_server();
+
+    let mut table_names = vec![];
+
+    table_names.push("data".to_string());
+
+    if let Ok(rt) = Runtime::new() {
+        let address = ("127.0.0.1".to_string());
+        match create_flight_service_client(&rt, &address, 9999) {
+            Ok(mut fsc) => {
+                let _result_create_table = create_model_table(&rt, &mut fsc, table_names[0].clone());
+
+                rt.block_on(async {
+                    let schema_result = fsc.get_schema(Request::new(FlightDescriptor::new_path(table_names))).await.ok()?.into_inner();
+
+                    let schema =
+                        try_schema_from_ipc_buffer(&schema_result.schema).ok()?;
+
+                    assert_eq!(
+                        schema,
+                        Schema::new(vec![
+                            Field::new("tid", DataType::UInt64, false),
+                            Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
+                            Field::new("value", DataType::Float32, false)
+                        ])
+                    );
+
+                    Some(())
+                }).expect("Runtime failed.");
+            }
+            Err(message) => {
+                eprintln!("error: cannot connect to {} due to a {}", address, message);
+                assert!(false);
+            }
+        }
+    } else {
+        eprintln!("error: unable to initialize run-time");
+        assert!(false);
+    }
+
+    flight_server.kill().expect("Could not kill server.");
+
+    remove_directory();
+}
+
+#[test]
+#[serial]
 fn test_can_ingest_message_with_tags() {
     create_directory();
 
@@ -137,7 +232,7 @@ fn test_can_ingest_message_with_tags() {
 
     let table_name = "data".to_string();
 
-    let flight_descriptor = FlightDescriptor::new_path(vec![String::from("data")]);
+    let flight_descriptor = FlightDescriptor::new_path(vec![table_name.clone()]);
 
     let mut flight_data_vec = vec![FlightData {
         flight_descriptor: Some(flight_descriptor),
@@ -149,7 +244,6 @@ fn test_can_ingest_message_with_tags() {
     flight_data_vec.push((flight_data_from_arrow_batch(&message, &options)).1);
 
     if let Ok(rt) = Runtime::new() {
-        flight_server = start_arrow_flight_server();
         let address = ("127.0.0.1".to_string());
         match create_flight_service_client(&rt, &address, 9999) {
             Ok(mut fsc) => {
@@ -173,7 +267,8 @@ fn test_can_ingest_message_with_tags() {
             }
         }
     } else {
-        panic!("error: unable to initialize run-time");
+        eprintln!("error: unable to initialize run-time");
+        assert!(false);
     }
 
     flight_server.kill().expect("Could not kill server.");
@@ -182,7 +277,7 @@ fn test_can_ingest_message_with_tags() {
 }
 
 #[test]
-#[serial(timeout_ms = 1000)]
+#[serial]
 fn test_can_ingest_message_without_tags() {
     create_directory();
 
@@ -240,7 +335,7 @@ fn test_can_ingest_message_without_tags() {
 }
 
 #[test]
-#[serial(timeout_ms = 1000)]
+#[serial]
 fn test_can_ingest_multiple_time_series_with_different_tags() {
     create_directory();
 
@@ -336,7 +431,7 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
 }
 
 #[test]
-#[serial(timeout_ms = 1000)]
+#[serial]
 fn test_cannot_ingest_invalid_message() {
     create_directory();
 
@@ -389,7 +484,7 @@ fn test_cannot_ingest_invalid_message() {
     remove_directory();
 }
 #[test]
-#[serial(timeout_ms = 1000)]
+#[serial]
 fn test_optimized_query_equals_non_optimized_query() {
     create_directory();
 
@@ -442,8 +537,6 @@ fn test_optimized_query_equals_non_optimized_query() {
 
                 let optimized_query = execute_query(&rt, &mut fsc, "SELECT MIN(value) FROM data")
                     .expect("Could not execute query.");
-
-                std::thread::sleep(time::Duration::from_millis(200));
 
                 let non_optimized_query =
                     execute_query(&rt, &mut fsc, "SELECT MIN(value) FROM data WHERE 1=1")
@@ -501,7 +594,6 @@ fn get_binary_directory() -> path::PathBuf {
 
 /// Start the binary built for integration testing.
 fn start_binary(binary: &str) -> process::Command {
-
     // Create path to binary
     let mut path = get_binary_directory();
     path.push(binary);
@@ -515,7 +607,6 @@ fn start_binary(binary: &str) -> process::Command {
 
 /// Start a new Arrow Flight Server to simulate a server for the integration tests.
 fn start_arrow_flight_server() -> Child {
-
     // Get the absolute path of the data directory.
     let absolute_path = canonicalize("tests/data")
         .expect("Could not retrieve absolute path of data folder")
@@ -532,8 +623,10 @@ fn start_arrow_flight_server() -> Child {
     let mut output = BufReader::new(process.stdout.as_mut().unwrap());
 
     // Ensure that the process has fully started.
-    while !line.contains("Starting Apache Arrow Flight"){
-        output.read_line(&mut line).expect("Could not read line of process.");
+    while !line.contains("Starting Apache Arrow Flight") {
+        output
+            .read_line(&mut line)
+            .expect("Could not read line of process.");
     }
 
     return process;
