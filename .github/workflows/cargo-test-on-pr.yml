@@ -13,15 +13,10 @@ jobs:
   cargo_build_and_test:
     name: Cargo Build and Test
 
-    # snmalloc requires Visual Studio 2017 or Visual Studio 2019 to build on Microsoft Windows
-    # https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md
-    # https://github.com/actions/virtual-environments/blob/main/images/win/Windows2016-Readme.md
-    # https://github.com/microsoft/snmalloc/issues/525#issuecomment-1128901104
-    # https://github.com/actions/virtual-environments/blob/main/images/win/Windows2019-Readme.md
     runs-on: ${{ matrix.operating-system }}
     strategy:
       matrix:
-        operating-system: [ubuntu-latest, macos-latest, windows-2019]
+        operating-system: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
     - uses: actions/checkout@v3
