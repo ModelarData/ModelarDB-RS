@@ -1130,8 +1130,8 @@ pub mod test_util {
 
     use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
     use datafusion::execution::runtime_env::RuntimeEnv;
-    use parking_lot::RwLock;
     use tempfile;
+    use tokio::sync::RwLock;
 
     use crate::models::ErrorBound;
     use crate::storage::StorageEngine;
