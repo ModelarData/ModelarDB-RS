@@ -56,6 +56,7 @@ use parking_lot::RwLock;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::models;
+use crate::storage;
 use crate::types::{
     ArrowTimeSeriesId, ArrowTimestamp, ArrowValue, CompressedSchema, TimestampArray,
     TimestampBuilder, ValueArray, ValueBuilder,
@@ -101,10 +102,14 @@ impl ModelTable {
                 .unwrap() // unwrap() is safe as model tables contains fields.
         };
 
+        // unwrap() is safe as the url is predefined as a constant in storage.
+        let object_store_url =
+            ObjectStoreUrl::parse(storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST).unwrap();
+
         Arc::new(ModelTable {
             context,
             model_table_metadata: model_table_metadata.clone(),
-            object_store_url: ObjectStoreUrl::local_filesystem(),
+            object_store_url,
             schema: Arc::new(Schema::new(columns)),
             fallback_field_column: fallback_field_column as u64,
             config_options: Arc::new(RwLock::new(ConfigOptions::new())),
@@ -211,7 +216,7 @@ impl TableProvider for ModelTable {
     /// from the metadata database.
     async fn scan(
         &self,
-        _ctx: &SessionState,
+        ctx: &SessionState,
         projection: &Option<Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
@@ -230,20 +235,27 @@ impl TableProvider for ModelTable {
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         // Request the matching files from the storage engine.
-        let mut key_object_metas = {
+        let key_object_metas = {
             // TODO: make the storage engine support multiple parallel readers.
-            let mut storage_engine = self.context.storage_engine.write();
+            let mut storage_engine = self.context.storage_engine.write().await;
+
+            // unwrap() is safe as the store is set by create_session_context().
+            let query_object_store = ctx
+                .runtime_env
+                .object_store(&self.object_store_url)
+                .unwrap();
 
             // unwrap() is safe to use as get_compressed_files() only fails if a
             // non-existing hash is passed or if end time is before start time.
             storage_engine
-                .get_compressed_files(&keys, None, None)
+                .get_compressed_files(&keys, None, None, &query_object_store)
+                .await
                 .unwrap()
         };
 
         // Create the data source operator. Assumes the ObjectStore exists.
         let partitioned_files: Vec<PartitionedFile> = key_object_metas
-            .drain(0..)
+            .into_iter()
             .map(|key_object_meta| PartitionedFile {
                 object_meta: key_object_meta.1,
                 partition_values: vec![ScalarValue::Utf8(Some(key_object_meta.0))],

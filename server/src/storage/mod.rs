@@ -23,12 +23,10 @@ mod time_series;
 pub(crate) mod uncompressed_data_manager;
 
 use std::ffi::OsStr;
-use std::fs;
 use std::fs::File;
-use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use chrono::DateTime;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use datafusion::parquet::arrow::ArrowWriter;
@@ -36,7 +34,7 @@ use datafusion::parquet::basic::Compression;
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
 use object_store::path::Path as ObjectStorePath;
-use object_store::ObjectMeta;
+use object_store::{ObjectMeta, ObjectStore};
 
 use crate::errors::ModelarDbError;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
@@ -47,6 +45,12 @@ use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::types::Timestamp;
 
 // TODO: Look into custom errors for all errors in storage engine.
+
+/// The scheme and host at which the query data folder is stored.
+pub const QUERY_DATA_FOLDER_SCHEME_AND_HOST: &str = "query";
+
+/// The scheme with host at which the query data folder is stored.
+pub const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
 
 /// The expected [first four bytes of any Apache Parquet file].
 ///
@@ -145,11 +149,12 @@ impl StorageEngine {
     /// Retrieve the compressed files that correspond to `keys` within the given range of time.
     /// If `keys` contain a key that does not exist or the end time is before the start time,
     /// [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned.
-    pub fn get_compressed_files(
+    pub async fn get_compressed_files(
         &mut self,
         keys: &[u64],
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>,
+        query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<(String, ObjectMeta)>, ModelarDbError> {
         let start_time = start_time.unwrap_or(0);
         let end_time = end_time.unwrap_or(Timestamp::MAX);
@@ -166,33 +171,21 @@ impl StorageEngine {
             // For each key, list the files that contain compressed data.
             let key_files = self
                 .compressed_data_manager
-                .save_and_get_saved_compressed_files(key)?;
+                .save_and_get_saved_compressed_files(key, &query_data_folder)
+                .await?;
 
-            // Prune the files based on the time range the file covers and convert to object meta.
-            let pruned_files = key_files.iter().filter_map(|file_path| {
-                if compressed_data_manager::is_compressed_file_within_time_range(
-                    file_path, start_time, end_time,
-                ) {
-                    // unwrap() is safe since we already know the file exists.
-                    let metadata = fs::metadata(&file_path).unwrap();
-
-                    // Create an object that contains the file path and extra metadata about the file.
-                    Some((
-                        key.to_string(),
-                        ObjectMeta {
-                            location: ObjectStorePath::from(file_path.to_str().unwrap()),
-                            last_modified: DateTime::from(metadata.modified().unwrap()),
-                            size: metadata.len() as usize,
-                        },
-                    ))
-                } else {
-                    None
-                }
+            // Prune the files based on the time range the file covers.
+            let pruned_key_files = key_files.into_iter().filter(|(_, object_meta)| {
+                let last_file_part = object_meta.location.parts().last().unwrap();
+                compressed_data_manager::is_compressed_file_within_time_range(
+                    last_file_part.as_ref(),
+                    start_time,
+                    end_time,
+                )
             });
 
-            compressed_files.extend(pruned_files);
+            compressed_files.extend(pruned_key_files)
         }
-
         Ok(compressed_files)
     }
 
@@ -246,11 +239,12 @@ impl StorageEngine {
 
     /// Return [`true`] if `file_path` is a readable Apache Parquet file,
     /// otherwise [`false`].
-    pub fn is_path_an_apache_parquet_file(file_path: &Path) -> bool {
-        if let Ok(mut file) = File::open(file_path) {
-            let mut first_four_bytes = vec![0u8; 4];
-            let _ = file.read_exact(&mut first_four_bytes);
-            first_four_bytes == APACHE_PARQUET_FILE_SIGNATURE
+    pub async fn is_path_an_apache_parquet_file(
+        object_store: &Arc<dyn ObjectStore>,
+        file_path: &ObjectStorePath,
+    ) -> bool {
+        if let Ok(bytes) = object_store.get_range(file_path, 0..4).await {
+            bytes == crate::storage::APACHE_PARQUET_FILE_SIGNATURE
         } else {
             false
         }
@@ -260,10 +254,12 @@ impl StorageEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
     use std::path::PathBuf;
     use std::sync::Arc;
 
     use datafusion::arrow::datatypes::Schema;
+    use object_store::local::LocalFileSystem;
     use tempfile::{tempdir, TempDir};
 
     use crate::get_array;
@@ -271,9 +267,9 @@ mod tests {
     use crate::types::TimestampArray;
 
     // Tests for get_compressed_files().
-    #[test]
-    fn test_can_get_compressed_files_for_keys() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
+    #[tokio::test]
+    async fn test_can_get_compressed_files_for_keys() {
+        let (temp_dir, mut storage_engine) = create_storage_engine();
 
         // Insert compressed segments with multiple different keys.
         let segment = test_util::get_compressed_segment_record_batch();
@@ -284,23 +280,30 @@ mod tests {
             .compressed_data_manager
             .insert_compressed_segment(2, segment);
 
-        let result = storage_engine.get_compressed_files(&[1, 2], None, None);
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let result = storage_engine
+            .get_compressed_files(&[1, 2], None, None, &object_store)
+            .await;
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap().len(), 2);
     }
 
-    #[test]
-    fn test_cannot_get_compressed_files_for_non_existent_key() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
+    #[tokio::test]
+    async fn test_get_no_compressed_files_for_non_existent_key() {
+        let (temp_dir, mut storage_engine) = create_storage_engine();
 
-        let result = storage_engine.get_compressed_files(&[1], None, None);
-        assert!(result.is_err());
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let result = storage_engine.get_compressed_files(&[1], None, None, &object_store);
+
+        assert!(result.await.unwrap().is_empty());
     }
 
-    #[test]
-    fn test_can_get_compressed_files_with_start_time() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
+    #[tokio::test]
+    async fn test_can_get_compressed_files_with_start_time() {
+        let (temp_dir, mut storage_engine) = create_storage_engine();
         let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 1, 2, 0);
 
         // If we have a start time after the first segments ends, only the file from the second
@@ -308,8 +311,10 @@ mod tests {
         let end_times = get_array!(segment_1, 3, TimestampArray);
         let start_time = Some(end_times.value(end_times.len() - 1) + 100);
 
-        let result = storage_engine.get_compressed_files(&[1, 2], start_time, None);
-        let files = result.unwrap();
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let result = storage_engine.get_compressed_files(&[1, 2], start_time, None, &object_store);
+        let files = result.await.unwrap();
         assert_eq!(files.len(), 1);
 
         // The path to the returned compressed file should contain the key of the second segment.
@@ -317,9 +322,9 @@ mod tests {
         assert!(file_path.contains("2/compressed"));
     }
 
-    #[test]
-    fn test_can_get_compressed_files_with_end_time() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
+    #[tokio::test]
+    async fn test_can_get_compressed_files_with_end_time() {
+        let (temp_dir, mut storage_engine) = create_storage_engine();
         let (_segment_1, segment_2) = insert_separated_segments(&mut storage_engine, 1, 2, 0);
 
         // If we have an end time before the second segment starts, only the file from the first
@@ -327,8 +332,10 @@ mod tests {
         let start_times = get_array!(segment_2, 2, TimestampArray);
         let end_time = Some(start_times.value(1) - 100);
 
-        let result = storage_engine.get_compressed_files(&[1, 2], None, end_time);
-        let files = result.unwrap();
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let result = storage_engine.get_compressed_files(&[1, 2], None, end_time, &object_store);
+        let files = result.await.unwrap();
         assert_eq!(files.len(), 1);
 
         // The path to the returned compressed file should contain the key of the first segment.
@@ -336,9 +343,9 @@ mod tests {
         assert!(file_path.contains("1/compressed"));
     }
 
-    #[test]
-    fn test_can_get_compressed_files_with_start_time_and_end_time() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
+    #[tokio::test]
+    async fn test_can_get_compressed_files_with_start_time_and_end_time() {
+        let (temp_dir, mut storage_engine) = create_storage_engine();
 
         // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
         let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 1, 2, 0);
@@ -352,8 +359,11 @@ mod tests {
         let start_time = Some(end_times.value(end_times.len() - 1) + 100);
         let end_time = Some(start_times.value(1) - 100);
 
-        let result = storage_engine.get_compressed_files(&[1, 2, 3, 4], start_time, end_time);
-        let files = result.unwrap();
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let result =
+            storage_engine.get_compressed_files(&[1, 2, 3, 4], start_time, end_time, &object_store);
+        let files = result.await.unwrap();
         assert_eq!(files.len(), 2);
 
         // The paths to the returned compressed files should contain the key of the second and third segment.
@@ -384,8 +394,8 @@ mod tests {
         (segment_1, segment_2)
     }
 
-    #[test]
-    fn test_cannot_get_compressed_files_where_end_time_is_before_start_time() {
+    #[tokio::test]
+    async fn test_cannot_get_compressed_files_where_end_time_is_before_start_time() {
         let (_temp_dir, mut storage_engine) = create_storage_engine();
 
         let segment = test_util::get_compressed_segment_record_batch();
@@ -393,8 +403,9 @@ mod tests {
             .compressed_data_manager
             .insert_compressed_segment(1, segment);
 
-        let result = storage_engine.get_compressed_files(&[1], Some(10), Some(1));
-        assert!(result.is_err());
+        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let result = storage_engine.get_compressed_files(&[1], Some(10), Some(1), &object_store);
+        assert!(result.await.is_err());
     }
 
     /// Create a [`StorageEngine`] with a folder that is deleted once the test is finished.
@@ -490,14 +501,17 @@ mod tests {
         assert!(result.is_err());
     }
 
-    #[test]
-    fn test_is_parquet_path_apache_parquet_file() {
+    #[tokio::test]
+    async fn test_is_parquet_path_apache_parquet_file() {
         let file_name = "test.parquet".to_owned();
         let (_temp_dir, path, _batch) = create_apache_parquet_file_in_temp_dir(file_name);
 
-        assert!(StorageEngine::is_path_an_apache_parquet_file(
-            path.as_path()
-        ));
+        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let object_store_path = ObjectStorePath::from_filesystem_path(path).unwrap();
+
+        assert!(
+            StorageEngine::is_path_an_apache_parquet_file(&object_store, &object_store_path).await
+        );
     }
 
     /// Create an Apache Parquet file in the [`TempDir`] from a generated [`RecordBatch`].
@@ -514,16 +528,38 @@ mod tests {
         (temp_dir, parquet_path, batch)
     }
 
-    #[test]
-    fn test_is_non_parquet_path_apache_parquet_file() {
+    #[tokio::test]
+    async fn test_is_non_parquet_path_apache_parquet_file() {
         let temp_dir = tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
-        File::create(path.clone()).unwrap();
+
+        let mut file = File::create(path.clone()).unwrap();
+        let mut signature = APACHE_PARQUET_FILE_SIGNATURE.to_vec();
+        signature.reverse();
+        file.write_all(&signature).unwrap();
+
+        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let object_store_path = ObjectStorePath::from_filesystem_path(&path).unwrap();
 
         assert!(path.exists());
-        assert!(!StorageEngine::is_path_an_apache_parquet_file(
-            path.as_path()
-        ));
+        assert!(
+            !StorageEngine::is_path_an_apache_parquet_file(&object_store, &object_store_path).await
+        );
+    }
+
+    #[tokio::test]
+    async fn test_is_empty_parquet_path_apache_parquet_file() {
+        let temp_dir = tempdir().unwrap();
+        let path = temp_dir.path().join("test.parquet");
+        File::create(path.clone()).unwrap();
+
+        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let object_store_path = ObjectStorePath::from_filesystem_path(&path).unwrap();
+
+        assert!(path.exists());
+        assert!(
+            !StorageEngine::is_path_an_apache_parquet_file(&object_store, &object_store_path).await
+        );
     }
 }
 
