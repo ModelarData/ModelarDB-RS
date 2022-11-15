@@ -31,9 +31,9 @@ use datafusion::arrow::array::{
 use datafusion::arrow::datatypes::TimeUnit::Millisecond;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimestampMillisecondType};
 use datafusion::arrow::error::ArrowError;
+use datafusion::arrow::ipc::convert::try_schema_from_ipc_buffer;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::{array, ipc};
-use datafusion::arrow::ipc::convert::try_schema_from_ipc_buffer;
 use futures::executor::block_on;
 use futures::stream;
 use log::{error, Log, Record};
@@ -43,6 +43,7 @@ use rusqlite::ffi::sqlite3_uint64;
 use serial_test::serial;
 use sqlparser::ast::DataType::Time;
 use sqlparser::test_utils::table;
+use sysinfo::{Pid, PidExt, ProcessExt, ProcessStatus, System, SystemExt};
 use tokio::io::AsyncBufReadExt;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
@@ -75,18 +76,27 @@ fn test_can_create_table() {
                 }
             }
             Err(message) => {
-                eprintln!("error: cannot connect to {} due to a {}", address, message);
-                assert!(false);
+                remove_directory();
+                panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        eprintln!("error: unable to initialize run-time");
-        assert!(false);
+        remove_directory();
+        panic!("error: unable to initialize run-time");
     }
 
-    flight_server.kill().expect("Could not kill server.");
-
     remove_directory();
+
+    let s = System::new_all();
+
+    match s.process(Pid::from_u32(flight_server.id())) {
+        Some(process) => {
+            process.kill();
+        }
+        None => {
+            println!("Process has already exited")
+        }
+    }
 }
 
 #[test]
@@ -109,18 +119,27 @@ fn test_can_create_model_table() {
                 }
             }
             Err(message) => {
-                eprintln!("error: cannot connect to {} due to a {}", address, message);
-                assert!(false);
+                remove_directory();
+                panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        eprintln!("error: unable to initialize run-time");
-        assert!(false);
+        remove_directory();
+        panic!("error: unable to initialize run-time");
     }
 
-    flight_server.kill().expect("Could not kill server.");
-
     remove_directory();
+
+    let s = System::new_all();
+
+    match s.process(Pid::from_u32(flight_server.id())) {
+        Some(process) => {
+            process.kill();
+        }
+        None => {
+            println!("Process has already exited")
+        }
+    }
 }
 
 #[test]
@@ -153,18 +172,27 @@ fn test_creating_and_listing_multiple_tables() {
                 }
             }
             Err(message) => {
-                eprintln!("error: cannot connect to {} due to a {}", address, message);
-                assert!(false);
+                remove_directory();
+                panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        eprintln!("error: unable to initialize run-time");
-        assert!(false);
+        remove_directory();
+        panic!("error: unable to initialize run-time");
     }
 
-    flight_server.kill().expect("Could not kill server.");
-
     remove_directory();
+
+    let s = System::new_all();
+
+    match s.process(Pid::from_u32(flight_server.id())) {
+        Some(process) => {
+            process.kill();
+        }
+        None => {
+            println!("Process has already exited")
+        }
+    }
 }
 
 #[test]
@@ -182,13 +210,17 @@ fn test_get_schema() {
         let address = ("127.0.0.1".to_string());
         match create_flight_service_client(&rt, &address, 9999) {
             Ok(mut fsc) => {
-                let _result_create_table = create_model_table(&rt, &mut fsc, table_names[0].clone());
+                let _result_create_table =
+                    create_model_table(&rt, &mut fsc, table_names[0].clone());
 
                 rt.block_on(async {
-                    let schema_result = fsc.get_schema(Request::new(FlightDescriptor::new_path(table_names))).await.ok()?.into_inner();
+                    let schema_result = fsc
+                        .get_schema(Request::new(FlightDescriptor::new_path(table_names)))
+                        .await
+                        .ok()?
+                        .into_inner();
 
-                    let schema =
-                        try_schema_from_ipc_buffer(&schema_result.schema).ok()?;
+                    let schema = try_schema_from_ipc_buffer(&schema_result.schema).ok()?;
 
                     assert_eq!(
                         schema,
@@ -200,21 +232,31 @@ fn test_get_schema() {
                     );
 
                     Some(())
-                }).expect("Runtime failed.");
+                })
+                .expect("Runtime failed.");
             }
             Err(message) => {
-                eprintln!("error: cannot connect to {} due to a {}", address, message);
-                assert!(false);
+                remove_directory();
+                panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        eprintln!("error: unable to initialize run-time");
-        assert!(false);
+        remove_directory();
+        panic!("error: unable to initialize run-time");
     }
 
-    flight_server.kill().expect("Could not kill server.");
-
     remove_directory();
+
+    let s = System::new_all();
+
+    match s.process(Pid::from_u32(flight_server.id())) {
+        Some(process) => {
+            process.kill();
+        }
+        None => {
+            println!("Process has already exited")
+        }
+    }
 }
 
 #[test]
@@ -262,18 +304,27 @@ fn test_can_ingest_message_with_tags() {
                 assert_eq!(message, reconstructed_recordbatch);
             }
             Err(message) => {
-                eprintln!("error: cannot connect to {} due to a {}", address, message);
-                assert!(false);
+                remove_directory();
+                panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        eprintln!("error: unable to initialize run-time");
-        assert!(false);
+        remove_directory();
+        panic!("error: unable to initialize run-time");
     }
 
-    flight_server.kill().expect("Could not kill server.");
-
     remove_directory();
+
+    let s = System::new_all();
+
+    match s.process(Pid::from_u32(flight_server.id())) {
+        Some(process) => {
+            process.kill();
+        }
+        None => {
+            println!("Process has already exited")
+        }
+    }
 }
 
 #[test]
@@ -320,18 +371,27 @@ fn test_can_ingest_message_without_tags() {
                 assert_eq!(message, reconstructed_recordbatch);
             }
             Err(message) => {
-                eprintln!("error: cannot connect to {} due to a {}", address, message);
-                assert!(false);
+                remove_directory();
+                panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        eprintln!("error: unable to initialize run-time");
-        assert!(false);
+        remove_directory();
+        panic!("error: unable to initialize run-time");
     }
 
-    flight_server.kill().expect("Could not kill server.");
-
     remove_directory();
+
+    let s = System::new_all();
+
+    match s.process(Pid::from_u32(flight_server.id())) {
+        Some(process) => {
+            process.kill();
+        }
+        None => {
+            println!("Process has already exited")
+        }
+    }
 }
 
 #[test]
@@ -416,18 +476,27 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
                 }
             }
             Err(message) => {
-                eprintln!("error: cannot connect to {} due to a {}", address, message);
-                assert!(false);
+                remove_directory();
+                panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        eprintln!("error: unable to initialize run-time");
-        assert!(false);
+        remove_directory();
+        panic!("error: unable to initialize run-time");
     }
 
-    flight_server.kill().expect("Could not kill server.");
-
     remove_directory();
+
+    let s = System::new_all();
+
+    match s.process(Pid::from_u32(flight_server.id())) {
+        Some(process) => {
+            process.kill();
+        }
+        None => {
+            println!("Process has already exited")
+        }
+    }
 }
 
 #[test]
@@ -470,18 +539,27 @@ fn test_cannot_ingest_invalid_message() {
                 assert!(query.is_empty());
             }
             Err(message) => {
-                eprintln!("error: cannot connect to {} due to a {}", address, message);
-                assert!(false);
+                remove_directory();
+                panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        eprintln!("error: unable to initialize run-time");
-        assert!(false);
+        remove_directory();
+        panic!("error: unable to initialize run-time");
     }
 
-    flight_server.kill().expect("Could not kill server.");
-
     remove_directory();
+
+    let s = System::new_all();
+
+    match s.process(Pid::from_u32(flight_server.id())) {
+        Some(process) => {
+            process.kill();
+        }
+        None => {
+            println!("Process has already exited")
+        }
+    }
 }
 #[test]
 #[serial]
@@ -545,18 +623,27 @@ fn test_optimized_query_equals_non_optimized_query() {
                 assert_eq!(optimized_query, non_optimized_query);
             }
             Err(message) => {
-                eprintln!("error: cannot connect to {} due to a {}", address, message);
-                assert!(false);
+                remove_directory();
+                panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        eprintln!("error: unable to initialize run-time");
-        assert!(false);
+        remove_directory();
+        panic!("error: unable to initialize run-time");
     }
 
-    flight_server.kill().expect("Could not kill server.");
-
     remove_directory();
+
+    let s = System::new_all();
+
+    match s.process(Pid::from_u32(flight_server.id())) {
+        Some(process) => {
+            process.kill();
+        }
+        None => {
+            println!("Process has already exited")
+        }
+    }
 }
 
 /// Create a directory to be used by the Arrow Flight server.
@@ -607,13 +694,8 @@ fn start_binary(binary: &str) -> process::Command {
 
 /// Start a new Arrow Flight Server to simulate a server for the integration tests.
 fn start_arrow_flight_server() -> Child {
-    // Get the absolute path of the data directory.
-    let absolute_path = canonicalize("tests/data")
-        .expect("Could not retrieve absolute path of data folder")
-        .into_os_string();
-
     let mut process = start_binary("modelardbd")
-        .arg(absolute_path)
+        .arg("tests/data")
         .stdout(process::Stdio::piped())
         .spawn()
         .expect("Failed to start Arrow Flight Server");
