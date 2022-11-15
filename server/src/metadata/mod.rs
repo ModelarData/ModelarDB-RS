@@ -985,7 +985,10 @@ mod tests {
             .unwrap();
 
         // Register the table with Apache Arrow DataFusion.
-        context.metadata_manager.register_tables(&context, &runtime).unwrap();
+        context
+            .metadata_manager
+            .register_tables(&context, &runtime)
+            .unwrap();
     }
 
     #[test]
@@ -1125,11 +1128,10 @@ mod tests {
 pub mod test_util {
     use super::*;
 
-    use std::sync::RwLock;
-
     use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
     use datafusion::execution::runtime_env::RuntimeEnv;
     use tempfile;
+    use tokio::sync::RwLock;
 
     use crate::models::ErrorBound;
     use crate::storage::StorageEngine;

@@ -208,8 +208,7 @@ impl FlightServiceHandler {
             )
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            // unwrap() is safe to use since write() only fails if the RwLock is poisoned.
-            let mut storage_engine = self.context.storage_engine.write().unwrap();
+            let mut storage_engine = self.context.storage_engine.write().await;
 
             // Note that the storage engine returns when the data is stored in memory, which means
             // the data could be lost if the system crashes right after ingesting the data.
