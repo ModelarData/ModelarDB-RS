@@ -198,8 +198,6 @@ impl FlightServiceHandler {
         model_table_metadata: &ModelTableMetadata,
         flight_data_stream: &mut Streaming<FlightData>,
     ) -> Result<(), Status> {
-
-        debug!("reached");
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
             let flight_data = flight_data?;
@@ -296,6 +294,8 @@ impl FlightServiceHandler {
         info!("Created model table '{}'.", model_table_metadata.name);
         Ok(())
     }
+    /// Flush data to the disk manually using an action
+    /// for debug purposes.
     async fn flush_data_to_disk(
         &self
     ) -> Result<(), Status> {
@@ -550,6 +550,7 @@ impl FlightService for FlightServiceHandler {
         };
 
         let output = stream::iter(vec![Ok(create_command_statement_update_action), Ok(flush_data_to_disk)]);
+        
         Ok(Response::new(Box::pin(output)))
     }
 }
