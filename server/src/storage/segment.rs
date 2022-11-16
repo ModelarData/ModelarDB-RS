@@ -315,15 +315,6 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Cannot get RecordBatch from SegmentBuilder that is not full.")]
-    fn test_panic_if_getting_record_batch_when_not_full() {
-        let mut segment_builder = SegmentBuilder::new();
-        segment_builder
-            .get_record_batch(&test_util::get_uncompressed_schema())
-            .unwrap();
-    }
-
-    #[test]
     fn test_can_spill_full_segment_builder() {
         let mut segment_builder = SegmentBuilder::new();
         insert_data_points(segment_builder.get_capacity(), &mut segment_builder);
@@ -335,18 +326,6 @@ mod tests {
 
         let uncompressed_path = temp_dir.path().join("uncompressed");
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
-    }
-
-    #[test]
-    #[should_panic(expected = "Cannot get RecordBatch from SegmentBuilder that is not full.")]
-    fn test_panic_if_spilling_segment_builder_when_not_full() {
-        let mut segment_builder = SegmentBuilder::new();
-        segment_builder
-            .spill_to_apache_parquet(
-                Path::new("folder_path"),
-                &test_util::get_uncompressed_schema(),
-            )
-            .unwrap();
     }
 
     // Tests for SpilledSegment.
