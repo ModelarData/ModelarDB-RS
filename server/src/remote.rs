@@ -50,7 +50,6 @@ use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::storage::StorageEngine;
-use crate::storage::uncompressed_data_manager;
 use crate::tables::ModelTable;
 use crate::Context;
 
