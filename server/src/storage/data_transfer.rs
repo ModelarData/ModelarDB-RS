@@ -39,12 +39,9 @@ use crate::{storage, StorageEngine};
 
 // TODO: When the storage engine is changed to use object store for everything, receive
 //       the object store directly through the parameters instead.
-// TODO: Set up the data transfer component based on whether the system is running on edge or cloud.
-// TODO: When a compressed file is saved, add the file to the data transfer component.
 // TODO: Handle the case where a connection can not be established when transferring data.
-// TODO: Use is_path_an_apache_parquet_file when merged.
 
-pub(super) struct DataTransfer {
+pub struct DataTransfer {
     /// Tokio runtime for executing asynchronous tasks.
     runtime: Arc<Runtime>,
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
@@ -63,7 +60,7 @@ impl DataTransfer {
     /// Create a new data transfer instance and initialize it with the compressed files already
     /// existing in `data_folder_path`. If `data_folder_path` or a path within `data_folder_path`
     /// could not be read, return [`IOError`].
-    pub(super) fn try_new(
+    pub fn try_new(
         runtime: Arc<Runtime>,
         data_folder_path: PathBuf,
         target_object_store: Arc<dyn ObjectStore>,
@@ -110,7 +107,7 @@ impl DataTransfer {
 
     /// Insert the compressed file into the files to be transferred. Retrieve the size of the file
     /// and add it to the total size of the current local files under the key.
-    pub(super) fn add_compressed_file(&mut self, key: &u64, file_path: &Path) -> Result<(), IOError> {
+    pub fn add_compressed_file(&mut self, key: &u64, file_path: &Path) -> Result<(), IOError> {
         let file_size = file_path.metadata()?.len() as usize;
         *self.compressed_files.entry(*key).or_insert(0) += file_size;
 
@@ -226,8 +223,8 @@ mod tests {
     #[test]
     fn test_include_existing_files_on_start_up() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let parquet_path = create_compressed_file(temp_dir.path(), "test");
-        let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
+        create_compressed_file(temp_dir.path(), "test");
+        let (_target_dir, data_transfer) = create_data_transfer_component(temp_dir.path());
 
         assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), COMPRESSED_FILE_SIZE)
     }
@@ -356,12 +353,12 @@ mod tests {
     #[test]
     fn test_transfer_if_reaching_batch_size_on_start_up() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let path_1 = create_compressed_file(temp_dir.path(), "test_1");
-        let path_2 = create_compressed_file(temp_dir.path(), "test_2");
-        let path_3 = create_compressed_file(temp_dir.path(), "test_3");
+        create_compressed_file(temp_dir.path(), "test_1");
+        create_compressed_file(temp_dir.path(), "test_2");
+        create_compressed_file(temp_dir.path(), "test_3");
 
         // Since the max batch size is 1 byte smaller than 3 compressed files, the data should be transferred immediately.
-        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
+        let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.path());
 
         assert!(target_dir.path().join(format!("{}/compressed/0-3.parquet", KEY)).exists());
         assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), 0 as usize);

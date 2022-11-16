@@ -21,15 +21,14 @@ mod compressed_data_manager;
 mod segment;
 mod time_series;
 mod uncompressed_data_manager;
-mod data_transfer;
+pub mod data_transfer;
 
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{Read, Write};
+use std::io::{Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use chrono::DateTime;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -77,12 +76,11 @@ pub struct StorageEngine {
     uncompressed_data_manager: UncompressedDataManager,
     /// Manager that contains and controls all compressed data.
     compressed_data_manager: CompressedDataManager,
-    /// Component to manage the quantity of saved compressed data and transfer the data when necessary.
-    data_transfer: Option<DataTransfer>,
 }
 
 impl StorageEngine {
     pub fn new(
+        data_transfer: Option<DataTransfer>,
         data_folder_path: PathBuf,
         metadata_manager: MetadataManager,
         compress_directly: bool,
@@ -96,6 +94,7 @@ impl StorageEngine {
         );
 
         let compressed_data_manager = CompressedDataManager::new(
+            data_transfer,
             data_folder_path.clone(),
             metadata_manager.compressed_reserved_memory_in_bytes,
             metadata_manager.get_compressed_schema(),
@@ -105,7 +104,6 @@ impl StorageEngine {
             metadata_manager,
             uncompressed_data_manager,
             compressed_data_manager,
-            data_transfer: None,
         }
     }
 
@@ -247,7 +245,7 @@ impl StorageEngine {
         file_path: &ObjectStorePath,
     ) -> bool {
         if let Ok(bytes) = object_store.get_range(file_path, 0..4).await {
-            bytes == crate::storage::APACHE_PARQUET_FILE_SIGNATURE
+            bytes == APACHE_PARQUET_FILE_SIGNATURE
         } else {
             false
         }
@@ -445,12 +443,10 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let data_folder_path_buf = temp_dir.path().to_path_buf();
         let data_folder_path = data_folder_path_buf.clone();
-        let runtime = Arc::new(Runtime::new().unwrap());
 
         (
             temp_dir,
             StorageEngine::new(
-                runtime,
                 data_folder_path_buf,
                 metadata_test_util::get_test_metadata_manager(data_folder_path.as_path()),
                 false,

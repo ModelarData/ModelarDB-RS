@@ -27,6 +27,7 @@ use tracing::info;
 use tracing::{debug, debug_span};
 
 use crate::errors::ModelarDbError;
+use crate::storage::data_transfer::DataTransfer;
 use crate::storage::time_series::CompressedTimeSeries;
 use crate::types::{CompressedSchema, Timestamp};
 use crate::StorageEngine;
@@ -34,6 +35,8 @@ use crate::StorageEngine;
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
 pub(super) struct CompressedDataManager {
+    /// Component to manage the quantity of saved compressed data and transfer the data when necessary.
+    data_transfer: Option<DataTransfer>,
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
     data_folder_path: PathBuf,
     /// The compressed segments before they are saved to persistent storage.
@@ -50,11 +53,13 @@ pub(super) struct CompressedDataManager {
 
 impl CompressedDataManager {
     pub(super) fn new(
+        data_transfer: Option<DataTransfer>,
         data_folder_path: PathBuf,
         compressed_reserved_memory_in_bytes: usize,
         compressed_schema: CompressedSchema,
     ) -> Self {
         Self {
+            data_transfer,
             data_folder_path,
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             compressed_data: HashMap::new(),
@@ -140,7 +145,7 @@ impl CompressedDataManager {
                         &query_data_folder,
                         &meta.location,
                     )
-                    .await
+                        .await
                     {
                         return Some((key.to_string(), meta));
                     };
@@ -229,10 +234,9 @@ mod tests {
     use object_store::local::LocalFileSystem;
     use tempfile::{tempdir, TempDir};
 
-    use crate::{get_array, storage};
+    use crate::{storage};
     use crate::metadata::test_util as metadata_test_util;
     use crate::storage::test_util;
-    use crate::types::TimestampArray;
 
     const KEY: u64 = 1;
 
@@ -426,7 +430,7 @@ mod tests {
         assert!(!is_compressed_file_within_time_range(
             "1-10.parquet",
             20,
-            30
+            30,
         ))
     }
 
@@ -435,7 +439,7 @@ mod tests {
         assert!(!is_compressed_file_within_time_range(
             "20-30.parquet",
             1,
-            10
+            10,
         ))
     }
 }

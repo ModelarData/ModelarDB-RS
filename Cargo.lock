@@ -1462,7 +1462,6 @@ dependencies = [
  "arrow-flight",
  "async-trait",
  "bytes",
- "chrono",
  "datafusion",
  "datafusion-common",
  "datafusion-expr",

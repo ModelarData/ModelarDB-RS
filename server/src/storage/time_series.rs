@@ -101,7 +101,6 @@ impl CompressedTimeSeries {
 mod tests {
     use super::*;
 
-    use datafusion::arrow::array::Array;
     use tempfile::tempdir;
 
     use crate::metadata::test_util as metadata_test_util;
