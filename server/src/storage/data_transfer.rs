@@ -71,20 +71,19 @@ impl DataTransfer {
         let local_data_folder_object_store = Arc::new(local_fs);
 
         // Parse through the data folder to retrieve already existing files that should be transferred.
-        let mut compressed_files = HashMap::new();
-        runtime.block_on(async {
+        let compressed_files = runtime.block_on(async {
             let list_stream = local_data_folder_object_store.list(None).await?;
 
-            list_stream.map(|maybe_meta| {
+            Ok(list_stream.fold(HashMap::new(), |mut acc, maybe_meta| async {
                 if let Ok(meta) = maybe_meta {
                     // If the file is a compressed file, add it to the compressed files.
                     if let Some(key) = Self::path_is_compressed_file(meta.location) {
-                        *compressed_files.entry(key).or_insert(0) += meta.size;
+                        *acc.entry(key).or_insert(0) += meta.size;
                     }
                 }
-            }).collect::<Vec<_>>().await;
 
-            Ok(())
+                acc
+            }).await)
         }).map_err(|error: object_store::Error| IOError::new(Other, error.to_string()))?;
 
         let mut data_transfer = Self {
@@ -262,10 +261,11 @@ mod tests {
     #[test]
     fn test_include_existing_files_on_start_up() {
         let temp_dir = tempfile::tempdir().unwrap();
-        create_compressed_file(temp_dir.path(), "test");
+        create_compressed_file(temp_dir.path(), "test_1");
+        create_compressed_file(temp_dir.path(), "test_2");
         let (_target_dir, data_transfer) = create_data_transfer_component(temp_dir.path());
 
-        assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), COMPRESSED_FILE_SIZE)
+        assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), COMPRESSED_FILE_SIZE * 2);
     }
 
     #[test]
@@ -299,7 +299,7 @@ mod tests {
         let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
 
         let parquet_path = path.join("test_parquet.parquet");
-        assert!(data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).is_err())
+        assert!(data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).is_err());
     }
 
     #[test]
