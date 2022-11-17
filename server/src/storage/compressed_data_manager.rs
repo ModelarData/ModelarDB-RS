@@ -15,8 +15,8 @@
 
 //! Support for managing all compressed data that is inserted into the [`StorageEngine`].
 
-use std::io::Error as IOError;
 use std::collections::{HashMap, VecDeque};
+use std::io::Error as IOError;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -141,7 +141,7 @@ impl CompressedDataManager {
                         &query_data_folder,
                         &meta.location,
                     )
-                        .await
+                    .await
                     {
                         return Some((key.to_string(), meta));
                     };
@@ -232,8 +232,8 @@ mod tests {
     use object_store::local::LocalFileSystem;
     use tempfile::{tempdir, TempDir};
 
-    use crate::storage;
     use crate::metadata::test_util as metadata_test_util;
+    use crate::storage;
     use crate::storage::test_util;
 
     const KEY: u64 = 1;

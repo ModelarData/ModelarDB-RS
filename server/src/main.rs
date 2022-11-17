@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_edge_command_line_arguments_without_blob_store() {
+    fn test_parse_edge_command_line_arguments_without_remote_object_store() {
         setup_environment();
         let tempdir = tempfile::tempdir().unwrap();
         let tempdir_str = tempdir.path().to_str().unwrap();
@@ -316,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_edge_command_line_arguments_without_mode_and_blob_store() {
+    fn test_parse_edge_command_line_arguments_without_mode_and_remote_object_store() {
         setup_environment();
         let tempdir = tempfile::tempdir().unwrap();
         let tempdir_str = tempdir.path().to_str().unwrap();
