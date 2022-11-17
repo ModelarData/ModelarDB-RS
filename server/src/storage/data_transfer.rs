@@ -13,9 +13,8 @@
  * limitations under the License.
  */
 
-//! Support for efficiently transferring data to a blob store in the cloud. Data saved locally on
-//! disk is managed here until it is of a sufficient size to be transferred efficiently. Furthermore,
-//! the component ensures that local data is kept on disk until a reliable connection is established.
+//! Support for efficiently transferring data to a remote blob store. Data saved locally on disk is
+//! managed here until it is of a sufficient size to be transferred efficiently.
 
 use std::collections::HashMap;
 use std::io::Error as IOError;
@@ -28,7 +27,7 @@ use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use object_store::path::{Path as ObjectStorePath, PathPart};
-use object_store::{ObjectStore};
+use object_store::ObjectStore;
 use object_store::local::LocalFileSystem;
 use tokio::runtime::Runtime;
 use futures::StreamExt;
@@ -40,6 +39,8 @@ use crate::{storage, StorageEngine};
 // TODO: When the storage engine is changed to use object store for everything, receive
 //       the object store directly through the parameters instead.
 // TODO: Handle the case where a connection can not be established when transferring data.
+// TODO: If there is a remote data folder, initialize the data transfer component in main.
+// TODO: When compressed data is saved, add the compressed file to the data transfer component.
 
 pub struct DataTransfer {
     /// Tokio runtime for executing asynchronous tasks.
@@ -107,21 +108,21 @@ impl DataTransfer {
 
     /// Insert the compressed file into the files to be transferred. Retrieve the size of the file
     /// and add it to the total size of the current local files under the key.
-    pub fn add_compressed_file(&mut self, key: &u64, file_path: &Path) -> Result<(), IOError> {
+    pub fn add_compressed_file(&mut self, key: &u64, file_path: &Path) -> Result<(), ParquetError> {
         let file_size = file_path.metadata()?.len() as usize;
         *self.compressed_files.entry(*key).or_insert(0) += file_size;
 
         // If the combined size of the files is larger than the batch size, transfer the data to the blob store.
         if self.compressed_files.get(key).unwrap() >= &self.transfer_batch_size_in_bytes {
-            self.transfer_data(key).map_err(|err| IOError::new(Other, err.to_string()))?;
+            self.transfer_data(key)?;
         }
 
         Ok(())
     }
 
     /// Transfer the data corresponding to `key` to the blob store. Once successfully transferred,
-    /// the data is deleted from local storage. Return [`Ok`] if the file was written successfully,
-    /// otherwise [`ParquetError`].
+    /// the data is deleted from local storage. Return [`Ok`] if the files were transferred
+    /// successfully, otherwise [`ParquetError`].
     fn transfer_data(&mut self, key: &u64) -> Result<(), ParquetError> {
         let _span = debug_span!("transfer_data", key = key).entered();
 
@@ -383,12 +384,16 @@ mod tests {
         let runtime = Arc::new(Runtime::new().unwrap());
 
         // Create the target object store.
-        let local_fs = LocalFileSystem::new_with_prefix(target_dir.path())
-            .expect("Error creating local file system.");
+        let local_fs = LocalFileSystem::new_with_prefix(target_dir.path()).unwrap();
         let target_object_store = Arc::new(local_fs);
 
-        let transfer_batch_size_in_bytes = COMPRESSED_FILE_SIZE * 3 - 1;
-        (target_dir, DataTransfer::try_new(runtime, data_folder_path.to_path_buf(),
-                                           target_object_store, transfer_batch_size_in_bytes).unwrap())
+        let data_transfer = DataTransfer::try_new(
+            runtime,
+            data_folder_path.to_path_buf(),
+            target_object_store,
+            COMPRESSED_FILE_SIZE * 3 - 1,
+        ).unwrap();
+
+        (target_dir, data_transfer)
     }
 }

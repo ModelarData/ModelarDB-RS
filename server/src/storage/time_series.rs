@@ -25,7 +25,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 
 use crate::storage;
 use crate::storage::StorageEngine;
-use crate::types::{CompressedSchema};
+use crate::types::CompressedSchema;
 
 /// A single compressed time series, containing one or more compressed segments and providing
 /// functionality for appending segments and saving all segments to a single Apache Parquet file.

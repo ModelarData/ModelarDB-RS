@@ -232,7 +232,7 @@ mod tests {
     use object_store::local::LocalFileSystem;
     use tempfile::{tempdir, TempDir};
 
-    use crate::{storage};
+    use crate::storage;
     use crate::metadata::test_util as metadata_test_util;
     use crate::storage::test_util;
 

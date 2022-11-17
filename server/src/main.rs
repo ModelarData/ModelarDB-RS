@@ -28,14 +28,14 @@ mod storage;
 mod tables;
 mod types;
 
-use std::{fs};
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
 use object_store::{aws::AmazonS3Builder, local::LocalFileSystem, path::Path, ObjectStore};
-use tokio::runtime::{Runtime};
+use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -114,7 +114,6 @@ fn main() -> Result<(), String> {
     let metadata_manager = MetadataManager::try_new(&data_folders.local_data_folder)
         .map_err(|error| format!("Unable to create a MetadataManager: {}", error))?;
     let session = create_session_context(data_folders.query_data_folder);
-
     let storage_engine = RwLock::new(StorageEngine::new(
         data_folders.local_data_folder,
         metadata_manager.clone(),

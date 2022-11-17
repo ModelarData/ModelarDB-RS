@@ -21,11 +21,11 @@ mod compressed_data_manager;
 mod segment;
 mod time_series;
 mod uncompressed_data_manager;
-pub mod data_transfer;
+mod data_transfer;
 
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -92,7 +92,7 @@ impl StorageEngine {
         );
 
         let compressed_data_manager = CompressedDataManager::new(
-            data_folder_path.clone(),
+            data_folder_path,
             metadata_manager.compressed_reserved_memory_in_bytes,
             metadata_manager.get_compressed_schema(),
         );
@@ -251,7 +251,7 @@ impl StorageEngine {
 
 /// Create an Apache ArrowWriter that writes to `writer`. If the writer could not be created
 /// return [`ParquetError`].
-pub fn create_apache_arrow_writer<W: Write>(
+pub(self) fn create_apache_arrow_writer<W: Write>(
     writer: W,
     schema: SchemaRef
 ) -> Result<ArrowWriter<W>, ParquetError> {
@@ -265,9 +265,8 @@ pub fn create_apache_arrow_writer<W: Write>(
     Ok(writer)
 }
 
-// TODO: Maybe add error handling to this.
 /// Create a file name that uses the first start timestamp and the last end timestamp from `batch`.
-pub fn create_time_range_file_name(batch: &RecordBatch) -> String {
+pub(self) fn create_time_range_file_name(batch: &RecordBatch) -> String {
     let start_times = get_array!(batch, 2, TimestampArray);
     let end_times = get_array!(batch, 3, TimestampArray);
 
