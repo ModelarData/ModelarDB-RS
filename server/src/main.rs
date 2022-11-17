@@ -28,14 +28,14 @@ mod storage;
 mod tables;
 mod types;
 
-use std::{env, fs};
+use std::{fs};
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
 use object_store::{aws::AmazonS3Builder, local::LocalFileSystem, path::Path, ObjectStore};
-use tokio::runtime::Runtime;
+use tokio::runtime::{Runtime};
 use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -99,27 +99,16 @@ fn main() -> Result<(), String> {
         Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {}", error))?,
     );
 
-    // Ensure the remote data folder can be accessed and set up the data transfer component if the
-    // remote data folder exists. The check is performed after parse_command_line_arguments() as the
-    // Tokio Runtime is required.
-    let data_transfer = if let Some(remote_data_folder) = data_folders.remote_data_folder {
+    // Ensure the remote data folder can be accessed. The check is performed after
+    // parse_command_line_arguments() as the Tokio Runtime is required.
+    if let Some(remote_data_folder) = data_folders.remote_data_folder {
         runtime.block_on(async {
             remote_data_folder
                 .get(&Path::from(""))
                 .await
                 .map_err(|error| error.to_string())
         })?;
-
-        // TODO: Make the transfer batch size in bytes part of the user-configurable settings.
-        storage::data_transfer::DataTransfer::try_new(
-            runtime.clone(),
-            data_folders.local_data_folder.clone(),
-            remote_data_folder,
-            5000,
-        ).ok()
-    } else {
-        None
-    };
+    }
 
     // Create the components for the Context.
     let metadata_manager = MetadataManager::try_new(&data_folders.local_data_folder)
@@ -127,7 +116,6 @@ fn main() -> Result<(), String> {
     let session = create_session_context(data_folders.query_data_folder);
 
     let storage_engine = RwLock::new(StorageEngine::new(
-        data_transfer,
         data_folders.local_data_folder,
         metadata_manager.clone(),
         true,

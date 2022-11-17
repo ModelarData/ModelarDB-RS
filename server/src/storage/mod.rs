@@ -44,7 +44,6 @@ use crate::get_array;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
-use crate::storage::data_transfer::DataTransfer;
 use crate::storage::segment::FinishedSegment;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::types::{Timestamp, TimestampArray};
@@ -80,7 +79,6 @@ pub struct StorageEngine {
 
 impl StorageEngine {
     pub fn new(
-        data_transfer: Option<DataTransfer>,
         data_folder_path: PathBuf,
         metadata_manager: MetadataManager,
         compress_directly: bool,
@@ -94,7 +92,6 @@ impl StorageEngine {
         );
 
         let compressed_data_manager = CompressedDataManager::new(
-            data_transfer,
             data_folder_path.clone(),
             metadata_manager.compressed_reserved_memory_in_bytes,
             metadata_manager.get_compressed_schema(),

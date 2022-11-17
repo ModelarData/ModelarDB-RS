@@ -15,6 +15,7 @@
 
 //! Support for managing all compressed data that is inserted into the [`StorageEngine`].
 
+use std::io::Error as IOError;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,7 +28,6 @@ use tracing::info;
 use tracing::{debug, debug_span};
 
 use crate::errors::ModelarDbError;
-use crate::storage::data_transfer::DataTransfer;
 use crate::storage::time_series::CompressedTimeSeries;
 use crate::types::{CompressedSchema, Timestamp};
 use crate::StorageEngine;
@@ -35,8 +35,6 @@ use crate::StorageEngine;
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
 pub(super) struct CompressedDataManager {
-    /// Component to manage the quantity of saved compressed data and transfer the data when necessary.
-    data_transfer: Option<DataTransfer>,
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
     data_folder_path: PathBuf,
     /// The compressed segments before they are saved to persistent storage.
@@ -53,13 +51,11 @@ pub(super) struct CompressedDataManager {
 
 impl CompressedDataManager {
     pub(super) fn new(
-        data_transfer: Option<DataTransfer>,
         data_folder_path: PathBuf,
         compressed_reserved_memory_in_bytes: usize,
         compressed_schema: CompressedSchema,
     ) -> Self {
         Self {
-            data_transfer,
             data_folder_path,
             // TODO: Maybe create with estimated capacity to avoid reallocation.
             compressed_data: HashMap::new(),
@@ -181,22 +177,24 @@ impl CompressedDataManager {
         }
     }
 
-    // TODO: After saving, the file location should be given to the data transfer component.
     /// Save the compressed data corresponding to `key` to disk. The size of the saved compressed
-    /// data is added back to the remaining reserved memory.
-    fn save_compressed_data(&mut self, key: &u64) {
-        debug!("Saving compressed time series with key '{}' to disk.", key);
+    /// data is added back to the remaining reserved memory. If the data is saved successfully,
+    /// return [`Ok`], otherwise return [`IOError`].
+    fn save_compressed_data(&mut self, key: &u64) -> Result<(), IOError> {
+        debug!("Saving compressed time series to disk.");
 
         let mut time_series = self.compressed_data.remove(&key).unwrap();
         let folder_path = self.data_folder_path.join(key.to_string());
-        time_series.save_to_apache_parquet(folder_path.as_path(), &self.compressed_schema);
 
+        time_series.save_to_apache_parquet(folder_path.as_path(), &self.compressed_schema)?;
         self.compressed_remaining_memory_in_bytes += time_series.size_in_bytes as isize;
 
         debug!(
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
             time_series.size_in_bytes, self.compressed_remaining_memory_in_bytes
         );
+
+        Ok(())
     }
 }
 
