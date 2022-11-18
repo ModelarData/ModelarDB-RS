@@ -99,8 +99,8 @@ fn main() -> Result<(), String> {
         Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {}", error))?,
     );
 
-    // Ensure the remote data folder can be accessed. The check is performed
-    // after parse_command_line_arguments() as the Tokio Runtime is required.
+    // Ensure the remote data folder can be accessed. The check is performed after
+    // parse_command_line_arguments() as the Tokio Runtime is required.
     if let Some(remote_data_folder) = data_folders.remote_data_folder {
         runtime.block_on(async {
             remote_data_folder
@@ -304,7 +304,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_edge_command_line_arguments_without_blob_store() {
+    fn test_parse_edge_command_line_arguments_without_remote_object_store() {
         setup_environment();
         let tempdir = tempfile::tempdir().unwrap();
         let tempdir_str = tempdir.path().to_str().unwrap();
@@ -316,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_edge_command_line_arguments_without_mode_and_blob_store() {
+    fn test_parse_edge_command_line_arguments_without_mode_and_remote_object_store() {
         setup_environment();
         let tempdir = tempfile::tempdir().unwrap();
         let tempdir_str = tempdir.path().to_str().unwrap();
