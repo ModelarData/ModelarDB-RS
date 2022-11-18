@@ -41,6 +41,8 @@ use crate::{storage, StorageEngine};
 // TODO: Handle the case where a connection can not be established when transferring data.
 // TODO: If there is a remote data folder, initialize the data transfer component in main.
 // TODO: When compressed data is saved, add the compressed file to the data transfer component.
+// TODO: Handle deleting the files after the transfer is complete in a safe way to avoid transferring
+//       the same data multiple times or deleting files that are currently used elsewhere.
 
 pub struct DataTransfer {
     /// Tokio runtime for executing asynchronous tasks.
