@@ -18,7 +18,6 @@
 //! using `FlightServiceHandler` can be started with
 //! `start_arrow_flight_server()`.
 
-use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
@@ -44,7 +43,6 @@ use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
-use tracing::field::debug;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
@@ -293,17 +291,6 @@ impl FlightServiceHandler {
         info!("Created model table '{}'.", model_table_metadata.name);
         Ok(())
     }
-    /// Flush data to the disk manually using an action
-    /// for debug purposes.
-    async fn flush_data_to_disk(
-        &self
-    ) -> Result<(), Status> {
-        let context = self.context.clone();
-
-        context.storage_engine.write().await.flush();
-
-        Ok(())
-    }
 }
 
 #[tonic::async_trait]
@@ -437,8 +424,6 @@ impl FlightService for FlightServiceHandler {
             .await
             .ok_or_else(|| Status::invalid_argument("Missing FlightData."))??;
 
-       // debug_assert_eq!(flight_data.data_body.len(), 0);
-
         let flight_descriptor = flight_data
             .flight_descriptor
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
@@ -521,8 +506,8 @@ impl FlightService for FlightServiceHandler {
 
             // Confirm the table was created.
             Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "Flush"{
-            self.flush_data_to_disk().await.expect("Failed to flush data to disk.");
+        } else if action.r#type == "FlushMemory"{
+            self.context.storage_engine.write().await.flush();
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
@@ -543,7 +528,7 @@ impl FlightService for FlightServiceHandler {
         };
 
         let flush_data_to_disk = ActionType{
-            r#type: "Flush".to_owned(),
+            r#type: "FlushMemory".to_owned(),
             description: "Flush the uncompressed data to disk by compressing and saving the data."
                 .to_owned()
         };
