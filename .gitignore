@@ -2,4 +2,3 @@ target
 proptest-regressions
 .idea
 *.log
-/server/tests/data

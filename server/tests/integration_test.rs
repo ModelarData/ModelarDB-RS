@@ -39,11 +39,13 @@ use futures::stream;
 use log::{error, Log, Record};
 use prost::Message;
 use rand::Rng;
+use rusqlite::DatabaseName::Temp;
 use rusqlite::ffi::sqlite3_uint64;
 use serial_test::serial;
 use sqlparser::ast::DataType::Time;
 use sqlparser::test_utils::table;
 use sysinfo::{Pid, PidExt, ProcessExt, ProcessStatus, System, SystemExt};
+use tempfile::{tempdir, TempDir};
 use tokio::io::AsyncBufReadExt;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
@@ -59,9 +61,9 @@ pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 #[test]
 #[serial]
 fn test_can_create_table() {
-    create_directory();
+    let dir = tempdir().expect("Could not create a directory.");
 
-    let mut flight_server = start_arrow_flight_server();
+    let mut flight_server = start_arrow_flight_server(dir.path());
 
     let table_name = "data".to_string();
 
@@ -76,16 +78,14 @@ fn test_can_create_table() {
                 }
             }
             Err(message) => {
-                remove_directory();
+                dir.close().expect("Could not destroy the directory.");
                 panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        remove_directory();
+        dir.close().expect("Could not destroy the directory.");
         panic!("error: unable to initialize run-time");
     }
-
-    remove_directory();
 
     let s = System::new_all();
 
@@ -97,14 +97,16 @@ fn test_can_create_table() {
             println!("Process has already exited")
         }
     }
+
+    dir.close().expect("Could not destroy the directory.");
 }
 
 #[test]
 #[serial]
 fn test_can_create_model_table() {
-    create_directory();
+    let dir = tempdir().expect("Could not create a directory.");
 
-    let mut flight_server = start_arrow_flight_server();
+    let mut flight_server = start_arrow_flight_server(dir.path());
 
     let table_name = "data".to_string();
 
@@ -119,16 +121,14 @@ fn test_can_create_model_table() {
                 }
             }
             Err(message) => {
-                remove_directory();
+                dir.close().expect("Could not destroy the directory.");
                 panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        remove_directory();
+        dir.close().expect("Could not destroy the directory.");
         panic!("error: unable to initialize run-time");
     }
-
-    remove_directory();
 
     let s = System::new_all();
 
@@ -140,14 +140,16 @@ fn test_can_create_model_table() {
             println!("Process has already exited")
         }
     }
+
+    dir.close().expect("Could not destroy the directory.");
 }
 
 #[test]
 #[serial]
 fn test_creating_and_listing_multiple_tables() {
-    create_directory();
+    let dir = tempdir().expect("Could not create a directory.");
 
-    let mut flight_server = start_arrow_flight_server();
+    let mut flight_server = start_arrow_flight_server(dir.path());
 
     let created_tables = vec![
         "data1".to_string(),
@@ -172,16 +174,14 @@ fn test_creating_and_listing_multiple_tables() {
                 }
             }
             Err(message) => {
-                remove_directory();
+                dir.close().expect("Could not destroy the directory.");
                 panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        remove_directory();
+        dir.close().expect("Could not destroy the directory.");
         panic!("error: unable to initialize run-time");
     }
-
-    remove_directory();
 
     let s = System::new_all();
 
@@ -193,14 +193,16 @@ fn test_creating_and_listing_multiple_tables() {
             println!("Process has already exited")
         }
     }
+
+    dir.close().expect("Could not destroy the directory.");
 }
 
 #[test]
 #[serial]
 fn test_get_schema() {
-    create_directory();
+    let dir = tempdir().expect("Could not create a directory.");
 
-    let mut flight_server = start_arrow_flight_server();
+    let mut flight_server = start_arrow_flight_server(dir.path());
 
     let mut table_names = vec![];
 
@@ -236,16 +238,14 @@ fn test_get_schema() {
                 .expect("Runtime failed.");
             }
             Err(message) => {
-                remove_directory();
+                dir.close().expect("Could not destroy the directory.");
                 panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        remove_directory();
+        dir.close().expect("Could not destroy the directory.");
         panic!("error: unable to initialize run-time");
     }
-
-    remove_directory();
 
     let s = System::new_all();
 
@@ -257,14 +257,16 @@ fn test_get_schema() {
             println!("Process has already exited")
         }
     }
+
+    dir.close().expect("Could not destroy the directory.");
 }
 
 #[test]
 #[serial]
 fn test_can_ingest_message_with_tags() {
-    create_directory();
+    let dir = tempdir().expect("Could not create a directory.");
 
-    let mut flight_server = start_arrow_flight_server();
+    let mut flight_server = start_arrow_flight_server(dir.path());
 
     let tag = "location".to_string();
 
@@ -304,16 +306,14 @@ fn test_can_ingest_message_with_tags() {
                 assert_eq!(message, reconstructed_recordbatch);
             }
             Err(message) => {
-                remove_directory();
+                dir.close().expect("Could not destroy the directory.");
                 panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        remove_directory();
+        dir.close().expect("Could not destroy the directory.");
         panic!("error: unable to initialize run-time");
     }
-
-    remove_directory();
 
     let s = System::new_all();
 
@@ -325,14 +325,16 @@ fn test_can_ingest_message_with_tags() {
             println!("Process has already exited")
         }
     }
+
+    dir.close().expect("Could not destroy the directory.");
 }
 
 #[test]
 #[serial]
 fn test_can_ingest_message_without_tags() {
-    create_directory();
+    let dir = tempdir().expect("Could not create a directory.");
 
-    let mut flight_server = start_arrow_flight_server();
+    let mut flight_server = start_arrow_flight_server(dir.path());
 
     let message = generate_random_message(None);
 
@@ -371,16 +373,14 @@ fn test_can_ingest_message_without_tags() {
                 assert_eq!(message, reconstructed_recordbatch);
             }
             Err(message) => {
-                remove_directory();
+                dir.close().expect("Could not destroy the directory.");
                 panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        remove_directory();
+        dir.close().expect("Could not destroy the directory.");
         panic!("error: unable to initialize run-time");
     }
-
-    remove_directory();
 
     let s = System::new_all();
 
@@ -392,14 +392,16 @@ fn test_can_ingest_message_without_tags() {
             println!("Process has already exited")
         }
     }
+
+    dir.close().expect("Could not destroy the directory.");
 }
 
 #[test]
 #[serial]
 fn test_can_ingest_multiple_time_series_with_different_tags() {
-    create_directory();
+    let dir = tempdir().expect("Could not create a directory.");
 
-    let mut flight_server = start_arrow_flight_server();
+    let mut flight_server = start_arrow_flight_server(dir.path());
 
     let options = ipc::writer::IpcWriteOptions::default();
 
@@ -476,16 +478,14 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
                 }
             }
             Err(message) => {
-                remove_directory();
+                dir.close().expect("Could not destroy the directory.");
                 panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        remove_directory();
+        dir.close().expect("Could not destroy the directory.");
         panic!("error: unable to initialize run-time");
     }
-
-    remove_directory();
 
     let s = System::new_all();
 
@@ -497,14 +497,16 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
             println!("Process has already exited")
         }
     }
+
+    dir.close().expect("Could not destroy the directory.");
 }
 
 #[test]
 #[serial]
 fn test_cannot_ingest_invalid_message() {
-    create_directory();
+    let dir = tempdir().expect("Could not create a directory.");
 
-    let mut flight_server = start_arrow_flight_server();
+    let mut flight_server = start_arrow_flight_server(dir.path());
 
     let message = generate_random_message(None);
 
@@ -539,16 +541,14 @@ fn test_cannot_ingest_invalid_message() {
                 assert!(query.is_empty());
             }
             Err(message) => {
-                remove_directory();
+                dir.close().expect("Could not destroy the directory.");
                 panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        remove_directory();
+        dir.close().expect("Could not destroy the directory.");
         panic!("error: unable to initialize run-time");
     }
-
-    remove_directory();
 
     let s = System::new_all();
 
@@ -560,13 +560,15 @@ fn test_cannot_ingest_invalid_message() {
             println!("Process has already exited")
         }
     }
+
+    dir.close().expect("Could not destroy the directory.");
 }
 #[test]
 #[serial]
 fn test_optimized_query_equals_non_optimized_query() {
-    create_directory();
+    let dir = tempdir().expect("Could not create a directory.");
 
-    let mut flight_server = start_arrow_flight_server();
+    let mut flight_server = start_arrow_flight_server(dir.path());
 
     let options = ipc::writer::IpcWriteOptions::default();
 
@@ -623,16 +625,14 @@ fn test_optimized_query_equals_non_optimized_query() {
                 assert_eq!(optimized_query, non_optimized_query);
             }
             Err(message) => {
-                remove_directory();
+                dir.close().expect("Could not destroy the directory.");
                 panic!("error: cannot connect to {} due to a {}", address, message);
             }
         }
     } else {
-        remove_directory();
+        dir.close().expect("Could not destroy the directory.");
         panic!("error: unable to initialize run-time");
     }
-
-    remove_directory();
 
     let s = System::new_all();
 
@@ -644,24 +644,8 @@ fn test_optimized_query_equals_non_optimized_query() {
             println!("Process has already exited")
         }
     }
-}
 
-/// Create a directory to be used by the Arrow Flight server.
-fn create_directory() {
-    if !Path::new("tests/data").exists() {
-        fs::create_dir("tests/data").expect("Could not create directory.");
-    } else {
-        return;
-    }
-}
-
-/// Remove the created directory used by the Arrow Flight Server.
-fn remove_directory() {
-    if Path::new("tests/data").exists() {
-        fs::remove_dir_all("tests/data").expect("Could not remove directory.");
-    } else {
-        return;
-    }
+    dir.close().expect("Could not destroy the directory.");
 }
 
 /// Get the directory of the binary built for integration testing.
@@ -693,9 +677,9 @@ fn start_binary(binary: &str) -> process::Command {
 }
 
 /// Start a new Arrow Flight Server to simulate a server for the integration tests.
-fn start_arrow_flight_server() -> Child {
+fn start_arrow_flight_server(dir: &Path) -> Child {
     let mut process = start_binary("modelardbd")
-        .arg("tests/data")
+        .arg(dir)
         .stdout(process::Stdio::piped())
         .spawn()
         .expect("Failed to start Arrow Flight Server");
@@ -771,6 +755,7 @@ fn create_model_table_without_tags(
         Ok(())
     })
 }
+
 
 /// Create a normal table in the ModelarDB server with Arrow Flight using the `do_action()` SQL Parser.
 fn create_table(
