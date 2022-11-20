@@ -238,7 +238,6 @@ mod tests {
     use object_store::local::LocalFileSystem;
     use object_store::path::Path as ObjectStorePath;
     use tempfile::TempDir;
-    use tokio::runtime::Runtime;
 
     use crate::storage::data_transfer::DataTransfer;
     use crate::storage::test_util;
@@ -288,12 +287,12 @@ mod tests {
     }
 
     // Tests for data transfer component.
-    #[test]
-    fn test_include_existing_files_on_start_up() {
+    #[tokio::test]
+    async fn test_include_existing_files_on_start_up() {
         let temp_dir = tempfile::tempdir().unwrap();
         create_compressed_file(temp_dir.path(), "test_1");
         create_compressed_file(temp_dir.path(), "test_2");
-        let (_target_dir, data_transfer) = create_data_transfer_component(temp_dir.path());
+        let (_target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
 
         assert_eq!(
             *data_transfer.compressed_files.get(&KEY).unwrap(),
@@ -301,14 +300,16 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_add_compressed_file_into_new_key() {
+    #[tokio::test]
+    async fn test_add_compressed_file_into_new_key() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
+        let (_target_dir, mut data_transfer) =
+            create_data_transfer_component(temp_dir.path()).await;
         let parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         assert!(data_transfer
             .add_compressed_file(&KEY, parquet_path.as_path())
+            .await
             .is_ok());
 
         assert_eq!(
@@ -317,17 +318,20 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_add_compressed_file_into_existing_key() {
+    #[tokio::test]
+    async fn test_add_compressed_file_into_existing_key() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
+        let (_target_dir, mut data_transfer) =
+            create_data_transfer_component(temp_dir.path()).await;
         let parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         data_transfer
             .add_compressed_file(&KEY, parquet_path.as_path())
+            .await
             .unwrap();
         data_transfer
             .add_compressed_file(&KEY, parquet_path.as_path())
+            .await
             .unwrap();
 
         assert_eq!(
@@ -336,30 +340,33 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_add_non_existent_file() {
+    #[tokio::test]
+    async fn test_add_non_existent_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join(format!("{}/compressed", KEY));
         fs::create_dir_all(path.clone()).unwrap();
 
-        let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
+        let (_target_dir, mut data_transfer) =
+            create_data_transfer_component(temp_dir.path()).await;
 
         let parquet_path = path.join("test_parquet.parquet");
         assert!(data_transfer
             .add_compressed_file(&KEY, parquet_path.as_path())
+            .await
             .is_err());
     }
 
-    #[test]
-    fn test_transfer_single_file() {
+    #[tokio::test]
+    async fn test_transfer_single_file() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
+        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path()).await;
         let parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         data_transfer
             .add_compressed_file(&KEY, parquet_path.as_path())
+            .await
             .unwrap();
-        data_transfer.transfer_data(&KEY).unwrap();
+        data_transfer.transfer_data(&KEY).await.unwrap();
 
         assert!(!parquet_path.exists());
 
@@ -375,20 +382,22 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_transfer_multiple_files() {
+    #[tokio::test]
+    async fn test_transfer_multiple_files() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
+        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path()).await;
         let path_1 = create_compressed_file(temp_dir.path(), "test_1");
         let path_2 = create_compressed_file(temp_dir.path(), "test_2");
 
         data_transfer
             .add_compressed_file(&KEY, path_1.as_path())
+            .await
             .unwrap();
         data_transfer
             .add_compressed_file(&KEY, path_2.as_path())
+            .await
             .unwrap();
-        data_transfer.transfer_data(&KEY).unwrap();
+        data_transfer.transfer_data(&KEY).await.unwrap();
 
         assert!(!path_1.exists());
         assert!(!path_2.exists());
@@ -409,16 +418,17 @@ mod tests {
         assert_eq!(batch.num_rows(), 6);
     }
 
-    #[test]
-    fn test_transfer_if_reaching_batch_size_when_adding() {
+    #[tokio::test]
+    async fn test_transfer_if_reaching_batch_size_when_adding() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
+        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path()).await;
         let parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         // Set the max batch size to ensure that the file is transferred immediately.
         data_transfer.transfer_batch_size_in_bytes = COMPRESSED_FILE_SIZE - 1;
         data_transfer
             .add_compressed_file(&KEY, parquet_path.as_path())
+            .await
             .unwrap();
 
         assert!(!parquet_path.exists());
@@ -435,15 +445,15 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_transfer_if_reaching_batch_size_on_start_up() {
+    #[tokio::test]
+    async fn test_transfer_if_reaching_batch_size_on_start_up() {
         let temp_dir = tempfile::tempdir().unwrap();
         let path_1 = create_compressed_file(temp_dir.path(), "test_1");
         let path_2 = create_compressed_file(temp_dir.path(), "test_2");
         let path_3 = create_compressed_file(temp_dir.path(), "test_3");
 
         // Since the max batch size is 1 byte smaller than 3 compressed files, the data should be transferred immediately.
-        let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.path());
+        let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
 
         assert!(!path_1.exists());
         assert!(!path_2.exists());
@@ -479,20 +489,21 @@ mod tests {
     }
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
-    fn create_data_transfer_component(local_data_folder_path: &Path) -> (TempDir, DataTransfer) {
+    async fn create_data_transfer_component(
+        local_data_folder_path: &Path,
+    ) -> (TempDir, DataTransfer) {
         let target_dir = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(Runtime::new().unwrap());
 
         // Create the target object store.
         let local_fs = LocalFileSystem::new_with_prefix(target_dir.path()).unwrap();
         let remote_data_folder_object_store = Arc::new(local_fs);
 
         let data_transfer = DataTransfer::try_new(
-            runtime,
             local_data_folder_path.to_path_buf(),
             remote_data_folder_object_store,
             COMPRESSED_FILE_SIZE * 3 - 1,
         )
+        .await
         .unwrap();
 
         (target_dir, data_transfer)
