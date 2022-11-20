@@ -26,11 +26,10 @@ use bytes::BufMut;
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
+use futures::StreamExt;
+use object_store::local::LocalFileSystem;
 use object_store::path::{Path as ObjectStorePath, PathPart};
 use object_store::ObjectStore;
-use object_store::local::LocalFileSystem;
-use tokio::runtime::Runtime;
-use futures::StreamExt;
 use tonic::codegen::Bytes;
 use tracing::{debug, debug_span};
 
@@ -43,7 +42,6 @@ use crate::{storage, StorageEngine};
 // TODO: Handle deleting the files after the transfer is complete in a safe way to avoid transferring
 //       the same data multiple times or deleting files that are currently used elsewhere.
 
-// TODO: Remove the runtime from the fields.
 // TODO: If there is a remote data folder, initialize the data transfer component in main.
 // TODO: Pass the data transfer component to the storage engine (maybe to compressed data manager).
 // TODO: Create a new function to move all compressed data to the remote store.
@@ -52,8 +50,6 @@ use crate::{storage, StorageEngine};
 // TODO: Run Rustfmt.
 
 pub struct DataTransfer {
-    /// Tokio runtime for executing asynchronous tasks.
-    runtime: Arc<Runtime>,
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
     local_data_folder_path: PathBuf,
     /// The object store containing all compressed data managed by the [`StorageEngine`].
@@ -71,7 +67,6 @@ impl DataTransfer {
     /// existing in `local_data_folder_path`. If `local_data_folder_path` or a path within
     /// `local_data_folder_path` could not be read, return [`IOError`].
     pub async fn try_new(
-        runtime: Arc<Runtime>,
         local_data_folder_path: PathBuf,
         remote_data_folder_object_store: Arc<dyn ObjectStore>,
         transfer_batch_size_in_bytes: usize,
@@ -82,19 +77,20 @@ impl DataTransfer {
         // Parse through the data folder to retrieve already existing files that should be transferred.
         let list_stream = local_data_folder_object_store.list(None).await?;
 
-        let compressed_files = list_stream.fold(HashMap::new(), |mut acc, maybe_meta| async {
-            if let Ok(meta) = maybe_meta {
-                // If the file is a compressed file, add the size of it to the total size of the files under the key.
-                if let Some(key) = Self::path_is_compressed_file(meta.location) {
-                    *acc.entry(key).or_insert(0) += meta.size;
+        let compressed_files = list_stream
+            .fold(HashMap::new(), |mut acc, maybe_meta| async {
+                if let Ok(meta) = maybe_meta {
+                    // If the file is a compressed file, add the size of it to the total size of the files under the key.
+                    if let Some(key) = Self::path_is_compressed_file(meta.location) {
+                        *acc.entry(key).or_insert(0) += meta.size;
+                    }
                 }
-            }
 
-            acc
-        }).await;
+                acc
+            })
+            .await;
 
         let mut data_transfer = Self {
-            runtime,
             local_data_folder_path,
             local_data_folder_object_store,
             remote_data_folder_object_store,
@@ -105,7 +101,8 @@ impl DataTransfer {
         // Check if data should be transferred immediately.
         for (key, size_in_bytes) in compressed_files.iter() {
             if size_in_bytes >= &transfer_batch_size_in_bytes {
-                data_transfer.transfer_data(key)
+                data_transfer
+                    .transfer_data(key)
                     .await
                     .map_err(|err| IOError::new(Other, err.to_string()))?;
             }
@@ -116,7 +113,11 @@ impl DataTransfer {
 
     /// Insert the compressed file into the files to be transferred. Retrieve the size of the file
     /// and add it to the total size of the current local files under the key.
-    pub async fn add_compressed_file(&mut self, key: &u64, file_path: &Path) -> Result<(), ParquetError> {
+    pub async fn add_compressed_file(
+        &mut self,
+        key: &u64,
+        file_path: &Path,
+    ) -> Result<(), ParquetError> {
         let file_size = file_path.metadata()?.len() as usize;
         *self.compressed_files.entry(*key).or_insert(0) += file_size;
 
@@ -141,29 +142,38 @@ impl DataTransfer {
 
         // Read all files that correspond to the key.
         let path = format!("{}/compressed", key).into();
-        let list_stream = self.local_data_folder_object_store
+        let list_stream = self
+            .local_data_folder_object_store
             .list(Some(&path))
             .await
             .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
 
-        let object_metas = list_stream.filter_map(|maybe_meta| async {
-            maybe_meta.ok()
-        }).collect::<Vec<_>>().await.into_iter();
+        let object_metas = list_stream
+            .filter_map(|maybe_meta| async { maybe_meta.ok() })
+            .collect::<Vec<_>>()
+            .await
+            .into_iter();
 
         debug!("Transferring {} compressed files.", object_metas.len());
 
         // Combine the Apache Parquet files into a single RecordBatch.
-        let record_batches = object_metas.clone().filter_map(|meta| {
-            let path = self.local_data_folder_path.to_string_lossy();
-            let file_path = PathBuf::from(format!("{}/{}", path, meta.location));
+        let record_batches = object_metas
+            .clone()
+            .filter_map(|meta| {
+                let path = self.local_data_folder_path.to_string_lossy();
+                let file_path = PathBuf::from(format!("{}/{}", path, meta.location));
 
-            StorageEngine::read_entire_apache_parquet_file(file_path.as_path()).ok()
-        }).collect::<Vec<RecordBatch>>();
+                StorageEngine::read_entire_apache_parquet_file(file_path.as_path()).ok()
+            })
+            .collect::<Vec<RecordBatch>>();
 
         let schema = record_batches[0].schema();
         let combined = compute::concat_batches(&schema, &record_batches)?;
 
-        debug!("Combined compressed files into single record batch with {} rows.", combined.num_rows());
+        debug!(
+            "Combined compressed files into single record batch with {} rows.",
+            combined.num_rows()
+        );
 
         // Write the combined RecordBatch to a bytes buffer.
         let mut buf = vec![].writer();
@@ -174,13 +184,15 @@ impl DataTransfer {
         // Transfer the combined RecordBatch to the remote object store.
         let file_name = storage::create_time_range_file_name(&combined);
         let path = format!("{}/compressed/{}", key, file_name).into();
-        self.remote_data_folder_object_store.put(&path, Bytes::from(buf.into_inner()))
+        self.remote_data_folder_object_store
+            .put(&path, Bytes::from(buf.into_inner()))
             .await
             .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
 
         // Delete the transferred files from local storage.
         for meta in object_metas.clone() {
-            self.local_data_folder_object_store.delete(&meta.location)
+            self.local_data_folder_object_store
+                .delete(&meta.location)
                 .await
                 .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
         }
@@ -191,8 +203,7 @@ impl DataTransfer {
 
         debug!(
             "Transferred {} bytes of compressed data to path '{}' in remote object store.",
-            transferred_bytes,
-            path,
+            transferred_bytes, path,
         );
 
         Ok(())
@@ -206,7 +217,8 @@ impl DataTransfer {
             if let Ok(key) = key_part.as_ref().parse::<u64>() {
                 if let Some(file_name_part) = path_parts.get(2) {
                     if Some(&PathPart::from("compressed")) == path_parts.get(1)
-                        && file_name_part.as_ref().ends_with(".parquet") {
+                        && file_name_part.as_ref().ends_with(".parquet")
+                    {
                         return Some(key);
                     }
                 }
@@ -223,8 +235,8 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
 
-    use object_store::path::Path as ObjectStorePath;
     use object_store::local::LocalFileSystem;
+    use object_store::path::Path as ObjectStorePath;
     use tempfile::TempDir;
     use tokio::runtime::Runtime;
 
@@ -269,7 +281,10 @@ mod tests {
     #[test]
     fn test_compressed_file_is_compressed_file() {
         let path = ObjectStorePath::from("4330327753845164038/compressed/test.parquet");
-        assert_eq!(DataTransfer::path_is_compressed_file(path), Some(4330327753845164038));
+        assert_eq!(
+            DataTransfer::path_is_compressed_file(path),
+            Some(4330327753845164038)
+        );
     }
 
     // Tests for data transfer component.
@@ -280,7 +295,10 @@ mod tests {
         create_compressed_file(temp_dir.path(), "test_2");
         let (_target_dir, data_transfer) = create_data_transfer_component(temp_dir.path());
 
-        assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), COMPRESSED_FILE_SIZE * 2);
+        assert_eq!(
+            *data_transfer.compressed_files.get(&KEY).unwrap(),
+            COMPRESSED_FILE_SIZE * 2
+        );
     }
 
     #[test]
@@ -289,8 +307,14 @@ mod tests {
         let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
         let parquet_path = create_compressed_file(temp_dir.path(), "test");
 
-        assert!(data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).is_ok());
-        assert_eq!(data_transfer.compressed_files.get(&KEY).unwrap(), &COMPRESSED_FILE_SIZE);
+        assert!(data_transfer
+            .add_compressed_file(&KEY, parquet_path.as_path())
+            .is_ok());
+
+        assert_eq!(
+            data_transfer.compressed_files.get(&KEY).unwrap(),
+            &COMPRESSED_FILE_SIZE
+        );
     }
 
     #[test]
@@ -299,10 +323,17 @@ mod tests {
         let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
         let parquet_path = create_compressed_file(temp_dir.path(), "test");
 
-        data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).unwrap();
-        data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).unwrap();
+        data_transfer
+            .add_compressed_file(&KEY, parquet_path.as_path())
+            .unwrap();
+        data_transfer
+            .add_compressed_file(&KEY, parquet_path.as_path())
+            .unwrap();
 
-        assert_eq!(data_transfer.compressed_files.get(&KEY).unwrap(), &(COMPRESSED_FILE_SIZE * 2));
+        assert_eq!(
+            data_transfer.compressed_files.get(&KEY).unwrap(),
+            &(COMPRESSED_FILE_SIZE * 2)
+        );
     }
 
     #[test]
@@ -314,7 +345,9 @@ mod tests {
         let (_target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
 
         let parquet_path = path.join("test_parquet.parquet");
-        assert!(data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).is_err());
+        assert!(data_transfer
+            .add_compressed_file(&KEY, parquet_path.as_path())
+            .is_err());
     }
 
     #[test]
@@ -323,14 +356,23 @@ mod tests {
         let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path());
         let parquet_path = create_compressed_file(temp_dir.path(), "test");
 
-        data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).unwrap();
+        data_transfer
+            .add_compressed_file(&KEY, parquet_path.as_path())
+            .unwrap();
         data_transfer.transfer_data(&KEY).unwrap();
 
         assert!(!parquet_path.exists());
 
         // The transferred file should have a time range file name that matches the compressed data.
-        assert!(target_dir.path().join(format!("{}/compressed/0-3.parquet", KEY)).exists());
-        assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), 0 as usize);
+        assert!(target_dir
+            .path()
+            .join(format!("{}/compressed/0-3.parquet", KEY))
+            .exists());
+
+        assert_eq!(
+            *data_transfer.compressed_files.get(&KEY).unwrap(),
+            0 as usize
+        );
     }
 
     #[test]
@@ -340,17 +382,27 @@ mod tests {
         let path_1 = create_compressed_file(temp_dir.path(), "test_1");
         let path_2 = create_compressed_file(temp_dir.path(), "test_2");
 
-        data_transfer.add_compressed_file(&KEY, path_1.as_path()).unwrap();
-        data_transfer.add_compressed_file(&KEY, path_2.as_path()).unwrap();
+        data_transfer
+            .add_compressed_file(&KEY, path_1.as_path())
+            .unwrap();
+        data_transfer
+            .add_compressed_file(&KEY, path_2.as_path())
+            .unwrap();
         data_transfer.transfer_data(&KEY).unwrap();
 
         assert!(!path_1.exists());
         assert!(!path_2.exists());
 
         // The transferred file should have a time range file name that matches the compressed data.
-        let target_path = target_dir.path().join(format!("{}/compressed/0-3.parquet", KEY));
+        let target_path = target_dir
+            .path()
+            .join(format!("{}/compressed/0-3.parquet", KEY));
         assert!(target_path.exists());
-        assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), 0 as usize);
+
+        assert_eq!(
+            *data_transfer.compressed_files.get(&KEY).unwrap(),
+            0 as usize
+        );
 
         // The transferred file should have 6 rows since each compressed file has 3.
         let batch = StorageEngine::read_entire_apache_parquet_file(target_path.as_path()).unwrap();
@@ -365,13 +417,22 @@ mod tests {
 
         // Set the max batch size to ensure that the file is transferred immediately.
         data_transfer.transfer_batch_size_in_bytes = COMPRESSED_FILE_SIZE - 1;
-        data_transfer.add_compressed_file(&KEY, parquet_path.as_path()).unwrap();
+        data_transfer
+            .add_compressed_file(&KEY, parquet_path.as_path())
+            .unwrap();
 
         assert!(!parquet_path.exists());
 
         // The transferred file should have a time range file name that matches the compressed data.
-        assert!(target_dir.path().join(format!("{}/compressed/0-3.parquet", KEY)).exists());
-        assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), 0 as usize);
+        assert!(target_dir
+            .path()
+            .join(format!("{}/compressed/0-3.parquet", KEY))
+            .exists());
+
+        assert_eq!(
+            *data_transfer.compressed_files.get(&KEY).unwrap(),
+            0 as usize
+        );
     }
 
     #[test]
@@ -389,14 +450,19 @@ mod tests {
         assert!(!path_3.exists());
 
         // The transferred file should have a time range file name that matches the compressed data.
-        assert!(target_dir.path().join(format!("{}/compressed/0-3.parquet", KEY)).exists());
-        assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), 0 as usize);
+        assert!(target_dir
+            .path()
+            .join(format!("{}/compressed/0-3.parquet", KEY))
+            .exists());
+
+        assert_eq!(
+            *data_transfer.compressed_files.get(&KEY).unwrap(),
+            0 as usize
+        );
     }
 
     #[test]
-    fn test_flush_compressed_files() {
-
-    }
+    fn test_flush_compressed_files() {}
 
     /// Set up a data folder with a key folder that has a single compressed file in it.
     /// Return the path to the created Apache Parquet file.
@@ -406,7 +472,8 @@ mod tests {
 
         let batch = test_util::get_compressed_segment_record_batch();
         let parquet_path = path.join(format!("{}.parquet", file_name));
-        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path()).unwrap();
+        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path())
+            .unwrap();
 
         parquet_path
     }
@@ -425,7 +492,8 @@ mod tests {
             local_data_folder_path.to_path_buf(),
             remote_data_folder_object_store,
             COMPRESSED_FILE_SIZE * 3 - 1,
-        ).unwrap();
+        )
+        .unwrap();
 
         (target_dir, data_transfer)
     }
