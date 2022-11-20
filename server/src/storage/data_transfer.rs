@@ -43,12 +43,13 @@ use crate::{storage, StorageEngine};
 // TODO: Handle deleting the files after the transfer is complete in a safe way to avoid transferring
 //       the same data multiple times or deleting files that are currently used elsewhere.
 
-// TODO: Remove all uses of block_on in the data transfer component.
+// TODO: Remove the runtime from the fields.
 // TODO: If there is a remote data folder, initialize the data transfer component in main.
 // TODO: Pass the data transfer component to the storage engine (maybe to compressed data manager).
 // TODO: Create a new function to move all compressed data to the remote store.
 // TODO: Add a test for this function.
 // TODO: Create a new action (add to list actions) that flushes the memory and the on-disk files.
+// TODO: Run Rustfmt.
 
 pub struct DataTransfer {
     /// Tokio runtime for executing asynchronous tasks.
@@ -104,7 +105,9 @@ impl DataTransfer {
         // Check if data should be transferred immediately.
         for (key, size_in_bytes) in compressed_files.iter() {
             if size_in_bytes >= &transfer_batch_size_in_bytes {
-                data_transfer.transfer_data(key).map_err(|err| IOError::new(Other, err.to_string()))?;
+                data_transfer.transfer_data(key)
+                    .await
+                    .map_err(|err| IOError::new(Other, err.to_string()))?;
             }
         }
 
@@ -113,13 +116,13 @@ impl DataTransfer {
 
     /// Insert the compressed file into the files to be transferred. Retrieve the size of the file
     /// and add it to the total size of the current local files under the key.
-    pub fn add_compressed_file(&mut self, key: &u64, file_path: &Path) -> Result<(), ParquetError> {
+    pub async fn add_compressed_file(&mut self, key: &u64, file_path: &Path) -> Result<(), ParquetError> {
         let file_size = file_path.metadata()?.len() as usize;
         *self.compressed_files.entry(*key).or_insert(0) += file_size;
 
         // If the combined size of the files is larger than the batch size, transfer the data to the remote object store.
         if self.compressed_files.get(key).unwrap() >= &self.transfer_batch_size_in_bytes {
-            self.transfer_data(key)?;
+            self.transfer_data(key).await?;
         }
 
         Ok(())
@@ -133,20 +136,19 @@ impl DataTransfer {
     /// Transfer the data corresponding to `key` to the remote object store. Once successfully
     /// transferred, the data is deleted from local storage. Return [`Ok`] if the files were
     /// transferred successfully, otherwise [`ParquetError`].
-    fn transfer_data(&mut self, key: &u64) -> Result<(), ParquetError> {
+    async fn transfer_data(&mut self, key: &u64) -> Result<(), ParquetError> {
         let _span = debug_span!("transfer_data", key = key).entered();
 
         // Read all files that correspond to the key.
-        let object_metas = self.runtime.block_on(async {
-            let path = format!("{}/compressed", key).into();
-            let list_stream = self.local_data_folder_object_store
-                .list(Some(&path))
-                .await?;
+        let path = format!("{}/compressed", key).into();
+        let list_stream = self.local_data_folder_object_store
+            .list(Some(&path))
+            .await
+            .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
 
-            Ok(list_stream.filter_map(|maybe_meta| async {
-                maybe_meta.ok()
-            }).collect::<Vec<_>>().await.into_iter())
-        }).map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
+        let object_metas = list_stream.filter_map(|maybe_meta| async {
+            maybe_meta.ok()
+        }).collect::<Vec<_>>().await.into_iter();
 
         debug!("Transferring {} compressed files.", object_metas.len());
 
@@ -169,29 +171,31 @@ impl DataTransfer {
         arrow_writer.write(&combined)?;
         arrow_writer.close()?;
 
-        self.runtime.block_on(async {
-            // Transfer the combined RecordBatch to the remote object store.
-            let file_name = storage::create_time_range_file_name(&combined);
-            let path = format!("{}/compressed/{}", key, file_name).into();
-            self.remote_data_folder_object_store.put(&path, Bytes::from(buf.into_inner())).await?;
+        // Transfer the combined RecordBatch to the remote object store.
+        let file_name = storage::create_time_range_file_name(&combined);
+        let path = format!("{}/compressed/{}", key, file_name).into();
+        self.remote_data_folder_object_store.put(&path, Bytes::from(buf.into_inner()))
+            .await
+            .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
 
-            // Delete the transferred files from local storage.
-            for meta in object_metas.clone() {
-                self.local_data_folder_object_store.delete(&meta.location).await?;
-            }
+        // Delete the transferred files from local storage.
+        for meta in object_metas.clone() {
+            self.local_data_folder_object_store.delete(&meta.location)
+                .await
+                .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
+        }
 
-            // Delete the transferred files from the in-memory tracking of compressed files.
-            let transferred_bytes: usize = object_metas.map(|meta| meta.size).sum();
-            *self.compressed_files.get_mut(key).unwrap() -= transferred_bytes;
+        // Delete the transferred files from the in-memory tracking of compressed files.
+        let transferred_bytes: usize = object_metas.map(|meta| meta.size).sum();
+        *self.compressed_files.get_mut(key).unwrap() -= transferred_bytes;
 
-            debug!(
-                "Transferred {} bytes of compressed data to path '{}' in remote object store.",
-                transferred_bytes,
-                path,
-            );
+        debug!(
+            "Transferred {} bytes of compressed data to path '{}' in remote object store.",
+            transferred_bytes,
+            path,
+        );
 
-            Ok(())
-        }).map_err(|error: object_store::Error| ParquetError::General(error.to_string()))
+        Ok(())
     }
 
     /// Return the key if `path` is an Apache Parquet file with compressed data, otherwise [`None`].
