@@ -69,7 +69,7 @@ impl DataTransfer {
     /// Create a new data transfer instance and initialize it with the compressed files already
     /// existing in `local_data_folder_path`. If `local_data_folder_path` or a path within
     /// `local_data_folder_path` could not be read, return [`IOError`].
-    pub fn try_new(
+    pub async fn try_new(
         runtime: Arc<Runtime>,
         local_data_folder_path: PathBuf,
         remote_data_folder_object_store: Arc<dyn ObjectStore>,
@@ -79,20 +79,18 @@ impl DataTransfer {
         let local_data_folder_object_store = Arc::new(local_fs);
 
         // Parse through the data folder to retrieve already existing files that should be transferred.
-        let compressed_files = runtime.block_on(async {
-            let list_stream = local_data_folder_object_store.list(None).await?;
+        let list_stream = local_data_folder_object_store.list(None).await?;
 
-            Ok(list_stream.fold(HashMap::new(), |mut acc, maybe_meta| async {
-                if let Ok(meta) = maybe_meta {
-                    // If the file is a compressed file, add it to the compressed files.
-                    if let Some(key) = Self::path_is_compressed_file(meta.location) {
-                        *acc.entry(key).or_insert(0) += meta.size;
-                    }
+        let compressed_files = list_stream.fold(HashMap::new(), |mut acc, maybe_meta| async {
+            if let Ok(meta) = maybe_meta {
+                // If the file is a compressed file, add the size of it to the total size of the files under the key.
+                if let Some(key) = Self::path_is_compressed_file(meta.location) {
+                    *acc.entry(key).or_insert(0) += meta.size;
                 }
+            }
 
-                acc
-            }).await)
-        }).map_err(|error: object_store::Error| IOError::new(Other, error.to_string()))?;
+            acc
+        }).await;
 
         let mut data_transfer = Self {
             runtime,
