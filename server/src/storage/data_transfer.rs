@@ -39,10 +39,16 @@ use crate::{storage, StorageEngine};
 // TODO: When the storage engine is changed to use object store for everything, receive
 //       the object store directly through the parameters instead.
 // TODO: Handle the case where a connection can not be established when transferring data.
-// TODO: If there is a remote data folder, initialize the data transfer component in main.
 // TODO: When compressed data is saved, add the compressed file to the data transfer component.
 // TODO: Handle deleting the files after the transfer is complete in a safe way to avoid transferring
 //       the same data multiple times or deleting files that are currently used elsewhere.
+
+// TODO: Remove all uses of block_on in the data transfer component.
+// TODO: If there is a remote data folder, initialize the data transfer component in main.
+// TODO: Pass the data transfer component to the storage engine (maybe to compressed data manager).
+// TODO: Create a new function to move all compressed data to the remote store.
+// TODO: Add a test for this function.
+// TODO: Create a new action (add to list actions) that flushes the memory and the on-disk files.
 
 pub struct DataTransfer {
     /// Tokio runtime for executing asynchronous tasks.
@@ -119,6 +125,11 @@ impl DataTransfer {
         }
 
         Ok(())
+    }
+
+    /// Transfer all compressed files currently in the data folder to the remote object store.
+    pub(super) fn flush_compressed_files(&mut self) {
+        // TODO: Iterate over the keys in the compressed files hashmap and call the transfer data function for each key.
     }
 
     /// Transfer the data corresponding to `key` to the remote object store. Once successfully
@@ -378,6 +389,11 @@ mod tests {
         // The transferred file should have a time range file name that matches the compressed data.
         assert!(target_dir.path().join(format!("{}/compressed/0-3.parquet", KEY)).exists());
         assert_eq!(*data_transfer.compressed_files.get(&KEY).unwrap(), 0 as usize);
+    }
+
+    #[test]
+    fn test_flush_compressed_files() {
+
     }
 
     /// Set up a data folder with a key folder that has a single compressed file in it.
