@@ -42,10 +42,6 @@ use crate::{storage, StorageEngine};
 // TODO: Handle deleting the files after the transfer is complete in a safe way to avoid transferring
 //       the same data multiple times or deleting files that are currently used elsewhere.
 
-// TODO: If there is a remote data folder, initialize the data transfer component in main.
-// TODO: Pass the data transfer component to the storage engine (maybe to compressed data manager).
-// TODO: Create a new function to move all compressed data to the remote store.
-// TODO: Add a test for this function.
 // TODO: Create a new action (add to list actions) that flushes the memory and the on-disk files.
 // TODO: Run Rustfmt.
 
@@ -130,8 +126,17 @@ impl DataTransfer {
     }
 
     /// Transfer all compressed files currently in the data folder to the remote object store.
-    pub(super) fn flush_compressed_files(&mut self) {
-        // TODO: Iterate over the keys in the compressed files hashmap and call the transfer data function for each key.
+    /// Return [`Ok`] if all files were transferred successfully, otherwise [`ParquetError`].
+    pub(super) async fn flush_compressed_files(&mut self) -> Result<(), ParquetError> {
+        for (key, size_in_bytes) in self.compressed_files.clone().iter() {
+            if size_in_bytes > &(0 as usize) {
+                self.transfer_data(key)
+                    .await
+                    .map_err(|err| IOError::new(Other, err.to_string()))?;
+            }
+        }
+
+        Ok(())
     }
 
     /// Transfer the data corresponding to `key` to the remote object store. Once successfully
