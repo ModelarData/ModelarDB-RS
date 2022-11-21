@@ -35,9 +35,9 @@ use crate::StorageEngine;
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
-pub(super) struct CompressedDataManager {
+pub struct CompressedDataManager {
     /// Component to manage the quantity of saved compressed data and transfer the data when necessary.
-    data_transfer: Option<DataTransfer>,
+    pub data_transfer: Option<DataTransfer>,
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
     data_folder_path: PathBuf,
     /// The compressed segments before they are saved to persistent storage.

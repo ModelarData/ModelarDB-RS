@@ -75,7 +75,7 @@ pub struct StorageEngine {
     /// Manager that contains and controls all uncompressed data.
     uncompressed_data_manager: UncompressedDataManager,
     /// Manager that contains and controls all compressed data.
-    compressed_data_manager: CompressedDataManager,
+    pub compressed_data_manager: CompressedDataManager,
 }
 
 impl StorageEngine {

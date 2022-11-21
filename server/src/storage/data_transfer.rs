@@ -31,7 +31,7 @@ use object_store::local::LocalFileSystem;
 use object_store::path::{Path as ObjectStorePath, PathPart};
 use object_store::ObjectStore;
 use tonic::codegen::Bytes;
-use tracing::{debug, debug_span};
+use tracing::debug;
 
 use crate::{storage, StorageEngine};
 
@@ -127,7 +127,7 @@ impl DataTransfer {
 
     /// Transfer all compressed files currently in the data folder to the remote object store.
     /// Return [`Ok`] if all files were transferred successfully, otherwise [`ParquetError`].
-    pub(super) async fn flush_compressed_files(&mut self) -> Result<(), ParquetError> {
+    pub(crate) async fn flush_compressed_files(&mut self) -> Result<(), ParquetError> {
         for (key, size_in_bytes) in self.compressed_files.clone().iter() {
             if size_in_bytes > &(0 as usize) {
                 self.transfer_data(key)
@@ -143,8 +143,6 @@ impl DataTransfer {
     /// transferred, the data is deleted from local storage. Return [`Ok`] if the files were
     /// transferred successfully, otherwise [`ParquetError`].
     async fn transfer_data(&mut self, key: &u64) -> Result<(), ParquetError> {
-        let _span = debug_span!("transfer_data", key = key).entered();
-
         // Read all files that correspond to the key.
         let path = format!("{}/compressed", key).into();
         let list_stream = self
@@ -159,7 +157,7 @@ impl DataTransfer {
             .await
             .into_iter();
 
-        debug!("Transferring {} compressed files.", object_metas.len());
+        debug!("Transferring {} compressed files from key '{}'.", object_metas.len(), key);
 
         // Combine the Apache Parquet files into a single RecordBatch.
         let record_batches = object_metas
