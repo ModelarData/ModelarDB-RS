@@ -55,11 +55,9 @@ fn test_can_create_table() {
 
     create_table(&rt, &mut fsc, TABLE_NAME, "NormalTable");
 
-    if let Ok(retrieved_tables) = retrieve_all_table_names(&rt, &mut fsc) {
-        assert_eq!(retrieved_tables[0], TABLE_NAME)
-    } else {
-        panic!("Could not retrieve tables.");
-    }
+    let retrieved_tables= retrieve_all_table_names(&rt, &mut fsc).expect("Could not retrieve tables.");
+
+    assert_eq!(retrieved_tables[0], TABLE_NAME);
 
     let s = System::new_all();
     if let Some(process) = s.process(Pid::from_u32(flight_server.id())) {
@@ -79,11 +77,9 @@ fn test_can_create_model_table() {
 
     create_table(&rt, &mut fsc, TABLE_NAME, "ModelTable");
 
-    if let Ok(retrieved_tables) = retrieve_all_table_names(&rt, &mut fsc) {
-        assert_eq!(retrieved_tables[0], TABLE_NAME)
-    } else {
-        panic!("Could not retrieve tables.");
-    }
+    let retrieved_tables= retrieve_all_table_names(&rt, &mut fsc).expect("Could not retrieve tables.");
+
+    assert_eq!(retrieved_tables[0], TABLE_NAME);
 
     let s = System::new_all();
     if let Some(process) = s.process(Pid::from_u32(flight_server.id())) {
@@ -106,12 +102,10 @@ fn test_creating_and_listing_multiple_tables() {
         create_table(&rt, &mut fsc, table_name, "ModelTable");
     }
 
-    if let Ok(retrieved_tables) = retrieve_all_table_names(&rt, &mut fsc) {
-        for table in created_tables.clone() {
-            assert!(retrieved_tables.contains(&table.to_string()))
-        }
-    } else {
-        panic!("Could not retrieve tables.");
+    let retrieved_tables = retrieve_all_table_names(&rt, &mut fsc).expect("Could not retrieve tables.");
+
+    for table in created_tables.clone() {
+        assert!(retrieved_tables.contains(&table.to_string()))
     }
 
     let s = System::new_all();
@@ -160,7 +154,7 @@ fn test_can_ingest_message_with_tags() {
         .expect("Cannot connect to flight service client.");
 
     let message = generate_random_message(Some("location"));
-    let flight_data_vec = create_flight_data_from_messages(vec![message.clone()]);
+    let flight_data_vec = create_flight_data_from_messages(&vec![message.clone()]);
 
     create_table(&rt, &mut fsc, TABLE_NAME, "ModelTable");
 
@@ -170,7 +164,7 @@ fn test_can_ingest_message_with_tags() {
     let query =
         execute_query(&rt, &mut fsc, "SELECT * FROM data").expect("Could not execute query.");
 
-    let reconstructed_record_batch = reconstruct_record_batch(message.clone(), query[0].clone());
+    let reconstructed_record_batch = reconstruct_record_batch(&message, &query[0]);
 
     assert_eq!(message, reconstructed_record_batch);
 
@@ -191,7 +185,7 @@ fn test_can_ingest_message_without_tags() {
         .expect("Cannot connect to flight service client.");
 
     let message = generate_random_message(None);
-    let flight_data_vec = create_flight_data_from_messages(vec![message.clone()]);
+    let flight_data_vec = create_flight_data_from_messages(&vec![message.clone()]);
 
     create_table(&rt, &mut fsc, TABLE_NAME, "ModelTableNoTag");
 
@@ -201,7 +195,7 @@ fn test_can_ingest_message_without_tags() {
     let query =
         execute_query(&rt, &mut fsc, "SELECT * FROM data").expect("Could not execute query.");
 
-    let reconstructed_record_batch = reconstruct_record_batch(message.clone(), query[0].clone());
+    let reconstructed_record_batch = reconstruct_record_batch(&message, &query[0]);
 
     assert_eq!(message, reconstructed_record_batch);
 
@@ -223,11 +217,11 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
 
     let mut messages = vec![];
     for i in 1..5 {
-        let batch = generate_random_message(Some(&*(format! {"location{}", i})));
+        let batch = generate_random_message(Some(&(format! {"location{}", i})));
 
-        messages.push(batch.clone());
+        messages.push(batch);
     }
-    let flight_data_vec = create_flight_data_from_messages(messages.clone());
+    let flight_data_vec = create_flight_data_from_messages(&messages);
 
     create_table(&rt, &mut fsc, TABLE_NAME, "ModelTable");
 
@@ -240,8 +234,8 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
     // The following loop matches the queried record batches with the
     // original record batches and asserts that they exist in
     // in the query.
-    for queried in query {
-        for original in messages.clone() {
+    for queried in &query {
+        for original in &messages {
             let original_timestamp_value = original
                 .clone()
                 .column(0)
@@ -260,7 +254,7 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
 
             if original_timestamp_value == queried_timestamp_value {
                 let reconstructed_record_batch =
-                    reconstruct_record_batch(original.clone(), queried.clone());
+                    &reconstruct_record_batch(&original, &queried);
                 assert_eq!(original, reconstructed_record_batch);
             }
         }
@@ -283,7 +277,7 @@ fn test_cannot_ingest_invalid_message() {
         .expect("Cannot connect to flight service client.");
 
     let message = generate_random_message(None);
-    let flight_data_vec = create_flight_data_from_messages(vec![message]);
+    let flight_data_vec = create_flight_data_from_messages(&vec![message]);
 
     create_table(&rt, &mut fsc, TABLE_NAME, "ModelTable");
 
@@ -313,11 +307,11 @@ fn test_optimized_query_equals_non_optimized_query() {
 
     let mut messages = vec![];
     for i in 1..5 {
-        let batch = generate_random_message(Some(&*(format! {"location{}", i})));
+        let batch = generate_random_message(Some(&(format! {"location{}", i})));
 
-        messages.push(batch.clone());
+        messages.push(batch);
     }
-    let flight_data_vec = create_flight_data_from_messages(messages.clone());
+    let flight_data_vec = create_flight_data_from_messages(&messages);
 
     create_table(&rt, &mut fsc, TABLE_NAME, "ModelTable");
 
@@ -481,7 +475,7 @@ fn generate_random_message(tag: Option<&str>) -> RecordBatch {
 }
 
 /// Creates and returns FlightData based on the messages inserted.
-fn create_flight_data_from_messages(messages: Vec<RecordBatch>) -> Vec<FlightData> {
+fn create_flight_data_from_messages(messages: &Vec<RecordBatch>) -> Vec<FlightData> {
     let flight_descriptor = FlightDescriptor::new_path(vec![TABLE_NAME.to_string()]);
 
     let mut flight_data_vec = vec![FlightData {
@@ -604,7 +598,7 @@ fn retrieve_schema(
 /// This is necessary because the current implementation of querying
 /// and retrieving schemas does not return the original tag column,
 /// and therefore does not return the original schema.
-fn reconstruct_record_batch(original: RecordBatch, query: RecordBatch) -> RecordBatch {
+fn reconstruct_record_batch(original: &RecordBatch, query: &RecordBatch) -> RecordBatch {
     let timestamp_value = query
         .column(1)
         .as_any()
