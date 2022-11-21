@@ -127,6 +127,7 @@ fn main() -> Result<(), String> {
         .map_err(|error| format!("Unable to create a MetadataManager: {}", error))?;
     let session = create_session_context(data_folders.query_data_folder);
     let storage_engine = RwLock::new(StorageEngine::new(
+        data_transfer,
         data_folders.local_data_folder,
         metadata_manager.clone(),
         true,
