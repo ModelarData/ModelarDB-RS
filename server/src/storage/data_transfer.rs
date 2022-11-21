@@ -373,18 +373,7 @@ mod tests {
             .unwrap();
         data_transfer.transfer_data(&KEY).await.unwrap();
 
-        assert!(!parquet_path.exists());
-
-        // The transferred file should have a time range file name that matches the compressed data.
-        assert!(target_dir
-            .path()
-            .join(format!("{}/compressed/0-3.parquet", KEY))
-            .exists());
-
-        assert_eq!(
-            *data_transfer.compressed_files.get(&KEY).unwrap(),
-            0 as usize
-        );
+        assert_data_transferred(vec![parquet_path], target_dir, data_transfer);
     }
 
     #[tokio::test]
@@ -404,23 +393,7 @@ mod tests {
             .unwrap();
         data_transfer.transfer_data(&KEY).await.unwrap();
 
-        assert!(!path_1.exists());
-        assert!(!path_2.exists());
-
-        // The transferred file should have a time range file name that matches the compressed data.
-        let target_path = target_dir
-            .path()
-            .join(format!("{}/compressed/0-3.parquet", KEY));
-        assert!(target_path.exists());
-
-        assert_eq!(
-            *data_transfer.compressed_files.get(&KEY).unwrap(),
-            0 as usize
-        );
-
-        // The transferred file should have 6 rows since each compressed file has 3.
-        let batch = StorageEngine::read_entire_apache_parquet_file(target_path.as_path()).unwrap();
-        assert_eq!(batch.num_rows(), 6);
+        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer);
     }
 
     #[tokio::test]
@@ -436,18 +409,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(!parquet_path.exists());
-
-        // The transferred file should have a time range file name that matches the compressed data.
-        assert!(target_dir
-            .path()
-            .join(format!("{}/compressed/0-3.parquet", KEY))
-            .exists());
-
-        assert_eq!(
-            *data_transfer.compressed_files.get(&KEY).unwrap(),
-            0 as usize
-        );
+        assert_data_transferred(vec![parquet_path], target_dir, data_transfer);
     }
 
     #[tokio::test]
@@ -460,24 +422,41 @@ mod tests {
         // Since the max batch size is 1 byte smaller than 3 compressed files, the data should be transferred immediately.
         let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
 
-        assert!(!path_1.exists());
-        assert!(!path_2.exists());
-        assert!(!path_3.exists());
+        assert_data_transferred(vec![path_1, path_2, path_3], target_dir, data_transfer);
+    }
+
+    #[tokio::test]
+    async fn test_flush_compressed_files() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path_1 = create_compressed_file(temp_dir.path(), "test_1");
+        let path_2 = create_compressed_file(temp_dir.path(), "test_2");
+        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path()).await;
+
+        data_transfer.flush_compressed_files().await.unwrap();
+
+        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer);
+    }
+
+    /// Assert that the files in `paths` are all removed, a file has been created in `target_dir`,
+    /// and that the hashmap containing the compressed files size is set to 0.
+    fn assert_data_transferred(paths: Vec<PathBuf>, target: TempDir, data_transfer: DataTransfer) {
+        for path in &paths {
+            assert!(!path.exists());
+        }
 
         // The transferred file should have a time range file name that matches the compressed data.
-        assert!(target_dir
-            .path()
-            .join(format!("{}/compressed/0-3.parquet", KEY))
-            .exists());
+        let target_path = target.path().join(format!("{}/compressed/0-3.parquet", KEY));
+        assert!(target_path.exists());
+
+        // The file should have 3 * number_of_files rows since each compressed file has 3 rows.
+        let batch = StorageEngine::read_entire_apache_parquet_file(target_path.as_path()).unwrap();
+        assert_eq!(batch.num_rows(), 3 * paths.len());
 
         assert_eq!(
             *data_transfer.compressed_files.get(&KEY).unwrap(),
             0 as usize
         );
     }
-
-    #[test]
-    fn test_flush_compressed_files() {}
 
     /// Set up a data folder with a key folder that has a single compressed file in it.
     /// Return the path to the created Apache Parquet file.
