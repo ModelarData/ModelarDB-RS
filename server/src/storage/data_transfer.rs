@@ -42,9 +42,6 @@ use crate::{storage, StorageEngine};
 // TODO: Handle deleting the files after the transfer is complete in a safe way to avoid transferring
 //       the same data multiple times or deleting files that are currently used elsewhere.
 
-// TODO: Create a new action (add to list actions) that flushes the memory and the on-disk files.
-// TODO: Run Rustfmt.
-
 pub struct DataTransfer {
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
     local_data_folder_path: PathBuf,
@@ -157,7 +154,11 @@ impl DataTransfer {
             .await
             .into_iter();
 
-        debug!("Transferring {} compressed files from key '{}'.", object_metas.len(), key);
+        debug!(
+            "Transferring {} compressed files from key '{}'.",
+            object_metas.len(),
+            key
+        );
 
         // Combine the Apache Parquet files into a single RecordBatch.
         let record_batches = object_metas
@@ -443,7 +444,9 @@ mod tests {
         }
 
         // The transferred file should have a time range file name that matches the compressed data.
-        let target_path = target.path().join(format!("{}/compressed/0-3.parquet", KEY));
+        let target_path = target
+            .path()
+            .join(format!("{}/compressed/0-3.parquet", KEY));
         assert!(target_path.exists());
 
         // The file should have 3 * number_of_files rows since each compressed file has 3 rows.

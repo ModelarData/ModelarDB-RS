@@ -513,8 +513,13 @@ impl FlightService for FlightServiceHandler {
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine.flush();
 
-            if let Some(data_transfer) = storage_engine.compressed_data_manager.data_transfer.as_mut() {
-                data_transfer.flush_compressed_files()
+            if let Some(data_transfer) = storage_engine
+                .compressed_data_manager
+                .data_transfer
+                .as_mut()
+            {
+                data_transfer
+                    .flush_compressed_files()
                     .await
                     .map_err(|error: ParquetError| Status::internal(error.to_string()))?;
             }
@@ -540,10 +545,15 @@ impl FlightService for FlightServiceHandler {
         let flush_edge_action = ActionType {
             r#type: "FlushEdge".to_owned(),
             description: "Flush uncompressed data to disk by compressing and saving the data and \
-            flush all compressed data to the remote object store.".to_owned()
+            flush all compressed data to the remote object store."
+                .to_owned(),
         };
 
-        let output = stream::iter(vec![Ok(create_command_statement_update_action), Ok(flush_edge_action)]);
+        let output = stream::iter(vec![
+            Ok(create_command_statement_update_action),
+            Ok(flush_edge_action),
+        ]);
+
         Ok(Response::new(Box::pin(output)))
     }
 }
