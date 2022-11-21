@@ -55,7 +55,8 @@ fn test_can_create_table() {
 
     create_table(&rt, &mut fsc, TABLE_NAME, "NormalTable");
 
-    let retrieved_tables= retrieve_all_table_names(&rt, &mut fsc).expect("Could not retrieve tables.");
+    let retrieved_tables =
+        retrieve_all_table_names(&rt, &mut fsc).expect("Could not retrieve tables.");
 
     assert_eq!(retrieved_tables[0], TABLE_NAME);
 
@@ -77,7 +78,8 @@ fn test_can_create_model_table() {
 
     create_table(&rt, &mut fsc, TABLE_NAME, "ModelTable");
 
-    let retrieved_tables= retrieve_all_table_names(&rt, &mut fsc).expect("Could not retrieve tables.");
+    let retrieved_tables =
+        retrieve_all_table_names(&rt, &mut fsc).expect("Could not retrieve tables.");
 
     assert_eq!(retrieved_tables[0], TABLE_NAME);
 
@@ -102,7 +104,8 @@ fn test_creating_and_listing_multiple_tables() {
         create_table(&rt, &mut fsc, table_name, "ModelTable");
     }
 
-    let retrieved_tables = retrieve_all_table_names(&rt, &mut fsc).expect("Could not retrieve tables.");
+    let retrieved_tables =
+        retrieve_all_table_names(&rt, &mut fsc).expect("Could not retrieve tables.");
 
     for table in created_tables.clone() {
         assert!(retrieved_tables.contains(&table.to_string()))
@@ -217,7 +220,7 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
 
     let mut messages = vec![];
     for i in 1..5 {
-        let batch = generate_random_message(Some(&(format! {"location{}", i})));
+        let batch = generate_random_message(Some(&format! {"location{}", i}));
 
         messages.push(batch);
     }
@@ -253,8 +256,7 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
                 .value(0);
 
             if original_timestamp_value == queried_timestamp_value {
-                let reconstructed_record_batch =
-                    &reconstruct_record_batch(&original, &queried);
+                let reconstructed_record_batch = &reconstruct_record_batch(&original, &queried);
                 assert_eq!(original, reconstructed_record_batch);
             }
         }
@@ -307,7 +309,7 @@ fn test_optimized_query_equals_non_optimized_query() {
 
     let mut messages = vec![];
     for i in 1..5 {
-        let batch = generate_random_message(Some(&(format! {"location{}", i})));
+        let batch = generate_random_message(Some(&format! {"location{}", i}));
 
         messages.push(batch);
     }
