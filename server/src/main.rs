@@ -41,6 +41,7 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::metadata::MetadataManager;
 use crate::optimizer::model_simple_aggregates;
+use crate::storage::data_transfer::DataTransfer;
 use crate::storage::StorageEngine;
 
 #[global_allocator]
@@ -99,25 +100,14 @@ fn main() -> Result<(), String> {
         Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {}", error))?,
     );
 
-    // Check if a remote data folder was provided and can be accessed. If so, the data transfer
-    // component is initialized. These checks are performed after parse_command_line_arguments()
-    // as the Tokio Runtime is required.
+    // Check if a remote data folder was provided and can be accessed. These checks are performed
+    // after parse_command_line_arguments() as the Tokio Runtime is required.
     let data_transfer = if let Some(remote_data_folder) = data_folders.remote_data_folder {
-        Some(runtime.block_on(async {
-            remote_data_folder
-                .get(&Path::from(""))
-                .await
-                .map_err(|error| error.to_string())?;
-
-            // TODO: Make the transfer batch size in bytes part of the user-configurable settings.
-            storage::data_transfer::DataTransfer::try_new(
-                data_folders.local_data_folder.clone(),
-                remote_data_folder,
-                64 * 1024 * 1024, // 64 MiB.
-            )
-            .await
-            .map_err(|error| error.to_string())
-        })?)
+        Some(check_and_initialize_data_transfer(
+            &runtime,
+            remote_data_folder,
+            data_folders.local_data_folder.clone(),
+        )?)
     } else {
         None
     };
@@ -230,6 +220,29 @@ fn argument_to_remote_object_store(argument: &str) -> Result<Arc<dyn ObjectStore
     } else {
         Err("Remote data folder must be s3://bucket-name.".to_owned())
     }
+}
+
+/// Check if the remote data folder can be accessed. If so, the data transfer component is initialized.
+fn check_and_initialize_data_transfer(
+    runtime: &Runtime,
+    remote_data_folder: Arc<dyn ObjectStore>,
+    local_data_folder: PathBuf,
+) -> Result<DataTransfer, String> {
+    runtime.block_on(async {
+        remote_data_folder
+            .get(&Path::from(""))
+            .await
+            .map_err(|error| error.to_string())?;
+
+        // TODO: Make the transfer batch size in bytes part of the user-configurable settings.
+        DataTransfer::try_new(
+            local_data_folder,
+            remote_data_folder,
+            64 * 1024 * 1024, // 64 MiB.
+        )
+        .await
+        .map_err(|error| error.to_string())
+    })
 }
 
 /// Create a new [`SessionContext`] for interacting with Apache Arrow
