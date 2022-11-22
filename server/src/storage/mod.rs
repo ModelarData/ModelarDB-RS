@@ -21,12 +21,15 @@ mod compressed_data_manager;
 mod segment;
 mod time_series;
 mod uncompressed_data_manager;
+mod data_transfer;
 
 use std::ffi::OsStr;
 use std::fs::File;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use datafusion::parquet::arrow::ArrowWriter;
@@ -37,12 +40,13 @@ use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
 
 use crate::errors::ModelarDbError;
+use crate::get_array;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::segment::FinishedSegment;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
-use crate::types::Timestamp;
+use crate::types::{Timestamp, TimestampArray};
 
 // TODO: Look into custom errors for all errors in storage engine.
 
@@ -204,13 +208,7 @@ impl StorageEngine {
         // Check if the extension of the given path is correct.
         if file_path.extension().and_then(OsStr::to_str) == Some("parquet") {
             let file = File::create(file_path).map_err(|_e| error)?;
-            let props = WriterProperties::builder()
-                .set_compression(Compression::ZSTD)
-                .set_dictionary_enabled(false)
-                .set_statistics_enabled(EnabledStatistics::Page)
-                .build();
-
-            let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props))?;
+            let mut writer = create_apache_arrow_writer(file, batch.schema())?;
             writer.write(&batch)?;
             writer.close()?;
 
@@ -244,11 +242,39 @@ impl StorageEngine {
         file_path: &ObjectStorePath,
     ) -> bool {
         if let Ok(bytes) = object_store.get_range(file_path, 0..4).await {
-            bytes == crate::storage::APACHE_PARQUET_FILE_SIGNATURE
+            bytes == APACHE_PARQUET_FILE_SIGNATURE
         } else {
             false
         }
     }
+}
+
+/// Create an Apache ArrowWriter that writes to `writer`. If the writer could not be created
+/// return [`ParquetError`].
+pub(self) fn create_apache_arrow_writer<W: Write>(
+    writer: W,
+    schema: SchemaRef
+) -> Result<ArrowWriter<W>, ParquetError> {
+    let props = WriterProperties::builder()
+        .set_compression(Compression::ZSTD)
+        .set_dictionary_enabled(false)
+        .set_statistics_enabled(EnabledStatistics::Page)
+        .build();
+
+    let writer = ArrowWriter::try_new(writer, schema, Some(props))?;
+    Ok(writer)
+}
+
+/// Create a file name that uses the first start timestamp and the last end timestamp from `batch`.
+pub(self) fn create_time_range_file_name(batch: &RecordBatch) -> String {
+    let start_times = get_array!(batch, 2, TimestampArray);
+    let end_times = get_array!(batch, 3, TimestampArray);
+
+    format!(
+        "{}-{}.parquet",
+        start_times.value(0),
+        end_times.value(end_times.len() - 1)
+    )
 }
 
 #[cfg(test)]

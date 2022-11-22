@@ -16,6 +16,7 @@
 //! Support for managing all compressed data that is inserted into the [`StorageEngine`].
 
 use std::collections::{HashMap, VecDeque};
+use std::io::Error as IOError;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -177,20 +178,23 @@ impl CompressedDataManager {
     }
 
     /// Save the compressed data corresponding to `key` to disk. The size of the saved compressed
-    /// data is added back to the remaining reserved memory.
-    fn save_compressed_data(&mut self, key: &u64) {
-        debug!("Saving compressed time series with key '{}' to disk.", key);
+    /// data is added back to the remaining reserved memory. If the data is saved successfully,
+    /// return [`Ok`], otherwise return [`IOError`].
+    fn save_compressed_data(&mut self, key: &u64) -> Result<(), IOError> {
+        debug!("Saving compressed time series to disk.");
 
         let mut time_series = self.compressed_data.remove(&key).unwrap();
         let folder_path = self.data_folder_path.join(key.to_string());
-        time_series.save_to_apache_parquet(folder_path.as_path(), &self.compressed_schema);
 
+        time_series.save_to_apache_parquet(folder_path.as_path(), &self.compressed_schema)?;
         self.compressed_remaining_memory_in_bytes += time_series.size_in_bytes as isize;
 
         debug!(
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
             time_series.size_in_bytes, self.compressed_remaining_memory_in_bytes
         );
+
+        Ok(())
     }
 }
 
@@ -228,10 +232,9 @@ mod tests {
     use object_store::local::LocalFileSystem;
     use tempfile::{tempdir, TempDir};
 
-    use crate::get_array;
     use crate::metadata::test_util as metadata_test_util;
+    use crate::storage;
     use crate::storage::test_util;
-    use crate::types::TimestampArray;
 
     const KEY: u64 = 1;
 
@@ -357,14 +360,8 @@ mod tests {
         assert_eq!(files.len(), 1);
 
         // The file should have the first start time and the last end time as the file name.
-        let start_times = get_array!(segment, 2, TimestampArray);
-        let end_times = get_array!(segment, 3, TimestampArray);
-        let expected_file_path = format!(
-            "{}/compressed/{}-{}.parquet",
-            KEY,
-            start_times.value(0),
-            end_times.value(end_times.len() - 1)
-        );
+        let file_name = storage::create_time_range_file_name(&segment);
+        let expected_file_path = format!("{}/compressed/{}", KEY, file_name);
 
         assert_eq!(
             files.get(0).unwrap().1.location,
@@ -431,7 +428,7 @@ mod tests {
         assert!(!is_compressed_file_within_time_range(
             "1-10.parquet",
             20,
-            30
+            30,
         ))
     }
 
@@ -440,7 +437,7 @@ mod tests {
         assert!(!is_compressed_file_within_time_range(
             "20-30.parquet",
             1,
-            10
+            10,
         ))
     }
 }

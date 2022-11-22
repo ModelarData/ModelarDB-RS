@@ -1637,6 +1637,7 @@ dependencies = [
  "arrow-flight",
  "assert_cmd",
  "async-trait",
+ "bytes",
  "datafusion",
  "datafusion-common",
  "datafusion-expr",
