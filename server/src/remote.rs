@@ -37,7 +37,6 @@ use datafusion::arrow::{
     ipc::writer::IpcWriteOptions, record_batch::RecordBatch,
 };
 use datafusion::catalog::schema::SchemaProvider;
-use datafusion::parquet::errors::ParquetError;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
 use tokio::runtime::Runtime;
@@ -512,17 +511,7 @@ impl FlightService for FlightServiceHandler {
         } else if action.r#type == "FlushEdge" {
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine.flush();
-
-            if let Some(data_transfer) = storage_engine
-                .compressed_data_manager
-                .data_transfer
-                .as_mut()
-            {
-                data_transfer
-                    .flush_compressed_files()
-                    .await
-                    .map_err(|error: ParquetError| Status::internal(error.to_string()))?;
-            }
+            storage_engine.transfer().await?;
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
@@ -545,7 +534,7 @@ impl FlightService for FlightServiceHandler {
         let flush_edge_action = ActionType {
             r#type: "FlushEdge".to_owned(),
             description: "Flush uncompressed data to disk by compressing and saving the data and \
-            flush all compressed data to the remote object store."
+            transfer all compressed data to the remote object store."
                 .to_owned(),
         };
 

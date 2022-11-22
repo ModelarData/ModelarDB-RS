@@ -123,7 +123,9 @@ impl DataTransfer {
     }
 
     /// Transfer all compressed files currently in the data folder to the remote object store.
-    /// Return [`Ok`] if all files were transferred successfully, otherwise [`ParquetError`].
+    /// Return [`Ok`] if all files were transferred successfully, otherwise [`ParquetError`]. Note
+    /// that if the function fails, some of the compressed files may still have been transferred. Since
+    /// the data is transferred separately for each key, the function can be called again if it failed.
     pub(crate) async fn flush_compressed_files(&mut self) -> Result<(), ParquetError> {
         for (key, size_in_bytes) in self.compressed_files.clone().iter() {
             if size_in_bytes > &(0 as usize) {

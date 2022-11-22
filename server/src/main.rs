@@ -99,9 +99,9 @@ fn main() -> Result<(), String> {
         Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {}", error))?,
     );
 
-    // Ensure the remote data folder can be accessed and set up the data transfer component if the
-    // remote data folder exists. The check is performed after parse_command_line_arguments() as the
-    // Tokio Runtime is required.
+    // Check if a remote data folder was provided and can be accessed. If so, the data transfer
+    // component is initialized. These checks are performed after parse_command_line_arguments()
+    // as the Tokio Runtime is required.
     let data_transfer = if let Some(remote_data_folder) = data_folders.remote_data_folder {
         Some(runtime.block_on(async {
             remote_data_folder
@@ -113,7 +113,7 @@ fn main() -> Result<(), String> {
             storage::data_transfer::DataTransfer::try_new(
                 data_folders.local_data_folder.clone(),
                 remote_data_folder,
-                5000,
+                64 * 1024 * 1024, // 64 MiB.
             )
             .await
             .map_err(|error| error.to_string())
