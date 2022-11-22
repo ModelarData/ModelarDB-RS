@@ -220,7 +220,7 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
 
     let mut messages = vec![];
     for i in 1..5 {
-        let batch = generate_random_message(Some(&format! {"location{}", i}));
+        let batch = generate_random_message(Some(&format!("location{}", i)));
 
         messages.push(batch);
     }
@@ -309,7 +309,7 @@ fn test_optimized_query_equals_non_optimized_query() {
 
     let mut messages = vec![];
     for i in 1..5 {
-        let batch = generate_random_message(Some(&format! {"location{}", i}));
+        let batch = generate_random_message(Some(&format!("location{}", i)));
 
         messages.push(batch);
     }
