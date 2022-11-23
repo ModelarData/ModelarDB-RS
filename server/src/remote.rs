@@ -508,6 +508,13 @@ impl FlightService for FlightServiceHandler {
 
             // Confirm the table was created.
             Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "FlushEdge" {
+            let mut storage_engine = self.context.storage_engine.write().await;
+            storage_engine.flush();
+            storage_engine.transfer().await?;
+
+            // Confirm the data was flushed.
+            Ok(Response::new(Box::pin(stream::empty())))
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
@@ -524,7 +531,18 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let output = stream::iter(vec![Ok(create_command_statement_update_action)]);
+        let flush_edge_action = ActionType {
+            r#type: "FlushEdge".to_owned(),
+            description: "Flush uncompressed data to disk by compressing and saving the data and \
+            transfer all compressed data to the remote object store."
+                .to_owned(),
+        };
+
+        let output = stream::iter(vec![
+            Ok(create_command_statement_update_action),
+            Ok(flush_edge_action),
+        ]);
+
         Ok(Response::new(Box::pin(output)))
     }
 }
