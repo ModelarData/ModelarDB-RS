@@ -18,10 +18,10 @@
 //! models in memory to batch compressed data before saving it to Apache Parquet files.
 
 mod compressed_data_manager;
+pub(super) mod data_transfer;
 mod segment;
 mod time_series;
 mod uncompressed_data_manager;
-mod data_transfer;
 
 use std::ffi::OsStr;
 use std::fs::File;
@@ -38,12 +38,14 @@ use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
+use tonic::Status;
 
 use crate::errors::ModelarDbError;
 use crate::get_array;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
+use crate::storage::data_transfer::DataTransfer;
 use crate::storage::segment::FinishedSegment;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::types::{Timestamp, TimestampArray};
@@ -79,6 +81,7 @@ pub struct StorageEngine {
 
 impl StorageEngine {
     pub fn new(
+        data_transfer: Option<DataTransfer>,
         data_folder_path: PathBuf,
         metadata_manager: MetadataManager,
         compress_directly: bool,
@@ -92,6 +95,7 @@ impl StorageEngine {
         );
 
         let compressed_data_manager = CompressedDataManager::new(
+            data_transfer,
             data_folder_path,
             metadata_manager.compressed_reserved_memory_in_bytes,
             metadata_manager.get_compressed_schema(),
@@ -142,6 +146,18 @@ impl StorageEngine {
 
         // Flush CompressedDataManager.
         self.compressed_data_manager.flush();
+    }
+
+    /// Transfer all of the compressed data the [`StorageEngine`] is managing to the remote object store.
+    pub async fn transfer(&mut self) -> Result<(), Status> {
+        if let Some(data_transfer) = self.compressed_data_manager.data_transfer.as_mut() {
+            data_transfer
+                .flush_compressed_files()
+                .await
+                .map_err(|error: ParquetError| Status::internal(error.to_string()))
+        } else {
+            Err(Status::internal("No remote object store available."))
+        }
     }
 
     /// Pass `segment` to [`CompressedDataManager`].
@@ -253,7 +269,7 @@ impl StorageEngine {
 /// return [`ParquetError`].
 pub(self) fn create_apache_arrow_writer<W: Write>(
     writer: W,
-    schema: SchemaRef
+    schema: SchemaRef,
 ) -> Result<ArrowWriter<W>, ParquetError> {
     let props = WriterProperties::builder()
         .set_compression(Compression::ZSTD)
@@ -443,6 +459,7 @@ mod tests {
         (
             temp_dir,
             StorageEngine::new(
+                None,
                 data_folder_path_buf,
                 metadata_test_util::get_test_metadata_manager(data_folder_path.as_path()),
                 false,
