@@ -1,6 +1,6 @@
 use std::borrow::Borrow;
 use std::collections::HashMap;
-use std::env;
+use std::{env, thread, time};
 use std::error::Error;
 use std::io::{BufRead, BufReader};
 use std::path;
@@ -9,6 +9,7 @@ use std::process;
 use std::process::Child;
 use std::string::{String, ToString};
 use std::sync::Arc;
+use std::thread::sleep;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use array::Array;
@@ -26,7 +27,7 @@ use datafusion::arrow::{array, ipc};
 use futures::stream;
 use rand::Rng;
 use serial_test::serial;
-use sysinfo::{Pid, PidExt, ProcessExt, ProcessStatus, System, SystemExt};
+use sysinfo::{Pid, PidExt, ProcessExt, ProcessStatus::Run, System, SystemExt};
 use tempfile::tempdir;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
@@ -638,10 +639,11 @@ fn reconstruct_record_batch(original: &RecordBatch, query: &RecordBatch) -> Reco
 fn terminate_arrow_flight_server(flight_server: Child) {
     let mut s = System::new_all();
 
-    while let Some(process) = s.process(Pid::from_u32(flight_server.id())){
-        if process.status() == ProcessStatus::Run{
+    loop {
+        s.refresh_processes();
+        if let Some(process) = s.process(Pid::from_u32(flight_server.id())){
             process.kill();
-            s.refresh_processes();
+            sleep(time::Duration::from_millis(200));
         }
         else {
             break;
