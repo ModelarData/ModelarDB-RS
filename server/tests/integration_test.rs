@@ -1,3 +1,4 @@
+use std::borrow::Borrow;
 use std::collections::HashMap;
 use std::env;
 use std::error::Error;
@@ -25,7 +26,7 @@ use datafusion::arrow::{array, ipc};
 use futures::stream;
 use rand::Rng;
 use serial_test::serial;
-use sysinfo::{Pid, PidExt, ProcessExt, System, SystemExt};
+use sysinfo::{Pid, PidExt, ProcessExt, ProcessStatus, System, SystemExt};
 use tempfile::tempdir;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
@@ -60,10 +61,7 @@ fn test_can_create_table() {
 
     assert_eq!(retrieved_tables[0], TABLE_NAME);
 
-    let s = System::new_all();
-    if let Some(process) = s.process(Pid::from_u32(flight_server.id())) {
-        process.kill();
-    }
+    terminate_arrow_flight_server(flight_server);
 }
 
 #[test]
@@ -83,10 +81,8 @@ fn test_can_create_model_table() {
 
     assert_eq!(retrieved_tables[0], TABLE_NAME);
 
-    let s = System::new_all();
-    if let Some(process) = s.process(Pid::from_u32(flight_server.id())) {
-        process.kill();
-    }
+    terminate_arrow_flight_server(flight_server);
+
 }
 
 #[test]
@@ -111,10 +107,7 @@ fn test_creating_and_listing_multiple_tables() {
         assert!(retrieved_tables.contains(&table.to_string()))
     }
 
-    let s = System::new_all();
-    if let Some(process) = s.process(Pid::from_u32(flight_server.id())) {
-        process.kill();
-    }
+    terminate_arrow_flight_server(flight_server);
 }
 
 #[test]
@@ -140,10 +133,8 @@ fn test_get_schema() {
         ])
     );
 
-    let s = System::new_all();
-    if let Some(process) = s.process(Pid::from_u32(flight_server.id())) {
-        process.kill();
-    }
+    terminate_arrow_flight_server(flight_server);
+
 }
 
 #[test]
@@ -171,10 +162,8 @@ fn test_can_ingest_message_with_tags() {
 
     assert_eq!(message, reconstructed_record_batch);
 
-    let s = System::new_all();
-    if let Some(process) = s.process(Pid::from_u32(flight_server.id())) {
-        process.kill();
-    }
+    terminate_arrow_flight_server(flight_server);
+
 }
 
 #[test]
@@ -202,10 +191,8 @@ fn test_can_ingest_message_without_tags() {
 
     assert_eq!(message, reconstructed_record_batch);
 
-    let s = System::new_all();
-    if let Some(process) = s.process(Pid::from_u32(flight_server.id())) {
-        process.kill();
-    }
+    terminate_arrow_flight_server(flight_server);
+
 }
 
 #[test]
@@ -262,10 +249,8 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
         }
     }
 
-    let s = System::new_all();
-    if let Some(process) = s.process(Pid::from_u32(flight_server.id())) {
-        process.kill();
-    }
+    terminate_arrow_flight_server(flight_server);
+
 }
 
 #[test]
@@ -291,10 +276,8 @@ fn test_cannot_ingest_invalid_message() {
 
     assert!(query.is_empty());
 
-    let s = System::new_all();
-    if let Some(process) = s.process(Pid::from_u32(flight_server.id())) {
-        process.kill();
-    }
+    terminate_arrow_flight_server(flight_server);
+
 }
 
 #[test]
@@ -331,10 +314,8 @@ fn test_optimized_query_equals_non_optimized_query() {
 
     assert_eq!(optimized_query, non_optimized_query);
 
-    let s = System::new_all();
-    if let Some(process) = s.process(Pid::from_u32(flight_server.id())) {
-        process.kill();
-    }
+    terminate_arrow_flight_server(flight_server);
+
 }
 
 /// Retrieve and return the directory of the binary built for integration testing.
@@ -650,5 +631,20 @@ fn reconstruct_record_batch(original: &RecordBatch, query: &RecordBatch) -> Reco
             ],
         )
         .expect("Could not create a Record Batch from query.")
+    }
+}
+
+/// Terminates the Arrow Flight Server, and only returns when the process has been terminated.
+fn terminate_arrow_flight_server(flight_server: Child) {
+    let mut s = System::new_all();
+
+    while let Some(process) = s.process(Pid::from_u32(flight_server.id())){
+        if process.status() == ProcessStatus::Run{
+            process.kill();
+            s.refresh_processes();
+        }
+        else {
+            break;
+        }
     }
 }
