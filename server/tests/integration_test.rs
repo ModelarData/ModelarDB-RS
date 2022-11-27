@@ -62,6 +62,8 @@ fn test_can_create_table() {
 
     assert_eq!(retrieved_tables[0], TABLE_NAME);
 
+
+
     terminate_arrow_flight_server(flight_server);
 }
 
@@ -639,14 +641,10 @@ fn reconstruct_record_batch(original: &RecordBatch, query: &RecordBatch) -> Reco
 fn terminate_arrow_flight_server(flight_server: Child) {
     let mut s = System::new_all();
 
-    loop {
-        s.refresh_processes();
-        if let Some(process) = s.process(Pid::from_u32(flight_server.id())){
-            process.kill();
-            sleep(time::Duration::from_millis(200));
-        }
-        else {
-            break;
-        }
+    s.refresh_all();
+
+    if let Some(process) = s.process(Pid::from_u32(flight_server.id())){
+        process.kill();
+        sleep(time::Duration::from_millis(1000));
     }
 }
