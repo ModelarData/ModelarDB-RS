@@ -645,6 +645,6 @@ fn terminate_arrow_flight_server(flight_server: Child) {
 
     if let Some(process) = s.process(Pid::from_u32(flight_server.id())){
         process.kill();
-        sleep(time::Duration::from_millis(1000));
+        sleep(time::Duration::from_millis(2000));
     }
 }
