@@ -6,7 +6,7 @@ use std::io::{BufRead, BufReader};
 use std::path;
 use std::path::Path;
 use std::process;
-use std::process::Child;
+use std::process::{Child, exit};
 use std::string::{String, ToString};
 use std::sync::Arc;
 use std::thread::sleep;
@@ -27,7 +27,7 @@ use datafusion::arrow::{array, ipc};
 use futures::stream;
 use rand::Rng;
 use serial_test::serial;
-use sysinfo::{Pid, PidExt, ProcessExt, ProcessStatus::Run, System, SystemExt};
+use sysinfo::{Pid, PidExt, ProcessExt, ProcessStatus, ProcessStatus::Run, System, SystemExt};
 use tempfile::tempdir;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
@@ -638,13 +638,7 @@ fn reconstruct_record_batch(original: &RecordBatch, query: &RecordBatch) -> Reco
 }
 
 /// Terminates the Arrow Flight Server, and only returns when the process has been terminated.
-fn terminate_arrow_flight_server(flight_server: Child) {
-    let mut s = System::new_all();
-
-    s.refresh_all();
-
-    if let Some(process) = s.process(Pid::from_u32(flight_server.id())){
-        process.kill();
-        sleep(time::Duration::from_millis(2000));
-    }
+fn terminate_arrow_flight_server(mut flight_server: Child) {
+    flight_server.kill().expect("Could not send kill signal");
+    flight_server.wait().expect("Could not exit.");
 }
