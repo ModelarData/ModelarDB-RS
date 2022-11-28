@@ -4,7 +4,7 @@ use std::error::Error;
 use std::path;
 use std::path::Path;
 use std::process;
-use std::process::Child;
+use std::process::{Child, Stdio};
 use std::string::{String, ToString};
 use std::sync::Arc;
 use std::thread::sleep;
@@ -340,11 +340,17 @@ fn start_binary(binary: &str) -> process::Command {
 
 /// Start and return a new Arrow Flight Server to simulate a server for the integration tests.
 fn start_arrow_flight_server(dir: &Path) -> Child {
+    // Spawn the Arrow Flight Server, adding stdout to /dev/null.
+    // This is done to prevent a flood of DEBUG and INFO messages
+    // when running "cargo test".
     let process = start_binary("modelardbd")
         .arg(dir)
+        .stdout(Stdio::null())
         .spawn()
         .expect("Failed to start Arrow Flight Server");
 
+    // The thread needs to sleep to ensure that the server has properly
+    // started before sending streams to it.
     sleep(Duration::from_secs(2));
 
     return process;
