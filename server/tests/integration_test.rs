@@ -1,16 +1,14 @@
-use std::borrow::Borrow;
 use std::collections::HashMap;
-use std::{env, thread, time};
+use std::env;
 use std::error::Error;
-use std::io::{BufRead, BufReader};
 use std::path;
 use std::path::Path;
 use std::process;
-use std::process::{Child, exit};
+use std::process::Child;
 use std::string::{String, ToString};
 use std::sync::Arc;
 use std::thread::sleep;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use array::Array;
 use arrow_flight::flight_service_client::FlightServiceClient;
@@ -27,7 +25,7 @@ use datafusion::arrow::{array, ipc};
 use futures::stream;
 use rand::Rng;
 use serial_test::serial;
-use sysinfo::{Pid, PidExt, ProcessExt, ProcessStatus, ProcessStatus::Run, System, SystemExt};
+use sysinfo::{Pid, PidExt, System, SystemExt};
 use tempfile::tempdir;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
@@ -62,8 +60,6 @@ fn test_can_create_table() {
 
     assert_eq!(retrieved_tables[0], TABLE_NAME);
 
-
-
     terminate_arrow_flight_server(flight_server);
 }
 
@@ -85,7 +81,6 @@ fn test_can_create_model_table() {
     assert_eq!(retrieved_tables[0], TABLE_NAME);
 
     terminate_arrow_flight_server(flight_server);
-
 }
 
 #[test]
@@ -137,7 +132,6 @@ fn test_get_schema() {
     );
 
     terminate_arrow_flight_server(flight_server);
-
 }
 
 #[test]
@@ -166,7 +160,6 @@ fn test_can_ingest_message_with_tags() {
     assert_eq!(message, reconstructed_record_batch);
 
     terminate_arrow_flight_server(flight_server);
-
 }
 
 #[test]
@@ -195,7 +188,6 @@ fn test_can_ingest_message_without_tags() {
     assert_eq!(message, reconstructed_record_batch);
 
     terminate_arrow_flight_server(flight_server);
-
 }
 
 #[test]
@@ -253,7 +245,6 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
     }
 
     terminate_arrow_flight_server(flight_server);
-
 }
 
 #[test]
@@ -280,7 +271,6 @@ fn test_cannot_ingest_invalid_message() {
     assert!(query.is_empty());
 
     terminate_arrow_flight_server(flight_server);
-
 }
 
 #[test]
@@ -318,7 +308,6 @@ fn test_optimized_query_equals_non_optimized_query() {
     assert_eq!(optimized_query, non_optimized_query);
 
     terminate_arrow_flight_server(flight_server);
-
 }
 
 /// Retrieve and return the directory of the binary built for integration testing.
@@ -351,20 +340,12 @@ fn start_binary(binary: &str) -> process::Command {
 
 /// Start and return a new Arrow Flight Server to simulate a server for the integration tests.
 fn start_arrow_flight_server(dir: &Path) -> Child {
-    let mut process = start_binary("modelardbd")
+    let process = start_binary("modelardbd")
         .arg(dir)
-        .stdout(process::Stdio::piped())
         .spawn()
         .expect("Failed to start Arrow Flight Server");
 
-    // Ensure that the process has fully started.
-    let mut output = BufReader::new(process.stdout.as_mut().unwrap());
-    let mut line = String::new();
-    while !line.contains("Starting Apache Arrow Flight") {
-        output
-            .read_line(&mut line)
-            .expect("Could not read line of process.");
-    }
+    sleep(Duration::from_secs(2));
 
     return process;
 }
@@ -639,6 +620,11 @@ fn reconstruct_record_batch(original: &RecordBatch, query: &RecordBatch) -> Reco
 
 /// Terminates the Arrow Flight Server, and only returns when the process has been terminated.
 fn terminate_arrow_flight_server(mut flight_server: Child) {
-    flight_server.kill().expect("Could not send kill signal");
-    flight_server.wait().expect("Could not exit.");
+    let mut s = System::new_all();
+
+    while let Some(_process) = s.process(Pid::from_u32(flight_server.id())) {
+        flight_server.kill().expect("Could not kill _process.");
+        flight_server.wait().expect("Could not wait for _process.");
+        s.refresh_all();
+    }
 }
