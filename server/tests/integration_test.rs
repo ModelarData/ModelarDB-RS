@@ -629,8 +629,15 @@ fn terminate_arrow_flight_server(mut flight_server: Child) {
     let mut s = System::new_all();
 
     while let Some(_process) = s.process(Pid::from_u32(flight_server.id())) {
-        flight_server.kill().expect("Could not kill _process.");
-        flight_server.wait().expect("Could not wait for _process.");
+        flight_server
+            .kill()
+            .expect(&*format!("Could not kill process {}.", flight_server.id()));
+        flight_server
+            .wait()
+            .expect(&*format!(
+            "Could not wait for process {}.",
+            flight_server.id()
+        ));
         s.refresh_all();
     }
 }
