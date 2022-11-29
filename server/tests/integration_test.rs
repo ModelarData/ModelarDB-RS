@@ -634,10 +634,7 @@ fn terminate_arrow_flight_server(mut flight_server: Child) {
             .expect(&*format!("Could not kill process {}.", flight_server.id()));
         flight_server
             .wait()
-            .expect(&*format!(
-            "Could not wait for process {}.",
-            flight_server.id()
-        ));
+            .expect(&*format!("Could not wait for process {}.", flight_server.id()));
         s.refresh_all();
     }
 }
