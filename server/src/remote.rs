@@ -424,8 +424,6 @@ impl FlightService for FlightServiceHandler {
             .await
             .ok_or_else(|| Status::invalid_argument("Missing FlightData."))??;
 
-        debug_assert_eq!(flight_data.data_body.len(), 0);
-
         let flight_descriptor = flight_data
             .flight_descriptor
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
@@ -508,6 +506,11 @@ impl FlightService for FlightServiceHandler {
 
             // Confirm the table was created.
             Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "FlushMemory" {
+            self.context.storage_engine.write().await.flush();
+
+            // Confirm the data was flushed.
+            Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "FlushEdge" {
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine.flush();
@@ -531,6 +534,12 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
+        let flush_data_to_disk = ActionType {
+            r#type: "FlushMemory".to_owned(),
+            description: "Flush the uncompressed data to disk by compressing and saving the data."
+                .to_owned(),
+        };
+
         let flush_edge_action = ActionType {
             r#type: "FlushEdge".to_owned(),
             description: "Flush uncompressed data to disk by compressing and saving the data and \
@@ -540,6 +549,7 @@ impl FlightService for FlightServiceHandler {
 
         let output = stream::iter(vec![
             Ok(create_command_statement_update_action),
+            Ok(flush_data_to_disk),
             Ok(flush_edge_action),
         ]);
 
