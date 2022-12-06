@@ -30,7 +30,9 @@ use datafusion::arrow::array::{
     ArrayAccessor, ArrayRef, BinaryArray, DictionaryArray, Float32Array, StringArray, UInt64Array,
     UInt8Array,
 };
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema, SchemaRef, UInt16Type};
+use datafusion::arrow::datatypes::{
+    ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, UInt16Type,
+};
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::config::ConfigOptions;
@@ -217,7 +219,7 @@ impl TableProvider for ModelTable {
     async fn scan(
         &self,
         ctx: &SessionState,
-        projection: &Option<Vec<usize>>,
+        projection: Option<&Vec<usize>>,
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
@@ -280,7 +282,11 @@ impl TableProvider for ModelTable {
             statistics,
             projection: None,
             limit,
-            table_partition_cols: vec!["storage_engine_key".to_owned()],
+            table_partition_cols: vec![(
+                "storage_engine_key".to_owned(),
+                DataType::Dictionary(Box::new(DataType::UInt16), Box::new(DataType::Utf8)),
+            )],
+            output_ordering: None,
             config_options: self.config_options.clone(),
         };
 
@@ -327,7 +333,7 @@ pub struct GridExec {
 impl GridExec {
     pub fn new(
         model_table_metadata: Arc<ModelTableMetadata>,
-        projection: &Option<Vec<usize>>,
+        projection: Option<&Vec<usize>>,
         limit: Option<usize>,
         schema: SchemaRef,
         input: Arc<dyn ExecutionPlan>,
@@ -610,7 +616,6 @@ impl RecordBatchStream for GridStream {
 mod tests {
     use super::*;
 
-    use datafusion::arrow::datatypes::DataType;
     use datafusion::prelude::Expr;
     use datafusion_expr::lit;
 
@@ -718,6 +723,7 @@ mod tests {
             projection: None,
             limit: None,
             table_partition_cols: vec![],
+            output_ordering: None,
             config_options: Arc::new(RwLock::new(ConfigOptions::new())),
         };
         Arc::new(ParquetExec::new(file_scan_config, None, None))

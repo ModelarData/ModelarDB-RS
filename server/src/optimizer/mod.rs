@@ -78,4 +78,8 @@ impl PhysicalOptimizerRule for LogPhysicalOptimizerRule {
     fn name(&self) -> &str {
         "log_physical_optimizer_rule"
     }
+
+    fn schema_check(&self) -> bool {
+        true
+    }
 }

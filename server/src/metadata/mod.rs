@@ -274,7 +274,7 @@ impl MetadataManager {
     pub fn compute_keys_using_fields_and_tags(
         &self,
         table_name: &str,
-        columns: &Option<Vec<usize>>,
+        columns: Option<&Vec<usize>>,
         fallback_field_column: u64,
         tag_predicates: &[(&str, &str)],
     ) -> Result<Vec<TimeSeriesId>> {
@@ -823,7 +823,7 @@ mod tests {
         let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
 
         assert!(metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", &None, 10, &[])
+            .compute_keys_using_fields_and_tags("model_table", None, 10, &[])
             .is_err());
     }
 
@@ -840,7 +840,7 @@ mod tests {
 
         // Lookup keys using fields and tags for an empty table.
         let keys = metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", &None, 10, &[])
+            .compute_keys_using_fields_and_tags("model_table", None, 10, &[])
             .unwrap();
         assert!(keys.is_empty());
     }
@@ -854,7 +854,7 @@ mod tests {
 
         // Lookup all keys for the table by not passing any fields or tags.
         let keys = metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", &None, 10, &[])
+            .compute_keys_using_fields_and_tags("model_table", None, 10, &[])
             .unwrap();
         assert_eq!(2, keys.len());
     }
@@ -868,7 +868,7 @@ mod tests {
 
         // Lookup the keys for the fallback column by only requesting tag columns.
         let keys = metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", &Some(vec![0]), 10, &[])
+            .compute_keys_using_fields_and_tags("model_table", Some(&vec![0]), 10, &[])
             .unwrap();
         assert_eq!(1, keys.len());
     }
@@ -885,13 +885,13 @@ mod tests {
 
         // Lookup all keys for the table by not requesting keys for columns.
         let keys = metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", &None, 10, &[])
+            .compute_keys_using_fields_and_tags("model_table", None, 10, &[])
             .unwrap();
         assert_eq!(4, keys.len());
 
         // Lookup keys for the table by requesting keys for a specific field column.
         let keys = metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", &Some(vec![1]), 10, &[])
+            .compute_keys_using_fields_and_tags("model_table", Some(&vec![1]), 10, &[])
             .unwrap();
         assert_eq!(2, keys.len());
     }
@@ -908,13 +908,13 @@ mod tests {
 
         // Lookup all keys for the table by not requesting keys for a tag value.
         let keys = metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", &None, 10, &[])
+            .compute_keys_using_fields_and_tags("model_table", None, 10, &[])
             .unwrap();
         assert_eq!(4, keys.len());
 
         // Lookup keys for the table by requesting keys for a specific tag value.
         let keys = metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", &None, 10, &[("tag", "tag_value1")])
+            .compute_keys_using_fields_and_tags("model_table", None, 10, &[("tag", "tag_value1")])
             .unwrap();
         assert_eq!(2, keys.len());
     }
