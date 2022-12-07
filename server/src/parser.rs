@@ -508,17 +508,20 @@ fn column_defs_to_schema(column_defs: &Vec<ColumnDef>) -> Result<Schema, DataFus
 // datafusion-sql v15.0.0. As Apache Arrow DataFusion no longer seems to provide an API for
 // converting from SQLDataType to DataType, the version of convert_simple_data_type() in
 // datafusion-sql v14.0.0 has been copied to parser.rs and have been updated according to the
-// changed made in datafusion-sql v15.0.0 to the greatest degree possible. As the private function
+// changes made in datafusion-sql v15.0.0 to the greatest degree possible. As the private function
 // make_decimal_type() is used by convert_simple_data_type() it has also been copied from
 // datafusion-sql v15.0.0. As these functions have been copied from datafusion-sql they should be
 // updated whenever a new version of datafusion-sql is released. Also significant effort should be
-// made to try an replace these two functions with calls to Apache Arrow DataFusion's public API
+// made to try and replace these two functions with calls to Apache Arrow DataFusion's public API
 // whenever a new version of Apache Arrow DataFusion is released.
 
-// This function is copied from datafusion-sql v14.0.0/v15.0.0 which was released under Apache-2.0.
-// https://github.com/apache/arrow-datafusion/blob/14.0.0/datafusion/sql/src/planner.rs#L2812
-// https://github.com/apache/arrow-datafusion/blob/15.0.0/datafusion/sql/src/planner.rs#L2790
-/// Convert SQL simple data type to relational representation of data type
+/// Convert a simple [`SQLDataType`] to the relational representation of the [`DataType`]. This
+/// function is copied from [datafusion-sql v14.0.0] and updated with the changes in [datafusion-sql
+/// v15.0.0] as it was changed from a public function to a private method in [datafusion-sql
+/// v15.0.0]. Both versions of datafusion-sql was released under Apache-2.0.
+///
+/// [datafusion-sql v14.0.0]: https://github.com/apache/arrow-datafusion/blob/14.0.0/datafusion/sql/src/planner.rs#L2812
+/// [datafusion-sql v15.0.0]: https://github.com/apache/arrow-datafusion/blob/15.0.0/datafusion/sql/src/planner.rs#L2790
 pub fn convert_simple_data_type(sql_type: &SQLDataType) -> DataFusionResult<DataType> {
     match sql_type {
         SQLDataType::Boolean => Ok(DataType::Boolean),
@@ -562,7 +565,7 @@ pub fn convert_simple_data_type(sql_type: &SQLDataType) -> DataFusionResult<Data
             }
         }
         SQLDataType::Numeric(exact_number_info)
-        |SQLDataType::Decimal(exact_number_info) => {
+        | SQLDataType::Decimal(exact_number_info) => {
             let (precision, scale) = match *exact_number_info {
                 ExactNumberInfo::None => (None, None),
                 ExactNumberInfo::Precision(precision) => (Some(precision), None),
@@ -607,9 +610,10 @@ pub fn convert_simple_data_type(sql_type: &SQLDataType) -> DataFusionResult<Data
     }
 }
 
-// This function is copied from datafusion-sql v15.0.0 which was released under Apache-2.0.
-// https://github.com/apache/arrow-datafusion/blob/15.0.0/datafusion/sql/src/utils.rs#L506
-/// Returns a validated `DataType` for the specified precision and scale.
+/// Return a validated [`DataType`] for the specified `precision` and `scale`. This function is
+/// copied from [datafusion-sql v15.0.0] which was released under Apache-2.0.
+///
+/// [datafusion-sql v15.0.0]: https://github.com/apache/arrow-datafusion/blob/15.0.0/datafusion/sql/src/utils.rs#L506
 fn make_decimal_type(precision: Option<u64>, scale: Option<u64>) -> DataFusionResult<DataType> {
     // PostgreSQL like behavior.
     let (precision, scale) = match (precision, scale) {
@@ -617,7 +621,7 @@ fn make_decimal_type(precision: Option<u64>, scale: Option<u64>) -> DataFusionRe
         (Some(p), None) => (p as u8, 0),
         (None, Some(_)) => {
             return Err(DataFusionError::Internal(
-                "Cannot specify only scale for decimal data type".to_string(),
+                "Cannot specify only scale for decimal data type.".to_string(),
             ))
         }
         (None, None) => (DECIMAL128_MAX_PRECISION, DECIMAL_DEFAULT_SCALE),

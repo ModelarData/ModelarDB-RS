@@ -753,7 +753,7 @@ impl Accumulator for ModelAvgAccumulator {
         unreachable!()
     }
 
- fn size(&self) -> usize {
+    fn size(&self) -> usize {
         mem::size_of_val(self)
     }
 }
