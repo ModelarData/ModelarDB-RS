@@ -18,12 +18,14 @@
 //!
 //! [sqlparser]: https://crates.io/crates/sqlparser
 
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
-use datafusion::common::DataFusionError;
-use datafusion_sql::planner;
+use datafusion::arrow::datatypes::{
+    ArrowPrimitiveType, DataType, Field, Schema, TimeUnit, DECIMAL128_MAX_PRECISION,
+    DECIMAL_DEFAULT_SCALE,
+};
+use datafusion::common::{DataFusionError, Result as DataFusionResult};
 use sqlparser::ast::{
-    ColumnDef, ColumnOption, ColumnOptionDef, DataType, HiveDistributionStyle, HiveFormat, Ident,
-    ObjectName, Statement, TimezoneInfo,
+    ColumnDef, ColumnOption, ColumnOptionDef, DataType as SQLDataType, ExactNumberInfo,
+    HiveDistributionStyle, HiveFormat, Ident, ObjectName, Statement, TimezoneInfo,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::keywords::Keyword;
@@ -107,7 +109,7 @@ impl ModelarDbDialect {
             let mut options = vec![];
 
             let data_type = match data_type.to_uppercase().as_str() {
-                "TIMESTAMP" => DataType::Timestamp(TimezoneInfo::None),
+                "TIMESTAMP" => SQLDataType::Timestamp(None, TimezoneInfo::None),
                 "FIELD" => {
                     // An error bound may also be specified for field columns.
                     let error_bound = if parser.peek_token() == Token::LParen {
@@ -126,9 +128,9 @@ impl ModelarDbDialect {
                         option: ColumnOption::Comment(error_bound.to_string()),
                     });
 
-                    DataType::Real
+                    SQLDataType::Real
                 }
-                "TAG" => DataType::Text,
+                "TAG" => SQLDataType::Text,
                 column_type => {
                     return Err(ParserError::ParserError(format!(
                         "Expected TIMESTAMP, FIELD, or TAG, found: {}.",
@@ -178,7 +180,7 @@ impl ModelarDbDialect {
     /// and `options`.
     fn new_column_def(
         column_name: &str,
-        data_type: DataType,
+        data_type: SQLDataType,
         options: Vec<ColumnOptionDef>,
     ) -> ColumnDef {
         ColumnDef {
@@ -356,7 +358,7 @@ fn semantic_checks_for_create_model_table(
     // Check that one timestamp column exists.
     let timestamp_column_indices = compute_indices_of_columns_with_data_type(
         &column_defs,
-        DataType::Timestamp(TimezoneInfo::None),
+        SQLDataType::Timestamp(None, TimezoneInfo::None),
     );
 
     if timestamp_column_indices.len() != 1 {
@@ -367,7 +369,7 @@ fn semantic_checks_for_create_model_table(
 
     // Compute the indices of the tag columns.
     let tag_column_indices =
-        compute_indices_of_columns_with_data_type(&column_defs, DataType::Text);
+        compute_indices_of_columns_with_data_type(&column_defs, SQLDataType::Text);
 
     // Extract the error bounds for the field columns.
     let error_bounds = extract_error_bounds_for_field_columns(column_defs)?;
@@ -464,7 +466,7 @@ fn check_unsupported_feature_is_disabled(enabled: bool, feature: &str) -> Result
 /// Compute the indices of all columns in `column_defs` with `data_type`.
 fn compute_indices_of_columns_with_data_type(
     column_defs: &Vec<ColumnDef>,
-    data_type: DataType,
+    data_type: SQLDataType,
 ) -> Vec<usize> {
     column_defs
         .iter()
@@ -480,11 +482,12 @@ fn column_defs_to_schema(column_defs: &Vec<ColumnDef>) -> Result<Schema, DataFus
     let mut fields = Vec::with_capacity(column_defs.len());
 
     for column_def in column_defs {
-        let data_type = if column_def.data_type == DataType::Timestamp(TimezoneInfo::None) {
+        let data_type = if column_def.data_type == SQLDataType::Timestamp(None, TimezoneInfo::None)
+        {
             // TIMESTAMP is manually converted as planner uses TimeUnit::Nanosecond.
             ArrowTimestamp::DATA_TYPE
         } else {
-            planner::convert_simple_data_type(&column_def.data_type)?
+            convert_simple_data_type(&column_def.data_type)?
         };
 
         fields.push(Field::new(
@@ -497,12 +500,151 @@ fn column_defs_to_schema(column_defs: &Vec<ColumnDef>) -> Result<Schema, DataFus
     Ok(Schema::new(fields))
 }
 
+/* Start of code copied from datafusion-sql v14.0.0/v15.0.0. */
+// The following two functions have been copied from datafusion-sql v14.0.0/v15.0.0 as parser.rs
+// used the version of convert_simple_data_type() implemented as a free function in datafusion-sql
+// v14.0.0 to convert from sqlparser::ast::DataType (SQLDataType) to
+// datafusion::arrow::datatypes::DataType and it was changed to a private instance method in
+// datafusion-sql v15.0.0. As Apache Arrow DataFusion no longer seems to provide an API for
+// converting from SQLDataType to DataType, the version of convert_simple_data_type() in
+// datafusion-sql v14.0.0 has been copied to parser.rs and has been updated according to the changes
+// made in datafusion-sql v15.0.0 to the greatest degree possible. As the private function
+// make_decimal_type() is used by convert_simple_data_type() it has also been copied from
+// datafusion-sql v15.0.0. As these functions have been copied from datafusion-sql they should be
+// updated whenever a new version of datafusion-sql is released. Also significant effort should be
+// made to try and replace these two functions with calls to Apache Arrow DataFusion's public API
+// whenever a new version of Apache Arrow DataFusion is released.
+
+/// Convert a simple [`SQLDataType`] to the relational representation of the [`DataType`]. This
+/// function is copied from [datafusion-sql v14.0.0] and updated with the changes in [datafusion-sql
+/// v15.0.0] as it was changed from a public function to a private method in [datafusion-sql
+/// v15.0.0]. Both versions of datafusion-sql were released under version 2.0 of the Apache License.
+///
+/// [datafusion-sql v14.0.0]: https://github.com/apache/arrow-datafusion/blob/14.0.0/datafusion/sql/src/planner.rs#L2812
+/// [datafusion-sql v15.0.0]: https://github.com/apache/arrow-datafusion/blob/15.0.0/datafusion/sql/src/planner.rs#L2790
+pub fn convert_simple_data_type(sql_type: &SQLDataType) -> DataFusionResult<DataType> {
+    match sql_type {
+        SQLDataType::Boolean => Ok(DataType::Boolean),
+        SQLDataType::TinyInt(_) => Ok(DataType::Int8),
+        SQLDataType::SmallInt(_) => Ok(DataType::Int16),
+        SQLDataType::Int(_) | SQLDataType::Integer(_) => Ok(DataType::Int32),
+        SQLDataType::BigInt(_) => Ok(DataType::Int64),
+        SQLDataType::UnsignedTinyInt(_) => Ok(DataType::UInt8),
+        SQLDataType::UnsignedSmallInt(_) => Ok(DataType::UInt16),
+        SQLDataType::UnsignedInt(_) | SQLDataType::UnsignedInteger(_) => Ok(DataType::UInt32),
+        SQLDataType::UnsignedBigInt(_) => Ok(DataType::UInt64),
+        SQLDataType::Float(_) => Ok(DataType::Float32),
+        SQLDataType::Real => Ok(DataType::Float32),
+        SQLDataType::Double | SQLDataType::DoublePrecision => Ok(DataType::Float64),
+        SQLDataType::Char(_)
+        | SQLDataType::Varchar(_)
+        | SQLDataType::Text
+        | SQLDataType::String => Ok(DataType::Utf8),
+        SQLDataType::Timestamp(None, tz_info) => {
+            let tz = if matches!(tz_info, TimezoneInfo::Tz)
+                || matches!(tz_info, TimezoneInfo::WithTimeZone)
+            {
+                Some("+00:00".to_string())
+            } else {
+                None
+            };
+            Ok(DataType::Timestamp(TimeUnit::Nanosecond, tz))
+        }
+        SQLDataType::Date => Ok(DataType::Date32),
+        SQLDataType::Time(None, tz_info) => {
+            if matches!(tz_info, TimezoneInfo::None)
+                || matches!(tz_info, TimezoneInfo::WithoutTimeZone)
+            {
+                Ok(DataType::Time64(TimeUnit::Nanosecond))
+            } else {
+                // We don't support TIMETZ and TIME WITH TIME ZONE for now.
+                Err(DataFusionError::NotImplemented(format!(
+                    "Unsupported SQL type {:?}",
+                    sql_type
+                )))
+            }
+        }
+        SQLDataType::Numeric(exact_number_info)
+        | SQLDataType::Decimal(exact_number_info) => {
+            let (precision, scale) = match *exact_number_info {
+                ExactNumberInfo::None => (None, None),
+                ExactNumberInfo::Precision(precision) => (Some(precision), None),
+                ExactNumberInfo::PrecisionAndScale(precision, scale) => {
+                    (Some(precision), Some(scale))
+                }
+            };
+            make_decimal_type(precision, scale)
+        }
+        SQLDataType::Bytea => Ok(DataType::Binary),
+        // Explicitly list all other types so that if sqlparser
+        // adds/changes the `SQLDataType` the compiler will tell us on upgrade
+        // and avoid bugs like https://github.com/apache/arrow-datafusion/issues/3059.
+        SQLDataType::Nvarchar(_)
+        | SQLDataType::Uuid
+        | SQLDataType::Binary(_)
+        | SQLDataType::Varbinary(_)
+        | SQLDataType::Blob(_)
+        | SQLDataType::Datetime(_)
+        | SQLDataType::Interval
+        | SQLDataType::Regclass
+        | SQLDataType::Custom(_, _)
+        | SQLDataType::Array(_)
+        | SQLDataType::Enum(_)
+        | SQLDataType::Set(_)
+        | SQLDataType::MediumInt(_)
+        | SQLDataType::UnsignedMediumInt(_)
+        | SQLDataType::Character(_)
+        | SQLDataType::CharacterVarying(_)
+        | SQLDataType::CharVarying(_)
+        | SQLDataType::CharacterLargeObject(_)
+        | SQLDataType::CharLargeObject(_)
+        // Precision is not supported.
+        | SQLDataType::Timestamp(Some(_), _)
+        // Precision is not supported.
+        | SQLDataType::Time(Some(_), _)
+        | SQLDataType::Dec(_)
+        | SQLDataType::Clob(_) => Err(DataFusionError::NotImplemented(format!(
+            "Unsupported SQL type {:?}",
+            sql_type
+        ))),
+    }
+}
+
+/// Return a validated [`DataType`] for the specified `precision` and `scale`. This function is
+/// copied from [datafusion-sql v15.0.0] which was released under version 2.0 of the Apache License.
+///
+/// [datafusion-sql v15.0.0]: https://github.com/apache/arrow-datafusion/blob/15.0.0/datafusion/sql/src/utils.rs#L506
+fn make_decimal_type(precision: Option<u64>, scale: Option<u64>) -> DataFusionResult<DataType> {
+    // PostgreSQL like behavior.
+    let (precision, scale) = match (precision, scale) {
+        (Some(p), Some(s)) => (p as u8, s as i8),
+        (Some(p), None) => (p as u8, 0),
+        (None, Some(_)) => {
+            return Err(DataFusionError::Internal(
+                "Cannot specify only scale for decimal data type.".to_string(),
+            ))
+        }
+        (None, None) => (DECIMAL128_MAX_PRECISION, DECIMAL_DEFAULT_SCALE),
+    };
+
+    // Apache Arrow decimal is i128 meaning 38 maximum decimal digits.
+    if precision == 0 || precision > DECIMAL128_MAX_PRECISION || scale.unsigned_abs() > precision {
+        Err(DataFusionError::Internal(format!(
+            "Decimal(precision = {}, scale = {}) should satisfy `0 < precision <= 38`, and `scale <= precision`.",
+            precision, scale
+        )))
+    } else {
+        Ok(DataType::Decimal128(precision, scale))
+    }
+}
+/* End of code copied from datafusion-sql v14.0.0/v15.0.0. */
+
 /// Extract the error bounds from the fields columns in `column_defs`.
 fn extract_error_bounds_for_field_columns(
     column_defs: &Vec<ColumnDef>,
 ) -> Result<Vec<ErrorBound>, ParserError> {
     let field_column_indices =
-        compute_indices_of_columns_with_data_type(column_defs, DataType::Real);
+        compute_indices_of_columns_with_data_type(column_defs, SQLDataType::Real);
     let mut error_bounds = vec![];
 
     for field_column_index in field_column_indices {
@@ -545,20 +687,20 @@ mod tests {
             let expected_columns = vec![
                 ModelarDbDialect::new_column_def(
                     "timestamp",
-                    DataType::Timestamp(TimezoneInfo::None),
+                    SQLDataType::Timestamp(None, TimezoneInfo::None),
                     vec![],
                 ),
                 ModelarDbDialect::new_column_def(
                     "field_one",
-                    DataType::Real,
+                    SQLDataType::Real,
                     new_column_option_def_error_bound(0),
                 ),
                 ModelarDbDialect::new_column_def(
                     "field_two",
-                    DataType::Real,
+                    SQLDataType::Real,
                     new_column_option_def_error_bound(10),
                 ),
-                ModelarDbDialect::new_column_def("tag", DataType::Text, vec![]),
+                ModelarDbDialect::new_column_def("tag", SQLDataType::Text, vec![]),
             ];
             assert!(columns == expected_columns);
         } else {
@@ -599,7 +741,7 @@ mod tests {
         assert!(tokenize_and_parse_sql(
             "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD, field FIELD(10), tag TAG)",
         )
-        .is_err());
+        .is_ok());
     }
 
     #[test]

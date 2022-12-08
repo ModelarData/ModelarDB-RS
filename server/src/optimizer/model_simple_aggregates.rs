@@ -15,6 +15,7 @@
 use std::any::Any;
 use std::cmp::PartialEq;
 use std::fmt::{Display, Formatter};
+use std::mem;
 use std::sync::Arc;
 
 use datafusion::arrow::array::{ArrayRef, BinaryArray, Float32Array, Int64Array, UInt8Array};
@@ -127,6 +128,10 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
 
     fn name(&self) -> &str {
         "ModelSimpleAggregatesPhysicalOptimizerRule"
+    }
+
+    fn schema_check(&self) -> bool {
+        true
     }
 }
 
@@ -319,6 +324,10 @@ impl Accumulator for ModelCountAccumulator {
     fn evaluate(&self) -> Result<ScalarValue> {
         unreachable!()
     }
+
+    fn size(&self) -> usize {
+        mem::size_of_val(self)
+    }
 }
 
 //Min
@@ -408,6 +417,10 @@ impl Accumulator for ModelMinAccumulator {
     fn evaluate(&self) -> Result<ScalarValue> {
         unreachable!()
     }
+
+    fn size(&self) -> usize {
+        mem::size_of_val(self)
+    }
 }
 
 //Max
@@ -496,6 +509,10 @@ impl Accumulator for ModelMaxAccumulator {
 
     fn evaluate(&self) -> Result<ScalarValue> {
         unreachable!()
+    }
+
+    fn size(&self) -> usize {
+        mem::size_of_val(self)
     }
 }
 
@@ -612,6 +629,10 @@ impl Accumulator for ModelSumAccumulator {
 
     fn evaluate(&self) -> Result<ScalarValue> {
         unreachable!()
+    }
+
+    fn size(&self) -> usize {
+        mem::size_of_val(self)
     }
 }
 
@@ -730,5 +751,9 @@ impl Accumulator for ModelAvgAccumulator {
 
     fn evaluate(&self) -> Result<ScalarValue> {
         unreachable!()
+    }
+
+    fn size(&self) -> usize {
+        mem::size_of_val(self)
     }
 }
