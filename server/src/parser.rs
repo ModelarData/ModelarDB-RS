@@ -507,8 +507,8 @@ fn column_defs_to_schema(column_defs: &Vec<ColumnDef>) -> Result<Schema, DataFus
 // datafusion::arrow::datatypes::DataType and it was changed to a private instance method in
 // datafusion-sql v15.0.0. As Apache Arrow DataFusion no longer seems to provide an API for
 // converting from SQLDataType to DataType, the version of convert_simple_data_type() in
-// datafusion-sql v14.0.0 has been copied to parser.rs and have been updated according to the
-// changes made in datafusion-sql v15.0.0 to the greatest degree possible. As the private function
+// datafusion-sql v14.0.0 has been copied to parser.rs and has been updated according to the changes
+// made in datafusion-sql v15.0.0 to the greatest degree possible. As the private function
 // make_decimal_type() is used by convert_simple_data_type() it has also been copied from
 // datafusion-sql v15.0.0. As these functions have been copied from datafusion-sql they should be
 // updated whenever a new version of datafusion-sql is released. Also significant effort should be
@@ -518,7 +518,7 @@ fn column_defs_to_schema(column_defs: &Vec<ColumnDef>) -> Result<Schema, DataFus
 /// Convert a simple [`SQLDataType`] to the relational representation of the [`DataType`]. This
 /// function is copied from [datafusion-sql v14.0.0] and updated with the changes in [datafusion-sql
 /// v15.0.0] as it was changed from a public function to a private method in [datafusion-sql
-/// v15.0.0]. Both versions of datafusion-sql was released under Apache-2.0.
+/// v15.0.0]. Both versions of datafusion-sql were released under version 2.0 of the Apache License.
 ///
 /// [datafusion-sql v14.0.0]: https://github.com/apache/arrow-datafusion/blob/14.0.0/datafusion/sql/src/planner.rs#L2812
 /// [datafusion-sql v15.0.0]: https://github.com/apache/arrow-datafusion/blob/15.0.0/datafusion/sql/src/planner.rs#L2790
@@ -611,7 +611,7 @@ pub fn convert_simple_data_type(sql_type: &SQLDataType) -> DataFusionResult<Data
 }
 
 /// Return a validated [`DataType`] for the specified `precision` and `scale`. This function is
-/// copied from [datafusion-sql v15.0.0] which was released under Apache-2.0.
+/// copied from [datafusion-sql v15.0.0] which was released under version 2.0 of the Apache License.
 ///
 /// [datafusion-sql v15.0.0]: https://github.com/apache/arrow-datafusion/blob/15.0.0/datafusion/sql/src/utils.rs#L506
 fn make_decimal_type(precision: Option<u64>, scale: Option<u64>) -> DataFusionResult<DataType> {
