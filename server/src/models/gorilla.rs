@@ -24,7 +24,7 @@
 
 use crate::models;
 use crate::models::bits::{BitReader, BitVecBuilder};
-use crate::types::{TimeSeriesId, TimeSeriesIdBuilder, Timestamp, Value, ValueBuilder};
+use crate::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
 
 /// The state the Gorilla model type needs while compressing the values of a
 /// time series segment.
@@ -131,7 +131,7 @@ impl Gorilla {
 /// compressed using Gorilla's compression method for floating-point values.
 pub fn sum(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8], values: &[u8]) -> Value {
     // This function replicates code from gorilla::grid() as it isn't necessary
-    // to store the time series ids, timestamps, and values in arrays for a sum.
+    // to store the univariate ids, timestamps, and values in arrays for a sum.
     // So any changes to the decompression must be mirrored in gorilla::grid().
     let length = models::length(start_time, end_time, timestamps);
     let mut bits = BitReader::try_new(values).unwrap();
@@ -167,12 +167,12 @@ pub fn sum(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8], values
 
 /// Decompress the values in `values` for the `timestamps` without matching
 /// values in `value_builder`. The values in `values` are compressed using
-/// Gorilla's compression method for floating-point values. `time_series_ids`
-/// and `values` are appended to `time_series_id_builder` and `value_builder`.
+/// Gorilla's compression method for floating-point values. `univariate_ids`
+/// and `values` are appended to `univariate_id_builder` and `value_builder`.
 pub fn grid(
-    time_series_id: TimeSeriesId,
+    univariate_id: UnivariateId,
     values: &[u8],
-    time_series_id_builder: &mut TimeSeriesIdBuilder,
+    univariate_id_builder: &mut UnivariateIdBuilder,
     timestamps: &[Timestamp],
     value_builder: &mut ValueBuilder,
 ) {
@@ -183,7 +183,7 @@ pub fn grid(
     let mut last_value = bits.read_bits(models::VALUE_SIZE_IN_BITS);
 
     // The first value is stored uncompressed using size_of::<Value> bits.
-    time_series_id_builder.append_value(time_series_id);
+    univariate_id_builder.append_value(univariate_id);
     value_builder.append_value(Value::from_bits(last_value));
 
     // Then values are stored using XOR and a variable length binary encoding.
@@ -204,7 +204,7 @@ pub fn grid(
             value ^= last_value;
             last_value = value;
         }
-        time_series_id_builder.append_value(time_series_id);
+        univariate_id_builder.append_value(univariate_id);
         value_builder.append_value(Value::from_bits(last_value));
     }
 }
@@ -287,28 +287,28 @@ mod tests {
         prop_assume!(!values.is_empty());
         let compressed_values = compress_values_using_gorilla(&values);
 
-        let mut time_series_id_builder = TimeSeriesIdBuilder::with_capacity(values.len());
+        let mut univariate_id_builder = UnivariateIdBuilder::with_capacity(values.len());
         let timestamps: Vec<Timestamp> = (1 ..= values.len() as i64).step_by(1).collect();
         let mut value_builder = ValueBuilder::with_capacity(values.len());
         grid(
             1,
             &compressed_values,
-            &mut time_series_id_builder,
+            &mut univariate_id_builder,
             &timestamps,
             &mut value_builder
         );
 
-        let time_series_ids_array = time_series_id_builder.finish();
+        let univariate_ids_array = univariate_id_builder.finish();
         let values_array = value_builder.finish();
 
         prop_assert!(
-            time_series_ids_array.len() == values.len()
-            && time_series_ids_array.len() == timestamps.len()
-            && time_series_ids_array.len() == values_array.len()
+            univariate_ids_array.len() == values.len()
+            && univariate_ids_array.len() == timestamps.len()
+            && univariate_ids_array.len() == values_array.len()
         );
-        prop_assert!(time_series_ids_array
+        prop_assert!(univariate_ids_array
              .iter()
-             .all(|time_series_id_option| time_series_id_option.unwrap() == 1));
+             .all(|maybe_univariate_id| maybe_univariate_id.unwrap() == 1));
         prop_assert!(timestamps.windows(2).all(|window| window[1] - window[0] == 1));
         prop_assert!(slice_of_value_equal(values_array.values(), &values));
     }

@@ -32,7 +32,7 @@ use std::mem;
 use crate::errors::ModelarDbError;
 use crate::models::{gorilla::Gorilla, pmcmean::PMCMean, swing::Swing};
 use crate::types::{
-    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueArray, ValueBuilder,
+    UnivariateId, UnivariateIdBuilder, Timestamp, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
 
 /// Unique ids for each model type. Constant values are used instead of an enum
@@ -249,9 +249,9 @@ pub fn sum(
 
 /// Reconstruct the data points for a time series segment whose values are
 /// represented by a model. Each data point is split into its three components
-/// and appended to `time_series_ids`, `timestamps`, and `values`.
+/// and appended to `univariate_ids`, `timestamps`, and `values`.
 pub fn grid(
-    time_series_id: TimeSeriesId,
+    univariate_id: UnivariateId,
     model_type_id: u8,
     timestamps: &[u8],
     start_time: Timestamp,
@@ -259,7 +259,7 @@ pub fn grid(
     values: &[u8],
     min_value: Value,
     max_value: Value,
-    time_series_id_builder: &mut TimeSeriesIdBuilder,
+    univariate_id_builder: &mut UnivariateIdBuilder,
     timestamp_builder: &mut TimestampBuilder,
     value_builder: &mut ValueBuilder,
 ) {
@@ -268,27 +268,27 @@ pub fn grid(
 
     match model_type_id as u8 {
         PMC_MEAN_ID => pmcmean::grid(
-            time_series_id,
+            univariate_id,
             min_value, // For PMC-Mean, min and max is the same value.
-            time_series_id_builder,
+            univariate_id_builder,
             new_timestamps,
             value_builder,
         ),
         SWING_ID => swing::grid(
-            time_series_id,
+            univariate_id,
             start_time,
             end_time,
             min_value,
             max_value,
             values,
-            time_series_id_builder,
+            univariate_id_builder,
             new_timestamps,
             value_builder,
         ),
         GORILLA_ID => gorilla::grid(
-            time_series_id,
+            univariate_id,
             values,
-            time_series_id_builder,
+            univariate_id_builder,
             new_timestamps,
             value_builder,
         ),

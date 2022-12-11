@@ -125,7 +125,7 @@ fn test_get_schema() {
     assert_eq!(
         schema,
         Schema::new(vec![
-            Field::new("tid", DataType::UInt64, false),
+            Field::new("univariate_id", DataType::UInt64, false),
             Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
             Field::new("value", DataType::Float32, false)
         ])

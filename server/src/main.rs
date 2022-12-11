@@ -279,7 +279,7 @@ fn setup_ctrl_c_handler(context: &Arc<Context>, runtime: &Arc<Runtime>) {
         // Errors are consciously ignored as the program should terminate if the
         // handler cannot be registered as buffers otherwise cannot be flushed.
         tokio::signal::ctrl_c().await.unwrap();
-        ctrl_c_context.storage_engine.write().await.flush();
+        ctrl_c_context.storage_engine.write().await.flush().unwrap();
         std::process::exit(0)
     });
 }

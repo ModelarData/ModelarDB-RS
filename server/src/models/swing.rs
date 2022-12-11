@@ -25,7 +25,7 @@
 
 use crate::models::ErrorBound;
 use crate::models::{self, timestamps};
-use crate::types::{TimeSeriesId, TimeSeriesIdBuilder, Timestamp, Value, ValueBuilder};
+use crate::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
 
 /// The state the Swing model type needs while fitting a model to a time series
 /// segment.
@@ -232,16 +232,16 @@ pub fn sum(
 }
 
 /// Reconstruct the values for the `timestamps` without matching values in
-/// `value_builder` using a model of type Swing. The `time_series_ids` and
-/// `values` are appended to `time_series_id_builder` and `value_builder`.
+/// `value_builder` using a model of type Swing. The `univariate_ids` and
+/// `values` are appended to `univariate_id_builder` and `value_builder`.
 pub fn grid(
-    time_series_id: TimeSeriesId,
+    univariate_id: UnivariateId,
     start_time: Timestamp,
     end_time: Timestamp,
     min_value: Value,
     max_value: Value,
     values: &[u8],
-    time_series_ids: &mut TimeSeriesIdBuilder,
+    univariate_id_builder: &mut UnivariateIdBuilder,
     timestamps: &[Timestamp],
     value_builder: &mut ValueBuilder,
 ) {
@@ -249,7 +249,7 @@ pub fn grid(
         decode_and_compute_slope_and_intercept(start_time, end_time, min_value, max_value, values);
 
     for timestamp in timestamps {
-        time_series_ids.append_value(time_series_id);
+        univariate_id_builder.append_value(univariate_id);
         let value = (slope * (*timestamp as f64) + intercept) as Value;
         value_builder.append_value(value);
     }
@@ -302,7 +302,7 @@ fn compute_slope_and_intercept(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::array::{BinaryArray, Float32Array, UInt8Array};
+    use datafusion::arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt8Array};
     use proptest::strategy::Strategy;
     use proptest::{num, prop_assert, prop_assert_eq, prop_assume, proptest};
 
@@ -499,8 +499,8 @@ mod tests {
     fn test_grid(value in num::i32::ANY.prop_map(i32_to_value)) {
         let timestamps: Vec<Timestamp> = (FIRST_TIMESTAMP ..= FINAL_TIMESTAMP)
             .step_by(SAMPLING_INTERVAL as usize).collect();
-        let mut time_series_ids = TimeSeriesIdBuilder::with_capacity(timestamps.len());
-        let mut values = ValueBuilder::with_capacity(timestamps.len());
+        let mut univariate_id_builder = UnivariateIdBuilder::with_capacity(timestamps.len());
+        let mut value_builder = ValueBuilder::with_capacity(timestamps.len());
 
         // The linear function represents a constant to have a known value.
         grid(
@@ -510,21 +510,21 @@ mod tests {
             value,
             value,
             &[0],
-            &mut time_series_ids,
+            &mut univariate_id_builder,
             &timestamps,
-            &mut values,
+            &mut value_builder,
         );
 
-        let time_series_ids = time_series_ids.finish();
-        let values = values.finish();
+        let univariate_ids = univariate_id_builder.finish();
+        let values = value_builder.finish();
 
         prop_assert!(
-            time_series_ids.len() == timestamps.len()
-            && time_series_ids.len() == values.len()
+            univariate_ids.len() == timestamps.len()
+            && univariate_ids.len() == values.len()
         );
-        prop_assert!(time_series_ids
+        prop_assert!(univariate_ids
              .iter()
-             .all(|time_series_id_option| time_series_id_option.unwrap() == 1));
+             .all(|maybe_univariate_id| maybe_univariate_id.unwrap() == 1));
         prop_assert!(timestamps
             .windows(2)
             .all(|window| window[1] - window[0] == SAMPLING_INTERVAL));
@@ -565,6 +565,7 @@ mod tests {
         );
         let values = ValueArray::from_iter_values(values);
         let segments = compression::try_compress(
+            1,
             &timestamps,
             &values,
             error_bound,
@@ -575,13 +576,14 @@ mod tests {
         // Extract the individual columns from the record batch.
         crate::get_arrays!(
             segments,
+            _univariate_id_array,
             model_type_id_array,
-            timestamps_array,
             start_time_array,
             end_time_array,
-            values_array,
+            timestamps_array,
             min_value_array,
             max_value_array,
+            values_array,
             _error_array
         );
 
@@ -590,7 +592,7 @@ mod tests {
         assert_eq!(model_type_id_array.value(0), SWING_ID);
 
         // Reconstruct all values from the segment.
-        let mut reconstructed_ids = TimeSeriesIdBuilder::with_capacity(timestamps.len());
+        let mut reconstructed_ids = UnivariateIdBuilder::with_capacity(timestamps.len());
         let mut reconstructed_timestamps = TimestampBuilder::with_capacity(timestamps.len());
         let mut reconstructed_values = ValueBuilder::with_capacity(timestamps.len());
 

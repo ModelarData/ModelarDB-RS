@@ -150,8 +150,8 @@ impl ModelTableMetadata {
             ));
         }
 
-        // If there are more than 1024 columns, return an error. This limitation is necessary
-        // since 10 bits are used to identify the column index of the data in the 64-bit hash key.
+        // If there are more than 1024 columns, return an error. This limitation is necessary since
+        // 10 bits are used to identify the column index of the data in the 64-bit univariate id.
         if schema.fields.len() > 1024 {
             return Err(ModelarDbError::ConfigurationError(
                 "There cannot be more than 1024 columns in the model table.".to_owned(),

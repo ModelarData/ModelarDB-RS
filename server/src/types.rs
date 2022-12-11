@@ -20,12 +20,12 @@
 //! the same name, e.g., `std::primitive::f32` and `proptest::num::f32`. It is
 //! assumed that each set of aliases are all for the same underlying type.
 
-// Types used for a single time series id.
-pub type TimeSeriesId = std::primitive::u64;
-pub type ArrowTimeSeriesId = datafusion::arrow::datatypes::UInt64Type;
+// Types used for a univariate id.
+pub type UnivariateId = std::primitive::u64;
+pub type ArrowUnivariateId = datafusion::arrow::datatypes::UInt64Type;
 
-// Types used for a collection of time series ids.
-pub type TimeSeriesIdBuilder = datafusion::arrow::array::PrimitiveBuilder<ArrowTimeSeriesId>;
+// Types used for a collection of univariate ids.
+pub type UnivariateIdBuilder = datafusion::arrow::array::PrimitiveBuilder<ArrowUnivariateId>;
 
 // Types used for a single timestamp.
 pub type Timestamp = std::primitive::i64; // It is signed to match TimestampMillisecondType.

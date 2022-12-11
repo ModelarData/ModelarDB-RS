@@ -22,9 +22,7 @@
 
 use crate::models;
 use crate::models::ErrorBound;
-use crate::types::{
-    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, Value, ValueBuilder,
-};
+use crate::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
 
 /// The state the PMC-Mean model type needs while fitting a model to a time
 /// series segment.
@@ -107,27 +105,22 @@ impl PMCMean {
 
 /// Compute the sum of the values for a time series segment whose values are
 /// represented by a model of type PMC-Mean.
-pub fn sum(
-    start_time: Timestamp,
-    end_time: Timestamp,
-    timestamps: &[u8],
-    value: Value
-) -> Value {
+pub fn sum(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8], value: Value) -> Value {
     models::length(start_time, end_time, timestamps) as Value * value
 }
 
 /// Reconstruct the values for the `timestamps` without matching values in
-/// `value_builder` using a model of type PMC-Mean. The `time_series_ids` and
-/// `values` are appended to `time_series_id_builder` and `value_builder`.
+/// `value_builder` using a model of type PMC-Mean. The `univariate_ids` and
+/// `values` are appended to `univariate_builder` and `value_builder`.
 pub fn grid(
-    time_series_id: TimeSeriesId,
+    univariate_id: UnivariateId,
     value: Value,
-    time_series_id_builder: &mut TimeSeriesIdBuilder,
+    univariate_id_builder: &mut UnivariateIdBuilder,
     timestamps: &[Timestamp],
     value_builder: &mut ValueBuilder,
 ) {
     for _timestamp in timestamps {
-        time_series_id_builder.append_value(time_series_id);
+        univariate_id_builder.append_value(univariate_id);
         value_builder.append_value(value);
     }
 }
@@ -276,29 +269,29 @@ mod tests {
     #[test]
     fn test_grid(value in ProptestValue::ANY) {
         let sampling_interval: i64 = 60;
-        let mut time_series_ids = TimeSeriesIdBuilder::with_capacity(10);
+        let mut univariate_id_builder = UnivariateIdBuilder::with_capacity(10);
         let timestamps: Vec<Timestamp> = (60..=600).step_by(60).collect();
-        let mut values = ValueBuilder::with_capacity(10);
+        let mut value_builder = ValueBuilder::with_capacity(10);
 
         grid(
             1,
             value,
-            &mut time_series_ids,
+            &mut univariate_id_builder,
             &timestamps,
-            &mut values,
+            &mut value_builder,
         );
 
-        let time_series_ids = time_series_ids.finish();
-        let values = values.finish();
+        let univariate_ids = univariate_id_builder.finish();
+        let values = value_builder.finish();
 
         prop_assert!(
-            time_series_ids.len() == 10
-            && time_series_ids.len() == timestamps.len()
-            && time_series_ids.len() == values.len()
+            univariate_ids.len() == 10
+            && univariate_ids.len() == timestamps.len()
+            && univariate_ids.len() == values.len()
         );
-        prop_assert!(time_series_ids
+        prop_assert!(univariate_ids
              .iter()
-             .all(|time_series_id_option| time_series_id_option.unwrap() == 1));
+             .all(|maybe_univariate_id| maybe_univariate_id.unwrap() == 1));
         prop_assert!(timestamps
             .windows(2)
             .all(|window| window[1] - window[0] == sampling_interval));

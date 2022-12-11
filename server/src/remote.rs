@@ -507,13 +507,20 @@ impl FlightService for FlightServiceHandler {
             // Confirm the table was created.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "FlushMemory" {
-            self.context.storage_engine.write().await.flush();
+            self.context
+                .storage_engine
+                .write()
+                .await
+                .flush()
+                .map_err(|error| Status::internal(error))?;
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "FlushEdge" {
             let mut storage_engine = self.context.storage_engine.write().await;
-            storage_engine.flush();
+            storage_engine
+                .flush()
+                .map_err(|error| Status::internal(error))?;
             storage_engine.transfer().await?;
 
             // Confirm the data was flushed.

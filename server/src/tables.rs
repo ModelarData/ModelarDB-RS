@@ -26,13 +26,8 @@ use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
 
 use async_trait::async_trait;
-use datafusion::arrow::array::{
-    ArrayAccessor, ArrayRef, BinaryArray, DictionaryArray, Float32Array, StringArray, UInt64Array,
-    UInt8Array,
-};
-use datafusion::arrow::datatypes::{
-    ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, UInt16Type,
-};
+use datafusion::arrow::array::{ArrayRef, BinaryArray, Float32Array, UInt64Array, UInt8Array};
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema, SchemaRef};
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::config::ConfigOptions;
@@ -48,7 +43,6 @@ use datafusion::physical_plan::{
     metrics::MetricsSet, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
     SendableRecordBatchStream, Statistics,
 };
-use datafusion::scalar::ScalarValue;
 use datafusion_common::ToDFSchema;
 use datafusion_expr::{col, BinaryExpr, Expr, Operator};
 use datafusion_optimizer::utils;
@@ -60,7 +54,7 @@ use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::models;
 use crate::storage;
 use crate::types::{
-    ArrowTimeSeriesId, ArrowTimestamp, ArrowValue, CompressedSchema, TimestampArray,
+    ArrowUnivariateId, ArrowTimestamp, ArrowValue, CompressedSchema, TimestampArray,
     TimestampBuilder, ValueArray, ValueBuilder,
 };
 use crate::Context;
@@ -88,7 +82,7 @@ impl ModelTable {
     pub fn new(context: Arc<Context>, model_table_metadata: Arc<ModelTableMetadata>) -> Arc<Self> {
         // Columns in the model table registered with Apache Arrow DataFusion.
         let columns = vec![
-            Field::new("tid", ArrowTimeSeriesId::DATA_TYPE, false),
+            Field::new("univariate_id", ArrowUnivariateId::DATA_TYPE, false),
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
             Field::new("value", ArrowValue::DATA_TYPE, false),
         ];
@@ -223,21 +217,9 @@ impl TableProvider for ModelTable {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        // TODO: extract predicates that consist of tag = tag_value from the query.
-        let tag_predicates = vec![];
-        let keys = self
-            .context
-            .metadata_manager
-            .compute_keys_using_fields_and_tags(
-                &self.model_table_metadata.name,
-                projection,
-                self.fallback_field_column,
-                &tag_predicates,
-            )
-            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
-
         // Request the matching files from the storage engine.
-        let key_object_metas = {
+        let table_name = &self.model_table_metadata.name;
+        let object_metas = {
             // TODO: make the storage engine support multiple parallel readers.
             let mut storage_engine = self.context.storage_engine.write().await;
 
@@ -250,17 +232,17 @@ impl TableProvider for ModelTable {
             // unwrap() is safe to use as get_compressed_files() only fails if a
             // non-existing hash is passed or if end time is before start time.
             storage_engine
-                .get_compressed_files(&keys, None, None, &query_object_store)
+                .get_compressed_files(table_name, None, None, &query_object_store)
                 .await
                 .unwrap()
         };
 
         // Create the data source operator. Assumes the ObjectStore exists.
-        let partitioned_files: Vec<PartitionedFile> = key_object_metas
+        let partitioned_files: Vec<PartitionedFile> = object_metas
             .into_iter()
-            .map(|key_object_meta| PartitionedFile {
-                object_meta: key_object_meta.1,
-                partition_values: vec![ScalarValue::Utf8(Some(key_object_meta.0))],
+            .map(|object_meta| PartitionedFile {
+                object_meta,
+                partition_values: vec![],
                 range: None,
                 extensions: None,
             })
@@ -282,13 +264,24 @@ impl TableProvider for ModelTable {
             statistics,
             projection: None,
             limit,
-            table_partition_cols: vec![(
-                "storage_engine_key".to_owned(),
-                DataType::Dictionary(Box::new(DataType::UInt16), Box::new(DataType::Utf8)),
-            )],
             output_ordering: None,
+            table_partition_cols: vec![],
             config_options: self.config_options.clone(),
         };
+
+        // TODO: extract predicates that consist of tag = tag_value from the query.
+        // TODO: prune row groups and segments by univariate id before gridding and aggregating.
+        let tag_predicates = vec![];
+        let _univariate_ids = self
+            .context
+            .metadata_manager
+            .compute_univariate_ids_using_fields_and_tags(
+                &self.model_table_metadata.name,
+                projection,
+                self.fallback_field_column,
+                &tag_predicates,
+            )
+            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         let predicate = rewrite_and_combine_filters(filters);
         let parquet_exec = Arc::new(ParquetExec::new(file_scan_config, predicate.clone(), None));
@@ -516,24 +509,16 @@ impl GridStream {
         // Retrieve the arrays from batch and cast them to their concrete type.
         crate::get_arrays!(
             batch,
-            model_type_id_array,
-            timestamps_array,
-            start_time_array,
-            end_time_array,
-            values_array,
-            min_value_array,
-            max_value_array,
+            univariate_ids,
+            model_type_ids,
+            start_times,
+            end_times,
+            timestamps,
+            min_values,
+            max_values,
+            values,
             _error_array
         );
-
-        // The get_array!() macro causes compile errors due to nested generics.
-        let key_string_array = batch
-            .column(8)
-            .as_any()
-            .downcast_ref::<DictionaryArray<UInt16Type>>()
-            .unwrap()
-            .downcast_dict::<StringArray>()
-            .unwrap();
 
         // Each segment is guaranteed to contain at least one data point.
         let num_rows = batch.num_rows();
@@ -544,17 +529,17 @@ impl GridStream {
         // Reconstructs the data points from the segments.
         for row_index in 0..num_rows {
             // unwrap() is safe as the storage engine created the strings.
-            let tid: u64 = key_string_array.value(row_index).parse().unwrap();
-            let model_type_id = model_type_id_array.value(row_index);
-            let timestamps = timestamps_array.value(row_index);
-            let start_time = start_time_array.value(row_index);
-            let end_time = end_time_array.value(row_index);
-            let values = values_array.value(row_index);
-            let min_value = min_value_array.value(row_index);
-            let max_value = max_value_array.value(row_index);
+            let univariate_id = univariate_ids.value(row_index);
+            let model_type_id = model_type_ids.value(row_index);
+            let start_time = start_times.value(row_index);
+            let end_time = end_times.value(row_index);
+            let timestamps = timestamps.value(row_index);
+            let min_value = min_values.value(row_index);
+            let max_value = max_values.value(row_index);
+            let values = values.value(row_index);
 
             models::grid(
-                tid,
+                univariate_id,
                 model_type_id,
                 timestamps,
                 start_time,
@@ -618,6 +603,7 @@ mod tests {
 
     use datafusion::prelude::Expr;
     use datafusion_expr::lit;
+    use datafusion::arrow::datatypes::DataType;
 
     use crate::metadata::test_util;
 
@@ -695,9 +681,9 @@ mod tests {
     #[test]
     fn test_new_filter_exec_with_predicates() {
         let filters = vec![new_binary_expr(
-            col("model_type_id"),
+            col("univariate_id"),
             Operator::Eq,
-            lit(1_u8),
+            lit(1_u64),
         )];
         let predicates = rewrite_and_combine_filters(&filters);
         let parquet_exec = new_parquet_exec();
