@@ -50,14 +50,14 @@ macro_rules! get_array {
 #[macro_export]
 macro_rules! get_arrays {
     ($batch:ident, $univariate_ids:ident, $model_type_ids:ident, $start_times:ident, $end_times:ident, $timestamps:ident, $min_values:ident, $max_values:ident, $values:ident, $errors:ident) => {
-        let $univariate_ids = crate::get_array!($batch, 0, UInt64Array);
-        let $model_type_ids = crate::get_array!($batch, 1, UInt8Array);
-        let $start_times = crate::get_array!($batch, 2, TimestampArray);
-        let $end_times = crate::get_array!($batch, 3, TimestampArray);
-        let $timestamps = crate::get_array!($batch, 4, BinaryArray);
-        let $min_values = crate::get_array!($batch, 5, ValueArray);
-        let $max_values = crate::get_array!($batch, 6, ValueArray);
-        let $values = crate::get_array!($batch, 7, BinaryArray);
-        let $errors = crate::get_array!($batch, 8, Float32Array);
+        let $univariate_ids = $crate::get_array!($batch, 0, UInt64Array);
+        let $model_type_ids = $crate::get_array!($batch, 1, UInt8Array);
+        let $start_times = $crate::get_array!($batch, 2, TimestampArray);
+        let $end_times = $crate::get_array!($batch, 3, TimestampArray);
+        let $timestamps = $crate::get_array!($batch, 4, BinaryArray);
+        let $min_values = $crate::get_array!($batch, 5, ValueArray);
+        let $max_values = $crate::get_array!($batch, 6, ValueArray);
+        let $values = $crate::get_array!($batch, 7, BinaryArray);
+        let $errors = $crate::get_array!($batch, 8, Float32Array);
     };
 }

@@ -64,7 +64,7 @@ fn new_aggregate(
 pub struct ModelSimpleAggregatesPhysicalOptimizerRule {}
 
 impl ModelSimpleAggregatesPhysicalOptimizerRule {
-    fn optimize(&self, plan: &Arc<dyn ExecutionPlan>) -> Option<Arc<dyn ExecutionPlan>> {
+    fn optimize(plan: &Arc<dyn ExecutionPlan>) -> Option<Arc<dyn ExecutionPlan>> {
         // Matches a simple aggregate performed without filtering out segments.
         if let Some(aggregate_exec) = plan.as_any().downcast_ref::<AggregateExec>() {
             let children = &aggregate_exec.children();
@@ -106,7 +106,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
         // Visit the children.
         // TODO: handle plans were multiple children must be updated.
         for child in plan.children() {
-            if let Some(new_child) = self.optimize(&child) {
+            if let Some(new_child) = ModelSimpleAggregatesPhysicalOptimizerRule::optimize(&child) {
                 return Some(plan.clone().with_new_children(vec![new_child]).unwrap());
             }
         }
@@ -121,7 +121,7 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
         plan: Arc<dyn ExecutionPlan>,
         _config: &SessionConfig,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        if let Some(optimized_plan) = self.optimize(&plan) {
+        if let Some(optimized_plan) = ModelSimpleAggregatesPhysicalOptimizerRule::optimize(&plan) {
             Ok(optimized_plan)
         } else {
             Ok(plan)

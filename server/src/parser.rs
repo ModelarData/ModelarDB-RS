@@ -164,7 +164,7 @@ impl ModelarDbDialect {
                 return Ok(());
             }
         }
-        parser.expected(format!("{}", &expected).as_str(), parser.peek_token())
+        parser.expected(expected, parser.peek_token())
     }
 
     /// Return its value as a [`String`] if the next [`Token`] is a
@@ -323,25 +323,25 @@ pub fn semantic_checks_for_create_table(
             .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
         // Check if the columns can be converted to a schema.
-        let schema = column_defs_to_schema(&columns)
+        let schema = column_defs_to_schema(columns)
             .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
         // Create a ValidStatement with the information for creating the table.
         let _expected_engine = CREATE_MODEL_TABLE_ENGINE.to_owned();
         if let Some(_expected_engine) = engine {
-            return Ok(ValidStatement::CreateModelTable(
+            Ok(ValidStatement::CreateModelTable(
                 semantic_checks_for_create_model_table(normalized_name, columns)?,
-            ));
+            ))
         } else {
-            return Ok(ValidStatement::CreateTable {
+            Ok(ValidStatement::CreateTable {
                 name: normalized_name,
                 schema,
-            });
+            })
         }
     } else {
         let message = "Expected CREATE TABLE or CREATE MODEL TABLE.";
-        return Err(ParserError::ParserError(message.to_owned()));
-    };
+        Err(ParserError::ParserError(message.to_owned()))
+    }
 }
 
 /// Perform additional semantic checks to ensure that the CREATE MODEL TABLE
@@ -357,7 +357,7 @@ fn semantic_checks_for_create_model_table(
 
     // Check that one timestamp column exists.
     let timestamp_column_indices = compute_indices_of_columns_with_data_type(
-        &column_defs,
+        column_defs,
         SQLDataType::Timestamp(None, TimezoneInfo::None),
     );
 
@@ -369,7 +369,7 @@ fn semantic_checks_for_create_model_table(
 
     // Compute the indices of the tag columns.
     let tag_column_indices =
-        compute_indices_of_columns_with_data_type(&column_defs, SQLDataType::Text);
+        compute_indices_of_columns_with_data_type(column_defs, SQLDataType::Text);
 
     // Extract the error bounds for the field columns.
     let error_bounds = extract_error_bounds_for_field_columns(column_defs)?;
@@ -465,7 +465,7 @@ fn check_unsupported_feature_is_disabled(enabled: bool, feature: &str) -> Result
 
 /// Compute the indices of all columns in `column_defs` with `data_type`.
 fn compute_indices_of_columns_with_data_type(
-    column_defs: &Vec<ColumnDef>,
+    column_defs: &[ColumnDef],
     data_type: SQLDataType,
 ) -> Vec<usize> {
     column_defs
@@ -641,7 +641,7 @@ fn make_decimal_type(precision: Option<u64>, scale: Option<u64>) -> DataFusionRe
 
 /// Extract the error bounds from the fields columns in `column_defs`.
 fn extract_error_bounds_for_field_columns(
-    column_defs: &Vec<ColumnDef>,
+    column_defs: &[ColumnDef],
 ) -> Result<Vec<ErrorBound>, ParserError> {
     let field_column_indices =
         compute_indices_of_columns_with_data_type(column_defs, SQLDataType::Real);

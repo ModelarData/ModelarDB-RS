@@ -81,8 +81,8 @@ pub fn try_compress(
             univariate_id,
             current_index,
             end_index,
-            &uncompressed_timestamps,
-            &uncompressed_values,
+            uncompressed_timestamps,
+            uncompressed_values,
             error_bound,
         );
         current_index = compressed_segment_builder.finish(&mut compressed_record_batch_builder);
@@ -125,7 +125,7 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
         // entry for model did not exist, and append index to the entry's Vec.
         compressed_segments_to_merge
             .entry(model)
-            .or_insert_with(|| Vec::new())
+            .or_insert_with(Vec::new)
             .push(index);
     }
 
@@ -350,6 +350,7 @@ impl CompressedSegmentBatchBuilder {
     }
 
     /// Append a compressed segment to the builder.
+    #[allow(clippy::too_many_arguments)]
     fn append_compressed_segment(
         &mut self,
         univariate_id: u64,

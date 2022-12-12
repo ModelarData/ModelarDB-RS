@@ -61,7 +61,7 @@ pub fn start_arrow_flight_server(
     let localhost_with_port = "0.0.0.0:".to_owned() + &port.to_string();
     let localhost_with_port: SocketAddr = localhost_with_port.parse()?;
     let handler = FlightServiceHandler {
-        context: context.clone(),
+        context,
         dictionaries_by_id: HashMap::new(),
     };
     let flight_service_server = FlightServiceServer::new(handler);
@@ -428,14 +428,14 @@ impl FlightService for FlightServiceHandler {
             .flight_descriptor
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
         let table_name = self.get_table_name_from_flight_descriptor(&flight_descriptor)?;
-        let normalized_table_name = MetadataManager::normalize_name(&table_name);
+        let normalized_table_name = MetadataManager::normalize_name(table_name);
 
         // Handle the data based on whether it is a normal table or a model table.
         if let Some(model_table_metadata) =
             self.get_model_table_metadata_from_default_database_schema(&normalized_table_name)?
         {
             debug!("Writing data to model table '{}'.", normalized_table_name);
-            self.ingest_into_model_table(&*model_table_metadata, &mut flight_data_stream)
+            self.ingest_into_model_table(&model_table_metadata, &mut flight_data_stream)
                 .await?;
         } else {
             debug!("Writing data to table '{}'.", normalized_table_name);
@@ -512,7 +512,7 @@ impl FlightService for FlightServiceHandler {
                 .write()
                 .await
                 .flush()
-                .map_err(|error| Status::internal(error))?;
+                .map_err(Status::internal)?;
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
@@ -520,7 +520,7 @@ impl FlightService for FlightServiceHandler {
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine
                 .flush()
-                .map_err(|error| Status::internal(error))?;
+                .map_err(Status::internal)?;
             storage_engine.transfer().await?;
 
             // Confirm the data was flushed.

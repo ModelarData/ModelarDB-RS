@@ -234,6 +234,7 @@ pub fn sum(
 /// Reconstruct the values for the `timestamps` without matching values in
 /// `value_builder` using a model of type Swing. The `univariate_ids` and
 /// `values` are appended to `univariate_id_builder` and `value_builder`.
+#[allow(clippy::too_many_arguments)]
 pub fn grid(
     univariate_id: UnivariateId,
     start_time: Timestamp,

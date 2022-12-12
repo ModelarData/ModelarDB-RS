@@ -210,10 +210,10 @@ impl MetadataManager {
     pub fn get_or_compute_tag_hash(
         &mut self,
         model_table: &ModelTableMetadata,
-        tag_values: &Vec<String>,
+        tag_values: &[String],
     ) -> Result<u64, rusqlite::Error> {
         let cache_key = {
-            let mut cache_key_list = tag_values.clone();
+            let mut cache_key_list = tag_values.to_vec();
             cache_key_list.push(model_table.name.clone());
 
             cache_key_list.join(";")
@@ -320,15 +320,8 @@ impl MetadataManager {
     ) -> Result<Vec<UnivariateId>> {
         // Construct a query that extracts the field columns in the table being queried which
         // overlaps with the columns being requested by the query.
-        let query_field_columns = if columns.is_none() {
-            format!(
-                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}'",
-                table_name
-            )
-        } else {
+        let query_field_columns = if let Some(columns) = columns {
             let column_predicates: Vec<String> = columns
-                .clone()
-                .unwrap()
                 .iter()
                 .map(|column| format!("column_index = {}", column))
                 .collect();
@@ -337,6 +330,11 @@ impl MetadataManager {
                 "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}' AND {}",
                 table_name,
                 column_predicates.join(" OR ")
+            )
+        } else {
+            format!(
+                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}'",
+                table_name
             )
         };
 
@@ -396,7 +394,7 @@ impl MetadataManager {
         }
 
         // Retrieve the hashes and compute the univariate ids;
-        let mut select_statement = connection.prepare(&query_hashes)?;
+        let mut select_statement = connection.prepare(query_hashes)?;
         let mut rows = select_statement.query([])?;
 
         let mut univariate_ids = vec![];
@@ -444,7 +442,7 @@ impl MetadataManager {
         let mut rows = select_statement.query(())?;
 
         while let Some(row) = rows.next()? {
-            if let Err(error) = self.register_table(row, &context, &runtime) {
+            if let Err(error) = self.register_table(row, context, runtime) {
                 error!("Failed to register table due to: {}.", error);
             }
         }
@@ -574,7 +572,7 @@ impl MetadataManager {
         let mut rows = select_statement.query(())?;
 
         while let Some(row) = rows.next()? {
-            if let Err(error) = MetadataManager::register_model_table(row, &context) {
+            if let Err(error) = MetadataManager::register_model_table(row, context) {
                 error!("Failed to register model table due to: {}.", error);
             }
         }

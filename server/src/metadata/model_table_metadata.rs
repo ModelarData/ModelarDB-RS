@@ -105,7 +105,7 @@ impl ModelTableMetadata {
 
         let field_column_indices: Vec<usize> = (0..schema.fields().len())
             .filter(|index| {
-                *index != timestamp_column_index && !tag_column_indices.contains(&index)
+                *index != timestamp_column_index && !tag_column_indices.contains(index)
             })
             .collect();
 
@@ -160,7 +160,7 @@ impl ModelTableMetadata {
 
         Ok(Self {
             name: table_name,
-            schema: Arc::new(schema.clone()),
+            schema: Arc::new(schema),
             tag_column_indices,
             timestamp_column_index,
             error_bounds,

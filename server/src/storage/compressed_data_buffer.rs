@@ -69,7 +69,7 @@ impl CompressedDataBuffer {
 
         // Combine the compressed segments into a single RecordBatch.
         let batch =
-            compute::concat_batches(&compressed_schema.0, &*self.compressed_segments).unwrap();
+            compute::concat_batches(&compressed_schema.0, &self.compressed_segments).unwrap();
 
         // Create the folder structure if it does not already exist.
         fs::create_dir_all(folder_path)?;

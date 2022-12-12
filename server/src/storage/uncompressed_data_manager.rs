@@ -146,8 +146,8 @@ impl UncompressedDataManager {
                 .collect();
 
             let tag_hash = metadata_manager
-                .get_or_compute_tag_hash(&model_table, &tag_values)
-                .map_err(|error| format!("Tag hash could not be saved: {}", error.to_string()))?;
+                .get_or_compute_tag_hash(model_table, &tag_values)
+                .map_err(|error| format!("Tag hash could not be saved: {}", error))?;
 
             // For each field column, generate the 64-bit univariate id, and append the current
             // timestamp and the field's value into in-memory buffer for the univariate id.
@@ -299,8 +299,8 @@ impl UncompressedDataManager {
         // unwrap() is safe to use since uncompressed_timestamps and uncompressed_values have the same length.
         let compressed_segments = compression::try_compress(
             univariate_id,
-            &uncompressed_timestamps,
-            &uncompressed_values,
+            uncompressed_timestamps,
+            uncompressed_values,
             error_bound,
             &self.compressed_schema,
         )
@@ -332,7 +332,7 @@ impl UncompressedDataManager {
                 );
 
                 *finished = Box::new(uncompressed_on_disk_data_buffer);
-                return ();
+                return;
             }
         }
 

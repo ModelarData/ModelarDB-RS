@@ -140,7 +140,7 @@ impl DataTransfer {
     /// it failed.
     pub(crate) async fn flush(&mut self) -> Result<(), ParquetError> {
         for (table_name, size_in_bytes) in self.compressed_files.clone().iter() {
-            if size_in_bytes > &(0 as usize) {
+            if size_in_bytes > &0_usize {
                 self.transfer_data(table_name)
                     .await
                     .map_err(|err| IOError::new(Other, err.to_string()))?;

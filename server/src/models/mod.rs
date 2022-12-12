@@ -32,7 +32,7 @@ use std::mem;
 use crate::errors::ModelarDbError;
 use crate::models::{gorilla::Gorilla, pmcmean::PMCMean, swing::Swing};
 use crate::types::{
-    UnivariateId, UnivariateIdBuilder, Timestamp, TimestampBuilder, Value, ValueArray, ValueBuilder,
+    Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueArray, ValueBuilder,
 };
 
 /// Unique ids for each model type. Constant values are used instead of an enum
@@ -73,7 +73,7 @@ impl ErrorBound {
 
     /// Return the memory representation of the error bound as a byte array in
     /// little-endian byte order.
-    pub fn to_le_bytes(&self) -> [u8; 4] {
+    pub fn to_le_bytes(self) -> [u8; 4] {
         self.0.to_le_bytes()
     }
 }
@@ -158,7 +158,7 @@ impl SelectedModel {
         let end_index = start_index + swing.get_length() - 1;
         let min_value = Value::min(start_value, end_value);
         let max_value = Value::max(start_value, end_value);
-        let values = vec!((start_value < end_value) as u8);
+        let values = vec![(start_value < end_value) as u8];
 
         Self {
             model_type_id: SWING_ID,
@@ -241,7 +241,9 @@ pub fn sum(
 ) -> Value {
     match model_type_id as u8 {
         PMC_MEAN_ID => pmcmean::sum(start_time, end_time, timestamps, min_value),
-        SWING_ID => swing::sum(start_time, end_time, timestamps, min_value, max_value, values),
+        SWING_ID => swing::sum(
+            start_time, end_time, timestamps, min_value, max_value, values,
+        ),
         GORILLA_ID => gorilla::sum(start_time, end_time, timestamps, values),
         _ => panic!("Unknown model type."),
     }
@@ -250,6 +252,7 @@ pub fn sum(
 /// Reconstruct the data points for a time series segment whose values are
 /// represented by a model. Each data point is split into its three components
 /// and appended to `univariate_ids`, `timestamps`, and `values`.
+#[allow(clippy::too_many_arguments)]
 pub fn grid(
     univariate_id: UnivariateId,
     model_type_id: u8,

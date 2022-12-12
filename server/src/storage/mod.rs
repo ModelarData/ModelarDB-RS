@@ -224,7 +224,7 @@ impl StorageEngine {
         // List the files storing the compressed data for the table with table_name.
         let compressed_files = self
             .compressed_data_manager
-            .save_and_get_saved_compressed_files(table_name, &query_data_folder)
+            .save_and_get_saved_compressed_files(table_name, query_data_folder)
             .await?;
 
         // TODO: prune by time and value in save_and_get_saved_compressed_files to perform the action async?
@@ -287,7 +287,7 @@ impl StorageEngine {
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
         let mut reader = builder.with_batch_size(usize::MAX).build()?;
 
-        let record_batch = reader.next().ok_or_else(|| error)??;
+        let record_batch = reader.next().ok_or(error)??;
         Ok(record_batch)
     }
 

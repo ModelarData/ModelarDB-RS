@@ -140,7 +140,7 @@ impl CompressedDataManager {
                 .unwrap();
             self.compressed_queue.remove(data_index);
 
-            self.save_compressed_data(&table_name)
+            self.save_compressed_data(table_name)
                 .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
         }
 
@@ -152,8 +152,7 @@ impl CompressedDataManager {
             .map_err(|error| {
                 ModelarDbError::DataRetrievalError(format!(
                     "Compressed data could not be listed for table '{}': {}",
-                    table_name,
-                    error.to_string()
+                    table_name, error
                 ))
             })?;
 
@@ -162,7 +161,7 @@ impl CompressedDataManager {
             .filter_map(|maybe_meta| async {
                 if let Ok(meta) = maybe_meta {
                     if StorageEngine::is_path_an_apache_parquet_file(
-                        &query_data_folder,
+                        query_data_folder,
                         &meta.location,
                     )
                     .await
@@ -213,10 +212,7 @@ impl CompressedDataManager {
         debug!("Saving compressed time series to disk.");
 
         let mut compressed_data_buffer = self.compressed_data.remove(table_name).unwrap();
-        let folder_path = self
-            .local_data_folder
-            .join("compressed")
-            .join(table_name.to_owned());
+        let folder_path = self.local_data_folder.join("compressed").join(table_name);
 
         compressed_data_buffer
             .save_to_apache_parquet(folder_path.as_path(), &self.compressed_schema)?;

@@ -104,7 +104,7 @@ impl ModelTable {
 
         Arc::new(ModelTable {
             context,
-            model_table_metadata: model_table_metadata.clone(),
+            model_table_metadata,
             object_store_url,
             schema: Arc::new(Schema::new(columns)),
             fallback_field_column: fallback_field_column as u64,
@@ -176,7 +176,7 @@ fn new_filter_exec(
     let df_schema = schema.clone().to_dfschema()?;
 
     let physical_predicate =
-        planner::create_physical_expr(predicate, &df_schema, &schema, &ExecutionProps::new())?;
+        planner::create_physical_expr(predicate, &df_schema, schema, &ExecutionProps::new())?;
 
     Ok(Arc::new(FilterExec::try_new(
         physical_predicate,
@@ -333,7 +333,7 @@ impl GridExec {
         input: Arc<dyn ExecutionPlan>,
     ) -> Arc<Self> {
         // Modifies the schema so it matches the passed projection.
-        let schema_after_projection = if let Some(ref projection) = projection {
+        let schema_after_projection = if let Some(projection) = projection {
             Arc::new(schema.project(projection).unwrap())
         } else {
             schema
