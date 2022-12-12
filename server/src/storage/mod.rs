@@ -130,7 +130,8 @@ impl StorageEngine {
 
         for segments in compressed_segments {
             self.compressed_data_manager
-                .insert_compressed_segment(&model_table.name, segments);
+                .insert_compressed_segment(&model_table.name, segments)
+                .map_err(|error| error.to_string())?;
         }
 
         Ok(())
@@ -144,8 +145,10 @@ impl StorageEngine {
         self.uncompressed_data_manager.get_finished_data_buffer()
     }
 
-    /// Flush all of the data the [`StorageEngine`] is currently storing in memory to disk.
+    /// Flush all of the data the [`StorageEngine`] is currently storing in memory to disk. If all
+    /// of the data is successfully flushed to disk, return [`Ok`], otherwise return [`IOError`].
     pub fn flush(&mut self) -> Result<(), String> {
+        // TODO: When the compression component is changed, just flush before managers.
         // Flush UncompressedDataManager.
         let compressed_buffers = self.uncompressed_data_manager.flush();
         let hash_to_table_name = self
@@ -160,7 +163,8 @@ impl StorageEngine {
             // unwrap() is safe as new univariate ids have been added to the metadata database.
             let table_name = hash_to_table_name.get(&tag_hash).unwrap();
             self.compressed_data_manager
-                .insert_compressed_segment(table_name, segment);
+                .insert_compressed_segment(table_name, segment)
+                .map_err(|error| error.to_string())?;
         }
 
         // Flush CompressedDataManager.

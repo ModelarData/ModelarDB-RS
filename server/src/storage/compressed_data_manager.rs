@@ -71,12 +71,13 @@ impl CompressedDataManager {
     }
 
     /// Insert the `compressed_segments` into the in-memory compressed data buffer for the table
-    /// with `table_name`.
+    /// with `table_name`. If `compressed_segments` is saved successfully, return [`Ok`], otherwise
+    /// return [`IOError`].
     pub(super) fn insert_compressed_segment(
         &mut self,
         table_name: &str,
         compressed_segments: RecordBatch,
-    ) {
+    ) -> Result<(), IOError> {
         let _span = debug_span!(
             "insert_compressed_segment",
             table_name = table_name.to_owned()
@@ -112,8 +113,10 @@ impl CompressedDataManager {
 
         // If the reserved memory limit is exceeded, save compressed data to disk.
         if self.compressed_remaining_memory_in_bytes < 0 {
-            self.save_compressed_data_to_free_memory();
+            self.save_compressed_data_to_free_memory()?;
         }
+
+        Ok(())
     }
 
     /// Return an [`ObjectMeta`] for each compressed file in `query_data_folder` that belongs to the
@@ -137,7 +140,8 @@ impl CompressedDataManager {
                 .unwrap();
             self.compressed_queue.remove(data_index);
 
-            self.save_compressed_data(&table_name);
+            self.save_compressed_data(&table_name)
+                .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
         }
 
         // List all files in query_data_folder for the table with table_name.
@@ -175,14 +179,16 @@ impl CompressedDataManager {
     }
 
     /// Save [`CompressedDataBuffers`](CompressedDataBuffer) to disk until the reserved memory limit
-    /// is no longer exceeded.
-    fn save_compressed_data_to_free_memory(&mut self) {
+    /// is no longer exceeded. If all of the data is saved successfully, return [`Ok`], otherwise
+    /// return [`IOError`].
+    fn save_compressed_data_to_free_memory(&mut self) -> Result<(), IOError> {
         debug!("Out of memory for compressed data. Saving compressed data to disk.");
 
         while self.compressed_remaining_memory_in_bytes < 0 {
             let table_name = self.compressed_queue.pop_front().unwrap();
-            self.save_compressed_data(&table_name);
+            self.save_compressed_data(&table_name)?;
         }
+        Ok(())
     }
 
     /// Flush the data that the [`CompressedDataManager`] is currently managing.

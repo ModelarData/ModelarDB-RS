@@ -173,11 +173,7 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
         // Since the schema is constant and the columns are always the same length, creating the
         // RecordBatch should never fail and unwrap is therefore safe to use.
         let batch = self.get_record_batch(uncompressed_schema).unwrap();
-        Ok(UncompressedOnDiskDataBuffer::new(
-            self.univariate_id,
-            local_data_folder,
-            batch,
-        ))
+        UncompressedOnDiskDataBuffer::new(self.univariate_id, local_data_folder, batch)
     }
 }
 
@@ -192,30 +188,32 @@ pub struct UncompressedOnDiskDataBuffer {
 
 impl UncompressedOnDiskDataBuffer {
     /// Spill the in-memory `data_points` to an Apache Parquet file, and return a
-    /// [`UncompressedOnDiskDataBuffer`] containing the `univariate_id` and a file path.
+    /// [`UncompressedOnDiskDataBuffer`] containing the `univariate_id` and a file path. If the
+    /// Apache Paruqet file is written successfully, return [`UncompressedOnDiskDataBuffer`],
+    /// otherwise return [`IOError`].
     pub(super) fn new(
         univariate_id: u64,
         local_data_folder: &Path,
         data_points: RecordBatch,
-    ) -> Self {
+    ) -> Result<Self, IOError> {
         let local_file_path = local_data_folder
             .join("uncompressed")
             .join(univariate_id.to_string());
 
         // Create the folder structure if it does not already exist.
-        fs::create_dir_all(local_file_path.as_path());
+        fs::create_dir_all(local_file_path.as_path())?;
 
         // Create a path that uses the first timestamp as the filename.
         let timestamps = get_array!(data_points, 0, TimestampArray);
         let file_name = format!("{}.parquet", timestamps.value(0));
         let file_path = local_file_path.join(file_name);
 
-        StorageEngine::write_batch_to_apache_parquet_file(data_points, file_path.as_path());
+        StorageEngine::write_batch_to_apache_parquet_file(data_points, file_path.as_path())?;
 
-        Self {
+        Ok(Self {
             univariate_id,
             file_path,
-        }
+        })
     }
 }
 
