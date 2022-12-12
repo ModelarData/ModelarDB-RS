@@ -369,10 +369,12 @@ mod tests {
         let segment = test_util::get_compressed_segments_record_batch();
         storage_engine
             .compressed_data_manager
-            .insert_compressed_segment(TABLE_NAME, segment.clone());
+            .insert_compressed_segment(TABLE_NAME, segment.clone())
+            .unwrap();
         storage_engine
             .compressed_data_manager
-            .insert_compressed_segment(TABLE_NAME, segment);
+            .insert_compressed_segment(TABLE_NAME, segment)
+            .unwrap();
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
@@ -496,14 +498,16 @@ mod tests {
             test_util::get_compressed_segments_record_batch_with_time(1000 + start_time);
         storage_engine
             .compressed_data_manager
-            .insert_compressed_segment(TABLE_NAME, segment_1.clone());
+            .insert_compressed_segment(TABLE_NAME, segment_1.clone())
+            .unwrap();
         storage_engine.compressed_data_manager.flush().unwrap();
 
         let segment_2 =
             test_util::get_compressed_segments_record_batch_with_time(2000 + start_time);
         storage_engine
             .compressed_data_manager
-            .insert_compressed_segment(TABLE_NAME, segment_2.clone());
+            .insert_compressed_segment(TABLE_NAME, segment_2.clone())
+            .unwrap();
         storage_engine.compressed_data_manager.flush().unwrap();
 
         (segment_1, segment_2)
@@ -516,7 +520,8 @@ mod tests {
         let segment = test_util::get_compressed_segments_record_batch();
         storage_engine
             .compressed_data_manager
-            .insert_compressed_segment(TABLE_NAME, segment);
+            .insert_compressed_segment(TABLE_NAME, segment)
+            .unwrap();
 
         let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
         let result = storage_engine.get_compressed_files(

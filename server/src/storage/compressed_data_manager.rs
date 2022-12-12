@@ -281,7 +281,9 @@ mod tests {
         let segment = test_util::get_compressed_segments_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        data_manager.insert_compressed_segment(TABLE_NAME, segment);
+        data_manager
+            .insert_compressed_segment(TABLE_NAME, segment)
+            .unwrap();
 
         assert!(data_manager.compressed_data.contains_key(TABLE_NAME));
         assert_eq!(
@@ -303,14 +305,18 @@ mod tests {
         let segment = test_util::get_compressed_segments_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        data_manager.insert_compressed_segment(TABLE_NAME, segment.clone());
+        data_manager
+            .insert_compressed_segment(TABLE_NAME, segment.clone())
+            .unwrap();
         let previous_size = data_manager
             .compressed_data
             .get(TABLE_NAME)
             .unwrap()
             .size_in_bytes;
 
-        data_manager.insert_compressed_segment(TABLE_NAME, segment);
+        data_manager
+            .insert_compressed_segment(TABLE_NAME, segment)
+            .unwrap();
 
         assert!(
             data_manager
@@ -331,7 +337,9 @@ mod tests {
         // Insert compressed data into the storage engine until data is saved to Apache Parquet.
         let max_compressed_segments = reserved_memory / test_util::COMPRESSED_SEGMENTS_SIZE;
         for _ in 0..max_compressed_segments + 1 {
-            data_manager.insert_compressed_segment(TABLE_NAME, segment.clone());
+            data_manager
+                .insert_compressed_segment(TABLE_NAME, segment.clone())
+                .unwrap();
         }
 
         // The compressed data should be saved to the table_name folder in the compressed folder.
@@ -346,7 +354,9 @@ mod tests {
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
         let reserved_memory = data_manager.compressed_remaining_memory_in_bytes;
 
-        data_manager.insert_compressed_segment(TABLE_NAME, segment);
+        data_manager
+            .insert_compressed_segment(TABLE_NAME, segment)
+            .unwrap();
 
         assert!(reserved_memory > data_manager.compressed_remaining_memory_in_bytes);
     }
@@ -356,11 +366,13 @@ mod tests {
         let segment = test_util::get_compressed_segments_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        data_manager.insert_compressed_segment(TABLE_NAME, segment.clone());
+        data_manager
+            .insert_compressed_segment(TABLE_NAME, segment.clone())
+            .unwrap();
 
         // Set the remaining memory to a negative value since data is only saved when out of memory.
         data_manager.compressed_remaining_memory_in_bytes = -1;
-        data_manager.save_compressed_data_to_free_memory();
+        data_manager.save_compressed_data_to_free_memory().unwrap();
 
         assert!(-1 < data_manager.compressed_remaining_memory_in_bytes);
     }
@@ -388,7 +400,9 @@ mod tests {
         let segment = test_util::get_compressed_segments_record_batch();
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        data_manager.insert_compressed_segment(TABLE_NAME, segment.clone());
+        data_manager
+            .insert_compressed_segment(TABLE_NAME, segment.clone())
+            .unwrap();
         data_manager.save_compressed_data(TABLE_NAME).unwrap();
 
         let object_store: Arc<dyn ObjectStore> =
@@ -416,12 +430,16 @@ mod tests {
         let segment = test_util::get_compressed_segments_record_batch_with_time(1000);
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        data_manager.insert_compressed_segment(TABLE_NAME, segment);
+        data_manager
+            .insert_compressed_segment(TABLE_NAME, segment)
+            .unwrap();
         data_manager.save_compressed_data(TABLE_NAME).unwrap();
 
         // This second inserted segment should be saved when the compressed files are retrieved.
         let segment_2 = test_util::get_compressed_segments_record_batch_with_time(2000);
-        data_manager.insert_compressed_segment(TABLE_NAME, segment_2.clone());
+        data_manager
+            .insert_compressed_segment(TABLE_NAME, segment_2.clone())
+            .unwrap();
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
@@ -438,7 +456,9 @@ mod tests {
         let segment = test_util::get_compressed_segments_record_batch();
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        data_manager.insert_compressed_segment(TABLE_NAME, segment);
+        data_manager
+            .insert_compressed_segment(TABLE_NAME, segment)
+            .unwrap();
         data_manager.save_compressed_data(TABLE_NAME).unwrap();
 
         let object_store: Arc<dyn ObjectStore> =
