@@ -1,4 +1,4 @@
-name: Cargo Build and Test
+name: Cargo Build, Lint, and Test
 
 on:
   push:
@@ -10,13 +10,16 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  cargo_build_and_test:
-    name: Cargo Build and Test
+  cargo_build_lint_and_test:
+    name: Cargo Build, Lint, and Test
 
     runs-on: ${{ matrix.operating-system }}
     strategy:
       matrix:
         operating-system: [ubuntu-latest, macos-latest, windows-latest]
+
+    env:
+      RUSTFLAGS: -D warnings
 
     steps:
     - uses: actions/checkout@v3
@@ -24,5 +27,7 @@ jobs:
       run: rustup update
     - name: Cargo Build
       run: cargo build --verbose
+    - name: Cargo Clippy
+      run: cargo clippy --verbose
     - name: Cargo Test
       run: cargo test --verbose
