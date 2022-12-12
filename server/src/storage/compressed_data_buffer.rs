@@ -72,13 +72,12 @@ impl CompressedDataBuffer {
             compute::concat_batches(&compressed_schema.0, &*self.compressed_segments).unwrap();
 
         // Create the folder structure if it does not already exist.
-        let complete_folder_path = folder_path.join("compressed");
-        fs::create_dir_all(complete_folder_path.as_path())?;
+        fs::create_dir_all(folder_path)?;
 
         // Create a path that uses the first start timestamp and the last end timestamp as the file
         // name to better support pruning data that is too new or too old when executing a query.
         let file_name = storage::create_time_range_file_name(&batch);
-        let file_path = complete_folder_path.join(file_name);
+        let file_path = folder_path.join(file_name);
         StorageEngine::write_batch_to_apache_parquet_file(batch, file_path.as_path())
             .map_err(|error| IOError::new(Other, error.to_string()))?;
 
@@ -139,10 +138,7 @@ mod tests {
 
         // Data should be saved to a file with the first start time and last end time as the file
         // name.
-        let file_path = format!(
-            "compressed/{}",
-            storage::create_time_range_file_name(&segment)
-        );
+        let file_path = storage::create_time_range_file_name(&segment);
         assert!(temp_dir.path().join(file_path).exists());
     }
 

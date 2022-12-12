@@ -141,7 +141,7 @@ impl CompressedDataManager {
         }
 
         // List all files in query_data_folder for the table with table_name.
-        let table_path = ObjectStorePath::from(format!("{}/compressed/", table_name));
+        let table_path = ObjectStorePath::from(format!("compressed/{}/", table_name));
         let table_files = query_data_folder
             .list(Some(&table_path))
             .await
@@ -207,7 +207,10 @@ impl CompressedDataManager {
         debug!("Saving compressed time series to disk.");
 
         let mut compressed_data_buffer = self.compressed_data.remove(table_name).unwrap();
-        let folder_path = self.data_folder_path.join(table_name.to_owned());
+        let folder_path = self
+            .data_folder_path
+            .join("compressed")
+            .join(table_name.to_owned());
 
         compressed_data_buffer
             .save_to_apache_parquet(folder_path.as_path(), &self.compressed_schema)?;
@@ -321,7 +324,7 @@ mod tests {
 
         // The compressed data should be saved to the "compressed" folder for the table.
         let data_folder_path = Path::new(&data_manager.data_folder_path);
-        let compressed_path = data_folder_path.join(format!("{}/compressed", TABLE_NAME));
+        let compressed_path = data_folder_path.join(format!("compressed/{}", TABLE_NAME));
         assert_eq!(compressed_path.read_dir().unwrap().count(), 1);
     }
 
@@ -388,7 +391,7 @@ mod tests {
 
         // The file should have the first start time and the last end time as the file name.
         let file_name = storage::create_time_range_file_name(&segment);
-        let expected_file_path = format!("{}/compressed/{}", TABLE_NAME, file_name);
+        let expected_file_path = format!("compressed/{}/{}", TABLE_NAME, file_name);
 
         assert_eq!(
             files.get(0).unwrap().location,

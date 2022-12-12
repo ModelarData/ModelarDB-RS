@@ -170,14 +170,12 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
         folder_path: &Path,
         uncompressed_schema: &UncompressedSchema,
     ) -> Result<UncompressedOnDiskDataBuffer, IOError> {
-        let folder_path = folder_path.join(self.univariate_id.to_string());
-
         // Since the schema is constant and the columns are always the same length, creating the
         // RecordBatch should never fail and unwrap is therefore safe to use.
         let batch = self.get_record_batch(uncompressed_schema).unwrap();
         Ok(UncompressedOnDiskDataBuffer::new(
             self.univariate_id,
-            folder_path.as_path(),
+            folder_path,
             batch,
         ))
     }
@@ -196,7 +194,9 @@ impl UncompressedOnDiskDataBuffer {
     /// Spill the in-memory `data_points` to an Apache Parquet file, and return a
     /// [`UncompressedOnDiskDataBuffer`] containing the `univariate_id` and a file path.
     pub(super) fn new(univariate_id: u64, folder_path: &Path, data_points: RecordBatch) -> Self {
-        let complete_folder_path = folder_path.join("uncompressed");
+        let complete_folder_path = folder_path
+            .join("uncompressed")
+            .join(univariate_id.to_string());
         fs::create_dir_all(complete_folder_path.as_path());
 
         // Create a path that uses the first timestamp as the filename.
@@ -345,7 +345,7 @@ mod tests {
             .spill_to_apache_parquet(temp_dir.path(), &test_util::get_uncompressed_schema())
             .unwrap();
 
-        let uncompressed_path = temp_dir.path().join("1/uncompressed");
+        let uncompressed_path = temp_dir.path().join("uncompressed/1");
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
     }
 
@@ -360,7 +360,7 @@ mod tests {
             .spill_to_apache_parquet(temp_dir.path(), &test_util::get_uncompressed_schema())
             .unwrap();
 
-        let uncompressed_path = temp_dir.path().join("1/uncompressed");
+        let uncompressed_path = temp_dir.path().join("uncompressed/1");
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
     }
 

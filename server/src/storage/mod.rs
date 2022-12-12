@@ -404,7 +404,7 @@ mod tests {
 
         // The path to the returned compressed file should contain the table name.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert!(file_path.contains("table/compressed"));
+        assert!(file_path.contains("compressed/table"));
     }
 
     #[tokio::test]
@@ -432,7 +432,7 @@ mod tests {
 
         // The path to the returned compressed file should contain the table name.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert!(file_path.contains("table/compressed"));
+        assert!(file_path.contains("compressed/table"));
     }
 
     /// Create and insert two compressed segments with a 1 second time difference offset by

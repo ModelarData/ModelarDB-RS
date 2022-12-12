@@ -528,7 +528,7 @@ mod tests {
 
         // The UncompressedDataBuffer should be spilled to the "uncompressed" folder under the id.
         let data_folder_path = Path::new(&data_manager.data_folder_path);
-        let uncompressed_path = data_folder_path.join(format!("{}/uncompressed", UNIVARIATE_ID));
+        let uncompressed_path = data_folder_path.join(format!("uncompressed/{}", UNIVARIATE_ID));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1);
     }
 
@@ -556,7 +556,7 @@ mod tests {
 
         // The finished buffers should be spilled to the "uncompressed" folder for the table.
         let data_folder_path = Path::new(&data_manager.data_folder_path);
-        let uncompressed_path = data_folder_path.join(format!("{}/uncompressed", UNIVARIATE_ID));
+        let uncompressed_path = data_folder_path.join(format!("uncompressed/{}", UNIVARIATE_ID));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 2);
     }
 
