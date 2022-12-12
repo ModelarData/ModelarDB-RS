@@ -233,7 +233,7 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Ensure the folder for storing the table data exists.
         let metadata_manager = &self.context.metadata_manager;
-        let folder_path = metadata_manager.get_data_folder_path().join(&table_name);
+        let folder_path = metadata_manager.get_local_data_folder().join(&table_name);
         fs::create_dir(&folder_path)?;
 
         // Create an empty Apache Parquet file to save the schema.

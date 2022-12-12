@@ -77,14 +77,14 @@ pub struct MetadataManager {
 
 impl MetadataManager {
     /// Return [`MetadataManager`] if a connection can be made to the metadata database in
-    /// `data_folder_path`, otherwise [`Error`](rusqlite::Error) is returned.
-    pub fn try_new(data_folder_path: &Path) -> Result<Self> {
-        if !Self::is_path_a_data_folder(data_folder_path) {
+    /// `local_data_folder`, otherwise [`Error`](rusqlite::Error) is returned.
+    pub fn try_new(local_data_folder: &Path) -> Result<Self> {
+        if !Self::is_path_a_data_folder(local_data_folder) {
             warn!("The data folder is not empty and does not contain data from ModelarDB");
         }
 
         // Compute the path to the metadata database.
-        let metadata_database_path = data_folder_path.join(METADATA_DATABASE_NAME);
+        let metadata_database_path = local_data_folder.join(METADATA_DATABASE_NAME);
 
         // Initialize the schema for record batches containing data points.
         let uncompressed_schema = UncompressedSchema(Arc::new(Schema::new(vec![
@@ -185,8 +185,8 @@ impl MetadataManager {
         Ok(())
     }
 
-    /// Return the path of the data folder.
-    pub fn get_data_folder_path(&self) -> &Path {
+    /// Return the path of the local data folder.
+    pub fn get_local_data_folder(&self) -> &Path {
         // unwrap() is safe as metadata_database_path is created by self.
         self.metadata_database_path.parent().unwrap()
     }
@@ -464,7 +464,7 @@ impl MetadataManager {
         let name = row.get::<usize, String>(0)?;
 
         // Compute the path to the folder containing data for the table.
-        let table_folder_path = self.get_data_folder_path().join(&name);
+        let table_folder_path = self.get_local_data_folder().join(&name);
         let table_folder = table_folder_path
             .to_str()
             .ok_or_else(|| format!("Path for table is not UTF-8: '{}'", name))?;
@@ -775,7 +775,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_path = temp_dir.path();
         let metadata_manager = test_util::get_test_metadata_manager(temp_dir_path);
-        assert_eq!(temp_dir_path, metadata_manager.get_data_folder_path());
+        assert_eq!(temp_dir_path, metadata_manager.get_local_data_folder());
     }
 
     #[test]
@@ -817,7 +817,7 @@ mod tests {
 
         // It should also be saved in the metadata database table.
         let database_path = metadata_manager
-            .get_data_folder_path()
+            .get_local_data_folder()
             .join(METADATA_DATABASE_NAME);
         let connection = Connection::open(database_path).unwrap();
 

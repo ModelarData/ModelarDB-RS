@@ -39,7 +39,7 @@ pub(super) struct CompressedDataManager {
     /// Component that transfers saved compressed data to the remote data folder when it is necessary.
     pub(super) data_transfer: Option<DataTransfer>,
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
-    data_folder_path: PathBuf,
+    local_data_folder: PathBuf,
     /// The compressed segments before they are saved to persistent storage.
     compressed_data: HashMap<String, CompressedDataBuffer>,
     /// FIFO queue of table names referring to [`CompressedDataBuffer`] that can be saved to
@@ -56,13 +56,13 @@ pub(super) struct CompressedDataManager {
 impl CompressedDataManager {
     pub(super) fn new(
         data_transfer: Option<DataTransfer>,
-        data_folder_path: PathBuf,
+        local_data_folder: PathBuf,
         compressed_reserved_memory_in_bytes: usize,
         compressed_schema: CompressedSchema,
     ) -> Self {
         Self {
             data_transfer,
-            data_folder_path,
+            local_data_folder,
             compressed_data: HashMap::new(),
             compressed_queue: VecDeque::new(),
             compressed_remaining_memory_in_bytes: compressed_reserved_memory_in_bytes as isize,
@@ -208,7 +208,7 @@ impl CompressedDataManager {
 
         let mut compressed_data_buffer = self.compressed_data.remove(table_name).unwrap();
         let folder_path = self
-            .data_folder_path
+            .local_data_folder
             .join("compressed")
             .join(table_name.to_owned());
 
@@ -322,9 +322,9 @@ mod tests {
             data_manager.insert_compressed_segment(TABLE_NAME, segment.clone());
         }
 
-        // The compressed data should be saved to the "compressed" folder for the table.
-        let data_folder_path = Path::new(&data_manager.data_folder_path);
-        let compressed_path = data_folder_path.join(format!("compressed/{}", TABLE_NAME));
+        // The compressed data should be saved to the table_name folder in the compressed folder.
+        let local_data_folder = Path::new(&data_manager.local_data_folder);
+        let compressed_path = local_data_folder.join(format!("compressed/{}", TABLE_NAME));
         assert_eq!(compressed_path.read_dir().unwrap().count(), 1);
     }
 
@@ -358,12 +358,12 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let metadata_manager = metadata_test_util::get_test_metadata_manager(temp_dir.path());
 
-        let data_folder_path = temp_dir.path().to_path_buf();
+        let local_data_folder = temp_dir.path().to_path_buf();
         (
             temp_dir,
             CompressedDataManager::new(
                 None,
-                data_folder_path,
+                local_data_folder,
                 metadata_manager.compressed_reserved_memory_in_bytes,
                 metadata_manager.get_compressed_schema(),
             ),

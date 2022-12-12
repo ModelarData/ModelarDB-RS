@@ -60,7 +60,7 @@ pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
     /// implement spilling to Apache Parquet, with already spilled segments returning [`IOError`].
     fn spill_to_apache_parquet(
         &mut self,
-        folder_path: &Path,
+        local_data_folder: &Path,
         uncompressed_schema: &UncompressedSchema,
     ) -> Result<UncompressedOnDiskDataBuffer, IOError>;
 }
@@ -167,7 +167,7 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
     /// the [`UncompressedOnDiskDataBuffer`] when finished.
     fn spill_to_apache_parquet(
         &mut self,
-        folder_path: &Path,
+        local_data_folder: &Path,
         uncompressed_schema: &UncompressedSchema,
     ) -> Result<UncompressedOnDiskDataBuffer, IOError> {
         // Since the schema is constant and the columns are always the same length, creating the
@@ -175,7 +175,7 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
         let batch = self.get_record_batch(uncompressed_schema).unwrap();
         Ok(UncompressedOnDiskDataBuffer::new(
             self.univariate_id,
-            folder_path,
+            local_data_folder,
             batch,
         ))
     }
@@ -193,16 +193,22 @@ pub struct UncompressedOnDiskDataBuffer {
 impl UncompressedOnDiskDataBuffer {
     /// Spill the in-memory `data_points` to an Apache Parquet file, and return a
     /// [`UncompressedOnDiskDataBuffer`] containing the `univariate_id` and a file path.
-    pub(super) fn new(univariate_id: u64, folder_path: &Path, data_points: RecordBatch) -> Self {
-        let complete_folder_path = folder_path
+    pub(super) fn new(
+        univariate_id: u64,
+        local_data_folder: &Path,
+        data_points: RecordBatch,
+    ) -> Self {
+        let local_file_path = local_data_folder
             .join("uncompressed")
             .join(univariate_id.to_string());
-        fs::create_dir_all(complete_folder_path.as_path());
+
+        // Create the folder structure if it does not already exist.
+        fs::create_dir_all(local_file_path.as_path());
 
         // Create a path that uses the first timestamp as the filename.
         let timestamps = get_array!(data_points, 0, TimestampArray);
         let file_name = format!("{}.parquet", timestamps.value(0));
-        let file_path = complete_folder_path.join(file_name);
+        let file_path = local_file_path.join(file_name);
 
         StorageEngine::write_batch_to_apache_parquet_file(data_points, file_path.as_path());
 
@@ -248,7 +254,7 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
     /// Since the buffer has already been spilled, return [`IOError`].
     fn spill_to_apache_parquet(
         &mut self,
-        _folder_path: &Path,
+        _local_data_folder: &Path,
         _uncompressed_schema: &UncompressedSchema,
     ) -> Result<UncompressedOnDiskDataBuffer, IOError> {
         Err(IOError::new(

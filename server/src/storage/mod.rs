@@ -87,12 +87,12 @@ pub struct StorageEngine {
 impl StorageEngine {
     pub fn new(
         data_transfer: Option<DataTransfer>,
-        data_folder_path: PathBuf,
+        local_data_folder: PathBuf,
         metadata_manager: MetadataManager,
         compress_directly: bool,
     ) -> Self {
         let uncompressed_data_manager = UncompressedDataManager::new(
-            data_folder_path.clone(),
+            local_data_folder.clone(),
             metadata_manager.uncompressed_reserved_memory_in_bytes,
             metadata_manager.get_uncompressed_schema(),
             metadata_manager.get_compressed_schema(),
@@ -101,7 +101,7 @@ impl StorageEngine {
 
         let compressed_data_manager = CompressedDataManager::new(
             data_transfer,
-            data_folder_path,
+            local_data_folder,
             metadata_manager.compressed_reserved_memory_in_bytes,
             metadata_manager.get_compressed_schema(),
         );
@@ -476,17 +476,13 @@ mod tests {
     /// Create a [`StorageEngine`] with a folder that is deleted once the test is finished.
     fn create_storage_engine() -> (TempDir, StorageEngine) {
         let temp_dir = tempdir().unwrap();
-        let data_folder_path_buf = temp_dir.path().to_path_buf();
-        let data_folder_path = data_folder_path_buf.clone();
+        let local_data_folder = temp_dir.path().to_path_buf();
+        let metadata_manager =
+            metadata_test_util::get_test_metadata_manager(local_data_folder.as_path());
 
         (
             temp_dir,
-            StorageEngine::new(
-                None,
-                data_folder_path_buf,
-                metadata_test_util::get_test_metadata_manager(data_folder_path.as_path()),
-                false,
-            ),
+            StorageEngine::new(None, local_data_folder, metadata_manager, false),
         )
     }
 

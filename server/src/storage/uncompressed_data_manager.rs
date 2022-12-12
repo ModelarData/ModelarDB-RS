@@ -37,7 +37,7 @@ use crate::{compression, get_array};
 /// files. When a uncompressed data buffer is finished the data is made available for compression.
 pub(super) struct UncompressedDataManager {
     /// Path to the folder containing all uncompressed data managed by the [`StorageEngine`].
-    data_folder_path: PathBuf,
+    local_data_folder: PathBuf,
     /// The [`UncompressedDataBuffers`](UncompressedDataBuffer) currently being filled with ingested
     /// data points.
     active_uncompressed_data_buffers: HashMap<u64, UncompressedInMemoryDataBuffer>,
@@ -58,14 +58,14 @@ pub(super) struct UncompressedDataManager {
 
 impl UncompressedDataManager {
     pub(super) fn new(
-        data_folder_path: PathBuf,
+        local_data_folder: PathBuf,
         uncompressed_reserved_memory_in_bytes: usize,
         uncompressed_schema: UncompressedSchema,
         compressed_schema: CompressedSchema,
         compress_directly: bool,
     ) -> Self {
         Self {
-            data_folder_path,
+            local_data_folder,
             active_uncompressed_data_buffers: HashMap::new(),
             finished_uncompressed_data_buffers: VecDeque::new(),
             uncompressed_remaining_memory_in_bytes: uncompressed_reserved_memory_in_bytes,
@@ -318,9 +318,10 @@ impl UncompressedDataManager {
 
         // Iterate through the finished buffers to find a buffer that is backed by memory.
         for finished in self.finished_uncompressed_data_buffers.iter_mut() {
-            if let Ok(uncompressed_on_disk_data_buffer) = finished
-                .spill_to_apache_parquet(self.data_folder_path.as_path(), &self.uncompressed_schema)
-            {
+            if let Ok(uncompressed_on_disk_data_buffer) = finished.spill_to_apache_parquet(
+                self.local_data_folder.as_path(),
+                &self.uncompressed_schema,
+            ) {
                 // Add the size of the in-memory data buffer back to the remaining reserved bytes.
                 self.uncompressed_remaining_memory_in_bytes +=
                     UncompressedInMemoryDataBuffer::get_memory_size();
@@ -526,9 +527,9 @@ mod tests {
             .unwrap();
         assert_eq!(first_finished.get_memory_size(), 0);
 
-        // The UncompressedDataBuffer should be spilled to the "uncompressed" folder under the id.
-        let data_folder_path = Path::new(&data_manager.data_folder_path);
-        let uncompressed_path = data_folder_path.join(format!("uncompressed/{}", UNIVARIATE_ID));
+        // The UncompressedDataBuffer should be spilled to univariate id in the uncompressed folder.
+        let local_data_folder = Path::new(&data_manager.local_data_folder);
+        let uncompressed_path = local_data_folder.join(format!("uncompressed/{}", UNIVARIATE_ID));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1);
     }
 
@@ -554,9 +555,9 @@ mod tests {
             .unwrap();
         assert_eq!(second_finished.get_memory_size(), 0);
 
-        // The finished buffers should be spilled to the "uncompressed" folder for the table.
-        let data_folder_path = Path::new(&data_manager.data_folder_path);
-        let uncompressed_path = data_folder_path.join(format!("uncompressed/{}", UNIVARIATE_ID));
+        // The finished buffers should be spilled to univariate id in the uncompressed folder.
+        let local_data_folder = Path::new(&data_manager.local_data_folder);
+        let uncompressed_path = local_data_folder.join(format!("uncompressed/{}", UNIVARIATE_ID));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 2);
     }
 
@@ -657,10 +658,10 @@ mod tests {
     fn create_managers(path: &Path) -> (MetadataManager, UncompressedDataManager) {
         let metadata_manager = test_util::get_test_metadata_manager(path);
 
-        let data_folder_path = metadata_manager.get_data_folder_path();
+        let local_data_folder = metadata_manager.get_local_data_folder();
 
         let uncompressed_data_manager = UncompressedDataManager::new(
-            data_folder_path.to_owned(),
+            local_data_folder.to_owned(),
             metadata_manager.uncompressed_reserved_memory_in_bytes,
             metadata_manager.get_uncompressed_schema(),
             metadata_manager.get_compressed_schema(),
