@@ -200,7 +200,7 @@ impl DataTransfer {
         arrow_writer.close()?;
 
         // Transfer the combined RecordBatch to the remote object store.
-        let file_name = storage::create_time_range_file_name(&combined);
+        let file_name = storage::create_time_and_value_range_file_name(&combined);
         let path = format!("{}/compressed/{}", table_name, file_name).into();
         self.remote_data_folder_object_store
             .put(&path, Bytes::from(buf.into_inner()))
@@ -454,7 +454,7 @@ mod tests {
         // The transferred file should have a time range file name that matches the compressed data.
         let target_path = target
             .path()
-            .join(format!("{}/compressed/0-3.parquet", TABLE_NAME));
+            .join(format!("{}/compressed/0-3-5.2-34.2.parquet", TABLE_NAME));
         assert!(target_path.exists());
 
         // The file should have 3 * number_of_files rows since each compressed file has 3 rows.

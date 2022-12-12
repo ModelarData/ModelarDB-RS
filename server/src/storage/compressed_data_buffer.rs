@@ -74,9 +74,11 @@ impl CompressedDataBuffer {
         // Create the folder structure if it does not already exist.
         fs::create_dir_all(folder_path)?;
 
-        // Create a path that uses the first start timestamp and the last end timestamp as the file
-        // name to better support pruning data that is too new or too old when executing a query.
-        let file_name = storage::create_time_range_file_name(&batch);
+        // Create a new file that includes the start timestamp of the first segment in batch, the
+        // end timestamp of the last segment in batch, the minium value stored in batch, and the
+        // maximum value stored in batch as the file name to efficiently pruning files that only
+        // contains data points with timestamps and values that is not relevant for a given query.
+        let file_name = storage::create_time_and_value_range_file_name(&batch);
         let file_path = folder_path.join(file_name);
         StorageEngine::write_batch_to_apache_parquet_file(batch, file_path.as_path())
             .map_err(|error| IOError::new(Other, error.to_string()))?;
@@ -138,7 +140,7 @@ mod tests {
 
         // Data should be saved to a file with the first start time and last end time as the file
         // name.
-        let file_path = storage::create_time_range_file_name(&segment);
+        let file_path = storage::create_time_and_value_range_file_name(&segment);
         assert!(temp_dir.path().join(file_path).exists());
     }
 

@@ -54,7 +54,7 @@ use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::models;
 use crate::storage;
 use crate::types::{
-    ArrowUnivariateId, ArrowTimestamp, ArrowValue, CompressedSchema, TimestampArray,
+    ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedSchema, TimestampArray,
     TimestampBuilder, ValueArray, ValueBuilder,
 };
 use crate::Context;
@@ -229,10 +229,11 @@ impl TableProvider for ModelTable {
                 .object_store(&self.object_store_url)
                 .unwrap();
 
+            // TODO: extract predicates on time and value and push them to the storage engine..
             // unwrap() is safe to use as get_compressed_files() only fails if a
             // non-existing hash is passed or if end time is before start time.
             storage_engine
-                .get_compressed_files(table_name, None, None, &query_object_store)
+                .get_compressed_files(table_name, None, None, None, None, &query_object_store)
                 .await
                 .unwrap()
         };
@@ -601,9 +602,9 @@ impl RecordBatchStream for GridStream {
 mod tests {
     use super::*;
 
+    use datafusion::arrow::datatypes::DataType;
     use datafusion::prelude::Expr;
     use datafusion_expr::lit;
-    use datafusion::arrow::datatypes::DataType;
 
     use crate::metadata::test_util;
 

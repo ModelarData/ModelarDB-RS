@@ -31,6 +31,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -50,7 +51,7 @@ use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::uncompressed_data_buffer::UncompressedDataBuffer;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
-use crate::types::{Timestamp, TimestampArray};
+use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
 
 // TODO: Look into custom errors for all errors in storage engine.
 
@@ -184,13 +185,16 @@ impl StorageEngine {
     }
 
     /// Retrieve the compressed files that correspond to the table with `table_name` within the
-    /// given range of time. If a table with `table_name` does not exist or the end time is before
-    /// the start time, [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned.
+    /// given range of time and value. If a table with `table_name` does not exist, the end time is
+    /// before the start time, or the max value is larger than the min value,
+    /// [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned.
     pub async fn get_compressed_files(
         &mut self,
         table_name: &str,
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>,
+        min_value: Option<Value>,
+        max_value: Option<Value>,
         query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
         let start_time = start_time.unwrap_or(0);
@@ -203,22 +207,34 @@ impl StorageEngine {
             )));
         };
 
+        let min_value = min_value.unwrap_or(Value::NEG_INFINITY);
+        let max_value = max_value.unwrap_or(Value::INFINITY);
+
+        if min_value > max_value {
+            return Err(ModelarDbError::DataRetrievalError(format!(
+                "Min value '{}' cannot be larger than max value '{}'.",
+                min_value, max_value
+            )));
+        };
+
         // List the files storing the compressed data for the table with table_name.
         let compressed_files = self
             .compressed_data_manager
             .save_and_get_saved_compressed_files(table_name, &query_data_folder)
             .await?;
 
-        // TODO: prune by time in save_and_get_saved_compressed_files to perform the action async?
-        // Prune the files based on the time range the file covers.
+        // TODO: prune by time and value in save_and_get_saved_compressed_files to perform the action async?
+        // Prune the files based on the time and value range the contains compressed segments for.
         let pruned_compressed_files = compressed_files
             .into_iter()
             .filter(|object_meta| {
                 let last_file_part = object_meta.location.parts().last().unwrap();
-                compressed_data_manager::is_compressed_file_within_time_range(
+                compressed_data_manager::is_compressed_file_within_time_and_value_range(
                     last_file_part.as_ref(),
                     start_time,
                     end_time,
+                    min_value,
+                    max_value,
                 )
             })
             .collect();
@@ -300,15 +316,26 @@ pub(self) fn create_apache_arrow_writer<W: Write>(
     Ok(writer)
 }
 
-/// Create a file name that uses the first start timestamp and the last end timestamp from `batch`.
-pub(self) fn create_time_range_file_name(batch: &RecordBatch) -> String {
+/// Create a file name that includes the start timestamp of the first segment in `batch`, the end
+/// timestamp of the last segment in `batch`, the minium value stored in `batch`, and the maximum
+/// value stored in `batch`.
+pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> String {
     let start_times = get_array!(batch, 2, TimestampArray);
     let end_times = get_array!(batch, 3, TimestampArray);
 
+    let min_values = get_array!(batch, 5, ValueArray);
+    let max_values = get_array!(batch, 6, ValueArray);
+
+    // unwrap() is safe as None is only returned if all of the values are None.
+    let min_value = aggregate::min(min_values).unwrap();
+    let max_value = aggregate::max(max_values).unwrap();
+
     format!(
-        "{}-{}.parquet",
+        "{}-{}-{}-{}.parquet",
         start_times.value(0),
-        end_times.value(end_times.len() - 1)
+        end_times.value(end_times.len() - 1),
+        min_value,
+        max_value
     )
 }
 
@@ -346,7 +373,7 @@ mod tests {
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = storage_engine
-            .get_compressed_files(TABLE_NAME, None, None, &object_store)
+            .get_compressed_files(TABLE_NAME, None, None, None, None, &object_store)
             .await;
 
         assert!(result.is_ok());
@@ -359,7 +386,8 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = storage_engine.get_compressed_files(TABLE_NAME, None, None, &object_store);
+        let result =
+            storage_engine.get_compressed_files(TABLE_NAME, None, None, None, None, &object_store);
 
         assert!(result.await.unwrap().is_empty());
     }
@@ -376,8 +404,14 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result =
-            storage_engine.get_compressed_files(TABLE_NAME, start_time, None, &object_store);
+        let result = storage_engine.get_compressed_files(
+            TABLE_NAME,
+            start_time,
+            None,
+            None,
+            None,
+            &object_store,
+        );
         let files = result.await.unwrap();
         assert_eq!(files.len(), 1);
 
@@ -398,7 +432,14 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = storage_engine.get_compressed_files(TABLE_NAME, None, end_time, &object_store);
+        let result = storage_engine.get_compressed_files(
+            TABLE_NAME,
+            None,
+            end_time,
+            None,
+            None,
+            &object_store,
+        );
         let files = result.await.unwrap();
         assert_eq!(files.len(), 1);
 
@@ -425,8 +466,14 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result =
-            storage_engine.get_compressed_files(TABLE_NAME, start_time, end_time, &object_store);
+        let result = storage_engine.get_compressed_files(
+            TABLE_NAME,
+            start_time,
+            end_time,
+            None,
+            None,
+            &object_store,
+        );
         let files = result.await.unwrap();
         assert_eq!(files.len(), 1);
 
@@ -468,8 +515,14 @@ mod tests {
             .insert_compressed_segment(TABLE_NAME, segment);
 
         let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
-        let result =
-            storage_engine.get_compressed_files(TABLE_NAME, Some(10), Some(1), &object_store);
+        let result = storage_engine.get_compressed_files(
+            TABLE_NAME,
+            Some(10),
+            Some(1),
+            None,
+            None,
+            &object_store,
+        );
         assert!(result.await.is_err());
     }
 
