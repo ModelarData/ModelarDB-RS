@@ -155,7 +155,7 @@ impl DataTransfer {
     /// files were transferred successfully, otherwise [`ParquetError`].
     async fn transfer_data(&mut self, table_name: &str) -> Result<(), ParquetError> {
         // Read all files that correspond stored for the table with table_name.
-        let path = format!("{}/compressed", table_name).into();
+        let path = format!("compressed/{}", table_name).into();
         let list_stream = self
             .local_data_folder_object_store
             .list(Some(&path))
@@ -201,7 +201,7 @@ impl DataTransfer {
 
         // Transfer the combined RecordBatch to the remote object store.
         let file_name = storage::create_time_and_value_range_file_name(&combined);
-        let path = format!("{}/compressed/{}", table_name, file_name).into();
+        let path = format!("compressed/{}/{}", table_name, file_name).into();
         self.remote_data_folder_object_store
             .put(&path, Bytes::from(buf.into_inner()))
             .await
@@ -227,20 +227,20 @@ impl DataTransfer {
         Ok(())
     }
 
-    /// Return the table name if `path` is an Apache Parquet file with compressed data, otherwise [`None`].
+    /// Return the table name if `path` is an Apache Parquet file with compressed data, otherwise
+    /// [`None`].
     fn path_is_compressed_file(path: ObjectStorePath) -> Option<String> {
         let path_parts: Vec<PathPart> = path.parts().collect();
 
-        if let Some(table_name) = path_parts.get(0) {
-            if let Some(file_name) = path_parts.get(2) {
-                if Some(&PathPart::from("compressed")) == path_parts.get(1)
-                    && file_name.as_ref().ends_with(".parquet")
-                {
-                    return Some(table_name.as_ref().to_owned());
+        if Some(&PathPart::from("compressed")) == path_parts.get(0) {
+            if let Some(table_name) = path_parts.get(1) {
+                if let Some(file_name) = path_parts.get(2) {
+                    if file_name.as_ref().ends_with(".parquet") {
+                        return Some(table_name.as_ref().to_owned());
+                    }
                 }
             }
         }
-
         None
     }
 }
@@ -271,25 +271,25 @@ mod tests {
 
     #[test]
     fn test_folder_path_is_not_compressed_file() {
-        let path = ObjectStorePath::from("table/compressed");
+        let path = ObjectStorePath::from("compressed/table");
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_table_folder_without_compressed_folder_is_not_compressed_file() {
-        let path = ObjectStorePath::from("table/test/test.parquet");
+        let path = ObjectStorePath::from("test/table/test.parquet");
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_non_parquet_file_is_not_compressed_file() {
-        let path = ObjectStorePath::from("table/compressed/test.txt");
+        let path = ObjectStorePath::from("compressed/table/test.txt");
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_compressed_file_is_compressed_file() {
-        let path = ObjectStorePath::from("table/compressed/test.parquet");
+        let path = ObjectStorePath::from("compressed/table/test.parquet");
         assert_eq!(
             DataTransfer::path_is_compressed_file(path),
             Some(TABLE_NAME.to_owned())
@@ -316,8 +316,6 @@ mod tests {
         let (_target_dir, mut data_transfer) =
             create_data_transfer_component(temp_dir.path()).await;
         let parquet_path = create_compressed_file(temp_dir.path(), "test");
-        dbg!(&temp_dir);
-        //std::thread::sleep(std::time::Duration::from_secs(600));
 
         assert!(data_transfer
             .add_compressed_file(&TABLE_NAME, parquet_path.as_path())
@@ -454,7 +452,7 @@ mod tests {
         // The transferred file should have a time range file name that matches the compressed data.
         let target_path = target
             .path()
-            .join(format!("{}/compressed/0-3-5.2-34.2.parquet", TABLE_NAME));
+            .join(format!("compressed/{}/0-3-5.2-34.2.parquet", TABLE_NAME));
         assert!(target_path.exists());
 
         // The file should have 3 * number_of_files rows since each compressed file has 3 rows.
@@ -471,7 +469,7 @@ mod tests {
     /// Set up a data folder with a table folder that has a single compressed file in it. Return the
     /// path to the created Apache Parquet file.
     fn create_compressed_file(local_data_folder_path: &Path, file_name: &str) -> PathBuf {
-        let path = local_data_folder_path.join(format!("{}/compressed", TABLE_NAME));
+        let path = local_data_folder_path.join(format!("compressed/{}", TABLE_NAME));
         fs::create_dir_all(path.clone()).unwrap();
 
         let batch = test_util::get_compressed_segments_record_batch();
