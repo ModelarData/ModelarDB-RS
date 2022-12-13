@@ -398,6 +398,8 @@ mod tests {
     use super::*;
 
     use datafusion::arrow::array::UInt8Array;
+    use rand::distributions::Uniform;
+    use rand::{thread_rng, Rng};
 
     use crate::metadata::test_util;
     use crate::models;
@@ -422,8 +424,7 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_constant_time_series() {
-        let timestamps = Vec::from_iter((100..1000).step_by(100));
-        let values = vec![10.0; timestamps.len()];
+        let (timestamps, values) = generate_test_data(100, false, false, false, None, None);
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);
         let error_bound = ErrorBound::try_new(0.0).unwrap();
@@ -445,8 +446,8 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_almost_constant_time_series() {
-        let timestamps = Vec::from_iter((100..1000).step_by(100));
-        let values = vec![10.1, 10.0, 10.2, 10.2, 10.0, 10.1, 10.0, 10.0, 10.0];
+        let (timestamps, values) =
+            generate_test_data(100, false, false, true, Some(9.8), Some(10.2));
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);
         let error_bound = ErrorBound::try_new(5.0).unwrap();
@@ -468,8 +469,7 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_linear_time_series() {
-        let timestamps = Vec::from_iter((100..1000).step_by(100));
-        let values = Vec::from_iter((10..100).step_by(10).map(|v| v as f32));
+        let (timestamps, values) = generate_test_data(100, false, true, false, None, None);
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);
         let error_bound = ErrorBound::try_new(0.0).unwrap();
@@ -491,8 +491,8 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_almost_linear_time_series() {
-        let timestamps = Vec::from_iter((100..1000).step_by(100));
-        let values = vec![10.0, 20.0, 30.1, 40.8, 51.0, 60.2, 70.1, 80.7, 90.4];
+        let (timestamps, values) =
+            generate_test_data(100, false, true, true, Some(9.0), Some(11.0));
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);
         let error_bound = ErrorBound::try_new(5.0).unwrap();
@@ -514,8 +514,8 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_random_time_series() {
-        let timestamps = Vec::from_iter((100..1000).step_by(100));
-        let values = vec![7.47, 13.34, 14.50, 4.88, 7.84, 6.69, 8.63, 5.109, 2.16];
+        let (timestamps, values) =
+            generate_test_data(50, false, false, true, Some(0.0), Some(f32::MAX));
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);
         let error_bound = ErrorBound::try_new(0.0).unwrap();
@@ -564,6 +564,79 @@ mod tests {
             &compressed_record_batch,
             &[models::GORILLA_ID, models::SWING_ID, models::PMC_MEAN_ID],
         )
+    }
+
+    fn generate_test_data(
+        length: u16,
+        irregular_timestamps: bool,
+        linear_values: bool,
+        random_values: bool,
+        min_step: Option<f32>,
+        max_step: Option<f32>,
+    ) -> (Vec<i64>, Vec<f32>) {
+        let mut randomizer = thread_rng();
+        let mut timestamps: Vec<i64> = vec![];
+        let mut values: Vec<f32> = vec![];
+
+        if irregular_timestamps || random_values {
+            if min_step == None || max_step == None {
+                panic!(
+                    "Randomness cannot be empty if irregular_timestamps or random_values are true."
+                )
+            } else if min_step > max_step {
+                panic!("min_step cannot be lower than the max_step.")
+            }
+        }
+
+        match irregular_timestamps {
+            true => {
+                let mut previous_timestamp: i64 = 0;
+                for _ in 0..length {
+                    let next_timestamp =
+                        (randomizer.sample(Uniform::from(10..100))) + previous_timestamp;
+                    timestamps.push(next_timestamp);
+                    previous_timestamp = next_timestamp;
+                }
+            }
+            false => {
+                timestamps = Vec::from_iter((100..(length + 1) as i64 * 100).step_by(100));
+            }
+        }
+
+        match (linear_values, random_values) {
+            (true, true) => {
+                let mut random_linear = vec![];
+                let mut previous_value: f32 = 0.0;
+                for _ in 0..length {
+                    let next_value = (randomizer
+                        .sample(Uniform::from(min_step.unwrap()..max_step.unwrap())))
+                        + previous_value;
+                    random_linear.push(next_value);
+                    previous_value = next_value;
+                }
+                values.append(&mut random_linear);
+            }
+            (true, false) => {
+                let mut linear =
+                    Vec::from_iter((10..(length + 1) * 10).step_by(10).map(|v| v as f32));
+                values.append(&mut linear);
+            }
+            (false, true) => {
+                let mut random = vec![];
+                for _ in 0..length {
+                    random.push(
+                        randomizer.sample(Uniform::from(min_step.unwrap()..max_step.unwrap())),
+                    );
+                }
+                values.append(&mut random);
+            }
+            (false, false) => {
+                let mut constant = vec![50.0; length as usize];
+                values.append(&mut constant);
+            }
+        }
+
+        (timestamps, values)
     }
 
     fn create_uncompressed_time_series(
