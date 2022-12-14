@@ -28,7 +28,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 
 use crate::errors::ModelarDbError;
 use crate::models::{
-    gorilla::Gorilla, pmcmean::PMCMean, swing::Swing, timestamps, ErrorBound, SelectedModel,
+    gorilla::Gorilla, pmc_mean::PMCMean, swing::Swing, timestamps, ErrorBound, SelectedModel,
 };
 use crate::types::{
     CompressedSchema, Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,

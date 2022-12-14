@@ -22,7 +22,7 @@
 
 pub mod bits;
 pub mod gorilla;
-pub mod pmcmean;
+pub mod pmc_mean;
 pub mod swing;
 pub mod timestamps;
 
@@ -30,7 +30,7 @@ use std::cmp::{Ordering, PartialOrd};
 use std::mem;
 
 use crate::errors::ModelarDbError;
-use crate::models::{gorilla::Gorilla, pmcmean::PMCMean, swing::Swing};
+use crate::models::{gorilla::Gorilla, pmc_mean::PMCMean, swing::Swing};
 use crate::types::{
     Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueArray, ValueBuilder,
 };
@@ -240,7 +240,7 @@ pub fn sum(
     values: &[u8],
 ) -> Value {
     match model_type_id as u8 {
-        PMC_MEAN_ID => pmcmean::sum(start_time, end_time, timestamps, min_value),
+        PMC_MEAN_ID => pmc_mean::sum(start_time, end_time, timestamps, min_value),
         SWING_ID => swing::sum(
             start_time, end_time, timestamps, min_value, max_value, values,
         ),
@@ -270,7 +270,7 @@ pub fn grid(
     let new_timestamps = &timestamp_builder.values_slice()[value_builder.values_slice().len()..];
 
     match model_type_id as u8 {
-        PMC_MEAN_ID => pmcmean::grid(
+        PMC_MEAN_ID => pmc_mean::grid(
             univariate_id,
             min_value, // For PMC-Mean, min and max is the same value.
             univariate_id_builder,
