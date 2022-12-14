@@ -37,13 +37,10 @@ use crate::types::{
 
 /// Unique ids for each model type. Constant values are used instead of an enum
 /// so the stored model type ids can be used in match expressions without being
-/// converted to an enum first. Zero and one are not used for compatibility with
-/// the legacy JVM-based version of [ModelarDB].
-///
-/// [ModelarDB]: https://github.com/ModelarData/ModelarDB
-pub const PMC_MEAN_ID: u8 = 2;
-pub const SWING_ID: u8 = 3;
-pub const GORILLA_ID: u8 = 4;
+/// converted to an enum first.
+pub const PMC_MEAN_ID: u8 = 0;
+pub const SWING_ID: u8 = 1;
+pub const GORILLA_ID: u8 = 2;
 
 /// Size of [`Value`] in bytes.
 const VALUE_SIZE_IN_BYTES: u8 = mem::size_of::<Value>() as u8;
