@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-/// Extract an [`array`](arrow::array) from a [`RecordBatch`](arrow::record_batch::RecordBatch) and
-/// cast it to the specified type:
+/// Extract an [`array`](datafusion::arrow::array::Array) from a
+/// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch) and cast it to the specified type:
 ///
 /// ```
 /// let array = crate::get_array!(record_batch, 0, UInt8Array);
@@ -34,12 +34,13 @@ macro_rules! get_array {
     };
 }
 
-/// Extract the [`arrays`](arrow::array) required to execute queries against a model table from a
-/// [`RecordBatch`](arrow::record_batch::RecordBatch), cast them to the required type, and assign
-/// the resulting arrays to the specified variables:
+/// Extract the [`arrays`](datafusion::arrow::array::Array) required to execute queries against a
+/// model table from a [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch), cast them to
+/// the required type, and assign the resulting arrays to the specified variables:
 ///
 /// ```
-/// crate::downcast_arrays!(batch, univariate_ids, model_type_ids, start_times, ...;
+/// crate::downcast_arrays!(batch, univariate_ids, model_type_ids, start_times, end_times,
+/// timestamps, min_values, max_values, values, errors);
 /// ```
 ///
 /// # Panics

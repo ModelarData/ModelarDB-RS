@@ -67,7 +67,8 @@ pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
 }
 
 /// A writeable in-memory data buffer that new data points can be efficiently appended to. It
-/// consists of an ordered sequence of timestamps and values being built using [`PrimitiveBuilder`].
+/// consists of an ordered sequence of timestamps and values being built using
+/// [`PrimitiveBuilder`](datafusion::arrow::array::PrimitiveBuilder).
 pub(super) struct UncompressedInMemoryDataBuffer {
     /// Id that uniquely identifies the time series the buffer stores data points from.
     univariate_id: u64,
@@ -183,7 +184,8 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
 pub struct UncompressedOnDiskDataBuffer {
     /// Id that uniquely identifies the time series the buffer stores data points from.
     univariate_id: u64,
-    /// Path to the Apache Parquet file containing the uncompressed data in the [`SpilledSegment`].
+    /// Path to the Apache Parquet file containing the uncompressed data in the
+    /// [`UncompressedOnDiskDataBuffer`].
     file_path: PathBuf,
 }
 

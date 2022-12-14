@@ -157,7 +157,7 @@ impl ModelarDbDialect {
     }
 
     /// Return [`Ok`] if the next [`Token`] is a [`Token::Word`] with the value
-    /// `expected`, otherwise a [`ParseError`] is returned.
+    /// `expected`, otherwise a [`ParserError`] is returned.
     fn expect_word_value(&self, parser: &mut Parser, expected: &str) -> Result<(), ParserError> {
         if let Ok(string) = self.parse_word_value(parser) {
             if string.to_uppercase() == expected.to_uppercase() {
@@ -168,7 +168,7 @@ impl ModelarDbDialect {
     }
 
     /// Return its value as a [`String`] if the next [`Token`] is a
-    /// [`Token::Word`], otherwise a [`ParseError`] is returned.
+    /// [`Token::Word`], otherwise a [`ParserError`] is returned.
     fn parse_word_value(&self, parser: &mut Parser) -> Result<String, ParserError> {
         match parser.next_token() {
             Token::Word(word) => Ok(word.value),
@@ -232,21 +232,21 @@ impl ModelarDbDialect {
 }
 
 impl Dialect for ModelarDbDialect {
-    /// Return [`True`] if a character is a valid start character for an
-    /// unquoted identifier, otherwise [`False`] is returned.
+    /// Return [`true`] if a character is a valid start character for an
+    /// unquoted identifier, otherwise [`false`] is returned.
     fn is_identifier_start(&self, c: char) -> bool {
         self.dialect.is_identifier_start(c)
     }
 
-    /// Return [`True`] if a character is a valid unquoted identifier character,
-    /// otherwise [`False`] is returned.
+    /// Return [`true`] if a character is a valid unquoted identifier character,
+    /// otherwise [`false`] is returned.
     fn is_identifier_part(&self, c: char) -> bool {
         self.dialect.is_identifier_part(c)
     }
 
     /// Check if the next tokens are CREATE TABLE TABLE, if so, attempt to parse
     /// the token stream as a CREATE MODEL TABLE DDL command. If parsing
-    /// succeeds, a [`Statement`] is returned, and if not, a [`ParseError`] is
+    /// succeeds, a [`Statement`] is returned, and if not, a [`ParserError`] is
     /// returned. If the next tokens are not CREATE TABLE TABLE, [`None`] is
     /// returned so sqlparser uses its parsing methods for all other commands.
     fn parse_statement(&self, parser: &mut Parser) -> Option<Result<Statement, ParserError>> {
@@ -453,7 +453,7 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
 }
 
 /// Return [`ParserError`] specifying that the functionality with the name
-/// `feature` is not supported if `enabled` is [`True`].
+/// `feature` is not supported if `enabled` is [`true`].
 fn check_unsupported_feature_is_disabled(enabled: bool, feature: &str) -> Result<(), ParserError> {
     if enabled {
         let message = format!("{} is not supported.", feature);

@@ -15,10 +15,11 @@
 
 //! Ingests data points into temporary in-memory buffers that can be spilled to immutable Apache
 //! Parquet files if necessary, uses the compression component to compress these buffers when they
-//! are full or [`flush()`] is called, stores the resulting data points compressed as metadata and
-//! models in in-memory buffers to batch them before saving them to immutable Apache Parquet files.
-//! The path to the Apache Parquet files containing relevant compressed data points for a query can
-//! be retrieved by the query engine using [`get_compressed_files()`].
+//! are full or [`StorageEngine::flush()`] is called, stores the resulting data points compressed as
+//! metadata and models in in-memory buffers to batch them before saving them to immutable Apache
+//! Parquet files. The path to the Apache Parquet files containing relevant compressed data points
+//! for a query can be retrieved by the query engine using
+//! [`StorageEngine::get_compressed_files()`].
 
 mod compressed_data_buffer;
 mod compressed_data_manager;
@@ -148,7 +149,7 @@ impl StorageEngine {
     }
 
     /// Flush all of the data the [`StorageEngine`] is currently storing in memory to disk. If all
-    /// of the data is successfully flushed to disk, return [`Ok`], otherwise return [`IOError`].
+    /// of the data is successfully flushed to disk, return [`Ok`], otherwise return [`String`].
     pub fn flush(&mut self) -> Result<(), String> {
         // TODO: When the compression component is changed, just flush before managers.
         // Flush UncompressedDataManager.

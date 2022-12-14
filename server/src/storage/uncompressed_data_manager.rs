@@ -13,7 +13,8 @@
  * limitations under the License.
  */
 
-//! Support for managing all uncompressed data that is ingested into the [`StorageEngine`].
+//! Support for managing all uncompressed data that is ingested into the
+//! [`StorageEngine`](crate::storage::StorageEngine).
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -36,7 +37,8 @@ use crate::{compression, get_array};
 /// Stores uncompressed data points temporarily in an in-memory buffer that spills to Apache Parquet
 /// files. When a uncompressed data buffer is finished the data is made available for compression.
 pub(super) struct UncompressedDataManager {
-    /// Path to the folder containing all uncompressed data managed by the [`StorageEngine`].
+    /// Path to the folder containing all uncompressed data managed by the
+    /// [`StorageEngine`](crate::storage::StorageEngine).
     local_data_folder: PathBuf,
     /// The [`UncompressedDataBuffers`](UncompressedDataBuffer) currently being filled with ingested
     /// data points.
@@ -314,7 +316,7 @@ impl UncompressedDataManager {
     /// Spill the first [`UncompressedInMemoryDataBuffer`] in the queue of
     /// [`UncompressedDataBuffers`](UncompressedDataBuffer). If no
     /// [`UncompressedInMemoryDataBuffers`](UncompressedInMemoryDataBuffer) could be found,
-    /// [`panic`](std::panic).
+    /// [`panic`](std::panic!).
     fn spill_finished_buffer(&mut self) {
         debug!("Not enough memory to create segment. Spilling an already finished buffer.");
 

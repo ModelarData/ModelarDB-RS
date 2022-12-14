@@ -61,17 +61,18 @@ pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
 pub struct MetadataManager {
     /// Location of the metadata database.
     metadata_database_path: PathBuf,
-    /// [`RecordBatch`] schema used for uncompressed segments.
+    /// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch)
+    /// [`Schema`](datafusion::arrow::datatypes::Schema) used for uncompressed data buffers.
     uncompressed_schema: UncompressedSchema,
-    /// [`RecordBatch`] schema used for compressed segments.
+    /// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch)
+    /// [`Schema`](datafusion::arrow::datatypes::Schema) used for compressed data buffers.
     compressed_schema: CompressedSchema,
     /// Cache of tag value hashes used to signify when to persist new unsaved
     /// tag combinations.
     tag_value_hashes: HashMap<String, u64>,
-    /// Amount of memory to reserve for storing
-    /// [`UncompressedSegments`](crate::storage::segment::UncompressedSegment).
+    /// Amount of memory to reserve for storing uncompressed data buffers.
     pub uncompressed_reserved_memory_in_bytes: usize,
-    /// Amount of memory to reserve for storing compressed segments.
+    /// Amount of memory to reserve for storing compressed data buffers.
     pub compressed_reserved_memory_in_bytes: usize,
 }
 
@@ -193,12 +194,14 @@ impl MetadataManager {
         self.metadata_database_path.parent().unwrap()
     }
 
-    /// Return the [`RecordBatch`] schema used for uncompressed segments.
+    /// Return the [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch)
+    /// [`Schema`](datafusion::arrow::datatypes::Schema) used for uncompressed data buffers.
     pub fn get_uncompressed_schema(&self) -> UncompressedSchema {
         self.uncompressed_schema.clone()
     }
 
-    /// Return the [`RecordBatch`] schema used for compressed segments.
+    /// Return the [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch)
+    /// [`Schema`](datafusion::arrow::datatypes::Schema) used for compressed data buffers.
     pub fn get_compressed_schema(&self) -> CompressedSchema {
         self.compressed_schema.clone()
     }
@@ -371,8 +374,8 @@ impl MetadataManager {
 
     /// Compute the 64-bit univariate ids of the univariate time series to retrieve from the storage
     /// engine using the two queries constructed from the fields, tag names, and tag values in the
-    /// user's query. Returns a [`RusqliteResult`] with an [`Error`](rusqlite::Error) if the data
-    /// cannot be retrieved from the metadata database, otherwise the univariate ids are returned.
+    /// user's query. Returns a [`Result`] with an [`Error`](rusqlite::Error) if the data cannot be
+    /// retrieved from the metadata database, otherwise the univariate ids are returned.
     fn compute_univariate_ids_using_metadata_database(
         &self,
         query_field_columns: &str,

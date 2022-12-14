@@ -74,10 +74,9 @@ pub struct Context {
 /// extract [`DataFolders`], construct a [`Context`] with the systems
 /// components, initialize the tables and model tables in the metadata database,
 /// initialize a CTRL+C handler that flushes the data in memory to disk, and
-/// start the Apache Arrow Flight interface. Returns [`Error`] formatted as a
-/// [`String`] if the command line arguments cannot be parsed, the metadata
-/// cannot be read from the database or the Apache Arrow Flight interface cannot
-/// be started.
+/// start the Apache Arrow Flight interface. Returns [`String`] formatted as a
+/// if the command line arguments cannot be parsed, the metadata cannot be read
+/// from the database or the Apache Arrow Flight interface cannot be started.
 fn main() -> Result<(), String> {
     // Initialize a tracing layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();
@@ -153,7 +152,7 @@ fn main() -> Result<(), String> {
 
 /// Parse the command lines arguments into an instance of [`DataFolders`]. If
 /// the necessary command line arguments are not provided, too many arguments
-/// are provided, or if the arguments are malformed, [`Error`] is returned.
+/// are provided, or if the arguments are malformed, [`String`] is returned.
 fn parse_command_line_arguments(arguments: &[&str]) -> Result<DataFolders, String> {
     // Match the provided command line arguments to the supported inputs.
     match arguments {
