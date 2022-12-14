@@ -56,9 +56,9 @@ pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
     fn get_memory_size(&self) -> usize;
 
     /// Since both [`UncompressedInMemoryDataBuffers`](UncompressedInMemoryDataBuffer) and
-    /// [`UncompressedOnDiskDataBuffers`](UncompressedOnDiskDataBuffer) are present in the queue as
-    /// [`FinishedUncompressedDataBuffers`](FinishedUncompressedDataBuffer), both structs need to
-    /// implement spilling to Apache Parquet, with already spilled segments returning [`IOError`].
+    /// [`UncompressedOnDiskDataBuffers`](UncompressedOnDiskDataBuffer) are present in the queue,
+    /// both structs need to implement spilling to Apache Parquet, with already spilled segments
+    /// returning [`IOError`].
     fn spill_to_apache_parquet(
         &mut self,
         local_data_folder: &Path,
