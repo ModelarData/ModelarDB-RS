@@ -552,19 +552,22 @@ mod tests {
             None,
             &object_store,
         );
-        let files = result.await.unwrap();
+        let mut files = result.await.unwrap();
         assert_eq!(files.len(), 2);
+
+        // Sort files as get_compressed_files() does not guarantee an ordering.
+        files.sort_unstable_by(|a, b| a.location.cmp(&b.location));
 
         // The path to the returned compressed file should contain the table name.
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/2000-2005-5.2-34.2.parquet", TABLE_NAME)
+            format!("compressed/{}/2000-2005-15.2-44.2.parquet", TABLE_NAME)
         );
         let file_path = files.get(1).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/2000-2005-15.2-44.2.parquet", TABLE_NAME)
+            format!("compressed/{}/2000-2005-5.2-34.2.parquet", TABLE_NAME)
         );
     }
 
@@ -594,8 +597,11 @@ mod tests {
             max_value,
             &object_store,
         );
-        let files = result.await.unwrap();
+        let mut files = result.await.unwrap();
         assert_eq!(files.len(), 2);
+
+        // Sort files as get_compressed_files() does not guarantee an ordering.
+        files.sort_unstable_by(|a, b| a.location.cmp(&b.location));
 
         // The path to the returned compressed file should contain the table name.
         let file_path = files.get(0).unwrap().location.to_string();
