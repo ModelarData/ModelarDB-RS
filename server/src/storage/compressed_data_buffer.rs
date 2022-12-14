@@ -75,9 +75,9 @@ impl CompressedDataBuffer {
         fs::create_dir_all(folder_path)?;
 
         // Create a new file that includes the start timestamp of the first segment in batch, the
-        // end timestamp of the last segment in batch, the minium value stored in batch, and the
-        // maximum value stored in batch as the file name to efficiently pruning files that only
-        // contains data points with timestamps and values that is not relevant for a given query.
+        // end timestamp of the last segment in batch, the minimum value stored in batch, and the
+        // maximum value stored in batch as the file name to support efficiently pruning files that
+        // only contains data points with timestamps and values that are not relevant for a query.
         let file_name = storage::create_time_and_value_range_file_name(&batch);
         let file_path = folder_path.join(file_name);
         StorageEngine::write_batch_to_apache_parquet_file(batch, file_path.as_path())
@@ -92,6 +92,7 @@ impl CompressedDataBuffer {
 
         // Compute the total number of bytes of memory used by the columns.
         for column in compressed_segments.columns() {
+            // TODO: How is this calculated internally?
             total_size += column.get_array_memory_size()
         }
 
@@ -110,46 +111,48 @@ mod tests {
 
     #[test]
     fn test_can_append_valid_compressed_segments() {
-        let mut time_series = CompressedDataBuffer::new();
-        time_series.append_compressed_segments(test_util::get_compressed_segments_record_batch());
+        let mut compressed_data_buffer = CompressedDataBuffer::new();
+        compressed_data_buffer
+            .append_compressed_segments(test_util::get_compressed_segments_record_batch());
 
-        assert_eq!(time_series.compressed_segments.len(), 1)
+        assert_eq!(compressed_data_buffer.compressed_segments.len(), 1)
     }
 
     #[test]
-    fn test_compressed_time_series_size_updated_when_appending() {
-        let mut time_series = CompressedDataBuffer::new();
-        time_series.append_compressed_segments(test_util::get_compressed_segments_record_batch());
+    fn test_compressed_data_buffer_size_updated_when_appending() {
+        let mut compressed_data_buffer = CompressedDataBuffer::new();
+        compressed_data_buffer
+            .append_compressed_segments(test_util::get_compressed_segments_record_batch());
 
-        assert!(time_series.size_in_bytes > 0);
+        assert!(compressed_data_buffer.size_in_bytes > 0);
     }
 
     #[test]
-    fn test_can_save_compressed_segments_to_apache_parquet() {
-        let mut time_series = CompressedDataBuffer::new();
+    fn test_can_save_compressed_data_buffer_to_apache_parquet() {
+        let mut compressed_data_buffer = CompressedDataBuffer::new();
         let segment = test_util::get_compressed_segments_record_batch();
-        time_series.append_compressed_segments(segment.clone());
+        compressed_data_buffer.append_compressed_segments(segment.clone());
 
         let temp_dir = tempdir().unwrap();
-        time_series
+        compressed_data_buffer
             .save_to_apache_parquet(
                 temp_dir.path(),
                 &metadata_test_util::get_compressed_schema(),
             )
             .unwrap();
 
-        // Data should be saved to a file with the first start time and last end time as the file
-        // name.
+        // Data should be saved to a file with the start time, end time, min value, and max value of
+        // the compressed segments the file contains as the file name.
         let file_path = storage::create_time_and_value_range_file_name(&segment);
         assert!(temp_dir.path().join(file_path).exists());
     }
 
     #[test]
     #[should_panic(expected = "Cannot save CompressedDataBuffer with no data.")]
-    fn test_panic_if_saving_empty_compressed_segments_to_apache_parquet() {
-        let mut empty_time_series = CompressedDataBuffer::new();
+    fn test_panic_if_saving_empty_compressed_data_buffer_to_apache_parquet() {
+        let mut empty_compressed_data_buffer = CompressedDataBuffer::new();
 
-        empty_time_series
+        empty_compressed_data_buffer
             .save_to_apache_parquet(
                 Path::new("table"),
                 &metadata_test_util::get_compressed_schema(),
@@ -158,11 +161,11 @@ mod tests {
     }
 
     #[test]
-    fn test_get_size_of_compressed_segments() {
-        let compressed_segments = test_util::get_compressed_segments_record_batch();
+    fn test_get_size_of_compressed_data_buffer() {
+        let compressed_data_buffer = test_util::get_compressed_segments_record_batch();
 
         assert_eq!(
-            CompressedDataBuffer::get_size_of_compressed_segments(&compressed_segments),
+            CompressedDataBuffer::get_size_of_compressed_segments(&compressed_data_buffer),
             test_util::COMPRESSED_SEGMENTS_SIZE,
         );
     }

@@ -106,7 +106,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
         // Visit the children.
         // TODO: handle plans were multiple children must be updated.
         for child in plan.children() {
-            if let Some(new_child) = ModelSimpleAggregatesPhysicalOptimizerRule::optimize(&child) {
+            if let Some(new_child) = Self::optimize(&child) {
                 return Some(plan.clone().with_new_children(vec![new_child]).unwrap());
             }
         }
@@ -121,7 +121,7 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
         plan: Arc<dyn ExecutionPlan>,
         _config: &SessionConfig,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        if let Some(optimized_plan) = ModelSimpleAggregatesPhysicalOptimizerRule::optimize(&plan) {
+        if let Some(optimized_plan) = Self::optimize(&plan) {
             Ok(optimized_plan)
         } else {
             Ok(plan)

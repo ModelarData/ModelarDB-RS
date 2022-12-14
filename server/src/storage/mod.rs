@@ -1,4 +1,5 @@
 /* Copyright 2022 The ModelarDB Contributors
+ *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
  * You may obtain a copy of the License at
@@ -69,10 +70,10 @@ const APACHE_PARQUET_FILE_SIGNATURE: &[u8] = &[80, 65, 82, 49]; // PAR1.
 /// The capacity of each uncompressed data buffer as the number of elements in the buffer where each
 /// element is a [`Timestamp`] and a [`Value`](use crate::types::Value). Note that the resulting
 /// size of the buffer has to be a multiple of 64 bytes to avoid the actual capacity being larger
-/// then the request due to internal alignment when allocating memory for the two array builders.
+/// than the requested due to internal alignment when allocating memory for the two array builders.
 const UNCOMPRESSED_DATA_BUFFER_CAPACITY: usize = 64 * 1024;
 
-/// Manages all uncompressed and compressed data, both while being stored in memory during ingested
+/// Manages all uncompressed and compressed data, both while being stored in memory during ingestion
 /// and when persisted to disk afterwards.
 pub struct StorageEngine {
     // TODO: is it better to use MetadataManager from context to share caches
@@ -130,15 +131,16 @@ impl StorageEngine {
 
         for segments in compressed_segments {
             self.compressed_data_manager
-                .insert_compressed_segment(&model_table.name, segments)
+                .insert_compressed_segments(&model_table.name, segments)
                 .map_err(|error| error.to_string())?;
         }
 
         Ok(())
     }
 
-    /// Retrieve the oldest [`UncompressedDataBuffer`] from [`UncompressedDataManager`] and return
-    /// it. Return [`None`] if there are no [`UncompressedDataBuffers`](UncompressedDataBuffer).
+    /// Retrieve the oldest finished [`UncompressedDataBuffer`] from [`UncompressedDataManager`] and
+    /// return it. Return [`None`] if there are no finished
+    /// [`UncompressedDataBuffers`](UncompressedDataBuffer).
     pub fn get_finished_uncompressed_data_buffer(
         &mut self,
     ) -> Option<Box<dyn UncompressedDataBuffer>> {
@@ -163,7 +165,7 @@ impl StorageEngine {
             // unwrap() is safe as new univariate ids have been added to the metadata database.
             let table_name = hash_to_table_name.get(&tag_hash).unwrap();
             self.compressed_data_manager
-                .insert_compressed_segment(table_name, segment)
+                .insert_compressed_segments(table_name, segment)
                 .map_err(|error| error.to_string())?;
         }
 
@@ -228,7 +230,7 @@ impl StorageEngine {
             .await?;
 
         // TODO: prune by time and value in save_and_get_saved_compressed_files to perform the action async?
-        // Prune the files based on the time and value range the contains compressed segments for.
+        // Prune files based on the time and value range each file contains compressed segments for.
         let pruned_compressed_files = compressed_files
             .into_iter()
             .filter(|object_meta| {
@@ -321,7 +323,7 @@ pub(self) fn create_apache_arrow_writer<W: Write>(
 }
 
 /// Create a file name that includes the start timestamp of the first segment in `batch`, the end
-/// timestamp of the last segment in `batch`, the minium value stored in `batch`, and the maximum
+/// timestamp of the last segment in `batch`, the minimum value stored in `batch`, and the maximum
 /// value stored in `batch`.
 pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> String {
     let start_times = get_array!(batch, 2, TimestampArray);
@@ -350,6 +352,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
+    use datafusion::arrow::compute;
     use datafusion::arrow::datatypes::Schema;
     use object_store::local::LocalFileSystem;
     use tempfile::{tempdir, TempDir};
@@ -362,18 +365,18 @@ mod tests {
 
     // Tests for get_compressed_files().
     #[tokio::test]
-    async fn test_can_get_compressed_files_for_table() {
+    async fn test_can_get_compressed_file_for_table() {
         let (temp_dir, mut storage_engine) = create_storage_engine();
 
         // Insert compressed segments into the same table.
         let segment = test_util::get_compressed_segments_record_batch();
         storage_engine
             .compressed_data_manager
-            .insert_compressed_segment(TABLE_NAME, segment.clone())
+            .insert_compressed_segments(TABLE_NAME, segment.clone())
             .unwrap();
         storage_engine
             .compressed_data_manager
-            .insert_compressed_segment(TABLE_NAME, segment)
+            .insert_compressed_segments(TABLE_NAME, segment)
             .unwrap();
 
         let object_store: Arc<dyn ObjectStore> =
@@ -399,9 +402,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_can_get_compressed_files_with_start_time() {
+    async fn test_can_get_compressed_file_with_start_time() {
         let (temp_dir, mut storage_engine) = create_storage_engine();
-        let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 0);
+        let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 0, 0.0);
 
         // If we have a start time after the first segments ends, only the file containing the
         // second segment should be retrieved.
@@ -423,13 +426,47 @@ mod tests {
 
         // The path to the returned compressed file should contain the table name.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert!(file_path.contains(TABLE_NAME));
+        assert_eq!(
+            file_path,
+            format!("compressed/{}/2000-2005-15.2-44.2.parquet", TABLE_NAME)
+        );
     }
 
     #[tokio::test]
-    async fn test_can_get_compressed_files_with_end_time() {
+    async fn test_can_get_compressed_file_with_min_value() {
         let (temp_dir, mut storage_engine) = create_storage_engine();
-        let (_segment_1, segment_2) = insert_separated_segments(&mut storage_engine, 0);
+        let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 0, 0.0);
+
+        // If we have a min value higher then the max value in the first segment, only the file
+        // containing the second segment should be retrieved.
+        let max_values = get_array!(segment_1, 6, ValueArray);
+        let min_value = Some(compute::max(max_values).unwrap() + 1.0);
+
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let result = storage_engine.get_compressed_files(
+            TABLE_NAME,
+            None,
+            None,
+            min_value,
+            None,
+            &object_store,
+        );
+        let files = result.await.unwrap();
+        assert_eq!(files.len(), 1);
+
+        // The path to the returned compressed file should contain the table name.
+        let file_path = files.get(0).unwrap().location.to_string();
+        assert_eq!(
+            file_path,
+            format!("compressed/{}/2000-2005-15.2-44.2.parquet", TABLE_NAME)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_can_get_compressed_file_with_end_time() {
+        let (temp_dir, mut storage_engine) = create_storage_engine();
+        let (_segment_1, segment_2) = insert_separated_segments(&mut storage_engine, 0, 0.0);
 
         // If we have an end time before the second segment starts, only the file containing the
         // first segment should be retrieved.
@@ -451,7 +488,41 @@ mod tests {
 
         // The path to the returned compressed file should contain the table name.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert!(file_path.contains("compressed/table"));
+        assert_eq!(
+            file_path,
+            format!("compressed/{}/1000-1005-5.2-34.2.parquet", TABLE_NAME)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_can_get_compressed_file_with_max_value() {
+        let (temp_dir, mut storage_engine) = create_storage_engine();
+        let (_segment_1, segment_2) = insert_separated_segments(&mut storage_engine, 0, 0.0);
+
+        // If we have a max value lower then the min value in the second segment, only the file
+        // containing the first segment should be retrieved.
+        let min_values = get_array!(segment_2, 5, ValueArray);
+        let max_value = Some(compute::min(min_values).unwrap() - 1.0);
+
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let result = storage_engine.get_compressed_files(
+            TABLE_NAME,
+            None,
+            None,
+            None,
+            max_value,
+            &object_store,
+        );
+        let files = result.await.unwrap();
+        assert_eq!(files.len(), 1);
+
+        // The path to the returned compressed file should contain the table name.
+        let file_path = files.get(0).unwrap().location.to_string();
+        assert_eq!(
+            file_path,
+            format!("compressed/{}/1000-1005-5.2-34.2.parquet", TABLE_NAME)
+        );
     }
 
     #[tokio::test]
@@ -459,11 +530,11 @@ mod tests {
         let (temp_dir, mut storage_engine) = create_storage_engine();
 
         // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
-        let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 0);
-        let (_segment_3, segment_4) = insert_separated_segments(&mut storage_engine, 1000);
+        let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 0, 0.0);
+        let (_segment_3, segment_4) = insert_separated_segments(&mut storage_engine, 1000, 0.0);
 
-        // If we have a start time after the first segment ends and an end time before the fourth
-        // segment starts, only the files containing the second and third segment should be listed.
+        // If we have a start time after the first segment and an end time before the fourth
+        // segment, only the files containing the second and third segment should be retrieved.
         let end_times = get_array!(segment_1, 3, TimestampArray);
         let start_times = get_array!(segment_4, 2, TimestampArray);
 
@@ -481,32 +552,87 @@ mod tests {
             &object_store,
         );
         let files = result.await.unwrap();
-        assert_eq!(files.len(), 1);
+        assert_eq!(files.len(), 2);
 
         // The path to the returned compressed file should contain the table name.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert!(file_path.contains("compressed/table"));
+        assert_eq!(
+            file_path,
+            format!("compressed/{}/2000-2005-5.2-34.2.parquet", TABLE_NAME)
+        );
+        let file_path = files.get(1).unwrap().location.to_string();
+        assert_eq!(
+            file_path,
+            format!("compressed/{}/2000-2005-15.2-44.2.parquet", TABLE_NAME)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_can_get_compressed_files_with_min_value_and_max_value() {
+        let (temp_dir, mut storage_engine) = create_storage_engine();
+
+        // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
+        let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 0, 0.0);
+        let (_segment_3, segment_4) = insert_separated_segments(&mut storage_engine, 1000, 100.0);
+
+        // If we have a min value higher the first segment and a max value lower than the fourth
+        // segment, only the files containing the second and third segment should be retrieved.
+        let max_values = get_array!(segment_1, 6, ValueArray);
+        let min_values = get_array!(segment_4, 5, ValueArray);
+
+        let min_value = Some(compute::max(max_values).unwrap() + 1.0);
+        let max_value = Some(compute::min(min_values).unwrap() - 1.0);
+
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let result = storage_engine.get_compressed_files(
+            TABLE_NAME,
+            None,
+            None,
+            min_value,
+            max_value,
+            &object_store,
+        );
+        let files = result.await.unwrap();
+        assert_eq!(files.len(), 2);
+
+        // The path to the returned compressed file should contain the table name.
+        let file_path = files.get(0).unwrap().location.to_string();
+        assert_eq!(
+            file_path,
+            format!("compressed/{}/2000-2005-105.2-134.2.parquet", TABLE_NAME)
+        );
+        let file_path = files.get(1).unwrap().location.to_string();
+        assert_eq!(
+            file_path,
+            format!("compressed/{}/2000-2005-15.2-44.2.parquet", TABLE_NAME)
+        );
     }
 
     /// Create and insert two compressed segments with a 1 second time difference offset by
-    /// `start_time`.
+    /// `start_time` and values with difference of 10 offset by `value_offset`.
     fn insert_separated_segments(
         storage_engine: &mut StorageEngine,
         start_time: i64,
+        value_offset: f32,
     ) -> (RecordBatch, RecordBatch) {
-        let segment_1 =
-            test_util::get_compressed_segments_record_batch_with_time(1000 + start_time);
+        let segment_1 = test_util::get_compressed_segments_record_batch_with_time(
+            1000 + start_time,
+            value_offset,
+        );
         storage_engine
             .compressed_data_manager
-            .insert_compressed_segment(TABLE_NAME, segment_1.clone())
+            .insert_compressed_segments(TABLE_NAME, segment_1.clone())
             .unwrap();
         storage_engine.compressed_data_manager.flush().unwrap();
 
-        let segment_2 =
-            test_util::get_compressed_segments_record_batch_with_time(2000 + start_time);
+        let segment_2 = test_util::get_compressed_segments_record_batch_with_time(
+            2000 + start_time,
+            10.0 + value_offset,
+        );
         storage_engine
             .compressed_data_manager
-            .insert_compressed_segment(TABLE_NAME, segment_2.clone())
+            .insert_compressed_segments(TABLE_NAME, segment_2.clone())
             .unwrap();
         storage_engine.compressed_data_manager.flush().unwrap();
 
@@ -520,7 +646,7 @@ mod tests {
         let segment = test_util::get_compressed_segments_record_batch();
         storage_engine
             .compressed_data_manager
-            .insert_compressed_segment(TABLE_NAME, segment)
+            .insert_compressed_segments(TABLE_NAME, segment)
             .unwrap();
 
         let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
@@ -532,7 +658,39 @@ mod tests {
             None,
             &object_store,
         );
-        assert!(result.await.is_err());
+
+        assert!(result
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("cannot be after end time"));
+    }
+
+    #[tokio::test]
+    async fn test_cannot_get_compressed_files_where_max_value_is_smaller_than_min_value() {
+        let (_temp_dir, mut storage_engine) = create_storage_engine();
+
+        let segment = test_util::get_compressed_segments_record_batch();
+        storage_engine
+            .compressed_data_manager
+            .insert_compressed_segments(TABLE_NAME, segment)
+            .unwrap();
+
+        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
+        let result = storage_engine.get_compressed_files(
+            TABLE_NAME,
+            None,
+            None,
+            Some(10.0),
+            Some(1.0),
+            &object_store,
+        );
+
+        assert!(result
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("cannot be larger than max value"));
     }
 
     /// Create a [`StorageEngine`] with a folder that is deleted once the test is finished.
@@ -703,22 +861,28 @@ pub mod test_util {
 
     /// Return a [`RecordBatch`] containing three compressed segments.
     pub fn get_compressed_segments_record_batch() -> RecordBatch {
-        get_compressed_segments_record_batch_with_time(0)
+        get_compressed_segments_record_batch_with_time(0, 0.0)
     }
 
-    /// Return a [`RecordBatch`] containing three compressed segment. The compressed segments time
-    /// span is from `time_ms` to `time_ms` + 3.
-    pub fn get_compressed_segments_record_batch_with_time(time_ms: i64) -> RecordBatch {
-        let start_times = vec![time_ms, time_ms + 1, time_ms + 2];
-        let end_times = vec![time_ms + 1, time_ms + 2, time_ms + 3];
+    /// Return a [`RecordBatch`] containing three compressed segments. The compressed segments time
+    /// range is from `time_ms` to `time_ms` + 3, while the value range is from `offset` + 5.2 to
+    /// `offset` + 34.2.
+    pub fn get_compressed_segments_record_batch_with_time(
+        time_ms: i64,
+        offset: f32,
+    ) -> RecordBatch {
+        let start_times = vec![time_ms, time_ms + 2, time_ms + 4];
+        let end_times = vec![time_ms + 1, time_ms + 3, time_ms + 5];
+        let min_values = vec![offset + 5.2, offset + 10.3, offset + 30.2];
+        let max_values = vec![offset + 20.2, offset + 12.2, offset + 34.2];
 
         let univariate_id = UInt64Array::from(vec![1, 2, 3]);
         let model_type_id = UInt8Array::from(vec![2, 3, 3]);
         let start_time = TimestampArray::from(start_times);
         let end_time = TimestampArray::from(end_times);
         let timestamps = BinaryArray::from_vec(vec![b"000", b"001", b"010"]);
-        let min_value = ValueArray::from(vec![5.2, 10.3, 30.2]);
-        let max_value = ValueArray::from(vec![20.2, 12.2, 34.2]);
+        let min_value = ValueArray::from(min_values);
+        let max_value = ValueArray::from(max_values);
         let values = BinaryArray::from_vec(vec![b"1111", b"1000", b"0000"]);
         let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
 

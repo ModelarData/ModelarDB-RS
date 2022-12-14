@@ -271,13 +271,13 @@ mod tests {
 
     #[test]
     fn test_folder_path_is_not_compressed_file() {
-        let path = ObjectStorePath::from("compressed/table");
+        let path = ObjectStorePath::from(format!("compressed/{}", TABLE_NAME));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_table_folder_without_compressed_folder_is_not_compressed_file() {
-        let path = ObjectStorePath::from("test/table/test.parquet");
+        let path = ObjectStorePath::from(format!("test/{}/test.parquet", TABLE_NAME));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
@@ -289,7 +289,7 @@ mod tests {
 
     #[test]
     fn test_compressed_file_is_compressed_file() {
-        let path = ObjectStorePath::from("compressed/table/test.parquet");
+        let path = ObjectStorePath::from(format!("compressed/{}/test.parquet", TABLE_NAME));
         assert_eq!(
             DataTransfer::path_is_compressed_file(path),
             Some(TABLE_NAME.to_owned())
@@ -329,7 +329,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_add_compressed_file_for_existing_existing() {
+    async fn test_add_compressed_file_for_existing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_target_dir, mut data_transfer) =
             create_data_transfer_component(temp_dir.path()).await;
@@ -452,7 +452,7 @@ mod tests {
         // The transferred file should have a time range file name that matches the compressed data.
         let target_path = target
             .path()
-            .join(format!("compressed/{}/0-3-5.2-34.2.parquet", TABLE_NAME));
+            .join(format!("compressed/{}/0-5-5.2-34.2.parquet", TABLE_NAME));
         assert!(target_path.exists());
 
         // The file should have 3 * number_of_files rows since each compressed file has 3 rows.

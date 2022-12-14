@@ -270,8 +270,9 @@ impl TableProvider for ModelTable {
             config_options: self.config_options.clone(),
         };
 
-        // TODO: extract predicates that consist of tag = tag_value from the query.
-        // TODO: prune row groups and segments by univariate id before gridding and aggregating.
+        // TODO: extract all of the predicates that consist of tag = tag_value from the query so the
+        // row groups can be pruned by univariate_id using ParquetExec and segments can be pruned by
+        // univariate_id using FilterExec before reconstructing data points or computing aggregates.
         let tag_predicates = vec![];
         let _univariate_ids = self
             .context

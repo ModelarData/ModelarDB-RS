@@ -150,7 +150,7 @@ impl UncompressedDataManager {
                 .map_err(|error| format!("Tag hash could not be saved: {}", error))?;
 
             // For each field column, generate the 64-bit univariate id, and append the current
-            // timestamp and the field's value into in-memory buffer for the univariate id.
+            // timestamp and the field's value into the in-memory buffer for the univariate id.
             for (field_index, field_column_array) in &field_column_arrays {
                 let univariate_id = tag_hash | *field_index as u64;
                 let value = field_column_array.value(index);
@@ -185,7 +185,7 @@ impl UncompressedDataManager {
                 .active_uncompressed_data_buffers
                 .remove(&univariate_id)
                 .unwrap();
-            let record_batch = self.compress_finished_buffers(univariate_id, buffer);
+            let record_batch = self.compress_finished_buffer(univariate_id, buffer);
             compressed_buffers.push((univariate_id, record_batch));
         }
         compressed_buffers
@@ -226,7 +226,7 @@ impl UncompressedDataManager {
                 //       changed to queue the buffer and let the compression component retrieve the
                 //       finished buffer and insert it back when compressed.
                 if self.compress_directly {
-                    return Some(self.compress_finished_buffers(univariate_id, finished_buffer));
+                    return Some(self.compress_finished_buffer(univariate_id, finished_buffer));
                 } else {
                     self.finished_uncompressed_data_buffers
                         .push_back(Box::new(finished_buffer));
@@ -260,8 +260,9 @@ impl UncompressedDataManager {
         None
     }
 
-    /// Remove the oldest [`UncompressedDataBuffer`] from the queue and return it. Return [`None`]
-    /// if the queue of [`UncompressedDataBuffer`](UncompressedDataBuffer) is empty.
+    /// Remove the oldest finished [`UncompressedDataBuffer`] from the queue and return it. Returns
+    /// [`None`] if there are no finished [`UncompressedDataBuffers`](UncompressedDataBuffer) in the
+    /// queue.
     pub(super) fn get_finished_data_buffer(&mut self) -> Option<Box<dyn UncompressedDataBuffer>> {
         if let Some(uncompressed_data_buffer) = self.finished_uncompressed_data_buffers.pop_front()
         {
@@ -276,11 +277,12 @@ impl UncompressedDataManager {
     }
 
     // TODO: Remove this when compression component is changed.
-    /// Compress the given full `segment_builder` and return the compressed and merged segment.
-    fn compress_finished_buffers(
+    /// Compress the full [`UncompressedInMemoryDataBuffer`] given as `in_memory_data_buffer` and
+    /// return the resulting compressed and merged segments as a [`RecordBatch`].
+    fn compress_finished_buffer(
         &mut self,
         univariate_id: u64,
-        mut segment_builder: UncompressedInMemoryDataBuffer,
+        mut in_memory_data_buffer: UncompressedInMemoryDataBuffer,
     ) -> RecordBatch {
         // Add the size of the segment back to the remaining reserved bytes.
         self.uncompressed_remaining_memory_in_bytes +=
@@ -290,7 +292,7 @@ impl UncompressedDataManager {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
 
         // unwrap() is safe to use since get_record_batch() can only fail for spilled buffers.
-        let data_points = segment_builder
+        let data_points = in_memory_data_buffer
             .get_record_batch(&self.uncompressed_schema)
             .unwrap();
         let uncompressed_timestamps = get_array!(data_points, 0, TimestampArray);
@@ -338,7 +340,7 @@ impl UncompressedDataManager {
 
         // TODO: All uncompressed and compressed data should be saved to disk first.
         // If not able to find any in-memory finished segments, panic!() is the only option.
-        panic!("Not enough reserved memory to the necessary uncompressed buffers.");
+        panic!("Not enough reserved memory for the necessary uncompressed buffers.");
     }
 }
 
@@ -628,7 +630,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Not enough reserved memory to the necessary uncompressed buffers.")]
+    #[should_panic(expected = "Not enough reserved memory for the necessary uncompressed buffers.")]
     fn test_panic_if_not_enough_reserved_memory() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());

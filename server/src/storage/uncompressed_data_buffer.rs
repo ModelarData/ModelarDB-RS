@@ -42,6 +42,7 @@ use crate::types::{
 /// automatically implements [`Sync`] and [`Send`] as they only contain types that implements
 /// [`Sync`] and [`Send`].
 pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
+    /// Return the data in the uncompressed data buffer as a [`RecordBatch`].
     fn get_record_batch(
         &mut self,
         uncompressed_schema: &UncompressedSchema,
@@ -66,9 +67,9 @@ pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
 }
 
 /// A writeable in-memory data buffer that new data points can be efficiently appended to. It
-/// consists of an ordered sequence of timestamps and values being build using [`PrimitiveBuilder`].
+/// consists of an ordered sequence of timestamps and values being built using [`PrimitiveBuilder`].
 pub(super) struct UncompressedInMemoryDataBuffer {
-    /// Key that uniquely identifies the time series the buffer stores data points from.
+    /// Id that uniquely identifies the time series the buffer stores data points from.
     univariate_id: u64,
     /// Builder consisting of timestamps.
     timestamps: TimestampBuilder,
@@ -180,17 +181,16 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
 /// A read only uncompressed buffer that has been spilled to disk as an Apache Parquet file due to
 /// memory constraints.
 pub struct UncompressedOnDiskDataBuffer {
-    /// Key that uniquely identifies the time series the buffer stores data points from.
+    /// Id that uniquely identifies the time series the buffer stores data points from.
     univariate_id: u64,
     /// Path to the Apache Parquet file containing the uncompressed data in the [`SpilledSegment`].
     file_path: PathBuf,
 }
 
 impl UncompressedOnDiskDataBuffer {
-    /// Spill the in-memory `data_points` to an Apache Parquet file, and return a
-    /// [`UncompressedOnDiskDataBuffer`] containing the `univariate_id` and a file path. If the
-    /// Apache Paruqet file is written successfully, return [`UncompressedOnDiskDataBuffer`],
-    /// otherwise return [`IOError`].
+    /// Spill the in-memory `data_points` from the time series with `univariate_id` to an Apache
+    /// Parquet file in `local_data_folder`. If the Apache Parquet file is written successfully,
+    /// return an [`UncompressedOnDiskDataBuffer`], otherwise return [`IOError`].
     pub(super) fn new(
         univariate_id: u64,
         local_data_folder: &Path,
@@ -397,7 +397,7 @@ mod tests {
         assert_eq!(data.num_rows(), capacity);
     }
 
-    /// Insert `count` generated data points into `segment_builder`.
+    /// Insert `count` generated data points into `uncompressed_buffer`.
     fn insert_data_points(count: usize, uncompressed_buffer: &mut UncompressedInMemoryDataBuffer) {
         let timestamp: Timestamp = 1234567890123;
         let value: Value = 30.0;

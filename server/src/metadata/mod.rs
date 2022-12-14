@@ -132,12 +132,14 @@ impl MetadataManager {
         }
     }
 
-    /// If they do not already exist, create the tables used for table and model table metadata. A
-    /// "table_metadata" table that can persist tables is created, a "model_table_metadata" table
-    /// that can persist model tables is created, "model_table_hash_table" that map from tag hashes
-    /// to the name of the model tables that contain them, and a "model_table_field_columns" table
-    /// that can save the index of field columns in specific model tables is created. If the tables
-    /// exist or were created, return [`Ok`], otherwise return [`rusqlite::Error`].
+    /// If they do not already exist, create the tables used for table and model table metadata.
+    /// * The table_metadata table contains the metadata for tables.
+    /// * The model_table_metadata table contains the main metadata for model tables.
+    /// * The model_table_hash_table contains a mapping from each tag hash to the name of the model
+    /// table that contains the time series with that tag hash.
+    /// * The model_table_field_columns table contains the name and index of the field columns in
+    /// each model table.
+    /// If the tables exist or were created, return [`Ok`], otherwise return [`rusqlite::Error`].
     fn create_metadata_database_tables(&self) -> Result<()> {
         let connection = Connection::open(&self.metadata_database_path)?;
 
@@ -205,8 +207,8 @@ impl MetadataManager {
     /// or, if the combination of tag values is not in the cache, by computing a new hash. If the
     /// hash is not in the cache, it is both saved to the cache, persisted to the model_table_tags
     /// table if it does not already contain it, and persisted to the model_table_hash_table_name if
-    /// it does not already contain it. If the model_table_tags table cannot be accessed,
-    /// [`rusqlite::Error`] is returned.
+    /// it does not already contain it. If the model_table_tags or the model_table_hash_table_name
+    /// table cannot be accessed, [`rusqlite::Error`] is returned.
     pub fn get_or_compute_tag_hash(
         &mut self,
         model_table: &ModelTableMetadata,
@@ -288,6 +290,8 @@ impl MetadataManager {
         }
     }
 
+    /// Return a mapping from tag hash to table names. Returns a [`Error`](rusqlite::Error) if the
+    /// necessary data cannot be retrieved from the metadata database.
     pub fn get_mapping_from_hash_to_table_name(&self) -> Result<HashMap<u64, String>> {
         // Open a connection to the database containing the metadata.
         let connection = Connection::open(&self.metadata_database_path)?;
