@@ -29,6 +29,6 @@ jobs:
     - name: Cargo Clippy
       run: cargo clippy --verbose
     - name: Cargo Doc
-      run: cargo doc --no-deps --verbose
+      run: cargo doc --verbose
     - name: Cargo Test
       run: cargo test --verbose

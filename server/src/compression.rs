@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Compress `UncompressedSegments` provided by [`StorageEngine`](crate::storage::StorageEngine)
+//! Compress `UncompressedDataBuffers` provided by [`StorageEngine`](crate::storage::StorageEngine)
 //! using the model types in [`models`](crate::models) to produce compressed segments which are
 //! returned to [`StorageEngine`](crate::storage::StorageEngine).
 
@@ -49,7 +49,7 @@ pub const GORILLA_MAXIMUM_LENGTH: usize = 50;
 /// [`CompressionError`](ModelarDbError::CompressionError) if
 /// `uncompressed_timestamps` and `uncompressed_values` have different lengths,
 /// otherwise the resulting compressed segments are returned as a
-/// [`RecordBatch`] with the schema provided as `compressed`.
+/// [`RecordBatch`] with the schema provided as `compressed_schema`.
 pub fn try_compress(
     univariate_id: u64,
     uncompressed_timestamps: &TimestampArray,

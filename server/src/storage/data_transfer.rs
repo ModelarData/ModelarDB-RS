@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn test_non_parquet_file_is_not_compressed_file() {
-        let path = ObjectStorePath::from("compressed/table/test.txt");
+        let path = ObjectStorePath::from(format!("compressed/{}/test.txt", TABLE_NAME));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 

@@ -136,8 +136,8 @@ impl MetadataManager {
     /// If they do not already exist, create the tables used for table and model table metadata.
     /// * The table_metadata table contains the metadata for tables.
     /// * The model_table_metadata table contains the main metadata for model tables.
-    /// * The model_table_hash_table contains a mapping from each tag hash to the name of the model
-    /// table that contains the time series with that tag hash.
+    /// * The model_table_hash_table_name contains a mapping from each tag hash to the name of the
+    /// model table that contains the time series with that tag hash.
     /// * The model_table_field_columns table contains the name and index of the field columns in
     /// each model table.
     /// If the tables exist or were created, return [`Ok`], otherwise return [`rusqlite::Error`].

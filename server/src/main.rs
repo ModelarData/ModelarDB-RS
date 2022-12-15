@@ -74,9 +74,9 @@ pub struct Context {
 /// extract [`DataFolders`], construct a [`Context`] with the systems
 /// components, initialize the tables and model tables in the metadata database,
 /// initialize a CTRL+C handler that flushes the data in memory to disk, and
-/// start the Apache Arrow Flight interface. Returns [`String`] formatted as a
-/// if the command line arguments cannot be parsed, the metadata cannot be read
-/// from the database or the Apache Arrow Flight interface cannot be started.
+/// start the Apache Arrow Flight interface. Returns [`String`] if the command
+/// line arguments cannot be parsed, if the metadata cannot be read from the
+/// database, or if the Apache Arrow Flight interface cannot be started.
 fn main() -> Result<(), String> {
     // Initialize a tracing layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();

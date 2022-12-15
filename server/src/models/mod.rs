@@ -93,7 +93,7 @@ impl PartialOrd<ErrorBound> for f32 {
 pub struct SelectedModel {
     /// Id of the model type that created this model.
     pub model_type_id: u8,
-    /// Index of the last data point in the `UncompressedSegment` that the
+    /// Index of the last data point in the `UncompressedDataBuffer` that the
     /// selected model represents.
     pub end_index: usize,
     /// The selected model's minimum value.

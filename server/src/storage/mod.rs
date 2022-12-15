@@ -425,7 +425,8 @@ mod tests {
         let files = result.await.unwrap();
         assert_eq!(files.len(), 1);
 
-        // The path to the returned compressed file should contain the table name.
+        // The path to the returned compressed file should contain the table name, the start time,
+        // end time, min value, and max value of the second segment.
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
@@ -456,7 +457,8 @@ mod tests {
         let files = result.await.unwrap();
         assert_eq!(files.len(), 1);
 
-        // The path to the returned compressed file should contain the table name.
+        // The path to the returned compressed file should contain the table name, the start time,
+        // end time, min value, and max value of the second segment.
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
@@ -487,7 +489,8 @@ mod tests {
         let files = result.await.unwrap();
         assert_eq!(files.len(), 1);
 
-        // The path to the returned compressed file should contain the table name.
+        // The path to the returned compressed file should contain the table name, the start time,
+        // end time, min value, and max value of the first segment.
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
@@ -518,7 +521,8 @@ mod tests {
         let files = result.await.unwrap();
         assert_eq!(files.len(), 1);
 
-        // The path to the returned compressed file should contain the table name.
+        // The path to the returned compressed file should contain the table name, the start time,
+        // end time, min value, and max value of the first segment.
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
@@ -558,7 +562,9 @@ mod tests {
         // Sort files as get_compressed_files() does not guarantee an ordering.
         files.sort_unstable_by(|a, b| a.location.cmp(&b.location));
 
-        // The path to the returned compressed file should contain the table name.
+        // The files containing the second and third segment should be returned and their path
+        // should contain the table name, the start time, end time, min value, and max value of the
+        // segment in each file.
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
@@ -603,7 +609,9 @@ mod tests {
         // Sort files as get_compressed_files() does not guarantee an ordering.
         files.sort_unstable_by(|a, b| a.location.cmp(&b.location));
 
-        // The path to the returned compressed file should contain the table name.
+        // The files containing the second and third segment should be returned and their path
+        // should contain the table name, the start time, end time, min value, and max value of the
+        // segment in each file.
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
