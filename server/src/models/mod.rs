@@ -46,7 +46,7 @@ pub const GORILLA_ID: u8 = 2;
 const VALUE_SIZE_IN_BYTES: u8 = mem::size_of::<Value>() as u8;
 
 /// Size of [`Value`] in bits.
-const VALUE_SIZE_IN_BITS: u8 = 8 * VALUE_SIZE_IN_BYTES as u8;
+const VALUE_SIZE_IN_BITS: u8 = 8 * VALUE_SIZE_IN_BYTES;
 
 /// General error bound that is guaranteed to not be negative, infinite, or NAN.
 /// For [`PMCMean`] and [`Swing`] the error bound is interpreted as a relative
@@ -236,7 +236,7 @@ pub fn sum(
     max_value: Value,
     values: &[u8],
 ) -> Value {
-    match model_type_id as u8 {
+    match model_type_id {
         PMC_MEAN_ID => pmc_mean::sum(start_time, end_time, timestamps, min_value),
         SWING_ID => swing::sum(
             start_time, end_time, timestamps, min_value, max_value, values,
@@ -266,7 +266,7 @@ pub fn grid(
     timestamps::decompress_all_timestamps(start_time, end_time, timestamps, timestamp_builder);
     let new_timestamps = &timestamp_builder.values_slice()[value_builder.values_slice().len()..];
 
-    match model_type_id as u8 {
+    match model_type_id {
         PMC_MEAN_ID => pmc_mean::grid(
             univariate_id,
             min_value, // For PMC-Mean, min and max is the same value.

@@ -585,7 +585,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
 
         // Returning an AggregateState::Scalar fills an array with the value.
         let mut result = Float32Array::builder(1);
-        result.append_value(sum as f32);
+        result.append_value(sum);
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
 
@@ -736,7 +736,7 @@ impl Accumulator for ModelAvgAccumulator {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
             let array = array.as_any().downcast_ref::<Float32Array>().unwrap();
-            self.sum += array.value(0) as f32;
+            self.sum += array.value(0);
             self.count += array.value(1) as u64;
         }
         Ok(())

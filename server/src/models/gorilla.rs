@@ -85,7 +85,7 @@ impl Gorilla {
                     - self.last_trailing_zero_bits;
                 self.compressed_values.append_bits(
                     value_xor_last_value >> self.last_trailing_zero_bits,
-                    meaningful_bits as u8,
+                    meaningful_bits,
                 );
             } else {
                 // Store the leading zero bits before the meaningful bits using
