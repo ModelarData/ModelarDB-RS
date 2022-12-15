@@ -338,7 +338,7 @@ pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> Strin
     let max_value = aggregate::max(max_values).unwrap();
 
     format!(
-        "{}-{}-{}-{}.parquet",
+        "{}_{}_{}_{}.parquet",
         start_times.value(0),
         end_times.value(end_times.len() - 1),
         min_value,
@@ -430,7 +430,7 @@ mod tests {
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/2000-2005-15.2-44.2.parquet", TABLE_NAME)
+            format!("compressed/{}/2000_2005_15.2_44.2.parquet", TABLE_NAME)
         );
     }
 
@@ -462,7 +462,7 @@ mod tests {
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/2000-2005-15.2-44.2.parquet", TABLE_NAME)
+            format!("compressed/{}/2000_2005_15.2_44.2.parquet", TABLE_NAME)
         );
     }
 
@@ -494,7 +494,7 @@ mod tests {
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/1000-1005-5.2-34.2.parquet", TABLE_NAME)
+            format!("compressed/{}/1000_1005_5.2_34.2.parquet", TABLE_NAME)
         );
     }
 
@@ -526,7 +526,7 @@ mod tests {
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/1000-1005-5.2-34.2.parquet", TABLE_NAME)
+            format!("compressed/{}/1000_1005_5.2_34.2.parquet", TABLE_NAME)
         );
     }
 
@@ -568,12 +568,12 @@ mod tests {
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/2000-2005-15.2-44.2.parquet", TABLE_NAME)
+            format!("compressed/{}/2000_2005_15.2_44.2.parquet", TABLE_NAME)
         );
         let file_path = files.get(1).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/2000-2005-5.2-34.2.parquet", TABLE_NAME)
+            format!("compressed/{}/2000_2005_5.2_34.2.parquet", TABLE_NAME)
         );
     }
 
@@ -615,12 +615,12 @@ mod tests {
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/2000-2005-105.2-134.2.parquet", TABLE_NAME)
+            format!("compressed/{}/2000_2005_105.2_134.2.parquet", TABLE_NAME)
         );
         let file_path = files.get(1).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/2000-2005-15.2-44.2.parquet", TABLE_NAME)
+            format!("compressed/{}/2000_2005_15.2_44.2.parquet", TABLE_NAME)
         );
     }
 

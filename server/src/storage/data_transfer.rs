@@ -452,7 +452,7 @@ mod tests {
         // The transferred file should have a time range file name that matches the compressed data.
         let target_path = target
             .path()
-            .join(format!("compressed/{}/0-5-5.2-34.2.parquet", TABLE_NAME));
+            .join(format!("compressed/{}/0_5_5.2_34.2.parquet", TABLE_NAME));
         assert!(target_path.exists());
 
         // The file should have 3 * number_of_files rows since each compressed file has 3 rows.
