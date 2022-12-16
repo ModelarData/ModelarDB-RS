@@ -66,25 +66,20 @@ fn main() -> Result<(), String> {
         let binary_path = env::current_exe().unwrap();
         let binary_name = binary_path.file_name().unwrap();
         Err(format!(
-            "usage: {} [server_address] [query_file]",
+            "Usage: {} [server_address] [query_file].",
             binary_name.to_str().unwrap()
         ))?;
     }
     let (maybe_host, maybe_query_file_path) = parse_command_line_arguments(args);
 
     // Create the Tokio runtime.
-    let runtime = Runtime::new()
-        .map_err(|error| format!("error: unable to initialize run-time due to {}", error))?;
+    let runtime =
+        Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {}", error))?;
 
     // Connect to the server.
     let host = maybe_host.unwrap_or_else(|| DEFAULT_HOST.to_owned());
-    let flight_service_client = connect(&runtime, &host, DEFAULT_PORT).map_err(|error| {
-        format!(
-            "error: cannot connect to {} due to a {}",
-            host,
-            error.to_string()
-        )
-    })?;
+    let flight_service_client = connect(&runtime, &host, DEFAULT_PORT)
+        .map_err(|error| format!("Cannot connect to {}: {}", host, error))?;
 
     // Execute the queries.
     if let Some(query_file) = maybe_query_file_path {
@@ -92,7 +87,7 @@ fn main() -> Result<(), String> {
     } else {
         repl(runtime, flight_service_client)
     }
-    .map_err(|error| format!("error: cannot execute queries due to {}", error))
+    .map_err(|error| format!("Cannot execute queries: {}", error))
 }
 
 /// Parse the command line arguments in `args` and return a pair with the address of the server to
@@ -204,7 +199,7 @@ fn repl(
 }
 
 /// Execute an action, a command, or a query. Returns [`Error`] if the action, command, or query
-/// could not be executed and their result retrieved.
+/// could not be executed or their result could not be retrieved.
 fn execute_and_print_action_command_or_query(
     runtime: &Runtime,
     flight_service_client: &mut FlightServiceClient<Channel>,
