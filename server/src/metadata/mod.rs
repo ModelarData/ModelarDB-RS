@@ -263,6 +263,8 @@ impl MetadataManager {
             let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
             // OR IGNORE is used to silently fail when trying to insert an already existing hash.
+            // This purposely occurs if the hash has already been written to the metadata database
+            // but is no longer stored in the cache, e.g., if the system has been restarted.
             let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
             transaction.execute(
                 format!(

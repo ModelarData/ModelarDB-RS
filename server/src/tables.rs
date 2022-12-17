@@ -229,9 +229,10 @@ impl TableProvider for ModelTable {
                 .object_store(&self.object_store_url)
                 .unwrap();
 
-            // TODO: extract predicates on time and value and push them to the storage engine..
-            // unwrap() is safe to use as get_compressed_files() only fails if a
-            // non-existing hash is passed or if end time is before start time.
+            // TODO: extract predicates on time and value and push them to the storage engine.
+            // unwrap() is safe to use as get_compressed_files() only fails if a table with the name
+            // table_name does not exists, if end time is before start time, or if max value is
+            // larger than min value.
             storage_engine
                 .get_compressed_files(table_name, None, None, None, None, &query_object_store)
                 .await

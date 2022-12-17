@@ -244,10 +244,10 @@ impl Dialect for ModelarDbDialect {
         self.dialect.is_identifier_part(c)
     }
 
-    /// Check if the next tokens are CREATE TABLE TABLE, if so, attempt to parse
+    /// Check if the next tokens are CREATE MODEL TABLE, if so, attempt to parse
     /// the token stream as a CREATE MODEL TABLE DDL command. If parsing
     /// succeeds, a [`Statement`] is returned, and if not, a [`ParserError`] is
-    /// returned. If the next tokens are not CREATE TABLE TABLE, [`None`] is
+    /// returned. If the next tokens are not CREATE MODEL TABLE, [`None`] is
     /// returned so sqlparser uses its parsing methods for all other commands.
     fn parse_statement(&self, parser: &mut Parser) -> Option<Result<Statement, ParserError>> {
         if self.next_tokens_are_create_model_table(parser) {
