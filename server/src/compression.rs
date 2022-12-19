@@ -400,7 +400,6 @@ mod tests {
     use datafusion::arrow::array::UInt8Array;
     use rand::distributions::Uniform;
     use rand::{thread_rng, Rng};
-    use rand::rngs::ThreadRng;
 
     use crate::metadata::test_util;
     use crate::models;
@@ -447,7 +446,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_constant_time_series(){
+    fn test_try_compress_irregular_constant_time_series() {
         let values = generate_data(100, false, false, None, None);
         let timestamps = generate_timestamps(values.len(), true);
         let (uncompressed_timestamps, uncompressed_values) =
@@ -460,7 +459,7 @@ mod tests {
             error_bound,
             &test_util::get_compressed_schema(),
         )
-            .unwrap();
+        .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
             &compressed_record_batch,
@@ -470,8 +469,7 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_almost_constant_time_series() {
-        let values =
-            generate_data(100, false, true, Some(9.8), Some(10.2));
+        let values = generate_data(100, false, true, Some(9.8), Some(10.2));
         let timestamps = generate_timestamps(values.len(), false);
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);
@@ -494,8 +492,7 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_almost_constant_time_series() {
-        let values =
-            generate_data(100, false, true, Some(9.8), Some(10.2));
+        let values = generate_data(100, false, true, Some(9.8), Some(10.2));
         let timestamps = generate_timestamps(values.len(), true);
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);
@@ -507,7 +504,7 @@ mod tests {
             error_bound,
             &test_util::get_compressed_schema(),
         )
-            .unwrap();
+        .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
             &compressed_record_batch,
@@ -540,8 +537,7 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_almost_linear_time_series() {
-        let values =
-            generate_data(100, true, true, Some(9.0), Some(11.0));
+        let values = generate_data(100, true, true, Some(9.0), Some(11.0));
         let timestamps = generate_timestamps(values.len(), false);
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);
@@ -564,8 +560,7 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_random_time_series() {
-        let values =
-            generate_data(50, false, true, Some(0.0), Some(f32::MAX));
+        let values = generate_data(50, false, true, Some(0.0), Some(f32::MAX));
         let timestamps = generate_timestamps(values.len(), false);
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);
@@ -588,8 +583,7 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_random_time_series() {
-        let values =
-            generate_data(50, false, true, Some(0.0), Some(f32::MAX));
+        let values = generate_data(50, false, true, Some(0.0), Some(f32::MAX));
         let timestamps = generate_timestamps(values.len(), true);
         let (uncompressed_timestamps, uncompressed_values) =
             create_uncompressed_time_series(&timestamps, &values);
@@ -601,7 +595,7 @@ mod tests {
             error_bound,
             &test_util::get_compressed_schema(),
         )
-            .unwrap();
+        .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
             &compressed_record_batch,
@@ -652,9 +646,7 @@ mod tests {
 
         if random_values {
             if min_step == None || max_step == None {
-                panic!(
-                    "min_step and max_step need to be entered if random_values is true."
-                )
+                panic!("min_step and max_step need to be entered if random_values is true.")
             } else if min_step > max_step {
                 panic!("min_step cannot be lower than the max_step.")
             }
@@ -688,7 +680,8 @@ mod tests {
                 values.append(&mut random);
             }
             (false, false) => {
-                let mut constant = vec![randomizer.sample(Uniform::from(0.0..f32::MAX)); length as usize];
+                let mut constant =
+                    vec![randomizer.sample(Uniform::from(0.0..f32::MAX)); length as usize];
                 values.append(&mut constant);
             }
         }
@@ -696,10 +689,10 @@ mod tests {
         values
     }
 
-    fn generate_timestamps(length: usize, irregular: bool) -> Vec<i64>{
+    fn generate_timestamps(length: usize, irregular: bool) -> Vec<i64> {
         let mut randomizer = thread_rng();
         let mut timestamps = vec![];
-        if irregular{
+        if irregular {
             let mut previous_timestamp: i64 = 0;
             for _ in 0..length {
                 let next_timestamp =
@@ -707,8 +700,7 @@ mod tests {
                 timestamps.push(next_timestamp);
                 previous_timestamp = next_timestamp;
             }
-        }
-        else {
+        } else {
             timestamps = Vec::from_iter((100..(length + 1) as i64 * 100).step_by(100));
         }
 
