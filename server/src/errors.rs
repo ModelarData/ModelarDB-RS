@@ -25,6 +25,7 @@ use std::fmt::{Display, Formatter};
 
 /// Error type used throughout the system.
 #[derive(Debug)]
+#[allow(clippy::enum_variant_names)]
 pub enum ModelarDbError {
     /// Error returned by the model types.
     CompressionError(String),

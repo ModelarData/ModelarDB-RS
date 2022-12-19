@@ -13,15 +13,14 @@
  * limitations under the License.
  */
 
-//! Management of the metadata database which stores the system's configuration
-//! and the metadata required for the tables and model tables. Tables can store
-//! arbitrary data, while model tables can only store time series as segments
-//! containing metadata and models. At runtime, the location of the data for the
-//! tables and the model table metadata are stored in Apache Arrow DataFusion's
-//! catalog, while this module stores the system's configuration and a mapping
-//! from model table name and tag values to hashes. These hashes can be combined
-//! with the corresponding model table's field column indexes to uniquely
-//! identify each univariate time series stored in the storage engine.
+//! Management of the metadata database which stores the system's configuration and the metadata
+//! required for the tables and model tables. Tables can store arbitrary data, while model tables
+//! can only store time series as segments containing metadata and models. At runtime, the location
+//! of the data for the tables and the model table metadata are stored in Apache Arrow DataFusion's
+//! catalog, while this module stores the system's configuration and a mapping from model table name
+//! and tag values to hashes. These hashes can be combined with the corresponding model table's
+//! field column indexes to uniquely identify each univariate time series stored in the storage
+//! engine by a univariate id.
 
 pub mod model_table_metadata;
 
@@ -48,45 +47,45 @@ use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::models::ErrorBound;
 use crate::tables::ModelTable;
 use crate::types::{
-    ArrowTimestamp, ArrowValue, CompressedSchema, TimeSeriesId, UncompressedSchema,
+    ArrowTimestamp, ArrowValue, CompressedSchema, UncompressedSchema, UnivariateId,
 };
 use crate::Context;
 
 /// Name used for the file containing the SQLite database storing the metadata.
 pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
 
-/// Store's the system's configuration and the metadata required for reading
-/// from and writing to the tables and model tables. The data that needs to be
-/// persisted are stored in the metadata database.
+/// Store's the system's configuration and the metadata required for reading from and writing to the
+/// tables and model tables. The data that needs to be persisted are stored in the metadata
+/// database.
 #[derive(Clone)]
 pub struct MetadataManager {
     /// Location of the metadata database.
     metadata_database_path: PathBuf,
-    /// [`RecordBatch`] schema used for uncompressed segments.
+    /// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch)
+    /// [`Schema`](datafusion::arrow::datatypes::Schema) used for uncompressed data buffers.
     uncompressed_schema: UncompressedSchema,
-    /// [`RecordBatch`] schema used for compressed segments.
+    /// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch)
+    /// [`Schema`](datafusion::arrow::datatypes::Schema) used for compressed data buffers.
     compressed_schema: CompressedSchema,
     /// Cache of tag value hashes used to signify when to persist new unsaved
     /// tag combinations.
     tag_value_hashes: HashMap<String, u64>,
-    /// Amount of memory to reserve for storing
-    /// [`UncompressedSegments`](crate::storage::segment::UncompressedSegment).
+    /// Amount of memory to reserve for storing uncompressed data buffers.
     pub uncompressed_reserved_memory_in_bytes: usize,
-    /// Amount of memory to reserve for storing compressed segments.
+    /// Amount of memory to reserve for storing compressed data buffers.
     pub compressed_reserved_memory_in_bytes: usize,
 }
 
 impl MetadataManager {
-    /// Return [`MetadataManager`] if a connection can be made to the metadata
-    /// database in `data_folder_path`, otherwise [`Error`](rusqlite::Error) is
-    /// returned.
-    pub fn try_new(data_folder_path: &Path) -> Result<Self> {
-        if !Self::is_path_a_data_folder(data_folder_path) {
+    /// Return [`MetadataManager`] if a connection can be made to the metadata database in
+    /// `local_data_folder`, otherwise [`Error`](rusqlite::Error) is returned.
+    pub fn try_new(local_data_folder: &Path) -> Result<Self> {
+        if !Self::is_path_a_data_folder(local_data_folder) {
             warn!("The data folder is not empty and does not contain data from ModelarDB");
         }
 
         // Compute the path to the metadata database.
-        let metadata_database_path = data_folder_path.join(METADATA_DATABASE_NAME);
+        let metadata_database_path = local_data_folder.join(METADATA_DATABASE_NAME);
 
         // Initialize the schema for record batches containing data points.
         let uncompressed_schema = UncompressedSchema(Arc::new(Schema::new(vec![
@@ -96,13 +95,14 @@ impl MetadataManager {
 
         // Initialize the schema for record batches containing segments.
         let compressed_schema = CompressedSchema(Arc::new(Schema::new(vec![
+            Field::new("univariate_id", DataType::UInt64, false),
             Field::new("model_type_id", DataType::UInt8, false),
-            Field::new("timestamps", DataType::Binary, false),
             Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
             Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("values", DataType::Binary, false),
+            Field::new("timestamps", DataType::Binary, false),
             Field::new("min_value", ArrowValue::DATA_TYPE, false),
             Field::new("max_value", ArrowValue::DATA_TYPE, false),
+            Field::new("values", DataType::Binary, false),
             Field::new("error", DataType::Float32, false),
         ])));
 
@@ -133,13 +133,14 @@ impl MetadataManager {
         }
     }
 
-    /// If they do not already exist, create the tables used for table and model
-    /// table metadata. A "table_metadata" table that can persist tables is
-    /// created, a "model_table_metadata" table that can persist model tables is
-    /// created, and a "model_table_field_columns" table that can save the index
-    /// of field columns in specific model tables is created. If the tables
-    /// exist or were created, return [`Ok`], otherwise return
-    /// [`rusqlite::Error`].
+    /// If they do not already exist, create the tables used for table and model table metadata.
+    /// * The table_metadata table contains the metadata for tables.
+    /// * The model_table_metadata table contains the main metadata for model tables.
+    /// * The model_table_hash_table_name contains a mapping from each tag hash to the name of the
+    /// model table that contains the time series with that tag hash.
+    /// * The model_table_field_columns table contains the name and index of the field columns in
+    /// each model table.
+    /// If the tables exist or were created, return [`Ok`], otherwise return [`rusqlite::Error`].
     fn create_metadata_database_tables(&self) -> Result<()> {
         let connection = Connection::open(&self.metadata_database_path)?;
 
@@ -163,6 +164,15 @@ impl MetadataManager {
             (),
         )?;
 
+        // Create the model_table_hash_name SQLite table if it does not exist.
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
+                hash INTEGER PRIMARY KEY,
+                table_name TEXT
+        ) STRICT",
+            (),
+        )?;
+
         // Create the model_table_field_columns SQLite table if it does not
         // exist. Note that column_index will only use a maximum of 10 bits.
         connection.execute(
@@ -178,35 +188,37 @@ impl MetadataManager {
         Ok(())
     }
 
-    /// Return the path of the data folder.
-    pub fn get_data_folder_path(&self) -> &Path {
+    /// Return the path of the local data folder.
+    pub fn get_local_data_folder(&self) -> &Path {
         // unwrap() is safe as metadata_database_path is created by self.
         self.metadata_database_path.parent().unwrap()
     }
 
-    /// Return the [`RecordBatch`] schema used for uncompressed segments.
+    /// Return the [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch)
+    /// [`Schema`](datafusion::arrow::datatypes::Schema) used for uncompressed data buffers.
     pub fn get_uncompressed_schema(&self) -> UncompressedSchema {
         self.uncompressed_schema.clone()
     }
 
-    /// Return the [`RecordBatch`] schema used for compressed segments.
+    /// Return the [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch)
+    /// [`Schema`](datafusion::arrow::datatypes::Schema) used for compressed data buffers.
     pub fn get_compressed_schema(&self) -> CompressedSchema {
         self.compressed_schema.clone()
     }
 
-    /// Return the tag hash for the given list of tag values either by
-    /// retrieving it from a cache or, if the combination of tag values is not
-    /// in the cache, by computing a new hash. If the hash is not in the cache,
-    /// it is both saved to the cache and persisted to the model_table_tags
-    /// table if it does not already contain it. If the model_table_tags table
-    /// cannot be accessed, [`rusqlite::Error`] is returned.
+    /// Return the tag hash for the given list of tag values either by retrieving it from a cache
+    /// or, if the combination of tag values is not in the cache, by computing a new hash. If the
+    /// hash is not in the cache, it is both saved to the cache, persisted to the model_table_tags
+    /// table if it does not already contain it, and persisted to the model_table_hash_table_name if
+    /// it does not already contain it. If the model_table_tags or the model_table_hash_table_name
+    /// table cannot be accessed, [`rusqlite::Error`] is returned.
     pub fn get_or_compute_tag_hash(
         &mut self,
         model_table: &ModelTableMetadata,
-        tag_values: &Vec<String>,
+        tag_values: &[String],
     ) -> Result<u64, rusqlite::Error> {
         let cache_key = {
-            let mut cache_key_list = tag_values.clone();
+            let mut cache_key_list = tag_values.to_vec();
             cache_key_list.push(model_table.name.clone());
 
             cache_key_list.join(";")
@@ -217,7 +229,8 @@ impl MetadataManager {
         if let Some(tag_hash) = self.tag_value_hashes.get(&cache_key) {
             Ok(*tag_hash)
         } else {
-            // Generate the 54-bit tag hash based on the tag values of the record batch and model table name.
+            // Generate the 54-bit tag hash based on the tag values of the record batch and model
+            // table name.
             let tag_hash = {
                 let mut hasher = DefaultHasher::new();
                 hasher.write(cache_key.as_bytes());
@@ -242,14 +255,18 @@ impl MetadataManager {
                 .collect::<Vec<String>>()
                 .join(",");
 
-            let connection = Connection::open(&self.metadata_database_path)?;
+            // Create a transaction to ensure the database state is consistent across tables.
+            let mut connection = Connection::open(&self.metadata_database_path)?;
+            let transaction = connection.transaction()?;
 
             // SQLite use signed integers https://www.sqlite.org/datatype3.html.
             let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
             // OR IGNORE is used to silently fail when trying to insert an already existing hash.
+            // This purposely occurs if the hash has already been written to the metadata database
+            // but is no longer stored in the cache, e.g., if the system has been restarted.
             let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
-            connection.execute(
+            transaction.execute(
                 format!(
                     "INSERT OR IGNORE INTO {}_tags (hash{}{}) VALUES ({}{}{})",
                     model_table.name,
@@ -263,32 +280,57 @@ impl MetadataManager {
                 (),
             )?;
 
+            transaction.execute(
+                format!(
+                    "INSERT OR IGNORE INTO model_table_hash_table_name (hash, table_name) VALUES ({}, '{}')",
+                    signed_tag_hash, model_table.name
+                )
+                .as_str(),
+                (),
+            )?;
+
+            transaction.commit()?;
+
             Ok(tag_hash)
         }
     }
 
-    /// Compute the 64-bit keys of the univariate time series to retrieve from
-    /// the storage engine using the fields, tag, and tag values in the query.
-    /// Returns a [`Error`](rusqlite::Error) if the necessary data cannot be
-    /// retrieved from the metadata database.
-    pub fn compute_keys_using_fields_and_tags(
+    /// Return a mapping from tag hash to table names. Returns a [`Error`](rusqlite::Error) if the
+    /// necessary data cannot be retrieved from the metadata database.
+    pub fn get_mapping_from_hash_to_table_name(&self) -> Result<HashMap<u64, String>> {
+        // Open a connection to the database containing the metadata.
+        let connection = Connection::open(&self.metadata_database_path)?;
+
+        let mut hash_to_table_name = HashMap::new();
+        let mut select_statement =
+            connection.prepare("SELECT hash, table_name FROM model_table_hash_table_name")?;
+        let mut rows = select_statement.query([])?;
+
+        while let Some(row) = rows.next()? {
+            // SQLite use signed integers https://www.sqlite.org/datatype3.html.
+            let signed_tag_hash = row.get::<usize, i64>(0)?;
+            let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
+            hash_to_table_name.insert(tag_hash, row.get::<usize, String>(1)?);
+        }
+
+        Ok(hash_to_table_name)
+    }
+
+    /// Compute the 64-bit univariate ids of the univariate time series to retrieve from the storage
+    /// engine using the field columns, tag names, and tag values in the query. Returns a
+    /// [`Error`](rusqlite::Error) if the necessary data cannot be retrieved from the metadata
+    /// database.
+    pub fn compute_univariate_ids_using_fields_and_tags(
         &self,
         table_name: &str,
         columns: Option<&Vec<usize>>,
         fallback_field_column: u64,
         tag_predicates: &[(&str, &str)],
-    ) -> Result<Vec<TimeSeriesId>> {
-        // Construct a query that extracts the field columns in the table being
-        // queried which overlaps with the columns being requested by the query.
-        let query_field_columns = if columns.is_none() {
-            format!(
-                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}'",
-                table_name
-            )
-        } else {
+    ) -> Result<Vec<UnivariateId>> {
+        // Construct a query that extracts the field columns in the table being queried which
+        // overlaps with the columns being requested by the query.
+        let query_field_columns = if let Some(columns) = columns {
             let column_predicates: Vec<String> = columns
-                .clone()
-                .unwrap()
                 .iter()
                 .map(|column| format!("column_index = {}", column))
                 .collect();
@@ -298,10 +340,15 @@ impl MetadataManager {
                 table_name,
                 column_predicates.join(" OR ")
             )
+        } else {
+            format!(
+                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}'",
+                table_name
+            )
         };
 
-        // Construct a query that extracts the hashes of the multivariate time
-        // series in the table with tag values that match those in the query.
+        // Construct a query that extracts the hashes of the multivariate time series in the table
+        // with tag values that match those in the query.
         let query_hashes = {
             if tag_predicates.is_empty() {
                 format!("SELECT hash FROM {}_tags", table_name)
@@ -319,20 +366,19 @@ impl MetadataManager {
             }
         };
 
-        // Retrieve the hashes using the queries and reconstruct the keys.
-        self.compute_keys_using_metadata_database(
+        // Retrieve the hashes using the queries and reconstruct the univariate ids.
+        self.compute_univariate_ids_using_metadata_database(
             &query_field_columns,
             fallback_field_column,
             &query_hashes,
         )
     }
 
-    /// Compute the 64-bit keys of the univariate time series to retrieve from
-    /// the storage engine using the two queries constructed from the fields,
-    /// tag, and tag values in the user's query. Returns a [`RusqliteResult`]
-    /// with an [`Error`](rusqlite::Error) if the data cannot be retrieved from
-    /// the metadata database, otherwise the keys are returned.
-    fn compute_keys_using_metadata_database(
+    /// Compute the 64-bit univariate ids of the univariate time series to retrieve from the storage
+    /// engine using the two queries constructed from the fields, tag names, and tag values in the
+    /// user's query. Returns a [`Result`] with an [`Error`](rusqlite::Error) if the data cannot be
+    /// retrieved from the metadata database, otherwise the univariate ids are returned.
+    fn compute_univariate_ids_using_metadata_database(
         &self,
         query_field_columns: &str,
         fallback_field_column: u64,
@@ -356,21 +402,21 @@ impl MetadataManager {
             field_columns.push(fallback_field_column);
         }
 
-        // Retrieve the hashes and compute the keys;
-        let mut select_statement = connection.prepare(&query_hashes)?;
+        // Retrieve the hashes and compute the univariate ids;
+        let mut select_statement = connection.prepare(query_hashes)?;
         let mut rows = select_statement.query([])?;
 
-        let mut keys = vec![];
+        let mut univariate_ids = vec![];
         while let Some(row) = rows.next()? {
             // SQLite use signed integers https://www.sqlite.org/datatype3.html.
             let signed_tag_hash = row.get::<usize, i64>(0)?;
             let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
 
             for field_column in &field_columns {
-                keys.push(tag_hash | field_column);
+                univariate_ids.push(tag_hash | field_column);
             }
         }
-        Ok(keys)
+        Ok(univariate_ids)
     }
 
     /// Normalize `name` to allow direct comparisons between names.
@@ -378,8 +424,8 @@ impl MetadataManager {
         name.to_lowercase()
     }
 
-    /// Save the created table to the metadata database. This consists of adding
-    /// a row to the table_metadata table with the `name` of the created table.
+    /// Save the created table to the metadata database. This consists of adding a row to the
+    /// table_metadata table with the `name` of the created table.
     pub fn save_table_metadata(&self, name: &str) -> Result<()> {
         // Add a new row in the table_metadata table to persist the table.
         let connection = Connection::open(&self.metadata_database_path)?;
@@ -390,9 +436,9 @@ impl MetadataManager {
         Ok(())
     }
 
-    /// Read the rows in the table_metadata table and use these to register
-    /// tables in Apache Arrow DataFusion. If the metadata database could not be
-    /// opened or the table could not be queried, return [`rusqlite::Error`].
+    /// Read the rows in the table_metadata table and use these to register tables in Apache Arrow
+    /// DataFusion. If the metadata database could not be opened or the table could not be queried,
+    /// return [`rusqlite::Error`].
     pub fn register_tables(
         &self,
         context: &Arc<Context>,
@@ -405,7 +451,7 @@ impl MetadataManager {
         let mut rows = select_statement.query(())?;
 
         while let Some(row) = rows.next()? {
-            if let Err(error) = self.register_table(row, &context, &runtime) {
+            if let Err(error) = self.register_table(row, context, runtime) {
                 error!("Failed to register table due to: {}.", error);
             }
         }
@@ -413,9 +459,9 @@ impl MetadataManager {
         Ok(())
     }
 
-    /// Use a row from the table_metadata table to register the table in Apache
-    /// Arrow DataFusion. If the metadata database could not be opened or the
-    /// table could not be queried, return [`Error`].
+    /// Use a row from the table_metadata table to register the table in Apache Arrow DataFusion. If
+    /// the metadata database could not be opened or the table could not be queried, return
+    /// [`Error`].
     fn register_table(
         &self,
         row: &Row,
@@ -425,7 +471,7 @@ impl MetadataManager {
         let name = row.get::<usize, String>(0)?;
 
         // Compute the path to the folder containing data for the table.
-        let table_folder_path = self.get_data_folder_path().join(&name);
+        let table_folder_path = self.get_local_data_folder().join(&name);
         let table_folder = table_folder_path
             .to_str()
             .ok_or_else(|| format!("Path for table is not UTF-8: '{}'", name))?;
@@ -441,9 +487,8 @@ impl MetadataManager {
         Ok(())
     }
 
-    /// Save the created model table to the metadata database. This includes
-    /// creating a tags table for the model table, adding a row to the
-    /// model_table_metadata table, and adding a row to the
+    /// Save the created model table to the metadata database. This includes creating a tags table
+    /// for the model table, adding a row to the model_table_metadata table, and adding a row to the
     /// model_table_field_columns table for each field column.
     pub fn save_model_table_metadata(
         &self,
@@ -456,7 +501,7 @@ impl MetadataManager {
         let mut connection = Connection::open(&self.metadata_database_path)?;
         let transaction = connection.transaction()?;
 
-        // Add a column definition for each tag field in the schema.
+        // Add a column definition for each tag column in the schema.
         let tag_columns: String = model_table_metadata
             .tag_column_indices
             .iter()
@@ -522,10 +567,9 @@ impl MetadataManager {
         transaction.commit()
     }
 
-    /// Convert the rows in the model_table_metadata table to
-    /// [`ModelTableMetadata`] and use these to register model tables in Apache
-    /// Arrow DataFusion. If the metadata database could not be opened or the
-    /// table could not be queried, return [`rusqlite::Error`].
+    /// Convert the rows in the model_table_metadata table to [`ModelTableMetadata`] and use these
+    /// to register model tables in Apache Arrow DataFusion. If the metadata database could not be
+    /// opened or the table could not be queried, return [`rusqlite::Error`].
     pub fn register_model_tables(&self, context: &Arc<Context>) -> Result<(), rusqlite::Error> {
         let connection = Connection::open(&self.metadata_database_path)?;
 
@@ -537,7 +581,7 @@ impl MetadataManager {
         let mut rows = select_statement.query(())?;
 
         while let Some(row) = rows.next()? {
-            if let Err(error) = MetadataManager::register_model_table(row, &context) {
+            if let Err(error) = MetadataManager::register_model_table(row, context) {
                 error!("Failed to register model table due to: {}.", error);
             }
         }
@@ -545,10 +589,9 @@ impl MetadataManager {
         Ok(())
     }
 
-    /// Convert a row from the model_table_metadata table to a
-    /// [`ModelTableMetadata`] and use it to register model tables in Apache
-    /// Arrow DataFusion. If the metadata database could not be opened or the
-    /// table could not be queried, return [`Error`].
+    /// Convert a row from the model_table_metadata table to a [`ModelTableMetadata`] and use it to
+    /// register model tables in Apache Arrow DataFusion. If the metadata database could not be
+    /// opened or the table could not be queried, return [`Error`].
     fn register_model_table(row: &Row, context: &Arc<Context>) -> Result<(), Box<dyn Error>> {
         let name = row.get::<usize, String>(0)?;
 
@@ -636,12 +679,11 @@ impl MetadataManager {
             .collect()
     }
 
-    /// Convert a [`&[u8]`] to a [`Vec<ErrorBound>`] if the length of `bytes`
-    /// divides evenly by [`mem::size_of::<f32>()`], otherwise
-    /// [`Error`](rusqlite::Error) is returned.
+    /// Convert a [`&[u8]`] to a [`Vec<ErrorBound>`] if the length of `bytes` divides evenly by
+    /// [`mem::size_of::<f32>()`], otherwise [`Error`](rusqlite::Error) is returned.
     fn convert_slice_u8_to_vec_error_bounds(bytes: &[u8]) -> Result<Vec<ErrorBound>> {
         if bytes.len() % mem::size_of::<f32>() != 0 {
-            // rusqlite defines UNKNOWN_COLUMN as usize::MAX;
+            // rusqlite defines UNKNOWN_COLUMN as usize::MAX.
             Err(rusqlite::Error::InvalidColumnType(
                 usize::MAX,
                 "Blob is not a vector of error bounds".to_owned(),
@@ -722,6 +764,13 @@ mod tests {
 
         connection
             .execute(
+                "SELECT hash, table_name FROM model_table_hash_table_name",
+                params![],
+            )
+            .unwrap();
+
+        connection
+            .execute(
                 "SELECT table_name, column_name, column_index FROM model_table_field_columns",
                 params![],
             )
@@ -733,7 +782,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_path = temp_dir.path();
         let metadata_manager = test_util::get_test_metadata_manager(temp_dir_path);
-        assert_eq!(temp_dir_path, metadata_manager.get_data_folder_path());
+        assert_eq!(temp_dir_path, metadata_manager.get_local_data_folder());
     }
 
     #[test]
@@ -775,7 +824,7 @@ mod tests {
 
         // It should also be saved in the metadata database table.
         let database_path = metadata_manager
-            .get_data_folder_path()
+            .get_local_data_folder()
             .join(METADATA_DATABASE_NAME);
         let connection = Connection::open(database_path).unwrap();
 
@@ -818,17 +867,17 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_keys_using_fields_and_tags_for_missing_model_table() {
+    fn test_compute_univariate_ids_using_fields_and_tags_for_missing_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
 
         assert!(metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", None, 10, &[])
+            .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
             .is_err());
     }
 
     #[test]
-    fn test_compute_keys_using_fields_and_tags_for_empty_model_table() {
+    fn test_compute_univariate_ids_using_fields_and_tags_for_empty_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
@@ -838,43 +887,44 @@ mod tests {
             .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
-        // Lookup keys using fields and tags for an empty table.
-        let keys = metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", None, 10, &[])
+        // Lookup univariate ids using fields and tags for an empty table.
+        let univariate_ids = metadata_manager
+            .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
             .unwrap();
-        assert!(keys.is_empty());
+        assert!(univariate_ids.is_empty());
     }
 
     #[test]
-    fn test_compute_keys_using_no_fields_and_tags_for_model_table() {
+    fn test_compute_univariate_ids_using_no_fields_and_tags_for_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
         let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
         initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]);
 
-        // Lookup all keys for the table by not passing any fields or tags.
-        let keys = metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", None, 10, &[])
+        // Lookup all univariate ids for the table by not passing any fields or tags.
+        let univariate_ids = metadata_manager
+            .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
             .unwrap();
-        assert_eq!(2, keys.len());
+        assert_eq!(2, univariate_ids.len());
     }
 
     #[test]
-    fn test_compute_keys_for_the_fallback_column_using_only_a_tag_column_for_model_table() {
+    fn test_compute_univariate_ids_for_the_fallback_column_using_only_a_tag_column_for_model_table()
+    {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
         let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
         initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]);
 
-        // Lookup the keys for the fallback column by only requesting tag columns.
-        let keys = metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", Some(&vec![0]), 10, &[])
+        // Lookup the univariate ids for the fallback column by only requesting tag columns.
+        let univariate_ids = metadata_manager
+            .compute_univariate_ids_using_fields_and_tags("model_table", Some(&vec![0]), 10, &[])
             .unwrap();
-        assert_eq!(1, keys.len());
+        assert_eq!(1, univariate_ids.len());
     }
 
     #[test]
-    fn test_compute_the_keys_for_a_specific_field_column_for_model_table() {
+    fn test_compute_the_univariate_ids_for_a_specific_field_column_for_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
         let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
@@ -883,21 +933,21 @@ mod tests {
             &["tag_value1", "tag_value2"],
         );
 
-        // Lookup all keys for the table by not requesting keys for columns.
-        let keys = metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", None, 10, &[])
+        // Lookup all univariate ids for the table by not requesting ids for columns.
+        let univariate_ids = metadata_manager
+            .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
             .unwrap();
-        assert_eq!(4, keys.len());
+        assert_eq!(4, univariate_ids.len());
 
-        // Lookup keys for the table by requesting keys for a specific field column.
-        let keys = metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", Some(&vec![1]), 10, &[])
+        // Lookup univariate ids for the table by requesting ids for a specific field column.
+        let univariate_ids = metadata_manager
+            .compute_univariate_ids_using_fields_and_tags("model_table", Some(&vec![1]), 10, &[])
             .unwrap();
-        assert_eq!(2, keys.len());
+        assert_eq!(2, univariate_ids.len());
     }
 
     #[test]
-    fn test_compute_the_keys_for_a_specific_tag_value_for_model_table() {
+    fn test_compute_the_univariate_ids_for_a_specific_tag_value_for_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
         let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
@@ -906,17 +956,22 @@ mod tests {
             &["tag_value1", "tag_value2"],
         );
 
-        // Lookup all keys for the table by not requesting keys for a tag value.
-        let keys = metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", None, 10, &[])
+        // Lookup all univariate ids for the table by not requesting ids for a tag value.
+        let univariate_ids = metadata_manager
+            .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
             .unwrap();
-        assert_eq!(4, keys.len());
+        assert_eq!(4, univariate_ids.len());
 
-        // Lookup keys for the table by requesting keys for a specific tag value.
-        let keys = metadata_manager
-            .compute_keys_using_fields_and_tags("model_table", None, 10, &[("tag", "tag_value1")])
+        // Lookup univariate ids for the table by requesting ids for a specific tag value.
+        let univariate_ids = metadata_manager
+            .compute_univariate_ids_using_fields_and_tags(
+                "model_table",
+                None,
+                10,
+                &[("tag", "tag_value1")],
+            )
             .unwrap();
-        assert_eq!(2, keys.len());
+        assert_eq!(2, univariate_ids.len());
     }
 
     fn initialize_model_table_with_tag_values(
@@ -1040,8 +1095,7 @@ mod tests {
 
         assert!(rows.next().unwrap().is_none());
 
-        // Retrieve the rows in model_table_field_columns from the metadata
-        // database.
+        // Retrieve the rows in model_table_field_columns from the metadata database.
         let mut select_statement = connection
             .prepare(
                 "SELECT table_name, column_name, column_index
@@ -1136,8 +1190,8 @@ pub mod test_util {
     use crate::models::ErrorBound;
     use crate::storage::StorageEngine;
 
-    /// Return a [`Context`] with the metadata manager created by
-    /// `get_test_metadata_manager()` and the data folder set to `path`.
+    /// Return a [`Context`] with the metadata manager created by `get_test_metadata_manager()` and
+    /// the data folder set to `path`.
     pub fn get_test_context(path: &Path) -> Arc<Context> {
         let metadata_manager = get_test_metadata_manager(path);
         let session = get_test_session_context();
@@ -1155,9 +1209,9 @@ pub mod test_util {
         })
     }
 
-    /// Return a [`MetadataManager`] with 5 MiBs reserved for uncompressed data,
-    /// 5 MiBs reserved for compressed data, and the data folder set to `path`.
-    /// Reducing the amount of reserved memory makes it faster to run unit tests.
+    /// Return a [`MetadataManager`] with 5 MiBs reserved for uncompressed data, 5 MiBs reserved for
+    /// compressed data, and the data folder set to `path`. Reducing the amount of reserved memory
+    /// makes it faster to run unit tests.
     pub fn get_test_metadata_manager(path: &Path) -> MetadataManager {
         let mut metadata_manager = MetadataManager::try_new(path).unwrap();
 
@@ -1175,8 +1229,8 @@ pub mod test_util {
         SessionContext::with_state(state)
     }
 
-    /// Return a [`ModelTableMetadata`] for a model table with a schema
-    /// containing a tag column, a timestamp column, and two field columns.
+    /// Return a [`ModelTableMetadata`] for a model table with a schema containing a tag column, a
+    /// timestamp column, and two field columns.
     pub fn get_model_table_metadata() -> ModelTableMetadata {
         let schema = Schema::new(vec![
             Field::new("tag", DataType::Utf8, false),

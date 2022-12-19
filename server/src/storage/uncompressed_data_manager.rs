@@ -13,7 +13,8 @@
  * limitations under the License.
  */
 
-//! Support for managing all uncompressed data that is ingested into the [`StorageEngine`].
+//! Support for managing all uncompressed data that is ingested into the
+//! [`StorageEngine`](crate::storage::StorageEngine).
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
@@ -25,46 +26,50 @@ use tracing::{debug, debug_span};
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::models::ErrorBound;
-use crate::storage::segment::{FinishedSegment, SegmentBuilder, UncompressedSegment};
+use crate::storage::uncompressed_data_buffer::{
+    UncompressedDataBuffer, UncompressedInMemoryDataBuffer,
+};
 use crate::types::{
     CompressedSchema, Timestamp, TimestampArray, UncompressedSchema, Value, ValueArray,
 };
 use crate::{compression, get_array};
 
-/// Converts a batch of data to uncompressed data points and stores uncompressed data points
-/// temporarily in an in-memory buffer that spills to Apache Parquet files. When finished the data
-/// is made available for compression.
+/// Stores uncompressed data points temporarily in an in-memory buffer that spills to Apache Parquet
+/// files. When a uncompressed data buffer is finished the data is made available for compression.
 pub(super) struct UncompressedDataManager {
-    /// Path to the folder containing all uncompressed data managed by the [`StorageEngine`].
-    data_folder_path: PathBuf,
-    /// The [`UncompressedSegments`](UncompressedSegment) while they are being built.
-    uncompressed_data: HashMap<u64, SegmentBuilder>,
-    /// FIFO queue of [`FinishedSegments`](FinishedSegment) that are ready for compression.
-    finished_queue: VecDeque<FinishedSegment>,
-    /// How many bytes of memory that are left for storing [`UncompressedSegments`](UncompressedSegment).
+    /// Path to the folder containing all uncompressed data managed by the
+    /// [`StorageEngine`](crate::storage::StorageEngine).
+    local_data_folder: PathBuf,
+    /// The [`UncompressedDataBuffers`](UncompressedDataBuffer) currently being filled with ingested
+    /// data points.
+    active_uncompressed_data_buffers: HashMap<u64, UncompressedInMemoryDataBuffer>,
+    /// FIFO queue of full [`UncompressedDataBuffers`](UncompressedDataBuffer) that are ready for
+    /// compression.
+    finished_uncompressed_data_buffers: VecDeque<Box<dyn UncompressedDataBuffer>>,
+    /// How many bytes of memory that are left for storing
+    /// [`UncompressedDataBuffers`](UncompressedDataBuffer).
     uncompressed_remaining_memory_in_bytes: usize,
-    /// Reference to the schema for uncompressed segments.
+    /// Reference to the schema for uncompressed data buffers.
     uncompressed_schema: UncompressedSchema,
-    /// Reference to the schema for compressed segments.
+    /// Reference to the schema for compressed data buffers.
     compressed_schema: CompressedSchema,
     // TODO: This is a temporary field used to fix existing tests. Remove when configuration component is changed.
-    /// If this is true, compress full segments directly instead of queueing them.
+    /// If this is true, compress finished buffers directly instead of queueing them.
     compress_directly: bool,
 }
 
 impl UncompressedDataManager {
     pub(super) fn new(
-        data_folder_path: PathBuf,
+        local_data_folder: PathBuf,
         uncompressed_reserved_memory_in_bytes: usize,
         uncompressed_schema: UncompressedSchema,
         compressed_schema: CompressedSchema,
         compress_directly: bool,
     ) -> Self {
         Self {
-            data_folder_path,
-            // TODO: Maybe create with estimated capacity to avoid reallocation.
-            uncompressed_data: HashMap::new(),
-            finished_queue: VecDeque::new(),
+            local_data_folder,
+            active_uncompressed_data_buffers: HashMap::new(),
+            finished_uncompressed_data_buffers: VecDeque::new(),
             uncompressed_remaining_memory_in_bytes: uncompressed_reserved_memory_in_bytes,
             uncompressed_schema,
             compressed_schema,
@@ -73,17 +78,18 @@ impl UncompressedDataManager {
     }
 
     // TODO: When the compression component is changed, this function should return Ok or Err.
-    /// Parse `data_points` and insert it into the in-memory buffer. The data points are first parsed
-    /// into multiple univariate time series based on `model_table`. These individual time series
-    /// are then inserted into the storage engine. Return a list of segments that were compressed
-    /// as a result of inserting the data points with their corresponding keys if the data was
-    /// successfully inserted, otherwise return [`Err`].
+    /// Split `data_points` and insert them into the in-memory buffer. The multivariate time series
+    /// in `data_points` are first split into multiple univariate time series based on
+    /// `model_table`. These univariate time series are then inserted into the storage engine.
+    /// Return a list of buffers that were compressed as a result of inserting the data points with
+    /// their corresponding univariate id if the data was successfully inserted, otherwise return
+    /// [`Err`].
     pub(super) fn insert_data_points(
         &mut self,
         metadata_manager: &mut MetadataManager,
         model_table: &ModelTableMetadata,
         data_points: &RecordBatch,
-    ) -> Result<Vec<(u64, RecordBatch)>, String> {
+    ) -> Result<Vec<RecordBatch>, String> {
         let _span = debug_span!("insert_data_points", table = model_table.name).entered();
         debug!(
             "Received record batch with {} data points for the table '{}'.",
@@ -106,7 +112,8 @@ impl UncompressedDataManager {
             .map(|index| data_points.column(*index).as_any().downcast_ref().unwrap())
             .collect();
 
-        // Prepare the field columns for iteration. The column index is saved with the corresponding array.
+        // Prepare the field columns for iteration. The column index is saved with the corresponding
+        // array.
         let field_column_arrays: Vec<(usize, &ValueArray)> = model_table
             .schema
             .fields()
@@ -114,7 +121,8 @@ impl UncompressedDataManager {
             .filter_map(|field| {
                 let index = model_table.schema.index_of(field.name().as_str()).unwrap();
 
-                // Field columns are the columns that are not the timestamp column or one of the tag columns.
+                // Field columns are the columns that are not the timestamp column or one of the tag
+                // columns.
                 let not_timestamp_column = index != model_table.timestamp_column_index;
                 let not_tag_column = !model_table.tag_column_indices.contains(&index);
 
@@ -129,10 +137,10 @@ impl UncompressedDataManager {
             })
             .collect();
 
-        let mut compressed_segments = vec![];
+        let mut compressed_buffers = vec![];
 
-        // For each row in the data, generate a tag hash, extract the individual measurements,
-        // and insert them into the storage engine.
+        // For each data point, generate a hash from the tags, extract the individual fields, and
+        // insert them into the storage engine.
         for (index, timestamp) in timestamps.iter().enumerate() {
             let tag_values: Vec<String> = tag_column_arrays
                 .iter()
@@ -140,126 +148,153 @@ impl UncompressedDataManager {
                 .collect();
 
             let tag_hash = metadata_manager
-                .get_or_compute_tag_hash(&model_table, &tag_values)
-                .map_err(|error| format!("Tag hash could not be saved: {}", error.to_string()))?;
+                .get_or_compute_tag_hash(model_table, &tag_values)
+                .map_err(|error| format!("Tag hash could not be saved: {}", error))?;
 
-            // For each field column, generate the 64-bit key, create a single data point, and
-            // insert the data point into the in-memory buffer.
+            // For each field column, generate the 64-bit univariate id, and append the current
+            // timestamp and the field's value into the in-memory buffer for the univariate id.
             for (field_index, field_column_array) in &field_column_arrays {
-                let key = tag_hash | *field_index as u64;
+                let univariate_id = tag_hash | *field_index as u64;
                 let value = field_column_array.value(index);
 
                 // TODO: When the compression component is changed, just insert the data points.
                 // unwrap() is safe to use since the timestamps array cannot contain null values.
-                if let Some(segment) = self.insert_data_point(key, timestamp.unwrap(), value) {
-                    compressed_segments.push((key, segment));
+                if let Some(buffer) =
+                    self.insert_data_point(univariate_id, timestamp.unwrap(), value)
+                {
+                    compressed_buffers.push(buffer);
                 };
             }
         }
 
-        Ok(compressed_segments)
+        Ok(compressed_buffers)
     }
 
-    // TODO: Update to handle finished segments when compress_full_segment is removed.
-    /// Compress the uncompressed data that the [`UncompressedDataManager`] is
-    /// currently managing, and return the compressed segments and their keys.
+    // TODO: Update to handle finished buffers when compress_finished_buffer is removed.
+    /// Compress the uncompressed data buffer that the [`UncompressedDataManager`] is currently
+    /// managing, and return the compressed buffers and their univariate ids.
     pub(super) fn flush(&mut self) -> Vec<(u64, RecordBatch)> {
-        // The keys are copied to not have multiple borrows to self at the same
-        // time, however, it is not clear if it necessary or can be removed.
-        let keys: Vec<u64> = self.uncompressed_data.keys().cloned().collect();
+        // The univariate ids are copied to not have multiple borrows to self at the same time.
+        let univariate_ids: Vec<u64> = self
+            .active_uncompressed_data_buffers
+            .keys()
+            .cloned()
+            .collect();
 
-        let mut compressed_segments = vec![];
-        for key in keys {
-            let segment = self.uncompressed_data.remove(&key).unwrap();
-            let record_batch = self.compress_full_segment(segment);
-            compressed_segments.push((key, record_batch));
+        let mut compressed_buffers = vec![];
+        for univariate_id in univariate_ids {
+            let buffer = self
+                .active_uncompressed_data_buffers
+                .remove(&univariate_id)
+                .unwrap();
+            let record_batch = self.compress_finished_buffer(univariate_id, buffer);
+            compressed_buffers.push((univariate_id, record_batch));
         }
-        compressed_segments
+        compressed_buffers
     }
 
     // TODO: When the compression component is changed, this function should return Ok or Err.
-    /// Insert a single data point into the in-memory buffer. Return the compressed segment if
-    /// the inserted data point made the segment full, otherwise return [`None`].
+    /// Insert a single data point into its in-memory buffer. Return a compressed data buffer if the
+    /// inserted data point made the buffer full and thus finished, otherwise return [`None`].
     fn insert_data_point(
         &mut self,
-        key: u64,
+        univariate_id: u64,
         timestamp: Timestamp,
         value: Value,
     ) -> Option<RecordBatch> {
-        let _span = debug_span!("insert_data_point", key = key).entered();
+        let _span = debug_span!("insert_data_point", univariate_id = univariate_id).entered();
         debug!(
-            "Inserting data point ({}, {}) into segment.",
+            "Inserting data point ({}, {}) into uncompressed data buffer.",
             timestamp, value
         );
 
-        if let Some(segment) = self.uncompressed_data.get_mut(&key) {
-            debug!("Found existing segment.");
-            segment.insert_data(timestamp, value);
+        if let Some(buffer) = self
+            .active_uncompressed_data_buffers
+            .get_mut(&univariate_id)
+        {
+            debug!("Found existing buffer.");
+            buffer.insert_data(timestamp, value);
 
-            if segment.is_full() {
-                debug!("Segment is full, moving it to the queue of finished segments.");
+            if buffer.is_full() {
+                debug!("Buffer is full, moving it to the queue of finished buffers.");
 
-                // Since this is only reachable if the segment exists in the HashMap, unwrap is safe to use.
-                let full_segment = self.uncompressed_data.remove(&key).unwrap();
+                // unwrap() is safe as this is only reachable if the buffer exists in the HashMap.
+                let finished_buffer = self
+                    .active_uncompressed_data_buffers
+                    .remove(&univariate_id)
+                    .unwrap();
 
-                // TODO: Currently we directly compress a segment when it is finished. This
-                //       should be changed to queue the segment and let the compression component
-                //       retrieve the finished segment and insert it back when compressed.
+                // TODO: Currently we directly compress a buffer when it is finished. This should be
+                //       changed to queue the buffer and let the compression component retrieve the
+                //       finished buffer and insert it back when compressed.
                 if self.compress_directly {
-                    return Some(self.compress_full_segment(full_segment));
+                    return Some(self.compress_finished_buffer(univariate_id, finished_buffer));
                 } else {
-                    self.enqueue_segment(key, full_segment);
+                    self.finished_uncompressed_data_buffers
+                        .push_back(Box::new(finished_buffer));
                 }
             }
         } else {
-            debug!("Could not find segment. Creating segment.");
+            debug!("Could not find buffer. Creating Buffer.");
 
-            // If there is not enough memory for a new segment, spill a finished segment.
-            if SegmentBuilder::get_memory_size() > self.uncompressed_remaining_memory_in_bytes {
-                self.spill_finished_segment();
+            // If there is not enough memory for a new buffer, spill a finished in-memory buffer.
+            if UncompressedInMemoryDataBuffer::get_memory_size()
+                > self.uncompressed_remaining_memory_in_bytes
+            {
+                self.spill_finished_buffer();
             }
 
-            // Create a new segment and reduce the remaining amount of reserved memory by its size.
-            let mut segment = SegmentBuilder::new();
-            self.uncompressed_remaining_memory_in_bytes -= SegmentBuilder::get_memory_size();
+            // Create a new buffer and reduce the remaining amount of reserved memory by its size.
+            let mut buffer = UncompressedInMemoryDataBuffer::new(univariate_id);
+            self.uncompressed_remaining_memory_in_bytes -=
+                UncompressedInMemoryDataBuffer::get_memory_size();
 
             debug!(
                 "Created segment. Remaining reserved bytes: {}.",
                 self.uncompressed_remaining_memory_in_bytes
             );
 
-            segment.insert_data(timestamp, value);
-            self.uncompressed_data.insert(key, segment);
+            buffer.insert_data(timestamp, value);
+            self.active_uncompressed_data_buffers
+                .insert(univariate_id, buffer);
         }
 
         None
     }
 
-    /// Remove the oldest [`FinishedSegment`] from the queue and return it. Return [`None`] if the
-    /// queue of [`FinishedSegments`](FinishedSegment) is empty.
-    pub(super) fn get_finished_segment(&mut self) -> Option<FinishedSegment> {
-        if let Some(finished_segment) = self.finished_queue.pop_front() {
-            // Add the memory size of the removed FinishedSegment back to the remaining bytes.
+    /// Remove the oldest finished [`UncompressedDataBuffer`] from the queue and return it. Returns
+    /// [`None`] if there are no finished [`UncompressedDataBuffers`](UncompressedDataBuffer) in the
+    /// queue.
+    pub(super) fn get_finished_data_buffer(&mut self) -> Option<Box<dyn UncompressedDataBuffer>> {
+        if let Some(uncompressed_data_buffer) = self.finished_uncompressed_data_buffers.pop_front()
+        {
+            // Add the memory size of the removed buffer back to the remaining bytes.
             self.uncompressed_remaining_memory_in_bytes +=
-                finished_segment.uncompressed_segment.get_memory_size();
+                uncompressed_data_buffer.get_memory_size();
 
-            Some(finished_segment)
+            Some(uncompressed_data_buffer)
         } else {
             None
         }
     }
 
     // TODO: Remove this when compression component is changed.
-    /// Compress the given full `segment_builder` and return the compressed and merged segment.
-    fn compress_full_segment(&mut self, mut segment_builder: SegmentBuilder) -> RecordBatch {
+    /// Compress the full [`UncompressedInMemoryDataBuffer`] given as `in_memory_data_buffer` and
+    /// return the resulting compressed and merged segments as a [`RecordBatch`].
+    fn compress_finished_buffer(
+        &mut self,
+        univariate_id: u64,
+        mut in_memory_data_buffer: UncompressedInMemoryDataBuffer,
+    ) -> RecordBatch {
         // Add the size of the segment back to the remaining reserved bytes.
-        self.uncompressed_remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
+        self.uncompressed_remaining_memory_in_bytes +=
+            UncompressedInMemoryDataBuffer::get_memory_size();
 
         // unwrap() is safe to use since the error bound is not negative, infinite, or NAN.
         let error_bound = ErrorBound::try_new(0.0).unwrap();
 
-        // unwrap() is safe to use since get_record_batch() can only fail for spilled segments.
-        let data_points = segment_builder
+        // unwrap() is safe to use since get_record_batch() can only fail for spilled buffers.
+        let data_points = in_memory_data_buffer
             .get_record_batch(&self.uncompressed_schema)
             .unwrap();
         let uncompressed_timestamps = get_array!(data_points, 0, TimestampArray);
@@ -267,8 +302,9 @@ impl UncompressedDataManager {
 
         // unwrap() is safe to use since uncompressed_timestamps and uncompressed_values have the same length.
         let compressed_segments = compression::try_compress(
-            &uncompressed_timestamps,
-            &uncompressed_values,
+            univariate_id,
+            uncompressed_timestamps,
+            uncompressed_values,
             error_bound,
             &self.compressed_schema,
         )
@@ -277,41 +313,36 @@ impl UncompressedDataManager {
         compression::merge_segments(compressed_segments)
     }
 
-    /// Move `segment_builder` to the queue of [`FinishedSegments`](FinishedSegment).
-    fn enqueue_segment(&mut self, key: u64, segment_builder: SegmentBuilder) {
-        let finished_segment = FinishedSegment {
-            key,
-            uncompressed_segment: Box::new(segment_builder),
-        };
+    /// Spill the first [`UncompressedInMemoryDataBuffer`] in the queue of
+    /// [`UncompressedDataBuffers`](UncompressedDataBuffer). If no
+    /// [`UncompressedInMemoryDataBuffers`](UncompressedInMemoryDataBuffer) could be found,
+    /// [`panic`](std::panic!).
+    fn spill_finished_buffer(&mut self) {
+        debug!("Not enough memory to create segment. Spilling an already finished buffer.");
 
-        self.finished_queue.push_back(finished_segment);
-    }
-
-    /// Spill the first in-memory [`FinishedSegment`] in the queue of [`FinishedSegments`](FinishedSegment).
-    /// If no in-memory [`FinishedSegments`](FinishedSegment) could be found, [`panic`](std::panic).
-    fn spill_finished_segment(&mut self) {
-        debug!("Not enough memory to create segment. Spilling an already finished segment.");
-
-        // Iterate through the finished segments to find a segment that is in memory.
-        for finished in self.finished_queue.iter_mut() {
-            if let Ok(file_path) = finished
-                .spill_to_apache_parquet(self.data_folder_path.as_path(), &self.uncompressed_schema)
-            {
-                // Add the size of the segment back to the remaining reserved bytes.
-                self.uncompressed_remaining_memory_in_bytes += SegmentBuilder::get_memory_size();
+        // Iterate through the finished buffers to find a buffer that is backed by memory.
+        for finished in self.finished_uncompressed_data_buffers.iter_mut() {
+            if let Ok(uncompressed_on_disk_data_buffer) = finished.spill_to_apache_parquet(
+                self.local_data_folder.as_path(),
+                &self.uncompressed_schema,
+            ) {
+                // Add the size of the in-memory data buffer back to the remaining reserved bytes.
+                self.uncompressed_remaining_memory_in_bytes +=
+                    UncompressedInMemoryDataBuffer::get_memory_size();
 
                 debug!(
-                    "Spilled the segment to '{}'. Remaining reserved bytes: {}.",
-                    file_path.display(),
-                    self.uncompressed_remaining_memory_in_bytes
+                    "Spilled '{:?}'. Remaining reserved bytes: {}.",
+                    finished, self.uncompressed_remaining_memory_in_bytes
                 );
-                return ();
+
+                *finished = Box::new(uncompressed_on_disk_data_buffer);
+                return;
             }
         }
 
         // TODO: All uncompressed and compressed data should be saved to disk first.
-        // If not able to find any in-memory finished segments, we should panic.
-        panic!("Not enough reserved memory to hold all necessary segment builders.");
+        // If not able to find any in-memory finished segments, panic!() is the only option.
+        panic!("Not enough reserved memory for the necessary uncompressed buffers.");
     }
 }
 
@@ -325,10 +356,10 @@ mod tests {
     use tempfile;
 
     use crate::metadata::{test_util, MetadataManager};
-    use crate::storage::BUILDER_CAPACITY;
+    use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
     use crate::types::{ArrowTimestamp, ArrowValue};
 
-    const KEY: u64 = 1;
+    const UNIVARIATE_ID: u64 = 1;
 
     #[test]
     fn test_can_insert_record_batch() {
@@ -344,7 +375,10 @@ mod tests {
             .unwrap();
 
         // Two separate builders are created since the inserted data has two field columns.
-        assert_eq!(data_manager.uncompressed_data.keys().len(), 2)
+        assert_eq!(
+            data_manager.active_uncompressed_data_buffers.keys().len(),
+            2
+        )
     }
 
     #[test]
@@ -360,8 +394,11 @@ mod tests {
             .insert_data_points(&mut metadata_manager, &model_table_metadata, &data)
             .unwrap();
 
-        // Since the tag is different for each data point, 4 separate builders should be created.
-        assert_eq!(data_manager.uncompressed_data.keys().len(), 4)
+        // Since the tag is different for each data point, 4 separate buffers should be created.
+        assert_eq!(
+            data_manager.active_uncompressed_data_buffers.keys().len(),
+            4
+        )
     }
 
     /// Create a record batch with data that resembles uncompressed data with a single tag and two
@@ -403,16 +440,18 @@ mod tests {
     }
 
     #[test]
-    fn test_can_insert_data_point_into_new_segment() {
+    fn test_can_insert_data_point_into_new_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
-        insert_data_points(1, &mut data_manager, KEY);
+        insert_data_points(1, &mut data_manager, UNIVARIATE_ID);
 
-        assert!(data_manager.uncompressed_data.contains_key(&KEY));
+        assert!(data_manager
+            .active_uncompressed_data_buffers
+            .contains_key(&UNIVARIATE_ID));
         assert_eq!(
             data_manager
-                .uncompressed_data
-                .get(&KEY)
+                .active_uncompressed_data_buffers
+                .get(&UNIVARIATE_ID)
                 .unwrap()
                 .get_length(),
             1
@@ -420,16 +459,18 @@ mod tests {
     }
 
     #[test]
-    fn test_can_insert_message_into_existing_segment() {
+    fn test_can_insert_message_into_existing_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
-        insert_data_points(2, &mut data_manager, KEY);
+        insert_data_points(2, &mut data_manager, UNIVARIATE_ID);
 
-        assert!(data_manager.uncompressed_data.contains_key(&KEY));
+        assert!(data_manager
+            .active_uncompressed_data_buffers
+            .contains_key(&UNIVARIATE_ID));
         assert_eq!(
             data_manager
-                .uncompressed_data
-                .get(&KEY)
+                .active_uncompressed_data_buffers
+                .get(&UNIVARIATE_ID)
                 .unwrap()
                 .get_length(),
             2
@@ -437,94 +478,116 @@ mod tests {
     }
 
     #[test]
-    fn test_can_get_finished_segment_when_finished() {
+    fn test_can_get_finished_uncompressed_data_buffer_when_finished() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
-        insert_data_points(BUILDER_CAPACITY, &mut data_manager, KEY);
+        insert_data_points(
+            UNCOMPRESSED_DATA_BUFFER_CAPACITY,
+            &mut data_manager,
+            UNIVARIATE_ID,
+        );
 
-        assert!(data_manager.get_finished_segment().is_some());
+        assert!(data_manager.get_finished_data_buffer().is_some());
     }
 
     #[test]
-    fn test_can_get_multiple_finished_segments_when_multiple_finished() {
+    fn test_can_get_multiple_finished_uncompressed_data_buffers_when_multiple_finished() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
-        insert_data_points(BUILDER_CAPACITY * 2, &mut data_manager, KEY);
+        insert_data_points(
+            UNCOMPRESSED_DATA_BUFFER_CAPACITY * 2,
+            &mut data_manager,
+            UNIVARIATE_ID,
+        );
 
-        assert!(data_manager.get_finished_segment().is_some());
-        assert!(data_manager.get_finished_segment().is_some());
+        assert!(data_manager.get_finished_data_buffer().is_some());
+        assert!(data_manager.get_finished_data_buffer().is_some());
     }
 
     #[test]
-    fn test_cannot_get_finished_segment_when_not_finished() {
+    fn test_cannot_get_finished_uncompressed_data_buffers_when_none_are_finished() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
 
-        assert!(data_manager.get_finished_segment().is_none());
+        assert!(data_manager.get_finished_data_buffer().is_none());
     }
 
     #[test]
-    fn test_spill_first_finished_segment_if_out_of_memory() {
+    fn test_spill_first_uncompressed_data_buffer_to_disk_if_out_of_memory() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
         let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
 
-        // Insert messages into the StorageEngine until a segment is spilled to Apache Parquet.
-        // If there is enough memory to hold n full segments, we need n + 1 to spill a segment.
-        let max_full_segments = reserved_memory / SegmentBuilder::get_memory_size();
-        let message_count = (max_full_segments * BUILDER_CAPACITY) + 1;
-        insert_data_points(message_count, &mut data_manager, KEY);
+        // Insert messages into the storage engine until a buffer is spilled to Apache Parquet.
+        // If there is enough memory to hold n full buffers, we need n + 1 to spill a buffer.
+        let max_full_buffers = reserved_memory / UncompressedInMemoryDataBuffer::get_memory_size();
+        let message_count = (max_full_buffers * UNCOMPRESSED_DATA_BUFFER_CAPACITY) + 1;
+        insert_data_points(message_count, &mut data_manager, UNIVARIATE_ID);
 
-        // The first FinishedSegment should have a memory size of 0 since it is spilled to disk.
-        let first_finished = data_manager.finished_queue.pop_front().unwrap();
-        assert_eq!(first_finished.uncompressed_segment.get_memory_size(), 0);
+        // The first UncompressedDataBuffer should have a memory size of 0 as it is spilled to disk.
+        let first_finished = data_manager
+            .finished_uncompressed_data_buffers
+            .pop_front()
+            .unwrap();
+        assert_eq!(first_finished.get_memory_size(), 0);
 
-        // The FinishedSegment should be spilled to the "uncompressed" folder under the key.
-        let data_folder_path = Path::new(&data_manager.data_folder_path);
-        let uncompressed_path = data_folder_path.join(format!("{}/uncompressed", KEY));
+        // The UncompressedDataBuffer should be spilled to univariate id in the uncompressed folder.
+        let local_data_folder = Path::new(&data_manager.local_data_folder);
+        let uncompressed_path = local_data_folder.join(format!("uncompressed/{}", UNIVARIATE_ID));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1);
     }
 
     #[test]
-    fn test_ignore_already_spilled_segments_when_spilling() {
+    fn test_ignore_already_spilled_uncompressed_data_buffer_when_spilling() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
-        insert_data_points(BUILDER_CAPACITY * 2, &mut data_manager, KEY);
+        insert_data_points(
+            UNCOMPRESSED_DATA_BUFFER_CAPACITY * 2,
+            &mut data_manager,
+            UNIVARIATE_ID,
+        );
 
-        data_manager.spill_finished_segment();
-        // When spilling one more, the first FinishedSegment should be ignored since it is already spilled.
-        data_manager.spill_finished_segment();
+        data_manager.spill_finished_buffer();
+        // When spilling one more, the first buffer should be ignored since it is already spilled.
+        data_manager.spill_finished_buffer();
 
-        data_manager.finished_queue.pop_front();
-        // The second FinishedSegment should have a memory size of 0 since it is spilled to disk.
-        let second_finished = data_manager.finished_queue.pop_front().unwrap();
-        assert_eq!(second_finished.uncompressed_segment.get_memory_size(), 0);
+        data_manager.finished_uncompressed_data_buffers.pop_front();
+        // The second buffer should have a memory size of 0 since it is already spilled to disk.
+        let second_finished = data_manager
+            .finished_uncompressed_data_buffers
+            .pop_front()
+            .unwrap();
+        assert_eq!(second_finished.get_memory_size(), 0);
 
-        // The finished segments should be spilled to the "uncompressed" folder under the key.
-        let data_folder_path = Path::new(&data_manager.data_folder_path);
-        let uncompressed_path = data_folder_path.join(format!("{}/uncompressed", KEY));
+        // The finished buffers should be spilled to univariate id in the uncompressed folder.
+        let local_data_folder = Path::new(&data_manager.local_data_folder);
+        let uncompressed_path = local_data_folder.join(format!("uncompressed/{}", UNIVARIATE_ID));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 2);
     }
 
     #[test]
-    fn test_remaining_memory_incremented_when_spilling_finished_segment() {
+    fn test_remaining_memory_incremented_when_spilling_finished_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
 
-        insert_data_points(BUILDER_CAPACITY, &mut data_manager, KEY);
+        insert_data_points(
+            UNCOMPRESSED_DATA_BUFFER_CAPACITY,
+            &mut data_manager,
+            UNIVARIATE_ID,
+        );
         let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
-        data_manager.spill_finished_segment();
+        data_manager.spill_finished_buffer();
 
         assert!(remaining_memory < data_manager.uncompressed_remaining_memory_in_bytes);
     }
 
     #[test]
-    fn test_remaining_memory_decremented_when_creating_new_segment() {
+    fn test_remaining_memory_decremented_when_creating_new_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
         let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
 
-        insert_data_points(1, &mut data_manager, KEY);
+        insert_data_points(1, &mut data_manager, UNIVARIATE_ID);
 
         assert!(reserved_memory > data_manager.uncompressed_remaining_memory_in_bytes);
     }
@@ -533,10 +596,14 @@ mod tests {
     fn test_remaining_memory_incremented_when_popping_in_memory() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
-        insert_data_points(BUILDER_CAPACITY, &mut data_manager, KEY);
+        insert_data_points(
+            UNCOMPRESSED_DATA_BUFFER_CAPACITY,
+            &mut data_manager,
+            UNIVARIATE_ID,
+        );
 
         let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
-        data_manager.get_finished_segment();
+        data_manager.get_finished_data_buffer();
 
         assert!(remaining_memory < data_manager.uncompressed_remaining_memory_in_bytes);
     }
@@ -545,13 +612,18 @@ mod tests {
     fn test_remaining_memory_not_incremented_when_popping_spilled() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
-        insert_data_points(BUILDER_CAPACITY, &mut data_manager, KEY);
+        insert_data_points(
+            UNCOMPRESSED_DATA_BUFFER_CAPACITY,
+            &mut data_manager,
+            UNIVARIATE_ID,
+        );
 
-        data_manager.spill_finished_segment();
+        data_manager.spill_finished_buffer();
         let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
 
-        // Since the FinishedSegment is not in memory, the remaining memory should not increase when popped.
-        data_manager.get_finished_segment();
+        // Since the UncompressedOnDiskDataBuffer is not in memory, the remaining memory should not
+        // increase when popped.
+        data_manager.get_finished_data_buffer();
 
         assert_eq!(
             remaining_memory,
@@ -560,35 +632,40 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Not enough reserved memory to hold all necessary segment builders.")]
+    #[should_panic(expected = "Not enough reserved memory for the necessary uncompressed buffers.")]
     fn test_panic_if_not_enough_reserved_memory() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
         let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
 
         // If there is enough reserved memory to hold n builders, we need to create n + 1 to panic.
-        for i in 0..(reserved_memory / SegmentBuilder::get_memory_size()) + 1 {
+        for i in 0..(reserved_memory / UncompressedInMemoryDataBuffer::get_memory_size()) + 1 {
             insert_data_points(1, &mut data_manager, i as u64);
         }
     }
 
     /// Insert `count` data points into `data_manager`.
-    fn insert_data_points(count: usize, data_manager: &mut UncompressedDataManager, key: u64) {
+    fn insert_data_points(
+        count: usize,
+        data_manager: &mut UncompressedDataManager,
+        univariate_id: u64,
+    ) {
         let value: Value = 30.0;
 
         for i in 0..count {
-            data_manager.insert_data_point(key, i as i64, value);
+            data_manager.insert_data_point(univariate_id, i as i64, value);
         }
     }
 
-    /// Create an [`UncompressedDataManager`] with a folder that is deleted once the test is finished.
+    /// Create an [`UncompressedDataManager`] with a folder that is deleted once the test is
+    /// finished.
     fn create_managers(path: &Path) -> (MetadataManager, UncompressedDataManager) {
         let metadata_manager = test_util::get_test_metadata_manager(path);
 
-        let data_folder_path = metadata_manager.get_data_folder_path();
+        let local_data_folder = metadata_manager.get_local_data_folder();
 
         let uncompressed_data_manager = UncompressedDataManager::new(
-            data_folder_path.to_owned(),
+            local_data_folder.to_owned(),
             metadata_manager.uncompressed_reserved_memory_in_bytes,
             metadata_manager.get_uncompressed_schema(),
             metadata_manager.get_compressed_schema(),

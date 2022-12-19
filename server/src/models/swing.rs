@@ -25,7 +25,7 @@
 
 use crate::models::ErrorBound;
 use crate::models::{self, timestamps};
-use crate::types::{TimeSeriesId, TimeSeriesIdBuilder, Timestamp, Value, ValueBuilder};
+use crate::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
 
 /// The state the Swing model type needs while fitting a model to a time series
 /// segment.
@@ -34,10 +34,10 @@ pub struct Swing {
     error_bound: ErrorBound,
     /// Time at which the first value represented by the current model was
     /// collected.
-    first_timestamp: Timestamp,
+    start_time: Timestamp,
     /// Time at which the last value represented by the current model was
     /// collected.
-    last_timestamp: Timestamp,
+    end_time: Timestamp,
     /// First value in the segment the current model is fitted to.
     first_value: f64, // f64 instead of Value to remove casts in fit_value()
     /// Slope for the linear function specifying the upper bound for the current
@@ -60,8 +60,8 @@ impl Swing {
     pub fn new(error_bound: ErrorBound) -> Self {
         Self {
             error_bound,
-            first_timestamp: 0,
-            last_timestamp: 0,
+            start_time: 0,
+            end_time: 0,
             first_value: f64::NAN,
             upper_bound_slope: f64::NAN,
             upper_bound_intercept: f64::NAN,
@@ -100,15 +100,15 @@ impl Swing {
 
         if self.length == 0 {
             // Line 1 - 2 of Algorithm 1 in the Swing and Slide paper.
-            self.first_timestamp = timestamp;
-            self.last_timestamp = timestamp;
+            self.start_time = timestamp;
+            self.end_time = timestamp;
             self.first_value = value;
             self.length += 1;
             true
         } else if !self.first_value.is_finite() || !value.is_finite() {
             // Extend Swing to handle both types of infinity and NAN.
             if models::equal_or_nan(self.first_value, value) {
-                self.last_timestamp = timestamp;
+                self.end_time = timestamp;
                 self.upper_bound_slope = value;
                 self.upper_bound_intercept = value;
                 self.lower_bound_slope = value;
@@ -120,16 +120,16 @@ impl Swing {
             }
         } else if self.length == 1 {
             // Line 3 of Algorithm 1 in the Swing and Slide paper.
-            self.last_timestamp = timestamp;
+            self.end_time = timestamp;
             (self.upper_bound_slope, self.upper_bound_intercept) = compute_slope_and_intercept(
-                self.first_timestamp,
+                self.start_time,
                 self.first_value,
                 timestamp,
                 value + maximum_deviation,
             );
 
             (self.lower_bound_slope, self.lower_bound_intercept) = compute_slope_and_intercept(
-                self.first_timestamp,
+                self.start_time,
                 self.first_value,
                 timestamp,
                 value - maximum_deviation,
@@ -148,13 +148,13 @@ impl Swing {
             {
                 false
             } else {
-                self.last_timestamp = timestamp;
+                self.end_time = timestamp;
 
                 // Line 17 of Algorithm 1 in the Swing and Slide paper.
                 if upper_bound_approximate_value - maximum_deviation > value {
                     (self.upper_bound_slope, self.upper_bound_intercept) =
                         compute_slope_and_intercept(
-                            self.first_timestamp,
+                            self.start_time,
                             self.first_value,
                             timestamp,
                             value + maximum_deviation,
@@ -165,7 +165,7 @@ impl Swing {
                 if lower_bound_approximate_value + maximum_deviation < value {
                     (self.lower_bound_slope, self.lower_bound_intercept) =
                         compute_slope_and_intercept(
-                            self.first_timestamp,
+                            self.start_time,
                             self.first_value,
                             timestamp,
                             value - maximum_deviation,
@@ -196,9 +196,8 @@ impl Swing {
         // TODO: Use the method in the Slide and Swing paper to select the
         // linear function within the lower and upper that minimizes error
         let first_value =
-            self.upper_bound_slope * self.first_timestamp as f64 + self.upper_bound_intercept;
-        let last_value =
-            self.upper_bound_slope * self.last_timestamp as f64 + self.upper_bound_intercept;
+            self.upper_bound_slope * self.start_time as f64 + self.upper_bound_intercept;
+        let last_value = self.upper_bound_slope * self.end_time as f64 + self.upper_bound_intercept;
         (first_value as Value, last_value as Value)
     }
 }
@@ -232,16 +231,17 @@ pub fn sum(
 }
 
 /// Reconstruct the values for the `timestamps` without matching values in
-/// `value_builder` using a model of type Swing. The `time_series_ids` and
-/// `values` are appended to `time_series_id_builder` and `value_builder`.
+/// `value_builder` using a model of type Swing. The `univariate_ids` and
+/// `values` are appended to `univariate_id_builder` and `value_builder`.
+#[allow(clippy::too_many_arguments)]
 pub fn grid(
-    time_series_id: TimeSeriesId,
+    univariate_id: UnivariateId,
     start_time: Timestamp,
     end_time: Timestamp,
     min_value: Value,
     max_value: Value,
     values: &[u8],
-    time_series_ids: &mut TimeSeriesIdBuilder,
+    univariate_id_builder: &mut UnivariateIdBuilder,
     timestamps: &[Timestamp],
     value_builder: &mut ValueBuilder,
 ) {
@@ -249,7 +249,7 @@ pub fn grid(
         decode_and_compute_slope_and_intercept(start_time, end_time, min_value, max_value, values);
 
     for timestamp in timestamps {
-        time_series_ids.append_value(time_series_id);
+        univariate_id_builder.append_value(univariate_id);
         let value = (slope * (*timestamp as f64) + intercept) as Value;
         value_builder.append_value(value);
     }
@@ -258,10 +258,10 @@ pub fn grid(
 /// Decode `values` to determine how `min_value` and `max_value` maps to the
 /// segments first value and final value. Then compute the slope and intercept
 /// of a linear function that intersects with the data points
-/// (`first_timestamp`, first value) and (`final_timestamp`, final value).
+/// (`start_time`, first value) and (`end_time`, final value).
 fn decode_and_compute_slope_and_intercept(
-    first_timestamp: Timestamp,
-    final_timestamp: Timestamp,
+    start_time: Timestamp,
+    end_time: Timestamp,
     min_value: Value,
     max_value: Value,
     values: &[u8],
@@ -271,19 +271,18 @@ fn decode_and_compute_slope_and_intercept(
 
     // Check if min value is the first value and max value is the final value.
     if values[0] == 1 {
-        compute_slope_and_intercept(first_timestamp, min_value, final_timestamp, max_value)
+        compute_slope_and_intercept(start_time, min_value, end_time, max_value)
     } else {
-        compute_slope_and_intercept(first_timestamp, max_value, final_timestamp, min_value)
+        compute_slope_and_intercept(start_time, max_value, end_time, min_value)
     }
 }
 
 /// Compute the slope and intercept of a linear function that intersects with
-/// the data points (`first_timestamp`, `first_value`) and (`final_timestamp`,
-/// `final_value`).
+/// the data points (`start_time`, `first_value`) and (`end_time`, `final_value`).
 fn compute_slope_and_intercept(
-    first_timestamp: Timestamp,
+    start_time: Timestamp,
     first_value: f64,
-    final_timestamp: Timestamp,
+    end_time: Timestamp,
     final_value: f64,
 ) -> (f64, f64) {
     // An if expression is used as it seems impossible to calculate the slope
@@ -293,8 +292,8 @@ fn compute_slope_and_intercept(
     } else {
         debug_assert!(first_value.is_finite(), "First value is not finite.");
         debug_assert!(final_value.is_finite(), "Second value is not finite.");
-        let slope = (final_value - first_value) / (final_timestamp - first_timestamp) as f64;
-        let intercept = first_value - slope * first_timestamp as f64;
+        let slope = (final_value - first_value) / (end_time - start_time) as f64;
+        let intercept = first_value - slope * start_time as f64;
         (slope, intercept)
     }
 }
@@ -302,7 +301,7 @@ fn compute_slope_and_intercept(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use datafusion::arrow::array::{BinaryArray, Float32Array, UInt8Array};
+    use datafusion::arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt8Array};
     use proptest::strategy::Strategy;
     use proptest::{num, prop_assert, prop_assert_eq, prop_assume, proptest};
 
@@ -315,8 +314,8 @@ mod tests {
 
     // Tests constants chosen to be realistic while minimizing the testing time.
     const SAMPLING_INTERVAL: Timestamp = 1000;
-    const FIRST_TIMESTAMP: Timestamp = 1658671178037;
-    const FINAL_TIMESTAMP: Timestamp = FIRST_TIMESTAMP + SAMPLING_INTERVAL;
+    const START_TIME: Timestamp = 1658671178037;
+    const END_TIME: Timestamp = START_TIME + SAMPLING_INTERVAL;
     const SEGMENT_LENGTH: Timestamp = 5; // Timestamp is used to remove casts.
 
     // Tests for Swing.
@@ -345,23 +344,22 @@ mod tests {
     fn can_fit_sequence_of_value_with_error_bound_zero(value: Value) {
         let error_bound_zero = ErrorBound::try_new(0.0).unwrap();
         let mut model_type = Swing::new(error_bound_zero);
-        let final_timestamp = FIRST_TIMESTAMP + SEGMENT_LENGTH * SAMPLING_INTERVAL;
-        for timestamp in (FIRST_TIMESTAMP..final_timestamp).step_by(SAMPLING_INTERVAL as usize) {
+        let end_time = START_TIME + SEGMENT_LENGTH * SAMPLING_INTERVAL;
+        for timestamp in (START_TIME..end_time).step_by(SAMPLING_INTERVAL as usize) {
             assert!(model_type.fit_data_point(timestamp, value));
         }
 
         let (first_value, final_value) = model_type.get_model();
         let (slope, intercept) = compute_slope_and_intercept(
-            FIRST_TIMESTAMP,
+            START_TIME,
             first_value as f64,
-            final_timestamp,
+            end_time,
             final_value as f64,
         );
         if value.is_nan() {
             assert!(slope == 0.0 && intercept.is_nan());
         } else {
-            for timestamp in (FIRST_TIMESTAMP..final_timestamp).step_by(SAMPLING_INTERVAL as usize)
-            {
+            for timestamp in (START_TIME..end_time).step_by(SAMPLING_INTERVAL as usize) {
                 let approximate_value = slope * timestamp as f64 + intercept;
                 assert_eq!(approximate_value, value as f64);
             }
@@ -372,7 +370,7 @@ mod tests {
     #[test]
     fn test_can_fit_one_value(value in ProptestValue::ANY) {
         let error_bound_zero = ErrorBound::try_new(0.0).unwrap();
-        prop_assert!(Swing::new(error_bound_zero).fit_data_point(FIRST_TIMESTAMP, value));
+        prop_assert!(Swing::new(error_bound_zero).fit_data_point(START_TIME, value));
     }
 
     #[test]
@@ -382,8 +380,8 @@ mod tests {
     ) {
         let error_bound_zero = ErrorBound::try_new(0.0).unwrap();
         let mut model_type = Swing::new(error_bound_zero);
-        prop_assert!(model_type.fit_data_point(FIRST_TIMESTAMP, first_value));
-        prop_assert!(model_type.fit_data_point(FINAL_TIMESTAMP, second_value));
+        prop_assert!(model_type.fit_data_point(START_TIME, first_value));
+        prop_assert!(model_type.fit_data_point(END_TIME, second_value));
     }
 
     #[test]
@@ -391,8 +389,8 @@ mod tests {
         prop_assume!(value != Value::INFINITY);
         let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
-        prop_assert!(model_type.fit_data_point(FIRST_TIMESTAMP, value));
-        prop_assert!(!model_type.fit_data_point(FINAL_TIMESTAMP, Value::INFINITY));
+        prop_assert!(model_type.fit_data_point(START_TIME, value));
+        prop_assert!(!model_type.fit_data_point(END_TIME, Value::INFINITY));
     }
 
     #[test]
@@ -400,8 +398,8 @@ mod tests {
         prop_assume!(value != Value::NEG_INFINITY);
         let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
-        prop_assert!(model_type.fit_data_point(FIRST_TIMESTAMP, value));
-        prop_assert!(!model_type.fit_data_point(FINAL_TIMESTAMP, Value::NEG_INFINITY));
+        prop_assert!(model_type.fit_data_point(START_TIME, value));
+        prop_assert!(!model_type.fit_data_point(END_TIME, Value::NEG_INFINITY));
     }
 
     #[test]
@@ -409,8 +407,8 @@ mod tests {
         prop_assume!(!value.is_nan());
         let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
-        prop_assert!(model_type.fit_data_point(FIRST_TIMESTAMP, value));
-        prop_assert!(!model_type.fit_data_point(FINAL_TIMESTAMP, Value::NAN));
+        prop_assert!(model_type.fit_data_point(START_TIME, value));
+        prop_assert!(!model_type.fit_data_point(END_TIME, Value::NAN));
     }
 
     #[test]
@@ -418,8 +416,8 @@ mod tests {
         prop_assume!(value != Value::INFINITY);
         let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
-        prop_assert!(model_type.fit_data_point(FIRST_TIMESTAMP, Value::INFINITY));
-        prop_assert!(!model_type.fit_data_point(FINAL_TIMESTAMP, value));
+        prop_assert!(model_type.fit_data_point(START_TIME, Value::INFINITY));
+        prop_assert!(!model_type.fit_data_point(END_TIME, value));
     }
 
     #[test]
@@ -427,8 +425,8 @@ mod tests {
         prop_assume!(value != Value::NEG_INFINITY);
         let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
-        prop_assert!(model_type.fit_data_point(FIRST_TIMESTAMP, Value::NEG_INFINITY));
-        prop_assert!(!model_type.fit_data_point(FINAL_TIMESTAMP, value));
+        prop_assert!(model_type.fit_data_point(START_TIME, Value::NEG_INFINITY));
+        prop_assert!(!model_type.fit_data_point(END_TIME, value));
     }
 
     #[test]
@@ -436,8 +434,8 @@ mod tests {
         prop_assume!(!value.is_nan());
         let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
-        prop_assert!(model_type.fit_data_point(FIRST_TIMESTAMP, Value::NAN));
-        prop_assert!(!model_type.fit_data_point(FINAL_TIMESTAMP, value));
+        prop_assert!(model_type.fit_data_point(START_TIME, Value::NAN));
+        prop_assert!(!model_type.fit_data_point(END_TIME, value));
     }
     }
 
@@ -469,7 +467,7 @@ mod tests {
         let error_bound = ErrorBound::try_new(error_bound).unwrap();
         let mut model_type = Swing::new(error_bound);
         let mut fit_all_values = true;
-        let mut timestamp = FIRST_TIMESTAMP;
+        let mut timestamp = START_TIME;
         for value in values {
             fit_all_values &= model_type.fit_data_point(timestamp, *value);
             timestamp += SAMPLING_INTERVAL;
@@ -488,7 +486,7 @@ mod tests {
         let max_value = f32::max(first_value, final_value);
         let value = (min_value < max_value) as u8;
 
-        let sum = sum(FIRST_TIMESTAMP, FINAL_TIMESTAMP, &[], min_value, max_value, &[value]);
+        let sum = sum(START_TIME, END_TIME, &[], min_value, max_value, &[value]);
         prop_assert_eq!(sum, first_value + final_value);
     }
     }
@@ -497,34 +495,34 @@ mod tests {
     proptest! {
     #[test]
     fn test_grid(value in num::i32::ANY.prop_map(i32_to_value)) {
-        let timestamps: Vec<Timestamp> = (FIRST_TIMESTAMP ..= FINAL_TIMESTAMP)
+        let timestamps: Vec<Timestamp> = (START_TIME ..= END_TIME)
             .step_by(SAMPLING_INTERVAL as usize).collect();
-        let mut time_series_ids = TimeSeriesIdBuilder::with_capacity(timestamps.len());
-        let mut values = ValueBuilder::with_capacity(timestamps.len());
+        let mut univariate_id_builder = UnivariateIdBuilder::with_capacity(timestamps.len());
+        let mut value_builder = ValueBuilder::with_capacity(timestamps.len());
 
         // The linear function represents a constant to have a known value.
         grid(
             1,
-            FIRST_TIMESTAMP,
-            FINAL_TIMESTAMP,
+            START_TIME,
+            END_TIME,
             value,
             value,
             &[0],
-            &mut time_series_ids,
+            &mut univariate_id_builder,
             &timestamps,
-            &mut values,
+            &mut value_builder,
         );
 
-        let time_series_ids = time_series_ids.finish();
-        let values = values.finish();
+        let univariate_ids = univariate_id_builder.finish();
+        let values = value_builder.finish();
 
         prop_assert!(
-            time_series_ids.len() == timestamps.len()
-            && time_series_ids.len() == values.len()
+            univariate_ids.len() == timestamps.len()
+            && univariate_ids.len() == values.len()
         );
-        prop_assert!(time_series_ids
+        prop_assert!(univariate_ids
              .iter()
-             .all(|time_series_id_option| time_series_id_option.unwrap() == 1));
+             .all(|maybe_univariate_id| maybe_univariate_id.unwrap() == 1));
         prop_assert!(timestamps
             .windows(2)
             .all(|window| window[1] - window[0] == SAMPLING_INTERVAL));
@@ -559,12 +557,13 @@ mod tests {
     fn test_can_reconstruct_sequence_of_linear_values_within_error_bound_zero(values: Vec<Value>) {
         // Fit model of type Swing to perfectly linear sequence.
         let error_bound = ErrorBound::try_new(0.0).unwrap();
-        let final_timestamp = FIRST_TIMESTAMP + values.len() as i64 * SAMPLING_INTERVAL;
+        let end_time = START_TIME + values.len() as i64 * SAMPLING_INTERVAL;
         let timestamps = TimestampArray::from_iter_values(
-            (FIRST_TIMESTAMP..final_timestamp).step_by(SAMPLING_INTERVAL as usize),
+            (START_TIME..end_time).step_by(SAMPLING_INTERVAL as usize),
         );
         let values = ValueArray::from_iter_values(values);
         let segments = compression::try_compress(
+            1,
             &timestamps,
             &values,
             error_bound,
@@ -575,13 +574,14 @@ mod tests {
         // Extract the individual columns from the record batch.
         crate::get_arrays!(
             segments,
+            _univariate_id_array,
             model_type_id_array,
-            timestamps_array,
             start_time_array,
             end_time_array,
-            values_array,
+            timestamps_array,
             min_value_array,
             max_value_array,
+            values_array,
             _error_array
         );
 
@@ -590,7 +590,7 @@ mod tests {
         assert_eq!(model_type_id_array.value(0), SWING_ID);
 
         // Reconstruct all values from the segment.
-        let mut reconstructed_ids = TimeSeriesIdBuilder::with_capacity(timestamps.len());
+        let mut reconstructed_ids = UnivariateIdBuilder::with_capacity(timestamps.len());
         let mut reconstructed_timestamps = TimestampBuilder::with_capacity(timestamps.len());
         let mut reconstructed_values = ValueBuilder::with_capacity(timestamps.len());
 

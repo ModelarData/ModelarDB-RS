@@ -1,17 +1,19 @@
-name: Cargo Build and Test
+name: Cargo Build, Lint, and Test
 
 on:
-  push:
-    branches: [ "master" ]
   pull_request:
+    branches: [ "master" ]
+  push:
     branches: [ "master" ]
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
 
 jobs:
-  cargo_build_and_test:
-    name: Cargo Build and Test
+  cargo_build_lint_and_test:
+    name: Cargo Build, Lint, and Test
 
     runs-on: ${{ matrix.operating-system }}
     strategy:
@@ -24,5 +26,9 @@ jobs:
       run: rustup update
     - name: Cargo Build
       run: cargo build --verbose
+    - name: Cargo Clippy
+      run: cargo clippy --verbose
+    - name: Cargo Doc
+      run: cargo doc --verbose
     - name: Cargo Test
       run: cargo test --verbose

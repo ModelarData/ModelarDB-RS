@@ -157,18 +157,18 @@ impl ModelarDbDialect {
     }
 
     /// Return [`Ok`] if the next [`Token`] is a [`Token::Word`] with the value
-    /// `expected`, otherwise a [`ParseError`] is returned.
+    /// `expected`, otherwise a [`ParserError`] is returned.
     fn expect_word_value(&self, parser: &mut Parser, expected: &str) -> Result<(), ParserError> {
         if let Ok(string) = self.parse_word_value(parser) {
             if string.to_uppercase() == expected.to_uppercase() {
                 return Ok(());
             }
         }
-        parser.expected(format!("{}", &expected).as_str(), parser.peek_token())
+        parser.expected(expected, parser.peek_token())
     }
 
     /// Return its value as a [`String`] if the next [`Token`] is a
-    /// [`Token::Word`], otherwise a [`ParseError`] is returned.
+    /// [`Token::Word`], otherwise a [`ParserError`] is returned.
     fn parse_word_value(&self, parser: &mut Parser) -> Result<String, ParserError> {
         match parser.next_token() {
             Token::Word(word) => Ok(word.value),
@@ -232,22 +232,22 @@ impl ModelarDbDialect {
 }
 
 impl Dialect for ModelarDbDialect {
-    /// Return [`True`] if a character is a valid start character for an
-    /// unquoted identifier, otherwise [`False`] is returned.
+    /// Return [`true`] if a character is a valid start character for an
+    /// unquoted identifier, otherwise [`false`] is returned.
     fn is_identifier_start(&self, c: char) -> bool {
         self.dialect.is_identifier_start(c)
     }
 
-    /// Return [`True`] if a character is a valid unquoted identifier character,
-    /// otherwise [`False`] is returned.
+    /// Return [`true`] if a character is a valid unquoted identifier character,
+    /// otherwise [`false`] is returned.
     fn is_identifier_part(&self, c: char) -> bool {
         self.dialect.is_identifier_part(c)
     }
 
-    /// Check if the next tokens are CREATE TABLE TABLE, if so, attempt to parse
+    /// Check if the next tokens are CREATE MODEL TABLE, if so, attempt to parse
     /// the token stream as a CREATE MODEL TABLE DDL command. If parsing
-    /// succeeds, a [`Statement`] is returned, and if not, a [`ParseError`] is
-    /// returned. If the next tokens are not CREATE TABLE TABLE, [`None`] is
+    /// succeeds, a [`Statement`] is returned, and if not, a [`ParserError`] is
+    /// returned. If the next tokens are not CREATE MODEL TABLE, [`None`] is
     /// returned so sqlparser uses its parsing methods for all other commands.
     fn parse_statement(&self, parser: &mut Parser) -> Option<Result<Statement, ParserError>> {
         if self.next_tokens_are_create_model_table(parser) {
@@ -323,25 +323,25 @@ pub fn semantic_checks_for_create_table(
             .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
         // Check if the columns can be converted to a schema.
-        let schema = column_defs_to_schema(&columns)
+        let schema = column_defs_to_schema(columns)
             .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
         // Create a ValidStatement with the information for creating the table.
         let _expected_engine = CREATE_MODEL_TABLE_ENGINE.to_owned();
         if let Some(_expected_engine) = engine {
-            return Ok(ValidStatement::CreateModelTable(
+            Ok(ValidStatement::CreateModelTable(
                 semantic_checks_for_create_model_table(normalized_name, columns)?,
-            ));
+            ))
         } else {
-            return Ok(ValidStatement::CreateTable {
+            Ok(ValidStatement::CreateTable {
                 name: normalized_name,
                 schema,
-            });
+            })
         }
     } else {
         let message = "Expected CREATE TABLE or CREATE MODEL TABLE.";
-        return Err(ParserError::ParserError(message.to_owned()));
-    };
+        Err(ParserError::ParserError(message.to_owned()))
+    }
 }
 
 /// Perform additional semantic checks to ensure that the CREATE MODEL TABLE
@@ -357,7 +357,7 @@ fn semantic_checks_for_create_model_table(
 
     // Check that one timestamp column exists.
     let timestamp_column_indices = compute_indices_of_columns_with_data_type(
-        &column_defs,
+        column_defs,
         SQLDataType::Timestamp(None, TimezoneInfo::None),
     );
 
@@ -369,7 +369,7 @@ fn semantic_checks_for_create_model_table(
 
     // Compute the indices of the tag columns.
     let tag_column_indices =
-        compute_indices_of_columns_with_data_type(&column_defs, SQLDataType::Text);
+        compute_indices_of_columns_with_data_type(column_defs, SQLDataType::Text);
 
     // Extract the error bounds for the field columns.
     let error_bounds = extract_error_bounds_for_field_columns(column_defs)?;
@@ -453,7 +453,7 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
 }
 
 /// Return [`ParserError`] specifying that the functionality with the name
-/// `feature` is not supported if `enabled` is [`True`].
+/// `feature` is not supported if `enabled` is [`true`].
 fn check_unsupported_feature_is_disabled(enabled: bool, feature: &str) -> Result<(), ParserError> {
     if enabled {
         let message = format!("{} is not supported.", feature);
@@ -465,7 +465,7 @@ fn check_unsupported_feature_is_disabled(enabled: bool, feature: &str) -> Result
 
 /// Compute the indices of all columns in `column_defs` with `data_type`.
 fn compute_indices_of_columns_with_data_type(
-    column_defs: &Vec<ColumnDef>,
+    column_defs: &[ColumnDef],
     data_type: SQLDataType,
 ) -> Vec<usize> {
     column_defs
@@ -641,7 +641,7 @@ fn make_decimal_type(precision: Option<u64>, scale: Option<u64>) -> DataFusionRe
 
 /// Extract the error bounds from the fields columns in `column_defs`.
 fn extract_error_bounds_for_field_columns(
-    column_defs: &Vec<ColumnDef>,
+    column_defs: &[ColumnDef],
 ) -> Result<Vec<ErrorBound>, ParserError> {
     let field_column_indices =
         compute_indices_of_columns_with_data_type(column_defs, SQLDataType::Real);

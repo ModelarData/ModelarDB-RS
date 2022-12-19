@@ -105,7 +105,7 @@ impl ModelTableMetadata {
 
         let field_column_indices: Vec<usize> = (0..schema.fields().len())
             .filter(|index| {
-                *index != timestamp_column_index && !tag_column_indices.contains(&index)
+                *index != timestamp_column_index && !tag_column_indices.contains(index)
             })
             .collect();
 
@@ -150,8 +150,8 @@ impl ModelTableMetadata {
             ));
         }
 
-        // If there are more than 1024 columns, return an error. This limitation is necessary
-        // since 10 bits are used to identify the column index of the data in the 64-bit hash key.
+        // If there are more than 1024 columns, return an error. This limitation is necessary since
+        // 10 bits are used to identify the column index of the data in the 64-bit univariate id.
         if schema.fields.len() > 1024 {
             return Err(ModelarDbError::ConfigurationError(
                 "There cannot be more than 1024 columns in the model table.".to_owned(),
@@ -160,7 +160,7 @@ impl ModelTableMetadata {
 
         Ok(Self {
             name: table_name,
-            schema: Arc::new(schema.clone()),
+            schema: Arc::new(schema),
             tag_column_indices,
             timestamp_column_index,
             error_bounds,

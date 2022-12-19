@@ -22,7 +22,7 @@
 
 pub mod bits;
 pub mod gorilla;
-pub mod pmcmean;
+pub mod pmc_mean;
 pub mod swing;
 pub mod timestamps;
 
@@ -30,26 +30,23 @@ use std::cmp::{Ordering, PartialOrd};
 use std::mem;
 
 use crate::errors::ModelarDbError;
-use crate::models::{gorilla::Gorilla, pmcmean::PMCMean, swing::Swing};
+use crate::models::{gorilla::Gorilla, pmc_mean::PMCMean, swing::Swing};
 use crate::types::{
-    TimeSeriesId, TimeSeriesIdBuilder, Timestamp, TimestampBuilder, Value, ValueArray, ValueBuilder,
+    Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueArray, ValueBuilder,
 };
 
 /// Unique ids for each model type. Constant values are used instead of an enum
 /// so the stored model type ids can be used in match expressions without being
-/// converted to an enum first. Zero and one are not used for compatibility with
-/// the legacy JVM-based version of [ModelarDB].
-///
-/// [ModelarDB]: https://github.com/ModelarData/ModelarDB
-pub const PMC_MEAN_ID: u8 = 2;
-pub const SWING_ID: u8 = 3;
-pub const GORILLA_ID: u8 = 4;
+/// converted to an enum first.
+pub const PMC_MEAN_ID: u8 = 0;
+pub const SWING_ID: u8 = 1;
+pub const GORILLA_ID: u8 = 2;
 
 /// Size of [`Value`] in bytes.
 const VALUE_SIZE_IN_BYTES: u8 = mem::size_of::<Value>() as u8;
 
 /// Size of [`Value`] in bits.
-const VALUE_SIZE_IN_BITS: u8 = 8 * VALUE_SIZE_IN_BYTES as u8;
+const VALUE_SIZE_IN_BITS: u8 = 8 * VALUE_SIZE_IN_BYTES;
 
 /// General error bound that is guaranteed to not be negative, infinite, or NAN.
 /// For [`PMCMean`] and [`Swing`] the error bound is interpreted as a relative
@@ -73,7 +70,7 @@ impl ErrorBound {
 
     /// Return the memory representation of the error bound as a byte array in
     /// little-endian byte order.
-    pub fn to_le_bytes(&self) -> [u8; 4] {
+    pub fn to_le_bytes(self) -> [u8; 4] {
         self.0.to_le_bytes()
     }
 }
@@ -96,7 +93,7 @@ impl PartialOrd<ErrorBound> for f32 {
 pub struct SelectedModel {
     /// Id of the model type that created this model.
     pub model_type_id: u8,
-    /// Index of the last data point in the `UncompressedSegment` that the
+    /// Index of the last data point in the `UncompressedDataBuffer` that the
     /// selected model represents.
     pub end_index: usize,
     /// The selected model's minimum value.
@@ -158,7 +155,7 @@ impl SelectedModel {
         let end_index = start_index + swing.get_length() - 1;
         let min_value = Value::min(start_value, end_value);
         let max_value = Value::max(start_value, end_value);
-        let values = vec!((start_value < end_value) as u8);
+        let values = vec![(start_value < end_value) as u8];
 
         Self {
             model_type_id: SWING_ID,
@@ -239,9 +236,11 @@ pub fn sum(
     max_value: Value,
     values: &[u8],
 ) -> Value {
-    match model_type_id as u8 {
-        PMC_MEAN_ID => pmcmean::sum(start_time, end_time, timestamps, min_value),
-        SWING_ID => swing::sum(start_time, end_time, timestamps, min_value, max_value, values),
+    match model_type_id {
+        PMC_MEAN_ID => pmc_mean::sum(start_time, end_time, timestamps, min_value),
+        SWING_ID => swing::sum(
+            start_time, end_time, timestamps, min_value, max_value, values,
+        ),
         GORILLA_ID => gorilla::sum(start_time, end_time, timestamps, values),
         _ => panic!("Unknown model type."),
     }
@@ -249,9 +248,10 @@ pub fn sum(
 
 /// Reconstruct the data points for a time series segment whose values are
 /// represented by a model. Each data point is split into its three components
-/// and appended to `time_series_ids`, `timestamps`, and `values`.
+/// and appended to `univariate_ids`, `timestamps`, and `values`.
+#[allow(clippy::too_many_arguments)]
 pub fn grid(
-    time_series_id: TimeSeriesId,
+    univariate_id: UnivariateId,
     model_type_id: u8,
     timestamps: &[u8],
     start_time: Timestamp,
@@ -259,36 +259,36 @@ pub fn grid(
     values: &[u8],
     min_value: Value,
     max_value: Value,
-    time_series_id_builder: &mut TimeSeriesIdBuilder,
+    univariate_id_builder: &mut UnivariateIdBuilder,
     timestamp_builder: &mut TimestampBuilder,
     value_builder: &mut ValueBuilder,
 ) {
     timestamps::decompress_all_timestamps(start_time, end_time, timestamps, timestamp_builder);
     let new_timestamps = &timestamp_builder.values_slice()[value_builder.values_slice().len()..];
 
-    match model_type_id as u8 {
-        PMC_MEAN_ID => pmcmean::grid(
-            time_series_id,
+    match model_type_id {
+        PMC_MEAN_ID => pmc_mean::grid(
+            univariate_id,
             min_value, // For PMC-Mean, min and max is the same value.
-            time_series_id_builder,
+            univariate_id_builder,
             new_timestamps,
             value_builder,
         ),
         SWING_ID => swing::grid(
-            time_series_id,
+            univariate_id,
             start_time,
             end_time,
             min_value,
             max_value,
             values,
-            time_series_id_builder,
+            univariate_id_builder,
             new_timestamps,
             value_builder,
         ),
         GORILLA_ID => gorilla::grid(
-            time_series_id,
+            univariate_id,
             values,
-            time_series_id_builder,
+            univariate_id_builder,
             new_timestamps,
             value_builder,
         ),

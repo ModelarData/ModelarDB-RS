@@ -13,9 +13,8 @@
  * limitations under the License.
  */
 
-/// Extract an [`array`](arrow::array) from a
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) and cast it to the
-/// specified type:
+/// Extract an [`array`](datafusion::arrow::array::Array) from a
+/// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch) and cast it to the specified type:
 ///
 /// ```
 /// let array = crate::get_array!(record_batch, 0, UInt8Array);
@@ -35,30 +34,31 @@ macro_rules! get_array {
     };
 }
 
-/// Extract the [`arrays`](arrow::array) required to execute queries against a
-/// model table from a [`RecordBatch`](arrow::record_batch::RecordBatch), cast
-/// them to the required type, and assign the resulting arrays to the specified
-/// variables:
+/// Extract the [`arrays`](datafusion::arrow::array::Array) required to execute queries against a
+/// model table from a [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch), cast them to
+/// the required type, and assign the resulting arrays to the specified variables:
 ///
 /// ```
-/// crate::downcast_arrays!(gids, start_times, end_times, mtids, models, gaps, batch);
+/// crate::downcast_arrays!(batch, univariate_ids, model_type_ids, start_times, end_times,
+/// timestamps, min_values, max_values, values, errors);
 /// ```
 ///
 /// # Panics
 ///
-/// Panics if `batch` does not contain seven columns or if the columns are not
-/// UInt8Array, BinaryArray, TimestampArray, TimestampArray, BinaryArray,
-/// ValueArray, ValueArray, and Float32Array.
+/// Panics if `batch` does not contain nine columns or if the columns are not UInt64Array,
+/// UInt8Array, TimestampArray, TimestampArray, BinaryArray, ValueArray, ValueArray, BinaryArray,
+/// and Float32Array.
 #[macro_export]
 macro_rules! get_arrays {
-    ($batch:ident, $model_type_id:ident, $timestamps:ident, $start_time:ident, $end_time:ident, $values:ident, $min_value:ident, $max_value:ident, $error:ident) => {
-        let $model_type_id = crate::get_array!($batch, 0, UInt8Array);
-        let $timestamps = crate::get_array!($batch, 1, BinaryArray);
-        let $start_time = crate::get_array!($batch, 2, TimestampArray);
-        let $end_time = crate::get_array!($batch, 3, TimestampArray);
-        let $values = crate::get_array!($batch, 4, BinaryArray);
-        let $min_value = crate::get_array!($batch, 5, ValueArray);
-        let $max_value = crate::get_array!($batch, 6, ValueArray);
-        let $error = crate::get_array!($batch, 7, Float32Array);
+    ($batch:ident, $univariate_ids:ident, $model_type_ids:ident, $start_times:ident, $end_times:ident, $timestamps:ident, $min_values:ident, $max_values:ident, $values:ident, $errors:ident) => {
+        let $univariate_ids = $crate::get_array!($batch, 0, UInt64Array);
+        let $model_type_ids = $crate::get_array!($batch, 1, UInt8Array);
+        let $start_times = $crate::get_array!($batch, 2, TimestampArray);
+        let $end_times = $crate::get_array!($batch, 3, TimestampArray);
+        let $timestamps = $crate::get_array!($batch, 4, BinaryArray);
+        let $min_values = $crate::get_array!($batch, 5, ValueArray);
+        let $max_values = $crate::get_array!($batch, 6, ValueArray);
+        let $values = $crate::get_array!($batch, 7, BinaryArray);
+        let $errors = $crate::get_array!($batch, 8, Float32Array);
     };
 }

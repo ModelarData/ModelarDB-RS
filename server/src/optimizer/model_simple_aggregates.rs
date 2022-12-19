@@ -18,7 +18,9 @@ use std::fmt::{Display, Formatter};
 use std::mem;
 use std::sync::Arc;
 
-use datafusion::arrow::array::{ArrayRef, BinaryArray, Float32Array, Int64Array, UInt8Array};
+use datafusion::arrow::array::{
+    ArrayRef, BinaryArray, Float32Array, Int64Array, UInt64Array, UInt8Array,
+};
 use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::datatypes::Field;
 use datafusion::arrow::datatypes::Schema;
@@ -62,7 +64,7 @@ fn new_aggregate(
 pub struct ModelSimpleAggregatesPhysicalOptimizerRule {}
 
 impl ModelSimpleAggregatesPhysicalOptimizerRule {
-    fn optimize(&self, plan: &Arc<dyn ExecutionPlan>) -> Option<Arc<dyn ExecutionPlan>> {
+    fn optimize(plan: &Arc<dyn ExecutionPlan>) -> Option<Arc<dyn ExecutionPlan>> {
         // Matches a simple aggregate performed without filtering out segments.
         if let Some(aggregate_exec) = plan.as_any().downcast_ref::<AggregateExec>() {
             let children = &aggregate_exec.children();
@@ -104,7 +106,7 @@ impl ModelSimpleAggregatesPhysicalOptimizerRule {
         // Visit the children.
         // TODO: handle plans were multiple children must be updated.
         for child in plan.children() {
-            if let Some(new_child) = self.optimize(&child) {
+            if let Some(new_child) = Self::optimize(&child) {
                 return Some(plan.clone().with_new_children(vec![new_child]).unwrap());
             }
         }
@@ -119,7 +121,7 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
         plan: Arc<dyn ExecutionPlan>,
         _config: &SessionConfig,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        if let Some(optimized_plan) = self.optimize(&plan) {
+        if let Some(optimized_plan) = Self::optimize(&plan) {
             Ok(optimized_plan)
         } else {
             Ok(plan)
@@ -257,21 +259,22 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         crate::get_arrays!(
             batch,
-            _model_type_id_array,
-            timestamps_array,
-            start_time_array,
-            end_time_array,
-            _values_array,
-            _min_value_array,
-            _max_value_array,
+            _univariate_ids,
+            _model_type_ids,
+            start_times,
+            end_times,
+            timestamps,
+            _min_values,
+            _max_values,
+            _values,
             _error_array
         );
 
         let mut count: i64 = 0;
         for row_index in 0..batch.num_rows() {
-            let timestamps = timestamps_array.value(row_index);
-            let start_time = start_time_array.value(row_index);
-            let end_time = end_time_array.value(row_index);
+            let start_time = start_times.value(row_index);
+            let end_time = end_times.value(row_index);
+            let timestamps = timestamps.value(row_index);
 
             count += models::length(start_time, end_time, timestamps) as i64;
         }
@@ -548,25 +551,26 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         crate::get_arrays!(
             batch,
-            model_type_id_array,
-            timestamps_array,
-            start_time_array,
-            end_time_array,
-            values_array,
-            min_value_array,
-            max_value_array,
+            _univariate_ids,
+            model_type_ids,
+            start_times,
+            end_times,
+            timestamps,
+            min_values,
+            max_values,
+            values,
             _error_array
         );
 
         let mut sum = 0.0;
         for row_index in 0..batch.num_rows() {
-            let model_type_id = model_type_id_array.value(row_index);
-            let timestamps = timestamps_array.value(row_index);
-            let start_time = start_time_array.value(row_index);
-            let end_time = end_time_array.value(row_index);
-            let min_value = min_value_array.value(row_index);
-            let max_value = max_value_array.value(row_index);
-            let values = values_array.value(row_index);
+            let model_type_id = model_type_ids.value(row_index);
+            let start_time = start_times.value(row_index);
+            let end_time = end_times.value(row_index);
+            let timestamps = timestamps.value(row_index);
+            let min_value = min_values.value(row_index);
+            let max_value = max_values.value(row_index);
+            let values = values.value(row_index);
 
             sum += models::sum(
                 model_type_id,
@@ -581,7 +585,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
 
         // Returning an AggregateState::Scalar fills an array with the value.
         let mut result = Float32Array::builder(1);
-        result.append_value(sum as f32);
+        result.append_value(sum);
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
 
@@ -668,26 +672,27 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         crate::get_arrays!(
             batch,
-            model_type_id_array,
-            timestamps_array,
-            start_time_array,
-            end_time_array,
-            values_array,
-            min_value_array,
-            max_value_array,
+            _univariate_ids,
+            model_type_ids,
+            start_times,
+            end_times,
+            timestamps,
+            min_values,
+            max_values,
+            values,
             _error_array
         );
 
         let mut sum = 0.0;
         let mut count: usize = 0;
         for row_index in 0..batch.num_rows() {
-            let model_type_id = model_type_id_array.value(row_index);
-            let timestamps = timestamps_array.value(row_index);
-            let start_time = start_time_array.value(row_index);
-            let end_time = end_time_array.value(row_index);
-            let min_value = min_value_array.value(row_index);
-            let max_value = max_value_array.value(row_index);
-            let values = values_array.value(row_index);
+            let model_type_id = model_type_ids.value(row_index);
+            let start_time = start_times.value(row_index);
+            let end_time = end_times.value(row_index);
+            let timestamps = timestamps.value(row_index);
+            let min_value = min_values.value(row_index);
+            let max_value = max_values.value(row_index);
+            let values = values.value(row_index);
 
             sum += models::sum(
                 model_type_id,
@@ -731,7 +736,7 @@ impl Accumulator for ModelAvgAccumulator {
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
             let array = array.as_any().downcast_ref::<Float32Array>().unwrap();
-            self.sum += array.value(0) as f32;
+            self.sum += array.value(0);
             self.count += array.value(1) as u64;
         }
         Ok(())
