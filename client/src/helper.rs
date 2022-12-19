@@ -79,8 +79,8 @@ impl Helper for ClientHelper {}
 impl Completer for ClientHelper {
     type Candidate = String;
 
-    /// Provide tab-completion for the word in [`line`] at [`pos`] in an
-    /// [`Editor`](rustyline::Editor) using a static list of keywords and table names.
+    /// Provide tab-completion for the word in `line` at `pos` in an [`Editor`](rustyline::Editor)
+    /// using a static list of keywords and table names.
     fn complete(
         &self,
         line: &str,
