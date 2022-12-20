@@ -12,8 +12,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-use rustyline::completion::extract_word;
-use rustyline::completion::Completer;
+
+//! Implementation of a [`ClientHelper`] that improves the usability of the client's read-eval-print
+//! loop. Currently, [`ClientHelper`] only provides simple tab-completion through the implementation
+//! of the [`Completer`] trait.
+
+use std::result::Result;
+
+use rustyline::completion::{self, Completer};
 use rustyline::error::ReadlineError;
 use rustyline::highlight::Highlighter;
 use rustyline::hint::Hinter;
@@ -21,7 +27,9 @@ use rustyline::validate::Validator;
 use rustyline::Context;
 use rustyline::Helper;
 
+/// Provides tab-completion for the client's read-eval-print loop.
 pub struct ClientHelper {
+    /// Keywords that can be tab-completed.
     completion_candidates: Vec<String>,
 }
 
@@ -71,18 +79,22 @@ impl Helper for ClientHelper {}
 impl Completer for ClientHelper {
     type Candidate = String;
 
+    /// Provide tab-completion for the word in `line` at `pos` in an [`Editor`](rustyline::Editor)
+    /// using a static list of keywords and table names.
     fn complete(
         &self,
         line: &str,
         pos: usize,
         _ctx: &Context<'_>,
-    ) -> std::result::Result<(usize, Vec<Self::Candidate>), ReadlineError> {
-        let (start, prefix) = extract_word(line, pos, None, " ".as_bytes());
+    ) -> Result<(usize, Vec<Self::Candidate>), ReadlineError> {
+        // The prefix and candidate are converted to uppercase to make the comparison
+        // case-insensitive. However, the unmodified candidates are returned to preserve their case.
+        let (start, prefix) = completion::extract_word(line, pos, None, " ".as_bytes());
         let uppercase_prefix = prefix.to_uppercase();
         let candidates: Vec<String> = self
             .completion_candidates
             .iter()
-            .filter(|result| result.to_uppercase().starts_with(&uppercase_prefix))
+            .filter(|candidate| candidate.to_uppercase().starts_with(&uppercase_prefix))
             .map(String::from)
             .collect();
         Ok((start, candidates))
