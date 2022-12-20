@@ -25,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{fmt, fs, mem};
 
+use async_trait::async_trait;
 use datafusion::arrow::array::{Array, ArrayBuilder};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
@@ -41,9 +42,10 @@ use crate::types::{
 /// and [`Send`]. Both [`UncompressedInMemoryDataBuffer`] and [`UncompressedOnDiskDataBuffer`]
 /// automatically implements [`Sync`] and [`Send`] as they only contain types that implements
 /// [`Sync`] and [`Send`].
+#[async_trait]
 pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
     /// Return the data in the uncompressed data buffer as a [`RecordBatch`].
-    fn get_record_batch(
+    async fn get_record_batch(
         &mut self,
         uncompressed_schema: &UncompressedSchema,
     ) -> Result<RecordBatch, ParquetError>;
@@ -59,7 +61,7 @@ pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
     /// [`UncompressedOnDiskDataBuffers`](UncompressedOnDiskDataBuffer) are present in the queue,
     /// both structs need to implement spilling to Apache Parquet, with already spilled segments
     /// returning [`IOError`].
-    fn spill_to_apache_parquet(
+    async fn spill_to_apache_parquet(
         &mut self,
         local_data_folder: &Path,
         uncompressed_schema: &UncompressedSchema,
@@ -138,9 +140,10 @@ impl fmt::Debug for UncompressedInMemoryDataBuffer {
     }
 }
 
+#[async_trait]
 impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
     /// Finish the array builders and return the data in a structured [`RecordBatch`].
-    fn get_record_batch(
+    async fn get_record_batch(
         &mut self,
         uncompressed_schema: &UncompressedSchema,
     ) -> Result<RecordBatch, ParquetError> {
@@ -167,14 +170,14 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
 
     /// Spill the in-memory [`UncompressedInMemoryDataBuffer`] to an Apache Parquet file and return
     /// the [`UncompressedOnDiskDataBuffer`] when finished.
-    fn spill_to_apache_parquet(
+    async fn spill_to_apache_parquet(
         &mut self,
         local_data_folder: &Path,
         uncompressed_schema: &UncompressedSchema,
     ) -> Result<UncompressedOnDiskDataBuffer, IOError> {
         // Since the schema is constant and the columns are always the same length, creating the
         // RecordBatch should never fail and unwrap is therefore safe to use.
-        let batch = self.get_record_batch(uncompressed_schema).unwrap();
+        let batch = self.get_record_batch(uncompressed_schema).await.unwrap();
         UncompressedOnDiskDataBuffer::new(self.univariate_id, local_data_folder, batch)
     }
 }
@@ -231,13 +234,14 @@ impl fmt::Debug for UncompressedOnDiskDataBuffer {
 }
 
 // TODO: Delete the spilled Apache Parquet file after it has been read?
+#[async_trait]
 impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
     /// Read the data from the Apache Parquet file and return it as a [`RecordBatch`].
-    fn get_record_batch(
+    async fn get_record_batch(
         &mut self,
         _uncompressed_schema: &UncompressedSchema,
     ) -> Result<RecordBatch, ParquetError> {
-        StorageEngine::read_batch_from_apache_parquet_file(self.file_path.as_path())
+        StorageEngine::read_batch_from_apache_parquet_file(self.file_path.as_path()).await
     }
 
     /// Return the univariate id that uniquely identifies the univariate time series the buffer
@@ -252,7 +256,7 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
     }
 
     /// Since the buffer has already been spilled, return [`IOError`].
-    fn spill_to_apache_parquet(
+    async fn spill_to_apache_parquet(
         &mut self,
         _local_data_folder: &Path,
         _uncompressed_schema: &UncompressedSchema,
@@ -327,21 +331,22 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_get_record_batch_from_in_memory_data_buffer() {
+    #[tokio::test]
+    async fn test_get_record_batch_from_in_memory_data_buffer() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(1);
         insert_data_points(uncompressed_buffer.get_capacity(), &mut uncompressed_buffer);
 
         let capacity = uncompressed_buffer.get_capacity();
         let data = uncompressed_buffer
             .get_record_batch(&test_util::get_uncompressed_schema())
+            .await
             .unwrap();
         assert_eq!(data.num_columns(), 2);
         assert_eq!(data.num_rows(), capacity);
     }
 
-    #[test]
-    fn test_in_memory_data_buffer_can_spill_not_full_buffer() {
+    #[tokio::test]
+    async fn test_in_memory_data_buffer_can_spill_not_full_buffer() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(1);
         insert_data_points(1, &mut uncompressed_buffer);
         assert!(!uncompressed_buffer.is_full());
@@ -349,14 +354,15 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         uncompressed_buffer
             .spill_to_apache_parquet(temp_dir.path(), &test_util::get_uncompressed_schema())
+            .await
             .unwrap();
 
         let uncompressed_path = temp_dir.path().join("uncompressed/1");
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
     }
 
-    #[test]
-    fn test_in_memory_data_buffer_can_spill_full_buffer() {
+    #[tokio::test]
+    async fn test_in_memory_data_buffer_can_spill_full_buffer() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(1);
         insert_data_points(uncompressed_buffer.get_capacity(), &mut uncompressed_buffer);
         assert!(uncompressed_buffer.is_full());
@@ -364,6 +370,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         uncompressed_buffer
             .spill_to_apache_parquet(temp_dir.path(), &test_util::get_uncompressed_schema())
+            .await
             .unwrap();
 
         let uncompressed_path = temp_dir.path().join("uncompressed/1");
@@ -381,8 +388,8 @@ mod tests {
         assert_eq!(uncompressed_buffer.get_memory_size(), 0)
     }
 
-    #[test]
-    fn test_get_record_batch_from_on_disk_data_buffer() {
+    #[tokio::test]
+    async fn test_get_record_batch_from_on_disk_data_buffer() {
         let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(1);
         let capacity = uncompressed_in_memory_buffer.get_capacity();
         insert_data_points(capacity, &mut uncompressed_in_memory_buffer);
@@ -390,10 +397,12 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let mut uncompressed_on_disk_buffer = uncompressed_in_memory_buffer
             .spill_to_apache_parquet(temp_dir.path(), &test_util::get_uncompressed_schema())
+            .await
             .unwrap();
 
         let data = uncompressed_on_disk_buffer
             .get_record_batch(&test_util::get_uncompressed_schema())
+            .await
             .unwrap();
         assert_eq!(data.num_columns(), 2);
         assert_eq!(data.num_rows(), capacity);
@@ -409,15 +418,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_cannot_spill_on_disk_data_buffer() {
+    #[tokio::test]
+    async fn test_cannot_spill_on_disk_data_buffer() {
         let mut uncompressed_buffer = UncompressedOnDiskDataBuffer {
             univariate_id: 1,
             file_path: Path::new("file_path").to_path_buf(),
         };
 
-        let result = uncompressed_buffer
-            .spill_to_apache_parquet(Path::new(""), &test_util::get_uncompressed_schema());
-        assert!(result.is_err())
+        let schema = test_util::get_uncompressed_schema();
+        let result = uncompressed_buffer.spill_to_apache_parquet(Path::new(""), &schema);
+        assert!(result.await.is_err())
     }
 }
