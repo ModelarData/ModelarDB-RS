@@ -29,6 +29,7 @@ pub mod timestamps;
 use std::cmp::{Ordering, PartialOrd};
 use std::mem;
 
+
 use crate::errors::ModelarDbError;
 use crate::models::{gorilla::Gorilla, pmc_mean::PMCMean, swing::Swing};
 use crate::types::{
@@ -307,6 +308,7 @@ mod tests {
     use datafusion::from_slice::FromSlice;
     use proptest::num;
     use proptest::{prop_assert, prop_assume, proptest};
+    use crate::compression::tests::{generate_data, generate_timestamps};
 
     use crate::types::TimestampArray;
 
@@ -393,6 +395,21 @@ mod tests {
         assert_eq!(73.0, selected_model.max_value);
         assert_eq!(10, selected_model.values.len());
     }
+
+    #[test]
+    fn test_selected_model_new() {
+        let uncompressed_timestamps_long = TimestampArray::from_slice(generate_timestamps(100, false));
+        let uncompressed_timestamps_short = TimestampArray::from_slice(generate_timestamps(25, false));
+        let uncompressed_values_long = ValueArray::from(generate_data(100, false, false, None, None));
+        let uncompressed_values_short = ValueArray::from(generate_data(25, false, false, None, None));
+
+        let selected_model_long = create_selected_model(&uncompressed_timestamps_long, &uncompressed_values_long);
+        let selected_model_short = create_selected_model(&uncompressed_timestamps_short, &uncompressed_values_short);
+
+        assert_eq!(PMC_MEAN_ID, selected_model_long.model_type_id);
+        assert_eq!(PMC_MEAN_ID, selected_model_short.model_type_id);
+    }
+
 
     fn create_selected_model(
         uncompressed_timestamps: &TimestampArray,
