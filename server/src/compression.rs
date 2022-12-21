@@ -454,6 +454,7 @@ pub(crate) mod tests {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
 
         let compressed_record_batch = try_compress(
+            1,
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
@@ -499,6 +500,7 @@ pub(crate) mod tests {
         let error_bound = ErrorBound::try_new(5.0).unwrap();
 
         let compressed_record_batch = try_compress(
+            1,
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
@@ -590,6 +592,7 @@ pub(crate) mod tests {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
 
         let compressed_record_batch = try_compress(
+            1,
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
