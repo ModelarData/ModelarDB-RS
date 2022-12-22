@@ -1195,12 +1195,15 @@ pub mod test_util {
     pub fn get_test_context(path: &Path) -> Arc<Context> {
         let metadata_manager = get_test_metadata_manager(path);
         let session = get_test_session_context();
-        let storage_engine = RwLock::new(StorageEngine::new(
-            None,
-            path.to_owned(),
-            metadata_manager.clone(),
-            true,
-        ));
+        let runtime = Runtime::new().unwrap();
+        let storage_engine = RwLock::new(
+            runtime
+                .block_on(async {
+                    StorageEngine::try_new(path.to_owned(), None, metadata_manager.clone(), true)
+                        .await
+                })
+                .unwrap(),
+        );
 
         Arc::new(Context {
             metadata_manager,

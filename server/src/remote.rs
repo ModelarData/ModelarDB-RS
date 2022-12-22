@@ -214,6 +214,7 @@ impl FlightServiceHandler {
             // the data could be lost if the system crashes right after ingesting the data.
             storage_engine
                 .insert_data_points(model_table_metadata, &data_points)
+                .await
                 .map_err(|error| {
                     Status::internal(format!("Data could not be ingested: {}", error))
                 })?;
@@ -512,15 +513,14 @@ impl FlightService for FlightServiceHandler {
                 .write()
                 .await
                 .flush()
+                .await
                 .map_err(Status::internal)?;
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "FlushEdge" {
             let mut storage_engine = self.context.storage_engine.write().await;
-            storage_engine
-                .flush()
-                .map_err(Status::internal)?;
+            storage_engine.flush().await.map_err(Status::internal)?;
             storage_engine.transfer().await?;
 
             // Confirm the data was flushed.

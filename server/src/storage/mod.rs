@@ -23,7 +23,7 @@
 
 mod compressed_data_buffer;
 mod compressed_data_manager;
-pub(super) mod data_transfer;
+mod data_transfer;
 mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
 
@@ -36,13 +36,15 @@ use std::sync::Arc;
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use datafusion::parquet::arrow::async_reader::ParquetRecordBatchStreamBuilder;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::Compression;
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
+use futures::StreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
+use tokio::fs::File as TokioFile;
 use tonic::Status;
 
 use crate::errors::ModelarDbError;
@@ -88,12 +90,15 @@ pub struct StorageEngine {
 }
 
 impl StorageEngine {
-    pub fn new(
-        data_transfer: Option<DataTransfer>,
+    /// Return [`StorageEngine`] that writes ingested data to `local_data_folder` and optionally
+    /// transfers compressed data to `remote_data_folder` if it is given. Returns [`String`] if
+    /// `remote_data_folder` is given but [`DataTransfer`] cannot not be created.
+    pub async fn try_new(
         local_data_folder: PathBuf,
+        remote_data_folder: Option<Arc<dyn ObjectStore>>,
         metadata_manager: MetadataManager,
         compress_directly: bool,
-    ) -> Self {
+    ) -> Result<Self, String> {
         let uncompressed_data_manager = UncompressedDataManager::new(
             local_data_folder.clone(),
             metadata_manager.uncompressed_reserved_memory_in_bytes,
@@ -102,6 +107,21 @@ impl StorageEngine {
             compress_directly,
         );
 
+        // TODO: Make the transfer batch size in bytes part of the user-configurable settings.
+        let data_transfer = if let Some(remote_data_folder) = remote_data_folder {
+            Some(
+                DataTransfer::try_new(
+                    local_data_folder.clone(),
+                    remote_data_folder,
+                    64 * 1024 * 1024, // 64 MiB.
+                )
+                .await
+                .map_err(|error| error.to_string())?,
+            )
+        } else {
+            None
+        };
+
         let compressed_data_manager = CompressedDataManager::new(
             data_transfer,
             local_data_folder,
@@ -109,26 +129,25 @@ impl StorageEngine {
             metadata_manager.get_compressed_schema(),
         );
 
-        Self {
+        Ok(Self {
             metadata_manager,
             uncompressed_data_manager,
             compressed_data_manager,
-        }
+        })
     }
 
     /// Pass `data_points` to [`UncompressedDataManager`]. Return [`Ok`] if all of the data points
     /// were successfully inserted, otherwise return [`Err`].
-    pub fn insert_data_points(
+    pub async fn insert_data_points(
         &mut self,
         model_table: &ModelTableMetadata,
         data_points: &RecordBatch,
     ) -> Result<(), String> {
         // TODO: When the compression component is changed, just insert the data points.
-        let compressed_segments = self.uncompressed_data_manager.insert_data_points(
-            &mut self.metadata_manager,
-            model_table,
-            data_points,
-        )?;
+        let compressed_segments = self
+            .uncompressed_data_manager
+            .insert_data_points(&mut self.metadata_manager, model_table, data_points)
+            .await?;
 
         for segments in compressed_segments {
             self.compressed_data_manager
@@ -150,10 +169,10 @@ impl StorageEngine {
 
     /// Flush all of the data the [`StorageEngine`] is currently storing in memory to disk. If all
     /// of the data is successfully flushed to disk, return [`Ok`], otherwise return [`String`].
-    pub fn flush(&mut self) -> Result<(), String> {
+    pub async fn flush(&mut self) -> Result<(), String> {
         // TODO: When the compression component is changed, just flush before managers.
         // Flush UncompressedDataManager.
-        let compressed_buffers = self.uncompressed_data_manager.flush();
+        let compressed_buffers = self.uncompressed_data_manager.flush().await;
         let hash_to_table_name = self
             .metadata_manager
             .get_mapping_from_hash_to_table_name()
@@ -277,7 +296,7 @@ impl StorageEngine {
     /// Read all rows from the Apache Parquet file at the location given by `file_path` and return
     /// them as a [`RecordBatch`]. If the file could not be read successfully, [`ParquetError`] is
     /// returned.
-    pub fn read_batch_from_apache_parquet_file(
+    pub async fn read_batch_from_apache_parquet_file(
         file_path: &Path,
     ) -> Result<RecordBatch, ParquetError> {
         let error = ParquetError::General(format!(
@@ -285,12 +304,14 @@ impl StorageEngine {
             file_path.display()
         ));
 
-        // Create a reader that can be used to read an Apache Parquet file.
-        let file = File::open(file_path).map_err(|_e| error.clone())?;
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file)?;
-        let mut reader = builder.with_batch_size(usize::MAX).build()?;
+        // Create a stream that can be used to read an Apache Parquet file.
+        let file = TokioFile::open(file_path)
+            .await
+            .map_err(|_e| error.clone())?;
+        let builder = ParquetRecordBatchStreamBuilder::new(file).await?;
+        let mut stream = builder.with_batch_size(usize::MAX).build()?;
 
-        let record_batch = reader.next().ok_or(error)??;
+        let record_batch = stream.next().await.ok_or(error)??;
         Ok(record_batch)
     }
 
@@ -367,7 +388,7 @@ mod tests {
     // Tests for get_compressed_files().
     #[tokio::test]
     async fn test_can_get_compressed_file_for_table() {
-        let (temp_dir, mut storage_engine) = create_storage_engine();
+        let (temp_dir, mut storage_engine) = create_storage_engine().await;
 
         // Insert compressed segments into the same table.
         let segment = test_util::get_compressed_segments_record_batch();
@@ -392,7 +413,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_no_compressed_files_for_non_existent_table() {
-        let (temp_dir, mut storage_engine) = create_storage_engine();
+        let (temp_dir, mut storage_engine) = create_storage_engine().await;
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
@@ -404,7 +425,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_get_compressed_file_with_start_time() {
-        let (temp_dir, mut storage_engine) = create_storage_engine();
+        let (temp_dir, mut storage_engine) = create_storage_engine().await;
         let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 0, 0.0);
 
         // If we have a start time after the first segments ends, only the file containing the
@@ -436,7 +457,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_get_compressed_file_with_min_value() {
-        let (temp_dir, mut storage_engine) = create_storage_engine();
+        let (temp_dir, mut storage_engine) = create_storage_engine().await;
         let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 0, 0.0);
 
         // If we have a min value higher then the max value in the first segment, only the file
@@ -468,7 +489,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_get_compressed_file_with_end_time() {
-        let (temp_dir, mut storage_engine) = create_storage_engine();
+        let (temp_dir, mut storage_engine) = create_storage_engine().await;
         let (_segment_1, segment_2) = insert_separated_segments(&mut storage_engine, 0, 0.0);
 
         // If we have an end time before the second segment starts, only the file containing the
@@ -500,7 +521,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_get_compressed_file_with_max_value() {
-        let (temp_dir, mut storage_engine) = create_storage_engine();
+        let (temp_dir, mut storage_engine) = create_storage_engine().await;
         let (_segment_1, segment_2) = insert_separated_segments(&mut storage_engine, 0, 0.0);
 
         // If we have a max value lower then the min value in the second segment, only the file
@@ -532,7 +553,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_get_compressed_files_with_start_time_and_end_time() {
-        let (temp_dir, mut storage_engine) = create_storage_engine();
+        let (temp_dir, mut storage_engine) = create_storage_engine().await;
 
         // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
         let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 0, 0.0);
@@ -579,7 +600,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_get_compressed_files_with_min_value_and_max_value() {
-        let (temp_dir, mut storage_engine) = create_storage_engine();
+        let (temp_dir, mut storage_engine) = create_storage_engine().await;
 
         // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
         let (segment_1, _segment_2) = insert_separated_segments(&mut storage_engine, 0, 0.0);
@@ -656,7 +677,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cannot_get_compressed_files_where_end_time_is_before_start_time() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let (_temp_dir, mut storage_engine) = create_storage_engine().await;
 
         let segment = test_util::get_compressed_segments_record_batch();
         storage_engine
@@ -683,7 +704,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cannot_get_compressed_files_where_max_value_is_smaller_than_min_value() {
-        let (_temp_dir, mut storage_engine) = create_storage_engine();
+        let (_temp_dir, mut storage_engine) = create_storage_engine().await;
 
         let segment = test_util::get_compressed_segments_record_batch();
         storage_engine
@@ -709,16 +730,17 @@ mod tests {
     }
 
     /// Create a [`StorageEngine`] with a folder that is deleted once the test is finished.
-    fn create_storage_engine() -> (TempDir, StorageEngine) {
+    async fn create_storage_engine() -> (TempDir, StorageEngine) {
         let temp_dir = tempdir().unwrap();
         let local_data_folder = temp_dir.path().to_path_buf();
         let metadata_manager =
             metadata_test_util::get_test_metadata_manager(local_data_folder.as_path());
+        let storage_engine =
+            StorageEngine::try_new(local_data_folder, None, metadata_manager, false)
+                .await
+                .unwrap();
 
-        (
-            temp_dir,
-            StorageEngine::new(None, local_data_folder, metadata_manager, false),
-        )
+        (temp_dir, storage_engine)
     }
 
     // Tests for writing and reading Apache Parquet files.
@@ -767,35 +789,35 @@ mod tests {
         assert!(!parquet_path.exists());
     }
 
-    #[test]
-    fn test_read_entire_apache_parquet_file() {
+    #[tokio::test]
+    async fn test_read_entire_apache_parquet_file() {
         let file_name = "test.parquet".to_owned();
         let (_temp_dir, path, batch) = create_apache_parquet_file_in_temp_dir(file_name);
 
-        let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path());
+        let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path()).await;
 
         assert!(result.is_ok());
         assert_eq!(batch, result.unwrap());
     }
 
-    #[test]
-    fn test_read_from_non_apache_parquet_file() {
+    #[tokio::test]
+    async fn test_read_from_non_apache_parquet_file() {
         let temp_dir = tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
         File::create(path.clone()).unwrap();
 
         let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path());
 
-        assert!(result.is_err());
+        assert!(result.await.is_err());
     }
 
-    #[test]
-    fn test_read_from_non_existent_path() {
+    #[tokio::test]
+    async fn test_read_from_non_existent_path() {
         let temp_dir = tempdir().unwrap();
         let path = temp_dir.path().join("none.parquet");
         let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path());
 
-        assert!(result.is_err());
+        assert!(result.await.is_err());
     }
 
     #[tokio::test]

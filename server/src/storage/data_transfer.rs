@@ -24,7 +24,6 @@ use std::sync::Arc;
 
 use bytes::BufMut;
 use datafusion::arrow::compute;
-use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
 use object_store::local::LocalFileSystem;
@@ -43,6 +42,7 @@ use crate::{storage, StorageEngine};
 //       transferring the same data multiple times or deleting files that are currently used
 //       elsewhere.
 
+#[allow(dead_code)]
 pub struct DataTransfer {
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
     local_data_folder_path: PathBuf,
@@ -108,6 +108,7 @@ impl DataTransfer {
         Ok(data_transfer)
     }
 
+    #[allow(dead_code)]
     /// Insert the compressed file into the files to be transferred. Retrieve the size of the file
     /// and add it to the total size of the current local files in the table with `table_name`.
     pub async fn add_compressed_file(
@@ -154,36 +155,39 @@ impl DataTransfer {
     /// Once successfully transferred, the data is deleted from local storage. Return [`Ok`] if the
     /// files were transferred successfully, otherwise [`ParquetError`].
     async fn transfer_data(&mut self, table_name: &str) -> Result<(), ParquetError> {
-        // Read all files that correspond stored for the table with table_name.
+        // Read all files that is currently stored for the table with table_name.
         let path = format!("compressed/{}", table_name).into();
-        let list_stream = self
+        let object_metas = self
             .local_data_folder_object_store
             .list(Some(&path))
             .await
-            .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
+            .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?
+            .filter_map(|maybe_meta| async { maybe_meta.ok() });
 
-        let object_metas = list_stream
-            .filter_map(|maybe_meta| async { maybe_meta.ok() })
-            .collect::<Vec<_>>()
-            .await
-            .into_iter();
+        // Combine the Apache Parquet files into a single RecordBatch.
+        let read_object_metas_and_record_batches = object_metas.filter_map(|meta| async {
+            let path = self.local_data_folder_path.to_string_lossy();
+            let file_path = PathBuf::from(format!("{}/{}", path, meta.location));
+
+            // The path of the Apache Parquet files read to produce the record batches are also
+            // returned to ensure that only the read files are deleted after the transfer.
+            if let Ok(record_batch) =
+                StorageEngine::read_batch_from_apache_parquet_file(file_path.as_path()).await
+            {
+                Some((meta, record_batch))
+            } else {
+                None
+            }
+        });
+
+        let (read_object_metas, record_batches): (Vec<_>, Vec<_>) =
+            read_object_metas_and_record_batches.unzip().await;
 
         debug!(
             "Transferring {} compressed files for the table '{}'.",
-            object_metas.len(),
+            read_object_metas.len(),
             table_name
         );
-
-        // Combine the Apache Parquet files into a single RecordBatch.
-        let record_batches = object_metas
-            .clone()
-            .filter_map(|meta| {
-                let path = self.local_data_folder_path.to_string_lossy();
-                let file_path = PathBuf::from(format!("{}/{}", path, meta.location));
-
-                StorageEngine::read_batch_from_apache_parquet_file(file_path.as_path()).ok()
-            })
-            .collect::<Vec<RecordBatch>>();
 
         let schema = record_batches[0].schema();
         let combined = compute::concat_batches(&schema, &record_batches)?;
@@ -208,7 +212,7 @@ impl DataTransfer {
             .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
 
         // Delete the transferred files from local storage.
-        for meta in object_metas.clone() {
+        for meta in &read_object_metas {
             self.local_data_folder_object_store
                 .delete(&meta.location)
                 .await
@@ -216,7 +220,7 @@ impl DataTransfer {
         }
 
         // Delete the transferred files from the in-memory tracking of compressed files.
-        let transferred_bytes: usize = object_metas.map(|meta| meta.size).sum();
+        let transferred_bytes: usize = read_object_metas.iter().map(|meta| meta.size).sum();
         *self.compressed_files.get_mut(table_name).unwrap() -= transferred_bytes;
 
         debug!(
@@ -378,7 +382,7 @@ mod tests {
             .unwrap();
         data_transfer.transfer_data(&TABLE_NAME).await.unwrap();
 
-        assert_data_transferred(vec![parquet_path], target_dir, data_transfer);
+        assert_data_transferred(vec![parquet_path], target_dir, data_transfer).await;
     }
 
     #[tokio::test]
@@ -398,7 +402,7 @@ mod tests {
             .unwrap();
         data_transfer.transfer_data(&TABLE_NAME).await.unwrap();
 
-        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer);
+        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer).await;
     }
 
     #[tokio::test]
@@ -414,7 +418,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_data_transferred(vec![parquet_path], target_dir, data_transfer);
+        assert_data_transferred(vec![parquet_path], target_dir, data_transfer).await;
     }
 
     #[tokio::test]
@@ -427,7 +431,7 @@ mod tests {
         // Since the max batch size is 1 byte smaller than 3 compressed files, the data should be transferred immediately.
         let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
 
-        assert_data_transferred(vec![path_1, path_2, path_3], target_dir, data_transfer);
+        assert_data_transferred(vec![path_1, path_2, path_3], target_dir, data_transfer).await;
     }
 
     #[tokio::test]
@@ -439,12 +443,16 @@ mod tests {
 
         data_transfer.flush().await.unwrap();
 
-        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer);
+        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer).await;
     }
 
     /// Assert that the files in `paths` are all removed, a file has been created in `target_dir`,
     /// and that the hashmap containing the compressed files size is set to 0.
-    fn assert_data_transferred(paths: Vec<PathBuf>, target: TempDir, data_transfer: DataTransfer) {
+    async fn assert_data_transferred(
+        paths: Vec<PathBuf>,
+        target: TempDir,
+        data_transfer: DataTransfer,
+    ) {
         for path in &paths {
             assert!(!path.exists());
         }
@@ -456,8 +464,9 @@ mod tests {
         assert!(target_path.exists());
 
         // The file should have 3 * number_of_files rows since each compressed file has 3 rows.
-        let batch =
-            StorageEngine::read_batch_from_apache_parquet_file(target_path.as_path()).unwrap();
+        let batch = StorageEngine::read_batch_from_apache_parquet_file(target_path.as_path())
+            .await
+            .unwrap();
         assert_eq!(batch.num_rows(), 3 * paths.len());
 
         assert_eq!(
