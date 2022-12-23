@@ -30,6 +30,7 @@ use datafusion::arrow::array::{ArrayRef, BinaryArray, Float32Array, UInt64Array,
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema, SchemaRef};
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::common::ToDFSchema;
 use datafusion::config::ConfigOptions;
 use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::datasource::{
@@ -37,16 +38,15 @@ use datafusion::datasource::{
 };
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::{ExecutionProps, SessionState, TaskContext};
+use datafusion::logical_expr::{col, BinaryExpr, Expr, Operator};
+use datafusion::optimizer::utils;
+use datafusion::physical_expr::planner;
 use datafusion::physical_plan::{
     expressions::PhysicalSortExpr, file_format::FileScanConfig, file_format::ParquetExec,
     filter::FilterExec, metrics::BaselineMetrics, metrics::ExecutionPlanMetricsSet,
     metrics::MetricsSet, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
     SendableRecordBatchStream, Statistics,
 };
-use datafusion_common::ToDFSchema;
-use datafusion_expr::{col, BinaryExpr, Expr, Operator};
-use datafusion_optimizer::utils;
-use datafusion_physical_expr::planner;
 use futures::stream::{Stream, StreamExt};
 use parking_lot::RwLock;
 
@@ -606,7 +606,7 @@ mod tests {
 
     use datafusion::arrow::datatypes::DataType;
     use datafusion::prelude::Expr;
-    use datafusion_expr::lit;
+    use datafusion::logical_expr::lit;
 
     use crate::metadata::test_util;
 
