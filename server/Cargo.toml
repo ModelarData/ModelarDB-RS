@@ -6,39 +6,34 @@ edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
-datafusion = "15.0.0"
-object_store = { version = "0.5.1", features = ["aws"] }
-sqlparser = "0.28.0"
+arrow-flight = "28.0.0"
+async-trait = "0.1.59"
 bytes = "1.3.0"
+datafusion = "15.0.0"
+futures = "0.3.25"
+object_store = { version = "0.5.1", features = ["aws"] }
+parking_lot = "0.12.1"
+rusqlite = { version = "0.28.0", features = ["bundled"] }
+snmalloc-rs = "0.3.3"
+sqlparser = "0.28.0"
+tokio = { version = "1.22.0", features = ["rt-multi-thread", "signal"] }
+tonic = "0.8.3"
 
 # Log is a dependency so the compile time filters for log and tracing can be set to the same value
 log = { version = "0.4.17", features = ["max_level_debug", "release_max_level_info"] }
 tracing = { version = "0.1.37", features = ["max_level_debug", "release_max_level_info"] }
-tracing-subscriber = "0.3.16"
 tracing-futures = "0.2.5"
-
-tokio = { version = "1.22.0", features = ["rt-multi-thread", "signal"] }
-
-async-trait = "0.1.59"
-futures = "0.3.25"
-
-arrow-flight = "28.0.0"
-tonic = "0.8.3"
-
-parking_lot = "0.12.1"
-snmalloc-rs = "0.3.3"
-
-rusqlite = { version = "0.28.0", features = ["bundled"] }
+tracing-subscriber = "0.3.16"
 
 [dev-dependencies]
-proptest = "1.0.0"
-tempfile = "3.3.0"
-rand = "0.8.5"
 assert_cmd = "2.0.7"
-prost = "0.11.3"
 libc = "0.2.138"
+proptest = "1.0.0"
+prost = "0.11.3"
+rand = "0.8.5"
 serial_test = "0.9.0"
 sysinfo = "0.26.8"
+tempfile = "3.3.0"
 
 [[test]]
 name = "integration"
