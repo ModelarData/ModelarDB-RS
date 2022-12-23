@@ -7,10 +7,6 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
 datafusion = "15.0.0"
-datafusion-common = "15.0.0"
-datafusion-optimizer = "15.0.0"
-datafusion-expr = "15.0.0"
-datafusion-physical-expr = "15.0.0"
 object_store = { version = "0.5.1", features = ["aws"] }
 sqlparser = "0.28.0"
 bytes = "1.3.0"

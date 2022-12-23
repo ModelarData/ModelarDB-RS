@@ -26,6 +26,7 @@ use datafusion::arrow::datatypes::Field;
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::Result;
+use datafusion::logical_expr::AggregateState;
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::aggregates::AggregateExec;
 use datafusion::physical_plan::expressions::format_state_name;
@@ -35,7 +36,6 @@ use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use datafusion::prelude::SessionConfig;
 use datafusion::scalar::ScalarValue;
-use datafusion_expr::AggregateState;
 
 use crate::models;
 use crate::tables::GridExec;
