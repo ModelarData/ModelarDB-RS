@@ -471,7 +471,7 @@ impl MetadataManager {
         let name = row.get::<usize, String>(0)?;
 
         // Compute the path to the folder containing data for the table.
-        let table_folder_path = self.get_local_data_folder().join(&name);
+        let table_folder_path = self.get_local_data_folder().join("compressed").join(&name);
         let table_folder = table_folder_path
             .to_str()
             .ok_or_else(|| format!("Path for table is not UTF-8: '{}'", name))?;
