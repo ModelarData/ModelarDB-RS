@@ -92,7 +92,9 @@ impl CompressedDataBuffer {
 
         // Compute the total number of bytes of memory used by the columns.
         for column in compressed_segments.columns() {
-            // TODO: How is this calculated internally?
+            // Recursively compute the total number of bytes of memory used by a single column. It
+            // is the size of the types, e.g., Array, ArrayData, Buffer, and Bitmap, and the data in
+            // the Apache Arrow format as the buffers with the data and the null bitmap if it exists.
             total_size += column.get_array_memory_size()
         }
 
