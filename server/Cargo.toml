@@ -30,3 +30,7 @@ rand = "0.8.5"
 serial_test = "0.9.0"
 sysinfo = "0.26.8"
 tempfile = "3.3.0"
+
+# Make machete ignore all dependencies that are required but not explicitly used in the source code
+[package.metadata.cargo-machete]
+ignored = ["log"]
