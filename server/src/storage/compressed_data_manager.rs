@@ -16,11 +16,14 @@
 //! Support for managing all compressed data that is inserted into the [`StorageEngine`].
 
 use std::collections::{HashMap, VecDeque};
+use std::fs;
 use std::io::Error as IOError;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
@@ -68,6 +71,32 @@ impl CompressedDataManager {
             compressed_remaining_memory_in_bytes: compressed_reserved_memory_in_bytes as isize,
             compressed_schema,
         }
+    }
+
+    /// Write `record_batch` to the table with `table_name` as a compressed Apache Parquet files.
+    pub(super) async fn insert_record_batch(
+        &self,
+        table_name: &str,
+        record_batch: RecordBatch,
+    ) -> Result<(), ParquetError> {
+        debug!(
+            "Received record batch with {} rows for the table '{}'.",
+            record_batch.num_rows(),
+            table_name
+        );
+        let local_file_path = self.local_data_folder.join("compressed").join(table_name);
+
+        // Create the folder structure if it does not already exist.
+        fs::create_dir_all(local_file_path.as_path())?;
+
+        // Create a path that uses the current timestamp as the filename.
+        let since_the_epoch = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| ParquetError::General(error.to_string()))?;
+        let file_name = format!("{}.parquet", since_the_epoch.as_millis());
+        let file_path = local_file_path.join(file_name);
+
+        StorageEngine::write_batch_to_apache_parquet_file(record_batch, file_path.as_path())
     }
 
     /// Insert the `compressed_segments` into the in-memory compressed data buffer for the table
@@ -277,6 +306,36 @@ mod tests {
     use crate::storage::test_util;
 
     const TABLE_NAME: &str = "table";
+
+    #[tokio::test]
+    async fn test_insert_record_batch() {
+        let record_batch = test_util::get_compressed_segments_record_batch();
+        let (temp_dir, data_manager) = create_compressed_data_manager();
+
+        let local_data_folder = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+        let table_folder = ObjectStorePath::parse(format!("compressed/{}/", TABLE_NAME)).unwrap();
+
+        let table_folder_files = local_data_folder
+            .list(Some(&table_folder))
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+        assert!(table_folder_files.is_empty());
+
+        data_manager
+            .insert_record_batch(TABLE_NAME, record_batch)
+            .await
+            .unwrap();
+
+        let table_folder_files = local_data_folder
+            .list(Some(&table_folder))
+            .await
+            .unwrap()
+            .collect::<Vec<_>>()
+            .await;
+        assert_eq!(table_folder_files.len(), 1);
+    }
 
     #[test]
     fn test_can_insert_compressed_segment_into_new_compressed_data_buffer() {

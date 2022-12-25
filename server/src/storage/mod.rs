@@ -136,8 +136,20 @@ impl StorageEngine {
         })
     }
 
-    /// Pass `data_points` to [`UncompressedDataManager`]. Return [`Ok`] if all of the data points
+    /// Pass `record_batch` to [`CompressedDataManager`]. Return [`Ok`] if all of the data points
     /// were successfully inserted, otherwise return [`Err`].
+    pub(super) async fn insert_record_batch(
+        &self,
+        table_name: &str,
+        record_batch: RecordBatch,
+    ) -> Result<(), ParquetError> {
+        self.compressed_data_manager
+            .insert_record_batch(table_name, record_batch)
+            .await
+    }
+
+    /// Pass `data_points` to [`UncompressedDataManager`]. Return [`Ok`] if all of the data points
+    /// were successfully inserted, otherwise return [`String`].
     pub async fn insert_data_points(
         &mut self,
         model_table: &ModelTableMetadata,

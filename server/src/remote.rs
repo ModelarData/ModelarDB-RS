@@ -42,7 +42,7 @@ use futures::{stream, Stream, StreamExt};
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
@@ -175,17 +175,27 @@ impl FlightServiceHandler {
 
     /// While there is still more data to receive, ingest the data into the
     /// table.
-    fn ingest_into_table(
+    async fn ingest_into_table(
         &self,
         table_name: &str,
-        _schema: SchemaRef,
-        _flight_data_stream: Streaming<FlightData>,
-    ) {
-        // TODO: Implement this.
-        error!(
-            "Received data for table '{}' but ingesting data into tables is not supported yet.",
-            table_name
-        );
+        schema: &SchemaRef,
+        flight_data_stream: &mut Streaming<FlightData>,
+    ) -> Result<(), Status> {
+        // Retrieve the data until the request does not contain any more data.
+        while let Some(flight_data) = flight_data_stream.next().await {
+            let record_batch = self.flight_data_to_record_batch(&flight_data?, schema)?;
+            let storage_engine = self.context.storage_engine.write().await;
+
+            // Write record_batch to the table with table_name as a compressed Apache Parquet files.
+            storage_engine
+                .insert_record_batch(table_name, record_batch)
+                .await
+                .map_err(|error| {
+                    Status::internal(format!("Data could not be ingested: {}", error))
+                })?;
+        }
+
+        Ok(())
     }
 
     /// While there is still more data to receive, ingest the data into the
@@ -197,17 +207,8 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
-            let flight_data = flight_data?;
-            debug_assert_eq!(flight_data.flight_descriptor, None);
-
-            // Convert the flight data to a record batch.
-            let data_points = utils::flight_data_to_arrow_batch(
-                &flight_data,
-                model_table_metadata.schema.clone(),
-                &self.dictionaries_by_id,
-            )
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
+            let data_points =
+                self.flight_data_to_record_batch(&flight_data?, &model_table_metadata.schema)?;
             let mut storage_engine = self.context.storage_engine.write().await;
 
             // Note that the storage engine returns when the data is stored in memory, which means
@@ -223,6 +224,18 @@ impl FlightServiceHandler {
         Ok(())
     }
 
+    /// Convert `flight_data` to a [`RecordBatch`].
+    fn flight_data_to_record_batch(
+        &self,
+        flight_data: &FlightData,
+        schema: &SchemaRef,
+    ) -> Result<RecordBatch, Status> {
+        debug_assert_eq!(flight_data.flight_descriptor, None);
+
+        utils::flight_data_to_arrow_batch(flight_data, schema.clone(), &self.dictionaries_by_id)
+            .map_err(|error| Status::invalid_argument(error.to_string()))
+    }
+
     /// Create a normal table, register it with Apache Arrow DataFusion's
     /// catalog, and save it to the [`MetadataManager`]. If the table exists,
     /// the Apache Parquet file cannot be created, or if the table cannot be
@@ -234,8 +247,11 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Ensure the folder for storing the table data exists.
         let metadata_manager = &self.context.metadata_manager;
-        let folder_path = metadata_manager.get_local_data_folder().join(&table_name);
-        fs::create_dir(&folder_path)?;
+        let folder_path = metadata_manager
+            .get_local_data_folder()
+            .join("compressed")
+            .join(&table_name);
+        fs::create_dir_all(&folder_path)?;
 
         // Create an empty Apache Parquet file to save the schema.
         let file_path = folder_path.join("empty_for_schema.parquet");
@@ -261,6 +277,7 @@ impl FlightServiceHandler {
             .map_err(|error| Status::internal(error.to_string()))?;
 
         info!("Created table '{}'.", table_name);
+
         Ok(())
     }
 
@@ -442,7 +459,8 @@ impl FlightService for FlightServiceHandler {
             debug!("Writing data to table '{}'.", normalized_table_name);
             let schema =
                 self.get_schema_of_table_in_default_database_schema(&normalized_table_name)?;
-            self.ingest_into_table(&normalized_table_name, schema, flight_data_stream);
+            self.ingest_into_table(&normalized_table_name, &schema, &mut flight_data_stream)
+                .await?;
         }
 
         // Confirm the data was received.
