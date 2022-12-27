@@ -233,7 +233,6 @@ impl fmt::Debug for UncompressedOnDiskDataBuffer {
     }
 }
 
-// TODO: Delete the spilled Apache Parquet file after it has been read?
 #[async_trait]
 impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
     /// Read the data from the Apache Parquet file and return it as a [`RecordBatch`].
@@ -241,7 +240,13 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
         &mut self,
         _uncompressed_schema: &UncompressedSchema,
     ) -> Result<RecordBatch, ParquetError> {
-        StorageEngine::read_batch_from_apache_parquet_file(self.file_path.as_path()).await
+        let record_batch =
+            StorageEngine::read_batch_from_apache_parquet_file(self.file_path.as_path()).await?;
+
+        fs::remove_file(self.file_path.as_path())
+            .map_err(|error| ParquetError::General(error.to_string()))?;
+
+        Ok(record_batch)
     }
 
     /// Return the univariate id that uniquely identifies the univariate time series the buffer
@@ -404,8 +409,16 @@ mod tests {
             .get_record_batch(&test_util::get_uncompressed_schema())
             .await
             .unwrap();
+
         assert_eq!(data.num_columns(), 2);
         assert_eq!(data.num_rows(), capacity);
+
+        let spilled_buffer_path = temp_dir
+            .path()
+            .join("uncompressed")
+            .join("1")
+            .join("1234567890123.parquet");
+        assert!(!spilled_buffer_path.exists());
     }
 
     /// Insert `count` generated data points into `uncompressed_buffer`.
