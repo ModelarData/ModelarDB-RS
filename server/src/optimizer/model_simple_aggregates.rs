@@ -257,7 +257,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        crate::get_arrays!(
+        crate::arrays!(
             batch,
             _univariate_ids,
             _model_type_ids,
@@ -364,7 +364,7 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         let mut min = Value::MAX;
-        let min_value_array = crate::get_array!(batch, 5, ValueArray);
+        let min_value_array = crate::array!(batch, 5, ValueArray);
         for row_index in 0..batch.num_rows() {
             min = Value::min(min, min_value_array.value(row_index));
         }
@@ -457,7 +457,7 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         let mut max = Value::MIN;
-        let max_value_array = crate::get_array!(batch, 6, ValueArray);
+        let max_value_array = crate::array!(batch, 6, ValueArray);
         for row_index in 0..batch.num_rows() {
             max = Value::max(max, max_value_array.value(row_index));
         }
@@ -549,7 +549,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        crate::get_arrays!(
+        crate::arrays!(
             batch,
             _univariate_ids,
             model_type_ids,
@@ -670,7 +670,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        crate::get_arrays!(
+        crate::arrays!(
             batch,
             _univariate_ids,
             model_type_ids,

@@ -111,18 +111,18 @@ impl Gorilla {
 
     /// Return the number of values currently compressed using XOR and a
     /// variable length binary encoding.
-    pub fn get_length(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.length
     }
 
     /// Return the number of bytes currently used per data point on average.
-    pub fn get_bytes_per_value(&self) -> f32 {
+    pub fn bytes_per_value(&self) -> f32 {
         self.compressed_values.len() as f32 / self.length as f32
     }
 
     /// Return the values compressed using XOR and a variable length binary
     /// encoding.
-    pub fn get_compressed_values(self) -> Vec<u8> {
+    pub fn compressed_values(self) -> Vec<u8> {
         self.compressed_values.finish()
     }
 }
@@ -223,7 +223,7 @@ mod tests {
     // Tests for Gorilla.
     #[test]
     fn test_empty_sequence() {
-        assert!(Gorilla::new().get_compressed_values().is_empty());
+        assert!(Gorilla::new().compressed_values().is_empty());
     }
 
     proptest! {
@@ -319,7 +319,7 @@ mod tests {
         for value in values {
             model_type.compress_value(*value);
         }
-        model_type.get_compressed_values()
+        model_type.compressed_values()
     }
 
     fn slice_of_value_equal(values_one: &[Value], values_two: &[Value]) -> bool {

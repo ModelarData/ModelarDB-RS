@@ -377,7 +377,7 @@ mod tests {
     use object_store::local::LocalFileSystem;
     use tempfile::{tempdir, TempDir};
 
-    use crate::get_array;
+    use crate::array;
     use crate::metadata::test_util as metadata_test_util;
     use crate::storage::{self, test_util};
     use crate::types::{TimestampArray, ValueArray};
@@ -387,7 +387,7 @@ mod tests {
     // Tests for insert_record_batch().
     #[tokio::test]
     async fn test_insert_record_batch() {
-        let record_batch = test_util::get_compressed_segments_record_batch();
+        let record_batch = test_util::compressed_segments_record_batch();
         let (temp_dir, data_manager) = create_compressed_data_manager();
 
         let local_data_folder = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
@@ -419,7 +419,7 @@ mod tests {
     // Tests for insert_compressed_segments().
     #[test]
     fn test_can_insert_compressed_segment_into_new_compressed_data_buffer() {
-        let segments = test_util::get_compressed_segments_record_batch();
+        let segments = test_util::compressed_segments_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
         data_manager
@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn test_can_insert_compressed_segment_into_existing_compressed_data_buffer() {
-        let segments = test_util::get_compressed_segments_record_batch();
+        let segments = test_util::compressed_segments_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
         data_manager
@@ -473,7 +473,7 @@ mod tests {
 
     #[test]
     fn test_save_first_compressed_data_buffer_if_out_of_memory() {
-        let segments = test_util::get_compressed_segments_record_batch();
+        let segments = test_util::compressed_segments_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
         let reserved_memory = data_manager.compressed_remaining_memory_in_bytes as usize;
 
@@ -494,7 +494,7 @@ mod tests {
 
     #[test]
     fn test_remaining_bytes_decremented_when_inserting_compressed_segments() {
-        let segments = test_util::get_compressed_segments_record_batch();
+        let segments = test_util::compressed_segments_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
         let reserved_memory = data_manager.compressed_remaining_memory_in_bytes;
 
@@ -507,7 +507,7 @@ mod tests {
 
     #[test]
     fn test_remaining_memory_incremented_when_saving_compressed_segments() {
-        let segments = test_util::get_compressed_segments_record_batch();
+        let segments = test_util::compressed_segments_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
         data_manager
@@ -524,7 +524,7 @@ mod tests {
     /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
     fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
         let temp_dir = tempdir().unwrap();
-        let metadata_manager = metadata_test_util::get_test_metadata_manager(temp_dir.path());
+        let metadata_manager = metadata_test_util::test_metadata_manager(temp_dir.path());
 
         let local_data_folder = temp_dir.path().to_path_buf();
         (
@@ -533,7 +533,7 @@ mod tests {
                 None,
                 local_data_folder,
                 metadata_manager.compressed_reserved_memory_in_bytes,
-                metadata_manager.get_compressed_schema(),
+                metadata_manager.compressed_schema(),
             )
             .unwrap(),
         )
@@ -545,7 +545,7 @@ mod tests {
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
         // Insert compressed segments into the same table.
-        let segment = test_util::get_compressed_segments_record_batch();
+        let segment = test_util::compressed_segments_record_batch();
         data_manager
             .insert_compressed_segments(TABLE_NAME, segment.clone())
             .unwrap();
@@ -588,7 +588,7 @@ mod tests {
 
         // If we have a start time after the first segments ends, only the file containing the
         // second segment should be retrieved.
-        let end_times = get_array!(segment_1, 3, TimestampArray);
+        let end_times = array!(segment_1, 3, TimestampArray);
         let start_time = Some(end_times.value(end_times.len() - 1) + 100);
 
         let object_store: Arc<dyn ObjectStore> =
@@ -623,7 +623,7 @@ mod tests {
 
         // If we have a min value higher then the max value in the first segment, only the file
         // containing the second segment should be retrieved.
-        let max_values = get_array!(segment_1, 6, ValueArray);
+        let max_values = array!(segment_1, 6, ValueArray);
         let min_value = Some(compute::max(max_values).unwrap() + 1.0);
 
         let object_store: Arc<dyn ObjectStore> =
@@ -658,7 +658,7 @@ mod tests {
 
         // If we have an end time before the second segment starts, only the file containing the
         // first segment should be retrieved.
-        let start_times = get_array!(segment_2, 2, TimestampArray);
+        let start_times = array!(segment_2, 2, TimestampArray);
         let end_time = Some(start_times.value(1) - 100);
 
         let object_store: Arc<dyn ObjectStore> =
@@ -693,7 +693,7 @@ mod tests {
 
         // If we have a max value lower then the min value in the second segment, only the file
         // containing the first segment should be retrieved.
-        let min_values = get_array!(segment_2, 5, ValueArray);
+        let min_values = array!(segment_2, 5, ValueArray);
         let max_value = Some(compute::min(min_values).unwrap() - 1.0);
 
         let object_store: Arc<dyn ObjectStore> =
@@ -731,8 +731,8 @@ mod tests {
 
         // If we have a start time after the first segment and an end time before the fourth
         // segment, only the files containing the second and third segment should be retrieved.
-        let end_times = get_array!(segment_1, 3, TimestampArray);
-        let start_times = get_array!(segment_4, 2, TimestampArray);
+        let end_times = array!(segment_1, 3, TimestampArray);
+        let start_times = array!(segment_4, 2, TimestampArray);
 
         let start_time = Some(end_times.value(end_times.len() - 1) + 100);
         let end_time = Some(start_times.value(1) - 100);
@@ -784,8 +784,8 @@ mod tests {
 
         // If we have a min value higher the first segment and a max value lower than the fourth
         // segment, only the files containing the second and third segment should be retrieved.
-        let max_values = get_array!(segment_1, 6, ValueArray);
-        let min_values = get_array!(segment_4, 5, ValueArray);
+        let max_values = array!(segment_1, 6, ValueArray);
+        let min_values = array!(segment_4, 5, ValueArray);
 
         let min_value = Some(compute::max(max_values).unwrap() + 1.0);
         let max_value = Some(compute::min(min_values).unwrap() - 1.0);
@@ -834,16 +834,14 @@ mod tests {
         start_time: i64,
         value_offset: f32,
     ) -> (RecordBatch, RecordBatch) {
-        let segment_1 = test_util::get_compressed_segments_record_batch_with_time(
-            1000 + start_time,
-            value_offset,
-        );
+        let segment_1 =
+            test_util::compressed_segments_record_batch_with_time(1000 + start_time, value_offset);
         data_manager
             .insert_compressed_segments(TABLE_NAME, segment_1.clone())
             .unwrap();
         data_manager.flush().unwrap();
 
-        let segment_2 = test_util::get_compressed_segments_record_batch_with_time(
+        let segment_2 = test_util::compressed_segments_record_batch_with_time(
             2000 + start_time,
             10.0 + value_offset,
         );
@@ -859,7 +857,7 @@ mod tests {
     async fn test_cannot_get_compressed_files_where_end_time_is_before_start_time() {
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        let segment = test_util::get_compressed_segments_record_batch();
+        let segment = test_util::compressed_segments_record_batch();
         data_manager
             .insert_compressed_segments(TABLE_NAME, segment)
             .unwrap();
@@ -885,7 +883,7 @@ mod tests {
     async fn test_cannot_get_compressed_files_where_max_value_is_smaller_than_min_value() {
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        let segment = test_util::get_compressed_segments_record_batch();
+        let segment = test_util::compressed_segments_record_batch();
         data_manager
             .insert_compressed_segments(TABLE_NAME, segment)
             .unwrap();
@@ -909,7 +907,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_get_saved_compressed_files() {
-        let segments = test_util::get_compressed_segments_record_batch();
+        let segments = test_util::compressed_segments_record_batch();
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
         data_manager
@@ -939,7 +937,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_in_memory_compressed_data_when_getting_saved_compressed_files() {
-        let segments = test_util::get_compressed_segments_record_batch_with_time(1000, 0.0);
+        let segments = test_util::compressed_segments_record_batch_with_time(1000, 0.0);
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
         data_manager
@@ -948,7 +946,7 @@ mod tests {
         data_manager.save_compressed_data(TABLE_NAME).unwrap();
 
         // This second inserted segment should be saved when the compressed files are retrieved.
-        let segment_2 = test_util::get_compressed_segments_record_batch_with_time(2000, 0.0);
+        let segment_2 = test_util::compressed_segments_record_batch_with_time(2000, 0.0);
         data_manager
             .insert_compressed_segments(TABLE_NAME, segment_2.clone())
             .unwrap();
@@ -965,7 +963,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_no_saved_compressed_files_from_non_existent_table() {
-        let segments = test_util::get_compressed_segments_record_batch();
+        let segments = test_util::compressed_segments_record_batch();
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
         data_manager

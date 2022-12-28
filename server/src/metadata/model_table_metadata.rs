@@ -104,9 +104,7 @@ impl ModelTableMetadata {
         }
 
         let field_column_indices: Vec<usize> = (0..schema.fields().len())
-            .filter(|index| {
-                *index != timestamp_column_index && !tag_column_indices.contains(index)
-            })
+            .filter(|index| *index != timestamp_column_index && !tag_column_indices.contains(index))
             .collect();
 
         // If there are no field columns, return an error.
@@ -179,7 +177,7 @@ mod test {
     // Tests for ModelTableMetadata.
     #[test]
     fn test_can_create_model_table_metadata() {
-        let (schema, error_bounds) = get_model_table_schema_and_error_bounds();
+        let (schema, error_bounds) = model_table_schema_and_error_bounds();
         let result = ModelTableMetadata::try_new(
             "table_name".to_owned(),
             schema,
@@ -193,7 +191,7 @@ mod test {
 
     #[test]
     fn test_cannot_create_model_table_metadata_with_timestamp_index_in_tag_indices() {
-        let (schema, error_bounds) = get_model_table_schema_and_error_bounds();
+        let (schema, error_bounds) = model_table_schema_and_error_bounds();
         let result = ModelTableMetadata::try_new(
             "table_name".to_owned(),
             schema,
@@ -207,7 +205,7 @@ mod test {
 
     #[test]
     fn test_cannot_create_model_table_metadata_with_invalid_timestamp_index() {
-        let (schema, error_bounds) = get_model_table_schema_and_error_bounds();
+        let (schema, error_bounds) = model_table_schema_and_error_bounds();
         let result = ModelTableMetadata::try_new(
             "table_name".to_owned(),
             schema,
@@ -233,7 +231,7 @@ mod test {
 
     #[test]
     fn test_cannot_create_model_table_metadata_with_invalid_tag_index() {
-        let (schema, error_bounds) = get_model_table_schema_and_error_bounds();
+        let (schema, error_bounds) = model_table_schema_and_error_bounds();
         let result = ModelTableMetadata::try_new(
             "table_name".to_owned(),
             schema,
@@ -295,7 +293,7 @@ mod test {
 
     #[test]
     fn test_cannot_create_model_table_metadata_with_duplicate_tag_indices() {
-        let (schema, error_bounds) = get_model_table_schema_and_error_bounds();
+        let (schema, error_bounds) = model_table_schema_and_error_bounds();
         let result = ModelTableMetadata::try_new(
             "table_name".to_owned(),
             schema,
@@ -309,14 +307,14 @@ mod test {
 
     #[test]
     fn test_cannot_create_model_table_metadata_with_missing_or_too_many_error_bounds() {
-        let (schema, _error_bounds) = get_model_table_schema_and_error_bounds();
+        let (schema, _error_bounds) = model_table_schema_and_error_bounds();
         let result =
             ModelTableMetadata::try_new("table_name".to_owned(), schema, 3, vec![0, 1, 2], vec![]);
 
         assert!(result.is_err());
     }
 
-    fn get_model_table_schema_and_error_bounds() -> (Schema, Vec<ErrorBound>) {
+    fn model_table_schema_and_error_bounds() -> (Schema, Vec<ErrorBound>) {
         (
             Schema::new(vec![
                 Field::new("location", DataType::Utf8, false),
