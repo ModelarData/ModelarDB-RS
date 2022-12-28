@@ -47,7 +47,7 @@ use tracing::{debug, info};
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
-use crate::storage::StorageEngine;
+use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 use crate::tables::ModelTable;
 use crate::Context;
 
@@ -249,7 +249,7 @@ impl FlightServiceHandler {
         let metadata_manager = &self.context.metadata_manager;
         let folder_path = metadata_manager
             .get_local_data_folder()
-            .join("compressed")
+            .join(COMPRESSED_DATA_FOLDER)
             .join(&table_name);
         fs::create_dir_all(&folder_path)?;
 

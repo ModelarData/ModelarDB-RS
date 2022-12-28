@@ -32,7 +32,7 @@ use datafusion::parquet::errors::ParquetError;
 use tracing::debug;
 
 use crate::get_array;
-use crate::storage::{StorageEngine, UNCOMPRESSED_DATA_BUFFER_CAPACITY};
+use crate::storage::{StorageEngine, UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER};
 use crate::types::{
     Timestamp, TimestampArray, TimestampBuilder, UncompressedSchema, Value, ValueBuilder,
 };
@@ -202,7 +202,7 @@ impl UncompressedOnDiskDataBuffer {
         data_points: RecordBatch,
     ) -> Result<Self, IOError> {
         let local_file_path = local_data_folder
-            .join("uncompressed")
+            .join(UNCOMPRESSED_DATA_FOLDER)
             .join(univariate_id.to_string());
 
         // Create the folder structure if it does not already exist.
@@ -373,7 +373,9 @@ mod tests {
             .await
             .unwrap();
 
-        let uncompressed_path = temp_dir.path().join("uncompressed/1");
+        let uncompressed_path = temp_dir
+            .path()
+            .join(format!("{}/1", UNCOMPRESSED_DATA_FOLDER));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
     }
 
@@ -389,7 +391,9 @@ mod tests {
             .await
             .unwrap();
 
-        let uncompressed_path = temp_dir.path().join("uncompressed/1");
+        let uncompressed_path = temp_dir
+            .path()
+            .join(format!("{}/1", UNCOMPRESSED_DATA_FOLDER));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
     }
 
@@ -426,7 +430,7 @@ mod tests {
 
         let spilled_buffer_path = temp_dir
             .path()
-            .join("uncompressed")
+            .join(UNCOMPRESSED_DATA_FOLDER)
             .join("1")
             .join("1234567890123.parquet");
         assert!(!spilled_buffer_path.exists());

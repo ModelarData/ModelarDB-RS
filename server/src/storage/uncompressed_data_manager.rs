@@ -31,6 +31,7 @@ use crate::models::ErrorBound;
 use crate::storage::uncompressed_data_buffer::{
     UncompressedDataBuffer, UncompressedInMemoryDataBuffer, UncompressedOnDiskDataBuffer,
 };
+use crate::storage::UNCOMPRESSED_DATA_FOLDER;
 use crate::types::{
     CompressedSchema, Timestamp, TimestampArray, UncompressedSchema, Value, ValueArray,
 };
@@ -73,7 +74,7 @@ impl UncompressedDataManager {
         compress_directly: bool,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the uncompressed data manager exists.
-        let local_uncompressed_data_folder = local_data_folder.join("uncompressed");
+        let local_uncompressed_data_folder = local_data_folder.join(UNCOMPRESSED_DATA_FOLDER);
         fs::create_dir_all(&local_uncompressed_data_folder)?;
 
         // Add references to the uncompressed data buffers currently on disk.
@@ -597,7 +598,8 @@ mod tests {
 
         // The UncompressedDataBuffer should be spilled to univariate id in the uncompressed folder.
         let local_data_folder = Path::new(&data_manager.local_data_folder);
-        let uncompressed_path = local_data_folder.join(format!("uncompressed/{}", UNIVARIATE_ID));
+        let uncompressed_path =
+            local_data_folder.join(format!("{}/{}", UNCOMPRESSED_DATA_FOLDER, UNIVARIATE_ID));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1);
     }
 
@@ -626,7 +628,8 @@ mod tests {
 
         // The finished buffers should be spilled to univariate id in the uncompressed folder.
         let local_data_folder = Path::new(&data_manager.local_data_folder);
-        let uncompressed_path = local_data_folder.join(format!("uncompressed/{}", UNIVARIATE_ID));
+        let uncompressed_path =
+            local_data_folder.join(format!("{}/{}", UNCOMPRESSED_DATA_FOLDER, UNIVARIATE_ID));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 2);
     }
 

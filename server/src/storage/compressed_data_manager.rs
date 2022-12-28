@@ -33,8 +33,8 @@ use tracing::{debug, debug_span};
 use crate::errors::ModelarDbError;
 use crate::storage::compressed_data_buffer::CompressedDataBuffer;
 use crate::storage::data_transfer::DataTransfer;
+use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 use crate::types::{CompressedSchema, Timestamp, Value};
-use crate::StorageEngine;
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
@@ -66,7 +66,7 @@ impl CompressedDataManager {
         compressed_schema: CompressedSchema,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the compressed data manager exists.
-        fs::create_dir_all(local_data_folder.join("compressed"))?;
+        fs::create_dir_all(local_data_folder.join(COMPRESSED_DATA_FOLDER))?;
 
         Ok(Self {
             data_transfer,
@@ -89,7 +89,10 @@ impl CompressedDataManager {
             record_batch.num_rows(),
             table_name
         );
-        let local_file_path = self.local_data_folder.join("compressed").join(table_name);
+        let local_file_path = self
+            .local_data_folder
+            .join(COMPRESSED_DATA_FOLDER)
+            .join(table_name);
 
         // Create the folder structure if it does not already exist.
         fs::create_dir_all(local_file_path.as_path())?;
@@ -210,7 +213,8 @@ impl CompressedDataManager {
         };
 
         // List all files in query_data_folder for the table named table_name.
-        let table_path = ObjectStorePath::from(format!("compressed/{}/", table_name));
+        let table_path =
+            ObjectStorePath::from(format!("{}/{}/", COMPRESSED_DATA_FOLDER, table_name));
         let table_files = query_data_folder
             .list(Some(&table_path))
             .await
@@ -279,7 +283,10 @@ impl CompressedDataManager {
         debug!("Saving compressed time series to disk.");
 
         let mut compressed_data_buffer = self.compressed_data_buffers.remove(table_name).unwrap();
-        let folder_path = self.local_data_folder.join("compressed").join(table_name);
+        let folder_path = self
+            .local_data_folder
+            .join(COMPRESSED_DATA_FOLDER)
+            .join(table_name);
 
         compressed_data_buffer
             .save_to_apache_parquet(folder_path.as_path(), &self.compressed_schema)?;
@@ -384,7 +391,8 @@ mod tests {
         let (temp_dir, data_manager) = create_compressed_data_manager();
 
         let local_data_folder = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-        let table_folder = ObjectStorePath::parse(format!("compressed/{}/", TABLE_NAME)).unwrap();
+        let table_folder =
+            ObjectStorePath::parse(format!("{}/{}/", COMPRESSED_DATA_FOLDER, TABLE_NAME)).unwrap();
 
         let table_folder_files = local_data_folder
             .list(Some(&table_folder))
@@ -479,7 +487,8 @@ mod tests {
 
         // The compressed data should be saved to the table_name folder in the compressed folder.
         let local_data_folder = Path::new(&data_manager.local_data_folder);
-        let compressed_path = local_data_folder.join(format!("compressed/{}", TABLE_NAME));
+        let compressed_path =
+            local_data_folder.join(format!("{}/{}", COMPRESSED_DATA_FOLDER, TABLE_NAME));
         assert_eq!(compressed_path.read_dir().unwrap().count(), 1);
     }
 
@@ -525,7 +534,8 @@ mod tests {
                 local_data_folder,
                 metadata_manager.compressed_reserved_memory_in_bytes,
                 metadata_manager.get_compressed_schema(),
-            ).unwrap(),
+            )
+            .unwrap(),
         )
     }
 
@@ -599,7 +609,10 @@ mod tests {
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/2000_2005_15.2_44.2.parquet", TABLE_NAME)
+            format!(
+                "{}/{}/2000_2005_15.2_44.2.parquet",
+                COMPRESSED_DATA_FOLDER, TABLE_NAME
+            )
         );
     }
 
@@ -631,7 +644,10 @@ mod tests {
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/2000_2005_15.2_44.2.parquet", TABLE_NAME)
+            format!(
+                "{}/{}/2000_2005_15.2_44.2.parquet",
+                COMPRESSED_DATA_FOLDER, TABLE_NAME
+            )
         );
     }
 
@@ -663,7 +679,10 @@ mod tests {
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/1000_1005_5.2_34.2.parquet", TABLE_NAME)
+            format!(
+                "{}/{}/1000_1005_5.2_34.2.parquet",
+                COMPRESSED_DATA_FOLDER, TABLE_NAME
+            )
         );
     }
 
@@ -695,7 +714,10 @@ mod tests {
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/1000_1005_5.2_34.2.parquet", TABLE_NAME)
+            format!(
+                "{}/{}/1000_1005_5.2_34.2.parquet",
+                COMPRESSED_DATA_FOLDER, TABLE_NAME
+            )
         );
     }
 
@@ -737,12 +759,18 @@ mod tests {
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/2000_2005_15.2_44.2.parquet", TABLE_NAME)
+            format!(
+                "{}/{}/2000_2005_15.2_44.2.parquet",
+                COMPRESSED_DATA_FOLDER, TABLE_NAME
+            )
         );
         let file_path = files.get(1).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/2000_2005_5.2_34.2.parquet", TABLE_NAME)
+            format!(
+                "{}/{}/2000_2005_5.2_34.2.parquet",
+                COMPRESSED_DATA_FOLDER, TABLE_NAME
+            )
         );
     }
 
@@ -784,12 +812,18 @@ mod tests {
         let file_path = files.get(0).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/2000_2005_105.2_134.2.parquet", TABLE_NAME)
+            format!(
+                "{}/{}/2000_2005_105.2_134.2.parquet",
+                COMPRESSED_DATA_FOLDER, TABLE_NAME
+            )
         );
         let file_path = files.get(1).unwrap().location.to_string();
         assert_eq!(
             file_path,
-            format!("compressed/{}/2000_2005_15.2_44.2.parquet", TABLE_NAME)
+            format!(
+                "{}/{}/2000_2005_15.2_44.2.parquet",
+                COMPRESSED_DATA_FOLDER, TABLE_NAME
+            )
         );
     }
 
@@ -895,7 +929,7 @@ mod tests {
 
         // The file should have the first start time and the last end time as the file name.
         let file_name = storage::create_time_and_value_range_file_name(&segments);
-        let expected_file_path = format!("compressed/{}/{}", TABLE_NAME, file_name);
+        let expected_file_path = format!("{}/{}/{}", COMPRESSED_DATA_FOLDER, TABLE_NAME, file_name);
 
         assert_eq!(
             files.get(0).unwrap().location,
