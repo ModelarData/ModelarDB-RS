@@ -190,20 +190,20 @@ impl MetadataManager {
     }
 
     /// Return the path of the local data folder.
-    pub fn get_local_data_folder(&self) -> &Path {
+    pub fn local_data_folder(&self) -> &Path {
         // unwrap() is safe as metadata_database_path is created by self.
         self.metadata_database_path.parent().unwrap()
     }
 
     /// Return the [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch)
     /// [`Schema`](datafusion::arrow::datatypes::Schema) used for uncompressed data buffers.
-    pub fn get_uncompressed_schema(&self) -> UncompressedSchema {
+    pub fn uncompressed_schema(&self) -> UncompressedSchema {
         self.uncompressed_schema.clone()
     }
 
     /// Return the [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch)
     /// [`Schema`](datafusion::arrow::datatypes::Schema) used for compressed data buffers.
-    pub fn get_compressed_schema(&self) -> CompressedSchema {
+    pub fn compressed_schema(&self) -> CompressedSchema {
         self.compressed_schema.clone()
     }
 
@@ -213,7 +213,7 @@ impl MetadataManager {
     /// table if it does not already contain it, and persisted to the model_table_hash_table_name if
     /// it does not already contain it. If the model_table_tags or the model_table_hash_table_name
     /// table cannot be accessed, [`rusqlite::Error`] is returned.
-    pub fn get_or_compute_tag_hash(
+    pub fn lookup_or_compute_tag_hash(
         &mut self,
         model_table: &ModelTableMetadata,
         tag_values: &[String],
@@ -298,7 +298,7 @@ impl MetadataManager {
 
     /// Return a mapping from tag hash to table names. Returns a [`Error`](rusqlite::Error) if the
     /// necessary data cannot be retrieved from the metadata database.
-    pub fn get_mapping_from_hash_to_table_name(&self) -> Result<HashMap<u64, String>> {
+    pub fn mapping_from_hash_to_table_name(&self) -> Result<HashMap<u64, String>> {
         // Open a connection to the database containing the metadata.
         let connection = Connection::open(&self.metadata_database_path)?;
 
@@ -473,7 +473,7 @@ impl MetadataManager {
 
         // Compute the path to the folder containing data for the table.
         let table_folder_path = self
-            .get_local_data_folder()
+            .local_data_folder()
             .join(COMPRESSED_DATA_FOLDER)
             .join(&name);
         let table_folder = table_folder_path
@@ -749,7 +749,7 @@ mod tests {
     #[test]
     fn test_create_metadata_database_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
         let metadata_database_path = metadata_manager.metadata_database_path;
 
         // Verify that the tables were created and has the expected columns.
@@ -785,42 +785,42 @@ mod tests {
     fn test_get_data_folder_path() {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_path = temp_dir.path();
-        let metadata_manager = test_util::get_test_metadata_manager(temp_dir_path);
-        assert_eq!(temp_dir_path, metadata_manager.get_local_data_folder());
+        let metadata_manager = test_util::test_metadata_manager(temp_dir_path);
+        assert_eq!(temp_dir_path, metadata_manager.local_data_folder());
     }
 
     #[test]
     fn test_get_uncompressed_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
         assert_eq!(
             metadata_manager.uncompressed_schema.0,
-            metadata_manager.get_uncompressed_schema().0
+            metadata_manager.uncompressed_schema().0
         );
     }
 
     #[test]
     fn test_get_compressed_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
         assert_eq!(
             metadata_manager.compressed_schema.0,
-            metadata_manager.get_compressed_schema().0
+            metadata_manager.compressed_schema().0
         );
     }
 
     #[test]
     fn test_get_new_tag_hash() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
 
-        let model_table_metadata = test_util::get_model_table_metadata();
+        let model_table_metadata = test_util::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         let result = metadata_manager
-            .get_or_compute_tag_hash(&model_table_metadata, &vec!["tag1".to_owned()]);
+            .lookup_or_compute_tag_hash(&model_table_metadata, &vec!["tag1".to_owned()]);
         assert!(result.is_ok());
 
         // When a new tag hash is retrieved, the hash should be saved in the cache.
@@ -828,7 +828,7 @@ mod tests {
 
         // It should also be saved in the metadata database table.
         let database_path = metadata_manager
-            .get_local_data_folder()
+            .local_data_folder()
             .join(METADATA_DATABASE_NAME);
         let connection = Connection::open(database_path).unwrap();
 
@@ -850,21 +850,21 @@ mod tests {
     #[test]
     fn test_get_existing_tag_hash() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
 
-        let model_table_metadata = test_util::get_model_table_metadata();
+        let model_table_metadata = test_util::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         metadata_manager
-            .get_or_compute_tag_hash(&model_table_metadata, &vec!["tag1".to_owned()])
+            .lookup_or_compute_tag_hash(&model_table_metadata, &vec!["tag1".to_owned()])
             .unwrap();
         assert_eq!(metadata_manager.tag_value_hashes.keys().len(), 1);
 
         // When getting the same tag hash again, it should just be retrieved from the cache.
         let result = metadata_manager
-            .get_or_compute_tag_hash(&model_table_metadata, &vec!["tag1".to_owned()]);
+            .lookup_or_compute_tag_hash(&model_table_metadata, &vec!["tag1".to_owned()]);
 
         assert!(result.is_ok());
         assert_eq!(metadata_manager.tag_value_hashes.keys().len(), 1);
@@ -873,7 +873,7 @@ mod tests {
     #[test]
     fn test_compute_univariate_ids_using_fields_and_tags_for_missing_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
 
         assert!(metadata_manager
             .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
@@ -884,9 +884,9 @@ mod tests {
     fn test_compute_univariate_ids_using_fields_and_tags_for_empty_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
 
-        let model_table_metadata = test_util::get_model_table_metadata();
+        let model_table_metadata = test_util::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
             .unwrap();
@@ -902,7 +902,7 @@ mod tests {
     fn test_compute_univariate_ids_using_no_fields_and_tags_for_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
         initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]);
 
         // Lookup all univariate ids for the table by not passing any fields or tags.
@@ -917,7 +917,7 @@ mod tests {
     {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
         initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]);
 
         // Lookup the univariate ids for the fallback column by only requesting tag columns.
@@ -931,7 +931,7 @@ mod tests {
     fn test_compute_the_univariate_ids_for_a_specific_field_column_for_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
         initialize_model_table_with_tag_values(
             &mut metadata_manager,
             &["tag_value1", "tag_value2"],
@@ -954,7 +954,7 @@ mod tests {
     fn test_compute_the_univariate_ids_for_a_specific_tag_value_for_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
         initialize_model_table_with_tag_values(
             &mut metadata_manager,
             &["tag_value1", "tag_value2"],
@@ -982,7 +982,7 @@ mod tests {
         metadata_manager: &mut MetadataManager,
         tag_values: &[&str],
     ) {
-        let model_table_metadata = test_util::get_model_table_metadata();
+        let model_table_metadata = test_util::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
             .unwrap();
@@ -990,7 +990,7 @@ mod tests {
         for tag_value in tag_values {
             let tag_value = tag_value.to_string();
             metadata_manager
-                .get_or_compute_tag_hash(&model_table_metadata, &vec![tag_value])
+                .lookup_or_compute_tag_hash(&model_table_metadata, &vec![tag_value])
                 .unwrap();
         }
     }
@@ -1009,7 +1009,7 @@ mod tests {
     fn test_save_table_metadata() {
         // Save a table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
 
         let table_name = "table_name";
         metadata_manager.save_table_metadata(table_name).unwrap();
@@ -1036,7 +1036,7 @@ mod tests {
         // Save a table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
         let runtime = Arc::new(Runtime::new().unwrap());
-        let context = test_util::get_test_context(temp_dir.path());
+        let context = test_util::test_context(temp_dir.path());
 
         context
             .metadata_manager
@@ -1054,9 +1054,9 @@ mod tests {
     fn test_save_model_table_metadata() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = test_util::get_test_metadata_manager(temp_dir.path());
+        let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
 
-        let model_table_metadata = test_util::get_model_table_metadata();
+        let model_table_metadata = test_util::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
             .unwrap();
@@ -1127,9 +1127,9 @@ mod tests {
 
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = test_util::get_test_context(temp_dir.path());
+        let context = test_util::test_context(temp_dir.path());
 
-        let model_table_metadata = test_util::get_model_table_metadata();
+        let model_table_metadata = test_util::model_table_metadata();
         context
             .metadata_manager
             .save_model_table_metadata(&model_table_metadata)
@@ -1149,7 +1149,7 @@ mod tests {
 
     #[test]
     fn test_blob_to_schema_and_schema_to_blob() {
-        let model_table_metadata = test_util::get_model_table_metadata();
+        let model_table_metadata = test_util::model_table_metadata();
         let schema = model_table_metadata.schema;
 
         // Serialize a schema to bytes.
@@ -1196,9 +1196,9 @@ pub mod test_util {
 
     /// Return a [`Context`] with the metadata manager created by `get_test_metadata_manager()` and
     /// the data folder set to `path`.
-    pub fn get_test_context(path: &Path) -> Arc<Context> {
-        let metadata_manager = get_test_metadata_manager(path);
-        let session = get_test_session_context();
+    pub fn test_context(path: &Path) -> Arc<Context> {
+        let metadata_manager = test_metadata_manager(path);
+        let session = test_session_context();
         let runtime = Runtime::new().unwrap();
         let storage_engine = RwLock::new(
             runtime
@@ -1219,7 +1219,7 @@ pub mod test_util {
     /// Return a [`MetadataManager`] with 5 MiBs reserved for uncompressed data, 5 MiBs reserved for
     /// compressed data, and the data folder set to `path`. Reducing the amount of reserved memory
     /// makes it faster to run unit tests.
-    pub fn get_test_metadata_manager(path: &Path) -> MetadataManager {
+    pub fn test_metadata_manager(path: &Path) -> MetadataManager {
         let mut metadata_manager = MetadataManager::try_new(path).unwrap();
 
         metadata_manager.uncompressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB
@@ -1229,7 +1229,7 @@ pub mod test_util {
     }
 
     /// Return a [`SessionContext`] without any additional optimizer rules.
-    pub fn get_test_session_context() -> SessionContext {
+    pub fn test_session_context() -> SessionContext {
         let config = SessionConfig::new();
         let runtime = Arc::new(RuntimeEnv::default());
         let state = SessionState::with_config_rt(config, runtime);
@@ -1238,7 +1238,7 @@ pub mod test_util {
 
     /// Return a [`ModelTableMetadata`] for a model table with a schema containing a tag column, a
     /// timestamp column, and two field columns.
-    pub fn get_model_table_metadata() -> ModelTableMetadata {
+    pub fn model_table_metadata() -> ModelTableMetadata {
         let schema = Schema::new(vec![
             Field::new("tag", DataType::Utf8, false),
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
@@ -1256,14 +1256,14 @@ pub mod test_util {
     }
 
     /// Return the [`RecordBatch`] schema used for uncompressed segments.
-    pub fn get_uncompressed_schema() -> UncompressedSchema {
+    pub fn uncompressed_schema() -> UncompressedSchema {
         let temp_dir = tempfile::tempdir().unwrap();
-        get_test_metadata_manager(temp_dir.path()).get_uncompressed_schema()
+        test_metadata_manager(temp_dir.path()).uncompressed_schema()
     }
 
     /// Return the [`RecordBatch`] schema used for compressed segments.
-    pub fn get_compressed_schema() -> CompressedSchema {
+    pub fn compressed_schema() -> CompressedSchema {
         let temp_dir = tempfile::tempdir().unwrap();
-        get_test_metadata_manager(temp_dir.path()).get_compressed_schema()
+        test_metadata_manager(temp_dir.path()).compressed_schema()
     }
 }

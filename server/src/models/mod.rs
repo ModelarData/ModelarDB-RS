@@ -115,9 +115,9 @@ impl SelectedModel {
         uncompressed_values: &ValueArray,
     ) -> Self {
         let bytes_per_value = [
-            (PMC_MEAN_ID, pmc_mean.get_bytes_per_value()),
-            (SWING_ID, swing.get_bytes_per_value()),
-            (GORILLA_ID, gorilla.get_bytes_per_value()),
+            (PMC_MEAN_ID, pmc_mean.bytes_per_value()),
+            (SWING_ID, swing.bytes_per_value()),
+            (GORILLA_ID, gorilla.bytes_per_value()),
         ];
 
         // unwrap() cannot fail as the array is not empty and there are no NaN.
@@ -137,8 +137,8 @@ impl SelectedModel {
 
     /// Create a [`SelectedModel`] from `pmc_mean`.
     fn select_pmc_mean(start_index: usize, pmc_mean: PMCMean) -> Self {
-        let value = pmc_mean.get_model();
-        let end_index = start_index + pmc_mean.get_length() - 1;
+        let value = pmc_mean.model();
+        let end_index = start_index + pmc_mean.len() - 1;
 
         Self {
             model_type_id: PMC_MEAN_ID,
@@ -151,8 +151,8 @@ impl SelectedModel {
 
     /// Create a [`SelectedModel`] from `swing`.
     fn select_swing(start_index: usize, swing: Swing) -> Self {
-        let (start_value, end_value) = swing.get_model();
-        let end_index = start_index + swing.get_length() - 1;
+        let (start_value, end_value) = swing.model();
+        let end_index = start_index + swing.len() - 1;
         let min_value = Value::min(start_value, end_value);
         let max_value = Value::max(start_value, end_value);
         let values = vec![(start_value < end_value) as u8];
@@ -172,7 +172,7 @@ impl SelectedModel {
         gorilla: Gorilla,
         uncompressed_values: &ValueArray,
     ) -> Self {
-        let end_index = start_index + gorilla.get_length() - 1;
+        let end_index = start_index + gorilla.len() - 1;
         let uncompressed_values = &uncompressed_values.values()[start_index..=end_index];
         let min_value = uncompressed_values
             .iter()
@@ -184,7 +184,7 @@ impl SelectedModel {
             .fold(Value::NAN, |current_max, value| {
                 Value::max(current_max, *value)
             });
-        let values = gorilla.get_compressed_values();
+        let values = gorilla.compressed_values();
 
         Self {
             model_type_id: GORILLA_ID,

@@ -485,7 +485,7 @@ mod tests {
         let path = local_data_folder_path.join(format!("compressed/{}", TABLE_NAME));
         fs::create_dir_all(path.clone()).unwrap();
 
-        let batch = test_util::get_compressed_segments_record_batch();
+        let batch = test_util::compressed_segments_record_batch();
         let apache_parquet_path = path.join(format!("{}.parquet", file_name));
         StorageEngine::write_batch_to_apache_parquet_file(
             batch.clone(),

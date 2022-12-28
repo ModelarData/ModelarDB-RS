@@ -178,12 +178,12 @@ impl Swing {
     }
 
     /// Return the number of values the model currently represents.
-    pub fn get_length(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.length
     }
 
     /// Return the number of bytes the current model uses per data point on average.
-    pub fn get_bytes_per_value(&self) -> f32 {
+    pub fn bytes_per_value(&self) -> f32 {
         (2.0 * models::VALUE_SIZE_IN_BYTES as f32) / self.length as f32
     }
 
@@ -192,7 +192,7 @@ impl Swing {
     /// two values are returned instead of the slope and intercept as the values
     /// only require `size_of::<Value>` while the slope and intercept generally
     /// must be [`f64`] to be precise enough.
-    pub fn get_model(&self) -> (Value, Value) {
+    pub fn model(&self) -> (Value, Value) {
         // TODO: Use the method in the Slide and Swing paper to select the
         // linear function within the lower and upper that minimizes error
         let first_value =
@@ -349,7 +349,7 @@ mod tests {
             assert!(model_type.fit_data_point(timestamp, value));
         }
 
-        let (first_value, final_value) = model_type.get_model();
+        let (first_value, final_value) = model_type.model();
         let (slope, intercept) = compute_slope_and_intercept(
             START_TIME,
             first_value as f64,
@@ -567,12 +567,12 @@ mod tests {
             &timestamps,
             &values,
             error_bound,
-            &test_util::get_compressed_schema(),
+            &test_util::compressed_schema(),
         )
         .unwrap();
 
         // Extract the individual columns from the record batch.
-        crate::get_arrays!(
+        crate::arrays!(
             segments,
             _univariate_id_array,
             model_type_id_array,

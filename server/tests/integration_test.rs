@@ -414,7 +414,7 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
 }
 
 /// Return the path to the directory containing the binary with the integration tests.
-fn get_binary_directory() -> PathBuf {
+fn binary_directory() -> PathBuf {
     let current_executable = env::current_exe().expect("Failed to get the path of the binary.");
 
     let parent_directory = current_executable
@@ -431,7 +431,7 @@ fn get_binary_directory() -> PathBuf {
 /// Execute the binary with the integration tests and return a handle to the process.
 fn start_binary(binary: &str) -> Command {
     // Create path to binary.
-    let mut path = get_binary_directory();
+    let mut path = binary_directory();
     path.push(binary);
     path.set_extension(consts::EXE_EXTENSION);
 

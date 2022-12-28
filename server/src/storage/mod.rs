@@ -18,8 +18,7 @@
 //! are full or [`StorageEngine::flush()`] is called, stores the resulting data points compressed as
 //! metadata and models in in-memory buffers to batch them before saving them to immutable Apache
 //! Parquet files. The path to the Apache Parquet files containing relevant compressed data points
-//! for a query can be retrieved by the query engine using
-//! [`StorageEngine::get_compressed_files()`].
+//! for a query can be retrieved by the query engine using [`StorageEngine::compressed_files()`].
 
 mod compressed_data_buffer;
 mod compressed_data_manager;
@@ -47,8 +46,8 @@ use object_store::{ObjectMeta, ObjectStore};
 use tokio::fs::File as TokioFile;
 use tonic::Status;
 
+use crate::array;
 use crate::errors::ModelarDbError;
-use crate::get_array;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
@@ -109,8 +108,8 @@ impl StorageEngine {
         let uncompressed_data_manager = UncompressedDataManager::try_new(
             local_data_folder.clone(),
             metadata_manager.uncompressed_reserved_memory_in_bytes,
-            metadata_manager.get_uncompressed_schema(),
-            metadata_manager.get_compressed_schema(),
+            metadata_manager.uncompressed_schema(),
+            metadata_manager.compressed_schema(),
             compress_directly,
         )?;
 
@@ -133,7 +132,7 @@ impl StorageEngine {
             data_transfer,
             local_data_folder,
             metadata_manager.compressed_reserved_memory_in_bytes,
-            metadata_manager.get_compressed_schema(),
+            metadata_manager.compressed_schema(),
         )?;
 
         Ok(Self {
@@ -180,10 +179,8 @@ impl StorageEngine {
     /// Retrieve the oldest finished [`UncompressedDataBuffer`] from [`UncompressedDataManager`] and
     /// return it. Return [`None`] if there are no finished
     /// [`UncompressedDataBuffers`](UncompressedDataBuffer).
-    pub fn get_finished_uncompressed_data_buffer(
-        &mut self,
-    ) -> Option<Box<dyn UncompressedDataBuffer>> {
-        self.uncompressed_data_manager.get_finished_data_buffer()
+    pub fn finished_uncompressed_data_buffer(&mut self) -> Option<Box<dyn UncompressedDataBuffer>> {
+        self.uncompressed_data_manager.finished_data_buffer()
     }
 
     /// Flush all of the data the [`StorageEngine`] is currently storing in memory to disk. If all
@@ -194,7 +191,7 @@ impl StorageEngine {
         let compressed_buffers = self.uncompressed_data_manager.flush().await;
         let hash_to_table_name = self
             .metadata_manager
-            .get_mapping_from_hash_to_table_name()
+            .mapping_from_hash_to_table_name()
             .map_err(|error| error.to_string())?;
 
         let tag_hash_one_bits: u64 = 18446744073709550592;
@@ -233,7 +230,7 @@ impl StorageEngine {
     /// given range of time and value. If a table with `table_name` does not exist, the end time is
     /// before the start time, or the max value is larger than the min value,
     /// [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned.
-    pub async fn get_compressed_files(
+    pub async fn compressed_files(
         &mut self,
         table_name: &str,
         start_time: Option<Timestamp>,
@@ -334,11 +331,11 @@ pub(self) fn create_apache_arrow_writer<W: Write>(
 /// timestamp of the last segment in `batch`, the minimum value stored in `batch`, and the maximum
 /// value stored in `batch`.
 pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> String {
-    let start_times = get_array!(batch, 2, TimestampArray);
-    let end_times = get_array!(batch, 3, TimestampArray);
+    let start_times = array!(batch, 2, TimestampArray);
+    let end_times = array!(batch, 3, TimestampArray);
 
-    let min_values = get_array!(batch, 5, ValueArray);
-    let max_values = get_array!(batch, 6, ValueArray);
+    let min_values = array!(batch, 5, ValueArray);
+    let max_values = array!(batch, 6, ValueArray);
 
     // unwrap() is safe as None is only returned if all of the values are None.
     let min_value = aggregate::min(min_values).unwrap();
@@ -368,7 +365,7 @@ mod tests {
     #[test]
     fn test_write_batch_to_apache_parquet_file() {
         let temp_dir = tempdir().unwrap();
-        let batch = test_util::get_compressed_segments_record_batch();
+        let batch = test_util::compressed_segments_record_batch();
 
         let apache_parquet_path = temp_dir.path().join("test.parquet");
         StorageEngine::write_batch_to_apache_parquet_file(batch, apache_parquet_path.as_path())
@@ -402,7 +399,7 @@ mod tests {
 
     fn write_to_file_and_assert_failed(file_name: String) {
         let temp_dir = tempdir().unwrap();
-        let batch = test_util::get_compressed_segments_record_batch();
+        let batch = test_util::compressed_segments_record_batch();
 
         let apache_parquet_path = temp_dir.path().join(file_name);
         let result =
@@ -461,7 +458,7 @@ mod tests {
         file_name: String,
     ) -> (TempDir, PathBuf, RecordBatch) {
         let temp_dir = tempdir().unwrap();
-        let batch = test_util::get_compressed_segments_record_batch();
+        let batch = test_util::compressed_segments_record_batch();
 
         let apache_parquet_path = temp_dir.path().join(file_name);
         StorageEngine::write_batch_to_apache_parquet_file(
@@ -523,17 +520,14 @@ pub mod test_util {
     pub const COMPRESSED_SEGMENTS_SIZE: usize = 2424;
 
     /// Return a [`RecordBatch`] containing three compressed segments.
-    pub fn get_compressed_segments_record_batch() -> RecordBatch {
-        get_compressed_segments_record_batch_with_time(0, 0.0)
+    pub fn compressed_segments_record_batch() -> RecordBatch {
+        compressed_segments_record_batch_with_time(0, 0.0)
     }
 
     /// Return a [`RecordBatch`] containing three compressed segments. The compressed segments time
     /// range is from `time_ms` to `time_ms` + 3, while the value range is from `offset` + 5.2 to
     /// `offset` + 34.2.
-    pub fn get_compressed_segments_record_batch_with_time(
-        time_ms: i64,
-        offset: f32,
-    ) -> RecordBatch {
+    pub fn compressed_segments_record_batch_with_time(time_ms: i64, offset: f32) -> RecordBatch {
         let start_times = vec![time_ms, time_ms + 2, time_ms + 4];
         let end_times = vec![time_ms + 1, time_ms + 3, time_ms + 5];
         let min_values = vec![offset + 5.2, offset + 10.3, offset + 30.2];
@@ -549,7 +543,7 @@ pub mod test_util {
         let values = BinaryArray::from_vec(vec![b"1111", b"1000", b"0000"]);
         let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
 
-        let schema = metadata_test_util::get_compressed_schema();
+        let schema = metadata_test_util::compressed_schema();
 
         RecordBatch::try_new(
             schema.0,
