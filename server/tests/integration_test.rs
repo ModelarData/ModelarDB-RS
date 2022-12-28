@@ -5,25 +5,26 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::string::String;
 use std::sync::Arc;
-use std::thread::sleep;
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use array::Array;
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::utils::{flight_data_from_arrow_batch, flight_data_to_arrow_batch};
+use arrow_flight::utils;
 use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor};
 use datafusion::arrow::array::{
     Float32Array, PrimitiveArray, StringArray, TimestampMillisecondArray,
 };
-use datafusion::arrow::datatypes::TimeUnit::Millisecond;
-use datafusion::arrow::datatypes::{DataType, Field, Schema, TimestampMillisecondType};
-use datafusion::arrow::ipc::convert::try_schema_from_ipc_buffer;
+use datafusion::arrow::datatypes::{
+    DataType, Field, Schema, TimeUnit::Millisecond, TimestampMillisecondType,
+};
+use datafusion::arrow::ipc::convert;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::{array, ipc};
 use futures::stream;
 use serial_test::serial;
 use sysinfo::{Pid, PidExt, System, SystemExt};
-use tempfile::tempdir;
+use tempfile;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
 use tonic::Request;
@@ -49,7 +50,7 @@ const HOST: &str = "127.0.0.1";
 #[test]
 #[serial]
 fn test_can_create_table() {
-    let temp_dir = tempdir().expect("Could not create a directory.");
+    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let flight_server = start_apache_arrow_flight_server(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
@@ -76,7 +77,7 @@ fn test_can_create_table() {
 #[test]
 #[serial]
 fn test_can_create_model_table() {
-    let temp_dir = tempdir().expect("Could not create a directory.");
+    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let flight_server = start_apache_arrow_flight_server(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
@@ -103,7 +104,7 @@ fn test_can_create_model_table() {
 #[test]
 #[serial]
 fn test_can_create_and_listen_multiple_model_tables() {
-    let temp_dir = tempdir().expect("Could not create a directory.");
+    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let flight_server = start_apache_arrow_flight_server(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
@@ -135,7 +136,7 @@ fn test_can_create_and_listen_multiple_model_tables() {
 #[test]
 #[serial]
 fn test_can_get_schema() {
-    let temp_dir = tempdir().expect("Could not create a directory.");
+    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let flight_server = start_apache_arrow_flight_server(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
@@ -167,7 +168,7 @@ fn test_can_get_schema() {
 #[test]
 #[serial]
 fn test_can_ingest_data_point_with_tags() {
-    let temp_dir = tempdir().expect("Could not create a directory.");
+    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let flight_server = start_apache_arrow_flight_server(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
@@ -210,7 +211,7 @@ fn test_can_ingest_data_point_with_tags() {
 #[test]
 #[serial]
 fn test_can_ingest_data_point_without_tags() {
-    let temp_dir = tempdir().expect("Could not create a directory.");
+    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let flight_server = start_apache_arrow_flight_server(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
@@ -253,7 +254,7 @@ fn test_can_ingest_data_point_without_tags() {
 #[test]
 #[serial]
 fn test_can_ingest_multiple_time_series_with_different_tags() {
-    let temp_dir = tempdir().expect("Could not create a directory.");
+    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let flight_server = start_apache_arrow_flight_server(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
@@ -321,7 +322,7 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
 #[test]
 #[serial]
 fn test_cannot_ingest_invalid_data_point() {
-    let temp_dir = tempdir().expect("Could not create a directory.");
+    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let flight_server = start_apache_arrow_flight_server(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
@@ -362,7 +363,7 @@ fn test_cannot_ingest_invalid_data_point() {
 #[test]
 #[serial]
 fn test_optimized_query_results_equals_non_optimized_query_results() {
-    let temp_dir = tempdir().expect("Could not create a directory.");
+    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let flight_server = start_apache_arrow_flight_server(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
@@ -453,7 +454,7 @@ fn start_apache_arrow_flight_server(path: &Path) -> Child {
 
     // The thread needs to sleep to ensure that the server has properly started before sending
     // streams to it.
-    sleep(Duration::from_secs(2));
+    thread::sleep(Duration::from_secs(2));
 
     return process;
 }
@@ -560,7 +561,11 @@ fn create_flight_data_from_data_points(data_points: &[RecordBatch]) -> Vec<Fligh
     }];
     for data_point in data_points {
         flight_data.push(
-            (flight_data_from_arrow_batch(&data_point, &ipc::writer::IpcWriteOptions::default())).1,
+            (utils::flight_data_from_arrow_batch(
+                &data_point,
+                &ipc::writer::IpcWriteOptions::default(),
+            ))
+            .1,
         );
     }
 
@@ -619,8 +624,11 @@ fn execute_query(
         let mut results = vec![];
         while let Some(flight_data) = stream.message().await? {
             let dictionaries_by_id = HashMap::new();
-            let record_batch =
-                flight_data_to_arrow_batch(&flight_data, schema.clone(), &dictionaries_by_id)?;
+            let record_batch = utils::flight_data_to_arrow_batch(
+                &flight_data,
+                schema.clone(),
+                &dictionaries_by_id,
+            )?;
             results.push(record_batch);
         }
         Ok(results)
@@ -667,7 +675,7 @@ fn retrieve_schema(
             .expect("Could not retrieve schema.")
             .into_inner();
 
-        let schema = try_schema_from_ipc_buffer(&schema_result.schema)
+        let schema = convert::try_schema_from_ipc_buffer(&schema_result.schema)
             .expect("Could not convert SchemaResult to schema.");
         schema
     })

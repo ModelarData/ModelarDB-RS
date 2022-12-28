@@ -106,7 +106,7 @@ impl CompressedDataBuffer {
 mod tests {
     use super::*;
 
-    use tempfile::tempdir;
+    use tempfile;
 
     use crate::metadata::test_util as metadata_test_util;
     use crate::storage::test_util;
@@ -135,7 +135,7 @@ mod tests {
         let segment = test_util::compressed_segments_record_batch();
         compressed_data_buffer.append_compressed_segments(segment.clone());
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         compressed_data_buffer
             .save_to_apache_parquet(temp_dir.path(), &metadata_test_util::compressed_schema())
             .unwrap();

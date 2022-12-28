@@ -359,12 +359,12 @@ mod tests {
 
     use datafusion::arrow::datatypes::Schema;
     use object_store::local::LocalFileSystem;
-    use tempfile::{tempdir, TempDir};
+    use tempfile::{self, TempDir};
 
     // Tests for writing and reading Apache Parquet files.
     #[test]
     fn test_write_batch_to_apache_parquet_file() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         let batch = test_util::compressed_segments_record_batch();
 
         let apache_parquet_path = temp_dir.path().join("test.parquet");
@@ -379,7 +379,7 @@ mod tests {
         let schema = Schema::new(vec![]);
         let batch = RecordBatch::new_empty(Arc::new(schema));
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         let apache_parquet_path = temp_dir.path().join("empty.parquet");
         StorageEngine::write_batch_to_apache_parquet_file(batch, apache_parquet_path.as_path())
             .unwrap();
@@ -398,7 +398,7 @@ mod tests {
     }
 
     fn write_to_file_and_assert_failed(file_name: String) {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         let batch = test_util::compressed_segments_record_batch();
 
         let apache_parquet_path = temp_dir.path().join(file_name);
@@ -422,7 +422,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_from_non_apache_parquet_file() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
         File::create(path.clone()).unwrap();
 
@@ -433,7 +433,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_from_non_existent_path() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("none.parquet");
         let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path());
 
@@ -453,11 +453,11 @@ mod tests {
         );
     }
 
-    /// Create an Apache Parquet file in the [`TempDir`] from a generated [`RecordBatch`].
+    /// Create an Apache Parquet file in the [`tempfile::TempDir`] from a generated [`RecordBatch`].
     fn create_apache_parquet_file_in_temp_dir(
         file_name: String,
     ) -> (TempDir, PathBuf, RecordBatch) {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         let batch = test_util::compressed_segments_record_batch();
 
         let apache_parquet_path = temp_dir.path().join(file_name);
@@ -472,7 +472,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_is_non_apache_parquet_path_apache_parquet_file() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
 
         let mut file = File::create(path.clone()).unwrap();
@@ -491,7 +491,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_is_empty_apache_parquet_path_apache_parquet_file() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir.path().join("test.parquet");
         File::create(path.clone()).unwrap();
 

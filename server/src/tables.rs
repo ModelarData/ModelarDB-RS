@@ -38,7 +38,7 @@ use datafusion::datasource::{
 };
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::{ExecutionProps, SessionState, TaskContext};
-use datafusion::logical_expr::{col, BinaryExpr, Expr, Operator};
+use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator};
 use datafusion::optimizer::utils;
 use datafusion::physical_expr::planner;
 use datafusion::physical_plan::{
@@ -127,16 +127,32 @@ fn rewrite_and_combine_filters(filters: &[Expr]) -> Option<Expr> {
         .iter()
         .map(|filter| match filter {
             Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
-                if **left == col("timestamp") {
+                if **left == logical_expr::col("timestamp") {
                     match op {
-                        Operator::Gt => new_binary_expr(col("end_time"), *op, *right.clone()),
-                        Operator::GtEq => new_binary_expr(col("end_time"), *op, *right.clone()),
-                        Operator::Lt => new_binary_expr(col("start_time"), *op, *right.clone()),
-                        Operator::LtEq => new_binary_expr(col("start_time"), *op, *right.clone()),
+                        Operator::Gt => {
+                            new_binary_expr(logical_expr::col("end_time"), *op, *right.clone())
+                        }
+                        Operator::GtEq => {
+                            new_binary_expr(logical_expr::col("end_time"), *op, *right.clone())
+                        }
+                        Operator::Lt => {
+                            new_binary_expr(logical_expr::col("start_time"), *op, *right.clone())
+                        }
+                        Operator::LtEq => {
+                            new_binary_expr(logical_expr::col("start_time"), *op, *right.clone())
+                        }
                         Operator::Eq => new_binary_expr(
-                            new_binary_expr(col("start_time"), Operator::LtEq, *right.clone()),
+                            new_binary_expr(
+                                logical_expr::col("start_time"),
+                                Operator::LtEq,
+                                *right.clone(),
+                            ),
                             Operator::And,
-                            new_binary_expr(col("end_time"), Operator::GtEq, *right.clone()),
+                            new_binary_expr(
+                                logical_expr::col("end_time"),
+                                Operator::GtEq,
+                                *right.clone(),
+                            ),
                         ),
                         _ => filter.clone(),
                     }
@@ -660,12 +676,16 @@ mod tests {
     }
 
     fn new_timestamp_filters(operator: Operator) -> Vec<Expr> {
-        vec![new_binary_expr(col("timestamp"), operator, lit(37))]
+        vec![new_binary_expr(
+            logical_expr::col("timestamp"),
+            operator,
+            lit(37),
+        )]
     }
 
     fn assert_timestamp_expr(expr: Expr, column: &str, operator: Operator) {
         if let Expr::BinaryExpr(BinaryExpr { left, op, right }) = expr {
-            assert_eq!(*left, col(column));
+            assert_eq!(*left, logical_expr::col(column));
             assert_eq!(op, operator);
             assert_eq!(*right, lit(37));
         } else {
@@ -685,7 +705,7 @@ mod tests {
     #[test]
     fn test_new_filter_exec_with_predicates() {
         let filters = vec![new_binary_expr(
-            col("univariate_id"),
+            logical_expr::col("univariate_id"),
             Operator::Eq,
             lit(1_u64),
         )];
