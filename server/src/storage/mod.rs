@@ -28,7 +28,7 @@ mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
 
 use std::ffi::OsStr;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -99,6 +99,13 @@ impl StorageEngine {
         metadata_manager: MetadataManager,
         compress_directly: bool,
     ) -> Result<Self, String> {
+        // Ensure the folders expected by the storage engine exists.
+        fs::create_dir_all(local_data_folder.join("uncompressed"))
+            .map_err(|error| error.to_string())?;
+        fs::create_dir_all(local_data_folder.join("compressed"))
+            .map_err(|error| error.to_string())?;
+
+        // Create the uncompressed data manager.
         let uncompressed_data_manager = UncompressedDataManager::new(
             local_data_folder.clone(),
             metadata_manager.uncompressed_reserved_memory_in_bytes,
@@ -107,6 +114,7 @@ impl StorageEngine {
             compress_directly,
         );
 
+        // Create the compressed data manager.
         // TODO: Make the transfer batch size in bytes part of the user-configurable settings.
         let data_transfer = if let Some(remote_data_folder) = remote_data_folder {
             Some(
