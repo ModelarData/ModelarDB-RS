@@ -57,20 +57,25 @@ pub(super) struct CompressedDataManager {
 }
 
 impl CompressedDataManager {
-    pub(super) fn new(
+    /// Return a [`CompressedDataManager`] if the required folder can be created in
+    /// `local_data_folder`, otherwise [`IOError`] is returned.
+    pub(super) fn try_new(
         data_transfer: Option<DataTransfer>,
         local_data_folder: PathBuf,
         compressed_reserved_memory_in_bytes: usize,
         compressed_schema: CompressedSchema,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, IOError> {
+        // Ensure the folder required by the compressed data manager exists.
+        fs::create_dir_all(local_data_folder.join("compressed"))?;
+
+        Ok(Self {
             data_transfer,
             local_data_folder,
             compressed_data_buffers: HashMap::new(),
             compressed_queue: VecDeque::new(),
             compressed_remaining_memory_in_bytes: compressed_reserved_memory_in_bytes as isize,
             compressed_schema,
-        }
+        })
     }
 
     /// Write `record_batch` to the table with `table_name` as a compressed Apache Parquet files.
@@ -515,12 +520,12 @@ mod tests {
         let local_data_folder = temp_dir.path().to_path_buf();
         (
             temp_dir,
-            CompressedDataManager::new(
+            CompressedDataManager::try_new(
                 None,
                 local_data_folder,
                 metadata_manager.compressed_reserved_memory_in_bytes,
                 metadata_manager.get_compressed_schema(),
-            ),
+            ).unwrap(),
         )
     }
 

@@ -17,6 +17,8 @@
 //! [`StorageEngine`](crate::storage::StorageEngine).
 
 use std::collections::{HashMap, VecDeque};
+use std::fs;
+use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::path::PathBuf;
 
 use datafusion::arrow::array::{Array, StringArray};
@@ -27,7 +29,7 @@ use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::models::ErrorBound;
 use crate::storage::uncompressed_data_buffer::{
-    UncompressedDataBuffer, UncompressedInMemoryDataBuffer,
+    UncompressedDataBuffer, UncompressedInMemoryDataBuffer, UncompressedOnDiskDataBuffer,
 };
 use crate::types::{
     CompressedSchema, Timestamp, TimestampArray, UncompressedSchema, Value, ValueArray,
@@ -59,22 +61,51 @@ pub(super) struct UncompressedDataManager {
 }
 
 impl UncompressedDataManager {
-    pub(super) fn new(
+    /// Return an [`UncompressedDataManager`] if the required folder can be created in
+    /// `local_data_folder` and an [`UncompressedOnDiskDataBuffer`] can be initialized for all
+    /// Apache Parquet files containing uncompressed data points in `local_data_store`, otherwise
+    /// [`IOError`] is returned.
+    pub(super) fn try_new(
         local_data_folder: PathBuf,
         uncompressed_reserved_memory_in_bytes: usize,
         uncompressed_schema: UncompressedSchema,
         compressed_schema: CompressedSchema,
         compress_directly: bool,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, IOError> {
+        // Ensure the folder required by the uncompressed data manager exists.
+        let local_uncompressed_data_folder = local_data_folder.join("uncompressed");
+        fs::create_dir_all(&local_uncompressed_data_folder)?;
+
+        // Add references to the uncompressed data buffers currently on disk.
+        let mut finished_data_buffers: VecDeque<Box<dyn UncompressedDataBuffer>> = VecDeque::new();
+        for maybe_folder_dir_entry in local_uncompressed_data_folder.read_dir()? {
+            let folder_dir_entry = maybe_folder_dir_entry?;
+
+            // unwrap() is safe as the file_name is a univariate id.
+            let univariate_id = folder_dir_entry
+                .file_name()
+                .to_str()
+                .ok_or_else(|| IOError::new(IOErrorKind::InvalidData, "Path is not valid UTF-8."))?
+                .parse::<u64>()
+                .map_err(|error| IOError::new(IOErrorKind::InvalidData, error))?;
+
+            for maybe_file_dir_entry in folder_dir_entry.path().read_dir()? {
+                finished_data_buffers.push_back(Box::new(UncompressedOnDiskDataBuffer::try_new(
+                    univariate_id,
+                    maybe_file_dir_entry?.path(),
+                )?));
+            }
+        }
+
+        Ok(Self {
             local_data_folder,
             active_uncompressed_data_buffers: HashMap::new(),
-            finished_uncompressed_data_buffers: VecDeque::new(),
+            finished_uncompressed_data_buffers: finished_data_buffers,
             uncompressed_remaining_memory_in_bytes: uncompressed_reserved_memory_in_bytes,
             uncompressed_schema,
             compressed_schema,
             compress_directly,
-        }
+        })
     }
 
     // TODO: When the compression component is changed, this function should return Ok or Err.
@@ -372,6 +403,23 @@ mod tests {
     use crate::types::{ArrowTimestamp, ArrowValue};
 
     const UNIVARIATE_ID: u64 = 1;
+
+    // Tests for UncompressedDataManager.
+    #[tokio::test]
+    async fn test_can_find_existing_on_disk_data_buffers() {
+        // Spill an uncompressed buffer to disk.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut buffer = UncompressedInMemoryDataBuffer::new(1);
+        buffer.insert_data(100, 10.0);
+        buffer
+            .spill_to_apache_parquet(temp_dir.path(), &test_util::get_uncompressed_schema())
+            .await
+            .unwrap();
+
+        // The uncompressed data buffer should be referenced by the uncompressed data manager.
+        let (_metadata_manager, data_manager) = create_managers(temp_dir.path());
+        assert_eq!(data_manager.finished_uncompressed_data_buffers.len(), 1)
+    }
 
     #[tokio::test]
     async fn test_can_insert_record_batch() {
@@ -686,13 +734,14 @@ mod tests {
 
         let local_data_folder = metadata_manager.get_local_data_folder();
 
-        let uncompressed_data_manager = UncompressedDataManager::new(
+        let uncompressed_data_manager = UncompressedDataManager::try_new(
             local_data_folder.to_owned(),
             metadata_manager.uncompressed_reserved_memory_in_bytes,
             metadata_manager.get_uncompressed_schema(),
             metadata_manager.get_compressed_schema(),
             false,
-        );
+        )
+        .unwrap();
 
         (metadata_manager, uncompressed_data_manager)
     }

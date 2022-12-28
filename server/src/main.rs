@@ -114,7 +114,7 @@ fn main() -> Result<(), String> {
             true,
         )
         .await
-    })?);
+    }).map_err(|error| error.to_string())?);
 
     // Create the Context.
     let context = Arc::new(Context {
