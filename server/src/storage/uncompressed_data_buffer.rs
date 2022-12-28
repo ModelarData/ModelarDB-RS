@@ -178,7 +178,7 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
         // Since the schema is constant and the columns are always the same length, creating the
         // RecordBatch should never fail and unwrap is therefore safe to use.
         let batch = self.get_record_batch(uncompressed_schema).await.unwrap();
-        UncompressedOnDiskDataBuffer::new(self.univariate_id, local_data_folder, batch)
+        UncompressedOnDiskDataBuffer::try_spill(self.univariate_id, local_data_folder, batch)
     }
 }
 
@@ -196,7 +196,7 @@ impl UncompressedOnDiskDataBuffer {
     /// Spill the in-memory `data_points` from the time series with `univariate_id` to an Apache
     /// Parquet file in `local_data_folder`. If the Apache Parquet file is written successfully,
     /// return an [`UncompressedOnDiskDataBuffer`], otherwise return [`IOError`].
-    pub(super) fn new(
+    pub(super) fn try_spill(
         univariate_id: u64,
         local_data_folder: &Path,
         data_points: RecordBatch,
@@ -214,6 +214,17 @@ impl UncompressedOnDiskDataBuffer {
         let file_path = local_file_path.join(file_name);
 
         StorageEngine::write_batch_to_apache_parquet_file(data_points, file_path.as_path())?;
+
+        Ok(Self {
+            univariate_id,
+            file_path,
+        })
+    }
+
+    /// Return an [`UncompressedOnDiskDataBuffer`] with the data points for `univariate_id` in
+    /// `file_path` if a file at `file_path` exists, otherwise [`IOError`] is returned.
+    pub(super) fn try_new(univariate_id: u64, file_path: PathBuf) -> Result<Self, IOError> {
+        file_path.try_exists()?;
 
         Ok(Self {
             univariate_id,
