@@ -443,13 +443,13 @@ fn start_binary(binary: &str) -> Command {
 
 /// Execute the binary with the ModelarDB server and return a handle to the process.
 fn start_apache_arrow_flight_server(path: &Path) -> Child {
-    // Spawn the Arrow Flight Server. The stdout stream is piped to /dev/null so the log data_points
+    // Spawn the Apache Arrow Flight Server. stdout is piped to /dev/null so the logged data_points
     // are not printed when the unit tests and the integration tests are run using "cargo test".
     let process = start_binary("modelardbd")
         .arg(path)
         .stdout(Stdio::null())
         .spawn()
-        .expect("Failed to start Arrow Flight Server");
+        .expect("Failed to start Apache Arrow Flight Server");
 
     // The thread needs to sleep to ensure that the server has properly started before sending
     // streams to it.
@@ -567,7 +567,8 @@ fn create_flight_data_from_data_points(data_points: &[RecordBatch]) -> Vec<Fligh
     return flight_data;
 }
 
-/// Send data_points to the ModelarDB server with Arrow Flight through the `do_put()` endpoint.
+/// Send data_points to the ModelarDB server with Apache Arrow Flight through the `do_put()`
+/// endpoint.
 fn send_data_points_to_apache_arrow_flight_server(
     runtime: &Runtime,
     client: &mut FlightServiceClient<Channel>,

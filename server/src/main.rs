@@ -106,15 +106,19 @@ fn main() -> Result<(), String> {
     let metadata_manager = MetadataManager::try_new(&data_folders.local_data_folder)
         .map_err(|error| format!("Unable to create a MetadataManager: {}", error))?;
     let session = create_session_context(data_folders.query_data_folder);
-    let storage_engine = RwLock::new(runtime.block_on(async {
-        StorageEngine::try_new(
-            data_folders.local_data_folder,
-            data_folders.remote_data_folder,
-            metadata_manager.clone(),
-            true,
-        )
-        .await
-    }).map_err(|error| error.to_string())?);
+    let storage_engine = RwLock::new(
+        runtime
+            .block_on(async {
+                StorageEngine::try_new(
+                    data_folders.local_data_folder,
+                    data_folders.remote_data_folder,
+                    metadata_manager.clone(),
+                    true,
+                )
+                .await
+            })
+            .map_err(|error| error.to_string())?,
+    );
 
     // Create the Context.
     let context = Arc::new(Context {
@@ -138,7 +142,7 @@ fn main() -> Result<(), String> {
     setup_ctrl_c_handler(&context, &runtime);
 
     // Start the Apache Arrow Flight interface.
-    remote::start_arrow_flight_server(context, &runtime, 9999)
+    remote::start_apache_arrow_flight_server(context, &runtime, 9999)
         .map_err(|error| error.to_string())?;
 
     Ok(())

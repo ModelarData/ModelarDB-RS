@@ -199,9 +199,9 @@ impl DataTransfer {
 
         // Write the combined RecordBatch to a bytes buffer.
         let mut buf = vec![].writer();
-        let mut arrow_writer = storage::create_apache_arrow_writer(&mut buf, schema)?;
-        arrow_writer.write(&combined)?;
-        arrow_writer.close()?;
+        let mut apache_arrow_writer = storage::create_apache_arrow_writer(&mut buf, schema)?;
+        apache_arrow_writer.write(&combined)?;
+        apache_arrow_writer.close()?;
 
         // Transfer the combined RecordBatch to the remote object store.
         let file_name = storage::create_time_and_value_range_file_name(&combined);
@@ -281,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn test_non_parquet_file_is_not_compressed_file() {
+    fn test_non_apache_parquet_file_is_not_compressed_file() {
         let path = ObjectStorePath::from(format!(
             "{}/{}/test.txt",
             COMPRESSED_DATA_FOLDER, TABLE_NAME
@@ -320,10 +320,10 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_target_dir, mut data_transfer) =
             create_data_transfer_component(temp_dir.path()).await;
-        let parquet_path = create_compressed_file(temp_dir.path(), "test");
+        let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         assert!(data_transfer
-            .add_compressed_file(&TABLE_NAME, parquet_path.as_path())
+            .add_compressed_file(&TABLE_NAME, apache_parquet_path.as_path())
             .await
             .is_ok());
 
@@ -338,14 +338,14 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_target_dir, mut data_transfer) =
             create_data_transfer_component(temp_dir.path()).await;
-        let parquet_path = create_compressed_file(temp_dir.path(), "test");
+        let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         data_transfer
-            .add_compressed_file(&TABLE_NAME, parquet_path.as_path())
+            .add_compressed_file(&TABLE_NAME, apache_parquet_path.as_path())
             .await
             .unwrap();
         data_transfer
-            .add_compressed_file(&TABLE_NAME, parquet_path.as_path())
+            .add_compressed_file(&TABLE_NAME, apache_parquet_path.as_path())
             .await
             .unwrap();
 
@@ -366,9 +366,9 @@ mod tests {
         let (_target_dir, mut data_transfer) =
             create_data_transfer_component(temp_dir.path()).await;
 
-        let parquet_path = path.join("test_parquet.parquet");
+        let apache_parquet_path = path.join("test_apache_parquet.parquet");
         assert!(data_transfer
-            .add_compressed_file(&TABLE_NAME, parquet_path.as_path())
+            .add_compressed_file(&TABLE_NAME, apache_parquet_path.as_path())
             .await
             .is_err());
     }
@@ -377,15 +377,15 @@ mod tests {
     async fn test_transfer_single_file() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path()).await;
-        let parquet_path = create_compressed_file(temp_dir.path(), "test");
+        let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         data_transfer
-            .add_compressed_file(&TABLE_NAME, parquet_path.as_path())
+            .add_compressed_file(&TABLE_NAME, apache_parquet_path.as_path())
             .await
             .unwrap();
         data_transfer.transfer_data(&TABLE_NAME).await.unwrap();
 
-        assert_data_transferred(vec![parquet_path], target_dir, data_transfer).await;
+        assert_data_transferred(vec![apache_parquet_path], target_dir, data_transfer).await;
     }
 
     #[tokio::test]
@@ -412,16 +412,16 @@ mod tests {
     async fn test_transfer_if_reaching_batch_size_when_adding() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path()).await;
-        let parquet_path = create_compressed_file(temp_dir.path(), "test");
+        let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         // Set the max batch size to ensure that the file is transferred immediately.
         data_transfer.transfer_batch_size_in_bytes = COMPRESSED_FILE_SIZE - 1;
         data_transfer
-            .add_compressed_file(&TABLE_NAME, parquet_path.as_path())
+            .add_compressed_file(&TABLE_NAME, apache_parquet_path.as_path())
             .await
             .unwrap();
 
-        assert_data_transferred(vec![parquet_path], target_dir, data_transfer).await;
+        assert_data_transferred(vec![apache_parquet_path], target_dir, data_transfer).await;
     }
 
     #[tokio::test]
@@ -486,11 +486,14 @@ mod tests {
         fs::create_dir_all(path.clone()).unwrap();
 
         let batch = test_util::get_compressed_segments_record_batch();
-        let parquet_path = path.join(format!("{}.parquet", file_name));
-        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path())
-            .unwrap();
+        let apache_parquet_path = path.join(format!("{}.parquet", file_name));
+        StorageEngine::write_batch_to_apache_parquet_file(
+            batch.clone(),
+            apache_parquet_path.as_path(),
+        )
+        .unwrap();
 
-        parquet_path
+        apache_parquet_path
     }
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
