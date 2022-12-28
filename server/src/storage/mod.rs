@@ -370,10 +370,11 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let batch = test_util::get_compressed_segments_record_batch();
 
-        let parquet_path = temp_dir.path().join("test.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path()).unwrap();
+        let apache_parquet_path = temp_dir.path().join("test.parquet");
+        StorageEngine::write_batch_to_apache_parquet_file(batch, apache_parquet_path.as_path())
+            .unwrap();
 
-        assert!(parquet_path.exists());
+        assert!(apache_parquet_path.exists());
     }
 
     #[test]
@@ -382,10 +383,11 @@ mod tests {
         let batch = RecordBatch::new_empty(Arc::new(schema));
 
         let temp_dir = tempdir().unwrap();
-        let parquet_path = temp_dir.path().join("empty.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path()).unwrap();
+        let apache_parquet_path = temp_dir.path().join("empty.parquet");
+        StorageEngine::write_batch_to_apache_parquet_file(batch, apache_parquet_path.as_path())
+            .unwrap();
 
-        assert!(parquet_path.exists());
+        assert!(apache_parquet_path.exists());
     }
 
     #[test]
@@ -402,12 +404,12 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let batch = test_util::get_compressed_segments_record_batch();
 
-        let parquet_path = temp_dir.path().join(file_name);
+        let apache_parquet_path = temp_dir.path().join(file_name);
         let result =
-            StorageEngine::write_batch_to_apache_parquet_file(batch, parquet_path.as_path());
+            StorageEngine::write_batch_to_apache_parquet_file(batch, apache_parquet_path.as_path());
 
         assert!(result.is_err());
-        assert!(!parquet_path.exists());
+        assert!(!apache_parquet_path.exists());
     }
 
     #[tokio::test]
@@ -442,7 +444,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_is_parquet_path_apache_parquet_file() {
+    async fn test_is_apache_parquet_path_apache_parquet_file() {
         let file_name = "test.parquet".to_owned();
         let (_temp_dir, path, _batch) = create_apache_parquet_file_in_temp_dir(file_name);
 
@@ -461,15 +463,18 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let batch = test_util::get_compressed_segments_record_batch();
 
-        let parquet_path = temp_dir.path().join(file_name);
-        StorageEngine::write_batch_to_apache_parquet_file(batch.clone(), parquet_path.as_path())
-            .unwrap();
+        let apache_parquet_path = temp_dir.path().join(file_name);
+        StorageEngine::write_batch_to_apache_parquet_file(
+            batch.clone(),
+            apache_parquet_path.as_path(),
+        )
+        .unwrap();
 
-        (temp_dir, parquet_path, batch)
+        (temp_dir, apache_parquet_path, batch)
     }
 
     #[tokio::test]
-    async fn test_is_non_parquet_path_apache_parquet_file() {
+    async fn test_is_non_apache_parquet_path_apache_parquet_file() {
         let temp_dir = tempdir().unwrap();
         let path = temp_dir.path().join("test.txt");
 
@@ -488,7 +493,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_is_empty_parquet_path_apache_parquet_file() {
+    async fn test_is_empty_apache_parquet_path_apache_parquet_file() {
         let temp_dir = tempdir().unwrap();
         let path = temp_dir.path().join("test.parquet");
         File::create(path.clone()).unwrap();

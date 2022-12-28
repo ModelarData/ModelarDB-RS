@@ -300,12 +300,12 @@ impl TableProvider for ModelTable {
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         let predicate = rewrite_and_combine_filters(filters);
-        let parquet_exec = Arc::new(ParquetExec::new(file_scan_config, predicate.clone(), None));
+        let apache_parquet_exec = Arc::new(ParquetExec::new(file_scan_config, predicate.clone(), None));
 
         // Create a filter operator if filters are not empty.
         let compressed_schema = self.context.metadata_manager.get_compressed_schema();
         let input =
-            new_filter_exec(&predicate, &parquet_exec, &compressed_schema).unwrap_or(parquet_exec);
+            new_filter_exec(&predicate, &apache_parquet_exec, &compressed_schema).unwrap_or(apache_parquet_exec);
 
         // Create the gridding operator.
         let grid_exec: Arc<dyn ExecutionPlan> = GridExec::new(
@@ -618,8 +618,8 @@ mod tests {
     use super::*;
 
     use datafusion::arrow::datatypes::DataType;
-    use datafusion::prelude::Expr;
     use datafusion::logical_expr::lit;
+    use datafusion::prelude::Expr;
 
     use crate::metadata::test_util;
     use crate::types::{Timestamp, Value};
@@ -806,9 +806,9 @@ mod tests {
     // Tests for new_filter_exec().
     #[test]
     fn test_new_filter_exec_without_predicates() {
-        let parquet_exec = new_parquet_exec();
+        let apache_parquet_exec = new_apache_parquet_exec();
         assert!(
-            new_filter_exec(&None, &parquet_exec, &test_util::get_compressed_schema()).is_err()
+            new_filter_exec(&None, &apache_parquet_exec, &test_util::get_compressed_schema()).is_err()
         );
     }
 
@@ -820,17 +820,17 @@ mod tests {
             lit(1_u64),
         )];
         let predicates = rewrite_and_combine_filters(&filters);
-        let parquet_exec = new_parquet_exec();
+        let apache_parquet_exec = new_apache_parquet_exec();
 
         assert!(new_filter_exec(
             &predicates,
-            &parquet_exec,
+            &apache_parquet_exec,
             &test_util::get_compressed_schema()
         )
         .is_ok());
     }
 
-    fn new_parquet_exec() -> Arc<ParquetExec> {
+    fn new_apache_parquet_exec() -> Arc<ParquetExec> {
         let file_scan_config = FileScanConfig {
             object_store_url: ObjectStoreUrl::local_filesystem(),
             file_schema: Arc::new(Schema::new(vec![Field::new(

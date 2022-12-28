@@ -53,7 +53,7 @@ use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
-pub fn start_arrow_flight_server(
+pub fn start_apache_arrow_flight_server(
     context: Arc<Context>,
     runtime: &Arc<Runtime>,
     port: i16,
