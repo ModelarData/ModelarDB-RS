@@ -32,7 +32,7 @@ use object_store::ObjectStore;
 use tonic::codegen::Bytes;
 use tracing::debug;
 
-use crate::{storage, StorageEngine};
+use crate::storage::{self, StorageEngine, COMPRESSED_DATA_FOLDER};
 
 // TODO: When the storage engine is changed to use object store for everything, receive
 //       the object store directly through the parameters instead.
@@ -156,7 +156,7 @@ impl DataTransfer {
     /// files were transferred successfully, otherwise [`ParquetError`].
     async fn transfer_data(&mut self, table_name: &str) -> Result<(), ParquetError> {
         // Read all files that is currently stored for the table with table_name.
-        let path = format!("compressed/{}", table_name).into();
+        let path = format!("{}/{}", COMPRESSED_DATA_FOLDER, table_name).into();
         let object_metas = self
             .local_data_folder_object_store
             .list(Some(&path))
@@ -205,7 +205,7 @@ impl DataTransfer {
 
         // Transfer the combined RecordBatch to the remote object store.
         let file_name = storage::create_time_and_value_range_file_name(&combined);
-        let path = format!("compressed/{}/{}", table_name, file_name).into();
+        let path = format!("{}/{}/{}", COMPRESSED_DATA_FOLDER, table_name, file_name).into();
         self.remote_data_folder_object_store
             .put(&path, Bytes::from(buf.into_inner()))
             .await
@@ -236,7 +236,7 @@ impl DataTransfer {
     fn path_is_compressed_file(path: ObjectStorePath) -> Option<String> {
         let path_parts: Vec<PathPart> = path.parts().collect();
 
-        if Some(&PathPart::from("compressed")) == path_parts.get(0) {
+        if Some(&PathPart::from(COMPRESSED_DATA_FOLDER)) == path_parts.get(0) {
             if let Some(table_name) = path_parts.get(1) {
                 if let Some(file_name) = path_parts.get(2) {
                     if file_name.as_ref().ends_with(".parquet") {
@@ -251,17 +251,12 @@ impl DataTransfer {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
     use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::sync::Arc;
 
-    use object_store::local::LocalFileSystem;
-    use object_store::path::Path as ObjectStorePath;
     use tempfile::TempDir;
 
-    use crate::storage::data_transfer::DataTransfer;
     use crate::storage::test_util;
-    use crate::StorageEngine;
 
     const TABLE_NAME: &str = "table";
     const COMPRESSED_FILE_SIZE: usize = 2922;
@@ -275,7 +270,7 @@ mod tests {
 
     #[test]
     fn test_folder_path_is_not_compressed_file() {
-        let path = ObjectStorePath::from(format!("compressed/{}", TABLE_NAME));
+        let path = ObjectStorePath::from(format!("{}/{}", COMPRESSED_DATA_FOLDER, TABLE_NAME));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
@@ -287,13 +282,19 @@ mod tests {
 
     #[test]
     fn test_non_parquet_file_is_not_compressed_file() {
-        let path = ObjectStorePath::from(format!("compressed/{}/test.txt", TABLE_NAME));
+        let path = ObjectStorePath::from(format!(
+            "{}/{}/test.txt",
+            COMPRESSED_DATA_FOLDER, TABLE_NAME
+        ));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_compressed_file_is_compressed_file() {
-        let path = ObjectStorePath::from(format!("compressed/{}/test.parquet", TABLE_NAME));
+        let path = ObjectStorePath::from(format!(
+            "{}/{}/test.parquet",
+            COMPRESSED_DATA_FOLDER, TABLE_NAME
+        ));
         assert_eq!(
             DataTransfer::path_is_compressed_file(path),
             Some(TABLE_NAME.to_owned())
@@ -357,7 +358,9 @@ mod tests {
     #[tokio::test]
     async fn test_add_non_existent_file() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join(format!("{}/compressed", TABLE_NAME));
+        let path = temp_dir
+            .path()
+            .join(format!("{}/{}", TABLE_NAME, COMPRESSED_DATA_FOLDER));
         fs::create_dir_all(path.clone()).unwrap();
 
         let (_target_dir, mut data_transfer) =
@@ -458,9 +461,10 @@ mod tests {
         }
 
         // The transferred file should have a time range file name that matches the compressed data.
-        let target_path = target
-            .path()
-            .join(format!("compressed/{}/0_5_5.2_34.2.parquet", TABLE_NAME));
+        let target_path = target.path().join(format!(
+            "{}/{}/0_5_5.2_34.2.parquet",
+            COMPRESSED_DATA_FOLDER, TABLE_NAME
+        ));
         assert!(target_path.exists());
 
         // The file should have 3 * number_of_files rows since each compressed file has 3 rows.
