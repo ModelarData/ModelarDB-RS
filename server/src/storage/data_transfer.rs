@@ -254,7 +254,7 @@ mod tests {
     use super::*;
     use std::fs;
 
-    use tempfile::TempDir;
+    use tempfile::{self, TempDir};
 
     use crate::storage::test_util;
 

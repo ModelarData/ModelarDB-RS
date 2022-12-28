@@ -29,11 +29,11 @@ use std::sync::Arc;
 
 use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
-use arrow::ipc::convert::try_schema_from_ipc_buffer;
+use arrow::ipc::convert;
 use arrow::record_batch::RecordBatch;
 use arrow::util::pretty;
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::utils::flight_data_to_arrow_batch;
+use arrow_flight::utils;
 use arrow_flight::Ticket;
 use arrow_flight::{Action, Criteria, FlightDescriptor};
 use rustyline::Editor;
@@ -272,7 +272,7 @@ fn execute_command(
                     .get_schema(request)
                     .await?
                     .into_inner();
-                let schema = try_schema_from_ipc_buffer(&schema_result.schema)?;
+                let schema = convert::try_schema_from_ipc_buffer(&schema_result.schema)?;
                 for field in schema.fields() {
                     println!("{}: {}", field.name(), field.data_type());
                 }
@@ -348,8 +348,11 @@ fn execute_query(
         let mut record_batches = vec![];
         let dictionaries_by_id = HashMap::new();
         while let Some(flight_data) = stream.message().await? {
-            let record_batch =
-                flight_data_to_arrow_batch(&flight_data, schema.clone(), &dictionaries_by_id)?;
+            let record_batch = utils::flight_data_to_arrow_batch(
+                &flight_data,
+                schema.clone(),
+                &dictionaries_by_id,
+            )?;
             record_batches.push(record_batch);
         }
 

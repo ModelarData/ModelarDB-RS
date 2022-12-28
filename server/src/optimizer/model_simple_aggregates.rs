@@ -29,8 +29,7 @@ use datafusion::error::Result;
 use datafusion::logical_expr::AggregateState;
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::aggregates::AggregateExec;
-use datafusion::physical_plan::expressions::format_state_name;
-use datafusion::physical_plan::expressions::{Avg, Count, Max, Min, Sum};
+use datafusion::physical_plan::expressions::{self, Avg, Count, Max, Min, Sum};
 use datafusion::physical_plan::ColumnarValue;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
@@ -192,7 +191,7 @@ impl AggregateExpr for ModelAggregateExpr {
                 Field::new("SUM", DataType::Float32, false),
             ],
             _ => vec![Field::new(
-                &format_state_name(self.name(), "NOT NULL"),
+                &expressions::format_state_name(self.name(), "NOT NULL"),
                 self.data_type.clone(),
                 false,
             )],

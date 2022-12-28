@@ -27,8 +27,7 @@ use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
-use tracing::info;
-use tracing::{debug, debug_span};
+use tracing::{debug, debug_span, info};
 
 use crate::errors::ModelarDbError;
 use crate::storage::compressed_data_buffer::CompressedDataBuffer;
@@ -375,7 +374,7 @@ mod tests {
 
     use datafusion::arrow::compute;
     use object_store::local::LocalFileSystem;
-    use tempfile::{tempdir, TempDir};
+    use tempfile::{self, TempDir};
 
     use crate::array;
     use crate::metadata::test_util as metadata_test_util;
@@ -523,7 +522,7 @@ mod tests {
 
     /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
     fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = metadata_test_util::test_metadata_manager(temp_dir.path());
 
         let local_data_folder = temp_dir.path().to_path_buf();

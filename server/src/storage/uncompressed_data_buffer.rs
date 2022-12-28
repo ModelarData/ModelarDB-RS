@@ -291,7 +291,7 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
 mod tests {
     use super::*;
 
-    use tempfile::tempdir;
+    use tempfile;
 
     use crate::metadata::test_util;
 
@@ -364,7 +364,7 @@ mod tests {
         insert_data_points(1, &mut uncompressed_buffer);
         assert!(!uncompressed_buffer.is_full());
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         uncompressed_buffer
             .spill_to_apache_parquet(temp_dir.path(), &test_util::uncompressed_schema())
             .await
@@ -382,7 +382,7 @@ mod tests {
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
         assert!(uncompressed_buffer.is_full());
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         uncompressed_buffer
             .spill_to_apache_parquet(temp_dir.path(), &test_util::uncompressed_schema())
             .await
@@ -411,7 +411,7 @@ mod tests {
         let capacity = uncompressed_in_memory_buffer.capacity();
         insert_data_points(capacity, &mut uncompressed_in_memory_buffer);
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         let mut uncompressed_on_disk_buffer = uncompressed_in_memory_buffer
             .spill_to_apache_parquet(temp_dir.path(), &test_util::uncompressed_schema())
             .await
