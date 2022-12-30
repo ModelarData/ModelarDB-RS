@@ -246,7 +246,9 @@ impl fmt::Debug for UncompressedOnDiskDataBuffer {
 
 #[async_trait]
 impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
-    /// Read the data from the Apache Parquet file and return it as a [`RecordBatch`].
+    /// Read the data from the Apache Parquet file, delete the Apache Parquet file, and return the
+    /// data as a [`RecordBatch`]. Return [`ParquetError`] if the Apache Parquet file cannot be read
+    /// or deleted.
     async fn record_batch(
         &mut self,
         _uncompressed_schema: &UncompressedSchema,

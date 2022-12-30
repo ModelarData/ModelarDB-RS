@@ -37,7 +37,7 @@ pub type TimeSeriesId = std::primitive::u64;
 pub type ArrowTimeSeriesId = datafusion::arrow::datatypes::UInt64Type;
 pub type ArrowTimestamp = TimestampMillisecondType;
 
-/// The different types of tables used in integration the tests.
+/// The different types of tables used in the integration tests.
 enum TableType {
     NormalTable,
     ModelTable,
@@ -51,7 +51,7 @@ const HOST: &str = "127.0.0.1";
 #[serial]
 fn test_can_create_table() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_apache_arrow_flight_server(temp_dir.path());
+    let flight_server = start_modelardbd(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
@@ -71,14 +71,14 @@ fn test_can_create_table() {
     assert_eq!(retrieved_table_names.len(), 1);
     assert_eq!(retrieved_table_names[0], TABLE_NAME);
 
-    terminate_apache_arrow_flight_server(flight_server);
+    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_create_model_table() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_apache_arrow_flight_server(temp_dir.path());
+    let flight_server = start_modelardbd(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
@@ -98,14 +98,14 @@ fn test_can_create_model_table() {
     assert_eq!(retrieved_table_names.len(), 1);
     assert_eq!(retrieved_table_names[0], TABLE_NAME);
 
-    terminate_apache_arrow_flight_server(flight_server);
+    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_create_and_listen_multiple_model_tables() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_apache_arrow_flight_server(temp_dir.path());
+    let flight_server = start_modelardbd(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
@@ -130,14 +130,14 @@ fn test_can_create_and_listen_multiple_model_tables() {
         assert!(retrieved_table_names.contains(&table_name.to_owned()))
     }
 
-    terminate_apache_arrow_flight_server(flight_server);
+    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_get_schema() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_apache_arrow_flight_server(temp_dir.path());
+    let flight_server = start_modelardbd(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
@@ -162,14 +162,14 @@ fn test_can_get_schema() {
         ])
     );
 
-    terminate_apache_arrow_flight_server(flight_server);
+    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_ingest_data_point_with_tags() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_apache_arrow_flight_server(temp_dir.path());
+    let flight_server = start_modelardbd(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
@@ -205,14 +205,14 @@ fn test_can_ingest_data_point_with_tags() {
 
     assert_eq!(data_point, reconstructed_record_batch);
 
-    terminate_apache_arrow_flight_server(flight_server);
+    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_ingest_data_point_without_tags() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_apache_arrow_flight_server(temp_dir.path());
+    let flight_server = start_modelardbd(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
@@ -248,14 +248,14 @@ fn test_can_ingest_data_point_without_tags() {
 
     assert_eq!(data_point, reconstructed_record_batch);
 
-    terminate_apache_arrow_flight_server(flight_server);
+    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_ingest_multiple_time_series_with_different_tags() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_apache_arrow_flight_server(temp_dir.path());
+    let flight_server = start_modelardbd(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
@@ -316,14 +316,14 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
         }
     }
 
-    terminate_apache_arrow_flight_server(flight_server);
+    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_cannot_ingest_invalid_data_point() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_apache_arrow_flight_server(temp_dir.path());
+    let flight_server = start_modelardbd(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
@@ -357,14 +357,14 @@ fn test_cannot_ingest_invalid_data_point() {
 
     assert!(query.is_empty());
 
-    terminate_apache_arrow_flight_server(flight_server);
+    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_optimized_query_results_equals_non_optimized_query_results() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_apache_arrow_flight_server(temp_dir.path());
+    let flight_server = start_modelardbd(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
@@ -411,7 +411,7 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
 
     assert_eq!(optimized_query, non_optimized_query);
 
-    terminate_apache_arrow_flight_server(flight_server);
+    stop_modelardbd(flight_server);
 }
 
 /// Return the path to the directory containing the binary with the integration tests.
@@ -442,8 +442,8 @@ fn start_binary(binary: &str) -> Command {
     Command::new(path.into_os_string())
 }
 
-/// Execute the binary with the ModelarDB server and return a handle to the process.
-fn start_apache_arrow_flight_server(path: &Path) -> Child {
+/// Execute the binary with the server and return a handle to the process.
+fn start_modelardbd(path: &Path) -> Child {
     // Spawn the Apache Arrow Flight Server. stdout is piped to /dev/null so the logged data_points
     // are not printed when the unit tests and the integration tests are run using "cargo test".
     let process = start_binary("modelardbd")
@@ -459,7 +459,8 @@ fn start_apache_arrow_flight_server(path: &Path) -> Child {
     return process;
 }
 
-/// Return a new Apache Arrow Flight client to access the endpoints in the ModelarDB server.
+/// Return a new Apache Arrow Flight client to access the remote methods provided by the server over
+/// gRPC.
 fn create_apache_arrow_flight_service_client(
     runtime: &Runtime,
     host: &str,
@@ -473,8 +474,8 @@ fn create_apache_arrow_flight_service_client(
     })
 }
 
-/// Create a normal table or model table with or without tags in the ModelarDB server through Apache
-/// Arrow Flight `do_action()` method and the `CommandStatementUpdate` Apache Arrow Flight Action.
+/// Create a normal table or model table with or without tags in the server through the
+/// `do_action()` method and the `CommandStatementUpdate` action.
 fn create_table(
     runtime: &Runtime,
     client: &mut FlightServiceClient<Channel>,
@@ -549,7 +550,7 @@ fn generate_random_data_point(tag: Option<&str>) -> RecordBatch {
     }
 }
 
-/// Create and returns [`FlightData`] based on the data_points inserted.
+/// Create and return [`FlightData`] based on the data_points inserted.
 fn create_flight_data_from_data_points(data_points: &[RecordBatch]) -> Vec<FlightData> {
     let flight_descriptor = FlightDescriptor::new_path(vec![TABLE_NAME.to_owned()]);
 
@@ -572,8 +573,7 @@ fn create_flight_data_from_data_points(data_points: &[RecordBatch]) -> Vec<Fligh
     return flight_data;
 }
 
-/// Send data_points to the ModelarDB server with Apache Arrow Flight through the `do_put()`
-/// endpoint.
+/// Send data points to the server through the `do_put()` method.
 fn send_data_points_to_apache_arrow_flight_server(
     runtime: &Runtime,
     client: &mut FlightServiceClient<Channel>,
@@ -586,7 +586,7 @@ fn send_data_points_to_apache_arrow_flight_server(
     })
 }
 
-/// Flush the data in the StorageEngine to disk using the `do_action()` Apache Arrow Flight method.
+/// Flush the data in the StorageEngine to disk through the `do_action()` method.
 fn flush_data_to_disk(runtime: &Runtime, flight_service_client: &mut FlightServiceClient<Channel>) {
     let action = Action {
         r#type: "FlushMemory".to_owned(),
@@ -602,7 +602,7 @@ fn flush_data_to_disk(runtime: &Runtime, flight_service_client: &mut FlightServi
     })
 }
 
-/// Execute a query against the ModelarDB server through the `do_get()` endpoint and return it.
+/// Execute a query against the server through the `do_get()` method and return it.
 fn execute_query(
     runtime: &Runtime,
     flight_service_client: &mut FlightServiceClient<Channel>,
@@ -635,7 +635,7 @@ fn execute_query(
     })
 }
 
-/// Retrieve the table names currently in the ModelarDB server and return them.
+/// Retrieve the table names currently in the server and return them.
 fn retrieve_all_table_names(
     runtime: &Runtime,
     flight_service_client: &mut FlightServiceClient<Channel>,
@@ -660,7 +660,7 @@ fn retrieve_all_table_names(
     })
 }
 
-/// Retrieve the schema of a table in the ModelarDB server and return it.
+/// Retrieve the schema of a table in the server and return it.
 fn retrieve_schema(
     runtime: &Runtime,
     client: &mut FlightServiceClient<Channel>,
@@ -737,8 +737,8 @@ fn reconstruct_record_batch(original: &RecordBatch, query: &RecordBatch) -> Reco
     }
 }
 
-/// Terminate the Apache Arrow Flight Server and return when the process has been terminated.
-fn terminate_apache_arrow_flight_server(mut flight_server: Child) {
+/// Terminate the server and return when the process has been terminated.
+fn stop_modelardbd(mut flight_server: Child) {
     let mut system = System::new_all();
 
     while let Some(_process) = system.process(Pid::from_u32(flight_server.id())) {

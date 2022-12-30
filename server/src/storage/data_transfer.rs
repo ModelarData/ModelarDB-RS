@@ -360,7 +360,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir
             .path()
-            .join(format!("{}/{}", TABLE_NAME, COMPRESSED_DATA_FOLDER));
+            .join(format!("{}/{}", COMPRESSED_DATA_FOLDER, TABLE_NAME));
         fs::create_dir_all(path.clone()).unwrap();
 
         let (_target_dir, mut data_transfer) =
@@ -482,7 +482,11 @@ mod tests {
     /// Set up a data folder with a table folder that has a single compressed file in it. Return the
     /// path to the created Apache Parquet file.
     fn create_compressed_file(local_data_folder_path: &Path, file_name: &str) -> PathBuf {
-        let path = local_data_folder_path.join(format!("compressed/{}", TABLE_NAME));
+        let path = local_data_folder_path.join(format!(
+            "{}/{}",
+            storage::COMPRESSED_DATA_FOLDER,
+            TABLE_NAME
+        ));
         fs::create_dir_all(path.clone()).unwrap();
 
         let batch = test_util::compressed_segments_record_batch();

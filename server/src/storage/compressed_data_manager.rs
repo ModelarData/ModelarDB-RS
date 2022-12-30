@@ -77,7 +77,7 @@ impl CompressedDataManager {
         })
     }
 
-    /// Write `record_batch` to the table with `table_name` as a compressed Apache Parquet files.
+    /// Write `record_batch` to the table with `table_name` as a compressed Apache Parquet file.
     pub(super) async fn insert_record_batch(
         &self,
         table_name: &str,
@@ -165,7 +165,7 @@ impl CompressedDataManager {
     /// * A table with `table_name` does not exist.
     /// * The compressed files could not be listed.
     /// * The end time is before the start time.
-    /// * The max value is larger than the min value.
+    /// * The max value is smaller than the min value.
     pub(super) async fn save_and_get_saved_compressed_files(
         &mut self,
         table_name: &str,
@@ -300,12 +300,12 @@ impl CompressedDataManager {
     }
 }
 
-/// Return the [`ObjectMeta`] in `object_meta` if it represents an Apache Parquet file and if the
-/// timestamps and values in its filename overlaps with the time range given by `start_time` and
+/// Return the [`ObjectMeta`] passed as `object_meta` if it represents an Apache Parquet file and if
+/// the timestamps and values in its filename overlaps with the time range given by `start_time` and
 /// `end_time` and the value range given by `min_value` and `max_value`, otherwise [`None`] is
 /// returned. Assumes the name of Apache Parquet files represented by `object_meta` has the
-/// following format: `start_timestamp-end_timestamp-min_value-max_value.parquet`, where both
-/// `start_timestamp` and `end_timestamp` are of the same unit as `start_time` and `end_time`.
+/// following format: `start-timestamp_end-timestamp_min-value_max-value.parquet`, where both
+/// `start-timestamp` and `end-timestamp` are of the same unit as `start_time` and `end_time`.
 async fn is_object_meta_relevant(
     object_meta: ObjectMeta,
     start_time: Timestamp,
@@ -335,8 +335,8 @@ async fn is_object_meta_relevant(
 /// Return [`true`] if the timestamps and values in `file name` overlaps with the time range given
 /// by `start_time` and `end_time` and the value range given by `min_value` and `max_value`,
 /// otherwise [`false`]. Assumes `file_name` has the following format:
-/// `start_timestamp-end_timestamp-min_value-max_value.parquet`, where both `start_timestamp` and
-/// `end_timestamp` are of the same unit as `start_time` and `end_time`.
+/// `start-timestamp_end-timestamp_min-value_max_value.parquet`, where both `start-timestamp` and
+/// `end-timestamp` are of the same unit as `start_time` and `end_time`.
 fn is_compressed_file_within_time_and_value_range(
     file_name: &str,
     start_time: Timestamp,

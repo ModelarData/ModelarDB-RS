@@ -56,8 +56,6 @@ use crate::storage::uncompressed_data_buffer::UncompressedDataBuffer;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
 
-// TODO: Look into custom errors for all errors in storage engine.
-
 /// The folder storing uncompressed data in the data folders.
 pub const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
 
@@ -142,8 +140,8 @@ impl StorageEngine {
         })
     }
 
-    /// Pass `record_batch` to [`CompressedDataManager`]. Return [`Ok`] if all of the data points
-    /// were successfully inserted, otherwise return [`Err`].
+    /// Pass `record_batch` to [`CompressedDataManager`]. Return [`Ok`] if `record_batch` was
+    /// successfully written to an Apache Parquet file, otherwise return [`Err`].
     pub(super) async fn insert_record_batch(
         &self,
         table_name: &str,
