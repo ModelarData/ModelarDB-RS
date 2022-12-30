@@ -335,7 +335,7 @@ async fn is_object_meta_relevant(
 /// Return [`true`] if the timestamps and values in `file name` overlaps with the time range given
 /// by `start_time` and `end_time` and the value range given by `min_value` and `max_value`,
 /// otherwise [`false`]. Assumes `file_name` has the following format:
-/// `start-timestamp_end-timestamp_min-value_max_value.parquet`, where both `start-timestamp` and
+/// `start-timestamp_end-timestamp_min-value_max-value.parquet`, where both `start-timestamp` and
 /// `end-timestamp` are of the same unit as `start_time` and `end_time`.
 fn is_compressed_file_within_time_and_value_range(
     file_name: &str,
