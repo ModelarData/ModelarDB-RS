@@ -106,7 +106,7 @@ impl PMCMean {
 /// Compute the sum of the values for a time series segment whose values are
 /// represented by a model of type PMC-Mean.
 pub fn sum(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8], value: Value) -> Value {
-    models::length(start_time, end_time, timestamps) as Value * value
+    models::len(start_time, end_time, timestamps) as Value * value
 }
 
 /// Reconstruct the values for the `timestamps` without matching values in

@@ -275,7 +275,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
             let end_time = end_times.value(row_index);
             let timestamps = timestamps.value(row_index);
 
-            count += models::length(start_time, end_time, timestamps) as i64;
+            count += models::len(start_time, end_time, timestamps) as i64;
         }
 
         // Returning an AggregateState::Scalar fills an array with the value.
@@ -703,7 +703,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
                 values,
             );
 
-            count += models::length(start_time, end_time, timestamps);
+            count += models::len(start_time, end_time, timestamps);
         }
 
         // Returning an AggregateState::Scalar fills an array with the value.
