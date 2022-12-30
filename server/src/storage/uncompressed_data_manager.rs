@@ -82,7 +82,6 @@ impl UncompressedDataManager {
         for maybe_folder_dir_entry in local_uncompressed_data_folder.read_dir()? {
             let folder_dir_entry = maybe_folder_dir_entry?;
 
-            // unwrap() is safe as the file_name is a univariate id.
             let univariate_id = folder_dir_entry
                 .file_name()
                 .to_str()
