@@ -307,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn test_get_in_memory_data_buffer_length() {
+    fn test_get_in_memory_data_buffer_len() {
         let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(1);
 
         assert_eq!(uncompressed_buffer.len(), 0);

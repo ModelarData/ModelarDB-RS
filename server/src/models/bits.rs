@@ -211,47 +211,47 @@ mod tests {
     }
 
     #[test]
-    fn test_empty_bit_vec_builder_length() {
+    fn test_empty_bit_vec_builder_len() {
         assert_eq!(BitVecBuilder::new().len(), 0);
     }
 
     #[test]
-    fn test_one_one_bit_vec_builder_length() {
+    fn test_one_one_bit_vec_builder_len() {
         let mut bit_vec_builder = BitVecBuilder::new();
         bit_vec_builder.append_a_one_bit();
         assert_eq!(bit_vec_builder.len(), 1);
     }
 
     #[test]
-    fn test_one_zero_bit_vec_builder_length() {
+    fn test_one_zero_bit_vec_builder_len() {
         let mut bit_vec_builder = BitVecBuilder::new();
         bit_vec_builder.append_a_zero_bit();
         assert_eq!(bit_vec_builder.len(), 1);
     }
 
     #[test]
-    fn test_eight_one_bits_vec_builder_length() {
+    fn test_eight_one_bits_vec_builder_len() {
         let mut bit_vec_builder = BitVecBuilder::new();
         (0..8).for_each(|_| bit_vec_builder.append_a_one_bit());
         assert_eq!(bit_vec_builder.len(), 1);
     }
 
     #[test]
-    fn test_eight_zero_bits_vec_builder_length() {
+    fn test_eight_zero_bits_vec_builder_len() {
         let mut bit_vec_builder = BitVecBuilder::new();
         (0..8).for_each(|_| bit_vec_builder.append_a_zero_bit());
         assert_eq!(bit_vec_builder.len(), 1);
     }
 
     #[test]
-    fn test_nine_one_bits_vec_builder_length() {
+    fn test_nine_one_bits_vec_builder_len() {
         let mut bit_vec_builder = BitVecBuilder::new();
         (0..9).for_each(|_| bit_vec_builder.append_a_one_bit());
         assert_eq!(bit_vec_builder.len(), 2);
     }
 
     #[test]
-    fn test_nine_zero_bits_vec_builder_length() {
+    fn test_nine_zero_bits_vec_builder_len() {
         let mut bit_vec_builder = BitVecBuilder::new();
         (0..9).for_each(|_| bit_vec_builder.append_a_zero_bit());
         assert_eq!(bit_vec_builder.len(), 2);

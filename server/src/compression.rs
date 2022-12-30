@@ -599,7 +599,7 @@ mod tests {
             let end_time = crate::array!(compressed_record_batch, 3, TimestampArray).value(segment);
             let timestamps = crate::array!(compressed_record_batch, 4, BinaryArray).value(segment);
 
-            total_compressed_length += models::length(start_time, end_time, timestamps);
+            total_compressed_length += models::len(start_time, end_time, timestamps);
         }
         assert_eq!(uncompressed_timestamps.len(), total_compressed_length);
     }

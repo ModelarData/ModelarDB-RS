@@ -219,7 +219,7 @@ pub fn sum(
         let first = slope * start_time as f64 + intercept;
         let last = slope * end_time as f64 + intercept;
         let average = (first + last) / 2.0;
-        let length = models::length(start_time, end_time, timestamps);
+        let length = models::len(start_time, end_time, timestamps);
         (average * length as f64) as Value
     } else {
         let mut sum: f64 = 0.0;

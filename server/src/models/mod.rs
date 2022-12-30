@@ -197,7 +197,7 @@ impl SelectedModel {
 }
 
 /// Compute the number of data points in a time series segment.
-pub fn length(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8]) -> usize {
+pub fn len(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8]) -> usize {
     if timestamps.is_empty() && start_time == end_time {
         // Timestamps are assumed to be unique so the segment has one timestamp.
         1
@@ -416,15 +416,15 @@ mod tests {
         SelectedModel::new(0, pmc_mean, swing, gorilla, &uncompressed_values)
     }
 
-    // Tests for length().
+    // Tests for len().
     #[test]
-    fn test_length_of_segment_with_one_data_point() {
-        assert_eq!(1, length(1658671178037, 1658671178037, &[]));
+    fn test_len_of_segment_with_one_data_point() {
+        assert_eq!(1, len(1658671178037, 1658671178037, &[]));
     }
 
     #[test]
-    fn test_length_of_segment_with_ten_data_points() {
-        assert_eq!(10, length(1658671178037, 1658671187047, &[10]));
+    fn test_len_of_segment_with_ten_data_points() {
+        assert_eq!(10, len(1658671178037, 1658671187047, &[10]));
     }
 
     // Tests for equal_or_nan().
