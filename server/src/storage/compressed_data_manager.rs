@@ -18,6 +18,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::Error as IOError;
+use std::io::ErrorKind::Other;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -252,18 +253,18 @@ impl CompressedDataManager {
     /// Save [`CompressedDataBuffers`](CompressedDataBuffer) to disk until the reserved memory limit
     /// is no longer exceeded. If all of the data is saved successfully, return [`Ok`], otherwise
     /// return [`IOError`].
-    fn save_compressed_data_to_free_memory(&mut self) -> Result<(), IOError> {
+    async fn save_compressed_data_to_free_memory(&mut self) -> Result<(), IOError> {
         debug!("Out of memory for compressed data. Saving compressed data to disk.");
 
         while self.compressed_remaining_memory_in_bytes < 0 {
             let table_name = self.compressed_queue.pop_front().unwrap();
-            self.save_compressed_data(&table_name)?;
+            self.save_compressed_data(&table_name).await?;
         }
         Ok(())
     }
 
     /// Flush the data that the [`CompressedDataManager`] is currently managing.
-    pub(super) fn flush(&mut self) -> Result<(), IOError> {
+    pub(super) async fn flush(&mut self) -> Result<(), IOError> {
         info!(
             "Flushing the remaining {} compressed data buffers.",
             self.compressed_queue.len()
@@ -271,7 +272,7 @@ impl CompressedDataManager {
 
         while !self.compressed_queue.is_empty() {
             let table = self.compressed_queue.pop_front().unwrap();
-            self.save_compressed_data(&table)?;
+            self.save_compressed_data(&table).await?;
         }
 
         Ok(())
@@ -280,7 +281,7 @@ impl CompressedDataManager {
     /// Save the compressed data that belongs to the table with `table_name` to disk. The size of
     /// the saved compressed data is added back to the remaining reserved memory. If the data is
     /// saved successfully, return [`Ok`], otherwise return [`IOError`].
-    fn save_compressed_data(&mut self, table_name: &str) -> Result<(), IOError> {
+    async fn save_compressed_data(&mut self, table_name: &str) -> Result<(), IOError> {
         debug!("Saving compressed time series to disk.");
 
         let mut compressed_data_buffer = self.compressed_data_buffers.remove(table_name).unwrap();
@@ -289,7 +290,7 @@ impl CompressedDataManager {
             .join(COMPRESSED_DATA_FOLDER)
             .join(table_name);
 
-        compressed_data_buffer
+        let file_path = compressed_data_buffer
             .save_to_apache_parquet(folder_path.as_path(), &self.compressed_schema)?;
         self.compressed_remaining_memory_in_bytes += compressed_data_buffer.size_in_bytes as isize;
 
@@ -297,6 +298,14 @@ impl CompressedDataManager {
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
             compressed_data_buffer.size_in_bytes, self.compressed_remaining_memory_in_bytes
         );
+
+        // Pass the saved compressed file to the data transfer component if possible.
+        if let Some(data_transfer) = &mut self.data_transfer {
+            data_transfer
+                .add_compressed_file(table_name, file_path.as_path())
+                .await
+                .map_err(|error| IOError::new(Other, error.to_string()))?;
+        }
 
         Ok(())
     }
