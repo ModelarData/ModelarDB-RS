@@ -27,7 +27,7 @@ use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
-use tracing::{debug, debug_span, info};
+use tracing::{debug, info};
 
 use crate::errors::ModelarDbError;
 use crate::storage::compressed_data_buffer::CompressedDataBuffer;
@@ -109,20 +109,15 @@ impl CompressedDataManager {
     /// Insert the `compressed_segments` into the in-memory compressed data buffer for the table
     /// with `table_name`. If `compressed_segments` is saved successfully, return [`Ok`], otherwise
     /// return [`IOError`].
-    pub(super) fn insert_compressed_segments(
+    pub(super) async fn insert_compressed_segments(
         &mut self,
         table_name: &str,
         compressed_segments: RecordBatch,
     ) -> Result<(), IOError> {
-        let _span = debug_span!(
-            "insert_compressed_segments",
-            table_name = table_name.to_owned()
-        )
-        .entered();
-
         debug!(
-            "Inserting batch with {} rows into compressed data buffer.",
-            compressed_segments.num_rows()
+            "Inserting batch with {} rows into compressed data buffer for table '{}'.",
+            compressed_segments.num_rows(),
+            table_name
         );
 
         // Since the compressed segments are already in memory, insert the segments into the
@@ -130,11 +125,17 @@ impl CompressedDataManager {
         let segments_size = if let Some(compressed_data_buffer) =
             self.compressed_data_buffers.get_mut(table_name)
         {
-            debug!("Found existing compressed data buffer.");
+            debug!(
+                "Found existing compressed data buffer for table '{}'.",
+                table_name
+            );
 
             compressed_data_buffer.append_compressed_segments(compressed_segments)
         } else {
-            debug!("Could not find compressed data buffer. Creating compressed data buffer.");
+            debug!(
+                "Could not find compressed data buffer for table '{}'. Creating compressed data buffer.",
+                table_name
+            );
 
             let mut compressed_data_buffer = CompressedDataBuffer::new();
             let segment_size =
@@ -151,7 +152,7 @@ impl CompressedDataManager {
 
         // If the reserved memory limit is exceeded, save compressed data to disk.
         if self.compressed_remaining_memory_in_bytes < 0 {
-            self.save_compressed_data_to_free_memory()?;
+            self.save_compressed_data_to_free_memory().await?;
         }
 
         Ok(())
@@ -187,6 +188,7 @@ impl CompressedDataManager {
             self.compressed_queue.remove(data_index);
 
             self.save_compressed_data(table_name)
+                .await
                 .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
         }
 
@@ -986,7 +988,7 @@ mod tests {
             5,
             15,
             -10.0,
-            0.0
+            0.0,
         ))
     }
 
@@ -997,7 +999,7 @@ mod tests {
             5,
             15,
             -10.0,
-            0.0
+            0.0,
         ))
     }
 
@@ -1008,7 +1010,7 @@ mod tests {
             1,
             30,
             -10.0,
-            0.0
+            0.0,
         ))
     }
 
@@ -1019,7 +1021,7 @@ mod tests {
             20,
             30,
             -10.0,
-            0.0
+            0.0,
         ))
     }
 
@@ -1030,7 +1032,7 @@ mod tests {
             1,
             10,
             -10.0,
-            0.0
+            0.0,
         ))
     }
 
@@ -1041,7 +1043,7 @@ mod tests {
             1,
             10,
             7.5,
-            15.0
+            15.0,
         ))
     }
 
@@ -1052,7 +1054,7 @@ mod tests {
             1,
             10,
             0.0,
-            7.5
+            7.5,
         ))
     }
 
@@ -1063,7 +1065,7 @@ mod tests {
             1,
             10,
             0.0,
-            10.0
+            10.0,
         ))
     }
 
@@ -1074,7 +1076,7 @@ mod tests {
             1,
             10,
             20.0,
-            30.0
+            30.0,
         ))
     }
 
@@ -1085,7 +1087,7 @@ mod tests {
             1,
             10,
             0.0,
-            10.0
+            10.0,
         ))
     }
 }
