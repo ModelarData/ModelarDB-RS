@@ -42,7 +42,6 @@ use crate::storage::{self, StorageEngine, COMPRESSED_DATA_FOLDER};
 //       transferring the same data multiple times or deleting files that are currently used
 //       elsewhere.
 
-#[allow(dead_code)]
 pub struct DataTransfer {
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
     local_data_folder_path: PathBuf,
@@ -108,7 +107,6 @@ impl DataTransfer {
         Ok(data_transfer)
     }
 
-    #[allow(dead_code)]
     /// Insert the compressed file into the files to be transferred. Retrieve the size of the file
     /// and add it to the total size of the current local files in the table with `table_name`.
     pub async fn add_compressed_file(
