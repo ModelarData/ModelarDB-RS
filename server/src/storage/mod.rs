@@ -112,7 +112,6 @@ impl StorageEngine {
         )?;
 
         // Create the compressed data manager.
-        // TODO: Make the transfer batch size in bytes part of the user-configurable settings.
         let data_transfer = if let Some(remote_data_folder) = remote_data_folder {
             Some(
                 DataTransfer::try_new(

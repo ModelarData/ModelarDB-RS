@@ -34,10 +34,10 @@ use tracing::debug;
 
 use crate::storage::{self, StorageEngine, COMPRESSED_DATA_FOLDER};
 
+// TODO: Make the transfer batch size in bytes part of the user-configurable settings.
 // TODO: When the storage engine is changed to use object store for everything, receive
 //       the object store directly through the parameters instead.
 // TODO: Handle the case where a connection can not be established when transferring data.
-// TODO: When compressed data is saved, add the compressed file to the data transfer component.
 // TODO: Handle deleting the files after the transfer is complete in a safe way to avoid
 //       transferring the same data multiple times or deleting files that are currently used
 //       elsewhere.
