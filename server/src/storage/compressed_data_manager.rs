@@ -935,16 +935,11 @@ mod tests {
         let segments = test_util::compressed_segments_record_batch();
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
-        // Insert compressed segments into the same table.
-        let segment = test_util::compressed_segments_record_batch();
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segment.clone())
+            .insert_compressed_segments(TABLE_NAME, segments.clone())
             .await
             .unwrap();
-        data_manager
-            .insert_compressed_segments(TABLE_NAME, segment)
-            .await
-            .unwrap();
+        data_manager.save_compressed_data(TABLE_NAME).await.unwrap();
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
