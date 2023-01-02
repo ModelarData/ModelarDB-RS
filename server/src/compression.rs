@@ -394,12 +394,11 @@ impl CompressedSegmentBatchBuilder {
 }
 
 #[cfg(test)]
-pub(crate) mod tests {
+mod tests {
     use super::*;
 
     use datafusion::arrow::array::UInt8Array;
-    use rand::distributions::Uniform;
-    use rand::{thread_rng, Rng};
+    use crate::compression::test_util::{generate_data, generate_timestamps};
 
     use crate::metadata::test_util;
     use crate::models;
@@ -637,110 +636,6 @@ pub(crate) mod tests {
         )
     }
 
-    /// Function for generating constant/random/linear/random-linear test data with the [ThreadRng](rand::rngs::thread::ThreadRng) randomizer.
-    ///
-    /// # Arguments
-    ///
-    /// * `length` - An unsigned integer that denotes how many data-points should be generated.
-    /// * `linear` - A boolean that denotes if the data should be linear.
-    /// * `random` - A boolean that denotes if the data should be randomized.
-    /// * `min_step` - Denotes the minimum change that should be applied from one data point to the next when randomizing data. Only used if `random` is set to `true`.
-    /// * `max_step` - Denotes the maximum change that should be applied from one data point to the next when randomizing data. Only used if `random` is set to `true`.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let constant_data = generate_data(100, false, false, None, None);
-    /// let random_data = generate_data(100, false, true, Some(10.0), Some(20.0));
-    /// let linear_data = generate_data(100, true, false, None, None);
-    /// let random_linear = generate_data(100, true, true, Some(9.0), Some(11.0));
-    /// ```
-    pub fn generate_data(
-        length: u16,
-        linear: bool,
-        random: bool,
-        min_step: Option<f32>,
-        max_step: Option<f32>,
-    ) -> Vec<f32> {
-        let mut randomizer = thread_rng();
-        let mut values: Vec<f32> = vec![];
-
-        if random {
-            if min_step == None || max_step == None {
-                panic!("min_step and max_step need to be entered if random_values is true.")
-            } else if min_step > max_step {
-                panic!("min_step cannot be lower than the max_step.")
-            }
-        }
-
-        match (linear, random) {
-            (true, true) => {
-                let mut random_linear = vec![];
-                let mut previous_value: f32 = 0.0;
-                for _ in 0..length {
-                    let next_value = (randomizer
-                        .sample(Uniform::from(min_step.unwrap()..max_step.unwrap())))
-                        + previous_value;
-                    random_linear.push(next_value);
-                    previous_value = next_value;
-                }
-                values.append(&mut random_linear);
-            }
-            (true, false) => {
-                let mut linear =
-                    Vec::from_iter((10..(length + 1) * 10).step_by(10).map(|v| v as f32));
-                values.append(&mut linear);
-            }
-            (false, true) => {
-                let mut random = vec![];
-                for _ in 0..length {
-                    random.push(
-                        randomizer.sample(Uniform::from(min_step.unwrap()..max_step.unwrap())),
-                    );
-                }
-                values.append(&mut random);
-            }
-            (false, false) => {
-                let mut constant =
-                    vec![randomizer.sample(Uniform::from(0.0..f32::MAX)); length as usize];
-                values.append(&mut constant);
-            }
-        }
-
-        values
-    }
-
-    /// Function for generating regular/irregular timestamps with the [ThreadRng](rand::rngs::thread::ThreadRng) randomizer.
-    ///
-    /// # Arguments
-    ///
-    /// * `length` - An unsigned integer that denotes how many timestamps should be generated.
-    /// * `irregular` - A boolean that denotes if the timestamps should be regular or irregular.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// let regular_timestamps = generate_timestamps(100, false);
-    /// let irregular_timestamps = generate_timestamps(100, true);
-    /// ```
-    pub fn generate_timestamps(length: usize, irregular: bool) -> Vec<i64> {
-        let mut randomizer = thread_rng();
-        let mut timestamps = vec![];
-        if irregular {
-            let mut previous_timestamp: i64 = 0;
-            for _ in 0..length {
-                let next_timestamp =
-                    (randomizer.sample(Uniform::from(10..100))) + previous_timestamp;
-                timestamps.push(next_timestamp);
-                previous_timestamp = next_timestamp;
-            }
-        } else {
-            timestamps = Vec::from_iter((100..(length + 1) as i64 * 100).step_by(100));
-        }
-
-        timestamps
-    }
-
     fn create_uncompressed_time_series(
         timestamps: &[Timestamp],
         values: &[Value],
@@ -879,5 +774,108 @@ pub(crate) mod tests {
         // Assert that the errors are correct.
         assert_eq!(0.0, errors.value(positive));
         assert_eq!(10.0, errors.value(negative));
+    }
+}
+
+#[cfg(test)]
+/// Separate module for utility functions
+pub mod test_util{
+    use rand::{Rng, thread_rng};
+    use rand::distributions::Uniform;
+
+    /// Function for generating constant/random/linear/random-linear test data with the [ThreadRng](rand::rngs::thread::ThreadRng) randomizer.
+    ///
+    /// # Arguments
+    ///
+    /// * `length` - Indicates how many data-points should be generated.
+    /// * `linear` - Indicates if the data should be linear.
+    /// * `random` - Indicates if the data should be randomized.
+    /// * `min_step` - Indicates the minimum change that should be applied from one data point to the next when randomizing data. Have to be set if `random` is set to `true`.
+    /// * `max_step` - Indicates the maximum change that should be applied from one data point to the next when randomizing data. Have to be set if `random` is set to `true`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let constant_data = generate_data(100, false, false, None, None);
+    /// let random_data = generate_data(100, false, true, Some(10.0), Some(20.0));
+    /// let linear_data = generate_data(100, true, false, None, None);
+    /// let random_linear = generate_data(100, true, true, Some(9.0), Some(11.0));
+    /// ```
+    pub fn generate_data(
+        length: u16,
+        linear: bool,
+        random: bool,
+        min_step: Option<f32>,
+        max_step: Option<f32>,
+    ) -> Vec<f32> {
+        let mut randomizer = thread_rng();
+        let mut values: Vec<f32> = vec![];
+
+        match (linear, random) {
+            (true, true) => {
+                let mut random_linear = vec![];
+                let mut previous_value: f32 = 0.0;
+                for _ in 0..length {
+                    let next_value = (randomizer
+                        .sample(Uniform::from(min_step.unwrap()..max_step.unwrap())))
+                        + previous_value;
+                    random_linear.push(next_value);
+                    previous_value = next_value;
+                }
+                values.append(&mut random_linear);
+            }
+            (true, false) => {
+                let mut linear =
+                    Vec::from_iter((10..(length + 1) * 10).step_by(10).map(|v| v as f32));
+                values.append(&mut linear);
+            }
+            (false, true) => {
+                let mut random = vec![];
+                for _ in 0..length {
+                    random.push(
+                        randomizer.sample(Uniform::from(min_step.unwrap()..max_step.unwrap())),
+                    );
+                }
+                values.append(&mut random);
+            }
+            (false, false) => {
+                let mut constant =
+                    vec![randomizer.sample(Uniform::from(0.0..f32::MAX)); length as usize];
+                values.append(&mut constant);
+            }
+        }
+
+        values
+    }
+
+    /// Function for generating regular/irregular timestamps with the [ThreadRng](rand::rngs::thread::ThreadRng) randomizer.
+    ///
+    /// # Arguments
+    ///
+    /// * `length` - Indicates how many timestamps should be generated.
+    /// * `irregular` - Indicates if the timestamps should be regular or irregular.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let regular_timestamps = generate_timestamps(100, false);
+    /// let irregular_timestamps = generate_timestamps(100, true);
+    /// ```
+    pub fn generate_timestamps(length: usize, irregular: bool) -> Vec<i64> {
+        let mut randomizer = thread_rng();
+        let mut timestamps = vec![];
+        if irregular {
+            let mut previous_timestamp: i64 = 0;
+            for _ in 0..length {
+                let next_timestamp =
+                    (randomizer.sample(Uniform::from(10..100))) + previous_timestamp;
+                timestamps.push(next_timestamp);
+                previous_timestamp = next_timestamp;
+            }
+        } else {
+            timestamps = Vec::from_iter((100..(length + 1) as i64 * 100).step_by(100));
+        }
+
+        timestamps
     }
 }

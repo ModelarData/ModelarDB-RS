@@ -305,7 +305,7 @@ fn equal_or_nan(v1: f64, v2: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::tests::{generate_data, generate_timestamps};
+    use crate::compression::test_util::{generate_data, generate_timestamps};
     use datafusion::from_slice::FromSlice;
     use proptest::num;
     use proptest::{prop_assert, prop_assume, proptest};
@@ -397,7 +397,7 @@ mod tests {
     }
 
     #[test]
-    fn test_selected_model_new() {
+    fn test_new_selected_model_selects_the_best_model() {
         let uncompressed_timestamps_long =
             TimestampArray::from_slice(generate_timestamps(100, false));
         let uncompressed_timestamps_short =
