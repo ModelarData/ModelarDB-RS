@@ -24,7 +24,6 @@ tonic = "0.8.3"
 log = { version = "0.4.17", features = ["max_level_debug", "release_max_level_info"] }
 tracing = { version = "0.1.37", features = ["max_level_debug", "release_max_level_info"] }
 tracing-subscriber = "0.3.16"
-tracing-futures = "0.2.5"
 
 [dev-dependencies]
 proptest = "1.0.0"
