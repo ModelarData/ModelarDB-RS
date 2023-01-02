@@ -457,7 +457,7 @@ mod tests {
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
-            &test_util::get_compressed_schema(),
+            &test_util::compressed_schema(),
         )
         .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
@@ -503,7 +503,7 @@ mod tests {
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
-            &test_util::get_compressed_schema(),
+            &test_util::compressed_schema(),
         )
         .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
@@ -595,7 +595,7 @@ mod tests {
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
-            &test_util::get_compressed_schema(),
+            &test_util::compressed_schema(),
         )
         .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
@@ -779,9 +779,9 @@ mod tests {
 
 #[cfg(test)]
 /// Separate module for utility functions
-pub mod test_util{
-    use rand::{Rng, thread_rng};
+pub mod test_util {
     use rand::distributions::Uniform;
+    use rand::{thread_rng, Rng};
 
     /// Function for generating constant/random/linear/random-linear test data with the [ThreadRng](rand::rngs::thread::ThreadRng) randomizer.
     ///

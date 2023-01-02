@@ -455,7 +455,7 @@ fn start_modelardbd(path: &Path) -> Child {
 
     // The thread needs to sleep to ensure that the server has properly started before sending
     // streams to it.
-    thread::sleep(Duration::from_secs(2));
+    thread::sleep(Duration::from_secs(5));
 
     return process;
 }

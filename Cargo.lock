@@ -1781,6 +1781,7 @@ dependencies = [
  "object_store",
  "parking_lot",
  "proptest",
+ "rand",
  "rusqlite",
  "serial_test",
  "snmalloc-rs",
@@ -1790,6 +1791,7 @@ dependencies = [
  "tokio",
  "tonic",
  "tracing",
+ "tracing-futures",
  "tracing-subscriber",
 ]
 
