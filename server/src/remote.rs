@@ -191,7 +191,10 @@ impl FlightServiceHandler {
                 .insert_record_batch(table_name, record_batch)
                 .await
                 .map_err(|error| {
-                    Status::internal(format!("Data could not be ingested: {}", error))
+                    Status::internal(format!(
+                        "Data could not be ingested into {}: {}",
+                        table_name, error
+                    ))
                 })?;
         }
 

@@ -162,7 +162,7 @@ impl CompressedDataManager {
     /// Return an [`ObjectMeta`] for each compressed file in `query_data_folder` that belongs to the
     /// table with `table_name` and contains compressed segments within the given range of time and
     /// value. If some compressed data that belongs to `table_name` is still in memory, save it to
-    /// disk first. If no files belongs to the table with `table_name` an empty [`Vec`] is returned,
+    /// disk first. If no files belong to the table with `table_name` an empty [`Vec`] is returned,
     /// while a [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
     /// * A table with `table_name` does not exist.
     /// * The compressed files could not be listed.
@@ -312,7 +312,7 @@ impl CompressedDataManager {
 }
 
 /// Return the [`ObjectMeta`] passed as `object_meta` if it represents an Apache Parquet file and if
-/// the timestamps and values in its filename overlaps with the time range given by `start_time` and
+/// the timestamps and values in its filename overlap with the time range given by `start_time` and
 /// `end_time` and the value range given by `min_value` and `max_value`, otherwise [`None`] is
 /// returned. Assumes the name of Apache Parquet files represented by `object_meta` has the
 /// following format: `start-timestamp_end-timestamp_min-value_max-value.parquet`, where both
@@ -567,11 +567,9 @@ mod tests {
         let segment = test_util::compressed_segments_record_batch();
         data_manager
             .insert_compressed_segments(TABLE_NAME, segment.clone())
-            .await
             .unwrap();
         data_manager
             .insert_compressed_segments(TABLE_NAME, segment)
-            .await
             .unwrap();
 
         let object_store: Arc<dyn ObjectStore> =
@@ -605,7 +603,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_get_compressed_file_with_start_time() {
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
-        let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
+        let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0);
 
         // If we have a start time after the first segments ends, only the file containing the
         // second segment should be retrieved.
@@ -640,7 +638,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_get_compressed_file_with_min_value() {
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
-        let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
+        let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0);
 
         // If we have a min value higher then the max value in the first segment, only the file
         // containing the second segment should be retrieved.
@@ -675,7 +673,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_get_compressed_file_with_end_time() {
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
-        let (_segment_1, segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
+        let (_segment_1, segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0);
 
         // If we have an end time before the second segment starts, only the file containing the
         // first segment should be retrieved.
@@ -710,7 +708,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_get_compressed_file_with_max_value() {
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
-        let (_segment_1, segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
+        let (_segment_1, segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0);
 
         // If we have a max value lower then the min value in the second segment, only the file
         // containing the first segment should be retrieved.
@@ -747,8 +745,8 @@ mod tests {
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
         // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
-        let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
-        let (_segment_3, segment_4) = insert_separated_segments(&mut data_manager, 1000, 0.0).await;
+        let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0);
+        let (_segment_3, segment_4) = insert_separated_segments(&mut data_manager, 1000, 0.0);
 
         // If we have a start time after the first segment and an end time before the fourth
         // segment, only the files containing the second and third segment should be retrieved.
@@ -800,9 +798,8 @@ mod tests {
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
         // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
-        let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
-        let (_segment_3, segment_4) =
-            insert_separated_segments(&mut data_manager, 1000, 100.0).await;
+        let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0);
+        let (_segment_3, segment_4) = insert_separated_segments(&mut data_manager, 1000, 100.0);
 
         // If we have a min value higher the first segment and a max value lower than the fourth
         // segment, only the files containing the second and third segment should be retrieved.
@@ -851,7 +848,7 @@ mod tests {
 
     /// Create and insert two compressed segments with a 1 second time difference offset by
     /// `start_time` and values with difference of 10 offset by `value_offset`.
-    async fn insert_separated_segments(
+    fn insert_separated_segments(
         data_manager: &mut CompressedDataManager,
         start_time: i64,
         value_offset: f32,
@@ -860,9 +857,8 @@ mod tests {
             test_util::compressed_segments_record_batch_with_time(1000 + start_time, value_offset);
         data_manager
             .insert_compressed_segments(TABLE_NAME, segment_1.clone())
-            .await
             .unwrap();
-        data_manager.flush().await.unwrap();
+        data_manager.flush().unwrap();
 
         let segment_2 = test_util::compressed_segments_record_batch_with_time(
             2000 + start_time,
@@ -870,9 +866,8 @@ mod tests {
         );
         data_manager
             .insert_compressed_segments(TABLE_NAME, segment_2.clone())
-            .await
             .unwrap();
-        data_manager.flush().await.unwrap();
+        data_manager.flush().unwrap();
 
         (segment_1, segment_2)
     }
@@ -884,7 +879,6 @@ mod tests {
         let segment = test_util::compressed_segments_record_batch();
         data_manager
             .insert_compressed_segments(TABLE_NAME, segment)
-            .await
             .unwrap();
 
         let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
@@ -911,7 +905,6 @@ mod tests {
         let segment = test_util::compressed_segments_record_batch();
         data_manager
             .insert_compressed_segments(TABLE_NAME, segment)
-            .await
             .unwrap();
 
         let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
@@ -936,11 +929,16 @@ mod tests {
         let segments = test_util::compressed_segments_record_batch();
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
+        // Insert compressed segments into the same table.
+        let segment = test_util::compressed_segments_record_batch();
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segments.clone())
+            .insert_compressed_segments(TABLE_NAME, segment.clone())
             .await
             .unwrap();
-        data_manager.save_compressed_data(TABLE_NAME).await.unwrap();
+        data_manager
+            .insert_compressed_segments(TABLE_NAME, segment)
+            .await
+            .unwrap();
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
