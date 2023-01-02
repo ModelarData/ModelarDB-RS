@@ -160,7 +160,7 @@ impl CompressedDataManager {
     /// Return an [`ObjectMeta`] for each compressed file in `query_data_folder` that belongs to the
     /// table with `table_name` and contains compressed segments within the given range of time and
     /// value. If some compressed data that belongs to `table_name` is still in memory, save it to
-    /// disk first. If no files belongs to the table with `table_name` an empty [`Vec`] is returned,
+    /// disk first. If no files belong to the table with `table_name` an empty [`Vec`] is returned,
     /// while a [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
     /// * A table with `table_name` does not exist.
     /// * The compressed files could not be listed.
@@ -301,7 +301,7 @@ impl CompressedDataManager {
 }
 
 /// Return the [`ObjectMeta`] passed as `object_meta` if it represents an Apache Parquet file and if
-/// the timestamps and values in its filename overlaps with the time range given by `start_time` and
+/// the timestamps and values in its filename overlap with the time range given by `start_time` and
 /// `end_time` and the value range given by `min_value` and `max_value`, otherwise [`None`] is
 /// returned. Assumes the name of Apache Parquet files represented by `object_meta` has the
 /// following format: `start-timestamp_end-timestamp_min-value_max-value.parquet`, where both
