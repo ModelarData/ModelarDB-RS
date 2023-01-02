@@ -26,16 +26,15 @@ use datafusion::arrow::datatypes::Field;
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::Result;
+use datafusion::logical_expr::AggregateState;
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::aggregates::AggregateExec;
-use datafusion::physical_plan::expressions::format_state_name;
-use datafusion::physical_plan::expressions::{Avg, Count, Max, Min, Sum};
+use datafusion::physical_plan::expressions::{self, Avg, Count, Max, Min, Sum};
 use datafusion::physical_plan::ColumnarValue;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use datafusion::prelude::SessionConfig;
 use datafusion::scalar::ScalarValue;
-use datafusion_expr::AggregateState;
 
 use crate::models;
 use crate::tables::GridExec;
@@ -192,7 +191,7 @@ impl AggregateExpr for ModelAggregateExpr {
                 Field::new("SUM", DataType::Float32, false),
             ],
             _ => vec![Field::new(
-                &format_state_name(self.name(), "NOT NULL"),
+                &expressions::format_state_name(self.name(), "NOT NULL"),
                 self.data_type.clone(),
                 false,
             )],
@@ -257,7 +256,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        crate::get_arrays!(
+        crate::arrays!(
             batch,
             _univariate_ids,
             _model_type_ids,
@@ -276,7 +275,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
             let end_time = end_times.value(row_index);
             let timestamps = timestamps.value(row_index);
 
-            count += models::length(start_time, end_time, timestamps) as i64;
+            count += models::len(start_time, end_time, timestamps) as i64;
         }
 
         // Returning an AggregateState::Scalar fills an array with the value.
@@ -364,7 +363,7 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         let mut min = Value::MAX;
-        let min_value_array = crate::get_array!(batch, 5, ValueArray);
+        let min_value_array = crate::array!(batch, 5, ValueArray);
         for row_index in 0..batch.num_rows() {
             min = Value::min(min, min_value_array.value(row_index));
         }
@@ -457,7 +456,7 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
         let mut max = Value::MIN;
-        let max_value_array = crate::get_array!(batch, 6, ValueArray);
+        let max_value_array = crate::array!(batch, 6, ValueArray);
         for row_index in 0..batch.num_rows() {
             max = Value::max(max, max_value_array.value(row_index));
         }
@@ -549,7 +548,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        crate::get_arrays!(
+        crate::arrays!(
             batch,
             _univariate_ids,
             model_type_ids,
@@ -670,7 +669,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
     }
 
     fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
-        crate::get_arrays!(
+        crate::arrays!(
             batch,
             _univariate_ids,
             model_type_ids,
@@ -704,7 +703,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
                 values,
             );
 
-            count += models::length(start_time, end_time, timestamps);
+            count += models::len(start_time, end_time, timestamps);
         }
 
         // Returning an AggregateState::Scalar fills an array with the value.

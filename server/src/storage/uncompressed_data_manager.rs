@@ -17,6 +17,8 @@
 //! [`StorageEngine`](crate::storage::StorageEngine).
 
 use std::collections::{HashMap, VecDeque};
+use std::fs;
+use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::path::PathBuf;
 
 use datafusion::arrow::array::{Array, StringArray};
@@ -27,12 +29,13 @@ use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::models::ErrorBound;
 use crate::storage::uncompressed_data_buffer::{
-    UncompressedDataBuffer, UncompressedInMemoryDataBuffer,
+    UncompressedDataBuffer, UncompressedInMemoryDataBuffer, UncompressedOnDiskDataBuffer,
 };
+use crate::storage::UNCOMPRESSED_DATA_FOLDER;
 use crate::types::{
     CompressedSchema, Timestamp, TimestampArray, UncompressedSchema, Value, ValueArray,
 };
-use crate::{compression, get_array};
+use crate::{array, compression};
 
 /// Stores uncompressed data points temporarily in an in-memory buffer that spills to Apache Parquet
 /// files. When a uncompressed data buffer is finished the data is made available for compression.
@@ -59,22 +62,50 @@ pub(super) struct UncompressedDataManager {
 }
 
 impl UncompressedDataManager {
-    pub(super) fn new(
+    /// Return an [`UncompressedDataManager`] if the required folder can be created in
+    /// `local_data_folder` and an [`UncompressedOnDiskDataBuffer`] can be initialized for all
+    /// Apache Parquet files containing uncompressed data points in `local_data_store`, otherwise
+    /// [`IOError`] is returned.
+    pub(super) fn try_new(
         local_data_folder: PathBuf,
         uncompressed_reserved_memory_in_bytes: usize,
         uncompressed_schema: UncompressedSchema,
         compressed_schema: CompressedSchema,
         compress_directly: bool,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, IOError> {
+        // Ensure the folder required by the uncompressed data manager exists.
+        let local_uncompressed_data_folder = local_data_folder.join(UNCOMPRESSED_DATA_FOLDER);
+        fs::create_dir_all(&local_uncompressed_data_folder)?;
+
+        // Add references to the uncompressed data buffers currently on disk.
+        let mut finished_data_buffers: VecDeque<Box<dyn UncompressedDataBuffer>> = VecDeque::new();
+        for maybe_folder_dir_entry in local_uncompressed_data_folder.read_dir()? {
+            let folder_dir_entry = maybe_folder_dir_entry?;
+
+            let univariate_id = folder_dir_entry
+                .file_name()
+                .to_str()
+                .ok_or_else(|| IOError::new(IOErrorKind::InvalidData, "Path is not valid UTF-8."))?
+                .parse::<u64>()
+                .map_err(|error| IOError::new(IOErrorKind::InvalidData, error))?;
+
+            for maybe_file_dir_entry in folder_dir_entry.path().read_dir()? {
+                finished_data_buffers.push_back(Box::new(UncompressedOnDiskDataBuffer::try_new(
+                    univariate_id,
+                    maybe_file_dir_entry?.path(),
+                )?));
+            }
+        }
+
+        Ok(Self {
             local_data_folder,
             active_uncompressed_data_buffers: HashMap::new(),
-            finished_uncompressed_data_buffers: VecDeque::new(),
+            finished_uncompressed_data_buffers: finished_data_buffers,
             uncompressed_remaining_memory_in_bytes: uncompressed_reserved_memory_in_bytes,
             uncompressed_schema,
             compressed_schema,
             compress_directly,
-        }
+        })
     }
 
     // TODO: When the compression component is changed, this function should return Ok or Err.
@@ -147,7 +178,7 @@ impl UncompressedDataManager {
                 .collect();
 
             let tag_hash = metadata_manager
-                .get_or_compute_tag_hash(model_table, &tag_values)
+                .lookup_or_compute_tag_hash(model_table, &tag_values)
                 .map_err(|error| format!("Tag hash could not be saved: {}", error))?;
 
             // For each field column, generate the 64-bit univariate id, and append the current
@@ -246,7 +277,7 @@ impl UncompressedDataManager {
             );
 
             // If there is not enough memory for a new buffer, spill a finished in-memory buffer.
-            if UncompressedInMemoryDataBuffer::get_memory_size()
+            if UncompressedInMemoryDataBuffer::memory_size()
                 > self.uncompressed_remaining_memory_in_bytes
             {
                 self.spill_finished_buffer().await;
@@ -255,7 +286,7 @@ impl UncompressedDataManager {
             // Create a new buffer and reduce the remaining amount of reserved memory by its size.
             let mut buffer = UncompressedInMemoryDataBuffer::new(univariate_id);
             self.uncompressed_remaining_memory_in_bytes -=
-                UncompressedInMemoryDataBuffer::get_memory_size();
+                UncompressedInMemoryDataBuffer::memory_size();
 
             debug!(
                 "Created buffer for {}. Remaining reserved bytes: {}.",
@@ -273,12 +304,11 @@ impl UncompressedDataManager {
     /// Remove the oldest finished [`UncompressedDataBuffer`] from the queue and return it. Returns
     /// [`None`] if there are no finished [`UncompressedDataBuffers`](UncompressedDataBuffer) in the
     /// queue.
-    pub(super) fn get_finished_data_buffer(&mut self) -> Option<Box<dyn UncompressedDataBuffer>> {
+    pub(super) fn finished_data_buffer(&mut self) -> Option<Box<dyn UncompressedDataBuffer>> {
         if let Some(uncompressed_data_buffer) = self.finished_uncompressed_data_buffers.pop_front()
         {
             // Add the memory size of the removed buffer back to the remaining bytes.
-            self.uncompressed_remaining_memory_in_bytes +=
-                uncompressed_data_buffer.get_memory_size();
+            self.uncompressed_remaining_memory_in_bytes += uncompressed_data_buffer.memory_size();
 
             Some(uncompressed_data_buffer)
         } else {
@@ -296,18 +326,18 @@ impl UncompressedDataManager {
     ) -> RecordBatch {
         // Add the size of the segment back to the remaining reserved bytes.
         self.uncompressed_remaining_memory_in_bytes +=
-            UncompressedInMemoryDataBuffer::get_memory_size();
+            UncompressedInMemoryDataBuffer::memory_size();
 
         // unwrap() is safe to use since the error bound is not negative, infinite, or NAN.
         let error_bound = ErrorBound::try_new(0.0).unwrap();
 
         // unwrap() is safe to use since get_record_batch() can only fail for spilled buffers.
         let data_points = in_memory_data_buffer
-            .get_record_batch(&self.uncompressed_schema)
+            .record_batch(&self.uncompressed_schema)
             .await
             .unwrap();
-        let uncompressed_timestamps = get_array!(data_points, 0, TimestampArray);
-        let uncompressed_values = get_array!(data_points, 1, ValueArray);
+        let uncompressed_timestamps = array!(data_points, 0, TimestampArray);
+        let uncompressed_values = array!(data_points, 1, ValueArray);
 
         // unwrap() is safe to use since uncompressed_timestamps and uncompressed_values have the same length.
         let compressed_segments = compression::try_compress(
@@ -340,7 +370,7 @@ impl UncompressedDataManager {
             {
                 // Add the size of the in-memory data buffer back to the remaining reserved bytes.
                 self.uncompressed_remaining_memory_in_bytes +=
-                    UncompressedInMemoryDataBuffer::get_memory_size();
+                    UncompressedInMemoryDataBuffer::memory_size();
 
                 debug!(
                     "Spilled '{:?}'. Remaining reserved bytes: {}.",
@@ -373,12 +403,29 @@ mod tests {
 
     const UNIVARIATE_ID: u64 = 1;
 
+    // Tests for UncompressedDataManager.
+    #[tokio::test]
+    async fn test_can_find_existing_on_disk_data_buffers() {
+        // Spill an uncompressed buffer to disk.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut buffer = UncompressedInMemoryDataBuffer::new(1);
+        buffer.insert_data(100, 10.0);
+        buffer
+            .spill_to_apache_parquet(temp_dir.path(), &test_util::uncompressed_schema())
+            .await
+            .unwrap();
+
+        // The uncompressed data buffer should be referenced by the uncompressed data manager.
+        let (_metadata_manager, data_manager) = create_managers(temp_dir.path());
+        assert_eq!(data_manager.finished_uncompressed_data_buffers.len(), 1)
+    }
+
     #[tokio::test]
     async fn test_can_insert_record_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (mut metadata_manager, mut data_manager) = create_managers(temp_dir.path());
 
-        let (model_table_metadata, data) = get_uncompressed_data(1);
+        let (model_table_metadata, data) = uncompressed_data(1);
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
             .unwrap();
@@ -399,7 +446,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (mut metadata_manager, mut data_manager) = create_managers(temp_dir.path());
 
-        let (model_table_metadata, data) = get_uncompressed_data(2);
+        let (model_table_metadata, data) = uncompressed_data(2);
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
             .unwrap();
@@ -418,7 +465,7 @@ mod tests {
     /// Create a record batch with data that resembles uncompressed data with a single tag and two
     /// field columns. The returned data has `row_count` rows, with a different tag for each row.
     /// Also create model table metadata for a model table that matches the created data.
-    fn get_uncompressed_data(row_count: usize) -> (ModelTableMetadata, RecordBatch) {
+    fn uncompressed_data(row_count: usize) -> (ModelTableMetadata, RecordBatch) {
         let tags: Vec<String> = (0..row_count).map(|tag| tag.to_string()).collect();
         let timestamps: Vec<Timestamp> = (0..row_count).map(|ts| ts as Timestamp).collect();
         let values: Vec<Value> = (0..row_count).map(|value| value as Value).collect();
@@ -467,7 +514,7 @@ mod tests {
                 .active_uncompressed_data_buffers
                 .get(&UNIVARIATE_ID)
                 .unwrap()
-                .get_length(),
+                .len(),
             1
         );
     }
@@ -486,7 +533,7 @@ mod tests {
                 .active_uncompressed_data_buffers
                 .get(&UNIVARIATE_ID)
                 .unwrap()
-                .get_length(),
+                .len(),
             2
         );
     }
@@ -502,7 +549,7 @@ mod tests {
         )
         .await;
 
-        assert!(data_manager.get_finished_data_buffer().is_some());
+        assert!(data_manager.finished_data_buffer().is_some());
     }
 
     #[tokio::test]
@@ -516,8 +563,8 @@ mod tests {
         )
         .await;
 
-        assert!(data_manager.get_finished_data_buffer().is_some());
-        assert!(data_manager.get_finished_data_buffer().is_some());
+        assert!(data_manager.finished_data_buffer().is_some());
+        assert!(data_manager.finished_data_buffer().is_some());
     }
 
     #[test]
@@ -525,7 +572,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
 
-        assert!(data_manager.get_finished_data_buffer().is_none());
+        assert!(data_manager.finished_data_buffer().is_none());
     }
 
     #[tokio::test]
@@ -536,7 +583,7 @@ mod tests {
 
         // Insert messages into the storage engine until a buffer is spilled to Apache Parquet.
         // If there is enough memory to hold n full buffers, we need n + 1 to spill a buffer.
-        let max_full_buffers = reserved_memory / UncompressedInMemoryDataBuffer::get_memory_size();
+        let max_full_buffers = reserved_memory / UncompressedInMemoryDataBuffer::memory_size();
         let message_count = (max_full_buffers * UNCOMPRESSED_DATA_BUFFER_CAPACITY) + 1;
         insert_data_points(message_count, &mut data_manager, UNIVARIATE_ID).await;
 
@@ -545,11 +592,12 @@ mod tests {
             .finished_uncompressed_data_buffers
             .pop_front()
             .unwrap();
-        assert_eq!(first_finished.get_memory_size(), 0);
+        assert_eq!(first_finished.memory_size(), 0);
 
         // The UncompressedDataBuffer should be spilled to univariate id in the uncompressed folder.
         let local_data_folder = Path::new(&data_manager.local_data_folder);
-        let uncompressed_path = local_data_folder.join(format!("uncompressed/{}", UNIVARIATE_ID));
+        let uncompressed_path =
+            local_data_folder.join(format!("{}/{}", UNCOMPRESSED_DATA_FOLDER, UNIVARIATE_ID));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1);
     }
 
@@ -574,11 +622,12 @@ mod tests {
             .finished_uncompressed_data_buffers
             .pop_front()
             .unwrap();
-        assert_eq!(second_finished.get_memory_size(), 0);
+        assert_eq!(second_finished.memory_size(), 0);
 
         // The finished buffers should be spilled to univariate id in the uncompressed folder.
         let local_data_folder = Path::new(&data_manager.local_data_folder);
-        let uncompressed_path = local_data_folder.join(format!("uncompressed/{}", UNIVARIATE_ID));
+        let uncompressed_path =
+            local_data_folder.join(format!("{}/{}", UNCOMPRESSED_DATA_FOLDER, UNIVARIATE_ID));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 2);
     }
 
@@ -622,7 +671,7 @@ mod tests {
         .await;
 
         let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
-        data_manager.get_finished_data_buffer();
+        data_manager.finished_data_buffer();
 
         assert!(remaining_memory < data_manager.uncompressed_remaining_memory_in_bytes);
     }
@@ -643,7 +692,7 @@ mod tests {
 
         // Since the UncompressedOnDiskDataBuffer is not in memory, the remaining memory should not
         // increase when popped.
-        data_manager.get_finished_data_buffer();
+        data_manager.finished_data_buffer();
 
         assert_eq!(
             remaining_memory,
@@ -659,7 +708,7 @@ mod tests {
         let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
 
         // If there is enough reserved memory to hold n builders, we need to create n + 1 to panic.
-        for i in 0..(reserved_memory / UncompressedInMemoryDataBuffer::get_memory_size()) + 1 {
+        for i in 0..(reserved_memory / UncompressedInMemoryDataBuffer::memory_size()) + 1 {
             insert_data_points(1, &mut data_manager, i as u64).await;
         }
     }
@@ -682,17 +731,18 @@ mod tests {
     /// Create an [`UncompressedDataManager`] with a folder that is deleted once the test is
     /// finished.
     fn create_managers(path: &Path) -> (MetadataManager, UncompressedDataManager) {
-        let metadata_manager = test_util::get_test_metadata_manager(path);
+        let metadata_manager = test_util::test_metadata_manager(path);
 
-        let local_data_folder = metadata_manager.get_local_data_folder();
+        let local_data_folder = metadata_manager.local_data_folder();
 
-        let uncompressed_data_manager = UncompressedDataManager::new(
+        let uncompressed_data_manager = UncompressedDataManager::try_new(
             local_data_folder.to_owned(),
             metadata_manager.uncompressed_reserved_memory_in_bytes,
-            metadata_manager.get_uncompressed_schema(),
-            metadata_manager.get_compressed_schema(),
+            metadata_manager.uncompressed_schema(),
+            metadata_manager.compressed_schema(),
             false,
-        );
+        )
+        .unwrap();
 
         (metadata_manager, uncompressed_data_manager)
     }

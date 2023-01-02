@@ -17,14 +17,14 @@
 /// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch) and cast it to the specified type:
 ///
 /// ```
-/// let array = crate::get_array!(record_batch, 0, UInt8Array);
+/// let array = crate::array!(record_batch, 0, UInt8Array);
 /// ```
 ///
 /// # Panics
 ///
 /// Panics if `column` is not in `batch` or if it cannot be cast to `type`.
 #[macro_export]
-macro_rules! get_array {
+macro_rules! array {
     ($batch:ident, $column:literal, $type:ident) => {
         $batch
             .column($column)
@@ -49,16 +49,16 @@ macro_rules! get_array {
 /// UInt8Array, TimestampArray, TimestampArray, BinaryArray, ValueArray, ValueArray, BinaryArray,
 /// and Float32Array.
 #[macro_export]
-macro_rules! get_arrays {
+macro_rules! arrays {
     ($batch:ident, $univariate_ids:ident, $model_type_ids:ident, $start_times:ident, $end_times:ident, $timestamps:ident, $min_values:ident, $max_values:ident, $values:ident, $errors:ident) => {
-        let $univariate_ids = $crate::get_array!($batch, 0, UInt64Array);
-        let $model_type_ids = $crate::get_array!($batch, 1, UInt8Array);
-        let $start_times = $crate::get_array!($batch, 2, TimestampArray);
-        let $end_times = $crate::get_array!($batch, 3, TimestampArray);
-        let $timestamps = $crate::get_array!($batch, 4, BinaryArray);
-        let $min_values = $crate::get_array!($batch, 5, ValueArray);
-        let $max_values = $crate::get_array!($batch, 6, ValueArray);
-        let $values = $crate::get_array!($batch, 7, BinaryArray);
-        let $errors = $crate::get_array!($batch, 8, Float32Array);
+        let $univariate_ids = $crate::array!($batch, 0, UInt64Array);
+        let $model_type_ids = $crate::array!($batch, 1, UInt8Array);
+        let $start_times = $crate::array!($batch, 2, TimestampArray);
+        let $end_times = $crate::array!($batch, 3, TimestampArray);
+        let $timestamps = $crate::array!($batch, 4, BinaryArray);
+        let $min_values = $crate::array!($batch, 5, ValueArray);
+        let $max_values = $crate::array!($batch, 6, ValueArray);
+        let $values = $crate::array!($batch, 7, BinaryArray);
+        let $errors = $crate::array!($batch, 8, Float32Array);
     };
 }

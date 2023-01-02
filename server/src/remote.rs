@@ -42,18 +42,18 @@ use futures::{stream, Stream, StreamExt};
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
-use tracing::{debug, error, info};
+use tracing::{debug, info};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
-use crate::storage::StorageEngine;
+use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 use crate::tables::ModelTable;
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
-pub fn start_arrow_flight_server(
+pub fn start_apache_arrow_flight_server(
     context: Arc<Context>,
     runtime: &Arc<Runtime>,
     port: i16,
@@ -96,11 +96,11 @@ impl FlightServiceHandler {
     /// Return the schema of `table_name` if the table exists in the default
     /// database schema, otherwise a [`Status`] indicating at what level the
     /// lookup failed is returned.
-    fn get_schema_of_table_in_default_database_schema(
+    fn schema_of_table_in_default_database_schema(
         &self,
         table_name: &str,
     ) -> Result<SchemaRef, Status> {
-        let database_schema = self.get_default_database_schema()?;
+        let database_schema = self.default_database_schema()?;
 
         let table = database_schema
             .table(table_name)
@@ -111,7 +111,7 @@ impl FlightServiceHandler {
 
     /// Return the default database schema if it exists, otherwise a [`Status`]
     /// indicating at what level the lookup failed is returned.
-    fn get_default_database_schema(&self) -> Result<Arc<dyn SchemaProvider>, Status> {
+    fn default_database_schema(&self) -> Result<Arc<dyn SchemaProvider>, Status> {
         let session = self.context.session.clone();
 
         let catalog = session
@@ -128,7 +128,7 @@ impl FlightServiceHandler {
     /// Return the table stored as the first element in
     /// [`FlightDescriptor.path`], otherwise a [`Status`] that specifies that
     /// the table name is missing.
-    fn get_table_name_from_flight_descriptor<'a>(
+    fn table_name_from_flight_descriptor<'a>(
         &'a self,
         flight_descriptor: &'a FlightDescriptor,
     ) -> Result<&String, Status> {
@@ -146,18 +146,18 @@ impl FlightServiceHandler {
     /// * [`Status`] if the default catalog, the default schema, a table with
     /// the name `table_name`, or a model table with the name `table_name` does
     /// not exists.
-    fn get_model_table_metadata_from_default_database_schema(
+    fn model_table_metadata_from_default_database_schema(
         &self,
         table_name: &str,
     ) -> Result<Option<Arc<ModelTableMetadata>>, Status> {
-        let database_schema = self.get_default_database_schema()?;
+        let database_schema = self.default_database_schema()?;
 
         let table = database_schema
             .table(table_name)
             .ok_or_else(|| Status::not_found("Table does not exist."))?;
 
         if let Some(model_table) = table.as_any().downcast_ref::<ModelTable>() {
-            Ok(Some(model_table.get_model_table_metadata()))
+            Ok(Some(model_table.model_table_metadata()))
         } else {
             Ok(None)
         }
@@ -165,7 +165,7 @@ impl FlightServiceHandler {
 
     /// Return [`Status`] if a table named `table_name` exists in the default catalog.
     fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
-        let maybe_schema = self.get_schema_of_table_in_default_database_schema(table_name);
+        let maybe_schema = self.schema_of_table_in_default_database_schema(table_name);
         if maybe_schema.is_ok() {
             let message = format!("Table with name '{}' already exists.", table_name);
             return Err(Status::already_exists(message));
@@ -175,17 +175,30 @@ impl FlightServiceHandler {
 
     /// While there is still more data to receive, ingest the data into the
     /// table.
-    fn ingest_into_table(
+    async fn ingest_into_table(
         &self,
         table_name: &str,
-        _schema: SchemaRef,
-        _flight_data_stream: Streaming<FlightData>,
-    ) {
-        // TODO: Implement this.
-        error!(
-            "Received data for table '{}' but ingesting data into tables is not supported yet.",
-            table_name
-        );
+        schema: &SchemaRef,
+        flight_data_stream: &mut Streaming<FlightData>,
+    ) -> Result<(), Status> {
+        // Retrieve the data until the request does not contain any more data.
+        while let Some(flight_data) = flight_data_stream.next().await {
+            let record_batch = self.flight_data_to_record_batch(&flight_data?, schema)?;
+            let storage_engine = self.context.storage_engine.write().await;
+
+            // Write record_batch to the table with table_name as a compressed Apache Parquet file.
+            storage_engine
+                .insert_record_batch(table_name, record_batch)
+                .await
+                .map_err(|error| {
+                    Status::internal(format!(
+                        "Data could not be ingested into {}: {}",
+                        table_name, error
+                    ))
+                })?;
+        }
+
+        Ok(())
     }
 
     /// While there is still more data to receive, ingest the data into the
@@ -197,17 +210,8 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
-            let flight_data = flight_data?;
-            debug_assert_eq!(flight_data.flight_descriptor, None);
-
-            // Convert the flight data to a record batch.
-            let data_points = utils::flight_data_to_arrow_batch(
-                &flight_data,
-                model_table_metadata.schema.clone(),
-                &self.dictionaries_by_id,
-            )
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
+            let data_points =
+                self.flight_data_to_record_batch(&flight_data?, &model_table_metadata.schema)?;
             let mut storage_engine = self.context.storage_engine.write().await;
 
             // Note that the storage engine returns when the data is stored in memory, which means
@@ -223,6 +227,18 @@ impl FlightServiceHandler {
         Ok(())
     }
 
+    /// Convert `flight_data` to a [`RecordBatch`].
+    fn flight_data_to_record_batch(
+        &self,
+        flight_data: &FlightData,
+        schema: &SchemaRef,
+    ) -> Result<RecordBatch, Status> {
+        debug_assert_eq!(flight_data.flight_descriptor, None);
+
+        utils::flight_data_to_arrow_batch(flight_data, schema.clone(), &self.dictionaries_by_id)
+            .map_err(|error| Status::invalid_argument(error.to_string()))
+    }
+
     /// Create a normal table, register it with Apache Arrow DataFusion's
     /// catalog, and save it to the [`MetadataManager`]. If the table exists,
     /// the Apache Parquet file cannot be created, or if the table cannot be
@@ -234,8 +250,11 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Ensure the folder for storing the table data exists.
         let metadata_manager = &self.context.metadata_manager;
-        let folder_path = metadata_manager.get_local_data_folder().join(&table_name);
-        fs::create_dir(&folder_path)?;
+        let folder_path = metadata_manager
+            .local_data_folder()
+            .join(COMPRESSED_DATA_FOLDER)
+            .join(&table_name);
+        fs::create_dir_all(&folder_path)?;
 
         // Create an empty Apache Parquet file to save the schema.
         let file_path = folder_path.join("empty_for_schema.parquet");
@@ -261,6 +280,7 @@ impl FlightServiceHandler {
             .map_err(|error| Status::internal(error.to_string()))?;
 
         info!("Created table '{}'.", table_name);
+
         Ok(())
     }
 
@@ -324,7 +344,7 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Criteria>,
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
-        let table_names = self.get_default_database_schema()?.table_names();
+        let table_names = self.default_database_schema()?.table_names();
         let flight_descriptor = FlightDescriptor::new_path(table_names);
         let flight_info =
             FlightInfo::new(IpcMessage(vec![]), Some(flight_descriptor), vec![], -1, -1);
@@ -348,8 +368,8 @@ impl FlightService for FlightServiceHandler {
         request: Request<FlightDescriptor>,
     ) -> Result<Response<SchemaResult>, Status> {
         let flight_descriptor = request.into_inner();
-        let table_name = self.get_table_name_from_flight_descriptor(&flight_descriptor)?;
-        let schema = self.get_schema_of_table_in_default_database_schema(table_name)?;
+        let table_name = self.table_name_from_flight_descriptor(&flight_descriptor)?;
+        let schema = self.schema_of_table_in_default_database_schema(table_name)?;
 
         let options = IpcWriteOptions::default();
         let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
@@ -428,21 +448,21 @@ impl FlightService for FlightServiceHandler {
         let flight_descriptor = flight_data
             .flight_descriptor
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
-        let table_name = self.get_table_name_from_flight_descriptor(&flight_descriptor)?;
+        let table_name = self.table_name_from_flight_descriptor(&flight_descriptor)?;
         let normalized_table_name = MetadataManager::normalize_name(table_name);
 
         // Handle the data based on whether it is a normal table or a model table.
         if let Some(model_table_metadata) =
-            self.get_model_table_metadata_from_default_database_schema(&normalized_table_name)?
+            self.model_table_metadata_from_default_database_schema(&normalized_table_name)?
         {
             debug!("Writing data to model table '{}'.", normalized_table_name);
             self.ingest_into_model_table(&model_table_metadata, &mut flight_data_stream)
                 .await?;
         } else {
             debug!("Writing data to table '{}'.", normalized_table_name);
-            let schema =
-                self.get_schema_of_table_in_default_database_schema(&normalized_table_name)?;
-            self.ingest_into_table(&normalized_table_name, schema, flight_data_stream);
+            let schema = self.schema_of_table_in_default_database_schema(&normalized_table_name)?;
+            self.ingest_into_table(&normalized_table_name, &schema, &mut flight_data_stream)
+                .await?;
         }
 
         // Confirm the data was received.

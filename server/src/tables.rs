@@ -30,6 +30,7 @@ use datafusion::arrow::array::{ArrayRef, BinaryArray, Float32Array, UInt64Array,
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema, SchemaRef};
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::common::ToDFSchema;
 use datafusion::config::ConfigOptions;
 use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::datasource::{
@@ -37,16 +38,15 @@ use datafusion::datasource::{
 };
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::{ExecutionProps, SessionState, TaskContext};
+use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator};
+use datafusion::optimizer::utils;
+use datafusion::physical_expr::planner;
 use datafusion::physical_plan::{
     expressions::PhysicalSortExpr, file_format::FileScanConfig, file_format::ParquetExec,
     filter::FilterExec, metrics::BaselineMetrics, metrics::ExecutionPlanMetricsSet,
     metrics::MetricsSet, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
     SendableRecordBatchStream, Statistics,
 };
-use datafusion_common::ToDFSchema;
-use datafusion_expr::{col, BinaryExpr, Expr, Operator};
-use datafusion_optimizer::utils;
-use datafusion_physical_expr::planner;
 use futures::stream::{Stream, StreamExt};
 use parking_lot::RwLock;
 
@@ -113,7 +113,7 @@ impl ModelTable {
     }
 
     /// Return the [`ModelTableMetadata`] for the table.
-    pub fn get_model_table_metadata(&self) -> Arc<ModelTableMetadata> {
+    pub fn model_table_metadata(&self) -> Arc<ModelTableMetadata> {
         self.model_table_metadata.clone()
     }
 }
@@ -127,29 +127,61 @@ fn rewrite_and_combine_filters(filters: &[Expr]) -> Option<Expr> {
         .iter()
         .map(|filter| match filter {
             Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
-                if **left == col("timestamp") {
+                if **left == logical_expr::col("timestamp") {
                     match op {
-                        Operator::Gt => new_binary_expr(col("end_time"), *op, *right.clone()),
-                        Operator::GtEq => new_binary_expr(col("end_time"), *op, *right.clone()),
-                        Operator::Lt => new_binary_expr(col("start_time"), *op, *right.clone()),
-                        Operator::LtEq => new_binary_expr(col("start_time"), *op, *right.clone()),
+                        Operator::Gt => {
+                            new_binary_expr(logical_expr::col("end_time"), *op, *right.clone())
+                        }
+                        Operator::GtEq => {
+                            new_binary_expr(logical_expr::col("end_time"), *op, *right.clone())
+                        }
+                        Operator::Lt => {
+                            new_binary_expr(logical_expr::col("start_time"), *op, *right.clone())
+                        }
+                        Operator::LtEq => {
+                            new_binary_expr(logical_expr::col("start_time"), *op, *right.clone())
+                        }
                         Operator::Eq => new_binary_expr(
-                            new_binary_expr(col("start_time"), Operator::LtEq, *right.clone()),
+                            new_binary_expr(
+                                logical_expr::col("start_time"),
+                                Operator::LtEq,
+                                *right.clone(),
+                            ),
                             Operator::And,
-                            new_binary_expr(col("end_time"), Operator::GtEq, *right.clone()),
+                            new_binary_expr(
+                                logical_expr::col("end_time"),
+                                Operator::GtEq,
+                                *right.clone(),
+                            ),
                         ),
                         _ => filter.clone(),
                     }
-                } else if **left == col("value") {
+                } else if **left == logical_expr::col("value") {
                     match op {
-                        Operator::Gt => new_binary_expr(col("max_value"), *op, *right.clone()),
-                        Operator::GtEq => new_binary_expr(col("max_value"), *op, *right.clone()),
-                        Operator::Lt => new_binary_expr(col("min_value"), *op, *right.clone()),
-                        Operator::LtEq => new_binary_expr(col("min_value"), *op, *right.clone()),
+                        Operator::Gt => {
+                            new_binary_expr(logical_expr::col("max_value"), *op, *right.clone())
+                        }
+                        Operator::GtEq => {
+                            new_binary_expr(logical_expr::col("max_value"), *op, *right.clone())
+                        }
+                        Operator::Lt => {
+                            new_binary_expr(logical_expr::col("min_value"), *op, *right.clone())
+                        }
+                        Operator::LtEq => {
+                            new_binary_expr(logical_expr::col("min_value"), *op, *right.clone())
+                        }
                         Operator::Eq => new_binary_expr(
-                            new_binary_expr(col("min_value"), Operator::LtEq, *right.clone()),
+                            new_binary_expr(
+                                logical_expr::col("min_value"),
+                                Operator::LtEq,
+                                *right.clone(),
+                            ),
                             Operator::And,
-                            new_binary_expr(col("max_value"), Operator::GtEq, *right.clone()),
+                            new_binary_expr(
+                                logical_expr::col("max_value"),
+                                Operator::GtEq,
+                                *right.clone(),
+                            ),
                         ),
                         _ => filter.clone(),
                     }
@@ -247,7 +279,7 @@ impl TableProvider for ModelTable {
             // table_name does not exists, if end time is before start time, or if max value is
             // larger than min value.
             storage_engine
-                .get_compressed_files(table_name, None, None, None, None, &query_object_store)
+                .compressed_files(table_name, None, None, None, None, &query_object_store)
                 .await
                 .unwrap()
         };
@@ -274,7 +306,7 @@ impl TableProvider for ModelTable {
         // TODO: partition the rows in the files to support parallel processing.
         let file_scan_config = FileScanConfig {
             object_store_url: self.object_store_url.clone(),
-            file_schema: self.context.metadata_manager.get_compressed_schema().0,
+            file_schema: self.context.metadata_manager.compressed_schema().0,
             file_groups: vec![partitioned_files],
             statistics,
             projection: None,
@@ -300,12 +332,13 @@ impl TableProvider for ModelTable {
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         let predicate = rewrite_and_combine_filters(filters);
-        let parquet_exec = Arc::new(ParquetExec::new(file_scan_config, predicate.clone(), None));
+        let apache_parquet_exec =
+            Arc::new(ParquetExec::new(file_scan_config, predicate.clone(), None));
 
         // Create a filter operator if filters are not empty.
-        let compressed_schema = self.context.metadata_manager.get_compressed_schema();
-        let input =
-            new_filter_exec(&predicate, &parquet_exec, &compressed_schema).unwrap_or(parquet_exec);
+        let compressed_schema = self.context.metadata_manager.compressed_schema();
+        let input = new_filter_exec(&predicate, &apache_parquet_exec, &compressed_schema)
+            .unwrap_or(apache_parquet_exec);
 
         // Create the gridding operator.
         let grid_exec: Arc<dyn ExecutionPlan> = GridExec::new(
@@ -523,7 +556,7 @@ impl GridStream {
         let _timer = self.baseline_metrics.elapsed_compute().timer();
 
         // Retrieve the arrays from batch and cast them to their concrete type.
-        crate::get_arrays!(
+        crate::arrays!(
             batch,
             univariate_ids,
             model_type_ids,
@@ -618,8 +651,8 @@ mod tests {
     use super::*;
 
     use datafusion::arrow::datatypes::DataType;
+    use datafusion::logical_expr::lit;
     use datafusion::prelude::Expr;
-    use datafusion_expr::lit;
 
     use crate::metadata::test_util;
     use crate::types::{Timestamp, Value};
@@ -707,7 +740,7 @@ mod tests {
 
     fn new_timestamp_filters(operator: Operator) -> Vec<Expr> {
         vec![new_binary_expr(
-            col("timestamp"),
+            logical_expr::col("timestamp"),
             operator,
             lit(TIMESTAMP_PREDICATE_VALUE),
         )]
@@ -787,7 +820,7 @@ mod tests {
 
     fn new_value_filters(operator: Operator) -> Vec<Expr> {
         vec![new_binary_expr(
-            col("value"),
+            logical_expr::col("value"),
             operator,
             lit(VALUE_PREDICATE_VALUE),
         )]
@@ -795,7 +828,7 @@ mod tests {
 
     fn assert_binary_expr(expr: Expr, column: &str, operator: Operator, value: Expr) {
         if let Expr::BinaryExpr(BinaryExpr { left, op, right }) = expr {
-            assert_eq!(*left, col(column));
+            assert_eq!(*left, logical_expr::col(column));
             assert_eq!(op, operator);
             assert_eq!(*right, value);
         } else {
@@ -806,31 +839,31 @@ mod tests {
     // Tests for new_filter_exec().
     #[test]
     fn test_new_filter_exec_without_predicates() {
-        let parquet_exec = new_parquet_exec();
+        let apache_parquet_exec = new_apache_parquet_exec();
         assert!(
-            new_filter_exec(&None, &parquet_exec, &test_util::get_compressed_schema()).is_err()
+            new_filter_exec(&None, &apache_parquet_exec, &test_util::compressed_schema()).is_err()
         );
     }
 
     #[test]
     fn test_new_filter_exec_with_predicates() {
         let filters = vec![new_binary_expr(
-            col("univariate_id"),
+            logical_expr::col("univariate_id"),
             Operator::Eq,
             lit(1_u64),
         )];
         let predicates = rewrite_and_combine_filters(&filters);
-        let parquet_exec = new_parquet_exec();
+        let apache_parquet_exec = new_apache_parquet_exec();
 
         assert!(new_filter_exec(
             &predicates,
-            &parquet_exec,
-            &test_util::get_compressed_schema()
+            &apache_parquet_exec,
+            &test_util::compressed_schema()
         )
         .is_ok());
     }
 
-    fn new_parquet_exec() -> Arc<ParquetExec> {
+    fn new_apache_parquet_exec() -> Arc<ParquetExec> {
         let file_scan_config = FileScanConfig {
             object_store_url: ObjectStoreUrl::local_filesystem(),
             file_schema: Arc::new(Schema::new(vec![Field::new(

@@ -73,18 +73,18 @@ impl PMCMean {
     }
 
     /// Return the number of values the model currently represents.
-    pub fn get_length(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.length
     }
 
     /// Return the number of bytes the current model uses per data point on average.
-    pub fn get_bytes_per_value(&self) -> f32 {
+    pub fn bytes_per_value(&self) -> f32 {
         models::VALUE_SIZE_IN_BYTES as f32 / self.length as f32
     }
 
     /// Return the current model. For a model of type PMC-Mean, its coefficient
     /// is the average value of the time series segment the model represents.
-    pub fn get_model(&self) -> Value {
+    pub fn model(&self) -> Value {
         (self.sum_of_values / self.length as f64) as Value
     }
 
@@ -106,7 +106,7 @@ impl PMCMean {
 /// Compute the sum of the values for a time series segment whose values are
 /// represented by a model of type PMC-Mean.
 pub fn sum(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8], value: Value) -> Value {
-    models::length(start_time, end_time, timestamps) as Value * value
+    models::len(start_time, end_time, timestamps) as Value * value
 }
 
 /// Reconstruct the values for the `timestamps` without matching values in
@@ -162,9 +162,9 @@ mod tests {
         }
 
         if value.is_nan() {
-            assert!(model_type.get_model().is_nan());
+            assert!(model_type.model().is_nan());
         } else {
-            assert_eq!(model_type.get_model(), value);
+            assert_eq!(model_type.model(), value);
         }
     }
 

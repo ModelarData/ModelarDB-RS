@@ -96,15 +96,15 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
     // TODO: merge segments with none equivalent models.
 
     // Extract the columns from the RecordBatch.
-    let univariate_ids = crate::get_array!(compressed_segments, 0, UInt64Array);
-    let model_type_ids = crate::get_array!(compressed_segments, 1, UInt8Array);
-    let start_times = crate::get_array!(compressed_segments, 2, TimestampArray);
-    let end_times = crate::get_array!(compressed_segments, 3, TimestampArray);
-    let timestamps = crate::get_array!(compressed_segments, 4, BinaryArray);
-    let min_values = crate::get_array!(compressed_segments, 5, ValueArray);
-    let max_values = crate::get_array!(compressed_segments, 6, ValueArray);
-    let values = crate::get_array!(compressed_segments, 7, BinaryArray);
-    let errors = crate::get_array!(compressed_segments, 8, Float32Array);
+    let univariate_ids = crate::array!(compressed_segments, 0, UInt64Array);
+    let model_type_ids = crate::array!(compressed_segments, 1, UInt8Array);
+    let start_times = crate::array!(compressed_segments, 2, TimestampArray);
+    let end_times = crate::array!(compressed_segments, 3, TimestampArray);
+    let timestamps = crate::array!(compressed_segments, 4, BinaryArray);
+    let min_values = crate::array!(compressed_segments, 5, ValueArray);
+    let max_values = crate::array!(compressed_segments, 6, ValueArray);
+    let values = crate::array!(compressed_segments, 7, BinaryArray);
+    let errors = crate::array!(compressed_segments, 8, Float32Array);
 
     // For each segment, check if it can be merged with another segment.
     let num_rows = compressed_segments.num_rows();
@@ -414,7 +414,7 @@ mod tests {
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
-            &test_util::get_compressed_schema(),
+            &test_util::compressed_schema(),
         )
         .unwrap();
         assert_eq!(0, compressed_record_batch.num_rows())
@@ -433,7 +433,7 @@ mod tests {
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
-            &test_util::get_compressed_schema(),
+            &test_util::compressed_schema(),
         )
         .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
@@ -456,7 +456,7 @@ mod tests {
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
-            &test_util::get_compressed_schema(),
+            &test_util::compressed_schema(),
         )
         .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
@@ -479,7 +479,7 @@ mod tests {
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
-            &test_util::get_compressed_schema(),
+            &test_util::compressed_schema(),
         )
         .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
@@ -502,7 +502,7 @@ mod tests {
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
-            &test_util::get_compressed_schema(),
+            &test_util::compressed_schema(),
         )
         .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
@@ -525,7 +525,7 @@ mod tests {
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
-            &test_util::get_compressed_schema(),
+            &test_util::compressed_schema(),
         )
         .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
@@ -556,7 +556,7 @@ mod tests {
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
-            &test_util::get_compressed_schema(),
+            &test_util::compressed_schema(),
         )
         .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
@@ -591,17 +591,15 @@ mod tests {
         for segment in 0..expected_model_type_ids.len() {
             let expected_model_type_id = expected_model_type_ids[segment];
             let model_type_id =
-                crate::get_array!(compressed_record_batch, 1, UInt8Array).value(segment);
+                crate::array!(compressed_record_batch, 1, UInt8Array).value(segment);
             assert_eq!(expected_model_type_id, model_type_id);
 
             let start_time =
-                crate::get_array!(compressed_record_batch, 2, TimestampArray).value(segment);
-            let end_time =
-                crate::get_array!(compressed_record_batch, 3, TimestampArray).value(segment);
-            let timestamps =
-                crate::get_array!(compressed_record_batch, 4, BinaryArray).value(segment);
+                crate::array!(compressed_record_batch, 2, TimestampArray).value(segment);
+            let end_time = crate::array!(compressed_record_batch, 3, TimestampArray).value(segment);
+            let timestamps = crate::array!(compressed_record_batch, 4, BinaryArray).value(segment);
 
-            total_compressed_length += models::length(start_time, end_time, timestamps);
+            total_compressed_length += models::len(start_time, end_time, timestamps);
         }
         assert_eq!(uncompressed_timestamps.len(), total_compressed_length);
     }
@@ -610,7 +608,7 @@ mod tests {
     #[test]
     fn test_merge_compressed_segments_empty_batch() {
         let merged_record_batch = merge_segments(
-            CompressedSegmentBatchBuilder::new(0).finish(&test_util::get_compressed_schema()),
+            CompressedSegmentBatchBuilder::new(0).finish(&test_util::compressed_schema()),
         );
         assert_eq!(0, merged_record_batch.num_rows())
     }
@@ -654,17 +652,17 @@ mod tests {
         }
 
         let compressed_record_batch =
-            compressed_record_batch_builder.finish(&test_util::get_compressed_schema());
+            compressed_record_batch_builder.finish(&test_util::compressed_schema());
         let merged_record_batch = merge_segments(compressed_record_batch);
 
         // Extract the columns from the RecordBatch.
-        let start_times = crate::get_array!(merged_record_batch, 2, TimestampArray);
-        let end_times = crate::get_array!(merged_record_batch, 3, TimestampArray);
-        let timestamps = crate::get_array!(merged_record_batch, 4, BinaryArray);
-        let min_values = crate::get_array!(merged_record_batch, 5, ValueArray);
-        let max_values = crate::get_array!(merged_record_batch, 6, ValueArray);
-        let values = crate::get_array!(merged_record_batch, 7, BinaryArray);
-        let errors = crate::get_array!(merged_record_batch, 8, Float32Array);
+        let start_times = crate::array!(merged_record_batch, 2, TimestampArray);
+        let end_times = crate::array!(merged_record_batch, 3, TimestampArray);
+        let timestamps = crate::array!(merged_record_batch, 4, BinaryArray);
+        let min_values = crate::array!(merged_record_batch, 5, ValueArray);
+        let max_values = crate::array!(merged_record_batch, 6, ValueArray);
+        let values = crate::array!(merged_record_batch, 7, BinaryArray);
+        let errors = crate::array!(merged_record_batch, 8, Float32Array);
 
         // Assert that the number of segments are correct.
         assert_eq!(2, merged_record_batch.num_rows());

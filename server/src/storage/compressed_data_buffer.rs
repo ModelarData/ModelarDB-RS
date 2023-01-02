@@ -47,7 +47,7 @@ impl CompressedDataBuffer {
     /// Append `compressed_segments` to the [`CompressedDataBuffer`] and return the size of
     /// `compressed_segments` in bytes. It is assumed that `compressed_segments` is sorted by time.
     pub(super) fn append_compressed_segments(&mut self, compressed_segments: RecordBatch) -> usize {
-        let segment_size = Self::get_size_of_compressed_segments(&compressed_segments);
+        let segment_size = Self::size_of_compressed_segments(&compressed_segments);
 
         self.compressed_segments.push(compressed_segments);
         self.size_in_bytes += segment_size;
@@ -87,12 +87,15 @@ impl CompressedDataBuffer {
     }
 
     /// Return the size in bytes of `compressed_segments`.
-    fn get_size_of_compressed_segments(compressed_segments: &RecordBatch) -> usize {
+    fn size_of_compressed_segments(compressed_segments: &RecordBatch) -> usize {
         let mut total_size: usize = 0;
 
         // Compute the total number of bytes of memory used by the columns.
         for column in compressed_segments.columns() {
-            // TODO: How is this calculated internally?
+            // Recursively compute the total number of bytes of memory used by a single column. It
+            // is both the size of the types, e.g., Array, ArrayData, Buffer, and Bitmap, and the
+            // column's values in Apache Arrow format as buffers and the null bitmap if it exists.
+            // Apache Arrow Columnar Format: https://arrow.apache.org/docs/format/Columnar.html.
             total_size += column.get_array_memory_size()
         }
 
@@ -104,7 +107,7 @@ impl CompressedDataBuffer {
 mod tests {
     use super::*;
 
-    use tempfile::tempdir;
+    use tempfile;
 
     use crate::metadata::test_util as metadata_test_util;
     use crate::storage::test_util;
@@ -113,7 +116,7 @@ mod tests {
     fn test_can_append_valid_compressed_segments() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
         compressed_data_buffer
-            .append_compressed_segments(test_util::get_compressed_segments_record_batch());
+            .append_compressed_segments(test_util::compressed_segments_record_batch());
 
         assert_eq!(compressed_data_buffer.compressed_segments.len(), 1)
     }
@@ -122,7 +125,7 @@ mod tests {
     fn test_compressed_data_buffer_size_updated_when_appending() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
         compressed_data_buffer
-            .append_compressed_segments(test_util::get_compressed_segments_record_batch());
+            .append_compressed_segments(test_util::compressed_segments_record_batch());
 
         assert!(compressed_data_buffer.size_in_bytes > 0);
     }
@@ -130,15 +133,12 @@ mod tests {
     #[test]
     fn test_can_save_compressed_data_buffer_to_apache_parquet() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
-        let segment = test_util::get_compressed_segments_record_batch();
+        let segment = test_util::compressed_segments_record_batch();
         compressed_data_buffer.append_compressed_segments(segment.clone());
 
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
         compressed_data_buffer
-            .save_to_apache_parquet(
-                temp_dir.path(),
-                &metadata_test_util::get_compressed_schema(),
-            )
+            .save_to_apache_parquet(temp_dir.path(), &metadata_test_util::compressed_schema())
             .unwrap();
 
         // Data should be saved to a file with the start time, end time, min value, and max value of
@@ -153,19 +153,16 @@ mod tests {
         let mut empty_compressed_data_buffer = CompressedDataBuffer::new();
 
         empty_compressed_data_buffer
-            .save_to_apache_parquet(
-                Path::new("table"),
-                &metadata_test_util::get_compressed_schema(),
-            )
+            .save_to_apache_parquet(Path::new("table"), &metadata_test_util::compressed_schema())
             .unwrap();
     }
 
     #[test]
     fn test_get_size_of_compressed_data_buffer() {
-        let compressed_data_buffer = test_util::get_compressed_segments_record_batch();
+        let compressed_data_buffer = test_util::compressed_segments_record_batch();
 
         assert_eq!(
-            CompressedDataBuffer::get_size_of_compressed_segments(&compressed_data_buffer),
+            CompressedDataBuffer::size_of_compressed_segments(&compressed_data_buffer),
             test_util::COMPRESSED_SEGMENTS_SIZE,
         );
     }
