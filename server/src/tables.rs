@@ -140,6 +140,19 @@ fn rewrite_and_combine_filters(filters: &[Expr]) -> Option<Expr> {
                         ),
                         _ => filter.clone(),
                     }
+                } else if **left == col("value") {
+                    match op {
+                        Operator::Gt => new_binary_expr(col("max_value"), *op, *right.clone()),
+                        Operator::GtEq => new_binary_expr(col("max_value"), *op, *right.clone()),
+                        Operator::Lt => new_binary_expr(col("min_value"), *op, *right.clone()),
+                        Operator::LtEq => new_binary_expr(col("min_value"), *op, *right.clone()),
+                        Operator::Eq => new_binary_expr(
+                            new_binary_expr(col("min_value"), Operator::LtEq, *right.clone()),
+                            Operator::And,
+                            new_binary_expr(col("max_value"), Operator::GtEq, *right.clone()),
+                        ),
+                        _ => filter.clone(),
+                    }
                 } else {
                     filter.clone()
                 }
@@ -609,6 +622,10 @@ mod tests {
     use datafusion_expr::lit;
 
     use crate::metadata::test_util;
+    use crate::types::{Timestamp, Value};
+
+    const TIMESTAMP_PREDICATE_VALUE: Timestamp = 37;
+    const VALUE_PREDICATE_VALUE: Value = 73.00;
 
     // Tests for rewrite_and_combine_filters().
     #[test]
@@ -620,28 +637,48 @@ mod tests {
     fn test_rewrite_greater_than_timestamp() {
         let filters = new_timestamp_filters(Operator::Gt);
         let predicate = rewrite_and_combine_filters(&filters).unwrap();
-        assert_timestamp_expr(predicate, "end_time", Operator::Gt);
+        assert_binary_expr(
+            predicate,
+            "end_time",
+            Operator::Gt,
+            lit(TIMESTAMP_PREDICATE_VALUE),
+        );
     }
 
     #[test]
     fn test_rewrite_greater_than_or_equal_timestamp() {
         let filters = new_timestamp_filters(Operator::GtEq);
         let predicate = rewrite_and_combine_filters(&filters).unwrap();
-        assert_timestamp_expr(predicate, "end_time", Operator::GtEq);
+        assert_binary_expr(
+            predicate,
+            "end_time",
+            Operator::GtEq,
+            lit(TIMESTAMP_PREDICATE_VALUE),
+        );
     }
 
     #[test]
     fn test_rewrite_less_than_timestamp() {
         let filters = new_timestamp_filters(Operator::Lt);
         let predicate = rewrite_and_combine_filters(&filters).unwrap();
-        assert_timestamp_expr(predicate, "start_time", Operator::Lt);
+        assert_binary_expr(
+            predicate,
+            "start_time",
+            Operator::Lt,
+            lit(TIMESTAMP_PREDICATE_VALUE),
+        );
     }
 
     #[test]
     fn test_rewrite_less_than_or_equal_timestamp() {
         let filters = new_timestamp_filters(Operator::LtEq);
         let predicate = rewrite_and_combine_filters(&filters).unwrap();
-        assert_timestamp_expr(predicate, "start_time", Operator::LtEq);
+        assert_binary_expr(
+            predicate,
+            "start_time",
+            Operator::LtEq,
+            lit(TIMESTAMP_PREDICATE_VALUE),
+        );
     }
 
     #[test]
@@ -650,23 +687,117 @@ mod tests {
         let predicate = rewrite_and_combine_filters(&filters).unwrap();
 
         if let Expr::BinaryExpr(BinaryExpr { left, op, right }) = predicate {
-            assert_timestamp_expr(*left, "start_time", Operator::LtEq);
+            assert_binary_expr(
+                *left,
+                "start_time",
+                Operator::LtEq,
+                lit(TIMESTAMP_PREDICATE_VALUE),
+            );
             assert_eq!(op, Operator::And);
-            assert_timestamp_expr(*right, "end_time", Operator::GtEq);
+            assert_binary_expr(
+                *right,
+                "end_time",
+                Operator::GtEq,
+                lit(TIMESTAMP_PREDICATE_VALUE),
+            );
         } else {
             panic!("Expr is not a BinaryExpr.");
         }
     }
 
     fn new_timestamp_filters(operator: Operator) -> Vec<Expr> {
-        vec![new_binary_expr(col("timestamp"), operator, lit(37))]
+        vec![new_binary_expr(
+            col("timestamp"),
+            operator,
+            lit(TIMESTAMP_PREDICATE_VALUE),
+        )]
     }
 
-    fn assert_timestamp_expr(expr: Expr, column: &str, operator: Operator) {
+    #[test]
+    fn test_rewrite_greater_than_value() {
+        let filters = new_value_filters(Operator::Gt);
+        let predicate = rewrite_and_combine_filters(&filters).unwrap();
+        assert_binary_expr(
+            predicate,
+            "max_value",
+            Operator::Gt,
+            lit(VALUE_PREDICATE_VALUE),
+        );
+    }
+
+    #[test]
+    fn test_rewrite_greater_than_or_equal_value() {
+        let filters = new_value_filters(Operator::GtEq);
+        let predicate = rewrite_and_combine_filters(&filters).unwrap();
+        assert_binary_expr(
+            predicate,
+            "max_value",
+            Operator::GtEq,
+            lit(VALUE_PREDICATE_VALUE),
+        );
+    }
+
+    #[test]
+    fn test_rewrite_less_than_value() {
+        let filters = new_value_filters(Operator::Lt);
+        let predicate = rewrite_and_combine_filters(&filters).unwrap();
+        assert_binary_expr(
+            predicate,
+            "min_value",
+            Operator::Lt,
+            lit(VALUE_PREDICATE_VALUE),
+        );
+    }
+
+    #[test]
+    fn test_rewrite_less_than_or_equal_value() {
+        let filters = new_value_filters(Operator::LtEq);
+        let predicate = rewrite_and_combine_filters(&filters).unwrap();
+        assert_binary_expr(
+            predicate,
+            "min_value",
+            Operator::LtEq,
+            lit(VALUE_PREDICATE_VALUE),
+        );
+    }
+
+    #[test]
+    fn test_rewrite_equal_value() {
+        let filters = new_value_filters(Operator::Eq);
+        let predicate = rewrite_and_combine_filters(&filters).unwrap();
+
+        if let Expr::BinaryExpr(BinaryExpr { left, op, right }) = predicate {
+            assert_binary_expr(
+                *left,
+                "min_value",
+                Operator::LtEq,
+                lit(VALUE_PREDICATE_VALUE),
+            );
+            assert_eq!(op, Operator::And);
+            assert_binary_expr(
+                *right,
+                "max_value",
+                Operator::GtEq,
+                lit(VALUE_PREDICATE_VALUE),
+            );
+        } else {
+            panic!("Expr is not a BinaryExpr.");
+        }
+    }
+
+    fn new_value_filters(operator: Operator) -> Vec<Expr> {
+        vec![new_binary_expr(
+            col("value"),
+            operator,
+            lit(VALUE_PREDICATE_VALUE),
+        )]
+    }
+
+    fn assert_binary_expr(expr: Expr, column: &str, operator: Operator, value: Expr) {
         if let Expr::BinaryExpr(BinaryExpr { left, op, right }) = expr {
             assert_eq!(*left, col(column));
             assert_eq!(op, operator);
-            assert_eq!(*right, lit(37));
+            assert_eq!(*right, value);
         } else {
             panic!("Expr is not a BinaryExpr.");
         }
