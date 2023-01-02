@@ -299,7 +299,9 @@ impl CompressedDataManager {
             compressed_data_buffer.size_in_bytes, self.compressed_remaining_memory_in_bytes
         );
 
-        // Pass the saved compressed file to the data transfer component if possible.
+        // Pass the saved compressed file to the data transfer component if a remote data folder
+        // was provided. If the total size of the files related to table_name have reached the
+        // transfer threshold, the files are transferred to the remote object store.
         if let Some(data_transfer) = &mut self.data_transfer {
             data_transfer
                 .add_compressed_file(table_name, file_path.as_path())
