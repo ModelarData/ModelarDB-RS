@@ -21,7 +21,7 @@ use std::fs;
 use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::path::PathBuf;
 
-use datafusion::arrow::array::{Array, StringArray};
+use datafusion::arrow::array::{Array, StringArray, UInt32Builder};
 use datafusion::arrow::record_batch::RecordBatch;
 use tracing::debug;
 
@@ -33,7 +33,8 @@ use crate::storage::uncompressed_data_buffer::{
 };
 use crate::storage::UNCOMPRESSED_DATA_FOLDER;
 use crate::types::{
-    CompressedSchema, Timestamp, TimestampArray, UncompressedSchema, Value, ValueArray,
+    CompressedSchema, Timestamp, TimestampArray, TimestampBuilder, UncompressedSchema, Value,
+    ValueArray,
 };
 use crate::{array, compression};
 
@@ -59,6 +60,8 @@ pub(super) struct UncompressedDataManager {
     // TODO: This is a temporary field used to fix existing tests. Remove when configuration component is changed.
     /// If this is true, compress finished buffers directly instead of queueing them.
     compress_directly: bool,
+    /// Log of the used uncompressed memory, updated every time the used memory changes.
+    uncompressed_used_memory: (TimestampBuilder, UInt32Builder),
 }
 
 impl UncompressedDataManager {
@@ -105,6 +108,7 @@ impl UncompressedDataManager {
             uncompressed_schema,
             compressed_schema,
             compress_directly,
+            uncompressed_used_memory: (TimestampBuilder::new(), UInt32Builder::new()),
         })
     }
 

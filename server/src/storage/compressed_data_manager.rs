@@ -22,6 +22,7 @@ use std::io::ErrorKind::Other;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use datafusion::arrow::array::UInt32Builder;
 
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
@@ -34,7 +35,7 @@ use crate::errors::ModelarDbError;
 use crate::storage::compressed_data_buffer::CompressedDataBuffer;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::types::{CompressedSchema, Timestamp, Value};
+use crate::types::{CompressedSchema, Timestamp, TimestampBuilder, Value};
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
@@ -54,6 +55,8 @@ pub(super) struct CompressedDataManager {
     compressed_remaining_memory_in_bytes: isize,
     /// Reference to the schema for compressed data buffers.
     compressed_schema: CompressedSchema,
+    /// Log of the used compressed memory, updated every time the used memory changes.
+    compressed_used_memory: (TimestampBuilder, UInt32Builder),
 }
 
 impl CompressedDataManager {
@@ -75,6 +78,7 @@ impl CompressedDataManager {
             compressed_queue: VecDeque::new(),
             compressed_remaining_memory_in_bytes: compressed_reserved_memory_in_bytes as isize,
             compressed_schema,
+            compressed_used_memory: (TimestampBuilder::new(), UInt32Builder::new()),
         })
     }
 
