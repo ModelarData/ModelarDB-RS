@@ -289,8 +289,9 @@ impl UncompressedDataManager {
 
             // Create a new buffer and reduce the remaining amount of reserved memory by its size.
             let mut buffer = UncompressedInMemoryDataBuffer::new(univariate_id);
-            self.uncompressed_remaining_memory_in_bytes -=
-                UncompressedInMemoryDataBuffer::memory_size();
+            self.set_uncompressed_remaining_memory_in_bytes(
+                self.uncompressed_remaining_memory_in_bytes - UncompressedInMemoryDataBuffer::memory_size()
+            );
 
             debug!(
                 "Created buffer for {}. Remaining reserved bytes: {}.",
@@ -312,7 +313,9 @@ impl UncompressedDataManager {
         if let Some(uncompressed_data_buffer) = self.finished_uncompressed_data_buffers.pop_front()
         {
             // Add the memory size of the removed buffer back to the remaining bytes.
-            self.uncompressed_remaining_memory_in_bytes += uncompressed_data_buffer.memory_size();
+            self.set_uncompressed_remaining_memory_in_bytes(
+                self.uncompressed_remaining_memory_in_bytes + uncompressed_data_buffer.memory_size()
+            );
 
             Some(uncompressed_data_buffer)
         } else {
@@ -329,8 +332,9 @@ impl UncompressedDataManager {
         mut in_memory_data_buffer: UncompressedInMemoryDataBuffer,
     ) -> RecordBatch {
         // Add the size of the segment back to the remaining reserved bytes.
-        self.uncompressed_remaining_memory_in_bytes +=
-            UncompressedInMemoryDataBuffer::memory_size();
+        self.set_uncompressed_remaining_memory_in_bytes(
+            self.uncompressed_remaining_memory_in_bytes + UncompressedInMemoryDataBuffer::memory_size()
+        );
 
         // unwrap() is safe to use since the error bound is not negative, infinite, or NAN.
         let error_bound = ErrorBound::try_new(0.0).unwrap();
@@ -372,16 +376,18 @@ impl UncompressedDataManager {
                 )
                 .await
             {
-                // Add the size of the in-memory data buffer back to the remaining reserved bytes.
-                self.uncompressed_remaining_memory_in_bytes +=
-                    UncompressedInMemoryDataBuffer::memory_size();
+                let new_remaining_memory =
+                    self.uncompressed_remaining_memory_in_bytes + UncompressedInMemoryDataBuffer::memory_size();
 
                 debug!(
                     "Spilled '{:?}'. Remaining reserved bytes: {}.",
-                    finished, self.uncompressed_remaining_memory_in_bytes
+                    finished, new_remaining_memory
                 );
 
                 *finished = Box::new(uncompressed_on_disk_data_buffer);
+
+                // Add the size of the in-memory data buffer back to the remaining reserved bytes.
+                self.set_uncompressed_remaining_memory_in_bytes(new_remaining_memory);
                 return;
             }
         }
@@ -396,7 +402,7 @@ impl UncompressedDataManager {
     fn set_uncompressed_remaining_memory_in_bytes(&mut self, value: usize) {
         let (timestamp, new_value) = create_log_entry(
             self.uncompressed_used_memory.1.values_slice(),
-            (self.uncompressed_remaining_memory_in_bytes - value) as isize,
+            self.uncompressed_remaining_memory_in_bytes as isize - value as isize,
         );
 
         self.uncompressed_used_memory.0.append_value(timestamp);

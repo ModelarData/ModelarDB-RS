@@ -153,7 +153,9 @@ impl CompressedDataManager {
             segment_size
         };
 
-        self.compressed_remaining_memory_in_bytes -= segments_size as isize;
+        self.set_compressed_remaining_memory_in_bytes(
+            self.compressed_remaining_memory_in_bytes - segments_size as isize
+        );
 
         // If the reserved memory limit is exceeded, save compressed data to disk.
         if self.compressed_remaining_memory_in_bytes < 0 {
@@ -296,7 +298,9 @@ impl CompressedDataManager {
 
         let file_path = compressed_data_buffer
             .save_to_apache_parquet(folder_path.as_path(), &self.compressed_schema)?;
-        self.compressed_remaining_memory_in_bytes += compressed_data_buffer.size_in_bytes as isize;
+        self.set_compressed_remaining_memory_in_bytes(
+            self.compressed_remaining_memory_in_bytes + compressed_data_buffer.size_in_bytes as isize
+        );
 
         debug!(
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
