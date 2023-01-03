@@ -34,7 +34,7 @@ use tracing::{debug, info};
 use crate::errors::ModelarDbError;
 use crate::storage::compressed_data_buffer::CompressedDataBuffer;
 use crate::storage::data_transfer::DataTransfer;
-use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
+use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER, create_log_entry};
 use crate::types::{CompressedSchema, Timestamp, TimestampBuilder, Value};
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
@@ -314,6 +314,20 @@ impl CompressedDataManager {
         }
 
         Ok(())
+    }
+
+    /// Setter for the `compressed_remaining_memory_in_bytes` field to ensure the total used
+    /// memory log is updated when the remaining memory is updated.
+    fn set_compressed_remaining_memory_in_bytes(&mut self, value: isize) {
+        let (timestamp, new_value) = create_log_entry(
+            self.compressed_used_memory.1.values_slice(),
+            self.compressed_remaining_memory_in_bytes - value,
+        );
+
+        self.compressed_used_memory.0.append_value(timestamp);
+        self.compressed_used_memory.1.append_value(new_value);
+
+        self.compressed_remaining_memory_in_bytes = value;
     }
 }
 

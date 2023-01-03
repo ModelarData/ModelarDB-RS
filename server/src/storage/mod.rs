@@ -32,7 +32,6 @@ use std::io::{Error as IOError, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use datafusion::arrow::array::UInt32Builder;
 
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -56,7 +55,7 @@ use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::uncompressed_data_buffer::UncompressedDataBuffer;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
-use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray};
+use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
 
 /// The folder storing uncompressed data in the data folders.
 pub const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
@@ -362,19 +361,15 @@ pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> Strin
 
 /// Create and add an entry to the logs used to create internal statistics. The timestamp is in
 /// milliseconds and the value is calculated based on the last log entry and the new value change.
-pub(self) fn create_log_entry(
-    mut current_logs: (TimestampBuilder, UInt32Builder),
-    value_change: isize,
-) {
+pub(self) fn create_log_entry(values: &[u32], value_change: isize) -> (Timestamp, u32) {
     // unwrap() is safe since the Unix epoch is always earlier than now.
     let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
     let timestamp = since_the_epoch.as_millis() as Timestamp;
 
-    let last_value = current_logs.1.values_slice().last().unwrap_or(&0);
+    let last_value = values.last().unwrap_or(&0);
     let new_value = (*last_value as isize + value_change) as u32;
 
-    current_logs.0.append_value(timestamp);
-    current_logs.1.append_value(new_value);
+    (timestamp, new_value)
 }
 
 #[cfg(test)]

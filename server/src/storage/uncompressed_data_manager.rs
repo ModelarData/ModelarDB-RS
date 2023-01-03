@@ -20,7 +20,6 @@ use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use datafusion::arrow::array::{Array, StringArray, UInt32Builder};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -32,7 +31,7 @@ use crate::models::ErrorBound;
 use crate::storage::uncompressed_data_buffer::{
     UncompressedDataBuffer, UncompressedInMemoryDataBuffer, UncompressedOnDiskDataBuffer,
 };
-use crate::storage::UNCOMPRESSED_DATA_FOLDER;
+use crate::storage::{create_log_entry, UNCOMPRESSED_DATA_FOLDER};
 use crate::types::{
     CompressedSchema, Timestamp, TimestampArray, TimestampBuilder, UncompressedSchema, Value,
     ValueArray,
@@ -395,21 +394,13 @@ impl UncompressedDataManager {
     /// Setter for the `uncompressed_remaining_memory_in_bytes` field to ensure the total used
     /// memory log is updated when the remaining memory is updated.
     fn set_uncompressed_remaining_memory_in_bytes(&mut self, value: usize) {
-        // Set the timestamp to the current time since epoch in milliseconds. unwrap() is safe since
-        // the Unix epoch is always earlier than now.
-        let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        self.uncompressed_used_memory
-            .0
-            .append_value(since_the_epoch.as_millis() as i64);
+        let (timestamp, new_value) = create_log_entry(
+            self.uncompressed_used_memory.1.values_slice(),
+            (self.uncompressed_remaining_memory_in_bytes - value) as isize,
+        );
 
-        // Set the value to the total current used uncompressed memory.
-        let last_value = self.uncompressed_used_memory
-            .1
-            .values_slice()
-            .last()
-            .unwrap_or(&0);
-        let value_change = self.uncompressed_remaining_memory_in_bytes as isize - value as isize;
-        self.uncompressed_used_memory.1.append_value((*last_value as isize - value_change) as u32);
+        self.uncompressed_used_memory.0.append_value(timestamp);
+        self.uncompressed_used_memory.1.append_value(new_value);
 
         self.uncompressed_remaining_memory_in_bytes = value;
     }
