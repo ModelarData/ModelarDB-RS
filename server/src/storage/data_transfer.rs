@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use bytes::BufMut;
+use datafusion::arrow::array::UInt32Builder;
 use datafusion::arrow::compute;
 use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
@@ -32,7 +33,8 @@ use object_store::ObjectStore;
 use tonic::codegen::Bytes;
 use tracing::debug;
 
-use crate::storage::{self, StorageEngine, COMPRESSED_DATA_FOLDER};
+use crate::storage::{self, StorageEngine, COMPRESSED_DATA_FOLDER, create_timestamp};
+use crate::types::TimestampBuilder;
 
 // TODO: Make the transfer batch size in bytes part of the user-configurable settings.
 // TODO: When the storage engine is changed to use object store for everything, receive
@@ -55,6 +57,9 @@ pub struct DataTransfer {
     /// The number of bytes that is required before transferring a batch of data to the remote
     /// object store.
     transfer_batch_size_in_bytes: usize,
+    /// Log of the total used disk space in bytes, updated every time a new compressed file is
+    /// added and when data is transferred.
+    used_disk_space: (TimestampBuilder, UInt32Builder),
 }
 
 impl DataTransfer {
@@ -92,7 +97,12 @@ impl DataTransfer {
             remote_data_folder_object_store,
             compressed_files: compressed_files.clone(),
             transfer_batch_size_in_bytes,
+            used_disk_space: (TimestampBuilder::new(), UInt32Builder::new()),
         };
+
+        // Log the initial used disk space.
+        let initial_disk_space: usize = compressed_files.values().into_iter().sum();
+        data_transfer.log_used_disk_space(initial_disk_space as isize);
 
         // Check if data should be transferred immediately.
         for (table_name, size_in_bytes) in compressed_files.iter() {
@@ -122,6 +132,7 @@ impl DataTransfer {
             self.compressed_files.insert(table_name.to_owned(), 0);
         }
         *self.compressed_files.get_mut(table_name).unwrap() += file_size;
+        self.log_used_disk_space(file_size as isize);
 
         // If the combined size of the files is larger than the batch size, transfer the data to the
         // remote object store.
@@ -220,6 +231,7 @@ impl DataTransfer {
         // Delete the transferred files from the in-memory tracking of compressed files.
         let transferred_bytes: usize = read_object_metas.iter().map(|meta| meta.size).sum();
         *self.compressed_files.get_mut(table_name).unwrap() -= transferred_bytes;
+        self.log_used_disk_space(-(transferred_bytes as isize));
 
         debug!(
             "Transferred {} bytes of compressed data to path '{}' in remote object store.",
@@ -244,6 +256,15 @@ impl DataTransfer {
             }
         }
         None
+    }
+
+    /// Add an entry to the used disk space log with the current timestamp and a new value
+    /// calculated based on the previous value.
+    fn log_used_disk_space(&mut self, value_change: isize) {
+        self.used_disk_space.0.append_value(create_timestamp());
+        
+        let last_value = self.used_disk_space.1.values_slice().last().unwrap_or(&0);
+        self.used_disk_space.1.append_value((*last_value as isize + value_change) as u32);
     }
 }
 
