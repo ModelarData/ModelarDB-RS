@@ -55,7 +55,7 @@ pub(super) struct CompressedDataManager {
     compressed_remaining_memory_in_bytes: isize,
     /// Reference to the schema for compressed data buffers.
     compressed_schema: CompressedSchema,
-    /// Log of the used compressed memory, updated every time the used memory changes.
+    /// Log of the used compressed memory in bytes, updated every time the used memory changes.
     compressed_used_memory: (TimestampBuilder, UInt32Builder),
 }
 

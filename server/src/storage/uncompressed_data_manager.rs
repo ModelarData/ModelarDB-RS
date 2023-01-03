@@ -20,6 +20,7 @@ use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use datafusion::arrow::array::{Array, StringArray, UInt32Builder};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -60,7 +61,7 @@ pub(super) struct UncompressedDataManager {
     // TODO: This is a temporary field used to fix existing tests. Remove when configuration component is changed.
     /// If this is true, compress finished buffers directly instead of queueing them.
     compress_directly: bool,
-    /// Log of the used uncompressed memory, updated every time the used memory changes.
+    /// Log of the used uncompressed memory in bytes, updated every time the used memory changes.
     uncompressed_used_memory: (TimestampBuilder, UInt32Builder),
 }
 
@@ -389,6 +390,28 @@ impl UncompressedDataManager {
         // TODO: All uncompressed and compressed data should be saved to disk first.
         // If not able to find any in-memory finished segments, panic!() is the only option.
         panic!("Not enough reserved memory for the necessary uncompressed buffers.");
+    }
+
+    /// Setter for the `uncompressed_remaining_memory_in_bytes` field to ensure the total used
+    /// memory log is updated when the remaining memory is updated.
+    fn set_uncompressed_remaining_memory_in_bytes(&mut self, value: usize) {
+        // Set the timestamp to the current time since epoch in milliseconds. unwrap() is safe since
+        // the Unix epoch is always earlier than now.
+        let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        self.uncompressed_used_memory
+            .0
+            .append_value(since_the_epoch.as_millis() as i64);
+
+        // Set the value to the total current used uncompressed memory.
+        let last_value = self.uncompressed_used_memory
+            .1
+            .values_slice()
+            .last()
+            .unwrap_or(&0);
+        let value_change = self.uncompressed_remaining_memory_in_bytes as isize - value as isize;
+        self.uncompressed_used_memory.1.append_value((last_value as isize - value_change) as u32);
+
+        self.uncompressed_remaining_memory_in_bytes = value;
     }
 }
 
