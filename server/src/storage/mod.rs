@@ -112,7 +112,6 @@ impl StorageEngine {
         )?;
 
         // Create the compressed data manager.
-        // TODO: Make the transfer batch size in bytes part of the user-configurable settings.
         let data_transfer = if let Some(remote_data_folder) = remote_data_folder {
             Some(
                 DataTransfer::try_new(
@@ -168,6 +167,7 @@ impl StorageEngine {
         for segments in compressed_segments {
             self.compressed_data_manager
                 .insert_compressed_segments(&model_table.name, segments)
+                .await
                 .map_err(|error| error.to_string())?;
         }
 
@@ -203,12 +203,14 @@ impl StorageEngine {
             let table_name = hash_to_table_name.get(&tag_hash).unwrap();
             self.compressed_data_manager
                 .insert_compressed_segments(table_name, segment)
+                .await
                 .map_err(|error| error.to_string())?;
         }
 
         // Flush CompressedDataManager.
         self.compressed_data_manager
             .flush()
+            .await
             .map_err(|error| error.to_string())?;
 
         Ok(())

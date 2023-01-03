@@ -34,15 +34,14 @@ use tracing::debug;
 
 use crate::storage::{self, StorageEngine, COMPRESSED_DATA_FOLDER};
 
+// TODO: Make the transfer batch size in bytes part of the user-configurable settings.
 // TODO: When the storage engine is changed to use object store for everything, receive
 //       the object store directly through the parameters instead.
 // TODO: Handle the case where a connection can not be established when transferring data.
-// TODO: When compressed data is saved, add the compressed file to the data transfer component.
 // TODO: Handle deleting the files after the transfer is complete in a safe way to avoid
 //       transferring the same data multiple times or deleting files that are currently used
 //       elsewhere.
 
-#[allow(dead_code)]
 pub struct DataTransfer {
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
     local_data_folder_path: PathBuf,
@@ -108,7 +107,6 @@ impl DataTransfer {
         Ok(data_transfer)
     }
 
-    #[allow(dead_code)]
     /// Insert the compressed file into the files to be transferred. Retrieve the size of the file
     /// and add it to the total size of the current local files in the table with `table_name`.
     pub async fn add_compressed_file(
