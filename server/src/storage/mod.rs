@@ -359,17 +359,12 @@ pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> Strin
     )
 }
 
-/// Create and add an entry to the logs used to create internal statistics. The timestamp is in
-/// milliseconds and the value is calculated based on the last log entry and the new value change.
-pub(self) fn create_log_entry(values: &[u32], value_change: isize) -> (Timestamp, u32) {
+/// Return the current milliseconds since the Unix epoch.
+pub(self) fn create_timestamp() -> Timestamp {
     // unwrap() is safe since the Unix epoch is always earlier than now.
     let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    let timestamp = since_the_epoch.as_millis() as Timestamp;
 
-    let last_value = values.last().unwrap_or(&0);
-    let new_value = (*last_value as isize + value_change) as u32;
-
-    (timestamp, new_value)
+    return since_the_epoch.as_millis() as Timestamp;
 }
 
 #[cfg(test)]

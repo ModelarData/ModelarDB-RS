@@ -31,7 +31,7 @@ use crate::models::ErrorBound;
 use crate::storage::uncompressed_data_buffer::{
     UncompressedDataBuffer, UncompressedInMemoryDataBuffer, UncompressedOnDiskDataBuffer,
 };
-use crate::storage::{create_log_entry, UNCOMPRESSED_DATA_FOLDER};
+use crate::storage::{create_timestamp, UNCOMPRESSED_DATA_FOLDER};
 use crate::types::{
     CompressedSchema, Timestamp, TimestampArray, TimestampBuilder, UncompressedSchema, Value,
     ValueArray,
@@ -62,6 +62,8 @@ pub(super) struct UncompressedDataManager {
     compress_directly: bool,
     /// Log of the used uncompressed memory in bytes, updated every time the used memory changes.
     uncompressed_used_memory: (TimestampBuilder, UInt32Builder),
+    /// Log of the amount of ingested data points, updated every time a new batch of data is ingested.
+    ingested_data_points: (TimestampBuilder, UInt32Builder),
 }
 
 impl UncompressedDataManager {
@@ -109,6 +111,7 @@ impl UncompressedDataManager {
             compressed_schema,
             compress_directly,
             uncompressed_used_memory: (TimestampBuilder::new(), UInt32Builder::new()),
+            ingested_data_points: (TimestampBuilder::new(), UInt32Builder::new()),
         })
     }
 
@@ -130,6 +133,10 @@ impl UncompressedDataManager {
             data_points.num_rows(),
             model_table.name
         );
+
+        // Log the amount of ingested data points.
+        self.ingested_data_points.0.append_value(create_timestamp());
+        self.ingested_data_points.1.append_value(data_points.num_rows() as u32);
 
         // Prepare the timestamp column for iteration.
         let timestamp_index = model_table.timestamp_column_index;
@@ -400,10 +407,12 @@ impl UncompressedDataManager {
     /// Setter for the `uncompressed_remaining_memory_in_bytes` field to ensure the total used
     /// memory log is updated when the remaining memory is updated.
     fn set_uncompressed_remaining_memory_in_bytes(&mut self, value: usize) {
-        let (timestamp, new_value) = create_log_entry(
-            self.uncompressed_used_memory.1.values_slice(),
-            self.uncompressed_remaining_memory_in_bytes as isize - value as isize,
-        );
+        let timestamp = create_timestamp();
+
+        // The value is calculated based on the last log entry and the new value change.
+        let last_value = self.uncompressed_used_memory.1.values_slice().last().unwrap_or(&0);
+        let value_change = self.uncompressed_remaining_memory_in_bytes as isize - value as isize;
+        let new_value = (*last_value as isize + value_change) as u32;
 
         self.uncompressed_used_memory.0.append_value(timestamp);
         self.uncompressed_used_memory.1.append_value(new_value);
