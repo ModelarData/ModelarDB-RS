@@ -409,7 +409,7 @@ impl UncompressedDataManager {
             .last()
             .unwrap_or(&0);
         let value_change = self.uncompressed_remaining_memory_in_bytes as isize - value as isize;
-        self.uncompressed_used_memory.1.append_value((last_value as isize - value_change) as u32);
+        self.uncompressed_used_memory.1.append_value((*last_value as isize - value_change) as u32);
 
         self.uncompressed_remaining_memory_in_bytes = value;
     }
