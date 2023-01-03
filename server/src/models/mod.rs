@@ -29,7 +29,6 @@ pub mod timestamps;
 use std::cmp::{Ordering, PartialOrd};
 use std::mem;
 
-
 use crate::errors::ModelarDbError;
 use crate::models::{gorilla::Gorilla, pmc_mean::PMCMean, swing::Swing};
 use crate::types::{
@@ -397,7 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn test_new_selected_model_selects_the_best_model() {
+    fn test_model_with_fewest_bytes_is_selected() {
         let uncompressed_timestamps_long =
             TimestampArray::from_slice(generate_timestamps(100, false));
         let uncompressed_timestamps_short =
