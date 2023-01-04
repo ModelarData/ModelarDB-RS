@@ -22,7 +22,6 @@ use std::io::ErrorKind::Other;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use datafusion::arrow::array::UInt32Builder;
 
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
@@ -34,8 +33,8 @@ use tracing::{debug, info};
 use crate::errors::ModelarDbError;
 use crate::storage::compressed_data_buffer::CompressedDataBuffer;
 use crate::storage::data_transfer::DataTransfer;
-use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER, create_timestamp};
-use crate::types::{CompressedSchema, Timestamp, TimestampBuilder, Value};
+use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER, StatisticLog};
+use crate::types::{CompressedSchema, Timestamp, Value};
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
@@ -56,7 +55,7 @@ pub(super) struct CompressedDataManager {
     /// Reference to the schema for compressed data buffers.
     compressed_schema: CompressedSchema,
     /// Log of the used compressed memory in bytes, updated every time the used memory changes.
-    compressed_used_memory: (TimestampBuilder, UInt32Builder),
+    used_compressed_memory: StatisticLog,
 }
 
 impl CompressedDataManager {
@@ -78,7 +77,7 @@ impl CompressedDataManager {
             compressed_queue: VecDeque::new(),
             compressed_remaining_memory_in_bytes: compressed_reserved_memory_in_bytes as isize,
             compressed_schema,
-            compressed_used_memory: (TimestampBuilder::new(), UInt32Builder::new()),
+            used_compressed_memory: StatisticLog::new(),
         })
     }
 
@@ -153,9 +152,9 @@ impl CompressedDataManager {
             segment_size
         };
 
-        self.set_compressed_remaining_memory_in_bytes(
-            self.compressed_remaining_memory_in_bytes - segments_size as isize
-        );
+        // Update the remaining memory for compressed data and log the change.
+        self.compressed_remaining_memory_in_bytes -= segments_size as isize;
+        self.used_compressed_memory.add_entry(segments_size as isize, true);
 
         // If the reserved memory limit is exceeded, save compressed data to disk.
         if self.compressed_remaining_memory_in_bytes < 0 {
@@ -298,13 +297,15 @@ impl CompressedDataManager {
 
         let file_path = compressed_data_buffer
             .save_to_apache_parquet(folder_path.as_path(), &self.compressed_schema)?;
-        self.set_compressed_remaining_memory_in_bytes(
-            self.compressed_remaining_memory_in_bytes + compressed_data_buffer.size_in_bytes as isize
-        );
+
+        // Update the remaining memory for compressed data and log the change.
+        let freed_memory = compressed_data_buffer.size_in_bytes as isize;
+        self.compressed_remaining_memory_in_bytes += freed_memory;
+        self.used_compressed_memory.add_entry(-freed_memory, true);
 
         debug!(
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
-            compressed_data_buffer.size_in_bytes, self.compressed_remaining_memory_in_bytes
+            freed_memory, self.compressed_remaining_memory_in_bytes
         );
 
         // Pass the saved compressed file to the data transfer component if a remote data folder
@@ -318,22 +319,6 @@ impl CompressedDataManager {
         }
 
         Ok(())
-    }
-
-    /// Setter for the `compressed_remaining_memory_in_bytes` field to ensure the total used
-    /// memory log is updated when the remaining memory is updated.
-    fn set_compressed_remaining_memory_in_bytes(&mut self, value: isize) {
-        let timestamp = create_timestamp();
-
-        // The value is calculated based on the last log entry and the new value change.
-        let last_value = self.compressed_used_memory.1.values_slice().last().unwrap_or(&0);
-        let value_change = self.compressed_remaining_memory_in_bytes - value;
-        let new_value = (*last_value as isize + value_change) as u32;
-
-        self.compressed_used_memory.0.append_value(timestamp);
-        self.compressed_used_memory.1.append_value(new_value);
-
-        self.compressed_remaining_memory_in_bytes = value;
     }
 }
 
