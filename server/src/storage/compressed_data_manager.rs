@@ -33,7 +33,7 @@ use tracing::{debug, info};
 use crate::errors::ModelarDbError;
 use crate::storage::compressed_data_buffer::CompressedDataBuffer;
 use crate::storage::data_transfer::DataTransfer;
-use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER, StatisticLog};
+use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER, Log};
 use crate::types::{CompressedSchema, Timestamp, Value};
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
@@ -55,7 +55,7 @@ pub(super) struct CompressedDataManager {
     /// Reference to the schema for compressed data buffers.
     compressed_schema: CompressedSchema,
     /// Log of the used compressed memory in bytes, updated every time the used memory changes.
-    used_compressed_memory: StatisticLog,
+    used_compressed_memory_log: Log,
 }
 
 impl CompressedDataManager {
@@ -77,7 +77,7 @@ impl CompressedDataManager {
             compressed_queue: VecDeque::new(),
             compressed_remaining_memory_in_bytes: compressed_reserved_memory_in_bytes as isize,
             compressed_schema,
-            used_compressed_memory: StatisticLog::new(),
+            used_compressed_memory_log: Log::new(),
         })
     }
 
@@ -154,7 +154,7 @@ impl CompressedDataManager {
 
         // Update the remaining memory for compressed data and log the change.
         self.compressed_remaining_memory_in_bytes -= segments_size as isize;
-        self.used_compressed_memory.add_entry(segments_size as isize, true);
+        self.used_compressed_memory_log.add_entry(segments_size as isize, true);
 
         // If the reserved memory limit is exceeded, save compressed data to disk.
         if self.compressed_remaining_memory_in_bytes < 0 {
@@ -301,7 +301,7 @@ impl CompressedDataManager {
         // Update the remaining memory for compressed data and log the change.
         let freed_memory = compressed_data_buffer.size_in_bytes as isize;
         self.compressed_remaining_memory_in_bytes += freed_memory;
-        self.used_compressed_memory.add_entry(-freed_memory, true);
+        self.used_compressed_memory_log.add_entry(-freed_memory, true);
 
         debug!(
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",

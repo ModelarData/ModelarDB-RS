@@ -317,14 +317,14 @@ impl StorageEngine {
 }
 
 /// Log used to record changes in specific attributes in the storage engine.
-struct StatisticLog {
+struct Log {
     /// Builder consisting of millisecond precision timestamps.
     timestamps: TimestampBuilder,
     /// Builder consisting of values.
     values: UInt32Builder,
 }
 
-impl StatisticLog {
+impl Log {
     fn new() -> Self {
         Self {
             timestamps: TimestampBuilder::new(),
