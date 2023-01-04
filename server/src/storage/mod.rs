@@ -26,13 +26,13 @@ mod data_transfer;
 mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
 
+use datafusion::arrow::array::{UInt32Array, UInt32Builder};
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{Error as IOError, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use datafusion::arrow::array::{UInt32Array, UInt32Builder};
 
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -254,6 +254,32 @@ impl StorageEngine {
                 query_data_folder,
             )
             .await
+    }
+
+    // TODO: Add the used disk space log to this.
+    /// Collect and return the logs of used uncompressed/compressed memory, used disk space, and ingested
+    /// data points over time. The logs are returned in tuples with the format (log_name, (timestamps, values)).
+    pub fn collect_logs(&mut self) -> Vec<(String, (TimestampArray, UInt32Array))> {
+        vec![
+            (
+                "used_uncompressed_memory".to_owned(),
+                self.uncompressed_data_manager
+                    .used_uncompressed_memory_log
+                    .finish(),
+            ),
+            (
+                "used_compressed_memory".to_owned(),
+                self.compressed_data_manager
+                    .used_compressed_memory_log
+                    .finish(),
+            ),
+            (
+                "ingested_data_points".to_owned(),
+                self.uncompressed_data_manager
+                    .ingested_data_points_log
+                    .finish(),
+            ),
+        ]
     }
 
     /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`

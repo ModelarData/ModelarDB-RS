@@ -60,9 +60,9 @@ pub(super) struct UncompressedDataManager {
     /// If this is true, compress finished buffers directly instead of queueing them.
     compress_directly: bool,
     /// Log of the used uncompressed memory in bytes, updated every time the used memory changes.
-    used_uncompressed_memory_log: Log,
+    pub(super) used_uncompressed_memory_log: Log,
     /// Log of the amount of ingested data points, updated every time a new batch of data is ingested.
-    ingested_data_points_log: Log,
+    pub(super) ingested_data_points_log: Log,
 }
 
 impl UncompressedDataManager {

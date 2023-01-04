@@ -55,7 +55,7 @@ pub(super) struct CompressedDataManager {
     /// Reference to the schema for compressed data buffers.
     compressed_schema: CompressedSchema,
     /// Log of the used compressed memory in bytes, updated every time the used memory changes.
-    used_compressed_memory_log: Log,
+    pub(super) used_compressed_memory_log: Log,
 }
 
 impl CompressedDataManager {

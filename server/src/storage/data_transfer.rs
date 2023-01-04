@@ -57,7 +57,7 @@ pub struct DataTransfer {
     transfer_batch_size_in_bytes: usize,
     /// Log of the total used disk space in bytes, updated every time a new compressed file is
     /// added and when data is transferred.
-    used_disk_space_log: Log,
+    pub used_disk_space_log: Log,
 }
 
 impl DataTransfer {
