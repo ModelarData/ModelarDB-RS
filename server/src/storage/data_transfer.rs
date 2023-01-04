@@ -262,7 +262,7 @@ impl DataTransfer {
     /// calculated based on the previous value.
     fn log_used_disk_space(&mut self, value_change: isize) {
         self.used_disk_space.0.append_value(create_timestamp());
-        
+
         let last_value = self.used_disk_space.1.values_slice().last().unwrap_or(&0);
         self.used_disk_space.1.append_value((*last_value as isize + value_change) as u32);
     }

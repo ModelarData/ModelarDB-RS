@@ -32,6 +32,7 @@ use std::io::{Error as IOError, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use datafusion::arrow::array::UInt32Builder;
 
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -55,7 +56,7 @@ use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::uncompressed_data_buffer::UncompressedDataBuffer;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
-use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
+use crate::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray};
 
 /// The folder storing uncompressed data in the data folders.
 pub const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
@@ -311,6 +312,23 @@ impl StorageEngine {
             bytes == APACHE_PARQUET_FILE_SIGNATURE
         } else {
             false
+        }
+    }
+}
+
+/// Log used to record changes in specific attributes in the storage engine.
+struct StatisticLog {
+    /// Builder consisting of millisecond precision timestamps.
+    timestamps: TimestampBuilder,
+    /// Builder consisting of values.
+    values: UInt32Builder,
+}
+
+impl StatisticLog {
+    fn new() -> Self {
+        Self {
+            timestamps: TimestampBuilder::new(),
+            values: UInt32Builder::new(),
         }
     }
 }
