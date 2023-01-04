@@ -32,7 +32,7 @@ use std::io::{Error as IOError, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use datafusion::arrow::array::UInt32Builder;
+use datafusion::arrow::array::{UInt32Array, UInt32Builder};
 
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -330,6 +330,28 @@ impl StatisticLog {
             timestamps: TimestampBuilder::new(),
             values: UInt32Builder::new(),
         }
+    }
+
+    /// Add a new entry to the log, where the timestamp is the current milliseconds since the Unix
+    /// epoch and the value is either set directly or based on the last value in the log.
+    fn add_entry(&mut self, value: isize, based_on_last: bool) {
+        // unwrap() is safe since the Unix epoch is always earlier than now.
+        let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let timestamp = since_the_epoch.as_millis() as Timestamp;
+
+        let mut new_value = value;
+        if based_on_last {
+            let last_value = self.values.values_slice().last().unwrap_or(&0);
+            new_value = *last_value as isize + value;
+        }
+
+        self.timestamps.append_value(timestamp);
+        self.values.append_value(new_value as u32);
+    }
+
+    /// Finish and reset the internal builders and return the finished Apache Arrow arrays.
+    fn finish(&mut self) -> (TimestampArray, UInt32Array) {
+        (self.timestamps.finish(), self.values.finish())
     }
 }
 
