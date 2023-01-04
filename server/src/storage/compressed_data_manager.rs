@@ -28,6 +28,7 @@ use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
+use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::errors::ModelarDbError;
@@ -56,6 +57,9 @@ pub(super) struct CompressedDataManager {
     compressed_schema: CompressedSchema,
     /// Log of the used compressed memory in bytes, updated every time the used memory changes.
     pub(super) used_compressed_memory_log: Log,
+    /// Log of the total used disk space in bytes, updated every time a new compressed file is
+    /// saved to disk.
+    pub used_disk_space_log: Arc<RwLock<Log>>,
 }
 
 impl CompressedDataManager {
@@ -66,6 +70,7 @@ impl CompressedDataManager {
         local_data_folder: PathBuf,
         compressed_reserved_memory_in_bytes: usize,
         compressed_schema: CompressedSchema,
+        used_disk_space_log: Arc<RwLock<Log>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the compressed data manager exists.
         fs::create_dir_all(local_data_folder.join(COMPRESSED_DATA_FOLDER))?;
@@ -78,6 +83,7 @@ impl CompressedDataManager {
             compressed_remaining_memory_in_bytes: compressed_reserved_memory_in_bytes as isize,
             compressed_schema,
             used_compressed_memory_log: Log::new(),
+            used_disk_space_log,
         })
     }
 
@@ -302,6 +308,10 @@ impl CompressedDataManager {
         let freed_memory = compressed_data_buffer.size_in_bytes as isize;
         self.compressed_remaining_memory_in_bytes += freed_memory;
         self.used_compressed_memory_log.add_entry(-freed_memory, true);
+
+        // Log the change to the used disk space.
+        let file_size = file_path.metadata()?.len() as isize;
+        self.used_disk_space_log.write().await.add_entry(file_size, true);
 
         debug!(
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",

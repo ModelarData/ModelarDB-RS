@@ -29,6 +29,7 @@ use futures::StreamExt;
 use object_store::local::LocalFileSystem;
 use object_store::path::{Path as ObjectStorePath, PathPart};
 use object_store::ObjectStore;
+use tokio::sync::RwLock;
 use tonic::codegen::Bytes;
 use tracing::debug;
 
@@ -55,9 +56,8 @@ pub struct DataTransfer {
     /// The number of bytes that is required before transferring a batch of data to the remote
     /// object store.
     transfer_batch_size_in_bytes: usize,
-    /// Log of the total used disk space in bytes, updated every time a new compressed file is
-    /// added and when data is transferred.
-    pub used_disk_space_log: Log,
+    /// Log of the total used disk space in bytes, updated when data is transferred.
+    pub used_disk_space_log: Arc<RwLock<Log>>,
 }
 
 impl DataTransfer {
@@ -68,6 +68,7 @@ impl DataTransfer {
         local_data_folder_path: PathBuf,
         remote_data_folder_object_store: Arc<dyn ObjectStore>,
         transfer_batch_size_in_bytes: usize,
+        used_disk_space_log: Arc<RwLock<Log>>,
     ) -> Result<Self, IOError> {
         let local_fs = LocalFileSystem::new_with_prefix(local_data_folder_path.clone())?;
         let local_data_folder_object_store = Arc::new(local_fs);
@@ -95,12 +96,12 @@ impl DataTransfer {
             remote_data_folder_object_store,
             compressed_files: compressed_files.clone(),
             transfer_batch_size_in_bytes,
-            used_disk_space_log: Log::new(),
+            used_disk_space_log
         };
 
         // Log the initial used disk space.
         let initial_disk_space: usize = compressed_files.values().into_iter().sum();
-        data_transfer.used_disk_space_log.add_entry(initial_disk_space as isize, true);
+        data_transfer.used_disk_space_log.write().await.add_entry(initial_disk_space as isize, true);
 
         // Check if data should be transferred immediately.
         for (table_name, size_in_bytes) in compressed_files.iter() {
@@ -130,7 +131,6 @@ impl DataTransfer {
             self.compressed_files.insert(table_name.to_owned(), 0);
         }
         *self.compressed_files.get_mut(table_name).unwrap() += file_size;
-        self.used_disk_space_log.add_entry(file_size as isize, true);
 
         // If the combined size of the files is larger than the batch size, transfer the data to the
         // remote object store.
@@ -229,7 +229,7 @@ impl DataTransfer {
         // Delete the transferred files from the in-memory tracking of compressed files.
         let transferred_bytes: usize = read_object_metas.iter().map(|meta| meta.size).sum();
         *self.compressed_files.get_mut(table_name).unwrap() -= transferred_bytes;
-        self.used_disk_space_log.add_entry(-(transferred_bytes as isize), true);
+        self.used_disk_space_log.write().await.add_entry(-(transferred_bytes as isize), true);
 
         debug!(
             "Transferred {} bytes of compressed data to path '{}' in remote object store.",

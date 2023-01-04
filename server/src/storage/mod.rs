@@ -46,6 +46,7 @@ use futures::StreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
 use tokio::fs::File as TokioFile;
+use tokio::sync::RwLock;
 use tonic::Status;
 
 use crate::array;
@@ -114,12 +115,14 @@ impl StorageEngine {
         )?;
 
         // Create the compressed data manager.
+        let used_disk_space_log = Arc::new(RwLock::new(Log::new()));
         let data_transfer = if let Some(remote_data_folder) = remote_data_folder {
             Some(
                 DataTransfer::try_new(
                     local_data_folder.clone(),
                     remote_data_folder,
                     64 * 1024 * 1024, // 64 MiB.
+                    used_disk_space_log.clone(),
                 )
                 .await?,
             )
@@ -132,6 +135,7 @@ impl StorageEngine {
             local_data_folder,
             metadata_manager.compressed_reserved_memory_in_bytes,
             metadata_manager.compressed_schema(),
+            used_disk_space_log,
         )?;
 
         Ok(Self {
@@ -256,10 +260,9 @@ impl StorageEngine {
             .await
     }
 
-    // TODO: Add the used disk space log to this.
     /// Collect and return the logs of used uncompressed/compressed memory, used disk space, and ingested
     /// data points over time. The logs are returned in tuples with the format (log_name, (timestamps, values)).
-    pub fn collect_logs(&mut self) -> Vec<(String, (TimestampArray, UInt32Array))> {
+    pub async fn collect_logs(&mut self) -> Vec<(String, (TimestampArray, UInt32Array))> {
         vec![
             (
                 "used_uncompressed_memory".to_owned(),
@@ -277,6 +280,14 @@ impl StorageEngine {
                 "ingested_data_points".to_owned(),
                 self.uncompressed_data_manager
                     .ingested_data_points_log
+                    .finish(),
+            ),
+            (
+                "used_disk_space".to_owned(),
+                self.compressed_data_manager
+                    .used_disk_space_log
+                    .write()
+                    .await
                     .finish(),
             ),
         ]
@@ -343,7 +354,7 @@ impl StorageEngine {
 }
 
 /// Log used to record changes in specific attributes in the storage engine.
-struct Log {
+pub struct Log {
     /// Builder consisting of millisecond precision timestamps.
     timestamps: TimestampBuilder,
     /// Builder consisting of values.
