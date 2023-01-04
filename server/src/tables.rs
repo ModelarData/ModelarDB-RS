@@ -327,8 +327,11 @@ impl TableProvider for ModelTable {
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         let predicate = rewrite_and_combine_filters(filters);
-        let apache_parquet_exec =
-            Arc::new(ParquetExec::new(file_scan_config, predicate.clone(), None));
+        let apache_parquet_exec = Arc::new(
+            ParquetExec::new(file_scan_config, predicate.clone(), None)
+                .with_pushdown_filters(true)
+                .with_reorder_filters(true),
+        );
 
         // Create a filter operator if filters are not empty.
         let compressed_schema = self.context.metadata_manager.compressed_schema();
