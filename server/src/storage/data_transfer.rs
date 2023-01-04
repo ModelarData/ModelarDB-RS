@@ -519,6 +519,7 @@ mod tests {
             local_data_folder_path.to_path_buf(),
             remote_data_folder_object_store,
             COMPRESSED_FILE_SIZE * 3 - 1,
+            Arc::new(RwLock::new(Log::new())),
         )
         .await
         .unwrap();

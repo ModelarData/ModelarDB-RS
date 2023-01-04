@@ -578,6 +578,7 @@ mod tests {
                 local_data_folder,
                 metadata_manager.compressed_reserved_memory_in_bytes,
                 metadata_manager.compressed_schema(),
+                Arc::new(RwLock::new(Log::new())),
             )
             .unwrap(),
         )

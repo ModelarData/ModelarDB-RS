@@ -589,6 +589,56 @@ mod tests {
             !StorageEngine::is_path_an_apache_parquet_file(&object_store, &object_store_path).await
         );
     }
+
+    // Tests for Log.
+    #[test]
+    fn test_add_entry_to_log() {
+        let mut log = Log::new();
+        let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let timestamp = since_the_epoch.as_millis() as Timestamp;
+
+        log.add_entry(30, false);
+        log.add_entry(30, false);
+
+        assert_eq!(log.timestamps.values_slice().last(), Some(&timestamp));
+        assert_eq!(log.values.values_slice().last(), Some(&30));
+    }
+
+    #[test]
+    fn test_add_positive_entry_to_log_based_on_last() {
+        let mut log = Log::new();
+
+        log.add_entry(30, true);
+        log.add_entry(30, true);
+
+        assert_eq!(log.values.values_slice().last(), Some(&60));
+    }
+
+    #[test]
+    fn test_add_negative_entry_to_log_based_on_last() {
+        let mut log = Log::new();
+
+        log.add_entry(30, true);
+        log.add_entry(-30, true);
+
+        assert_eq!(log.values.values_slice().last(), Some(&0));
+    }
+
+    #[test]
+    fn test_finish_log() {
+        let mut log = Log::new();
+
+        log.add_entry(30, true);
+        log.add_entry(-30, true);
+
+        let (_timestamps, values) = log.finish();
+        assert_eq!(values.value(0), 30);
+        assert_eq!(values.value(1), 0);
+
+        // Ensure that the builders in the log has been reset.
+        assert_eq!(log.timestamps.values_slice().len(), 0);
+        assert_eq!(log.values.values_slice().len(), 0);
+    }
 }
 
 #[cfg(test)]
