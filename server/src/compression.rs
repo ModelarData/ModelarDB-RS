@@ -397,8 +397,8 @@ impl CompressedSegmentBatchBuilder {
 mod tests {
     use super::*;
 
-    use datafusion::arrow::array::UInt8Array;
     use crate::compression::test_util::{generate_data, generate_timestamps};
+    use datafusion::arrow::array::UInt8Array;
 
     use crate::metadata::test_util;
     use crate::models;
@@ -798,7 +798,6 @@ pub mod test_util {
         let mut values: Vec<f32> = vec![];
 
         match (linear, random) {
-
             // Generates almost linear data.
             (true, true) => {
                 let mut random_linear = vec![];
@@ -831,10 +830,9 @@ pub mod test_util {
                 values.append(&mut random);
             }
 
-            // Generates randomly selected constant data.
+            // Generates constant data.
             (false, false) => {
-                let mut constant =
-                    vec![10.0; length as usize];
+                let mut constant = vec![10.0; length as usize];
                 values.append(&mut constant);
             }
         }
