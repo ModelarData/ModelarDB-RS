@@ -21,7 +21,7 @@ use std::fs;
 use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::path::PathBuf;
 
-use datafusion::arrow::array::{Array, StringArray, UInt32Builder};
+use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
 use tracing::debug;
 
@@ -31,10 +31,9 @@ use crate::models::ErrorBound;
 use crate::storage::uncompressed_data_buffer::{
     UncompressedDataBuffer, UncompressedInMemoryDataBuffer, UncompressedOnDiskDataBuffer,
 };
-use crate::storage::{create_timestamp, UNCOMPRESSED_DATA_FOLDER};
+use crate::storage::{StatisticLog, UNCOMPRESSED_DATA_FOLDER};
 use crate::types::{
-    CompressedSchema, Timestamp, TimestampArray, TimestampBuilder, UncompressedSchema, Value,
-    ValueArray,
+    CompressedSchema, Timestamp, TimestampArray, UncompressedSchema, Value, ValueArray,
 };
 use crate::{array, compression};
 
@@ -61,9 +60,9 @@ pub(super) struct UncompressedDataManager {
     /// If this is true, compress finished buffers directly instead of queueing them.
     compress_directly: bool,
     /// Log of the used uncompressed memory in bytes, updated every time the used memory changes.
-    uncompressed_used_memory: (TimestampBuilder, UInt32Builder),
+    used_uncompressed_memory: StatisticLog,
     /// Log of the amount of ingested data points, updated every time a new batch of data is ingested.
-    ingested_data_points: (TimestampBuilder, UInt32Builder),
+    ingested_data_points: StatisticLog,
 }
 
 impl UncompressedDataManager {
@@ -110,8 +109,8 @@ impl UncompressedDataManager {
             uncompressed_schema,
             compressed_schema,
             compress_directly,
-            uncompressed_used_memory: (TimestampBuilder::new(), UInt32Builder::new()),
-            ingested_data_points: (TimestampBuilder::new(), UInt32Builder::new()),
+            used_uncompressed_memory: StatisticLog::new(),
+            ingested_data_points: StatisticLog::new(),
         })
     }
 
@@ -135,8 +134,7 @@ impl UncompressedDataManager {
         );
 
         // Log the amount of ingested data points.
-        self.ingested_data_points.0.append_value(create_timestamp());
-        self.ingested_data_points.1.append_value(data_points.num_rows() as u32);
+        self.ingested_data_points.add_entry(data_points.num_rows() as isize, false);
 
         // Prepare the timestamp column for iteration.
         let timestamp_index = model_table.timestamp_column_index;
@@ -296,9 +294,10 @@ impl UncompressedDataManager {
 
             // Create a new buffer and reduce the remaining amount of reserved memory by its size.
             let mut buffer = UncompressedInMemoryDataBuffer::new(univariate_id);
-            self.set_uncompressed_remaining_memory_in_bytes(
-                self.uncompressed_remaining_memory_in_bytes - UncompressedInMemoryDataBuffer::memory_size()
-            );
+
+            let used_memory = UncompressedInMemoryDataBuffer::memory_size();
+            self.uncompressed_remaining_memory_in_bytes -= used_memory;
+            self.used_uncompressed_memory.add_entry(used_memory as isize, true);
 
             debug!(
                 "Created buffer for {}. Remaining reserved bytes: {}.",
@@ -319,10 +318,9 @@ impl UncompressedDataManager {
     pub(super) fn finished_data_buffer(&mut self) -> Option<Box<dyn UncompressedDataBuffer>> {
         if let Some(uncompressed_data_buffer) = self.finished_uncompressed_data_buffers.pop_front()
         {
-            // Add the memory size of the removed buffer back to the remaining bytes.
-            self.set_uncompressed_remaining_memory_in_bytes(
-                self.uncompressed_remaining_memory_in_bytes + uncompressed_data_buffer.memory_size()
-            );
+            // Add the memory size of the removed buffer back to the remaining bytes and log the change.
+            self.uncompressed_remaining_memory_in_bytes += uncompressed_data_buffer.memory_size();
+            self.used_uncompressed_memory.add_entry(-(uncompressed_data_buffer.memory_size() as isize), true);
 
             Some(uncompressed_data_buffer)
         } else {
@@ -338,10 +336,10 @@ impl UncompressedDataManager {
         univariate_id: u64,
         mut in_memory_data_buffer: UncompressedInMemoryDataBuffer,
     ) -> RecordBatch {
-        // Add the size of the segment back to the remaining reserved bytes.
-        self.set_uncompressed_remaining_memory_in_bytes(
-            self.uncompressed_remaining_memory_in_bytes + UncompressedInMemoryDataBuffer::memory_size()
-        );
+        // Add the size of the segment back to the remaining reserved bytes and log the change.
+        let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
+        self.uncompressed_remaining_memory_in_bytes += freed_memory;
+        self.used_uncompressed_memory.add_entry(-(freed_memory as isize), true);
 
         // unwrap() is safe to use since the error bound is not negative, infinite, or NAN.
         let error_bound = ErrorBound::try_new(0.0).unwrap();
@@ -383,18 +381,17 @@ impl UncompressedDataManager {
                 )
                 .await
             {
-                let new_remaining_memory =
-                    self.uncompressed_remaining_memory_in_bytes + UncompressedInMemoryDataBuffer::memory_size();
+                // Add the size of the in-memory data buffer back to the remaining reserved bytes.
+                let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
+                self.uncompressed_remaining_memory_in_bytes += freed_memory;
+                self.used_uncompressed_memory.add_entry(-(freed_memory as isize), true);
 
                 debug!(
                     "Spilled '{:?}'. Remaining reserved bytes: {}.",
-                    finished, new_remaining_memory
+                    finished, self.uncompressed_remaining_memory_in_bytes
                 );
 
                 *finished = Box::new(uncompressed_on_disk_data_buffer);
-
-                // Add the size of the in-memory data buffer back to the remaining reserved bytes.
-                self.set_uncompressed_remaining_memory_in_bytes(new_remaining_memory);
                 return;
             }
         }
@@ -402,22 +399,6 @@ impl UncompressedDataManager {
         // TODO: All uncompressed and compressed data should be saved to disk first.
         // If not able to find any in-memory finished segments, panic!() is the only option.
         panic!("Not enough reserved memory for the necessary uncompressed buffers.");
-    }
-
-    /// Setter for the `uncompressed_remaining_memory_in_bytes` field to ensure the total used
-    /// memory log is updated when the remaining memory is updated.
-    fn set_uncompressed_remaining_memory_in_bytes(&mut self, value: usize) {
-        let timestamp = create_timestamp();
-
-        // The value is calculated based on the last log entry and the new value change.
-        let last_value = self.uncompressed_used_memory.1.values_slice().last().unwrap_or(&0);
-        let value_change = self.uncompressed_remaining_memory_in_bytes as isize - value as isize;
-        let new_value = (*last_value as isize + value_change) as u32;
-
-        self.uncompressed_used_memory.0.append_value(timestamp);
-        self.uncompressed_used_memory.1.append_value(new_value);
-
-        self.uncompressed_remaining_memory_in_bytes = value;
     }
 }
 

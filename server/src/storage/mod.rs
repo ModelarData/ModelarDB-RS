@@ -399,14 +399,6 @@ pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> Strin
     )
 }
 
-/// Return the current milliseconds since the Unix epoch.
-pub(self) fn create_timestamp() -> Timestamp {
-    // unwrap() is safe since the Unix epoch is always earlier than now.
-    let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-
-    return since_the_epoch.as_millis() as Timestamp;
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
