@@ -486,7 +486,9 @@ mod tests {
         assert_eq!(
             data_manager.active_uncompressed_data_buffers.keys().len(),
             2
-        )
+        );
+
+        assert_eq!(data_manager.ingested_data_points_log.values.len(), 1);
     }
 
     #[tokio::test]
@@ -507,7 +509,9 @@ mod tests {
         assert_eq!(
             data_manager.active_uncompressed_data_buffers.keys().len(),
             4
-        )
+        );
+
+        assert_eq!(data_manager.ingested_data_points_log.values.len(), 1);
     }
 
     /// Create a record batch with data that resembles uncompressed data with a single tag and two
@@ -568,7 +572,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_can_insert_message_into_existing_uncompressed_data_buffer() {
+    async fn test_can_insert_data_point_into_existing_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path()).await;
         insert_data_points(2, &mut data_manager, UNIVARIATE_ID).await;

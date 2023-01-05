@@ -261,6 +261,7 @@ impl DataTransfer {
 mod tests {
     use super::*;
     use std::fs;
+    use datafusion::arrow::array::ArrayBuilder;
 
     use tempfile::{self, TempDir};
 
@@ -321,6 +322,8 @@ mod tests {
             *data_transfer.compressed_files.get(TABLE_NAME).unwrap(),
             COMPRESSED_FILE_SIZE * 2
         );
+
+        assert_eq!(data_transfer.used_disk_space_log.read().await.values.len(), 1);
     }
 
     #[tokio::test]
@@ -485,6 +488,8 @@ mod tests {
             *data_transfer.compressed_files.get(TABLE_NAME).unwrap(),
             0 as usize
         );
+
+        assert_eq!(data_transfer.used_disk_space_log.read().await.values.len(), 2);
     }
 
     /// Set up a data folder with a table folder that has a single compressed file in it. Return the

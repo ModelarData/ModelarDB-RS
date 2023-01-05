@@ -566,6 +566,7 @@ mod tests {
 
         assert!(-1 < data_manager.compressed_remaining_memory_in_bytes);
         assert_eq!(data_manager.used_compressed_memory_log.values.len(), 2);
+        assert_eq!(data_manager.used_disk_space_log.read().await.values.len(), 1);
     }
 
     /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
