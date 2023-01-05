@@ -407,6 +407,7 @@ fn is_compressed_file_within_time_and_value_range(
 mod tests {
     use super::*;
     use std::path::Path;
+    use datafusion::arrow::array::ArrayBuilder;
 
     use datafusion::arrow::compute;
     use object_store::local::LocalFileSystem;
@@ -543,6 +544,7 @@ mod tests {
             .unwrap();
 
         assert!(reserved_memory > data_manager.compressed_remaining_memory_in_bytes);
+        assert_eq!(data_manager.used_compressed_memory_log.values.len(), 1);
     }
 
     #[tokio::test]
@@ -563,6 +565,7 @@ mod tests {
             .unwrap();
 
         assert!(-1 < data_manager.compressed_remaining_memory_in_bytes);
+        assert_eq!(data_manager.used_compressed_memory_log.values.len(), 2);
     }
 
     /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.

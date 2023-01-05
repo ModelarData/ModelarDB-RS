@@ -440,6 +440,7 @@ mod tests {
     use super::*;
     use std::path::Path;
     use std::sync::Arc;
+    use datafusion::arrow::array::ArrayBuilder;
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
     use tempfile;
@@ -693,6 +694,11 @@ mod tests {
         data_manager.spill_finished_buffer().await;
 
         assert!(remaining_memory < data_manager.uncompressed_remaining_memory_in_bytes);
+        assert_eq!(data_manager.used_uncompressed_memory_log.values.len(), 2);
+
+        // The used disk space log should have an entry for when the uncompressed data manager is
+        // created and for when the data buffer is spilled to disk.
+        assert_eq!(data_manager.used_disk_space_log.read().await.values.len(), 2);
     }
 
     #[tokio::test]
@@ -704,6 +710,7 @@ mod tests {
         insert_data_points(1, &mut data_manager, UNIVARIATE_ID).await;
 
         assert!(reserved_memory > data_manager.uncompressed_remaining_memory_in_bytes);
+        assert_eq!(data_manager.used_uncompressed_memory_log.values.len(), 1);
     }
 
     #[tokio::test]
@@ -721,6 +728,7 @@ mod tests {
         data_manager.finished_data_buffer().await;
 
         assert!(remaining_memory < data_manager.uncompressed_remaining_memory_in_bytes);
+        assert_eq!(data_manager.used_uncompressed_memory_log.values.len(), 2);
     }
 
     #[tokio::test]
@@ -745,6 +753,9 @@ mod tests {
             remaining_memory,
             data_manager.uncompressed_remaining_memory_in_bytes
         );
+
+        assert_eq!(data_manager.used_uncompressed_memory_log.values.len(), 3);
+        assert_eq!(data_manager.used_disk_space_log.read().await.values.len(), 3);
     }
 
     #[tokio::test]
