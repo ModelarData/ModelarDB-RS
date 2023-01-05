@@ -105,6 +105,8 @@ impl StorageEngine {
         metadata_manager: MetadataManager,
         compress_directly: bool,
     ) -> Result<Self, IOError> {
+        let used_disk_space_log = Arc::new(RwLock::new(Log::new()));
+
         // Create the uncompressed data manager.
         let uncompressed_data_manager = UncompressedDataManager::try_new(
             local_data_folder.clone(),
@@ -112,10 +114,10 @@ impl StorageEngine {
             metadata_manager.uncompressed_schema(),
             metadata_manager.compressed_schema(),
             compress_directly,
-        )?;
+            used_disk_space_log.clone(),
+        ).await?;
 
         // Create the compressed data manager.
-        let used_disk_space_log = Arc::new(RwLock::new(Log::new()));
         let data_transfer = if let Some(remote_data_folder) = remote_data_folder {
             Some(
                 DataTransfer::try_new(
@@ -183,8 +185,8 @@ impl StorageEngine {
     /// Retrieve the oldest finished [`UncompressedDataBuffer`] from [`UncompressedDataManager`] and
     /// return it. Return [`None`] if there are no finished
     /// [`UncompressedDataBuffers`](UncompressedDataBuffer).
-    pub fn finished_uncompressed_data_buffer(&mut self) -> Option<Box<dyn UncompressedDataBuffer>> {
-        self.uncompressed_data_manager.finished_data_buffer()
+    pub async fn finished_uncompressed_data_buffer(&mut self) -> Option<Box<dyn UncompressedDataBuffer>> {
+        self.uncompressed_data_manager.finished_data_buffer().await
     }
 
     /// Flush all of the data the [`StorageEngine`] is currently storing in memory to disk. If all
