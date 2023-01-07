@@ -304,11 +304,12 @@ fn equal_or_nan(v1: f64, v2: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::compression::test_util::{generate_data, generate_timestamps};
+
     use datafusion::from_slice::FromSlice;
     use proptest::num;
     use proptest::{prop_assert, prop_assume, proptest};
 
+    use crate::compression::test_util as comp_test_util;
     use crate::types::TimestampArray;
 
     const UNCOMPRESSED_TIMESTAMPS: &[Timestamp] = &[100, 200, 300, 400, 500];
@@ -395,24 +396,68 @@ mod tests {
         assert_eq!(10, selected_model.values.len());
     }
 
+    /// This test ensures that the model with the fewest amount of bytes is selected.
+    /// It does this by asserting that a range of constant/linear values above and below the [`GORILLA_MAXIMUM_LENGTH`](crate::compression::GORILLA_MAXIMUM_LENGTH)
+    /// threshold always uses either PMC-Mean or Swing, as these take up the least amount of space.
     #[test]
     fn test_model_with_fewest_bytes_is_selected() {
-        let uncompressed_timestamps_long =
-            TimestampArray::from_slice(generate_timestamps(100, false));
-        let uncompressed_timestamps_short =
-            TimestampArray::from_slice(generate_timestamps(25, false));
-        let uncompressed_values_long =
-            ValueArray::from(generate_data(100, false, false, None, None));
-        let uncompressed_values_short =
-            ValueArray::from(generate_data(25, false, false, None, None));
+        let uncompressed_timestamps_pmc_long =
+            TimestampArray::from_slice(comp_test_util::generate_timestamps(100, false));
+        let uncompressed_timestamps_pmc_short =
+            TimestampArray::from_slice(comp_test_util::generate_timestamps(25, false));
+        let uncompressed_values_pmc_long = ValueArray::from(comp_test_util::generate_values(
+            100,
+            comp_test_util::DataType::Constant,
+            None,
+            None,
+        ));
+        let uncompressed_values_pmc_short = ValueArray::from(comp_test_util::generate_values(
+            25,
+            comp_test_util::DataType::Constant,
+            None,
+            None,
+        ));
 
-        let selected_model_long =
-            create_selected_model(&uncompressed_timestamps_long, &uncompressed_values_long);
-        let selected_model_short =
-            create_selected_model(&uncompressed_timestamps_short, &uncompressed_values_short);
+        let selected_model_pmc_long = create_selected_model(
+            &uncompressed_timestamps_pmc_long,
+            &uncompressed_values_pmc_long,
+        );
+        let selected_model_pmc_short = create_selected_model(
+            &uncompressed_timestamps_pmc_short,
+            &uncompressed_values_pmc_short,
+        );
 
-        assert_eq!(PMC_MEAN_ID, selected_model_long.model_type_id);
-        assert_eq!(PMC_MEAN_ID, selected_model_short.model_type_id);
+        assert_eq!(PMC_MEAN_ID, selected_model_pmc_long.model_type_id);
+        assert_eq!(PMC_MEAN_ID, selected_model_pmc_short.model_type_id);
+
+        let uncompressed_timestamps_swing_long =
+            TimestampArray::from_slice(comp_test_util::generate_timestamps(100, false));
+        let uncompressed_timestamps_swing_short =
+            TimestampArray::from_slice(comp_test_util::generate_timestamps(25, false));
+        let uncompressed_values_swing_long = ValueArray::from(comp_test_util::generate_values(
+            100,
+            comp_test_util::DataType::Linear,
+            None,
+            None,
+        ));
+        let uncompressed_values_swing_short = ValueArray::from(comp_test_util::generate_values(
+            25,
+            comp_test_util::DataType::Linear,
+            None,
+            None,
+        ));
+
+        let selected_model_swing_long = create_selected_model(
+            &uncompressed_timestamps_swing_long,
+            &uncompressed_values_swing_long,
+        );
+        let selected_model_swing_short = create_selected_model(
+            &uncompressed_timestamps_swing_short,
+            &uncompressed_values_swing_short,
+        );
+
+        assert_eq!(SWING_ID, selected_model_swing_long.model_type_id);
+        assert_eq!(SWING_ID, selected_model_swing_short.model_type_id);
     }
 
     fn create_selected_model(
