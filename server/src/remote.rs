@@ -568,7 +568,22 @@ impl FlightService for FlightServiceHandler {
                 Field::new("values", DataType::List(Box::new(value_field)), false),
             ]);
 
-            Ok(Response::new(Box::pin(stream::once(async { Ok(arrow_flight::Result { body: batch_bytes }) }))))
+            // Extract the data from the logs and insert it into Apache Arrow array builders.
+            let mut log_builder = StringBuilder::new();
+            let mut timestamps_builder = ListBuilder::new(TimestampBuilder::new());
+            let mut values_builder = ListBuilder::new(UInt32Builder::new());
+
+            for (log_name, (timestamps, values)) in logs.iter() {
+                log_builder.append_value(log_name);
+
+                timestamps_builder.values().append_slice(timestamps.values());
+                timestamps_builder.append(true);
+
+                values_builder.values().append_slice(values.values());
+                values_builder.append(true);
+            }
+            
+            Ok(Response::new(Box::pin(stream::empty())))
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
