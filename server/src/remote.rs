@@ -32,13 +32,13 @@ use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
+use datafusion::arrow::array::{ListBuilder, StringBuilder, UInt32Builder};
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field};
+use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::arrow::{
     array::ArrayRef, datatypes::Schema, datatypes::SchemaRef, error::ArrowError,
     ipc::writer::IpcWriteOptions, record_batch::RecordBatch,
 };
-use datafusion::arrow::array::{ListArray, ListBuilder, StringArray, StringBuilder, UInt32Builder};
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, UInt32Type};
-use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::catalog::schema::SchemaProvider;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
@@ -52,8 +52,8 @@ use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 use crate::tables::ModelTable;
-use crate::Context;
 use crate::types::{ArrowTimestamp, TimestampBuilder};
+use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
@@ -550,9 +550,6 @@ impl FlightService for FlightServiceHandler {
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "CollectLogs" {
-            // TODO: Use the actual log names from the logs.
-            // TODO: Use the actual values from the logs.
-            // TODO: Use the actual timestamps from the logs.
             // TODO: Replace the unwraps with map_err to status.
 
             let mut storage_engine = self.context.storage_engine.write().await;
@@ -564,7 +561,11 @@ impl FlightService for FlightServiceHandler {
 
             let schema = Schema::new(vec![
                 Field::new("log", DataType::Utf8, false),
-                Field::new("timestamps", DataType::List(Box::new(value_field.clone())), false),
+                Field::new(
+                    "timestamps",
+                    DataType::List(Box::new(timestamp_field)),
+                    false,
+                ),
                 Field::new("values", DataType::List(Box::new(value_field)), false),
             ]);
 
@@ -576,14 +577,35 @@ impl FlightService for FlightServiceHandler {
             for (log_name, (timestamps, values)) in logs.iter() {
                 log_builder.append_value(log_name);
 
-                timestamps_builder.values().append_slice(timestamps.values());
+                timestamps_builder
+                    .values()
+                    .append_slice(timestamps.values());
                 timestamps_builder.append(true);
 
                 values_builder.values().append_slice(values.values());
                 values_builder.append(true);
             }
-            
-            Ok(Response::new(Box::pin(stream::empty())))
+
+            // Finish the builders and create the record batch containing the logs.
+            let batch = RecordBatch::try_new(
+                Arc::new(schema.clone()),
+                vec![
+                    Arc::new(log_builder.finish()),
+                    Arc::new(timestamps_builder.finish()),
+                    Arc::new(values_builder.finish()),
+                ],
+            )
+            .unwrap();
+
+            let options = IpcWriteOptions::default();
+            let mut writer = StreamWriter::try_new_with_options(vec![], &schema, options).unwrap();
+
+            writer.write(&batch).unwrap();
+            let batch_bytes = writer.into_inner().unwrap();
+
+            Ok(Response::new(Box::pin(stream::once(async {
+                Ok(arrow_flight::Result { body: batch_bytes })
+            }))))
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
@@ -615,9 +637,11 @@ impl FlightService for FlightServiceHandler {
 
         let collect_logs = ActionType {
             r#type: "CollectLogs".to_owned(),
-            description: "Collect internal logs describing the amount of used memory for uncompressed \
+            description:
+                "Collect internal logs describing the amount of used memory for uncompressed \
             and compressed data, used disk space, and ingested data points over time. The logs are \
-            cleared when collected.".to_owned(),
+            cleared when collected."
+                    .to_owned(),
         };
 
         let output = stream::iter(vec![
