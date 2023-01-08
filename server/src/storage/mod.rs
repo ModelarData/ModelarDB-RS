@@ -37,7 +37,7 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::async_reader::ParquetRecordBatchStreamBuilder;
 use datafusion::parquet::arrow::ArrowWriter;
-use datafusion::parquet::basic::Compression;
+use datafusion::parquet::basic::{Compression, Encoding};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
 use futures::StreamExt;
@@ -321,9 +321,11 @@ pub(self) fn create_apache_arrow_writer<W: Write>(
     schema: SchemaRef,
 ) -> Result<ArrowWriter<W>, ParquetError> {
     let props = WriterProperties::builder()
+        .set_encoding(Encoding::PLAIN)
         .set_compression(Compression::ZSTD)
         .set_dictionary_enabled(false)
-        .set_statistics_enabled(EnabledStatistics::Page)
+        .set_statistics_enabled(EnabledStatistics::None)
+        .set_bloom_filter_enabled(false)
         .build();
 
     let writer = ArrowWriter::try_new(writer, schema, Some(props))?;
