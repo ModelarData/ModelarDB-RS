@@ -550,8 +550,6 @@ impl FlightService for FlightServiceHandler {
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "CollectLogs" {
-            // TODO: Replace the unwraps with map_err to status.
-
             let mut storage_engine = self.context.storage_engine.write().await;
             let logs = storage_engine.collect_logs().await;
 
@@ -597,11 +595,17 @@ impl FlightService for FlightServiceHandler {
             )
             .unwrap();
 
+            // Write the schema and corresponding record batch to a stream.
             let options = IpcWriteOptions::default();
-            let mut writer = StreamWriter::try_new_with_options(vec![], &schema, options).unwrap();
+            let mut writer = StreamWriter::try_new_with_options(vec![], &schema, options)
+                .map_err(|error| Status::internal(error.to_string()))?;
 
-            writer.write(&batch).unwrap();
-            let batch_bytes = writer.into_inner().unwrap();
+            writer
+                .write(&batch)
+                .map_err(|error| Status::internal(error.to_string()))?;
+            let batch_bytes = writer
+                .into_inner()
+                .map_err(|error| Status::internal(error.to_string()))?;
 
             Ok(Response::new(Box::pin(stream::once(async {
                 Ok(arrow_flight::Result { body: batch_bytes })
