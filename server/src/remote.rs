@@ -36,6 +36,9 @@ use datafusion::arrow::{
     array::ArrayRef, datatypes::Schema, datatypes::SchemaRef, error::ArrowError,
     ipc::writer::IpcWriteOptions, record_batch::RecordBatch,
 };
+use datafusion::arrow::array::{ListArray, ListBuilder, StringArray, StringBuilder, UInt32Builder};
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, UInt32Type};
+use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::catalog::schema::SchemaProvider;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
@@ -50,6 +53,7 @@ use crate::parser::{self, ValidStatement};
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 use crate::tables::ModelTable;
 use crate::Context;
+use crate::types::{ArrowTimestamp, TimestampBuilder};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
@@ -545,6 +549,26 @@ impl FlightService for FlightServiceHandler {
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "CollectLogs" {
+            // TODO: Use the actual log names from the logs.
+            // TODO: Use the actual values from the logs.
+            // TODO: Use the actual timestamps from the logs.
+            // TODO: Replace the unwraps with map_err to status.
+
+            let mut storage_engine = self.context.storage_engine.write().await;
+            let logs = storage_engine.collect_logs().await;
+
+            // Create the schema for the single record batch that contains all data from the logs.
+            let timestamp_field = Field::new("item", ArrowTimestamp::DATA_TYPE, true);
+            let value_field = Field::new("item", DataType::UInt32, true);
+
+            let schema = Schema::new(vec![
+                Field::new("log", DataType::Utf8, false),
+                Field::new("timestamps", DataType::List(Box::new(value_field.clone())), false),
+                Field::new("values", DataType::List(Box::new(value_field)), false),
+            ]);
+
+            Ok(Response::new(Box::pin(stream::once(async { Ok(arrow_flight::Result { body: batch_bytes }) }))))
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
@@ -574,10 +598,18 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
+        let collect_logs = ActionType {
+            r#type: "CollectLogs".to_owned(),
+            description: "Collect internal logs describing the amount of used memory for uncompressed \
+            and compressed data, used disk space, and ingested data points over time. The logs are \
+            cleared when collected.".to_owned(),
+        };
+
         let output = stream::iter(vec![
             Ok(create_command_statement_update_action),
             Ok(flush_data_to_disk),
             Ok(flush_edge_action),
+            Ok(collect_logs),
         ]);
 
         Ok(Response::new(Box::pin(output)))
