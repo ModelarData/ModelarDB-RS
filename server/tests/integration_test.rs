@@ -743,6 +743,7 @@ fn stop_modelardbd(mut flight_server: Child) {
     let mut system = System::new_all();
 
     while let Some(_process) = system.process(Pid::from_u32(flight_server.id())) {
+        system.refresh_all();
         flight_server
             .kill()
             .expect(&*format!("Could not kill process {}.", flight_server.id()));

@@ -309,8 +309,9 @@ mod tests {
     use proptest::num;
     use proptest::{prop_assert, prop_assume, proptest};
 
-    use crate::compression::test_util as comp_test_util;
+    use crate::compression::test_util as compression_test_util;
     use crate::types::TimestampArray;
+    use compression_test_util::StructureOfValues;
 
     const UNCOMPRESSED_TIMESTAMPS: &[Timestamp] = &[100, 200, 300, 400, 500];
 
@@ -348,7 +349,8 @@ mod tests {
         let uncompressed_timestamps = TimestampArray::from_slice(UNCOMPRESSED_TIMESTAMPS);
         let uncompressed_values = ValueArray::from(vec![10.0, 10.0, 10.0, 10.0, 10.0]);
 
-        let selected_model = create_selected_model(&uncompressed_timestamps, &uncompressed_values);
+        let selected_model =
+            create_selected_model(&uncompressed_timestamps, &uncompressed_values, 0.0);
 
         assert_eq!(PMC_MEAN_ID, selected_model.model_type_id);
         assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
@@ -361,7 +363,8 @@ mod tests {
     fn test_model_selected_model_attributes_for_increasing_swing() {
         let uncompressed_timestamps = TimestampArray::from_slice(UNCOMPRESSED_TIMESTAMPS);
         let uncompressed_values = ValueArray::from(vec![10.0, 20.0, 30.0, 40.0, 50.0]);
-        let selected_model = create_selected_model(&uncompressed_timestamps, &uncompressed_values);
+        let selected_model =
+            create_selected_model(&uncompressed_timestamps, &uncompressed_values, 0.0);
 
         assert_eq!(SWING_ID, selected_model.model_type_id);
         assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
@@ -374,7 +377,8 @@ mod tests {
     fn test_model_selected_model_attributes_for_decreasing_swing() {
         let uncompressed_timestamps = TimestampArray::from_slice(UNCOMPRESSED_TIMESTAMPS);
         let uncompressed_values = ValueArray::from(vec![50.0, 40.0, 30.0, 20.0, 10.0]);
-        let selected_model = create_selected_model(&uncompressed_timestamps, &uncompressed_values);
+        let selected_model =
+            create_selected_model(&uncompressed_timestamps, &uncompressed_values, 0.0);
 
         assert_eq!(SWING_ID, selected_model.model_type_id);
         assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
@@ -387,7 +391,8 @@ mod tests {
     fn test_model_selected_model_attributes_for_gorilla() {
         let uncompressed_timestamps = TimestampArray::from_slice(UNCOMPRESSED_TIMESTAMPS);
         let uncompressed_values = ValueArray::from(vec![37.0, 73.0, 37.0, 73.0, 37.0]);
-        let selected_model = create_selected_model(&uncompressed_timestamps, &uncompressed_values);
+        let selected_model =
+            create_selected_model(&uncompressed_timestamps, &uncompressed_values, 0.0);
 
         assert_eq!(GORILLA_ID, selected_model.model_type_id);
         assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
@@ -397,74 +402,65 @@ mod tests {
     }
 
     /// This test ensures that the model with the fewest amount of bytes is selected.
-    /// It does this by asserting that a range of constant/linear values above and below the [`GORILLA_MAXIMUM_LENGTH`](crate::compression::GORILLA_MAXIMUM_LENGTH)
-    /// threshold always uses either PMC-Mean or Swing, as these take up the least amount of space.
     #[test]
-    fn test_model_with_fewest_bytes_is_selected() {
-        let uncompressed_timestamps_pmc_long =
-            TimestampArray::from_slice(comp_test_util::generate_timestamps(100, false));
-        let uncompressed_timestamps_pmc_short =
-            TimestampArray::from_slice(comp_test_util::generate_timestamps(25, false));
-        let uncompressed_values_pmc_long = ValueArray::from(comp_test_util::generate_values(
-            100,
-            comp_test_util::DataType::Constant,
+    fn test_model_with_fewest_bytes_is_selected_pmc_mean() {
+        let values_1 = ValueArray::from(compression_test_util::generate_values(
+            5,
+            StructureOfValues::Random,
+            Some(-1.0),
+            Some(1.0),
+        ));
+        let timestamps_1 =
+            TimestampArray::from_slice(compression_test_util::generate_timestamps(5, false));
+        let values_2 = ValueArray::from(compression_test_util::generate_values(
+            50,
+            StructureOfValues::Random,
+            Some(-1.0),
+            Some(1.0),
+        ));
+        let timestamps_2 =
+            TimestampArray::from_slice(compression_test_util::generate_timestamps(50, false));
+
+        let selected_model_1 = create_selected_model(&timestamps_1, &values_1, 10.0);
+        let selected_model_2 = create_selected_model(&timestamps_2, &values_2, 10.0);
+
+        assert_eq!(selected_model_1.model_type_id, PMC_MEAN_ID);
+        assert_eq!(selected_model_2.model_type_id, PMC_MEAN_ID);
+    }
+
+    /// This test ensures that the model with the fewest amount of bytes is selected.
+    #[test]
+    fn test_model_with_fewest_bytes_is_selected_swing() {
+        let values_1 = ValueArray::from(compression_test_util::generate_values(
+            5,
+            StructureOfValues::Linear,
             None,
             None,
         ));
-        let uncompressed_values_pmc_short = ValueArray::from(comp_test_util::generate_values(
-            25,
-            comp_test_util::DataType::Constant,
+        let timestamps_1 =
+            TimestampArray::from_slice(compression_test_util::generate_timestamps(5, false));
+        let values_2 = ValueArray::from(compression_test_util::generate_values(
+            50,
+            StructureOfValues::Linear,
             None,
             None,
         ));
+        let timestamps_2 =
+            TimestampArray::from_slice(compression_test_util::generate_timestamps(50, false));
 
-        let selected_model_pmc_long = create_selected_model(
-            &uncompressed_timestamps_pmc_long,
-            &uncompressed_values_pmc_long,
-        );
-        let selected_model_pmc_short = create_selected_model(
-            &uncompressed_timestamps_pmc_short,
-            &uncompressed_values_pmc_short,
-        );
+        let selected_model_1 = create_selected_model(&timestamps_1, &values_1, 0.0);
+        let selected_model_2 = create_selected_model(&timestamps_2, &values_2, 0.0);
 
-        assert_eq!(PMC_MEAN_ID, selected_model_pmc_long.model_type_id);
-        assert_eq!(PMC_MEAN_ID, selected_model_pmc_short.model_type_id);
-
-        let uncompressed_timestamps_swing_long =
-            TimestampArray::from_slice(comp_test_util::generate_timestamps(100, false));
-        let uncompressed_timestamps_swing_short =
-            TimestampArray::from_slice(comp_test_util::generate_timestamps(25, false));
-        let uncompressed_values_swing_long = ValueArray::from(comp_test_util::generate_values(
-            100,
-            comp_test_util::DataType::Linear,
-            None,
-            None,
-        ));
-        let uncompressed_values_swing_short = ValueArray::from(comp_test_util::generate_values(
-            25,
-            comp_test_util::DataType::Linear,
-            None,
-            None,
-        ));
-
-        let selected_model_swing_long = create_selected_model(
-            &uncompressed_timestamps_swing_long,
-            &uncompressed_values_swing_long,
-        );
-        let selected_model_swing_short = create_selected_model(
-            &uncompressed_timestamps_swing_short,
-            &uncompressed_values_swing_short,
-        );
-
-        assert_eq!(SWING_ID, selected_model_swing_long.model_type_id);
-        assert_eq!(SWING_ID, selected_model_swing_short.model_type_id);
+        assert_eq!(selected_model_1.model_type_id, SWING_ID);
+        assert_eq!(selected_model_2.model_type_id, SWING_ID);
     }
 
     fn create_selected_model(
         uncompressed_timestamps: &TimestampArray,
         uncompressed_values: &ValueArray,
+        error_bound: f32,
     ) -> SelectedModel {
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let error_bound = ErrorBound::try_new(error_bound).unwrap();
         let mut pmc_mean = PMCMean::new(error_bound);
         let mut swing = Swing::new(error_bound);
         let mut gorilla = Gorilla::new();
