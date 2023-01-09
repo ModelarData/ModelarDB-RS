@@ -326,11 +326,11 @@ impl MetadataManager {
         // Open a connection to the database containing the metadata.
         let connection = Connection::open(&self.metadata_database_path)?;
 
-        let mut hash_to_table_name = HashMap::new();
         let mut select_statement =
             connection.prepare("SELECT hash, table_name FROM model_table_hash_table_name")?;
         let mut rows = select_statement.query([])?;
 
+        let mut hash_to_table_name = HashMap::new();
         while let Some(row) = rows.next()? {
             // SQLite use signed integers https://www.sqlite.org/datatype3.html.
             let signed_tag_hash = row.get::<usize, i64>(0)?;
@@ -339,6 +339,47 @@ impl MetadataManager {
         }
 
         Ok(hash_to_table_name)
+    }
+
+    /// Return a mapping from tag hashes to the tags in the columns with the names in
+    /// `tag_column_names` for the time series in the model table with the name `model_table_name`.
+    /// Returns a [`Error`](rusqlite::Error) if the necessary data cannot be retrieved from the
+    /// metadata database.
+    pub fn mapping_from_hash_to_tags(
+        &self,
+        model_table_name: &str,
+        tag_column_names: &Vec<&str>,
+    ) -> Result<HashMap<u64, Vec<String>>> {
+        // Return an empty HashMap if no tag column names are passed to keep the signature simple.
+        if tag_column_names.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // Open a connection to the database containing the metadata.
+        let connection = Connection::open(&self.metadata_database_path)?;
+
+        let mut select_statement = connection.prepare(&format!(
+            "SELECT hash,{} FROM {}_tags",
+            tag_column_names.join(","),
+            model_table_name
+        ))?;
+        let mut rows = select_statement.query([])?;
+
+        let mut hash_to_tags = HashMap::new();
+        while let Some(row) = rows.next()? {
+            // SQLite use signed integers https://www.sqlite.org/datatype3.html.
+            let signed_tag_hash = row.get::<usize, i64>(0)?;
+            let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
+
+            // Add all of the tag in order so they can be directly appended to each row.
+            let mut tags = Vec::with_capacity(tag_column_names.len());
+            for tag_column_index in 1..=tag_column_names.len() {
+                tags.push(row.get::<usize, String>(tag_column_index)?);
+            }
+            hash_to_tags.insert(tag_hash, tags);
+        }
+
+        Ok(hash_to_tags)
     }
 
     /// Compute the 64-bit univariate ids of the univariate time series to retrieve from the storage

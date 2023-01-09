@@ -19,6 +19,7 @@
 //! [`GridStream`] which implements [`Stream`] and [`RecordBatchStream`].
 
 use std::any::Any;
+use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
 use std::pin::Pin;
@@ -26,7 +27,9 @@ use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
 
 use async_trait::async_trait;
-use datafusion::arrow::array::{ArrayRef, BinaryArray, Float32Array, UInt64Array, UInt8Array};
+use datafusion::arrow::array::{
+    ArrayRef, BinaryArray, Float32Array, StringBuilder, UInt64Array, UInt8Array,
+};
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema, SchemaRef};
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -76,12 +79,17 @@ pub struct ModelTable {
 
 impl ModelTable {
     pub fn new(context: Arc<Context>, model_table_metadata: Arc<ModelTableMetadata>) -> Arc<Self> {
-        // Columns in the model table registered with Apache Arrow DataFusion.
-        let columns = vec![
+        // Default columns in the model table to be registered with Apache Arrow DataFusion.
+        let mut columns = vec![
             Field::new("univariate_id", ArrowUnivariateId::DATA_TYPE, false),
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
             Field::new("value", ArrowValue::DATA_TYPE, false),
         ];
+
+        // Tag columns in the model table to be registered with Apache Arrow DataFusion.
+        for index in &model_table_metadata.tag_column_indices {
+            columns.push(model_table_metadata.schema.field(*index).clone());
+        }
 
         // Compute the index of the first field column in the model table's
         // schema. This is used for queries that does not contain any fields.
@@ -338,12 +346,40 @@ impl TableProvider for ModelTable {
         let input = new_filter_exec(&predicate, &apache_parquet_exec, &compressed_schema)
             .unwrap_or(apache_parquet_exec);
 
+        // Ensures a projection is present for looking up columns to return.
+        let projection: Vec<usize> = if let Some(projection) = projection {
+            projection.to_vec()
+        } else {
+            (0..self.schema.fields().len()).collect()
+        };
+
+        // Compute a mapping from hashes to tags.
+        let tag_names_in_projection: Vec<&str> = projection
+            .iter()
+            .filter_map(|index| {
+                // Tags are appended to the schema univariate_id, timestamp, value
+                if *index > 2 {
+                    let i = self.model_table_metadata.tag_column_indices[index - 3];
+                    Some(self.model_table_metadata.schema.fields[i].name().as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let hash_to_tags = self
+            .context
+            .metadata_manager
+            .mapping_from_hash_to_tags(&self.model_table_metadata.name, &tag_names_in_projection)
+            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
+
         // Create the gridding operator.
         let grid_exec: Arc<dyn ExecutionPlan> = GridExec::new(
             self.model_table_metadata.clone(),
             projection,
             limit,
             self.schema(),
+            hash_to_tags,
             input,
         );
 
@@ -364,6 +400,8 @@ pub struct GridExec {
     limit: Option<usize>,
     /// Schema of the model table after projection.
     schema_after_projection: SchemaRef,
+    /// Mapping from tag hash to tags.
+    hash_to_tags: HashMap<u64, Vec<String>>,
     /// Operator to read batches of rows from.
     input: Arc<dyn ExecutionPlan>,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
@@ -373,35 +411,22 @@ pub struct GridExec {
 impl GridExec {
     pub fn new(
         model_table_metadata: Arc<ModelTableMetadata>,
-        projection: Option<&Vec<usize>>,
+        projection: Vec<usize>,
         limit: Option<usize>,
         schema: SchemaRef,
+        hash_to_tags: HashMap<u64, Vec<String>>,
         input: Arc<dyn ExecutionPlan>,
     ) -> Arc<Self> {
-        // Modifies the schema so it matches the passed projection.
-        let schema_after_projection = if let Some(projection) = projection {
-            Arc::new(schema.project(projection).unwrap())
-        } else {
-            schema
-        };
-
-        // Ensures a projection is present for looking up columns to return.
-        let projection: Vec<usize> = if let Some(projection) = projection {
-            projection.to_vec()
-        } else {
-            schema_after_projection
-                .fields()
-                .iter()
-                .enumerate()
-                .map(|(i, _)| i)
-                .collect()
-        };
+        // Modifies the schema so it matches the passed projection. unwrap() is safe as the
+        // projection is for the schema so errors due to out of bounds indexing cannot happen.
+        let schema_after_projection = Arc::new(schema.project(&projection).unwrap());
 
         Arc::new(GridExec {
             model_table_metadata,
             projection,
             limit,
             schema_after_projection,
+            hash_to_tags,
             input,
             metrics: ExecutionPlanMetricsSet::new(),
         })
@@ -451,6 +476,7 @@ impl ExecutionPlan for GridExec {
                 projection: self.projection.clone(),
                 limit: self.limit,
                 schema_after_projection: self.schema_after_projection.clone(),
+                hash_to_tags: self.hash_to_tags.clone(),
                 input: children[0].clone(),
                 metrics: self.metrics.clone(),
             }))
@@ -473,6 +499,7 @@ impl ExecutionPlan for GridExec {
             self.projection.clone(),
             self.limit,
             self.schema_after_projection.clone(),
+            self.hash_to_tags.clone(), // TODO: share single instance though RC or ARC.
             self.input.execute(partition, task_context)?,
             BaselineMetrics::new(&self.metrics, partition),
         )))
@@ -521,6 +548,8 @@ struct GridStream {
     _limit: Option<usize>,
     /// Schema of the model table after projection.
     schema_after_projection: SchemaRef,
+    /// Mapping from tag hash to tags.
+    hash_to_tags: HashMap<u64, Vec<String>>,
     /// Stream to read batches of rows from.
     input: SendableRecordBatchStream,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
@@ -532,6 +561,7 @@ impl GridStream {
         projection: Vec<usize>,
         limit: Option<usize>,
         schema_after_projection: SchemaRef,
+        hash_to_tags: HashMap<u64, Vec<String>>,
         input: SendableRecordBatchStream,
         baseline_metrics: BaselineMetrics,
     ) -> Self {
@@ -539,6 +569,7 @@ impl GridStream {
             projection,
             _limit: limit,
             schema_after_projection,
+            hash_to_tags,
             input,
             baseline_metrics,
         }
@@ -568,7 +599,7 @@ impl GridStream {
 
         // Each segment is guaranteed to contain at least one data point.
         let num_rows = batch.num_rows();
-        let mut key_builder = UInt64Array::builder(num_rows);
+        let mut univariate_ids_builder = UInt64Array::builder(num_rows);
         let mut timestamp_builder = TimestampBuilder::with_capacity(num_rows);
         let mut value_builder = ValueBuilder::with_capacity(num_rows);
 
@@ -593,24 +624,54 @@ impl GridStream {
                 values,
                 min_value,
                 max_value,
-                &mut key_builder,
+                &mut univariate_ids_builder,
                 &mut timestamp_builder,
                 &mut value_builder,
             );
         }
 
-        // Returns the batch of reconstructed data points.
-        let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.projection.len());
-        for column in &self.projection {
-            match column {
-                0 => columns.push(Arc::new(key_builder.finish())),
-                1 => columns.push(Arc::new(timestamp_builder.finish())),
-                2 => columns.push(Arc::new(value_builder.finish())),
-                _ => unimplemented!("Tags currently cannot be added."),
+        // Append the tags to each of the data points if any were requested.
+        let mut tag_columns: Vec<StringBuilder> = Vec::with_capacity(self.projection.len());
+
+        // The first 54-bits of each univariate_id is computed from the time series tags while the
+        // remaining 10-bits is the index of the column in the table, thus only the 54-bit tag hash
+        // is needed from each univariate_id to determine which table each time series belong to.
+        let tag_hash_one_bits: u64 = 18446744073709550592;
+
+        // Skip appending tags if none were requested.
+        if !self.hash_to_tags.is_empty() {
+            // unwrap() is safe as the HashMap is guaranteed to contain at least one value.
+            let tag_columns_len = self.hash_to_tags.values().next().unwrap().len();
+            for _ in 0..tag_columns_len {
+                tag_columns.push(StringBuilder::new());
+            }
+
+            for univariate_id in univariate_ids_builder.values_slice() {
+                let tag_hash = univariate_id & tag_hash_one_bits;
+                let tags = &self.hash_to_tags[&tag_hash];
+                for index in 0..tag_columns_len {
+                    tag_columns[index].append_value(tags[index].clone());
+                }
             }
         }
 
-        // unwrap() is safe as columns are constructed from self.projection.
+        // Add the none tag columns to the batch.
+        let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.projection.len());
+        for column in &self.projection {
+            match column {
+                0 => columns.push(Arc::new(univariate_ids_builder.finish())),
+                1 => columns.push(Arc::new(timestamp_builder.finish())),
+                2 => columns.push(Arc::new(value_builder.finish())),
+                _ => (), // The remaining columns are for tags.
+            }
+        }
+
+        // Add the tag columns to the batch.
+        tag_columns
+            .drain(0..)
+            .for_each(|mut tag_column| columns.push(Arc::new(tag_column.finish())));
+
+        // Return the batch, unwrap() is safe as columns are constructed from self.projection.
         RecordBatch::try_new(self.schema_after_projection.clone(), columns).unwrap()
     }
 }
