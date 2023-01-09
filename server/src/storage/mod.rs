@@ -344,7 +344,7 @@ pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> Strin
 
     // unwrap() is safe as None is only returned if all of the values are None.
     // Both aggregate::min() and aggregate::max() consider NaN to be greater than other non-null
-    // value. So since min_values and max_values cannot contain null, min_value will be NaN if all
+    // values. So since min_values and max_values cannot contain null, min_value will be NaN if all
     // values in min_values are NaN while max_value will be NaN if any value in max_values is NaN.
     let min_value = aggregate::min(min_values).unwrap();
     let max_value = aggregate::max(max_values).unwrap();
