@@ -366,10 +366,14 @@ fn is_compressed_file_within_time_and_value_range(
     let file_ends_after_start = file_end_time >= start_time;
     let file_starts_before_end = file_start_time <= end_time;
 
+    // create_time_and_value_range_file_name() considers NaN to be greater than all other non-null
+    // values. Thus, file_min_value is NaN if all of the segments in the file with file_name only
+    // contain NaN values while file_max_value is NaN if any of the segments contains a NaN value.
+    // The total_cmp() method is used instead of the comparison operators to take NaN into account.
     let file_min_value = split.next().unwrap().parse::<Value>().unwrap();
     let file_max_value = split.next().unwrap().parse::<Value>().unwrap();
-    let file_max_greater_than_min = file_max_value >= min_value;
-    let file_min_less_than_max = file_min_value <= max_value;
+    let file_max_greater_than_min = file_max_value.total_cmp(&min_value).is_ge();
+    let file_min_less_than_max = file_min_value.total_cmp(&max_value).is_le();
 
     // Return true if the file's compressed segments ends at or after the start time, starts at or
     // before the end time, has a maximum value that is larger than or equal to the minimum
@@ -803,7 +807,8 @@ mod tests {
 
         // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
         let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
-        let (_segment_3, segment_4) = insert_separated_segments(&mut data_manager, 1000, 100.0).await;
+        let (_segment_3, segment_4) =
+            insert_separated_segments(&mut data_manager, 1000, 100.0).await;
 
         // If we have a min value higher the first segment and a max value lower than the fourth
         // segment, only the files containing the second and third segment should be retrieved.
@@ -1078,6 +1083,28 @@ mod tests {
     }
 
     #[test]
+    fn test_compressed_file_max_within_nan_value_range() {
+        assert!(is_compressed_file_within_time_and_value_range(
+            "1_10_5.0_10.0.parquet",
+            1,
+            10,
+            7.5,
+            f32::NAN,
+        ))
+    }
+
+    #[test]
+    fn test_compressed_file_max_is_nan_and_within_value_range() {
+        assert!(is_compressed_file_within_time_and_value_range(
+            "1_10_5.0_NaN.parquet",
+            1,
+            10,
+            7.5,
+            15.0,
+        ))
+    }
+
+    #[test]
     fn test_compressed_file_min_within_value_range() {
         assert!(is_compressed_file_within_time_and_value_range(
             "1_10_5.0_10.0.parquet",
@@ -1100,6 +1127,17 @@ mod tests {
     }
 
     #[test]
+    fn test_compressed_file_with_only_nan_is_within_nan_value_range() {
+        assert!(is_compressed_file_within_time_and_value_range(
+            "1_10_NaN_NaN.parquet",
+            1,
+            10,
+            f32::NAN,
+            f32::NAN,
+        ))
+    }
+
+    #[test]
     fn test_compressed_file_is_less_than_value_range() {
         assert!(!is_compressed_file_within_time_and_value_range(
             "1_10_0.0_10.0.parquet",
@@ -1114,6 +1152,28 @@ mod tests {
     fn test_compressed_file_is_greater_than_value_range() {
         assert!(!is_compressed_file_within_time_and_value_range(
             "1_10_20.0_30.0.parquet",
+            1,
+            10,
+            0.0,
+            10.0,
+        ))
+    }
+
+    #[test]
+    fn test_compressed_file_is_outside_nan_value_range() {
+        assert!(!is_compressed_file_within_time_and_value_range(
+            "1_10_5.0_7.5.parquet",
+            1,
+            10,
+            Value::NAN,
+            Value::NAN,
+        ))
+    }
+
+    #[test]
+    fn test_compressed_file_with_only_nan_is_outside_value_range() {
+        assert!(!is_compressed_file_within_time_and_value_range(
+            "1_10_NaN_NaN.parquet",
             1,
             10,
             0.0,
