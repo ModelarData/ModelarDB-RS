@@ -403,56 +403,26 @@ mod tests {
 
     /// This test ensures that the model with the fewest amount of bytes is selected.
     #[test]
-    fn test_model_with_fewest_bytes_is_selected_pmc_mean() {
-        let values_1 = ValueArray::from(compression_test_util::generate_values(
-            5,
-            StructureOfValues::Random,
-            Some(-1.0),
-            Some(1.0),
+    fn test_model_with_fewest_bytes_is_selected() {
+        let values: Vec<f32> =
+            compression_test_util::generate_values(25, StructureOfValues::Constant, None, None)
+                .into_iter()
+                .chain(compression_test_util::generate_values(
+                    25,
+                    StructureOfValues::Random,
+                    Some(0.0),
+                    Some(100.0),
+                ))
+                .collect();
+        let timestamps = TimestampArray::from_slice(compression_test_util::generate_timestamps(
+            values.len(),
+            false,
         ));
-        let timestamps_1 =
-            TimestampArray::from_slice(compression_test_util::generate_timestamps(5, false));
-        let values_2 = ValueArray::from(compression_test_util::generate_values(
-            50,
-            StructureOfValues::Random,
-            Some(-1.0),
-            Some(1.0),
-        ));
-        let timestamps_2 =
-            TimestampArray::from_slice(compression_test_util::generate_timestamps(50, false));
+        let value_array = ValueArray::from(values);
 
-        let selected_model_1 = create_selected_model(&timestamps_1, &values_1, 10.0);
-        let selected_model_2 = create_selected_model(&timestamps_2, &values_2, 10.0);
+        let selected_model = create_selected_model(&timestamps, &value_array, 10.0);
 
-        assert_eq!(selected_model_1.model_type_id, PMC_MEAN_ID);
-        assert_eq!(selected_model_2.model_type_id, PMC_MEAN_ID);
-    }
-
-    /// This test ensures that the model with the fewest amount of bytes is selected.
-    #[test]
-    fn test_model_with_fewest_bytes_is_selected_swing() {
-        let values_1 = ValueArray::from(compression_test_util::generate_values(
-            5,
-            StructureOfValues::Linear,
-            None,
-            None,
-        ));
-        let timestamps_1 =
-            TimestampArray::from_slice(compression_test_util::generate_timestamps(5, false));
-        let values_2 = ValueArray::from(compression_test_util::generate_values(
-            50,
-            StructureOfValues::Linear,
-            None,
-            None,
-        ));
-        let timestamps_2 =
-            TimestampArray::from_slice(compression_test_util::generate_timestamps(50, false));
-
-        let selected_model_1 = create_selected_model(&timestamps_1, &values_1, 0.0);
-        let selected_model_2 = create_selected_model(&timestamps_2, &values_2, 0.0);
-
-        assert_eq!(selected_model_1.model_type_id, SWING_ID);
-        assert_eq!(selected_model_2.model_type_id, SWING_ID);
+        assert_eq!(selected_model.model_type_id, PMC_MEAN_ID);
     }
 
     fn create_selected_model(

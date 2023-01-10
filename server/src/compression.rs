@@ -840,11 +840,11 @@ pub mod test_util {
     }
 
     /// Generate constant/random/linear/almost-linear test values with the
-    /// [ThreadRng](rand::rngs::thread::ThreadRng) randomizer. Select the length using `length` and type of
-    /// values to be generated using [`StructureOfValues`]. If `Random` is selected, min_step and max_step
-    /// is the range of values which can be generated. If `AlmostLinear` is selected, `min_step`
-    /// and `max_step` is the maximum and minimum change that should be applied from one value to the next.
-    /// Returns the generated values as a [`Vec`].
+    /// [ThreadRng](rand::rngs::thread::ThreadRng) randomizer. Select the amount of values to be generated
+    /// using `length` and type of values to be generated using [`StructureOfValues`]. If `Random` is
+    /// selected, `min` and `max` is the range of values which can be generated. If `AlmostLinear` is
+    /// selected, `min` and `max` is the maximum and minimum change that should be applied from one value
+    /// to the next. Returns the generated values as a [`Vec`].
     pub fn generate_values(
         length: usize,
         data_type: StructureOfValues,
@@ -886,7 +886,7 @@ pub mod test_util {
 
             // Generates constant data.
             StructureOfValues::Constant => {
-                let mut constant = vec![10.0; length as usize];
+                let mut constant = vec![50.0; length as usize];
                 values.append(&mut constant);
             }
         }
