@@ -398,44 +398,61 @@ mod tests {
     use super::*;
 
     use datafusion::arrow::array::UInt8Array;
+    use rand::{thread_rng, Rng};
 
+    use crate::compression::test_util as compression_test_util;
     use crate::metadata::test_util;
     use crate::models;
+    use compression_test_util::StructureOfValues;
+
+    const ERROR_BOUND_ZERO: f32 = 0.0;
+    const ERROR_BOUND_FIVE: f32 = 5.0;
+    const TRY_COMPRESS_TEST_LENGTH: usize = 50;
 
     // Tests for try_compress().
     #[test]
     fn test_try_compress_empty_time_series() {
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
-        let (uncompressed_timestamps, uncompressed_values) =
-            create_uncompressed_time_series(&[], &[]);
+        let values = vec![];
+        let timestamps = vec![];
+        let (_, compressed_record_batch) =
+            create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
 
-        let compressed_record_batch = try_compress(
-            1,
-            &uncompressed_timestamps,
-            &uncompressed_values,
-            error_bound,
-            &test_util::compressed_schema(),
-        )
-        .unwrap();
         assert_eq!(0, compressed_record_batch.num_rows())
     }
 
     #[test]
     fn test_try_compress_regular_constant_time_series() {
-        let timestamps = Vec::from_iter((100..1000).step_by(100));
-        let values = vec![10.0; timestamps.len()];
-        let (uncompressed_timestamps, uncompressed_values) =
-            create_uncompressed_time_series(&timestamps, &values);
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let values = compression_test_util::generate_values(
+            TRY_COMPRESS_TEST_LENGTH,
+            StructureOfValues::Constant,
+            None,
+            None,
+        );
+        let timestamps = compression_test_util::generate_timestamps(values.len(), false);
 
-        let compressed_record_batch = try_compress(
-            1,
+        let (uncompressed_timestamps, compressed_record_batch) =
+            create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
+
+        assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
-            &uncompressed_values,
-            error_bound,
-            &test_util::compressed_schema(),
+            &compressed_record_batch,
+            &[models::PMC_MEAN_ID],
         )
-        .unwrap();
+    }
+
+    #[test]
+    fn test_try_compress_irregular_constant_time_series() {
+        let values = compression_test_util::generate_values(
+            TRY_COMPRESS_TEST_LENGTH,
+            StructureOfValues::Constant,
+            None,
+            None,
+        );
+        let timestamps = compression_test_util::generate_timestamps(values.len(), true);
+
+        let (uncompressed_timestamps, compressed_record_batch) =
+            create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
+
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
             &compressed_record_batch,
@@ -445,20 +462,41 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_almost_constant_time_series() {
-        let timestamps = Vec::from_iter((100..1000).step_by(100));
-        let values = vec![10.1, 10.0, 10.2, 10.2, 10.0, 10.1, 10.0, 10.0, 10.0];
-        let (uncompressed_timestamps, uncompressed_values) =
-            create_uncompressed_time_series(&timestamps, &values);
-        let error_bound = ErrorBound::try_new(5.0).unwrap();
+        // To generate almost constant time series, Random with a small
+        // margin between min_step and max_step is selected for generate_values.
+        let values = compression_test_util::generate_values(
+            TRY_COMPRESS_TEST_LENGTH,
+            StructureOfValues::Random,
+            Some(9.8),
+            Some(10.2),
+        );
+        let timestamps = compression_test_util::generate_timestamps(values.len(), false);
 
-        let compressed_record_batch = try_compress(
-            1,
+        let (uncompressed_timestamps, compressed_record_batch) =
+            create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_FIVE);
+
+        assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
-            &uncompressed_values,
-            error_bound,
-            &test_util::compressed_schema(),
+            &compressed_record_batch,
+            &[models::PMC_MEAN_ID],
         )
-        .unwrap();
+    }
+
+    #[test]
+    fn test_try_compress_irregular_almost_constant_time_series() {
+        // To generate almost constant time series, the Random enum with a small
+        // margin between min_step and max_step is used in generate_values.
+        let values = compression_test_util::generate_values(
+            TRY_COMPRESS_TEST_LENGTH,
+            StructureOfValues::Random,
+            Some(9.8),
+            Some(10.2),
+        );
+        let timestamps = compression_test_util::generate_timestamps(values.len(), true);
+
+        let (uncompressed_timestamps, compressed_record_batch) =
+            create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_FIVE);
+
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
             &compressed_record_batch,
@@ -468,20 +506,43 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_linear_time_series() {
-        let timestamps = Vec::from_iter((100..1000).step_by(100));
-        let values = Vec::from_iter((10..100).step_by(10).map(|v| v as f32));
-        let (uncompressed_timestamps, uncompressed_values) =
-            create_uncompressed_time_series(&timestamps, &values);
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let values = compression_test_util::generate_values(
+            TRY_COMPRESS_TEST_LENGTH,
+            StructureOfValues::Linear,
+            None,
+            None,
+        );
+        let timestamps = compression_test_util::generate_timestamps(values.len(), false);
 
-        let compressed_record_batch = try_compress(
-            1,
+        let (uncompressed_timestamps, compressed_record_batch) =
+            create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
+
+        assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
-            &uncompressed_values,
-            error_bound,
-            &test_util::compressed_schema(),
+            &compressed_record_batch,
+            &[models::SWING_ID],
         )
-        .unwrap();
+    }
+
+    #[test]
+    fn test_try_compress_irregular_linear_time_series() {
+        // Create a random linear equation and generate random timestamps.
+        // A linear equation must be created instead of using generate_values,
+        // since randomly generated irregular timestamps combined with linear values
+        // would not fit the equation.
+        let a: i64 = thread_rng().gen_range(-10..10);
+        let b: i64 = thread_rng().gen_range(1..50);
+        let timestamps = compression_test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
+
+        // Calculate the corresponding values on the y axis. These values are not f32 initially
+        // because precision errors may occur, and try_compress therefore fails to make a Swing model within
+        // ERROR_BOUND_ZERO.
+        let i64values: Vec<i64> = timestamps.iter().map(|&x| a * x + b).collect();
+        let values: Vec<f32> = i64values.iter().map(|&x| x as f32).collect();
+
+        let (uncompressed_timestamps, compressed_record_batch) =
+            create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_FIVE);
+
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
             &compressed_record_batch,
@@ -491,20 +552,37 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_almost_linear_time_series() {
-        let timestamps = Vec::from_iter((100..1000).step_by(100));
-        let values = vec![10.0, 20.0, 30.1, 40.8, 51.0, 60.2, 70.1, 80.7, 90.4];
-        let (uncompressed_timestamps, uncompressed_values) =
-            create_uncompressed_time_series(&timestamps, &values);
-        let error_bound = ErrorBound::try_new(5.0).unwrap();
+        let values = compression_test_util::generate_values(
+            TRY_COMPRESS_TEST_LENGTH,
+            StructureOfValues::AlmostLinear,
+            Some(9.0),
+            Some(11.0),
+        );
+        let timestamps = compression_test_util::generate_timestamps(values.len(), false);
 
-        let compressed_record_batch = try_compress(
-            1,
+        let (uncompressed_timestamps, compressed_record_batch) =
+            create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_FIVE);
+
+        assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
-            &uncompressed_values,
-            error_bound,
-            &test_util::compressed_schema(),
+            &compressed_record_batch,
+            &[models::SWING_ID],
         )
-        .unwrap();
+    }
+
+    #[test]
+    fn test_try_compress_irregular_almost_linear_time_series() {
+        let values = compression_test_util::generate_values(
+            TRY_COMPRESS_TEST_LENGTH,
+            StructureOfValues::AlmostLinear,
+            Some(9.8),
+            Some(10.2),
+        );
+        let timestamps = compression_test_util::generate_timestamps(values.len(), true);
+
+        let (uncompressed_timestamps, compressed_record_batch) =
+            create_and_compress_time_series(&values, &timestamps, 15.0);
+
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
             &compressed_record_batch,
@@ -514,20 +592,37 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_random_time_series() {
-        let timestamps = Vec::from_iter((100..1000).step_by(100));
-        let values = vec![7.47, 13.34, 14.50, 4.88, 7.84, 6.69, 8.63, 5.109, 2.16];
-        let (uncompressed_timestamps, uncompressed_values) =
-            create_uncompressed_time_series(&timestamps, &values);
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let values = compression_test_util::generate_values(
+            TRY_COMPRESS_TEST_LENGTH,
+            StructureOfValues::Random,
+            Some(0.0),
+            Some(f32::MAX),
+        );
+        let timestamps = compression_test_util::generate_timestamps(values.len(), false);
 
-        let compressed_record_batch = try_compress(
-            1,
+        let (uncompressed_timestamps, compressed_record_batch) =
+            create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
+
+        assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
-            &uncompressed_values,
-            error_bound,
-            &test_util::compressed_schema(),
+            &compressed_record_batch,
+            &[models::GORILLA_ID],
         )
-        .unwrap();
+    }
+
+    #[test]
+    fn test_try_compress_irregular_random_time_series() {
+        let values = compression_test_util::generate_values(
+            TRY_COMPRESS_TEST_LENGTH,
+            StructureOfValues::Random,
+            Some(0.0),
+            Some(f32::MAX),
+        );
+        let timestamps = compression_test_util::generate_timestamps(values.len(), true);
+
+        let (uncompressed_timestamps, compressed_record_batch) =
+            create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
+
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
             &compressed_record_batch,
@@ -537,28 +632,33 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_random_linear_constant_time_series() {
-        let mut constant = vec![10.0; 100];
-        let mut linear = Vec::from_iter((10..1000).step_by(10).map(|v| v as f32));
-        let mut random = vec![7.47, 13.34, 14.50, 4.88, 7.84, 6.69, 8.63, 5.109, 2.16];
-
+        let mut constant = compression_test_util::generate_values(
+            TRY_COMPRESS_TEST_LENGTH,
+            StructureOfValues::Constant,
+            None,
+            None,
+        );
+        let mut linear = compression_test_util::generate_values(
+            TRY_COMPRESS_TEST_LENGTH,
+            StructureOfValues::Linear,
+            None,
+            None,
+        );
+        let mut random = compression_test_util::generate_values(
+            TRY_COMPRESS_TEST_LENGTH,
+            StructureOfValues::Random,
+            Some(0.0),
+            Some(f32::MAX),
+        );
         let mut values = vec![];
         values.append(&mut random);
         values.append(&mut linear);
         values.append(&mut constant);
+        let timestamps = compression_test_util::generate_timestamps(values.len(), false);
 
-        let timestamps = Vec::from_iter((100..(values.len() + 1) as i64 * 100).step_by(100));
-        let (uncompressed_timestamps, uncompressed_values) =
-            create_uncompressed_time_series(&timestamps, &values);
+        let (uncompressed_timestamps, compressed_record_batch) =
+            create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
 
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
-        let compressed_record_batch = try_compress(
-            1,
-            &uncompressed_timestamps,
-            &uncompressed_values,
-            error_bound,
-            &test_util::compressed_schema(),
-        )
-        .unwrap();
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
             &compressed_record_batch,
@@ -575,6 +675,25 @@ mod tests {
         let mut values_builder = ValueBuilder::with_capacity(values.len());
         values_builder.append_slice(values);
         (timestamps_builder.finish(), values_builder.finish())
+    }
+
+    fn create_and_compress_time_series(
+        values: &Vec<f32>,
+        timestamps: &Vec<i64>,
+        error_bound: f32,
+    ) -> (TimestampArray, RecordBatch) {
+        let (uncompressed_timestamps, uncompressed_values) =
+            create_uncompressed_time_series(&timestamps, &values);
+        let error_bound = ErrorBound::try_new(error_bound).unwrap();
+        let compressed_record_batch = try_compress(
+            1,
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            error_bound,
+            &test_util::compressed_schema(),
+        )
+        .unwrap();
+        (uncompressed_timestamps, compressed_record_batch)
     }
 
     fn assert_compressed_record_batch_with_segments_from_regular_time_series(
@@ -704,5 +823,95 @@ mod tests {
         // Assert that the errors are correct.
         assert_eq!(0.0, errors.value(positive));
         assert_eq!(10.0, errors.value(negative));
+    }
+}
+
+#[cfg(test)]
+/// Separate module for utility functions.
+pub mod test_util {
+    use rand::distributions::Uniform;
+    use rand::{thread_rng, Rng};
+
+    pub enum StructureOfValues {
+        Constant,
+        Random,
+        Linear,
+        AlmostLinear,
+    }
+
+    /// Generate constant/random/linear/almost-linear test values with the
+    /// [ThreadRng](rand::rngs::thread::ThreadRng) randomizer. Select the amount of values to be generated
+    /// using `length` and type of values to be generated using [`StructureOfValues`]. If `Random` is
+    /// selected, `min` and `max` is the range of values which can be generated. If `AlmostLinear` is
+    /// selected, `min` and `max` is the maximum and minimum change that should be applied from one value
+    /// to the next. Returns the generated values as a [`Vec`].
+    pub fn generate_values(
+        length: usize,
+        data_type: StructureOfValues,
+        min: Option<f32>,
+        max: Option<f32>,
+    ) -> Vec<f32> {
+        let mut randomizer = thread_rng();
+        let mut values: Vec<f32> = vec![];
+
+        match data_type {
+            // Generates almost linear data.
+            StructureOfValues::AlmostLinear => {
+                let mut random_linear = vec![];
+                let mut previous_value: f32 = 0.0;
+                for _ in 0..length {
+                    let next_value = (randomizer.sample(Uniform::from(min.unwrap()..max.unwrap())))
+                        + previous_value;
+                    random_linear.push(next_value);
+                    previous_value = next_value;
+                }
+                values.append(&mut random_linear);
+            }
+
+            // Generates linear data.
+            StructureOfValues::Linear => {
+                let mut linear =
+                    Vec::from_iter((10..(length + 1) * 10).step_by(10).map(|v| v as f32));
+                values.append(&mut linear);
+            }
+
+            // Generates randomized data.
+            StructureOfValues::Random => {
+                let mut random = vec![];
+                for _ in 0..length {
+                    random.push(randomizer.sample(Uniform::from(min.unwrap()..max.unwrap())));
+                }
+                values.append(&mut random);
+            }
+
+            // Generates constant data.
+            StructureOfValues::Constant => {
+                let mut constant = vec![50.0; length as usize];
+                values.append(&mut constant);
+            }
+        }
+
+        values
+    }
+
+    /// Generate regular/irregular timestamps with the [ThreadRng](rand::rngs::thread::ThreadRng) randomizer.
+    /// Select the length and type of timestamps to be generated using the parameters `length` and `irregular`.
+    /// Returns the generated timestamps as a [`Vec`].
+    pub fn generate_timestamps(length: usize, irregular: bool) -> Vec<i64> {
+        let mut timestamps = vec![];
+        if irregular {
+            let mut randomizer = thread_rng();
+            let mut previous_timestamp: i64 = 0;
+            for _ in 0..length {
+                let next_timestamp =
+                    (randomizer.sample(Uniform::from(10..20))) + previous_timestamp;
+                timestamps.push(next_timestamp);
+                previous_timestamp = next_timestamp;
+            }
+        } else {
+            timestamps = Vec::from_iter((100..(length + 1) as i64 * 100).step_by(100));
+        }
+
+        timestamps
     }
 }

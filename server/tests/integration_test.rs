@@ -455,7 +455,7 @@ fn start_modelardbd(path: &Path) -> Child {
 
     // The thread needs to sleep to ensure that the server has properly started before sending
     // streams to it.
-    thread::sleep(Duration::from_secs(2));
+    thread::sleep(Duration::from_secs(5));
 
     return process;
 }
@@ -743,6 +743,7 @@ fn stop_modelardbd(mut flight_server: Child) {
     let mut system = System::new_all();
 
     while let Some(_process) = system.process(Pid::from_u32(flight_server.id())) {
+        system.refresh_all();
         flight_server
             .kill()
             .expect(&*format!("Could not kill process {}.", flight_server.id()));

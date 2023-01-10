@@ -304,11 +304,14 @@ fn equal_or_nan(v1: f64, v2: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use datafusion::from_slice::FromSlice;
     use proptest::num;
     use proptest::{prop_assert, prop_assume, proptest};
 
+    use crate::compression::test_util as compression_test_util;
     use crate::types::TimestampArray;
+    use compression_test_util::StructureOfValues;
 
     const UNCOMPRESSED_TIMESTAMPS: &[Timestamp] = &[100, 200, 300, 400, 500];
 
@@ -346,7 +349,8 @@ mod tests {
         let uncompressed_timestamps = TimestampArray::from_slice(UNCOMPRESSED_TIMESTAMPS);
         let uncompressed_values = ValueArray::from(vec![10.0, 10.0, 10.0, 10.0, 10.0]);
 
-        let selected_model = create_selected_model(&uncompressed_timestamps, &uncompressed_values);
+        let selected_model =
+            create_selected_model(&uncompressed_timestamps, &uncompressed_values, 0.0);
 
         assert_eq!(PMC_MEAN_ID, selected_model.model_type_id);
         assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
@@ -359,7 +363,8 @@ mod tests {
     fn test_model_selected_model_attributes_for_increasing_swing() {
         let uncompressed_timestamps = TimestampArray::from_slice(UNCOMPRESSED_TIMESTAMPS);
         let uncompressed_values = ValueArray::from(vec![10.0, 20.0, 30.0, 40.0, 50.0]);
-        let selected_model = create_selected_model(&uncompressed_timestamps, &uncompressed_values);
+        let selected_model =
+            create_selected_model(&uncompressed_timestamps, &uncompressed_values, 0.0);
 
         assert_eq!(SWING_ID, selected_model.model_type_id);
         assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
@@ -372,7 +377,8 @@ mod tests {
     fn test_model_selected_model_attributes_for_decreasing_swing() {
         let uncompressed_timestamps = TimestampArray::from_slice(UNCOMPRESSED_TIMESTAMPS);
         let uncompressed_values = ValueArray::from(vec![50.0, 40.0, 30.0, 20.0, 10.0]);
-        let selected_model = create_selected_model(&uncompressed_timestamps, &uncompressed_values);
+        let selected_model =
+            create_selected_model(&uncompressed_timestamps, &uncompressed_values, 0.0);
 
         assert_eq!(SWING_ID, selected_model.model_type_id);
         assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
@@ -385,7 +391,8 @@ mod tests {
     fn test_model_selected_model_attributes_for_gorilla() {
         let uncompressed_timestamps = TimestampArray::from_slice(UNCOMPRESSED_TIMESTAMPS);
         let uncompressed_values = ValueArray::from(vec![37.0, 73.0, 37.0, 73.0, 37.0]);
-        let selected_model = create_selected_model(&uncompressed_timestamps, &uncompressed_values);
+        let selected_model =
+            create_selected_model(&uncompressed_timestamps, &uncompressed_values, 0.0);
 
         assert_eq!(GORILLA_ID, selected_model.model_type_id);
         assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
@@ -394,11 +401,36 @@ mod tests {
         assert_eq!(10, selected_model.values.len());
     }
 
+    /// This test ensures that the model with the fewest amount of bytes is selected.
+    #[test]
+    fn test_model_with_fewest_bytes_is_selected() {
+        let values: Vec<f32> =
+            compression_test_util::generate_values(25, StructureOfValues::Constant, None, None)
+                .into_iter()
+                .chain(compression_test_util::generate_values(
+                    25,
+                    StructureOfValues::Random,
+                    Some(0.0),
+                    Some(100.0),
+                ))
+                .collect();
+        let timestamps = TimestampArray::from_slice(compression_test_util::generate_timestamps(
+            values.len(),
+            false,
+        ));
+        let value_array = ValueArray::from(values);
+
+        let selected_model = create_selected_model(&timestamps, &value_array, 10.0);
+
+        assert_eq!(selected_model.model_type_id, PMC_MEAN_ID);
+    }
+
     fn create_selected_model(
         uncompressed_timestamps: &TimestampArray,
         uncompressed_values: &ValueArray,
+        error_bound: f32,
     ) -> SelectedModel {
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let error_bound = ErrorBound::try_new(error_bound).unwrap();
         let mut pmc_mean = PMCMean::new(error_bound);
         let mut swing = Swing::new(error_bound);
         let mut gorilla = Gorilla::new();
