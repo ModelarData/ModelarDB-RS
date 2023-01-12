@@ -361,6 +361,8 @@ pub struct Log {
     timestamps: TimestampBuilder,
     /// Builder consisting of values.
     values: UInt32Builder,
+    /// Since the values builder is cleared when the log is finished, the last value is saved separately.
+    last_value: isize,
 }
 
 impl Log {
@@ -368,6 +370,7 @@ impl Log {
         Self {
             timestamps: TimestampBuilder::new(),
             values: UInt32Builder::new(),
+            last_value: 0,
         }
     }
 
@@ -380,12 +383,12 @@ impl Log {
 
         let mut new_value = value;
         if based_on_last {
-            let last_value = self.values.values_slice().last().unwrap_or(&0);
-            new_value = *last_value as isize + value;
+            new_value = self.last_value + value;
         }
 
         self.timestamps.append_value(timestamp);
         self.values.append_value(new_value as u32);
+        self.last_value = new_value;
     }
 
     /// Finish and reset the internal builders and return the finished Apache Arrow arrays.
