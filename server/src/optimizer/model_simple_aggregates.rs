@@ -25,15 +25,14 @@ use datafusion::arrow::datatypes::DataType;
 use datafusion::arrow::datatypes::Field;
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::config::ConfigOptions;
 use datafusion::error::Result;
-use datafusion::logical_expr::AggregateState;
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::aggregates::AggregateExec;
 use datafusion::physical_plan::expressions::{self, Avg, Count, Max, Min, Sum};
 use datafusion::physical_plan::ColumnarValue;
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
-use datafusion::prelude::SessionConfig;
 use datafusion::scalar::ScalarValue;
 
 use crate::models;
@@ -118,7 +117,7 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
     fn optimize(
         &self,
         plan: Arc<dyn ExecutionPlan>,
-        _config: &SessionConfig,
+        _config: &ConfigOptions,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         if let Some(optimized_plan) = Self::optimize(&plan) {
             Ok(optimized_plan)
@@ -191,7 +190,7 @@ impl AggregateExpr for ModelAggregateExpr {
                 Field::new("SUM", DataType::Float32, false),
             ],
             _ => vec![Field::new(
-                &expressions::format_state_name(self.name(), "NOT NULL"),
+                expressions::format_state_name(self.name(), "NOT NULL"),
                 self.data_type.clone(),
                 false,
             )],
@@ -278,7 +277,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
             count += models::len(start_time, end_time, timestamps) as i64;
         }
 
-        // Returning an AggregateState::Scalar fills an array with the value.
+        // Returning a Scalar fills an array with the value.
         let mut result = Int64Array::builder(1);
         result.append_value(count);
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
@@ -317,10 +316,8 @@ impl Accumulator for ModelCountAccumulator {
         unreachable!()
     }
 
-    fn state(&self) -> Result<Vec<AggregateState>> {
-        Ok(vec![AggregateState::Scalar(ScalarValue::Int64(Some(
-            self.count,
-        )))])
+    fn state(&self) -> Result<Vec<ScalarValue>> {
+        Ok(vec![ScalarValue::Int64(Some(self.count))])
     }
 
     fn evaluate(&self) -> Result<ScalarValue> {
@@ -368,7 +365,7 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
             min = Value::min(min, min_value_array.value(row_index));
         }
 
-        // Returning an AggregateState::Scalar fills an array with the value.
+        // Returning a Scalar fills an array with the value.
         let mut result = ValueArray::builder(1);
         result.append_value(min);
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
@@ -410,10 +407,8 @@ impl Accumulator for ModelMinAccumulator {
         unreachable!()
     }
 
-    fn state(&self) -> Result<Vec<AggregateState>> {
-        Ok(vec![AggregateState::Scalar(ScalarValue::Float32(Some(
-            self.min,
-        )))])
+    fn state(&self) -> Result<Vec<ScalarValue>> {
+        Ok(vec![ScalarValue::Float32(Some(self.min))])
     }
 
     fn evaluate(&self) -> Result<ScalarValue> {
@@ -461,7 +456,7 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
             max = Value::max(max, max_value_array.value(row_index));
         }
 
-        // Returning an AggregateState::Scalar fills an array with the value.
+        // Returning a Scalar fills an array with the value.
         let mut result = ValueArray::builder(1);
         result.append_value(max);
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
@@ -503,10 +498,8 @@ impl Accumulator for ModelMaxAccumulator {
         unreachable!()
     }
 
-    fn state(&self) -> Result<Vec<AggregateState>> {
-        Ok(vec![AggregateState::Scalar(ScalarValue::Float32(Some(
-            self.max,
-        )))])
+    fn state(&self) -> Result<Vec<ScalarValue>> {
+        Ok(vec![ScalarValue::Float32(Some(self.max))])
     }
 
     fn evaluate(&self) -> Result<ScalarValue> {
@@ -582,7 +575,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
             );
         }
 
-        // Returning an AggregateState::Scalar fills an array with the value.
+        // Returning a Scalar fills an array with the value.
         let mut result = Float32Array::builder(1);
         result.append_value(sum);
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
@@ -623,10 +616,10 @@ impl Accumulator for ModelSumAccumulator {
         unreachable!()
     }
 
-    fn state(&self) -> Result<Vec<AggregateState>> {
+    fn state(&self) -> Result<Vec<ScalarValue>> {
         Ok(vec![
-            AggregateState::Scalar(ScalarValue::Float32(Some(self.sum))),
-            AggregateState::Scalar(ScalarValue::from(self.count)),
+            ScalarValue::Float32(Some(self.sum)),
+            ScalarValue::from(self.count),
         ])
     }
 
@@ -706,7 +699,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
             count += models::len(start_time, end_time, timestamps);
         }
 
-        // Returning an AggregateState::Scalar fills an array with the value.
+        // Returning a Scalar fills an array with the value.
         let mut result = ValueArray::builder(2);
         result.append_value(sum as Value);
         result.append_value(count as Value);
@@ -745,11 +738,11 @@ impl Accumulator for ModelAvgAccumulator {
         unreachable!()
     }
 
-    fn state(&self) -> Result<Vec<AggregateState>> {
+    fn state(&self) -> Result<Vec<ScalarValue>> {
         //Must match datafusion::physical_plan::expressions::AvgAccumulator
         Ok(vec![
-            AggregateState::Scalar(ScalarValue::UInt64(Some(self.count))),
-            AggregateState::Scalar(ScalarValue::Float32(Some(self.sum))),
+            ScalarValue::UInt64(Some(self.count)),
+            ScalarValue::Float32(Some(self.sum)),
         ])
     }
 

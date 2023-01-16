@@ -96,7 +96,7 @@ impl FlightServiceHandler {
     /// Return the schema of `table_name` if the table exists in the default
     /// database schema, otherwise a [`Status`] indicating at what level the
     /// lookup failed is returned.
-    fn schema_of_table_in_default_database_schema(
+    async fn schema_of_table_in_default_database_schema(
         &self,
         table_name: &str,
     ) -> Result<SchemaRef, Status> {
@@ -104,6 +104,7 @@ impl FlightServiceHandler {
 
         let table = database_schema
             .table(table_name)
+            .await
             .ok_or_else(|| Status::not_found("Table does not exist."))?;
 
         Ok(table.schema())
@@ -146,7 +147,7 @@ impl FlightServiceHandler {
     /// * [`Status`] if the default catalog, the default schema, a table with
     /// the name `table_name`, or a model table with the name `table_name` does
     /// not exists.
-    fn model_table_metadata_from_default_database_schema(
+    async fn model_table_metadata_from_default_database_schema(
         &self,
         table_name: &str,
     ) -> Result<Option<Arc<ModelTableMetadata>>, Status> {
@@ -154,6 +155,7 @@ impl FlightServiceHandler {
 
         let table = database_schema
             .table(table_name)
+            .await
             .ok_or_else(|| Status::not_found("Table does not exist."))?;
 
         if let Some(model_table) = table.as_any().downcast_ref::<ModelTable>() {
@@ -164,9 +166,9 @@ impl FlightServiceHandler {
     }
 
     /// Return [`Status`] if a table named `table_name` exists in the default catalog.
-    fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
+    async fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
         let maybe_schema = self.schema_of_table_in_default_database_schema(table_name);
-        if maybe_schema.is_ok() {
+        if maybe_schema.await.is_ok() {
             let message = format!("Table with name '{}' already exists.", table_name);
             return Err(Status::already_exists(message));
         }
@@ -369,7 +371,9 @@ impl FlightService for FlightServiceHandler {
     ) -> Result<Response<SchemaResult>, Status> {
         let flight_descriptor = request.into_inner();
         let table_name = self.table_name_from_flight_descriptor(&flight_descriptor)?;
-        let schema = self.schema_of_table_in_default_database_schema(table_name)?;
+        let schema = self
+            .schema_of_table_in_default_database_schema(table_name)
+            .await?;
 
         let options = IpcWriteOptions::default();
         let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
@@ -391,25 +395,25 @@ impl FlightService for FlightServiceHandler {
         let query = str::from_utf8(&ticket.ticket)
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-        // Execute the query.
+        // Plan the query.
         info!("Executing the query: {}.", query);
         let session = self.context.session.clone();
         let data_frame = session
             .sql(query)
             .await
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+        // Serialize the schema.
+        let options = IpcWriteOptions::default();
+        let schema_as_flight_data = SchemaAsIpc::new(&data_frame.schema().into(), &options).into();
+        let mut result_set: Vec<Result<FlightData, Status>> = vec![Ok(schema_as_flight_data)];
+
+        // Serialize the query result.
         let record_batches = data_frame
             .collect()
             .await
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-        // Serialize the schema.
-        let options = IpcWriteOptions::default();
-        let schema_as_flight_data =
-            SchemaAsIpc::new(&data_frame.schema().clone().into(), &options).into();
-        let mut result_set: Vec<Result<FlightData, Status>> = vec![Ok(schema_as_flight_data)];
-
-        // Serialize the query result.
         let mut record_batches_as_flight_data: Vec<Result<FlightData, Status>> = record_batches
             .iter()
             .flat_map(|result| {
@@ -452,15 +456,18 @@ impl FlightService for FlightServiceHandler {
         let normalized_table_name = MetadataManager::normalize_name(table_name);
 
         // Handle the data based on whether it is a normal table or a model table.
-        if let Some(model_table_metadata) =
-            self.model_table_metadata_from_default_database_schema(&normalized_table_name)?
+        if let Some(model_table_metadata) = self
+            .model_table_metadata_from_default_database_schema(&normalized_table_name)
+            .await?
         {
             debug!("Writing data to model table '{}'.", normalized_table_name);
             self.ingest_into_model_table(&model_table_metadata, &mut flight_data_stream)
                 .await?;
         } else {
             debug!("Writing data to table '{}'.", normalized_table_name);
-            let schema = self.schema_of_table_in_default_database_schema(&normalized_table_name)?;
+            let schema = self
+                .schema_of_table_in_default_database_schema(&normalized_table_name)
+                .await?;
             self.ingest_into_table(&normalized_table_name, &schema, &mut flight_data_stream)
                 .await?;
         }
@@ -516,11 +523,12 @@ impl FlightService for FlightServiceHandler {
             // Create the table or model table if it does not already exists.
             match valid_statement {
                 ValidStatement::CreateTable { name, schema } => {
-                    self.check_if_table_exists(&name)?;
+                    self.check_if_table_exists(&name).await?;
                     self.register_and_save_table(name, schema).await?;
                 }
                 ValidStatement::CreateModelTable(model_table_metadata) => {
-                    self.check_if_table_exists(&model_table_metadata.name)?;
+                    self.check_if_table_exists(&model_table_metadata.name)
+                        .await?;
                     self.register_and_save_model_table(model_table_metadata)?;
                 }
             };
