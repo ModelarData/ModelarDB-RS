@@ -92,6 +92,7 @@ pub fn try_compress(
 /// Merges the segments in `compressed_segments` that contain equivalent models.
 /// Assumes that the segments in `compressed_segments` are all from the same
 /// time series and that the segments are all sorted according to time.
+#[allow(dead_code)]
 pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
     // TODO: merge segments with none equivalent models.
 

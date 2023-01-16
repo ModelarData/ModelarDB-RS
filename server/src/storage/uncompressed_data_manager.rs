@@ -379,16 +379,20 @@ impl UncompressedDataManager {
         let uncompressed_values = array!(data_points, 1, ValueArray);
 
         // unwrap() is safe to use since uncompressed_timestamps and uncompressed_values have the same length.
-        let compressed_segments = compression::try_compress(
+        compression::try_compress(
             univariate_id,
             uncompressed_timestamps,
             uncompressed_values,
             error_bound,
             &self.compressed_schema,
         )
-        .unwrap();
+        .unwrap()
 
-        compression::merge_segments(compressed_segments)
+        // TODO: integrate merge_segments with query processing.
+        // Currently segment merging is disabled as the query pipeline assumes compressed segments
+        // are sorted and never overlapping. That compressed segments are never overlapping can be
+        // broken by merge_segments if the segments A B C for a univariate time series becomes AC B.
+        // compression::merge_segments(compressed_segments)
     }
 
     /// Spill the first [`UncompressedInMemoryDataBuffer`] in the queue of
