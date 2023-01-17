@@ -48,7 +48,7 @@ use crate::models::ErrorBound;
 use crate::storage::COMPRESSED_DATA_FOLDER;
 use crate::tables::ModelTable;
 use crate::types::{
-    ArrowTimestamp, ArrowValue, CompressedSchema, UncompressedSchema, UnivariateId,
+    ArrowTimestamp, ArrowValue, CompressedSchema, MetricSchema, UncompressedSchema, UnivariateId,
 };
 use crate::Context;
 
@@ -68,6 +68,9 @@ pub struct MetadataManager {
     /// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch)
     /// [`Schema`](datafusion::arrow::datatypes::Schema) used for compressed data buffers.
     compressed_schema: CompressedSchema,
+    /// [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch)
+    /// [`Schema`](datafusion::arrow::datatypes::Schema) used for internally collected metrics.
+    metric_schema: MetricSchema,
     /// Cache of tag value hashes used to signify when to persist new unsaved
     /// tag combinations.
     tag_value_hashes: HashMap<String, u64>,
@@ -107,11 +110,26 @@ impl MetadataManager {
             Field::new("error", DataType::Float32, false),
         ])));
 
+        // Initialize the schema for record batches containing internally collected metrics.
+        let timestamp_field = Field::new("item", ArrowTimestamp::DATA_TYPE, true);
+        let value_field = Field::new("item", DataType::UInt32, true);
+
+        let metric_schema = MetricSchema(Arc::new(Schema::new(vec![
+            Field::new("log", DataType::Utf8, false),
+            Field::new(
+                "timestamps",
+                DataType::List(Box::new(timestamp_field)),
+                false,
+            ),
+            Field::new("values", DataType::List(Box::new(value_field)), false),
+        ])));
+
         // Create the metadata manager with the default values.
         let metadata_manager = Self {
             metadata_database_path,
             uncompressed_schema,
             compressed_schema,
+            metric_schema,
             tag_value_hashes: HashMap::new(),
             // Default values for parameters.
             uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
@@ -205,6 +223,12 @@ impl MetadataManager {
     /// [`Schema`](datafusion::arrow::datatypes::Schema) used for compressed data buffers.
     pub fn compressed_schema(&self) -> CompressedSchema {
         self.compressed_schema.clone()
+    }
+
+    /// Return the [`RecordBatch`](datafusion::arrow::record_batch::RecordBatch)
+    /// [`Schema`](datafusion::arrow::datatypes::Schema) used for internally collected metrics.
+    pub fn metric_schema(&self) -> MetricSchema {
+        self.metric_schema.clone()
     }
 
     /// Return the tag hash for the given list of tag values either by retrieving it from a cache

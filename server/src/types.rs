@@ -51,9 +51,12 @@ pub mod tests {
 pub type ValueBuilder = datafusion::arrow::array::PrimitiveBuilder<ArrowValue>;
 pub type ValueArray = datafusion::arrow::array::PrimitiveArray<ArrowValue>;
 
-// Types used for the schema of uncompressed and compressed data.
+// Types used for the schema of uncompressed data, compressed data, and metrics.
 #[derive(Clone)]
 pub struct UncompressedSchema(pub datafusion::arrow::datatypes::SchemaRef);
 
 #[derive(Clone)]
 pub struct CompressedSchema(pub datafusion::arrow::datatypes::SchemaRef);
+
+#[derive(Clone)]
+pub struct MetricSchema(pub datafusion::arrow::datatypes::SchemaRef);

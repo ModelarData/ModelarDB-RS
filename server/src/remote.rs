@@ -33,7 +33,6 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
 use datafusion::arrow::array::{ListBuilder, StringBuilder, UInt32Builder};
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field};
 use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::arrow::{
     array::ArrayRef, datatypes::Schema, datatypes::SchemaRef, error::ArrowError,
@@ -52,7 +51,7 @@ use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 use crate::tables::ModelTable;
-use crate::types::{ArrowTimestamp, TimestampBuilder};
+use crate::types::TimestampBuilder;
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
@@ -553,20 +552,6 @@ impl FlightService for FlightServiceHandler {
             let mut storage_engine = self.context.storage_engine.write().await;
             let logs = storage_engine.collect_logs().await;
 
-            // Create the schema for the single record batch that contains all data from the logs.
-            let timestamp_field = Field::new("item", ArrowTimestamp::DATA_TYPE, true);
-            let value_field = Field::new("item", DataType::UInt32, true);
-
-            let schema = Schema::new(vec![
-                Field::new("log", DataType::Utf8, false),
-                Field::new(
-                    "timestamps",
-                    DataType::List(Box::new(timestamp_field)),
-                    false,
-                ),
-                Field::new("values", DataType::List(Box::new(value_field)), false),
-            ]);
-
             // Extract the data from the logs and insert it into Apache Arrow array builders.
             let mut log_builder = StringBuilder::new();
             let mut timestamps_builder = ListBuilder::new(TimestampBuilder::new());
@@ -584,9 +569,11 @@ impl FlightService for FlightServiceHandler {
                 values_builder.append(true);
             }
 
+            let schema = self.context.metadata_manager.metric_schema();
+
             // Finish the builders and create the record batch containing the logs.
             let batch = RecordBatch::try_new(
-                Arc::new(schema.clone()),
+                schema.0.clone(),
                 vec![
                     Arc::new(log_builder.finish()),
                     Arc::new(timestamps_builder.finish()),
@@ -597,7 +584,7 @@ impl FlightService for FlightServiceHandler {
 
             // Write the schema and corresponding record batch to a stream.
             let options = IpcWriteOptions::default();
-            let mut writer = StreamWriter::try_new_with_options(vec![], &schema, options)
+            let mut writer = StreamWriter::try_new_with_options(vec![], &schema.0, options)
                 .map_err(|error| Status::internal(error.to_string()))?;
 
             writer
