@@ -759,6 +759,10 @@ mod tests {
         );
 
         assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 3);
+
+        // The used disk space metric should have an entry for when the uncompressed data manager is
+        // created, an entry for when the data buffer is spilled to disk, and an entry for when the
+        // finished data buffer is popped.
         assert_eq!(data_manager.used_disk_space_metric.read().await.values.len(), 3);
     }
 

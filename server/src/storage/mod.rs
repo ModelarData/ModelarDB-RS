@@ -269,25 +269,25 @@ impl StorageEngine {
     pub async fn collect_metrics(&mut self) -> Vec<(String, (TimestampArray, UInt32Array))> {
         vec![
             (
-                "used_uncompressed_memory".to_owned(),
+                MetricType::UsedUncompressedMemory.to_string(),
                 self.uncompressed_data_manager
                     .used_uncompressed_memory_metric
                     .finish(),
             ),
             (
-                "used_compressed_memory".to_owned(),
+                MetricType::UsedCompressedMemory.to_string(),
                 self.compressed_data_manager
                     .used_compressed_memory_metric
                     .finish(),
             ),
             (
-                "ingested_data_points".to_owned(),
+                MetricType::IngestedDataPoints.to_string(),
                 self.uncompressed_data_manager
                     .ingested_data_points_metric
                     .finish(),
             ),
             (
-                "used_disk_space".to_owned(),
+                MetricType::UsedDiskSpace.to_string(),
                 self.compressed_data_manager
                     .used_disk_space_metric
                     .write()
@@ -353,6 +353,25 @@ impl StorageEngine {
             bytes == APACHE_PARQUET_FILE_SIGNATURE
         } else {
             false
+        }
+    }
+}
+
+/// The different types of metrics that are collected in the storage engine.
+enum MetricType {
+    UsedUncompressedMemory,
+    UsedCompressedMemory,
+    IngestedDataPoints,
+    UsedDiskSpace,
+}
+
+impl MetricType {
+    fn to_string(&self) -> String {
+        match self {
+            Self::UsedUncompressedMemory => "used_uncompressed_memory".to_string(),
+            Self::UsedCompressedMemory => "used_compressed_memory".to_string(),
+            Self::IngestedDataPoints => "ingested_data_bytes".to_string(),
+            Self::UsedDiskSpace => "used_disk_space".to_string(),
         }
     }
 }

@@ -489,6 +489,8 @@ mod tests {
             0 as usize
         );
 
+        // The used disk space log should have an entry for when the data transfer component is
+        // created and for when the transferred files are deleted from disk.
         assert_eq!(data_transfer.used_disk_space_metric.read().await.values.len(), 2);
     }
 
