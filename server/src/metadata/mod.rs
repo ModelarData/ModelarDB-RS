@@ -115,7 +115,7 @@ impl MetadataManager {
         let value_field = Field::new("item", DataType::UInt32, true);
 
         let metric_schema = MetricSchema(Arc::new(Schema::new(vec![
-            Field::new("log", DataType::Utf8, false),
+            Field::new("metric", DataType::Utf8, false),
             Field::new(
                 "timestamps",
                 DataType::List(Box::new(timestamp_field)),

@@ -548,17 +548,17 @@ impl FlightService for FlightServiceHandler {
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "CollectLogs" {
+        } else if action.r#type == "CollectMetrics" {
             let mut storage_engine = self.context.storage_engine.write().await;
-            let logs = storage_engine.collect_logs().await;
+            let metrics = storage_engine.collect_metrics().await;
 
-            // Extract the data from the logs and insert it into Apache Arrow array builders.
-            let mut log_builder = StringBuilder::new();
+            // Extract the data from the metrics and insert it into Apache Arrow array builders.
+            let mut metric_builder = StringBuilder::new();
             let mut timestamps_builder = ListBuilder::new(TimestampBuilder::new());
             let mut values_builder = ListBuilder::new(UInt32Builder::new());
 
-            for (log_name, (timestamps, values)) in logs.iter() {
-                log_builder.append_value(log_name);
+            for (metric_name, (timestamps, values)) in metrics.iter() {
+                metric_builder.append_value(metric_name);
 
                 timestamps_builder
                     .values()
@@ -571,11 +571,11 @@ impl FlightService for FlightServiceHandler {
 
             let schema = self.context.metadata_manager.metric_schema();
 
-            // Finish the builders and create the record batch containing the logs.
+            // Finish the builders and create the record batch containing the metrics.
             let batch = RecordBatch::try_new(
                 schema.0.clone(),
                 vec![
-                    Arc::new(log_builder.finish()),
+                    Arc::new(metric_builder.finish()),
                     Arc::new(timestamps_builder.finish()),
                     Arc::new(values_builder.finish()),
                 ],
@@ -626,11 +626,11 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let collect_logs = ActionType {
-            r#type: "CollectLogs".to_owned(),
+        let collect_metrics = ActionType {
+            r#type: "CollectMetrics".to_owned(),
             description:
-                "Collect internal logs describing the amount of used memory for uncompressed \
-            and compressed data, used disk space, and ingested data points over time. The logs are \
+                "Collect internal metrics describing the amount of used memory for uncompressed \
+            and compressed data, used disk space, and ingested data points over time. The metrics are \
             cleared when collected."
                     .to_owned(),
         };
@@ -639,7 +639,7 @@ impl FlightService for FlightServiceHandler {
             Ok(create_command_statement_update_action),
             Ok(flush_data_to_disk),
             Ok(flush_edge_action),
-            Ok(collect_logs),
+            Ok(collect_metrics),
         ]);
 
         Ok(Response::new(Box::pin(output)))

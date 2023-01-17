@@ -33,7 +33,7 @@ use tokio::sync::RwLock;
 use tonic::codegen::Bytes;
 use tracing::debug;
 
-use crate::storage::{self, StorageEngine, COMPRESSED_DATA_FOLDER, Log};
+use crate::storage::{self, StorageEngine, COMPRESSED_DATA_FOLDER, Metric};
 
 // TODO: Make the transfer batch size in bytes part of the user-configurable settings.
 // TODO: When the storage engine is changed to use object store for everything, receive
@@ -56,8 +56,8 @@ pub struct DataTransfer {
     /// The number of bytes that is required before transferring a batch of data to the remote
     /// object store.
     transfer_batch_size_in_bytes: usize,
-    /// Log of the total used disk space in bytes, updated when data is transferred.
-    pub used_disk_space_log: Arc<RwLock<Log>>,
+    /// Metric for the total used disk space in bytes, updated when data is transferred.
+    pub used_disk_space_metric: Arc<RwLock<Metric>>,
 }
 
 impl DataTransfer {
@@ -68,7 +68,7 @@ impl DataTransfer {
         local_data_folder_path: PathBuf,
         remote_data_folder_object_store: Arc<dyn ObjectStore>,
         transfer_batch_size_in_bytes: usize,
-        used_disk_space_log: Arc<RwLock<Log>>,
+        used_disk_space_metric: Arc<RwLock<Metric>>,
     ) -> Result<Self, IOError> {
         let local_fs = LocalFileSystem::new_with_prefix(local_data_folder_path.clone())?;
         let local_data_folder_object_store = Arc::new(local_fs);
@@ -96,12 +96,12 @@ impl DataTransfer {
             remote_data_folder_object_store,
             compressed_files: compressed_files.clone(),
             transfer_batch_size_in_bytes,
-            used_disk_space_log
+            used_disk_space_metric
         };
 
-        // Log the initial used disk space.
+        // Record the initial used disk space.
         let initial_disk_space: usize = compressed_files.values().into_iter().sum();
-        data_transfer.used_disk_space_log.write().await.add_entry(initial_disk_space as isize, true);
+        data_transfer.used_disk_space_metric.write().await.append(initial_disk_space as isize, true);
 
         // Check if data should be transferred immediately.
         for (table_name, size_in_bytes) in compressed_files.iter() {
@@ -229,7 +229,7 @@ impl DataTransfer {
         // Delete the transferred files from the in-memory tracking of compressed files.
         let transferred_bytes: usize = read_object_metas.iter().map(|meta| meta.size).sum();
         *self.compressed_files.get_mut(table_name).unwrap() -= transferred_bytes;
-        self.used_disk_space_log.write().await.add_entry(-(transferred_bytes as isize), true);
+        self.used_disk_space_metric.write().await.append(-(transferred_bytes as isize), true);
 
         debug!(
             "Transferred {} bytes of compressed data to path '{}' in remote object store.",
@@ -323,7 +323,7 @@ mod tests {
             COMPRESSED_FILE_SIZE * 2
         );
 
-        assert_eq!(data_transfer.used_disk_space_log.read().await.values.len(), 1);
+        assert_eq!(data_transfer.used_disk_space_metric.read().await.values.len(), 1);
     }
 
     #[tokio::test]
@@ -489,7 +489,7 @@ mod tests {
             0 as usize
         );
 
-        assert_eq!(data_transfer.used_disk_space_log.read().await.values.len(), 2);
+        assert_eq!(data_transfer.used_disk_space_metric.read().await.values.len(), 2);
     }
 
     /// Set up a data folder with a table folder that has a single compressed file in it. Return the
@@ -524,7 +524,7 @@ mod tests {
             local_data_folder_path.to_path_buf(),
             remote_data_folder_object_store,
             COMPRESSED_FILE_SIZE * 3 - 1,
-            Arc::new(RwLock::new(Log::new())),
+            Arc::new(RwLock::new(Metric::new())),
         )
         .await
         .unwrap();

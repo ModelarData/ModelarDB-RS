@@ -105,7 +105,9 @@ impl StorageEngine {
         metadata_manager: MetadataManager,
         compress_directly: bool,
     ) -> Result<Self, IOError> {
-        let used_disk_space_log = Arc::new(RwLock::new(Log::new()));
+        // Create a metric for used disk space. The metric is wrapped in an Arc and a read/write lock
+        // since it is appended to by multiple components, potentially at the same time.
+        let used_disk_space_metric = Arc::new(RwLock::new(Metric::new()));
 
         // Create the uncompressed data manager.
         let uncompressed_data_manager = UncompressedDataManager::try_new(
@@ -114,7 +116,7 @@ impl StorageEngine {
             metadata_manager.uncompressed_schema(),
             metadata_manager.compressed_schema(),
             compress_directly,
-            used_disk_space_log.clone(),
+            used_disk_space_metric.clone(),
         ).await?;
 
         // Create the compressed data manager.
@@ -124,7 +126,7 @@ impl StorageEngine {
                     local_data_folder.clone(),
                     remote_data_folder,
                     64 * 1024 * 1024, // 64 MiB.
-                    used_disk_space_log.clone(),
+                    used_disk_space_metric.clone(),
                 )
                 .await?,
             )
@@ -137,7 +139,7 @@ impl StorageEngine {
             local_data_folder,
             metadata_manager.compressed_reserved_memory_in_bytes,
             metadata_manager.compressed_schema(),
-            used_disk_space_log,
+            used_disk_space_metric,
         )?;
 
         Ok(Self {
@@ -262,32 +264,32 @@ impl StorageEngine {
             .await
     }
 
-    /// Collect and return the logs of used uncompressed/compressed memory, used disk space, and ingested
-    /// data points over time. The logs are returned in tuples with the format (log_name, (timestamps, values)).
-    pub async fn collect_logs(&mut self) -> Vec<(String, (TimestampArray, UInt32Array))> {
+    /// Collect and return the metrics of used uncompressed/compressed memory, used disk space, and ingested
+    /// data points over time. The metrics are returned in tuples with the format (metric_name, (timestamps, values)).
+    pub async fn collect_metrics(&mut self) -> Vec<(String, (TimestampArray, UInt32Array))> {
         vec![
             (
                 "used_uncompressed_memory".to_owned(),
                 self.uncompressed_data_manager
-                    .used_uncompressed_memory_log
+                    .used_uncompressed_memory_metric
                     .finish(),
             ),
             (
                 "used_compressed_memory".to_owned(),
                 self.compressed_data_manager
-                    .used_compressed_memory_log
+                    .used_compressed_memory_metric
                     .finish(),
             ),
             (
                 "ingested_data_points".to_owned(),
                 self.uncompressed_data_manager
-                    .ingested_data_points_log
+                    .ingested_data_points_metric
                     .finish(),
             ),
             (
                 "used_disk_space".to_owned(),
                 self.compressed_data_manager
-                    .used_disk_space_log
+                    .used_disk_space_metric
                     .write()
                     .await
                     .finish(),
@@ -355,17 +357,19 @@ impl StorageEngine {
     }
 }
 
-/// Log used to record changes in specific attributes in the storage engine.
-pub struct Log {
+/// Metric used to record changes in specific attributes in the storage engine.
+pub struct Metric {
     /// Builder consisting of millisecond precision timestamps.
     timestamps: TimestampBuilder,
     /// Builder consisting of values.
     values: UInt32Builder,
-    /// Since the values builder is cleared when the log is finished, the last value is saved separately.
+    /// Last saved metric value, used to support updating the metric based on a change to the last
+    /// value instead of with a direct new value. Since the values builder is cleared when the metric
+    /// is finished, the last value is saved separately.
     last_value: isize,
 }
 
-impl Log {
+impl Metric {
     fn new() -> Self {
         Self {
             timestamps: TimestampBuilder::new(),
@@ -374,9 +378,9 @@ impl Log {
         }
     }
 
-    /// Add a new entry to the log, where the timestamp is the current milliseconds since the Unix
-    /// epoch and the value is either set directly or based on the last value in the log.
-    fn add_entry(&mut self, value: isize, based_on_last: bool) {
+    /// Add a new entry to the metric, where the timestamp is the current milliseconds since the Unix
+    /// epoch and the value is either set directly or based on the last value in the metric.
+    fn append(&mut self, value: isize, based_on_last: bool) {
         // unwrap() is safe since the Unix epoch is always earlier than now.
         let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let timestamp = since_the_epoch.as_millis() as Timestamp;
@@ -595,54 +599,54 @@ mod tests {
         );
     }
 
-    // Tests for Log.
+    // Tests for Metric.
     #[test]
-    fn test_add_entry_to_log() {
-        let mut log = Log::new();
+    fn test_append_to_metric() {
+        let mut metric = Metric::new();
         let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let timestamp = since_the_epoch.as_millis() as Timestamp;
 
-        log.add_entry(30, false);
-        log.add_entry(30, false);
+        metric.append(30, false);
+        metric.append(30, false);
 
-        assert_eq!(log.timestamps.values_slice().last(), Some(&timestamp));
-        assert_eq!(log.values.values_slice().last(), Some(&30));
+        assert_eq!(metric.timestamps.values_slice().last(), Some(&timestamp));
+        assert_eq!(metric.values.values_slice().last(), Some(&30));
     }
 
     #[test]
-    fn test_add_positive_entry_to_log_based_on_last() {
-        let mut log = Log::new();
+    fn test_append_positive_value_to_metric_based_on_last() {
+        let mut metric = Metric::new();
 
-        log.add_entry(30, true);
-        log.add_entry(30, true);
+        metric.append(30, true);
+        metric.append(30, true);
 
-        assert_eq!(log.values.values_slice().last(), Some(&60));
+        assert_eq!(metric.values.values_slice().last(), Some(&60));
     }
 
     #[test]
-    fn test_add_negative_entry_to_log_based_on_last() {
-        let mut log = Log::new();
+    fn test_append_negative_value_to_metric_based_on_last() {
+        let mut metric = Metric::new();
 
-        log.add_entry(30, true);
-        log.add_entry(-30, true);
+        metric.append(30, true);
+        metric.append(-30, true);
 
-        assert_eq!(log.values.values_slice().last(), Some(&0));
+        assert_eq!(metric.values.values_slice().last(), Some(&0));
     }
 
     #[test]
-    fn test_finish_log() {
-        let mut log = Log::new();
+    fn test_finish_metric() {
+        let mut metric = Metric::new();
 
-        log.add_entry(30, true);
-        log.add_entry(-30, true);
+        metric.append(30, true);
+        metric.append(-30, true);
 
-        let (_timestamps, values) = log.finish();
+        let (_timestamps, values) = metric.finish();
         assert_eq!(values.value(0), 30);
         assert_eq!(values.value(1), 0);
 
-        // Ensure that the builders in the log has been reset.
-        assert_eq!(log.timestamps.values_slice().len(), 0);
-        assert_eq!(log.values.values_slice().len(), 0);
+        // Ensure that the builders in the metric has been reset.
+        assert_eq!(metric.timestamps.values_slice().len(), 0);
+        assert_eq!(metric.values.values_slice().len(), 0);
     }
 }
 

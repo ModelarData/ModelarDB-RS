@@ -33,7 +33,7 @@ use crate::models::ErrorBound;
 use crate::storage::uncompressed_data_buffer::{
     UncompressedDataBuffer, UncompressedInMemoryDataBuffer, UncompressedOnDiskDataBuffer,
 };
-use crate::storage::{Log, UNCOMPRESSED_DATA_FOLDER};
+use crate::storage::{Metric, UNCOMPRESSED_DATA_FOLDER};
 use crate::types::{
     CompressedSchema, Timestamp, TimestampArray, UncompressedSchema, Value, ValueArray,
 };
@@ -61,12 +61,12 @@ pub(super) struct UncompressedDataManager {
     // TODO: This is a temporary field used to fix existing tests. Remove when configuration component is changed.
     /// If this is true, compress finished buffers directly instead of queueing them.
     compress_directly: bool,
-    /// Log of the used uncompressed memory in bytes, updated every time the used memory changes.
-    pub(super) used_uncompressed_memory_log: Log,
-    /// Log of the amount of ingested data points, updated every time a new batch of data is ingested.
-    pub(super) ingested_data_points_log: Log,
-    /// Log of the total used disk space in bytes, updated every time uncompressed data is spilled.
-    pub used_disk_space_log: Arc<RwLock<Log>>,
+    /// Metric for the used uncompressed memory in bytes, updated every time the used memory changes.
+    pub(super) used_uncompressed_memory_metric: Metric,
+    /// Metric for the amount of ingested data points, updated every time a new batch of data is ingested.
+    pub(super) ingested_data_points_metric: Metric,
+    /// Metric for the total used disk space in bytes, updated every time uncompressed data is spilled.
+    pub used_disk_space_metric: Arc<RwLock<Metric>>,
 }
 
 impl UncompressedDataManager {
@@ -80,7 +80,7 @@ impl UncompressedDataManager {
         uncompressed_schema: UncompressedSchema,
         compressed_schema: CompressedSchema,
         compress_directly: bool,
-        used_disk_space_log: Arc<RwLock<Log>>,
+        used_disk_space_metric: Arc<RwLock<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the uncompressed data manager exists.
         let local_uncompressed_data_folder = local_data_folder.join(UNCOMPRESSED_DATA_FOLDER);
@@ -106,15 +106,15 @@ impl UncompressedDataManager {
             }
         }
 
-        // Log the used disk space of the uncompressed data buffers currently on disk.
+        // Record the used disk space of the uncompressed data buffers currently on disk.
         let initial_disk_space: usize = finished_data_buffers
             .iter()
             .map(|buffer| buffer.disk_size())
             .sum();
-        used_disk_space_log
+        used_disk_space_metric
             .write()
             .await
-            .add_entry(initial_disk_space as isize, true);
+            .append(initial_disk_space as isize, true);
 
         Ok(Self {
             local_data_folder,
@@ -124,9 +124,9 @@ impl UncompressedDataManager {
             uncompressed_schema,
             compressed_schema,
             compress_directly,
-            used_uncompressed_memory_log: Log::new(),
-            ingested_data_points_log: Log::new(),
-            used_disk_space_log,
+            used_uncompressed_memory_metric: Metric::new(),
+            ingested_data_points_metric: Metric::new(),
+            used_disk_space_metric,
         })
     }
 
@@ -149,9 +149,9 @@ impl UncompressedDataManager {
             model_table.name
         );
 
-        // Log the amount of ingested data points.
-        self.ingested_data_points_log
-            .add_entry(data_points.num_rows() as isize, false);
+        // Record the amount of ingested data points.
+        self.ingested_data_points_metric
+            .append(data_points.num_rows() as isize, false);
 
         // Prepare the timestamp column for iteration.
         let timestamp_index = model_table.timestamp_column_index;
@@ -314,8 +314,8 @@ impl UncompressedDataManager {
 
             let used_memory = UncompressedInMemoryDataBuffer::memory_size();
             self.uncompressed_remaining_memory_in_bytes -= used_memory;
-            self.used_uncompressed_memory_log
-                .add_entry(used_memory as isize, true);
+            self.used_uncompressed_memory_metric
+                .append(used_memory as isize, true);
 
             debug!(
                 "Created buffer for {}. Remaining reserved bytes: {}.",
@@ -336,16 +336,16 @@ impl UncompressedDataManager {
     pub(super) async fn finished_data_buffer(&mut self) -> Option<Box<dyn UncompressedDataBuffer>> {
         if let Some(uncompressed_data_buffer) = self.finished_uncompressed_data_buffers.pop_front()
         {
-            // Add the memory size of the removed buffer back to the remaining bytes and log the change.
+            // Add the memory size of the removed buffer back to the remaining bytes and record the change.
             self.uncompressed_remaining_memory_in_bytes += uncompressed_data_buffer.memory_size();
-            self.used_uncompressed_memory_log
-                .add_entry(-(uncompressed_data_buffer.memory_size() as isize), true);
+            self.used_uncompressed_memory_metric
+                .append(-(uncompressed_data_buffer.memory_size() as isize), true);
 
-            // Since the buffer was potentially on disk, log the potential change to the used disk space.
-            self.used_disk_space_log
+            // Since the buffer was potentially on disk, record the potential change to the used disk space.
+            self.used_disk_space_metric
                 .write()
                 .await
-                .add_entry(-(uncompressed_data_buffer.disk_size() as isize), true);
+                .append(-(uncompressed_data_buffer.disk_size() as isize), true);
 
             Some(uncompressed_data_buffer)
         } else {
@@ -361,11 +361,11 @@ impl UncompressedDataManager {
         univariate_id: u64,
         mut in_memory_data_buffer: UncompressedInMemoryDataBuffer,
     ) -> RecordBatch {
-        // Add the size of the segment back to the remaining reserved bytes and log the change.
+        // Add the size of the segment back to the remaining reserved bytes and record the change.
         let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
         self.uncompressed_remaining_memory_in_bytes += freed_memory;
-        self.used_uncompressed_memory_log
-            .add_entry(-(freed_memory as isize), true);
+        self.used_uncompressed_memory_metric
+            .append(-(freed_memory as isize), true);
 
         // unwrap() is safe to use since the error bound is not negative, infinite, or NAN.
         let error_bound = ErrorBound::try_new(0.0).unwrap();
@@ -410,14 +410,14 @@ impl UncompressedDataManager {
                 // Add the size of the in-memory data buffer back to the remaining reserved bytes.
                 let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
                 self.uncompressed_remaining_memory_in_bytes += freed_memory;
-                self.used_uncompressed_memory_log
-                    .add_entry(-(freed_memory as isize), true);
+                self.used_uncompressed_memory_metric
+                    .append(-(freed_memory as isize), true);
 
-                // Log the used disk space of the spilled finished buffer.
-                self.used_disk_space_log
+                // Record the used disk space of the spilled finished buffer.
+                self.used_disk_space_metric
                     .write()
                     .await
-                    .add_entry(uncompressed_on_disk_data_buffer.disk_size() as isize, true);
+                    .append(uncompressed_on_disk_data_buffer.disk_size() as isize, true);
 
                 debug!(
                     "Spilled '{:?}'. Remaining reserved bytes: {}.",
@@ -488,7 +488,7 @@ mod tests {
             2
         );
 
-        assert_eq!(data_manager.ingested_data_points_log.values.len(), 1);
+        assert_eq!(data_manager.ingested_data_points_metric.values.len(), 1);
     }
 
     #[tokio::test]
@@ -511,7 +511,7 @@ mod tests {
             4
         );
 
-        assert_eq!(data_manager.ingested_data_points_log.values.len(), 1);
+        assert_eq!(data_manager.ingested_data_points_metric.values.len(), 1);
     }
 
     /// Create a record batch with data that resembles uncompressed data with a single tag and two
@@ -698,11 +698,11 @@ mod tests {
         data_manager.spill_finished_buffer().await;
 
         assert!(remaining_memory < data_manager.uncompressed_remaining_memory_in_bytes);
-        assert_eq!(data_manager.used_uncompressed_memory_log.values.len(), 2);
+        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 2);
 
-        // The used disk space log should have an entry for when the uncompressed data manager is
+        // The used disk space metric should have an entry for when the uncompressed data manager is
         // created and for when the data buffer is spilled to disk.
-        assert_eq!(data_manager.used_disk_space_log.read().await.values.len(), 2);
+        assert_eq!(data_manager.used_disk_space_metric.read().await.values.len(), 2);
     }
 
     #[tokio::test]
@@ -714,7 +714,7 @@ mod tests {
         insert_data_points(1, &mut data_manager, UNIVARIATE_ID).await;
 
         assert!(reserved_memory > data_manager.uncompressed_remaining_memory_in_bytes);
-        assert_eq!(data_manager.used_uncompressed_memory_log.values.len(), 1);
+        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 1);
     }
 
     #[tokio::test]
@@ -732,7 +732,7 @@ mod tests {
         data_manager.finished_data_buffer().await;
 
         assert!(remaining_memory < data_manager.uncompressed_remaining_memory_in_bytes);
-        assert_eq!(data_manager.used_uncompressed_memory_log.values.len(), 2);
+        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 2);
     }
 
     #[tokio::test]
@@ -758,8 +758,8 @@ mod tests {
             data_manager.uncompressed_remaining_memory_in_bytes
         );
 
-        assert_eq!(data_manager.used_uncompressed_memory_log.values.len(), 3);
-        assert_eq!(data_manager.used_disk_space_log.read().await.values.len(), 3);
+        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 3);
+        assert_eq!(data_manager.used_disk_space_metric.read().await.values.len(), 3);
     }
 
     #[tokio::test]
@@ -803,7 +803,7 @@ mod tests {
             metadata_manager.uncompressed_schema(),
             metadata_manager.compressed_schema(),
             false,
-            Arc::new(RwLock::new(Log::new())),
+            Arc::new(RwLock::new(Metric::new())),
         )
         .await
         .unwrap();
