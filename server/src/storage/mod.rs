@@ -28,6 +28,7 @@ mod uncompressed_data_manager;
 
 use datafusion::arrow::array::{UInt32Array, UInt32Builder};
 use std::ffi::OsStr;
+use std::fmt;
 use std::fs::File;
 use std::io::{Error as IOError, Write};
 use std::path::{Path, PathBuf};
@@ -365,13 +366,13 @@ enum MetricType {
     UsedDiskSpace,
 }
 
-impl MetricType {
-    fn to_string(&self) -> String {
+impl fmt::Display for MetricType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::UsedUncompressedMemory => "used_uncompressed_memory".to_string(),
-            Self::UsedCompressedMemory => "used_compressed_memory".to_string(),
-            Self::IngestedDataPoints => "ingested_data_bytes".to_string(),
-            Self::UsedDiskSpace => "used_disk_space".to_string(),
+            Self::UsedUncompressedMemory => write!(f, "used_uncompressed_memory"),
+            Self::UsedCompressedMemory => write!(f, "used_compressed_memory"),
+            Self::IngestedDataPoints => write!(f, "ingested_data_bytes"),
+            Self::UsedDiskSpace => write!(f, "used_disk_space"),
         }
     }
 }
