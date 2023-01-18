@@ -407,10 +407,10 @@ fn is_compressed_file_within_time_and_value_range(
 mod tests {
     use super::*;
     use std::path::Path;
-    use datafusion::arrow::array::ArrayBuilder;
 
     use datafusion::arrow::compute;
     use object_store::local::LocalFileSystem;
+    use ringbuf::Rb;
     use tempfile::{self, TempDir};
 
     use crate::array;

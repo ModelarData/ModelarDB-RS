@@ -261,8 +261,8 @@ impl DataTransfer {
 mod tests {
     use super::*;
     use std::fs;
-    use datafusion::arrow::array::ArrayBuilder;
 
+    use ringbuf::Rb;
     use tempfile::{self, TempDir};
 
     use crate::storage::test_util;

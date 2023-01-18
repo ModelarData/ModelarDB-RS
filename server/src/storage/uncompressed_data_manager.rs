@@ -440,9 +440,9 @@ mod tests {
     use super::*;
     use std::path::Path;
     use std::sync::Arc;
-    use datafusion::arrow::array::ArrayBuilder;
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
+    use ringbuf::Rb;
     use tempfile;
 
     use crate::metadata::{test_util, MetadataManager};
