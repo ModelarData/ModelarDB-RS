@@ -266,29 +266,29 @@ impl StorageEngine {
     }
 
     /// Collect and return the metrics of used uncompressed/compressed memory, used disk space, and ingested
-    /// data points over time. The metrics are returned in tuples with the format (metric_name, (timestamps, values)).
-    pub async fn collect_metrics(&mut self) -> Vec<(String, (TimestampArray, UInt32Array))> {
+    /// data points over time. The metrics are returned in tuples with the format (metric_type, (timestamps, values)).
+    pub async fn collect_metrics(&mut self) -> Vec<(MetricType, (TimestampArray, UInt32Array))> {
         vec![
             (
-                MetricType::UsedUncompressedMemory.to_string(),
+                MetricType::UsedUncompressedMemory,
                 self.uncompressed_data_manager
                     .used_uncompressed_memory_metric
                     .finish(),
             ),
             (
-                MetricType::UsedCompressedMemory.to_string(),
+                MetricType::UsedCompressedMemory,
                 self.compressed_data_manager
                     .used_compressed_memory_metric
                     .finish(),
             ),
             (
-                MetricType::IngestedDataPoints.to_string(),
+                MetricType::IngestedDataPoints,
                 self.uncompressed_data_manager
                     .ingested_data_points_metric
                     .finish(),
             ),
             (
-                MetricType::UsedDiskSpace.to_string(),
+                MetricType::UsedDiskSpace,
                 self.compressed_data_manager
                     .used_disk_space_metric
                     .write()
@@ -359,7 +359,7 @@ impl StorageEngine {
 }
 
 /// The different types of metrics that are collected in the storage engine.
-enum MetricType {
+pub enum MetricType {
     UsedUncompressedMemory,
     UsedCompressedMemory,
     IngestedDataPoints,
@@ -384,7 +384,7 @@ pub struct Metric {
     /// Builder consisting of values.
     values: UInt32Builder,
     /// Last saved metric value, used to support updating the metric based on a change to the last
-    /// value instead of with a direct new value. Since the values builder is cleared when the metric
+    /// value instead of simply storing the new value. Since the values builder is cleared when the metric
     /// is finished, the last value is saved separately.
     last_value: isize,
 }

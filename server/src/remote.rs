@@ -480,21 +480,21 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// Perform a specific action based on the type of the action in `request`.
-    /// Currently only the action `CommandStatementUpdate` is supported which
-    /// executes a SQL query containing a command that does not return a result.
-    /// These commands can be `CREATE TABLE table_name(...` which creates a
-    /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a
-    /// model table. A model table is a specialized table for efficiently
-    /// storing multivariate time series with tags within a per field error
-    /// bound. Thus, model tables can only contain a single timestamp column,
-    /// field columns, and tag columns. If no error bound is defined for a field
-    /// column it defaults to an error bound of 0% (lossless compression).
-    ///
-    /// Examples of CREATE TABLE and CREATE MODEL TABLE commands:
-    /// * CREATE TABLE company(id INTEGER, name TEXT)
-    /// * CREATE MODEL TABLE wind_turbines(timestamp TIMESTAMP,
-    ///   field_lossless FIELD, field_lossy FIELD(5), tag_one TAG, tag_two TAG)
+    /// Perform a specific action based on the type of the action in `request`. Currently the
+    /// following actions are supported:
+    /// * `CommandStatementUpdate`: Execute a SQL query containing a command that does not
+    /// return a result. These commands can be `CREATE TABLE table_name(...` which creates a
+    /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a model table.
+    /// * `FlushMemory`: Flush all data that is currently in memory to disk. This flushes both
+    /// uncompressed and compressed data in the storage engine to disk.
+    /// * `FlushEdge`: An extension of the `FlushMemory` action that both flushes all data that is
+    /// currently in memory to disk and then flushes all compressed data on disk to the remote
+    /// object store. Note that data is only transferred to the remote object store if one was
+    /// provided when starting the server.
+    /// * `CollectMetrics`: Collect internal metrics describing the amount of used memory for
+    /// uncompressed and compressed data, used disk space, and ingested data points over time.
+    /// Note that the metrics are cleared when collected, meaning that only the metrics
+    /// recorded since the last call to `CollectMetrics` is returned.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -558,7 +558,7 @@ impl FlightService for FlightServiceHandler {
             let mut values_builder = ListBuilder::new(UInt32Builder::new());
 
             for (metric_name, (timestamps, values)) in metrics.iter() {
-                metric_builder.append_value(metric_name);
+                metric_builder.append_value(metric_name.to_string());
 
                 timestamps_builder
                     .values()
