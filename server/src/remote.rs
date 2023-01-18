@@ -487,14 +487,14 @@ impl FlightService for FlightServiceHandler {
     /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a model table.
     /// * `FlushMemory`: Flush all data that is currently in memory to disk. This flushes both
     /// uncompressed and compressed data in the storage engine to disk.
-    /// * `FlushEdge`: An extension of the `FlushMemory` action that both flushes all data that is
+    /// * `FlushEdge`: An extension of the `FlushMemory` action that first flushes all data that is
     /// currently in memory to disk and then flushes all compressed data on disk to the remote
     /// object store. Note that data is only transferred to the remote object store if one was
     /// provided when starting the server.
     /// * `CollectMetrics`: Collect internal metrics describing the amount of used memory for
     /// uncompressed and compressed data, used disk space, and ingested data points over time.
     /// Note that the metrics are cleared when collected, meaning that only the metrics
-    /// recorded since the last call to `CollectMetrics` is returned.
+    /// recorded since the last call to `CollectMetrics` are returned.
     async fn do_action(
         &self,
         request: Request<Action>,
