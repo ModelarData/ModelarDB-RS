@@ -424,10 +424,10 @@ impl Metric {
 
     /// Finish and reset the internal ring buffers and return the timestamps and values as Apache Arrow arrays.
     fn finish(&mut self) -> (TimestampArray, UInt32Array) {
-        let timestamps = self.timestamps.pop_iter().collect::<Vec<Timestamp>>();
-        let values = self.values.pop_iter().collect::<Vec<u32>>();
+        let timestamps = TimestampArray::from_iter_values(self.timestamps.pop_iter());
+        let values = UInt32Array::from_iter_values(self.values.pop_iter());
 
-        (TimestampArray::from(timestamps), UInt32Array::from(values))
+        (timestamps, values)
     }
 }
 
