@@ -26,19 +26,19 @@ use datafusion::optimizer::OptimizerConfig;
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::planner::DefaultPhysicalPlanner;
 use datafusion::physical_plan::{ExecutionPlan, PhysicalPlanner};
-use datafusion::prelude::SessionConfig;
+use datafusion::config::ConfigOptions;
 use tracing::debug;
 
 pub struct LogOptimizerRule {}
 
 impl OptimizerRule for LogOptimizerRule {
-    fn optimize(
+    fn try_optimize(
         &self,
         logical_plan: &LogicalPlan,
-        _execution_props: &mut OptimizerConfig,
-    ) -> Result<LogicalPlan> {
+        _execution_props: &dyn OptimizerConfig,
+    ) -> Result<Option<LogicalPlan>> {
         debug!("Logical plan:\n{:#?}\n", &logical_plan);
-        Ok(logical_plan.clone())
+        Ok(Some(logical_plan.clone()))
     }
 
     fn name(&self) -> &str {
@@ -69,7 +69,7 @@ impl PhysicalOptimizerRule for LogPhysicalOptimizerRule {
     fn optimize(
         &self,
         execution_plan: Arc<dyn ExecutionPlan>,
-        _config: &SessionConfig,
+        _config: &ConfigOptions,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         debug!("Execution plan:\n{:#?}\n", &execution_plan);
         Ok(execution_plan.clone())

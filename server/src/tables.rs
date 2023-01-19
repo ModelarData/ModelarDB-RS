@@ -31,7 +31,6 @@ use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema, SchemaRef}
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::ToDFSchema;
-use datafusion::config::ConfigOptions;
 use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::datasource::{
     datasource::TableProviderFilterPushDown, listing::PartitionedFile, TableProvider, TableType,
@@ -48,7 +47,6 @@ use datafusion::physical_plan::{
     SendableRecordBatchStream, Statistics,
 };
 use futures::stream::{Stream, StreamExt};
-use parking_lot::RwLock;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::models;
@@ -74,8 +72,6 @@ pub struct ModelTable {
     schema: Arc<Schema>,
     /// Field column to use for queries that do not include fields.
     fallback_field_column: u64,
-    /// Configuration options to use for reading Apache Parquet files.
-    config_options: Arc<RwLock<ConfigOptions>>,
 }
 
 impl ModelTable {
@@ -108,7 +104,6 @@ impl ModelTable {
             object_store_url,
             schema: Arc::new(Schema::new(columns)),
             fallback_field_column: fallback_field_column as u64,
-            config_options: Arc::new(RwLock::new(ConfigOptions::new())),
         })
     }
 
@@ -270,7 +265,7 @@ impl TableProvider for ModelTable {
 
             // unwrap() is safe as the store is set by create_session_context().
             let query_object_store = ctx
-                .runtime_env
+                .runtime_env()
                 .object_store(&self.object_store_url)
                 .unwrap();
 
@@ -311,9 +306,9 @@ impl TableProvider for ModelTable {
             statistics,
             projection: None,
             limit,
-            output_ordering: None,
             table_partition_cols: vec![],
-            config_options: self.config_options.clone(),
+            output_ordering: None,
+            infinite_source: false,
         };
 
         // TODO: extract all of the predicates that consist of tag = tag_value from the query so the
@@ -877,7 +872,7 @@ mod tests {
             limit: None,
             table_partition_cols: vec![],
             output_ordering: None,
-            config_options: Arc::new(RwLock::new(ConfigOptions::new())),
+            infinite_source: false,
         };
         Arc::new(ParquetExec::new(file_scan_config, None, None))
     }

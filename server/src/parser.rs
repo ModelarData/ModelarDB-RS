@@ -58,13 +58,13 @@ impl ModelarDbDialect {
     /// otherwise [`false`] is returned. The method does not consume tokens.
     fn next_tokens_are_create_model_table(&self, parser: &Parser) -> bool {
         // CREATE.
-        if let Token::Word(word) = parser.peek_nth_token(0) {
+        if let Token::Word(word) = parser.peek_nth_token(0).token {
             if word.keyword == Keyword::CREATE {
                 // MODEL.
-                if let Token::Word(word) = parser.peek_nth_token(1) {
+                if let Token::Word(word) = parser.peek_nth_token(1).token {
                     if word.value.to_uppercase() == "MODEL" {
                         // TABLE.
-                        if let Token::Word(word) = parser.peek_nth_token(2) {
+                        if let Token::Word(word) = parser.peek_nth_token(2).token {
                             if word.keyword == Keyword::TABLE {
                                 return true;
                             }
@@ -170,9 +170,10 @@ impl ModelarDbDialect {
     /// Return its value as a [`String`] if the next [`Token`] is a
     /// [`Token::Word`], otherwise a [`ParserError`] is returned.
     fn parse_word_value(&self, parser: &mut Parser) -> Result<String, ParserError> {
-        match parser.next_token() {
+        let token_with_location = parser.next_token();
+        match token_with_location.token {
             Token::Word(word) => Ok(word.value),
-            unexpected => parser.expected("literal string", unexpected),
+            _ => parser.expected("literal string", token_with_location),
         }
     }
 
@@ -491,7 +492,7 @@ fn column_defs_to_schema(column_defs: &Vec<ColumnDef>) -> Result<Schema, DataFus
         };
 
         fields.push(Field::new(
-            &MetadataManager::normalize_name(&column_def.name.value),
+            MetadataManager::normalize_name(&column_def.name.value),
             data_type,
             false,
         ));
@@ -544,7 +545,7 @@ pub fn convert_simple_data_type(sql_type: &SQLDataType) -> DataFusionResult<Data
             let tz = if matches!(tz_info, TimezoneInfo::Tz)
                 || matches!(tz_info, TimezoneInfo::WithTimeZone)
             {
-                Some("+00:00".to_string())
+                Some("+00:00".to_owned())
             } else {
                 None
             };
@@ -621,7 +622,7 @@ fn make_decimal_type(precision: Option<u64>, scale: Option<u64>) -> DataFusionRe
         (Some(p), None) => (p as u8, 0),
         (None, Some(_)) => {
             return Err(DataFusionError::Internal(
-                "Cannot specify only scale for decimal data type.".to_string(),
+                "Cannot specify only scale for decimal data type.".to_owned(),
             ))
         }
         (None, None) => (DECIMAL128_MAX_PRECISION, DECIMAL_DEFAULT_SCALE),

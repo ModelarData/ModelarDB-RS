@@ -6,19 +6,17 @@ edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
-arrow-flight = "28.0.0"
-async-trait = "0.1.59"
+arrow-flight = "29.0.0"
+async-trait = "0.1.61"
 bytes = "1.3.0"
-datafusion = "15.0.0"
+datafusion = "16.0.0"
 futures = "0.3.25"
-object_store = { version = "0.5.1", features = ["aws"] }
-parking_lot = "0.12.1"
-rand = "0.8.5"
+object_store = { version = "0.5.3", features = ["aws"] }
 ringbuf = "0.3.2"
 rusqlite = { version = "0.28.0", features = ["bundled"] }
 snmalloc-rs = "0.3.3"
-sqlparser = "0.27.0"
-tokio = { version = "1.22.0", features = ["rt-multi-thread", "signal"] }
+sqlparser = "0.30.0"
+tokio = { version = "1.24.1", features = ["rt-multi-thread", "signal"] }
 tonic = "0.8.3"
 
 # Log is a dependency so the compile time filters for log and tracing can be set to the same values.
@@ -28,8 +26,9 @@ tracing-subscriber = "0.3.16"
 
 [dev-dependencies]
 proptest = "1.0.0"
-serial_test = "0.9.0"
-sysinfo = "0.26.8"
+rand = "0.8.5"
+serial_test = "0.10.0"
+sysinfo = "0.27.6"
 tempfile = "3.3.0"
 
 # Make machete ignore dependencies that are required but not explicitly used in the source code.

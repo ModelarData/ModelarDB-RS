@@ -268,7 +268,7 @@ mod tests {
     use crate::storage::test_util;
 
     const TABLE_NAME: &str = "table";
-    const COMPRESSED_FILE_SIZE: usize = 2163;
+    const COMPRESSED_FILE_SIZE: usize = 2147;
 
     // Tests for path_is_compressed_file().
     #[test]
