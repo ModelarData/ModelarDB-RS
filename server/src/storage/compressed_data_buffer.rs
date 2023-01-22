@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::parquet::format::SortingColumn;
 
 use crate::storage;
 use crate::storage::StorageEngine;
@@ -74,14 +75,26 @@ impl CompressedDataBuffer {
         // Create the folder structure if it does not already exist.
         fs::create_dir_all(folder_path)?;
 
+
         // Create a new file that includes the start timestamp of the first segment in batch, the
         // end timestamp of the last segment in batch, the minimum value stored in batch, and the
         // maximum value stored in batch as the file name to support efficiently pruning files that
         // only contains data points with timestamps and values that are not relevant for a query.
         let file_name = storage::create_time_and_value_range_file_name(&batch);
         let file_path = folder_path.join(file_name);
-        StorageEngine::write_batch_to_apache_parquet_file(batch, file_path.as_path())
-            .map_err(|error| IOError::new(Other, error.to_string()))?;
+
+        // Specify that the file must be sorted by univariate_id and then by start_time.
+        let sorting_columns = Some(vec![
+            SortingColumn::new(0, false, false),
+            SortingColumn::new(2, false, false),
+        ]);
+
+        StorageEngine::write_batch_to_apache_parquet_file(
+            batch,
+            file_path.as_path(),
+            sorting_columns,
+        )
+        .map_err(|error| IOError::new(Other, error.to_string()))?;
 
         Ok(file_path)
     }

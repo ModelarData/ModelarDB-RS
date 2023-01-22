@@ -206,7 +206,7 @@ impl DataTransfer {
 
         // Write the combined RecordBatch to a bytes buffer.
         let mut buf = vec![].writer();
-        let mut apache_arrow_writer = storage::create_apache_arrow_writer(&mut buf, schema)?;
+        let mut apache_arrow_writer = storage::create_apache_arrow_writer(&mut buf, schema, None)?;
         apache_arrow_writer.write(&combined)?;
         apache_arrow_writer.close()?;
 
@@ -503,6 +503,7 @@ mod tests {
         StorageEngine::write_batch_to_apache_parquet_file(
             batch,
             apache_parquet_path.as_path(),
+            None
         )
         .unwrap();
 

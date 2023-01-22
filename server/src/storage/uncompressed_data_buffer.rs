@@ -221,7 +221,7 @@ impl UncompressedOnDiskDataBuffer {
         let file_name = format!("{}.parquet", timestamps.value(0));
         let file_path = local_file_path.join(file_name);
 
-        StorageEngine::write_batch_to_apache_parquet_file(data_points, file_path.as_path())?;
+        StorageEngine::write_batch_to_apache_parquet_file(data_points, file_path.as_path(), None)?;
 
         Ok(Self {
             univariate_id,

@@ -142,7 +142,7 @@ impl UncompressedDataManager {
         metadata_manager: &mut MetadataManager,
         model_table: &ModelTableMetadata,
         data_points: &RecordBatch,
-    ) -> Result<Vec<RecordBatch>, String> {
+    ) -> Result<Vec<(u64, RecordBatch)>, String> {
         debug!(
             "Received record batch with {} data points for the table '{}'.",
             data_points.num_rows(),
@@ -219,7 +219,7 @@ impl UncompressedDataManager {
                     .insert_data_point(univariate_id, timestamp.unwrap(), value)
                     .await
                 {
-                    compressed_buffers.push(buffer);
+                    compressed_buffers.push((univariate_id, buffer));
                 };
             }
         }

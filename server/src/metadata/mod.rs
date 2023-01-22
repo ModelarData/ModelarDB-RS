@@ -326,8 +326,8 @@ impl MetadataManager {
     }
 
     /// Extract the last 10-bits from `univariate_id` which is the index of the time series column.
-    pub fn univariate_id_to_column_index(univariate_id: u64) -> u64 {
-        univariate_id & 1023
+    pub fn univariate_id_to_column_index(univariate_id: u64) -> u16 {
+        (univariate_id & 1023) as u16
     }
 
     /// Return a mapping from tag hash to table names. Returns a [`Error`](rusqlite::Error) if the
@@ -948,12 +948,12 @@ mod tests {
         #[test]
         fn test_univariate_id_to_tag_hash_and_column_index(
             tag_hash in num::u64::ANY,
-            column_index in num::u64::ANY,
+            column_index in num::u16::ANY,
         ) {
             // Combine tag hash and column index into a univariate id.
             let tag_hash = tag_hash << 10; // 54-bits is used for the tag hash.
             let column_index = column_index % 1024; // 10-bits is used for the column index.
-            let univariate_id = tag_hash | column_index;
+            let univariate_id = tag_hash | column_index as u64;
 
             // Split the univariate_id into the tag hash and column index.
             let computed_tag_hash = MetadataManager::univariate_id_to_tag_hash(univariate_id);
