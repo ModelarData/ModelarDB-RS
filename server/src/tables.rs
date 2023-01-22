@@ -52,6 +52,7 @@ use datafusion::physical_plan::{
 use futures::stream::{Stream, StreamExt};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::metadata::MetadataManager;
 use crate::models;
 use crate::storage;
 use crate::types::{
@@ -633,11 +634,6 @@ impl GridStream {
         // Append the tags to each of the data points if any were requested.
         let mut tag_columns: Vec<StringBuilder> = Vec::with_capacity(self.projection.len());
 
-        // The first 54-bits of each univariate_id is computed from the time series tags while the
-        // remaining 10-bits is the index of the column in the table, thus only the 54-bit tag hash
-        // is needed from each univariate_id to determine which table each time series belong to.
-        let tag_hash_one_bits: u64 = 18446744073709550592;
-
         // Skip appending tags if none were requested.
         if !self.hash_to_tags.is_empty() {
             // unwrap() is safe as the HashMap is guaranteed to contain at least one value.
@@ -647,7 +643,7 @@ impl GridStream {
             }
 
             for univariate_id in univariate_ids_builder.values_slice() {
-                let tag_hash = univariate_id & tag_hash_one_bits;
+                let tag_hash = MetadataManager::univariate_id_to_tag_hash(*univariate_id);
                 let tags = &self.hash_to_tags[&tag_hash];
                 for index in 0..tag_columns_len {
                     tag_columns[index].append_value(tags[index].clone());

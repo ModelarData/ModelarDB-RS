@@ -204,12 +204,9 @@ impl StorageEngine {
             .mapping_from_hash_to_table_name()
             .map_err(|error| error.to_string())?;
 
-        // The first 54-bits of each univariate_id is computed from the time series tags while the
-        // remaining 10-bits is the index of the column in the table, thus only the 54-bit tag hash
-        // is needed from each univariate_id to determine which table each time series belong to.
-        let tag_hash_one_bits: u64 = 18446744073709550592;
         for (univariate_id, segment) in compressed_buffers {
-            let tag_hash = univariate_id & tag_hash_one_bits;
+            let tag_hash = MetadataManager::univariate_id_to_tag_hash(univariate_id);
+            let _column_index = MetadataManager::univariate_id_to_column_index(univariate_id);
 
             // unwrap() is safe as new univariate ids have been added to the metadata database.
             let table_name = hash_to_table_name.get(&tag_hash).unwrap();

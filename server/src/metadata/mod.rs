@@ -320,6 +320,16 @@ impl MetadataManager {
         }
     }
 
+    /// Extract the first 54-bits from `univariate_id` which is a hash computed from tags.
+    pub fn univariate_id_to_tag_hash(univariate_id: u64) -> u64 {
+        univariate_id & 18446744073709550592
+    }
+
+    /// Extract the last 10-bits from `univariate_id` which is the index of the time series column.
+    pub fn univariate_id_to_column_index(univariate_id: u64) -> u64 {
+        univariate_id & 1023
+    }
+
     /// Return a mapping from tag hash to table names. Returns a [`Error`](rusqlite::Error) if the
     /// necessary data cannot be retrieved from the metadata database.
     pub fn mapping_from_hash_to_table_name(&self) -> Result<HashMap<u64, String>> {
@@ -932,6 +942,27 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(metadata_manager.tag_value_hashes.keys().len(), 1);
+    }
+
+    proptest! {
+        #[test]
+        fn test_univariate_id_to_tag_hash_and_column_index(
+            tag_hash in num::u64::ANY,
+            column_index in num::u64::ANY,
+        ) {
+            // Combine tag hash and column index into a univariate id.
+            let tag_hash = tag_hash << 10; // 54-bits is used for the tag hash.
+            let column_index = column_index % 1024; // 10-bits is used for the column index.
+            let univariate_id = tag_hash | column_index;
+
+            // Split the univariate_id into the tag hash and column index.
+            let computed_tag_hash = MetadataManager::univariate_id_to_tag_hash(univariate_id);
+            let computed_column_index = MetadataManager::univariate_id_to_column_index(univariate_id);
+
+            // Original and split should match.
+            prop_assert_eq!(tag_hash, computed_tag_hash);
+            prop_assert_eq!(column_index, computed_column_index);
+        }
     }
 
     #[test]
