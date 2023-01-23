@@ -46,7 +46,7 @@ use tracing::{error, info, warn};
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::models::ErrorBound;
 use crate::storage::COMPRESSED_DATA_FOLDER;
-use crate::tables::ModelTable;
+use crate::query::ModelTable;
 use crate::types::{
     ArrowTimestamp, ArrowValue, CompressedSchema, MetricSchema, UncompressedSchema, UnivariateId,
 };

@@ -36,7 +36,7 @@ use datafusion::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
 use datafusion::scalar::ScalarValue;
 
 use crate::models;
-use crate::tables::GridExec;
+use crate::query::grid_exec::GridExec;
 use crate::types::{TimestampArray, Value, ValueArray};
 
 // Helper Functions.

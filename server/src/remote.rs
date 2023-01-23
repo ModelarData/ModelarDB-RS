@@ -49,8 +49,8 @@ use tracing::{debug, info};
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
+use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::tables::ModelTable;
 use crate::types::TimestampBuilder;
 use crate::Context;
 
