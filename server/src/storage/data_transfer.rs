@@ -22,18 +22,16 @@ use std::io::ErrorKind::Other;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use bytes::BufMut;
-use datafusion::arrow::compute;
 use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
 use object_store::local::LocalFileSystem;
 use object_store::path::{Path as ObjectStorePath, PathPart};
-use object_store::ObjectStore;
+use object_store::{ObjectMeta, ObjectStore};
 use tokio::sync::RwLock;
-use tonic::codegen::Bytes;
 use tracing::debug;
 
-use crate::storage::{self, StorageEngine, COMPRESSED_DATA_FOLDER, Metric};
+use crate::storage::Metric;
+use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 
 // TODO: Make the transfer batch size in bytes part of the user-configurable settings.
 // TODO: When the storage engine is changed to use object store for everything, receive
@@ -44,15 +42,13 @@ use crate::storage::{self, StorageEngine, COMPRESSED_DATA_FOLDER, Metric};
 //       elsewhere.
 
 pub struct DataTransfer {
-    /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
-    local_data_folder_path: PathBuf,
     /// The object store containing all compressed data managed by the [`StorageEngine`].
-    local_data_folder_object_store: Arc<dyn ObjectStore>,
+    local_data_folder: Arc<dyn ObjectStore>,
     /// The object store that the data should be transferred to.
-    remote_data_folder_object_store: Arc<dyn ObjectStore>,
+    remote_data_folder: Arc<dyn ObjectStore>,
     /// Map from table names to the combined size in bytes of the compressed files currently saved
     /// for the table with that table name.
-    compressed_files: HashMap<String, usize>,
+    compressed_files: HashMap<(String, u16), usize>,
     /// The number of bytes that is required before transferring a batch of data to the remote
     /// object store.
     transfer_batch_size_in_bytes: usize,
@@ -65,16 +61,14 @@ impl DataTransfer {
     /// existing in `local_data_folder_path`. If `local_data_folder_path` or a path within
     /// `local_data_folder_path` could not be read, return [`IOError`].
     pub async fn try_new(
-        local_data_folder_path: PathBuf,
-        remote_data_folder_object_store: Arc<dyn ObjectStore>,
+        local_data_folder: PathBuf,
+        remote_data_folder: Arc<dyn ObjectStore>,
         transfer_batch_size_in_bytes: usize,
         used_disk_space_metric: Arc<RwLock<Metric>>,
     ) -> Result<Self, IOError> {
-        let local_fs = LocalFileSystem::new_with_prefix(local_data_folder_path.clone())?;
-        let local_data_folder_object_store = Arc::new(local_fs);
-
         // Parse through the data folder to retrieve already existing files that should be transferred.
-        let list_stream = local_data_folder_object_store.list(None).await?;
+        let local_data_folder = Arc::new(LocalFileSystem::new_with_prefix(local_data_folder)?);
+        let list_stream = local_data_folder.list(None).await?;
 
         let compressed_files = list_stream
             .fold(HashMap::new(), |mut acc, maybe_meta| async {
@@ -91,23 +85,26 @@ impl DataTransfer {
             .await;
 
         let mut data_transfer = Self {
-            local_data_folder_path,
-            local_data_folder_object_store,
-            remote_data_folder_object_store,
+            local_data_folder,
+            remote_data_folder,
             compressed_files: compressed_files.clone(),
             transfer_batch_size_in_bytes,
-            used_disk_space_metric
+            used_disk_space_metric,
         };
 
         // Record the initial used disk space.
         let initial_disk_space: usize = compressed_files.values().into_iter().sum();
-        data_transfer.used_disk_space_metric.write().await.append(initial_disk_space as isize, true);
+        data_transfer
+            .used_disk_space_metric
+            .write()
+            .await
+            .append(initial_disk_space as isize, true);
 
         // Check if data should be transferred immediately.
-        for (table_name, size_in_bytes) in compressed_files.iter() {
+        for ((table_name, column_index), size_in_bytes) in compressed_files.iter() {
             if size_in_bytes >= &transfer_batch_size_in_bytes {
                 data_transfer
-                    .transfer_data(table_name)
+                    .transfer_data(table_name, *column_index)
                     .await
                     .map_err(|err| IOError::new(Other, err.to_string()))?;
             }
@@ -121,21 +118,25 @@ impl DataTransfer {
     pub async fn add_compressed_file(
         &mut self,
         table_name: &str,
+        column_index: u16,
         file_path: &Path,
     ) -> Result<(), ParquetError> {
+        let table_column_name = (table_name.to_owned(), column_index);
         let file_size = file_path.metadata()?.len() as usize;
 
         // entry() is not used as it would require the allocation of a new String for each lookup as
-        // it must be given as a K, while get_mut() accepts the key as a &K so &str can be used.
-        if !self.compressed_files.contains_key(table_name) {
-            self.compressed_files.insert(table_name.to_owned(), 0);
+        // it must be given as a K, while get_mut() accepts the key as a &K so one K can be used.
+        if !self.compressed_files.contains_key(&table_column_name) {
+            self.compressed_files.insert(table_column_name.clone(), 0);
         }
-        *self.compressed_files.get_mut(table_name).unwrap() += file_size;
+        *self.compressed_files.get_mut(&table_column_name).unwrap() += file_size;
 
         // If the combined size of the files is larger than the batch size, transfer the data to the
         // remote object store.
-        if self.compressed_files.get(table_name).unwrap() >= &self.transfer_batch_size_in_bytes {
-            self.transfer_data(table_name).await?;
+        if self.compressed_files.get(&table_column_name).unwrap()
+            >= &self.transfer_batch_size_in_bytes
+        {
+            self.transfer_data(table_name, column_index).await?;
         }
 
         Ok(())
@@ -147,9 +148,9 @@ impl DataTransfer {
     /// Since the data is transferred separately for each table, the function can be called again if
     /// it failed.
     pub(crate) async fn flush(&mut self) -> Result<(), ParquetError> {
-        for (table_name, size_in_bytes) in self.compressed_files.clone().iter() {
+        for ((table_name, column_index), size_in_bytes) in self.compressed_files.clone().iter() {
             if size_in_bytes > &0_usize {
-                self.transfer_data(table_name)
+                self.transfer_data(table_name, *column_index)
                     .await
                     .map_err(|err| IOError::new(Other, err.to_string()))?;
             }
@@ -161,75 +162,47 @@ impl DataTransfer {
     /// Transfer the data stored locally for the table with `table_name` to the remote object store.
     /// Once successfully transferred, the data is deleted from local storage. Return [`Ok`] if the
     /// files were transferred successfully, otherwise [`ParquetError`].
-    async fn transfer_data(&mut self, table_name: &str) -> Result<(), ParquetError> {
+    async fn transfer_data(
+        &mut self,
+        table_name: &str,
+        column_index: u16,
+    ) -> Result<(), ParquetError> {
         // Read all files that is currently stored for the table with table_name.
-        let path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}").into();
+        let path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}").into();
         let object_metas = self
-            .local_data_folder_object_store
+            .local_data_folder
             .list(Some(&path))
             .await
             .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?
-            .filter_map(|maybe_meta| async { maybe_meta.ok() });
-
-        // Combine the Apache Parquet files into a single RecordBatch.
-        let read_object_metas_and_record_batches = object_metas.filter_map(|meta| async {
-            let path = self.local_data_folder_path.to_string_lossy();
-            let file_path = PathBuf::from(format!("{}/{}", path, meta.location));
-
-            // The path of the Apache Parquet files read to produce the record batches are also
-            // returned to ensure that only the read files are deleted after the transfer.
-            if let Ok(record_batch) =
-                StorageEngine::read_batch_from_apache_parquet_file(file_path.as_path()).await
-            {
-                Some((meta, record_batch))
-            } else {
-                None
-            }
-        });
-
-        let (read_object_metas, record_batches): (Vec<_>, Vec<_>) =
-            read_object_metas_and_record_batches.unzip().await;
+            .filter_map(|maybe_meta| async { maybe_meta.ok() })
+            .collect::<Vec<ObjectMeta>>()
+            .await;
 
         debug!(
             "Transferring {} compressed files for the table '{}'.",
-            read_object_metas.len(),
+            object_metas.len(),
             table_name
         );
 
-        let schema = record_batches[0].schema();
-        let combined = compute::concat_batches(&schema, &record_batches)?;
+        // Merge the files and transfer them to the remote object store.
+        StorageEngine::merge_compressed_apache_parquet_files(
+            &self.local_data_folder,
+            &object_metas,
+            &self.remote_data_folder,
+            &format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"),
+        )
+        .await?;
 
-        debug!(
-            "Combined compressed files into single record batch with {} rows.",
-            combined.num_rows()
-        );
-
-        // Write the combined RecordBatch to a bytes buffer.
-        let mut buf = vec![].writer();
-        let mut apache_arrow_writer = storage::create_apache_arrow_writer(&mut buf, schema, None)?;
-        apache_arrow_writer.write(&combined)?;
-        apache_arrow_writer.close()?;
-
-        // Transfer the combined RecordBatch to the remote object store.
-        let file_name = storage::create_time_and_value_range_file_name(&combined);
-        let path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{file_name}").into();
-        self.remote_data_folder_object_store
-            .put(&path, Bytes::from(buf.into_inner()))
+        // Remove the transferred files from the in-memory tracking of compressed files.
+        let transferred_bytes: usize = object_metas.iter().map(|meta| meta.size).sum();
+        *self
+            .compressed_files
+            .get_mut(&(table_name.to_owned(), column_index))
+            .unwrap() -= transferred_bytes;
+        self.used_disk_space_metric
+            .write()
             .await
-            .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
-
-        // Delete the transferred files from local storage.
-        for meta in &read_object_metas {
-            self.local_data_folder_object_store
-                .delete(&meta.location)
-                .await
-                .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
-        }
-
-        // Delete the transferred files from the in-memory tracking of compressed files.
-        let transferred_bytes: usize = read_object_metas.iter().map(|meta| meta.size).sum();
-        *self.compressed_files.get_mut(table_name).unwrap() -= transferred_bytes;
-        self.used_disk_space_metric.write().await.append(-(transferred_bytes as isize), true);
+            .append(-(transferred_bytes as isize), true);
 
         debug!(
             "Transferred {} bytes of compressed data to path '{}' in remote object store.",
@@ -239,16 +212,22 @@ impl DataTransfer {
         Ok(())
     }
 
-    /// Return the table name if `path` is an Apache Parquet file with compressed data, otherwise
-    /// [`None`].
-    fn path_is_compressed_file(path: ObjectStorePath) -> Option<String> {
+    /// Return the table name and column index if `path` is an Apache Parquet file with compressed
+    /// data, otherwise [`None`].
+    fn path_is_compressed_file(path: ObjectStorePath) -> Option<(String, u16)> {
         let path_parts: Vec<PathPart> = path.parts().collect();
 
         if Some(&PathPart::from(COMPRESSED_DATA_FOLDER)) == path_parts.get(0) {
             if let Some(table_name) = path_parts.get(1) {
-                if let Some(file_name) = path_parts.get(2) {
-                    if file_name.as_ref().ends_with(".parquet") {
-                        return Some(table_name.as_ref().to_owned());
+                if let Some(column_index) = path_parts.get(2) {
+                    if let Some(file_name) = path_parts.get(3) {
+                        if file_name.as_ref().ends_with(".parquet") {
+                            // unwrap() is safe as the column index folder is created by the system.
+                            return Some((
+                                table_name.as_ref().to_owned(),
+                                column_index.as_ref().parse().unwrap(),
+                            ));
+                        }
                     }
                 }
             }
@@ -268,6 +247,7 @@ mod tests {
     use crate::storage::test_util;
 
     const TABLE_NAME: &str = "table";
+    const COLUMN_INDEX: u16 = 5;
     const COMPRESSED_FILE_SIZE: usize = 2147;
 
     // Tests for path_is_compressed_file().
@@ -279,7 +259,9 @@ mod tests {
 
     #[test]
     fn test_folder_path_is_not_compressed_file() {
-        let path = ObjectStorePath::from(format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}"));
+        let path = ObjectStorePath::from(format!(
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}"
+        ));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
@@ -292,7 +274,7 @@ mod tests {
     #[test]
     fn test_non_apache_parquet_file_is_not_compressed_file() {
         let path = ObjectStorePath::from(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/test.txt"
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/test.txt"
         ));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
@@ -300,11 +282,11 @@ mod tests {
     #[test]
     fn test_compressed_file_is_compressed_file() {
         let path = ObjectStorePath::from(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/test.parquet"
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/test.parquet"
         ));
         assert_eq!(
             DataTransfer::path_is_compressed_file(path),
-            Some(TABLE_NAME.to_owned())
+            Some((TABLE_NAME.to_owned(), COLUMN_INDEX))
         );
     }
 
@@ -317,11 +299,22 @@ mod tests {
         let (_target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
 
         assert_eq!(
-            *data_transfer.compressed_files.get(TABLE_NAME).unwrap(),
+            *data_transfer
+                .compressed_files
+                .get(&(TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .unwrap(),
             COMPRESSED_FILE_SIZE * 2
         );
 
-        assert_eq!(data_transfer.used_disk_space_metric.read().await.values.len(), 1);
+        assert_eq!(
+            data_transfer
+                .used_disk_space_metric
+                .read()
+                .await
+                .values
+                .len(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -332,12 +325,15 @@ mod tests {
         let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         assert!(data_transfer
-            .add_compressed_file(TABLE_NAME, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, apache_parquet_path.as_path())
             .await
             .is_ok());
 
         assert_eq!(
-            data_transfer.compressed_files.get(TABLE_NAME).unwrap(),
+            data_transfer
+                .compressed_files
+                .get(&(TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .unwrap(),
             &COMPRESSED_FILE_SIZE
         );
     }
@@ -350,16 +346,19 @@ mod tests {
         let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         data_transfer
-            .add_compressed_file(TABLE_NAME, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, apache_parquet_path.as_path())
             .await
             .unwrap();
         data_transfer
-            .add_compressed_file(TABLE_NAME, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, apache_parquet_path.as_path())
             .await
             .unwrap();
 
         assert_eq!(
-            data_transfer.compressed_files.get(TABLE_NAME).unwrap(),
+            data_transfer
+                .compressed_files
+                .get(&(TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .unwrap(),
             &(COMPRESSED_FILE_SIZE * 2)
         );
     }
@@ -377,7 +376,7 @@ mod tests {
 
         let apache_parquet_path = path.join("test_apache_parquet.parquet");
         assert!(data_transfer
-            .add_compressed_file(TABLE_NAME, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, apache_parquet_path.as_path())
             .await
             .is_err());
     }
@@ -389,10 +388,13 @@ mod tests {
         let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         data_transfer
-            .add_compressed_file(TABLE_NAME, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, apache_parquet_path.as_path())
             .await
             .unwrap();
-        data_transfer.transfer_data(TABLE_NAME).await.unwrap();
+        data_transfer
+            .transfer_data(TABLE_NAME, COLUMN_INDEX)
+            .await
+            .unwrap();
 
         assert_data_transferred(vec![apache_parquet_path], target_dir, data_transfer).await;
     }
@@ -405,14 +407,17 @@ mod tests {
         let path_2 = create_compressed_file(temp_dir.path(), "test_2");
 
         data_transfer
-            .add_compressed_file(TABLE_NAME, path_1.as_path())
+            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, path_1.as_path())
             .await
             .unwrap();
         data_transfer
-            .add_compressed_file(TABLE_NAME, path_2.as_path())
+            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, path_2.as_path())
             .await
             .unwrap();
-        data_transfer.transfer_data(TABLE_NAME).await.unwrap();
+        data_transfer
+            .transfer_data(TABLE_NAME, COLUMN_INDEX)
+            .await
+            .unwrap();
 
         assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer).await;
     }
@@ -426,7 +431,7 @@ mod tests {
         // Set the max batch size to ensure that the file is transferred immediately.
         data_transfer.transfer_batch_size_in_bytes = COMPRESSED_FILE_SIZE - 1;
         data_transfer
-            .add_compressed_file(TABLE_NAME, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, apache_parquet_path.as_path())
             .await
             .unwrap();
 
@@ -471,7 +476,7 @@ mod tests {
 
         // The transferred file should have a time range file name that matches the compressed data.
         let target_path = target.path().join(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/0_5_5.2_34.2.parquet"
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/0_5_5.2_34.2.parquet"
         ));
         assert!(target_path.exists());
 
@@ -482,20 +487,32 @@ mod tests {
         assert_eq!(batch.num_rows(), 3 * paths.len());
 
         assert_eq!(
-            *data_transfer.compressed_files.get(TABLE_NAME).unwrap(),
+            *data_transfer
+                .compressed_files
+                .get(&(TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .unwrap(),
             0_usize
         );
 
         // The used disk space log should have an entry for when the data transfer component is
         // created and for when the transferred files are deleted from disk.
-        assert_eq!(data_transfer.used_disk_space_metric.read().await.values.len(), 2);
+        assert_eq!(
+            data_transfer
+                .used_disk_space_metric
+                .read()
+                .await
+                .values
+                .len(),
+            2
+        );
     }
 
     /// Set up a data folder with a table folder that has a single compressed file in it. Return the
     /// path to the created Apache Parquet file.
     fn create_compressed_file(local_data_folder_path: &Path, file_name: &str) -> PathBuf {
-        let path =
-            local_data_folder_path.join(format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}"));
+        let path = local_data_folder_path.join(format!(
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}"
+        ));
         fs::create_dir_all(path.clone()).unwrap();
 
         let batch = test_util::compressed_segments_record_batch();
@@ -503,7 +520,7 @@ mod tests {
         StorageEngine::write_batch_to_apache_parquet_file(
             batch,
             apache_parquet_path.as_path(),
-            None
+            None,
         )
         .unwrap();
 

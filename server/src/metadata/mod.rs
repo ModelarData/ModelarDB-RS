@@ -711,13 +711,13 @@ impl MetadataManager {
         let ipc_message: IpcMessage = schema_as_ipc.try_into().map_err(|error: ArrowError| {
             rusqlite::Error::InvalidColumnType(1, error.to_string(), Blob)
         })?;
-        Ok(ipc_message.0)
+        Ok(ipc_message.0.to_vec())
     }
 
     /// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow
     /// schema, otherwise [`Error`](rusqlite::Error).
     fn convert_blob_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
-        let ipc_message = IpcMessage(schema_bytes);
+        let ipc_message = IpcMessage(schema_bytes.into());
         Schema::try_from(ipc_message).map_err(|error| {
             let message = format!("Blob is not a valid Schema: {error}");
             rusqlite::Error::InvalidColumnType(1, message, Blob)

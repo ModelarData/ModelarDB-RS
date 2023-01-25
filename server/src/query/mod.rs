@@ -277,7 +277,7 @@ impl TableProvider for ModelTable {
             // unwrap() is safe to use as get_compressed_files() only fails if a table with the name
             // table_name does not exists, if end time is before start time, or if max value is
             // larger than min value.
-            let column_index = 0; // TODO: use the column_index assigned to the pipeline.
+            let column_index = 4; // TODO: use the column_index assigned to the pipeline.
             storage_engine
                 .compressed_files(
                     table_name,

@@ -36,6 +36,7 @@ use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::utils;
 use arrow_flight::Ticket;
 use arrow_flight::{Action, Criteria, FlightDescriptor};
+use bytes::Bytes;
 use rustyline::Editor;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
@@ -229,7 +230,7 @@ fn execute_action(
 ) -> Result<(), Box<dyn Error>> {
     let action = Action {
         r#type: "CommandStatementUpdate".to_owned(),
-        body: action_body.to_owned().into_bytes(),
+        body: action_body.to_owned().into(),
     };
 
     let request = Request::new(action);
@@ -303,7 +304,9 @@ fn retrieve_table_names(
     runtime: &Runtime,
     flight_service_client: &mut FlightServiceClient<Channel>,
 ) -> Result<Vec<String>, Box<dyn Error>> {
-    let criteria = Criteria { expression: vec![] };
+    let criteria = Criteria {
+        expression: Bytes::new(),
+    };
     let request = Request::new(criteria);
 
     runtime.block_on(async {
@@ -334,9 +337,8 @@ fn execute_query(
 ) -> Result<Vec<RecordBatch>, Box<dyn Error>> {
     runtime.block_on(async {
         // Execute the query.
-        let ticket_data = query.to_owned().into_bytes();
         let ticket = Ticket {
-            ticket: ticket_data,
+            ticket: query.to_owned().into(),
         };
         let mut stream = flight_service_client.do_get(ticket).await?.into_inner();
 

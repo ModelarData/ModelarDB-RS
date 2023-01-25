@@ -6,8 +6,9 @@ edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
-arrow = "29.0.0"
-arrow-flight = "29.0.0"
+arrow = "31.0.0"
+arrow-flight = "31.0.0"
+bytes = "1.3.0"
 dirs = "4.0.0"
 rustyline = "10.1.1"
 tokio = "1.24.2"

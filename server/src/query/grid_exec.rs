@@ -141,8 +141,7 @@ impl ExecutionPlan for GridExec {
             }))
         } else {
             Err(DataFusionError::Plan(format!(
-                "A single child must be provided {:?}",
-                self
+                "A single child must be provided {self:?}"
             )))
         }
     }

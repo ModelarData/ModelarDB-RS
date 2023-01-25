@@ -28,17 +28,21 @@ mod uncompressed_data_manager;
 
 use datafusion::arrow::array::UInt32Array;
 use std::ffi::OsStr;
-use std::{fmt, mem};
 use std::fs::File;
 use std::io::{Error as IOError, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{fmt, mem};
 
+use bytes::buf::BufMut;
+use datafusion::arrow::compute;
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::async_reader::ParquetRecordBatchStreamBuilder;
+use datafusion::parquet::arrow::async_reader::{
+    ParquetObjectReader, ParquetRecordBatchStreamBuilder,
+};
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::{Compression, Encoding};
 use datafusion::parquet::errors::ParquetError;
@@ -47,10 +51,12 @@ use datafusion::parquet::format::SortingColumn;
 use futures::StreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
+use ringbuf::{HeapRb, Rb};
 use tokio::fs::File as TokioFile;
 use tokio::sync::RwLock;
+use tonic::codegen::Bytes;
 use tonic::Status;
-use ringbuf::{HeapRb, Rb};
+use tracing::debug;
 
 use crate::array;
 use crate::errors::ModelarDbError;
@@ -120,7 +126,8 @@ impl StorageEngine {
             metadata_manager.compressed_schema(),
             compress_directly,
             used_disk_space_metric.clone(),
-        ).await?;
+        )
+        .await?;
 
         // Create the compressed data manager.
         let data_transfer = if let Some(remote_data_folder) = remote_data_folder {
@@ -191,7 +198,9 @@ impl StorageEngine {
     /// Retrieve the oldest finished [`UncompressedDataBuffer`] from [`UncompressedDataManager`] and
     /// return it. Return [`None`] if there are no finished
     /// [`UncompressedDataBuffers`](UncompressedDataBuffer).
-    pub async fn finished_uncompressed_data_buffer(&mut self) -> Option<Box<dyn UncompressedDataBuffer>> {
+    pub async fn finished_uncompressed_data_buffer(
+        &mut self,
+    ) -> Option<Box<dyn UncompressedDataBuffer>> {
         self.uncompressed_data_manager.finished_data_buffer().await
     }
 
@@ -240,10 +249,11 @@ impl StorageEngine {
         }
     }
 
-    /// Retrieve the compressed files that correspond to the column at `column_index` in the table
-    /// with `table_name` within the given range of time and value. If a table with `table_name`
-    /// does not exist, the end time is before the start time, or the max value is larger than the
-    /// min value, [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned.
+    /// Retrieve the compressed sorted files that correspond to the column at `column_index` in the
+    /// table with `table_name` within the given range of time and value. If a column at
+    /// `column_index` in table with `table_name` does not exist, the end time is before the start
+    /// time, or the max value is larger than the min value,
+    /// [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned.
     #[allow(clippy::too_many_arguments)]
     pub async fn compressed_files(
         &mut self,
@@ -256,7 +266,7 @@ impl StorageEngine {
         query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
         self.compressed_data_manager
-            .save_and_get_saved_compressed_files(
+            .save_merge_and_get_saved_compressed_files(
                 table_name,
                 column_index,
                 start_time,
@@ -347,6 +357,87 @@ impl StorageEngine {
 
         let record_batch = stream.next().await.ok_or(error)??;
         Ok(record_batch)
+    }
+
+    /// Merge the Apache Parquet files in `input_data_folder`/`input_files` and write them to a
+    /// single Apache Parquet file in `output_data_folder`/`output_folder`. Return an [`ObjectMeta`]
+    /// that represent the merged file if it is written successfully, otherwise [`ParquetError`] is
+    /// returned.
+    pub async fn merge_compressed_apache_parquet_files(
+        input_data_folder: &Arc<dyn ObjectStore>,
+        input_files: &[ObjectMeta],
+        output_data_folder: &Arc<dyn ObjectStore>,
+        output_folder: &str,
+    ) -> Result<ObjectMeta, ParquetError> {
+        // TODO: ensure termination at any place does not duplicate or loss data.
+        // Read input files, for_each is not used so errors can be returned with ?.
+        let mut record_batches = Vec::with_capacity(input_files.len());
+        for input_file in input_files {
+            let reader = ParquetObjectReader::new(input_data_folder.clone(), input_file.clone());
+            let builder = ParquetRecordBatchStreamBuilder::new(reader).await?;
+            let mut stream = builder.with_batch_size(usize::MAX).build()?;
+
+            let record_batch = stream.next().await.ok_or_else(|| {
+                ParquetError::General(format!(
+                    "Apache Parquet file at path '{}' could not be read.",
+                    input_file.location
+                ))
+            })??;
+
+            record_batches.push(record_batch);
+        }
+
+        // Merge the record batches into a single combined record batches.
+        let schema = record_batches[0].schema();
+        let combined = compute::concat_batches(&schema, &record_batches)?;
+
+        // Compute the name of the output file based on data in combined.
+        let file_name = create_time_and_value_range_file_name(&combined);
+        let output_file = format!("{output_folder}/{file_name}").into();
+
+        // Specify that the file must be sorted by univariate_id and then by start_time.
+        let sorting_columns = Some(vec![
+            SortingColumn::new(0, false, false),
+            SortingColumn::new(2, false, false),
+        ]);
+
+        // Delete the input files as the output file has been written.
+        for input_file in input_files {
+            input_data_folder
+                .delete(&input_file.location)
+                .await
+                .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
+        }
+
+        // Write the combined record batch to the output location.
+        let mut buf = vec![].writer();
+        let mut apache_arrow_writer =
+            create_apache_arrow_writer(&mut buf, schema, sorting_columns)?;
+        apache_arrow_writer.write(&combined)?;
+        apache_arrow_writer.close()?;
+
+        output_data_folder
+            .put(&output_file, Bytes::from(buf.into_inner()))
+            .await
+            .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
+
+        debug!(
+            "Merged {} compressed files into single Apache Parquet file with {} rows.",
+            input_files.len(),
+            combined.num_rows()
+        );
+
+        // Return an ObjectMeta that represent the successfully merged and written file.
+        // unwrap() is safe as the file have just been written successfully to the output_file path.
+        let output_folder_path = ObjectStorePath::parse(output_folder).unwrap();
+        output_data_folder
+            .list(Some(&output_folder_path))
+            .await
+            .map_err(|error| ParquetError::General(error.to_string()))?
+            .next()
+            .await
+            .unwrap()
+            .map_err(|error| ParquetError::General(error.to_string()))
     }
 
     /// Return [`true`] if `file_path` is a readable Apache Parquet file, otherwise [`false`].

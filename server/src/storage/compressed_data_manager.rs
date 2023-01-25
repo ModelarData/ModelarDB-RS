@@ -176,14 +176,71 @@ impl CompressedDataManager {
         Ok(())
     }
 
+    /// Return an [`ObjectMeta`] for a compressed file in `query_data_folder` that belongs to the
+    /// column at `column_index` in the table with `table_name` and contains all of the compressed
+    /// segments within the given range of time and value. If some compressed data that belongs to
+    /// `column_index` in `table_name` is still in memory, save it to disk first. If no files belong
+    /// to the column at `column_index` for the table with `table_name` an empty [`Vec`] is
+    /// returned, while a [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
+    /// * A table with `table_name` does not exist.
+    /// * A column with `column_index` does not exist.
+    /// * The compressed files could not be listed.
+    /// * The end time is before the start time.
+    /// * The max value is smaller than the min value.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn save_merge_and_get_saved_compressed_files(
+        &mut self,
+        table_name: &str,
+        column_index: u16,
+        start_time: Option<Timestamp>,
+        end_time: Option<Timestamp>,
+        min_value: Option<Value>,
+        max_value: Option<Value>,
+        query_data_folder: &Arc<dyn ObjectStore>,
+    ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
+        // Retrieve object_metas that represent the relevant files for table_name and column_index.
+        let relevant_apache_parquet_files = self
+            .save_and_get_saved_compressed_files(
+                table_name,
+                column_index,
+                start_time,
+                end_time,
+                min_value,
+                max_value,
+                query_data_folder,
+            )
+            .await?;
+
+        // Compact the compressed Apache Parquet files if multiple are returned to ensure order.
+        if relevant_apache_parquet_files.len() == 1 {
+            Ok(relevant_apache_parquet_files)
+        } else {
+            let object_meta = StorageEngine::merge_compressed_apache_parquet_files(
+                query_data_folder,
+                &relevant_apache_parquet_files,
+                query_data_folder,
+                &format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"),
+            )
+            .await
+            .map_err(|error| {
+                ModelarDbError::DataRetrievalError(format!(
+                    "Compressed data could not be merged for column '{column_index}' in table '{table_name}': {error}"
+                ))
+            })?;
+
+            Ok(vec![object_meta])
+        }
+    }
+
     /// Return an [`ObjectMeta`] for each compressed file in `query_data_folder` that belongs to the
     /// column at `column_index` in the table with `table_name` and contains compressed segments
     /// within the given range of time and value. If some compressed data that belongs to
-    /// `table_name` is still in memory, save it to disk first. If no files belong to the table with
-    /// `table_name` an empty [`Vec`] is returned, while a
-    /// [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
+    /// `column_index` in `table_name` is still in memory, save it to disk first. If no files belong
+    /// to the column at `column_index` for the table with `table_name` an empty [`Vec`] is
+    /// returned, while a [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
     /// * A table with `table_name` does not exist.
     /// * The compressed files could not be listed.
+    /// * A column with `column_index` does not exist.
     /// * The end time is before the start time.
     /// * The max value is smaller than the min value.
     #[allow(clippy::too_many_arguments)]
@@ -343,7 +400,7 @@ impl CompressedDataManager {
         // transfer threshold, the files are transferred to the remote object store.
         if let Some(data_transfer) = &mut self.data_transfer {
             data_transfer
-                .add_compressed_file(table_name, file_path.as_path())
+                .add_compressed_file(table_name, column_index, file_path.as_path())
                 .await
                 .map_err(|error| IOError::new(Other, error.to_string()))?;
         }

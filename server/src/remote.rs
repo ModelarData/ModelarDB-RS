@@ -32,11 +32,13 @@ use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
+use bytes::Bytes;
 use datafusion::arrow::array::{ListBuilder, StringBuilder, UInt32Builder};
 use datafusion::arrow::ipc::writer::StreamWriter;
+use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::{
     array::ArrayRef, datatypes::Schema, datatypes::SchemaRef, error::ArrowError,
-    ipc::writer::IpcWriteOptions, record_batch::RecordBatch,
+    record_batch::RecordBatch,
 };
 use datafusion::catalog::schema::SchemaProvider;
 use datafusion::prelude::ParquetReadOptions;
@@ -350,8 +352,13 @@ impl FlightService for FlightServiceHandler {
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
         let table_names = self.default_database_schema()?.table_names();
         let flight_descriptor = FlightDescriptor::new_path(table_names);
-        let flight_info =
-            FlightInfo::new(IpcMessage(vec![]), Some(flight_descriptor), vec![], -1, -1);
+        let flight_info = FlightInfo::new(
+            IpcMessage(Bytes::new()),
+            Some(flight_descriptor),
+            vec![],
+            -1,
+            -1,
+        );
 
         let output = stream::once(async { Ok(flight_info) });
         Ok(Response::new(Box::pin(output)))
@@ -416,15 +423,22 @@ impl FlightService for FlightServiceHandler {
             .await
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
+        let data_generator = IpcDataGenerator::default();
+        let writer_options = IpcWriteOptions::default();
+        let mut dictionary_tracker = DictionaryTracker::new(false);
+
         let mut record_batches_as_flight_data: Vec<Result<FlightData, Status>> = record_batches
             .iter()
             .flat_map(|result| {
-                let (flight_dictionaries, flight_batch) =
-                    utils::flight_data_from_arrow_batch(result, &options);
-                flight_dictionaries
+                // unwrap() is safe as the result is produced by Apache Arrow DataFusion.
+                let (encoded_dictionaries, encoded_batch) = data_generator
+                    .encoded_batch(result, &mut dictionary_tracker, &writer_options)
+                    .unwrap();
+
+                encoded_dictionaries
                     .into_iter()
-                    .chain(std::iter::once(flight_batch))
-                    .map(Ok)
+                    .map(|encoded_dictionary| Ok(encoded_dictionary.into()))
+                    .chain(std::iter::once(Ok(encoded_batch.into())))
             })
             .collect();
         result_set.append(&mut record_batches_as_flight_data);
@@ -603,7 +617,9 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::internal(error.to_string()))?;
 
             Ok(Response::new(Box::pin(stream::once(async {
-                Ok(arrow_flight::Result { body: batch_bytes })
+                Ok(arrow_flight::Result {
+                    body: batch_bytes.into(),
+                })
             }))))
         } else {
             Err(Status::unimplemented("Action not implemented."))
