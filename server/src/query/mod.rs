@@ -25,7 +25,6 @@
 //! [`MetadataManager`](crate::metadata::MetadataManager) to create the complete results containing
 //! a timestamp column, one or more field columns, and zero or more tag columns.
 // TODO: implemented SortedJoinExec and make its `` a link.
-// TODO: determine if ParquetExec filtering is enough and the extra FilterExec can be removed.
 
 // Public so the rules added to Apache Arrow DataFusion's physical optimizer can access GridExec.
 pub mod grid_exec;
@@ -35,25 +34,22 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema, SchemaRef};
-use datafusion::common::ToDFSchema;
 use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::datasource::{
     datasource::TableProviderFilterPushDown, listing::PartitionedFile, TableProvider, TableType,
 };
 use datafusion::error::{DataFusionError, Result};
-use datafusion::execution::context::{ExecutionProps, SessionState};
+use datafusion::execution::context::SessionState;
 use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator};
 use datafusion::optimizer::utils;
-use datafusion::physical_expr::planner;
 use datafusion::physical_plan::{
-    file_format::FileScanConfig, file_format::ParquetExec, filter::FilterExec, ExecutionPlan,
-    Statistics,
+    file_format::FileScanConfig, file_format::ParquetExec, ExecutionPlan, Statistics,
 };
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::query::grid_exec::GridExec;
 use crate::storage;
-use crate::types::{ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedSchema};
+use crate::types::{ArrowTimestamp, ArrowUnivariateId, ArrowValue};
 use crate::Context;
 
 /// A queryable representation of a model table which stores multivariate time
@@ -205,29 +201,6 @@ fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
     })
 }
 
-/// Create a [`FilterExec`]. [`None`] is returned if `predicate` is
-/// [`None`].
-fn new_filter_exec(
-    predicate: &Option<Expr>,
-    input: &Arc<ParquetExec>,
-    compressed_schema: &CompressedSchema,
-) -> Result<Arc<dyn ExecutionPlan>> {
-    let predicate = predicate
-        .as_ref()
-        .ok_or_else(|| DataFusionError::Plan("predicate is None".to_owned()))?;
-
-    let schema = &compressed_schema.0;
-    let df_schema = schema.clone().to_dfschema()?;
-
-    let physical_predicate =
-        planner::create_physical_expr(predicate, &df_schema, schema, &ExecutionProps::new())?;
-
-    Ok(Arc::new(FilterExec::try_new(
-        physical_predicate,
-        input.clone(),
-    )?))
-}
-
 #[async_trait]
 impl TableProvider for ModelTable {
     /// Return `self` as [`Any`] so it can be downcast.
@@ -325,8 +298,7 @@ impl TableProvider for ModelTable {
         };
 
         // TODO: extract all of the predicates that consist of tag = tag_value from the query so the
-        // row groups can be pruned by univariate_id using ParquetExec and segments can be pruned by
-        // univariate_id using FilterExec before reconstructing data points or computing aggregates.
+        // row groups and segments can be pruned by univariate_id using ParquetExec and segments.
         let tag_predicates = vec![];
         let _univariate_ids = self
             .context
@@ -341,15 +313,10 @@ impl TableProvider for ModelTable {
 
         let predicate = rewrite_and_combine_filters(filters);
         let apache_parquet_exec = Arc::new(
-            ParquetExec::new(file_scan_config, predicate.clone(), None)
+            ParquetExec::new(file_scan_config, predicate, None)
                 .with_pushdown_filters(true)
                 .with_reorder_filters(true),
         );
-
-        // Create a filter operator if filters are not empty.
-        let compressed_schema = self.context.metadata_manager.compressed_schema();
-        let input = new_filter_exec(&predicate, &apache_parquet_exec, &compressed_schema)
-            .unwrap_or(apache_parquet_exec);
 
         // Ensures a projection is present for looking up columns to return.
         let projection: Vec<usize> = if let Some(projection) = projection {
@@ -385,7 +352,7 @@ impl TableProvider for ModelTable {
             limit,
             self.schema(),
             hash_to_tags,
-            input,
+            apache_parquet_exec,
         );
 
         Ok(grid_exec)
@@ -396,11 +363,9 @@ impl TableProvider for ModelTable {
 mod tests {
     use super::*;
 
-    use datafusion::arrow::datatypes::DataType;
     use datafusion::logical_expr::lit;
     use datafusion::prelude::Expr;
 
-    use crate::metadata::test_util;
     use crate::types::{Timestamp, Value};
 
     const TIMESTAMP_PREDICATE_VALUE: Timestamp = 37;
@@ -580,51 +545,5 @@ mod tests {
         } else {
             panic!("Expr is not a BinaryExpr.");
         }
-    }
-
-    // Tests for new_filter_exec().
-    #[test]
-    fn test_new_filter_exec_without_predicates() {
-        let apache_parquet_exec = new_apache_parquet_exec();
-        assert!(
-            new_filter_exec(&None, &apache_parquet_exec, &test_util::compressed_schema()).is_err()
-        );
-    }
-
-    #[test]
-    fn test_new_filter_exec_with_predicates() {
-        let filters = vec![new_binary_expr(
-            logical_expr::col("univariate_id"),
-            Operator::Eq,
-            lit(1_u64),
-        )];
-        let predicates = rewrite_and_combine_filters(&filters);
-        let apache_parquet_exec = new_apache_parquet_exec();
-
-        assert!(new_filter_exec(
-            &predicates,
-            &apache_parquet_exec,
-            &test_util::compressed_schema()
-        )
-        .is_ok());
-    }
-
-    fn new_apache_parquet_exec() -> Arc<ParquetExec> {
-        let file_scan_config = FileScanConfig {
-            object_store_url: ObjectStoreUrl::local_filesystem(),
-            file_schema: Arc::new(Schema::new(vec![Field::new(
-                "model_type_id",
-                DataType::UInt8,
-                false,
-            )])),
-            file_groups: vec![],
-            statistics: Statistics::default(),
-            projection: None,
-            limit: None,
-            table_partition_cols: vec![],
-            output_ordering: None,
-            infinite_source: false,
-        };
-        Arc::new(ParquetExec::new(file_scan_config, None, None))
     }
 }
