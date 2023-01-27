@@ -133,8 +133,7 @@ impl ModelarDbDialect {
                 "TAG" => SQLDataType::Text,
                 column_type => {
                     return Err(ParserError::ParserError(format!(
-                        "Expected TIMESTAMP, FIELD, or TAG, found: {}.",
-                        column_type
+                        "Expected TIMESTAMP, FIELD, or TAG, found: {column_type}."
                     )))
                 }
             };
@@ -457,7 +456,7 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
 /// `feature` is not supported if `enabled` is [`true`].
 fn check_unsupported_feature_is_disabled(enabled: bool, feature: &str) -> Result<(), ParserError> {
     if enabled {
-        let message = format!("{} is not supported.", feature);
+        let message = format!("{feature} is not supported.");
         Err(ParserError::ParserError(message))
     } else {
         Ok(())
@@ -560,8 +559,7 @@ pub fn convert_simple_data_type(sql_type: &SQLDataType) -> DataFusionResult<Data
             } else {
                 // We don't support TIMETZ and TIME WITH TIME ZONE for now.
                 Err(DataFusionError::NotImplemented(format!(
-                    "Unsupported SQL type {:?}",
-                    sql_type
+                    "Unsupported SQL type {sql_type:?}"
                 )))
             }
         }
@@ -605,8 +603,7 @@ pub fn convert_simple_data_type(sql_type: &SQLDataType) -> DataFusionResult<Data
         | SQLDataType::Time(Some(_), _)
         | SQLDataType::Dec(_)
         | SQLDataType::Clob(_) => Err(DataFusionError::NotImplemented(format!(
-            "Unsupported SQL type {:?}",
-            sql_type
+            "Unsupported SQL type {sql_type:?}"
         ))),
     }
 }
@@ -631,8 +628,7 @@ fn make_decimal_type(precision: Option<u64>, scale: Option<u64>) -> DataFusionRe
     // Apache Arrow decimal is i128 meaning 38 maximum decimal digits.
     if precision == 0 || precision > DECIMAL128_MAX_PRECISION || scale.unsigned_abs() > precision {
         Err(DataFusionError::Internal(format!(
-            "Decimal(precision = {}, scale = {}) should satisfy `0 < precision <= 38`, and `scale <= precision`.",
-            precision, scale
+            "Decimal(precision = {precision}, scale = {scale}) should satisfy `0 < precision <= 38`, and `scale <= precision`."
         )))
     } else {
         Ok(DataType::Decimal128(precision, scale))
@@ -682,7 +678,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_model_table() {
         let sql = "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_one FIELD, field_two FIELD(10), tag TAG)";
-        if let Statement::CreateTable { name, columns, .. } = tokenize_and_parse_sql(&sql).unwrap()
+        if let Statement::CreateTable { name, columns, .. } = tokenize_and_parse_sql(sql).unwrap()
         {
             assert!(name == new_object_name("table_name"));
             let expected_columns = vec![

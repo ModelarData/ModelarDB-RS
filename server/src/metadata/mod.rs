@@ -276,7 +276,7 @@ impl MetadataManager {
 
             let values = tag_values
                 .iter()
-                .map(|value| format!("'{}'", value))
+                .map(|value| format!("'{value}'"))
                 .collect::<Vec<String>>()
                 .join(",");
 
@@ -357,7 +357,7 @@ impl MetadataManager {
         let query_field_columns = if let Some(columns) = columns {
             let column_predicates: Vec<String> = columns
                 .iter()
-                .map(|column| format!("column_index = {}", column))
+                .map(|column| format!("column_index = {column}"))
                 .collect();
 
             format!(
@@ -367,8 +367,7 @@ impl MetadataManager {
             )
         } else {
             format!(
-                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}'",
-                table_name
+                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{table_name}'"
             )
         };
 
@@ -376,11 +375,11 @@ impl MetadataManager {
         // with tag values that match those in the query.
         let query_hashes = {
             if tag_predicates.is_empty() {
-                format!("SELECT hash FROM {}_tags", table_name)
+                format!("SELECT hash FROM {table_name}_tags")
             } else {
                 let predicates: Vec<String> = tag_predicates
                     .iter()
-                    .map(|(tag, tag_value)| format!("{} = '{}'", tag, tag_value))
+                    .map(|(tag, tag_value)| format!("{tag} = '{tag_value}'"))
                     .collect();
 
                 format!(
@@ -502,7 +501,7 @@ impl MetadataManager {
             .join(&name);
         let table_folder = table_folder_path
             .to_str()
-            .ok_or_else(|| format!("Path for table is not UTF-8: '{}'", name))?;
+            .ok_or_else(|| format!("Path for table is not UTF-8: '{name}'"))?;
 
         // Register table.
         runtime.block_on(context.session.register_parquet(
@@ -669,7 +668,7 @@ impl MetadataManager {
     fn convert_blob_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
         let ipc_message = IpcMessage(schema_bytes);
         Schema::try_from(ipc_message).map_err(|error| {
-            let message = format!("Blob is not a valid Schema: {}", error);
+            let message = format!("Blob is not a valid Schema: {error}");
             rusqlite::Error::InvalidColumnType(1, message, Blob)
         })
     }
@@ -738,7 +737,7 @@ mod tests {
     use std::fs;
 
     use proptest::{collection, num, prop_assert_eq, proptest};
-    use tempfile;
+    
 
     use crate::metadata::test_util;
 
@@ -777,7 +776,7 @@ mod tests {
         let metadata_database_path = metadata_manager.metadata_database_path;
 
         // Verify that the tables were created and has the expected columns.
-        let connection = Connection::open(&metadata_database_path).unwrap();
+        let connection = Connection::open(metadata_database_path).unwrap();
         connection
             .execute("SELECT table_name FROM table_metadata", params![])
             .unwrap();
@@ -844,7 +843,7 @@ mod tests {
             .unwrap();
 
         let result = metadata_manager
-            .lookup_or_compute_tag_hash(&model_table_metadata, &vec!["tag1".to_owned()]);
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()]);
         assert!(result.is_ok());
 
         // When a new tag hash is retrieved, the hash should be saved in the cache.
@@ -882,13 +881,13 @@ mod tests {
             .unwrap();
 
         metadata_manager
-            .lookup_or_compute_tag_hash(&model_table_metadata, &vec!["tag1".to_owned()])
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
             .unwrap();
         assert_eq!(metadata_manager.tag_value_hashes.keys().len(), 1);
 
         // When getting the same tag hash again, it should just be retrieved from the cache.
         let result = metadata_manager
-            .lookup_or_compute_tag_hash(&model_table_metadata, &vec!["tag1".to_owned()]);
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()]);
 
         assert!(result.is_ok());
         assert_eq!(metadata_manager.tag_value_hashes.keys().len(), 1);
@@ -1014,7 +1013,7 @@ mod tests {
         for tag_value in tag_values {
             let tag_value = tag_value.to_string();
             metadata_manager
-                .lookup_or_compute_tag_hash(&model_table_metadata, &vec![tag_value])
+                .lookup_or_compute_tag_hash(&model_table_metadata, &[tag_value])
                 .unwrap();
         }
     }

@@ -172,7 +172,7 @@ impl FlightServiceHandler {
     async fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
         let maybe_schema = self.schema_of_table_in_default_database_schema(table_name);
         if maybe_schema.await.is_ok() {
-            let message = format!("Table with name '{}' already exists.", table_name);
+            let message = format!("Table with name '{table_name}' already exists.");
             return Err(Status::already_exists(message));
         }
         Ok(())
@@ -197,8 +197,7 @@ impl FlightServiceHandler {
                 .await
                 .map_err(|error| {
                     Status::internal(format!(
-                        "Data could not be ingested into {}: {}",
-                        table_name, error
+                        "Data could not be ingested into {table_name}: {error}"
                     ))
                 })?;
         }
@@ -225,7 +224,7 @@ impl FlightServiceHandler {
                 .insert_data_points(model_table_metadata, &data_points)
                 .await
                 .map_err(|error| {
-                    Status::internal(format!("Data could not be ingested: {}", error))
+                    Status::internal(format!("Data could not be ingested: {error}"))
                 })?;
         }
 

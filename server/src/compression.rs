@@ -683,7 +683,7 @@ mod tests {
         error_bound: f32,
     ) -> (TimestampArray, RecordBatch) {
         let (uncompressed_timestamps, uncompressed_values) =
-            create_uncompressed_time_series(&timestamps, &values);
+            create_uncompressed_time_series(timestamps, values);
         let error_bound = ErrorBound::try_new(error_bound).unwrap();
         let compressed_record_batch = try_compress(
             1,
@@ -886,7 +886,7 @@ pub mod test_util {
 
             // Generates constant data.
             StructureOfValues::Constant => {
-                let mut constant = vec![50.0; length as usize];
+                let mut constant = vec![50.0; length];
                 values.append(&mut constant);
             }
         }

@@ -95,7 +95,7 @@ fn main() -> Result<(), String> {
     // Create a Tokio runtime for executing asynchronous tasks. The runtime is
     // not in the context so it can be passed to the components in the context.
     let runtime = Arc::new(
-        Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {}", error))?,
+        Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {error}"))?,
     );
 
     // Check if a remote data folder was provided and can be accessed. These checks are performed
@@ -104,7 +104,7 @@ fn main() -> Result<(), String> {
 
     // Create the components for the Context.
     let metadata_manager = MetadataManager::try_new(&data_folders.local_data_folder)
-        .map_err(|error| format!("Unable to create a MetadataManager: {}", error))?;
+        .map_err(|error| format!("Unable to create a MetadataManager: {error}"))?;
     let session = create_session_context(data_folders.query_data_folder);
     let storage_engine = RwLock::new(
         runtime
@@ -131,12 +131,12 @@ fn main() -> Result<(), String> {
     context
         .metadata_manager
         .register_tables(&context, &runtime)
-        .map_err(|error| format!("Unable to register tables: {}", error))?;
+        .map_err(|error| format!("Unable to register tables: {error}"))?;
 
     context
         .metadata_manager
         .register_model_tables(&context)
-        .map_err(|error| format!("Unable to register model tables: {}", error))?;
+        .map_err(|error| format!("Unable to register model tables: {error}"))?;
 
     // Setup CTRL+C handler.
     setup_ctrl_c_handler(&context, &runtime);
@@ -174,8 +174,7 @@ fn parse_command_line_arguments(arguments: &[&str]) -> Result<DataFolders, Strin
             let binary_path = std::env::current_exe().unwrap();
             let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
             Err(format!(
-                "Usage: {} [mode] local_data_folder [remote_data_folder].",
-                binary_name
+                "Usage: {binary_name} [mode] local_data_folder [remote_data_folder]."
             ))
         }
     }
@@ -287,7 +286,7 @@ mod tests {
 
     use std::env;
 
-    use tempfile;
+    
 
     // Tests for parse_command_line_arguments().
     #[test]

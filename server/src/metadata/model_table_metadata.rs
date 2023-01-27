@@ -79,8 +79,7 @@ impl ModelTableMetadata {
         } else {
             // If the index of the timestamp column does not match the schema, return an error.
             return Err(ModelarDbError::ConfigurationError(format!(
-                "The timestamp column index '{}' does not match a field in the schema.",
-                timestamp_column_index
+                "The timestamp column index '{timestamp_column_index}' does not match a field in the schema."
             )));
         }
 
@@ -97,8 +96,7 @@ impl ModelTableMetadata {
             } else {
                 // If the indices for the tag columns does not match the schema, return an error.
                 return Err(ModelarDbError::ConfigurationError(format!(
-                    "The tag column index '{}' does not match a field in the schema.",
-                    tag_column_index
+                    "The tag column index '{tag_column_index}' does not match a field in the schema."
                 )));
             }
         }
@@ -337,7 +335,7 @@ mod test {
     fn test_cannot_create_model_table_metadata_with_too_many_fields() {
         // Create 1025 fields that can be used to initialize a schema.
         let fields = (0..1025)
-            .map(|i| Field::new(format!("field_{}", i).as_str(), DataType::Float32, false))
+            .map(|i| Field::new(format!("field_{i}").as_str(), DataType::Float32, false))
             .collect::<Vec<Field>>();
 
         let error_bounds = vec![

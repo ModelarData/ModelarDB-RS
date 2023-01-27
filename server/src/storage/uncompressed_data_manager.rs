@@ -205,7 +205,7 @@ impl UncompressedDataManager {
 
             let tag_hash = metadata_manager
                 .lookup_or_compute_tag_hash(model_table, &tag_values)
-                .map_err(|error| format!("Tag hash could not be saved: {}", error))?;
+                .map_err(|error| format!("Tag hash could not be saved: {error}"))?;
 
             // For each field column, generate the 64-bit univariate id, and append the current
             // timestamp and the field's value into the in-memory buffer for the univariate id.
@@ -443,7 +443,7 @@ mod tests {
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
     use ringbuf::Rb;
-    use tempfile;
+    
 
     use crate::metadata::{test_util, MetadataManager};
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
@@ -649,7 +649,7 @@ mod tests {
         // The UncompressedDataBuffer should be spilled to univariate id in the uncompressed folder.
         let local_data_folder = Path::new(&data_manager.local_data_folder);
         let uncompressed_path =
-            local_data_folder.join(format!("{}/{}", UNCOMPRESSED_DATA_FOLDER, UNIVARIATE_ID));
+            local_data_folder.join(format!("{UNCOMPRESSED_DATA_FOLDER}/{UNIVARIATE_ID}"));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1);
     }
 
@@ -679,7 +679,7 @@ mod tests {
         // The finished buffers should be spilled to univariate id in the uncompressed folder.
         let local_data_folder = Path::new(&data_manager.local_data_folder);
         let uncompressed_path =
-            local_data_folder.join(format!("{}/{}", UNCOMPRESSED_DATA_FOLDER, UNIVARIATE_ID));
+            local_data_folder.join(format!("{UNCOMPRESSED_DATA_FOLDER}/{UNIVARIATE_ID}"));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 2);
     }
 
@@ -694,7 +694,7 @@ mod tests {
             UNIVARIATE_ID,
         )
         .await;
-        let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
+        let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes;
         data_manager.spill_finished_buffer().await;
 
         assert!(remaining_memory < data_manager.uncompressed_remaining_memory_in_bytes);
@@ -728,7 +728,7 @@ mod tests {
         )
         .await;
 
-        let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
+        let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes;
         data_manager.finished_data_buffer().await;
 
         assert!(remaining_memory < data_manager.uncompressed_remaining_memory_in_bytes);
@@ -747,7 +747,7 @@ mod tests {
         .await;
 
         data_manager.spill_finished_buffer().await;
-        let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
+        let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes;
 
         // Since the UncompressedOnDiskDataBuffer is not in memory, the remaining memory should not
         // increase when popped.

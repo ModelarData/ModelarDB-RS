@@ -453,8 +453,7 @@ impl ExecutionPlan for GridExec {
             }))
         } else {
             Err(DataFusionError::Plan(format!(
-                "A single child must be provided {:?}",
-                self
+                "A single child must be provided {self:?}"
             )))
         }
     }
@@ -658,7 +657,7 @@ mod tests {
     // Tests for rewrite_and_combine_filters().
     #[test]
     fn test_rewrite_empty_vec() {
-        assert!(rewrite_and_combine_filters(&vec!()).is_none());
+        assert!(rewrite_and_combine_filters(&[]).is_none());
     }
 
     #[test]
