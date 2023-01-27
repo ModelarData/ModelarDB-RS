@@ -20,9 +20,11 @@ use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
+use tokio::sync::RwLock;
 use tracing::debug;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
@@ -31,7 +33,7 @@ use crate::models::ErrorBound;
 use crate::storage::uncompressed_data_buffer::{
     UncompressedDataBuffer, UncompressedInMemoryDataBuffer, UncompressedOnDiskDataBuffer,
 };
-use crate::storage::UNCOMPRESSED_DATA_FOLDER;
+use crate::storage::{Metric, UNCOMPRESSED_DATA_FOLDER};
 use crate::types::{
     CompressedSchema, Timestamp, TimestampArray, UncompressedSchema, Value, ValueArray,
 };
@@ -59,6 +61,12 @@ pub(super) struct UncompressedDataManager {
     // TODO: This is a temporary field used to fix existing tests. Remove when configuration component is changed.
     /// If this is true, compress finished buffers directly instead of queueing them.
     compress_directly: bool,
+    /// Metric for the used uncompressed memory in bytes, updated every time the used memory changes.
+    pub(super) used_uncompressed_memory_metric: Metric,
+    /// Metric for the amount of ingested data points, updated every time a new batch of data is ingested.
+    pub(super) ingested_data_points_metric: Metric,
+    /// Metric for the total used disk space in bytes, updated every time uncompressed data is spilled.
+    pub used_disk_space_metric: Arc<RwLock<Metric>>,
 }
 
 impl UncompressedDataManager {
@@ -66,12 +74,13 @@ impl UncompressedDataManager {
     /// `local_data_folder` and an [`UncompressedOnDiskDataBuffer`] can be initialized for all
     /// Apache Parquet files containing uncompressed data points in `local_data_store`, otherwise
     /// [`IOError`] is returned.
-    pub(super) fn try_new(
+    pub(super) async fn try_new(
         local_data_folder: PathBuf,
         uncompressed_reserved_memory_in_bytes: usize,
         uncompressed_schema: UncompressedSchema,
         compressed_schema: CompressedSchema,
         compress_directly: bool,
+        used_disk_space_metric: Arc<RwLock<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the uncompressed data manager exists.
         let local_uncompressed_data_folder = local_data_folder.join(UNCOMPRESSED_DATA_FOLDER);
@@ -97,6 +106,16 @@ impl UncompressedDataManager {
             }
         }
 
+        // Record the used disk space of the uncompressed data buffers currently on disk.
+        let initial_disk_space: usize = finished_data_buffers
+            .iter()
+            .map(|buffer| buffer.disk_size())
+            .sum();
+        used_disk_space_metric
+            .write()
+            .await
+            .append(initial_disk_space as isize, true);
+
         Ok(Self {
             local_data_folder,
             active_uncompressed_data_buffers: HashMap::new(),
@@ -105,6 +124,9 @@ impl UncompressedDataManager {
             uncompressed_schema,
             compressed_schema,
             compress_directly,
+            used_uncompressed_memory_metric: Metric::new(),
+            ingested_data_points_metric: Metric::new(),
+            used_disk_space_metric,
         })
     }
 
@@ -126,6 +148,10 @@ impl UncompressedDataManager {
             data_points.num_rows(),
             model_table.name
         );
+
+        // Record the amount of ingested data points.
+        self.ingested_data_points_metric
+            .append(data_points.num_rows() as isize, false);
 
         // Prepare the timestamp column for iteration.
         let timestamp_index = model_table.timestamp_column_index;
@@ -285,8 +311,11 @@ impl UncompressedDataManager {
 
             // Create a new buffer and reduce the remaining amount of reserved memory by its size.
             let mut buffer = UncompressedInMemoryDataBuffer::new(univariate_id);
-            self.uncompressed_remaining_memory_in_bytes -=
-                UncompressedInMemoryDataBuffer::memory_size();
+
+            let used_memory = UncompressedInMemoryDataBuffer::memory_size();
+            self.uncompressed_remaining_memory_in_bytes -= used_memory;
+            self.used_uncompressed_memory_metric
+                .append(used_memory as isize, true);
 
             debug!(
                 "Created buffer for {}. Remaining reserved bytes: {}.",
@@ -304,11 +333,19 @@ impl UncompressedDataManager {
     /// Remove the oldest finished [`UncompressedDataBuffer`] from the queue and return it. Returns
     /// [`None`] if there are no finished [`UncompressedDataBuffers`](UncompressedDataBuffer) in the
     /// queue.
-    pub(super) fn finished_data_buffer(&mut self) -> Option<Box<dyn UncompressedDataBuffer>> {
+    pub(super) async fn finished_data_buffer(&mut self) -> Option<Box<dyn UncompressedDataBuffer>> {
         if let Some(uncompressed_data_buffer) = self.finished_uncompressed_data_buffers.pop_front()
         {
-            // Add the memory size of the removed buffer back to the remaining bytes.
+            // Add the memory size of the removed buffer back to the remaining bytes and record the change.
             self.uncompressed_remaining_memory_in_bytes += uncompressed_data_buffer.memory_size();
+            self.used_uncompressed_memory_metric
+                .append(-(uncompressed_data_buffer.memory_size() as isize), true);
+
+            // Since the buffer was potentially on disk, record the potential change to the used disk space.
+            self.used_disk_space_metric
+                .write()
+                .await
+                .append(-(uncompressed_data_buffer.disk_size() as isize), true);
 
             Some(uncompressed_data_buffer)
         } else {
@@ -324,9 +361,11 @@ impl UncompressedDataManager {
         univariate_id: u64,
         mut in_memory_data_buffer: UncompressedInMemoryDataBuffer,
     ) -> RecordBatch {
-        // Add the size of the segment back to the remaining reserved bytes.
-        self.uncompressed_remaining_memory_in_bytes +=
-            UncompressedInMemoryDataBuffer::memory_size();
+        // Add the size of the segment back to the remaining reserved bytes and record the change.
+        let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
+        self.uncompressed_remaining_memory_in_bytes += freed_memory;
+        self.used_uncompressed_memory_metric
+            .append(-(freed_memory as isize), true);
 
         // unwrap() is safe to use since the error bound is not negative, infinite, or NAN.
         let error_bound = ErrorBound::try_new(0.0).unwrap();
@@ -369,8 +408,16 @@ impl UncompressedDataManager {
                 .await
             {
                 // Add the size of the in-memory data buffer back to the remaining reserved bytes.
-                self.uncompressed_remaining_memory_in_bytes +=
-                    UncompressedInMemoryDataBuffer::memory_size();
+                let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
+                self.uncompressed_remaining_memory_in_bytes += freed_memory;
+                self.used_uncompressed_memory_metric
+                    .append(-(freed_memory as isize), true);
+
+                // Record the used disk space of the spilled finished buffer.
+                self.used_disk_space_metric
+                    .write()
+                    .await
+                    .append(uncompressed_on_disk_data_buffer.disk_size() as isize, true);
 
                 debug!(
                     "Spilled '{:?}'. Remaining reserved bytes: {}.",
@@ -395,6 +442,7 @@ mod tests {
     use std::sync::Arc;
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
+    use ringbuf::Rb;
     use tempfile;
 
     use crate::metadata::{test_util, MetadataManager};
@@ -416,14 +464,14 @@ mod tests {
             .unwrap();
 
         // The uncompressed data buffer should be referenced by the uncompressed data manager.
-        let (_metadata_manager, data_manager) = create_managers(temp_dir.path());
+        let (_metadata_manager, data_manager) = create_managers(temp_dir.path()).await;
         assert_eq!(data_manager.finished_uncompressed_data_buffers.len(), 1)
     }
 
     #[tokio::test]
     async fn test_can_insert_record_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (mut metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (mut metadata_manager, mut data_manager) = create_managers(temp_dir.path()).await;
 
         let (model_table_metadata, data) = uncompressed_data(1);
         metadata_manager
@@ -438,13 +486,15 @@ mod tests {
         assert_eq!(
             data_manager.active_uncompressed_data_buffers.keys().len(),
             2
-        )
+        );
+
+        assert_eq!(data_manager.ingested_data_points_metric.values.len(), 1);
     }
 
     #[tokio::test]
     async fn test_can_insert_record_batch_with_multiple_data_points() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (mut metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (mut metadata_manager, mut data_manager) = create_managers(temp_dir.path()).await;
 
         let (model_table_metadata, data) = uncompressed_data(2);
         metadata_manager
@@ -459,7 +509,9 @@ mod tests {
         assert_eq!(
             data_manager.active_uncompressed_data_buffers.keys().len(),
             4
-        )
+        );
+
+        assert_eq!(data_manager.ingested_data_points_metric.values.len(), 1);
     }
 
     /// Create a record batch with data that resembles uncompressed data with a single tag and two
@@ -503,7 +555,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_insert_data_point_into_new_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path()).await;
         insert_data_points(1, &mut data_manager, UNIVARIATE_ID).await;
 
         assert!(data_manager
@@ -520,9 +572,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_can_insert_message_into_existing_uncompressed_data_buffer() {
+    async fn test_can_insert_data_point_into_existing_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path()).await;
         insert_data_points(2, &mut data_manager, UNIVARIATE_ID).await;
 
         assert!(data_manager
@@ -541,7 +593,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_get_finished_uncompressed_data_buffer_when_finished() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path()).await;
         insert_data_points(
             UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
@@ -549,13 +601,13 @@ mod tests {
         )
         .await;
 
-        assert!(data_manager.finished_data_buffer().is_some());
+        assert!(data_manager.finished_data_buffer().await.is_some());
     }
 
     #[tokio::test]
     async fn test_can_get_multiple_finished_uncompressed_data_buffers_when_multiple_finished() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path()).await;
         insert_data_points(
             UNCOMPRESSED_DATA_BUFFER_CAPACITY * 2,
             &mut data_manager,
@@ -563,22 +615,22 @@ mod tests {
         )
         .await;
 
-        assert!(data_manager.finished_data_buffer().is_some());
-        assert!(data_manager.finished_data_buffer().is_some());
+        assert!(data_manager.finished_data_buffer().await.is_some());
+        assert!(data_manager.finished_data_buffer().await.is_some());
     }
 
-    #[test]
-    fn test_cannot_get_finished_uncompressed_data_buffers_when_none_are_finished() {
+    #[tokio::test]
+    async fn test_cannot_get_finished_uncompressed_data_buffers_when_none_are_finished() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path()).await;
 
-        assert!(data_manager.finished_data_buffer().is_none());
+        assert!(data_manager.finished_data_buffer().await.is_none());
     }
 
     #[tokio::test]
     async fn test_spill_first_uncompressed_data_buffer_to_disk_if_out_of_memory() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path()).await;
         let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
 
         // Insert messages into the storage engine until a buffer is spilled to Apache Parquet.
@@ -604,7 +656,7 @@ mod tests {
     #[tokio::test]
     async fn test_ignore_already_spilled_uncompressed_data_buffer_when_spilling() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path()).await;
         insert_data_points(
             UNCOMPRESSED_DATA_BUFFER_CAPACITY * 2,
             &mut data_manager,
@@ -634,7 +686,7 @@ mod tests {
     #[tokio::test]
     async fn test_remaining_memory_incremented_when_spilling_finished_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path()).await;
 
         insert_data_points(
             UNCOMPRESSED_DATA_BUFFER_CAPACITY,
@@ -646,23 +698,29 @@ mod tests {
         data_manager.spill_finished_buffer().await;
 
         assert!(remaining_memory < data_manager.uncompressed_remaining_memory_in_bytes);
+        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 2);
+
+        // The used disk space metric should have an entry for when the uncompressed data manager is
+        // created and for when the data buffer is spilled to disk.
+        assert_eq!(data_manager.used_disk_space_metric.read().await.values.len(), 2);
     }
 
     #[tokio::test]
     async fn test_remaining_memory_decremented_when_creating_new_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path()).await;
         let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
 
         insert_data_points(1, &mut data_manager, UNIVARIATE_ID).await;
 
         assert!(reserved_memory > data_manager.uncompressed_remaining_memory_in_bytes);
+        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 1);
     }
 
     #[tokio::test]
     async fn test_remaining_memory_incremented_when_popping_in_memory() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path()).await;
         insert_data_points(
             UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
@@ -671,15 +729,16 @@ mod tests {
         .await;
 
         let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes.clone();
-        data_manager.finished_data_buffer();
+        data_manager.finished_data_buffer().await;
 
         assert!(remaining_memory < data_manager.uncompressed_remaining_memory_in_bytes);
+        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 2);
     }
 
     #[tokio::test]
     async fn test_remaining_memory_not_incremented_when_popping_spilled() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path()).await;
         insert_data_points(
             UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
@@ -692,19 +751,26 @@ mod tests {
 
         // Since the UncompressedOnDiskDataBuffer is not in memory, the remaining memory should not
         // increase when popped.
-        data_manager.finished_data_buffer();
+        data_manager.finished_data_buffer().await;
 
         assert_eq!(
             remaining_memory,
             data_manager.uncompressed_remaining_memory_in_bytes
         );
+
+        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 3);
+
+        // The used disk space metric should have an entry for when the uncompressed data manager is
+        // created, an entry for when the data buffer is spilled to disk, and an entry for when the
+        // finished data buffer is popped.
+        assert_eq!(data_manager.used_disk_space_metric.read().await.values.len(), 3);
     }
 
     #[tokio::test]
     #[should_panic(expected = "Not enough reserved memory for the necessary uncompressed buffers.")]
     async fn test_panic_if_not_enough_reserved_memory() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path());
+        let (_metadata_manager, mut data_manager) = create_managers(temp_dir.path()).await;
         let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
 
         // If there is enough reserved memory to hold n builders, we need to create n + 1 to panic.
@@ -730,7 +796,7 @@ mod tests {
 
     /// Create an [`UncompressedDataManager`] with a folder that is deleted once the test is
     /// finished.
-    fn create_managers(path: &Path) -> (MetadataManager, UncompressedDataManager) {
+    async fn create_managers(path: &Path) -> (MetadataManager, UncompressedDataManager) {
         let metadata_manager = test_util::test_metadata_manager(path);
 
         let local_data_folder = metadata_manager.local_data_folder();
@@ -741,7 +807,9 @@ mod tests {
             metadata_manager.uncompressed_schema(),
             metadata_manager.compressed_schema(),
             false,
+            Arc::new(RwLock::new(Metric::new())),
         )
+        .await
         .unwrap();
 
         (metadata_manager, uncompressed_data_manager)

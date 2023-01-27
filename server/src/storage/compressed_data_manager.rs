@@ -28,12 +28,13 @@ use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
+use tokio::sync::RwLock;
 use tracing::{debug, info};
 
 use crate::errors::ModelarDbError;
 use crate::storage::compressed_data_buffer::CompressedDataBuffer;
 use crate::storage::data_transfer::DataTransfer;
-use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
+use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER, Metric};
 use crate::types::{CompressedSchema, Timestamp, Value};
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
@@ -54,6 +55,11 @@ pub(super) struct CompressedDataManager {
     compressed_remaining_memory_in_bytes: isize,
     /// Reference to the schema for compressed data buffers.
     compressed_schema: CompressedSchema,
+    /// Metric for the used compressed memory in bytes, updated every time the used memory changes.
+    pub(super) used_compressed_memory_metric: Metric,
+    /// Metric for the total used disk space in bytes, updated every time a new compressed file is
+    /// saved to disk.
+    pub used_disk_space_metric: Arc<RwLock<Metric>>,
 }
 
 impl CompressedDataManager {
@@ -64,6 +70,7 @@ impl CompressedDataManager {
         local_data_folder: PathBuf,
         compressed_reserved_memory_in_bytes: usize,
         compressed_schema: CompressedSchema,
+        used_disk_space_metric: Arc<RwLock<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the compressed data manager exists.
         fs::create_dir_all(local_data_folder.join(COMPRESSED_DATA_FOLDER))?;
@@ -75,6 +82,8 @@ impl CompressedDataManager {
             compressed_queue: VecDeque::new(),
             compressed_remaining_memory_in_bytes: compressed_reserved_memory_in_bytes as isize,
             compressed_schema,
+            used_compressed_memory_metric: Metric::new(),
+            used_disk_space_metric,
         })
     }
 
@@ -149,7 +158,9 @@ impl CompressedDataManager {
             segment_size
         };
 
+        // Update the remaining memory for compressed data and record the change.
         self.compressed_remaining_memory_in_bytes -= segments_size as isize;
+        self.used_compressed_memory_metric.append(segments_size as isize, true);
 
         // If the reserved memory limit is exceeded, save compressed data to disk.
         if self.compressed_remaining_memory_in_bytes < 0 {
@@ -292,11 +303,19 @@ impl CompressedDataManager {
 
         let file_path = compressed_data_buffer
             .save_to_apache_parquet(folder_path.as_path(), &self.compressed_schema)?;
-        self.compressed_remaining_memory_in_bytes += compressed_data_buffer.size_in_bytes as isize;
+
+        // Update the remaining memory for compressed data and record the change.
+        let freed_memory = compressed_data_buffer.size_in_bytes as isize;
+        self.compressed_remaining_memory_in_bytes += freed_memory;
+        self.used_compressed_memory_metric.append(-freed_memory, true);
+
+        // Record the change to the used disk space.
+        let file_size = file_path.metadata()?.len() as isize;
+        self.used_disk_space_metric.write().await.append(file_size, true);
 
         debug!(
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
-            compressed_data_buffer.size_in_bytes, self.compressed_remaining_memory_in_bytes
+            freed_memory, self.compressed_remaining_memory_in_bytes
         );
 
         // Pass the saved compressed file to the data transfer component if a remote data folder
@@ -391,6 +410,7 @@ mod tests {
 
     use datafusion::arrow::compute;
     use object_store::local::LocalFileSystem;
+    use ringbuf::Rb;
     use tempfile::{self, TempDir};
 
     use crate::array;
@@ -524,6 +544,7 @@ mod tests {
             .unwrap();
 
         assert!(reserved_memory > data_manager.compressed_remaining_memory_in_bytes);
+        assert_eq!(data_manager.used_compressed_memory_metric.values.len(), 1);
     }
 
     #[tokio::test]
@@ -544,6 +565,8 @@ mod tests {
             .unwrap();
 
         assert!(-1 < data_manager.compressed_remaining_memory_in_bytes);
+        assert_eq!(data_manager.used_compressed_memory_metric.values.len(), 2);
+        assert_eq!(data_manager.used_disk_space_metric.read().await.values.len(), 1);
     }
 
     /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
@@ -559,6 +582,7 @@ mod tests {
                 local_data_folder,
                 metadata_manager.compressed_reserved_memory_in_bytes,
                 metadata_manager.compressed_schema(),
+                Arc::new(RwLock::new(Metric::new())),
             )
             .unwrap(),
         )

@@ -32,6 +32,8 @@ use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
+use datafusion::arrow::array::{ListBuilder, StringBuilder, UInt32Builder};
+use datafusion::arrow::ipc::writer::StreamWriter;
 use datafusion::arrow::{
     array::ArrayRef, datatypes::Schema, datatypes::SchemaRef, error::ArrowError,
     ipc::writer::IpcWriteOptions, record_batch::RecordBatch,
@@ -49,6 +51,7 @@ use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 use crate::tables::ModelTable;
+use crate::types::TimestampBuilder;
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
@@ -484,21 +487,22 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// Perform a specific action based on the type of the action in `request`.
-    /// Currently only the action `CommandStatementUpdate` is supported which
-    /// executes a SQL query containing a command that does not return a result.
-    /// These commands can be `CREATE TABLE table_name(...` which creates a
-    /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a
-    /// model table. A model table is a specialized table for efficiently
-    /// storing multivariate time series with tags within a per field error
-    /// bound. Thus, model tables can only contain a single timestamp column,
-    /// field columns, and tag columns. If no error bound is defined for a field
-    /// column it defaults to an error bound of 0% (lossless compression).
-    ///
-    /// Examples of CREATE TABLE and CREATE MODEL TABLE commands:
-    /// * CREATE TABLE company(id INTEGER, name TEXT)
-    /// * CREATE MODEL TABLE wind_turbines(timestamp TIMESTAMP,
-    ///   field_lossless FIELD, field_lossy FIELD(5), tag_one TAG, tag_two TAG)
+    /// Perform a specific action based on the type of the action in `request`. Currently the
+    /// following actions are supported:
+    /// * `CommandStatementUpdate`: Execute a SQL query containing a command that does not
+    /// return a result. These commands can be `CREATE TABLE table_name(...` which creates a
+    /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a model table.
+    /// * `FlushMemory`: Flush all data that is currently in memory to disk. This compresses the
+    /// uncompressed data currently in memory and then flushes all compressed data in the storage
+    /// engine to disk.
+    /// * `FlushEdge`: An extension of the `FlushMemory` action that first flushes all data that is
+    /// currently in memory to disk and then flushes all compressed data on disk to the remote
+    /// object store. Note that data is only transferred to the remote object store if one was
+    /// provided when starting the server.
+    /// * `CollectMetrics`: Collect internal metrics describing the amount of memory used for
+    /// uncompressed and compressed data, disk space used, and the number of data points ingested
+    /// over time. Note that the metrics are cleared when collected, thus only the metrics
+    /// recorded since the last call to `CollectMetrics` are returned.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -553,6 +557,55 @@ impl FlightService for FlightServiceHandler {
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "CollectMetrics" {
+            let mut storage_engine = self.context.storage_engine.write().await;
+            let metrics = storage_engine.collect_metrics().await;
+
+            // Extract the data from the metrics and insert it into Apache Arrow array builders.
+            let mut metric_builder = StringBuilder::new();
+            let mut timestamps_builder = ListBuilder::new(TimestampBuilder::new());
+            let mut values_builder = ListBuilder::new(UInt32Builder::new());
+
+            for (metric_name, (timestamps, values)) in metrics.iter() {
+                metric_builder.append_value(metric_name.to_string());
+
+                timestamps_builder
+                    .values()
+                    .append_slice(timestamps.values());
+                timestamps_builder.append(true);
+
+                values_builder.values().append_slice(values.values());
+                values_builder.append(true);
+            }
+
+            let schema = self.context.metadata_manager.metric_schema();
+
+            // Finish the builders and create the record batch containing the metrics.
+            let batch = RecordBatch::try_new(
+                schema.0.clone(),
+                vec![
+                    Arc::new(metric_builder.finish()),
+                    Arc::new(timestamps_builder.finish()),
+                    Arc::new(values_builder.finish()),
+                ],
+            )
+            .unwrap();
+
+            // Write the schema and corresponding record batch to a stream.
+            let options = IpcWriteOptions::default();
+            let mut writer = StreamWriter::try_new_with_options(vec![], &schema.0, options)
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            writer
+                .write(&batch)
+                .map_err(|error| Status::internal(error.to_string()))?;
+            let batch_bytes = writer
+                .into_inner()
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            Ok(Response::new(Box::pin(stream::once(async {
+                Ok(arrow_flight::Result { body: batch_bytes })
+            }))))
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
@@ -582,10 +635,20 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
+        let collect_metrics = ActionType {
+            r#type: "CollectMetrics".to_owned(),
+            description:
+                "Collect internal metrics describing the amount of used memory for uncompressed \
+            and compressed data, used disk space, and ingested data points over time. The metrics are \
+            cleared when collected."
+                    .to_owned(),
+        };
+
         let output = stream::iter(vec![
             Ok(create_command_statement_update_action),
             Ok(flush_data_to_disk),
             Ok(flush_edge_action),
+            Ok(collect_metrics),
         ]);
 
         Ok(Response::new(Box::pin(output)))

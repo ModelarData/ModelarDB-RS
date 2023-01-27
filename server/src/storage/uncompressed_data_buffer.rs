@@ -57,6 +57,9 @@ pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
     /// Return the total amount of memory used by the buffer.
     fn memory_size(&self) -> usize;
 
+    /// Return the total amount of disk space used by the buffer.
+    fn disk_size(&self) -> usize;
+
     /// Since both [`UncompressedInMemoryDataBuffers`](UncompressedInMemoryDataBuffer) and
     /// [`UncompressedOnDiskDataBuffers`](UncompressedOnDiskDataBuffer) are present in the queue,
     /// both structs need to implement spilling to Apache Parquet, with already spilled segments
@@ -168,6 +171,11 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
         UncompressedInMemoryDataBuffer::memory_size()
     }
 
+    /// Since the data is not kept on disk, return 0.
+    fn disk_size(&self) -> usize {
+        0
+    }
+
     /// Spill the in-memory [`UncompressedInMemoryDataBuffer`] to an Apache Parquet file and return
     /// the [`UncompressedOnDiskDataBuffer`] when finished.
     async fn spill_to_apache_parquet(
@@ -273,6 +281,12 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
         0
     }
 
+    /// Return the total size of the Apache Parquet file containing the uncompressed data buffer.
+    fn disk_size(&self) -> usize {
+        // unwrap() is safe since the path is created internally.
+        self.file_path.metadata().unwrap().len() as usize
+    }
+
     /// Since the buffer has already been spilled, return [`IOError`].
     async fn spill_to_apache_parquet(
         &mut self,
@@ -306,6 +320,13 @@ mod tests {
             + (uncompressed_buffer.values.capacity() * mem::size_of::<Value>());
 
         assert_eq!(UncompressedInMemoryDataBuffer::memory_size(), expected)
+    }
+
+    #[test]
+    fn test_get_in_memory_data_buffer_disk_size() {
+        let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(1);
+
+        assert_eq!(uncompressed_buffer.disk_size(), 0);
     }
 
     #[test]
@@ -405,6 +426,21 @@ mod tests {
         };
 
         assert_eq!(uncompressed_buffer.memory_size(), 0)
+    }
+
+    #[tokio::test]
+    async fn test_get_on_disk_data_buffer_disk_size() {
+        let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(1);
+        let capacity = uncompressed_in_memory_buffer.capacity();
+        insert_data_points(capacity, &mut uncompressed_in_memory_buffer);
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let uncompressed_on_disk_buffer = uncompressed_in_memory_buffer
+            .spill_to_apache_parquet(temp_dir.path(), &test_util::uncompressed_schema())
+            .await
+            .unwrap();
+
+        assert_eq!(uncompressed_on_disk_buffer.disk_size(), 675)
     }
 
     #[tokio::test]
