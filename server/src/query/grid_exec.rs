@@ -18,7 +18,6 @@
 //! metadata and models.
 
 use std::any::Any;
-use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Formatter;
 use std::pin::Pin;
@@ -27,65 +26,75 @@ use std::task::{Context as StdTaskContext, Poll};
 
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    ArrayRef, BinaryArray, Float32Array, StringBuilder, UInt64Array, UInt8Array,
+    ArrayRef, ArrowPrimitiveType, BinaryArray, Float32Array, UInt64Array, UInt8Array,
 };
-use datafusion::arrow::datatypes::SchemaRef;
+use datafusion::arrow::datatypes::{Field, Schema, SchemaRef};
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
+use datafusion::physical_plan::expressions::{Column, PhysicalSortExpr};
+use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
+use datafusion::physical_plan::sorts::sort::SortOptions;
 use datafusion::physical_plan::{
-    expressions::PhysicalSortExpr, metrics::BaselineMetrics, metrics::ExecutionPlanMetricsSet,
-    metrics::MetricsSet, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
-    SendableRecordBatchStream, Statistics,
+    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream,
+    Statistics,
 };
 use futures::stream::{Stream, StreamExt};
 
-use crate::metadata::model_table_metadata::ModelTableMetadata;
-use crate::metadata::MetadataManager;
 use crate::models;
-use crate::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
+use crate::types::{
+    ArrowTimestamp, ArrowUnivariateId, ArrowValue, TimestampArray, TimestampBuilder, ValueArray,
+    ValueBuilder,
+};
 
-/// An operator that reconstructs the data points stored as segments containing
-/// metadata and models. It is public so the additional rules added to Apache
-/// Arrow DataFusion's physical optimizer can pattern match on it.
+/// An execution that reconstructs the data points stored as segments containing metadata and
+/// models. It is public so the additional rules added to Apache Arrow DataFusion's physical
+/// optimizer can pattern match on it.
 #[derive(Debug, Clone)]
 pub struct GridExec {
-    /// Metadata required to query the model table.
-    model_table_metadata: Arc<ModelTableMetadata>,
-    /// Columns requested by the query.
-    projection: Vec<usize>,
-    /// Number of rows requested by the query.
+    /// Schema of the execution plan.
+    schema: SchemaRef,
+    /// Ordering of the plans output.
+    output_ordering: Vec<PhysicalSortExpr>,
+    /// Number of data points requested by the query.
     limit: Option<usize>,
-    /// Schema of the model table after projection.
-    schema_after_projection: SchemaRef,
-    /// Mapping from tag hash to tags.
-    hash_to_tags: HashMap<u64, Vec<String>>,
-    /// Operator to read batches of rows from.
+    /// Execution plan to read batches of segments from.
     input: Arc<dyn ExecutionPlan>,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
     metrics: ExecutionPlanMetricsSet,
 }
 
 impl GridExec {
-    pub fn new(
-        model_table_metadata: Arc<ModelTableMetadata>,
-        projection: Vec<usize>,
-        limit: Option<usize>,
-        schema: SchemaRef,
-        hash_to_tags: HashMap<u64, Vec<String>>,
-        input: Arc<dyn ExecutionPlan>,
-    ) -> Arc<Self> {
-        // Modifies the schema so it matches the passed projection. unwrap() is safe as the
-        // projection is for the schema so errors due to out of bounds indexing cannot happen.
-        let schema_after_projection = Arc::new(schema.project(&projection).unwrap());
+    pub fn new(limit: Option<usize>, input: Arc<dyn ExecutionPlan>) -> Arc<Self> {
+        // Schema.
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("univariate_id", ArrowUnivariateId::DATA_TYPE, false),
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("value", ArrowValue::DATA_TYPE, false),
+        ]));
+
+        // Output Ordering.
+        let sort_options = SortOptions {
+            descending: false,
+            nulls_first: false,
+        };
+
+        let output_ordering = vec![
+            PhysicalSortExpr {
+                expr: Arc::new(Column::new("univariate_id", 0)),
+                options: sort_options,
+            },
+            PhysicalSortExpr {
+                expr: Arc::new(Column::new("timestamp", 1)),
+                options: sort_options,
+            },
+        ];
 
         Arc::new(GridExec {
-            model_table_metadata,
-            projection,
+            schema,
+            output_ordering,
             limit,
-            schema_after_projection,
-            hash_to_tags,
             input,
             metrics: ExecutionPlanMetricsSet::new(),
         })
@@ -99,43 +108,38 @@ impl ExecutionPlan for GridExec {
         self
     }
 
-    /// Return the schema of the model table after projection.
+    /// Return the schema of the plan.
     fn schema(&self) -> SchemaRef {
-        self.schema_after_projection.clone()
+        self.schema.clone()
     }
 
-    /// Return the single operator batches of rows are read from.
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.input.clone()]
-    }
-
-    /// Return the partitioning of the single operator batches of rows are read
-    /// from as [`GridExec`] does not repartition the batches of rows.
+    /// Return the partitioning of the single execution plan batches of segments are read from.
     fn output_partitioning(&self) -> Partitioning {
         self.input.output_partitioning()
     }
 
-    /// Return `None` to indicate that `GridExec` does not guarantee a specific
-    /// ordering of the rows it produces.
+    /// Specify that the record batches produced by the execution plan will be ordered by
+    /// descendingly by univariate_id and then descendingly timestamp.
     fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        //TODO: can it be guaranteed that GridExec outputs ordered data?
-        None
+        Some(&self.output_ordering)
     }
 
-    /// Return a new instance of [`GridExec`] with the operator to read batches
-    /// of rows from replaced. [`DataFusionError::Plan`] is returned if
-    /// `children` does not contain a single element.
+    /// Return the single execution plan batches of rows are read from.
+    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
+        vec![self.input.clone()]
+    }
+
+    /// Return a new [`GridExec`] with the execution plan to read batches of rows from replaced.
+    /// [`DataFusionError::Plan`] is returned if `children` does not contain a single element.
     fn with_new_children(
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         if children.len() == 1 {
             Ok(Arc::new(GridExec {
-                model_table_metadata: self.model_table_metadata.clone(),
-                projection: self.projection.clone(),
+                schema: self.schema.clone(),
+                output_ordering: self.output_ordering.clone(),
                 limit: self.limit,
-                schema_after_projection: self.schema_after_projection.clone(),
-                hash_to_tags: self.hash_to_tags.clone(),
                 input: children[0].clone(),
                 metrics: self.metrics.clone(),
             }))
@@ -146,19 +150,17 @@ impl ExecutionPlan for GridExec {
         }
     }
 
-    /// Create a stream that read batches of rows with segments from the data
-    /// source operator, reconstructs the data points from the metadata and
-    /// models in the segments, and returns batches of rows with data points.
+    /// Create a stream that reads batches of rows with segments from the child stream, reconstructs
+    /// the data points from the metadata and models in the segments, and returns batches of rows
+    /// with data points.
     fn execute(
         &self,
         partition: usize,
         task_context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(GridStream::new(
-            self.projection.clone(),
+            self.schema.clone(),
             self.limit,
-            self.schema_after_projection.clone(),
-            self.hash_to_tags.clone(), // TODO: share single instance though RC or ARC.
             self.input.execute(partition, task_context)?,
             BaselineMetrics::new(&self.metrics, partition),
         )))
@@ -182,33 +184,17 @@ impl ExecutionPlan for GridExec {
     /// Write a string-based representation of the operator to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> fmt::Result {
-        let columns: Vec<&String> = self
-            .schema_after_projection
-            .fields()
-            .iter()
-            .map(|f| f.name())
-            .collect();
-
-        write!(
-            f,
-            "GridExec: projection={:?}, limit={:?}, columns={:?}",
-            self.projection, self.limit, columns
-        )
+        write!(f, "GridExec: limit={:?}", self.limit)
     }
 }
 
-/// A stream that read batches of rows with segments from the data source
-/// operator, reconstructs the data points from the metadata and models in the
-/// segments, and returns batches of rows with data points.
+/// A stream that read batches of rows with segments from the input stream, reconstructs the data
+/// points from the metadata and models in the segments, and returns batches of data points.
 struct GridStream {
-    /// Columns requested by the query.
-    projection: Vec<usize>,
+    /// Schema of the stream.
+    schema: SchemaRef,
     /// Number of rows requested by the query.
     _limit: Option<usize>,
-    /// Schema of the model table after projection.
-    schema_after_projection: SchemaRef,
-    /// Mapping from tag hash to tags.
-    hash_to_tags: HashMap<u64, Vec<String>>,
     /// Stream to read batches of rows from.
     input: SendableRecordBatchStream,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
@@ -217,18 +203,14 @@ struct GridStream {
 
 impl GridStream {
     fn new(
-        projection: Vec<usize>,
+        schema: SchemaRef,
         limit: Option<usize>,
-        schema_after_projection: SchemaRef,
-        hash_to_tags: HashMap<u64, Vec<String>>,
         input: SendableRecordBatchStream,
         baseline_metrics: BaselineMetrics,
     ) -> Self {
         GridStream {
-            projection,
+            schema,
             _limit: limit,
-            schema_after_projection,
-            hash_to_tags,
             input,
             baseline_metrics,
         }
@@ -236,8 +218,8 @@ impl GridStream {
 
     // TODO: it is necessary to return batch_size data points to prevent skew?
     // TODO: limit the batches of data points to only contain what is needed.
-    /// Reconstruct the data points from the metadata and models in the segments
-    /// in `batch`, and return batches of rows with data points.
+    /// Reconstruct the data points from the metadata and models in the segments in `batch`, and
+    /// return batches of data points.
     fn grid(&self, batch: &RecordBatch) -> RecordBatch {
         // Record the time elapsed from the timer is created to it is dropped.
         let _timer = self.baseline_metrics.elapsed_compute().timer();
@@ -258,7 +240,7 @@ impl GridStream {
 
         // Each segment is guaranteed to contain at least one data point.
         let num_rows = batch.num_rows();
-        let mut univariate_ids_builder = UInt64Array::builder(num_rows);
+        let mut univariate_id_builder = UInt64Array::builder(num_rows);
         let mut timestamp_builder = TimestampBuilder::with_capacity(num_rows);
         let mut value_builder = ValueBuilder::with_capacity(num_rows);
 
@@ -283,56 +265,25 @@ impl GridStream {
                 values,
                 min_value,
                 max_value,
-                &mut univariate_ids_builder,
+                &mut univariate_id_builder,
                 &mut timestamp_builder,
                 &mut value_builder,
             );
         }
 
-        // Append the tags to each of the data points if any were requested.
-        let mut tag_columns: Vec<StringBuilder> = Vec::with_capacity(self.projection.len());
+        let column: Vec<ArrayRef> = vec![
+            Arc::new(univariate_id_builder.finish()),
+            Arc::new(timestamp_builder.finish()),
+            Arc::new(value_builder.finish()),
+        ];
 
-        // Skip appending tags if none were requested.
-        if !self.hash_to_tags.is_empty() {
-            // unwrap() is safe as the HashMap is guaranteed to contain at least one value.
-            let tag_columns_len = self.hash_to_tags.values().next().unwrap().len();
-            for _ in 0..tag_columns_len {
-                tag_columns.push(StringBuilder::new());
-            }
-
-            for univariate_id in univariate_ids_builder.values_slice() {
-                let tag_hash = MetadataManager::univariate_id_to_tag_hash(*univariate_id);
-                let tags = &self.hash_to_tags[&tag_hash];
-                for index in 0..tag_columns_len {
-                    tag_columns[index].append_value(tags[index].clone());
-                }
-            }
-        }
-
-        // Add the none tag columns to the batch.
-        let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.projection.len());
-        for column in &self.projection {
-            match column {
-                0 => columns.push(Arc::new(univariate_ids_builder.finish())),
-                1 => columns.push(Arc::new(timestamp_builder.finish())),
-                2 => columns.push(Arc::new(value_builder.finish())),
-                _ => (), // The remaining columns are for tags.
-            }
-        }
-
-        // Add the tag columns to the batch.
-        tag_columns
-            .drain(0..)
-            .for_each(|mut tag_column| columns.push(Arc::new(tag_column.finish())));
-
-        // Return the batch, unwrap() is safe as columns are constructed from self.projection.
-        RecordBatch::try_new(self.schema_after_projection.clone(), columns).unwrap()
+        // Return the batch, unwrap() is safe as GridStream uses a static schema.
+        RecordBatch::try_new(self.schema.clone(), column).unwrap()
     }
 }
 
 impl Stream for GridStream {
-    /// Specify that [`GridStream`] returns [`ArrowResult<RecordBatch>`] when
-    /// polled.
+    /// Specify that [`GridStream`] returns [`ArrowResult<RecordBatch>`] when polled.
     type Item = ArrowResult<RecordBatch>;
 
     /// Try to poll the next element from the [`GridStream`] and returns:
@@ -352,8 +303,8 @@ impl Stream for GridStream {
 }
 
 impl RecordBatchStream for GridStream {
-    /// Return the schema of the model table after projection.
+    /// Return the schema of the stream.
     fn schema(&self) -> SchemaRef {
-        self.schema_after_projection.clone()
+        self.schema.clone()
     }
 }

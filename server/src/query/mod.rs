@@ -20,20 +20,20 @@
 //! * [`GridExec`] which takes the sorted compressed segments from the Apache Parquet files for a
 //! single column and reconstructs the data points they represent as three sorted arrays containing
 //! the data points' univariate ids, timestamps, and values.
-//! * `SortedJoinExec` which take the sorted arrays produced by each [`GridExec`] and combines them
-//! with the time series tags retrieved from the
+//! * [`SortedJoinExec`] which joins the sorted arrays produced by each [`GridExec`] and combines
+//! them with the time series tags retrieved from the
 //! [`MetadataManager`](crate::metadata::MetadataManager) to create the complete results containing
 //! a timestamp column, one or more field columns, and zero or more tag columns.
-// TODO: implemented SortedJoinExec and make its `` a link.
 
 // Public so the rules added to Apache Arrow DataFusion's physical optimizer can access GridExec.
 pub mod grid_exec;
+pub mod sorted_join_exec;
 
 use std::any::Any;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema, SchemaRef};
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, SchemaRef};
 use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::datasource::{
     datasource::TableProviderFilterPushDown, listing::PartitionedFile, TableProvider, TableType,
@@ -45,11 +45,15 @@ use datafusion::optimizer::utils;
 use datafusion::physical_plan::{
     file_format::FileScanConfig, file_format::ParquetExec, ExecutionPlan, Statistics,
 };
+use object_store::ObjectStore;
+use tokio::sync::RwLockWriteGuard;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::query::grid_exec::GridExec;
+use crate::query::sorted_join_exec::SortedJoinExec;
 use crate::storage;
-use crate::types::{ArrowTimestamp, ArrowUnivariateId, ArrowValue};
+use crate::storage::StorageEngine;
+use crate::types::ArrowValue;
 use crate::Context;
 
 /// A queryable representation of a model table which stores multivariate time
@@ -63,26 +67,12 @@ pub struct ModelTable {
     object_store_url: ObjectStoreUrl,
     /// Metadata required to read from and write to the model table.
     model_table_metadata: Arc<ModelTableMetadata>,
-    /// Schema of the model table registered with Apache Arrow DataFusion.
-    schema: Arc<Schema>,
     /// Field column to use for queries that do not include fields.
     fallback_field_column: u64,
 }
 
 impl ModelTable {
     pub fn new(context: Arc<Context>, model_table_metadata: Arc<ModelTableMetadata>) -> Arc<Self> {
-        // Default columns in the model table to be registered with Apache Arrow DataFusion.
-        let mut columns = vec![
-            Field::new("univariate_id", ArrowUnivariateId::DATA_TYPE, false),
-            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("value", ArrowValue::DATA_TYPE, false),
-        ];
-
-        // Tag columns in the model table to be registered with Apache Arrow DataFusion.
-        for index in &model_table_metadata.tag_column_indices {
-            columns.push(model_table_metadata.schema.field(*index).clone());
-        }
-
         // Compute the index of the first field column in the model table's
         // schema. This is used for queries that does not contain any fields.
         let fallback_field_column = {
@@ -102,7 +92,6 @@ impl ModelTable {
             context,
             model_table_metadata,
             object_store_url,
-            schema: Arc::new(Schema::new(columns)),
             fallback_field_column: fallback_field_column as u64,
         })
     }
@@ -110,6 +99,92 @@ impl ModelTable {
     /// Return the [`ModelTableMetadata`] for the table.
     pub fn model_table_metadata(&self) -> Arc<ModelTableMetadata> {
         self.model_table_metadata.clone()
+    }
+
+    /// Return the index of `tag_column_index` in the tables schema if it exists and is a tag
+    /// column, otherwise [`None`] is returned.
+    fn position_of_tag_column_index(&self, column_index: &usize) -> Option<usize> {
+        self.model_table_metadata
+            .tag_column_indices
+            .iter()
+            .position(|value| value == column_index)
+    }
+
+    /// Create an [`ExecutionPlan`] that will scan the column at `column_index` in the table with
+    /// `table_name`. Returns a [`DataFusionError::Plan`] if the necessary metadata cannot be
+    /// retrieved from the metadata database.
+    async fn scan_column(
+        &self,
+        storage_engine: &mut RwLockWriteGuard<'_, StorageEngine>,
+        query_object_store: &Arc<dyn ObjectStore>,
+        table_name: &str,
+        column_index: u16,
+        predicate: Option<Expr>,
+        limit: Option<usize>,
+    ) -> Arc<dyn ExecutionPlan> {
+        // TODO: Read segments from parquet file and prune irrelevant segments by time.
+        // TODO: Reconstruct batches of data points from the segments (need to be static size? with FilterExec)
+        // TODO: Filter out irrelevant data points by time for the column to ensure each pipeline return same values.
+
+        // unwrap() is safe to use as get_compressed_files() only fails if a table with the name
+        // table_name and column with column_index does not exists, if end time is before start
+        // time, or if max value is larger than min value.
+        // TODO: extract predicates on time and value and push them to the storage engine.
+        let object_metas = storage_engine
+            .compressed_files(
+                table_name,
+                column_index,
+                None,
+                None,
+                None,
+                None,
+                &query_object_store,
+            )
+            .await
+            .unwrap();
+
+        // Create the data source operator. Assumes the ObjectStore exists.
+        let partitioned_files: Vec<PartitionedFile> = object_metas
+            .into_iter()
+            .map(|object_meta| PartitionedFile {
+                object_meta,
+                partition_values: vec![],
+                range: None,
+                extensions: None,
+            })
+            .collect::<Vec<PartitionedFile>>();
+
+        // TODO: predict the accumulate size of the input data after filtering.
+        let statistics = Statistics {
+            num_rows: None,
+            total_byte_size: None,
+            column_statistics: None,
+            is_exact: false,
+        };
+
+        let file_scan_config = FileScanConfig {
+            object_store_url: self.object_store_url.clone(),
+            file_schema: self.context.metadata_manager.compressed_schema().0,
+            file_groups: vec![partitioned_files],
+            statistics,
+            projection: None,
+            limit,
+            table_partition_cols: vec![],
+            output_ordering: None,
+            infinite_source: false,
+        };
+
+        let apache_parquet_exec = Arc::new(
+            ParquetExec::new(file_scan_config, predicate, None)
+                .with_pushdown_filters(true)
+                .with_reorder_filters(true),
+        );
+
+        // Create the gridding operator.
+        let grid_exec: Arc<dyn ExecutionPlan> = GridExec::new(limit, apache_parquet_exec);
+
+        // TODO: filter data points
+        grid_exec
     }
 }
 
@@ -208,10 +283,9 @@ impl TableProvider for ModelTable {
         self
     }
 
-    /// Return the schema of the model table registered with Apache Arrow
-    /// DataFusion.
+    /// Return the schema of the model table registered with Apache Arrow DataFusion.
     fn schema(&self) -> SchemaRef {
-        self.schema.clone()
+        self.model_table_metadata.schema.clone()
     }
 
     /// Specify that model tables are base tables and not views or temporary.
@@ -234,68 +308,48 @@ impl TableProvider for ModelTable {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        // Request the matching files from the storage engine.
-        let table_name = &self.model_table_metadata.name;
-        let object_metas = {
-            // TODO: make the storage engine support multiple parallel readers.
-            let mut storage_engine = self.context.storage_engine.write().await;
-
-            // unwrap() is safe as the store is set by create_session_context().
-            let query_object_store = ctx
-                .runtime_env()
-                .object_store(&self.object_store_url)
-                .unwrap();
-
-            // TODO: extract predicates on time and value and push them to the storage engine.
-            // unwrap() is safe to use as get_compressed_files() only fails if a table with the name
-            // table_name does not exists, if end time is before start time, or if max value is
-            // larger than min value.
-            let column_index = 4; // TODO: use the column_index assigned to the pipeline.
-            storage_engine
-                .compressed_files(
-                    table_name,
-                    column_index,
-                    None,
-                    None,
-                    None,
-                    None,
-                    &query_object_store,
-                )
-                .await
-                .unwrap()
+        // Ensures a projection is present for looking up the columns to return.
+        let projection: Vec<usize> = if let Some(projection) = projection {
+            projection.to_vec()
+        } else {
+            (0..self.model_table_metadata.schema.fields().len()).collect()
         };
 
-        // Create the data source operator. Assumes the ObjectStore exists.
-        let partitioned_files: Vec<PartitionedFile> = object_metas
-            .into_iter()
-            .map(|object_meta| PartitionedFile {
-                object_meta,
-                partition_values: vec![],
-                range: None,
-                extensions: None,
-            })
-            .collect::<Vec<PartitionedFile>>();
+        // So SortedJoinExec simply needs to append arrays to a vector, the order of the field and
+        // tag columns in the projection is extracted and the execution plans SortedJoinExec read
+        // columns from are arranged in the same order as the field columns.
+        let schema_column_len = self.model_table_metadata.schema.fields().len();
+        let tag_columns_len = self.model_table_metadata.tag_column_indices.len();
+        let mut field_indices_in_projection: Vec<u16> =
+            Vec::with_capacity(schema_column_len - 1 - tag_columns_len);
+        let mut tag_indices_in_projection: Vec<usize> = Vec::with_capacity(tag_columns_len);
+        let mut tag_names_in_projection: Vec<&str> = Vec::with_capacity(tag_columns_len);
 
-        // TODO: predict the accumulate size of the input data after filtering.
-        let statistics = Statistics {
-            num_rows: None,
-            total_byte_size: None,
-            column_statistics: None,
-            is_exact: false,
-        };
+        for index in &projection {
+            if *index == self.model_table_metadata.timestamp_column_index {
+                // TODO: hardcode timestamp index to 0 and figure out how to fix it afterwards.
+            } else if let Some(tag_column_index) = self.position_of_tag_column_index(index) {
+                // Storing the index of the index allows direct lookup in hash_to_tags.
+                tag_indices_in_projection.push(tag_column_index);
+                let tag_name = self.model_table_metadata.schema.fields[*index]
+                    .name()
+                    .as_str();
+                tag_names_in_projection.push(tag_name)
+            } else {
+                field_indices_in_projection.push(*index as u16);
+            }
+        }
 
-        // TODO: partition the rows in the files to support parallel processing.
-        let file_scan_config = FileScanConfig {
-            object_store_url: self.object_store_url.clone(),
-            file_schema: self.context.metadata_manager.compressed_schema().0,
-            file_groups: vec![partitioned_files],
-            statistics,
-            projection: None,
-            limit,
-            table_partition_cols: vec![],
-            output_ordering: None,
-            infinite_source: false,
-        };
+        dbg!(&tag_columns_len);
+        dbg!(&field_indices_in_projection);
+        dbg!(&tag_indices_in_projection);
+        dbg!(&tag_names_in_projection);
+
+        // unwrap() is safe as the store is set by create_session_context().
+        let query_object_store = ctx
+            .runtime_env()
+            .object_store(&self.object_store_url)
+            .unwrap();
 
         // TODO: extract all of the predicates that consist of tag = tag_value from the query so the
         // row groups and segments can be pruned by univariate_id using ParquetExec and segments.
@@ -305,57 +359,44 @@ impl TableProvider for ModelTable {
             .metadata_manager
             .compute_univariate_ids_using_fields_and_tags(
                 &self.model_table_metadata.name,
-                projection,
+                Some(&projection),
                 self.fallback_field_column,
                 &tag_predicates,
             )
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
-        let predicate = rewrite_and_combine_filters(filters);
-        let apache_parquet_exec = Arc::new(
-            ParquetExec::new(file_scan_config, predicate, None)
-                .with_pushdown_filters(true)
-                .with_reorder_filters(true),
-        );
-
-        // Ensures a projection is present for looking up columns to return.
-        let projection: Vec<usize> = if let Some(projection) = projection {
-            projection.to_vec()
-        } else {
-            (0..self.schema.fields().len()).collect()
-        };
-
         // Compute a mapping from hashes to tags.
-        let tag_names_in_projection: Vec<&str> = projection
-            .iter()
-            .filter_map(|index| {
-                // Tags are appended to the schema univariate_id, timestamp, value
-                if *index > 2 {
-                    let i = self.model_table_metadata.tag_column_indices[index - 3];
-                    Some(self.model_table_metadata.schema.fields[i].name().as_str())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        let hash_to_tags = self
+        let _hash_to_tags = self
             .context
             .metadata_manager
             .mapping_from_hash_to_tags(&self.model_table_metadata.name, &tag_names_in_projection)
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
-        // Create the gridding operator.
-        let grid_exec: Arc<dyn ExecutionPlan> = GridExec::new(
-            self.model_table_metadata.clone(),
-            projection,
-            limit,
-            self.schema(),
-            hash_to_tags,
-            apache_parquet_exec,
-        );
+        let table_name = &self.model_table_metadata.name.as_str();
+        let predicate = rewrite_and_combine_filters(filters);
 
-        Ok(grid_exec)
+        // Request the matching files from the storage engine. The exclusive lock on the storage
+        // engine is hold until object metas for all columns have been retrieved to ensure they
+        // contain the same number of data points.
+        let mut field_column_execution_plans: Vec<Arc<dyn ExecutionPlan>> =
+            Vec::with_capacity(field_indices_in_projection.len());
+        let mut storage_engine = self.context.storage_engine.write().await;
+        for field_column_index in field_indices_in_projection {
+            let execution_plan = self
+                .scan_column(
+                    &mut storage_engine,
+                    &query_object_store,
+                    table_name,
+                    field_column_index,
+                    predicate.clone(),
+                    limit,
+                )
+                .await;
+
+            field_column_execution_plans.push(execution_plan);
+        }
+
+        Ok(Arc::new(SortedJoinExec {}))
     }
 }
 
