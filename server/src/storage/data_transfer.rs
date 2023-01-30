@@ -163,7 +163,7 @@ impl DataTransfer {
     /// files were transferred successfully, otherwise [`ParquetError`].
     async fn transfer_data(&mut self, table_name: &str) -> Result<(), ParquetError> {
         // Read all files that is currently stored for the table with table_name.
-        let path = format!("{}/{}", COMPRESSED_DATA_FOLDER, table_name).into();
+        let path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}").into();
         let object_metas = self
             .local_data_folder_object_store
             .list(Some(&path))
@@ -212,7 +212,7 @@ impl DataTransfer {
 
         // Transfer the combined RecordBatch to the remote object store.
         let file_name = storage::create_time_and_value_range_file_name(&combined);
-        let path = format!("{}/{}/{}", COMPRESSED_DATA_FOLDER, table_name, file_name).into();
+        let path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{file_name}").into();
         self.remote_data_folder_object_store
             .put(&path, Bytes::from(buf.into_inner()))
             .await
@@ -279,21 +279,20 @@ mod tests {
 
     #[test]
     fn test_folder_path_is_not_compressed_file() {
-        let path = ObjectStorePath::from(format!("{}/{}", COMPRESSED_DATA_FOLDER, TABLE_NAME));
+        let path = ObjectStorePath::from(format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}"));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_table_folder_without_compressed_folder_is_not_compressed_file() {
-        let path = ObjectStorePath::from(format!("test/{}/test.parquet", TABLE_NAME));
+        let path = ObjectStorePath::from(format!("test/{TABLE_NAME}/test.parquet"));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_non_apache_parquet_file_is_not_compressed_file() {
         let path = ObjectStorePath::from(format!(
-            "{}/{}/test.txt",
-            COMPRESSED_DATA_FOLDER, TABLE_NAME
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/test.txt"
         ));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
@@ -301,8 +300,7 @@ mod tests {
     #[test]
     fn test_compressed_file_is_compressed_file() {
         let path = ObjectStorePath::from(format!(
-            "{}/{}/test.parquet",
-            COMPRESSED_DATA_FOLDER, TABLE_NAME
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/test.parquet"
         ));
         assert_eq!(
             DataTransfer::path_is_compressed_file(path),
@@ -334,7 +332,7 @@ mod tests {
         let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         assert!(data_transfer
-            .add_compressed_file(&TABLE_NAME, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, apache_parquet_path.as_path())
             .await
             .is_ok());
 
@@ -352,11 +350,11 @@ mod tests {
         let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         data_transfer
-            .add_compressed_file(&TABLE_NAME, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, apache_parquet_path.as_path())
             .await
             .unwrap();
         data_transfer
-            .add_compressed_file(&TABLE_NAME, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, apache_parquet_path.as_path())
             .await
             .unwrap();
 
@@ -371,7 +369,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = temp_dir
             .path()
-            .join(format!("{}/{}", COMPRESSED_DATA_FOLDER, TABLE_NAME));
+            .join(format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}"));
         fs::create_dir_all(path.clone()).unwrap();
 
         let (_target_dir, mut data_transfer) =
@@ -379,7 +377,7 @@ mod tests {
 
         let apache_parquet_path = path.join("test_apache_parquet.parquet");
         assert!(data_transfer
-            .add_compressed_file(&TABLE_NAME, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, apache_parquet_path.as_path())
             .await
             .is_err());
     }
@@ -391,10 +389,10 @@ mod tests {
         let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         data_transfer
-            .add_compressed_file(&TABLE_NAME, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, apache_parquet_path.as_path())
             .await
             .unwrap();
-        data_transfer.transfer_data(&TABLE_NAME).await.unwrap();
+        data_transfer.transfer_data(TABLE_NAME).await.unwrap();
 
         assert_data_transferred(vec![apache_parquet_path], target_dir, data_transfer).await;
     }
@@ -407,14 +405,14 @@ mod tests {
         let path_2 = create_compressed_file(temp_dir.path(), "test_2");
 
         data_transfer
-            .add_compressed_file(&TABLE_NAME, path_1.as_path())
+            .add_compressed_file(TABLE_NAME, path_1.as_path())
             .await
             .unwrap();
         data_transfer
-            .add_compressed_file(&TABLE_NAME, path_2.as_path())
+            .add_compressed_file(TABLE_NAME, path_2.as_path())
             .await
             .unwrap();
-        data_transfer.transfer_data(&TABLE_NAME).await.unwrap();
+        data_transfer.transfer_data(TABLE_NAME).await.unwrap();
 
         assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer).await;
     }
@@ -428,7 +426,7 @@ mod tests {
         // Set the max batch size to ensure that the file is transferred immediately.
         data_transfer.transfer_batch_size_in_bytes = COMPRESSED_FILE_SIZE - 1;
         data_transfer
-            .add_compressed_file(&TABLE_NAME, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, apache_parquet_path.as_path())
             .await
             .unwrap();
 
@@ -473,8 +471,7 @@ mod tests {
 
         // The transferred file should have a time range file name that matches the compressed data.
         let target_path = target.path().join(format!(
-            "{}/{}/0_5_5.2_34.2.parquet",
-            COMPRESSED_DATA_FOLDER, TABLE_NAME
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/0_5_5.2_34.2.parquet"
         ));
         assert!(target_path.exists());
 
@@ -486,7 +483,7 @@ mod tests {
 
         assert_eq!(
             *data_transfer.compressed_files.get(TABLE_NAME).unwrap(),
-            0 as usize
+            0_usize
         );
 
         // The used disk space log should have an entry for when the data transfer component is
@@ -498,13 +495,13 @@ mod tests {
     /// path to the created Apache Parquet file.
     fn create_compressed_file(local_data_folder_path: &Path, file_name: &str) -> PathBuf {
         let path =
-            local_data_folder_path.join(format!("{}/{}", COMPRESSED_DATA_FOLDER, TABLE_NAME));
+            local_data_folder_path.join(format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}"));
         fs::create_dir_all(path.clone()).unwrap();
 
         let batch = test_util::compressed_segments_record_batch();
-        let apache_parquet_path = path.join(format!("{}.parquet", file_name));
+        let apache_parquet_path = path.join(format!("{file_name}.parquet"));
         StorageEngine::write_batch_to_apache_parquet_file(
-            batch.clone(),
+            batch,
             apache_parquet_path.as_path(),
         )
         .unwrap();

@@ -74,12 +74,12 @@ fn main() -> Result<(), String> {
 
     // Create the Tokio runtime.
     let runtime =
-        Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {}", error))?;
+        Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {error}"))?;
 
     // Connect to the server.
     let host = maybe_host.unwrap_or_else(|| DEFAULT_HOST.to_owned());
     let flight_service_client = connect(&runtime, &host, DEFAULT_PORT)
-        .map_err(|error| format!("Cannot connect to {}: {}", host, error))?;
+        .map_err(|error| format!("Cannot connect to {host}: {error}"))?;
 
     // Execute the queries.
     if let Some(query_file) = maybe_query_file_path {
@@ -87,7 +87,7 @@ fn main() -> Result<(), String> {
     } else {
         repl(runtime, flight_service_client)
     }
-    .map_err(|error| format!("Cannot execute queries: {}", error))
+    .map_err(|error| format!("Cannot execute queries: {error}"))
 }
 
 /// Parse the command line arguments in `args` and return a pair with the address of the server to
@@ -122,7 +122,7 @@ fn connect(
     host: &str,
     port: u16,
 ) -> Result<FlightServiceClient<Channel>, Box<dyn Error>> {
-    let address = format!("grpc://{}:{}", host, port);
+    let address = format!("grpc://{host}:{port}");
     runtime.block_on(async { Ok(FlightServiceClient::connect(address).await?) })
 }
 
@@ -146,13 +146,13 @@ fn file(
 
         // Execute the query.
         if !query.is_empty() {
-            println!("{}", query);
+            println!("{query}");
             if let Err(message) = execute_and_print_action_command_or_query(
                 &runtime,
                 &mut flight_service_client,
                 &query,
             ) {
-                eprintln!("{}", message);
+                eprintln!("{message}");
             }
             // Formatting newline.
             println!();
@@ -185,7 +185,7 @@ fn repl(
         if let Err(message) =
             execute_and_print_action_command_or_query(&runtime, &mut flight_service_client, &line)
         {
-            eprintln!("{}", message);
+            eprintln!("{message}");
         }
     }
 
@@ -283,7 +283,7 @@ fn execute_command(
             //Print the name of the tables on the server.
             if let Ok(tables) = retrieve_table_names(runtime, flight_service_client) {
                 for table in tables {
-                    println!("{}", table);
+                    println!("{table}");
                 }
             }
             Ok(())

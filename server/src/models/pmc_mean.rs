@@ -252,7 +252,7 @@ mod tests {
         for value in [42.0, 42.0, 42.8, 42.0, 42.0] {
             fit_all_values &= model_type.fit_value(value);
         }
-        return fit_all_values;
+        fit_all_values
     }
 
     // Tests for sum().

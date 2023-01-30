@@ -307,7 +307,7 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
 mod tests {
     use super::*;
 
-    use tempfile;
+    
 
     use crate::metadata::test_util;
 
@@ -395,7 +395,7 @@ mod tests {
 
         let uncompressed_path = temp_dir
             .path()
-            .join(format!("{}/1", UNCOMPRESSED_DATA_FOLDER));
+            .join(format!("{UNCOMPRESSED_DATA_FOLDER}/1"));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
     }
 
@@ -413,7 +413,7 @@ mod tests {
 
         let uncompressed_path = temp_dir
             .path()
-            .join(format!("{}/1", UNCOMPRESSED_DATA_FOLDER));
+            .join(format!("{UNCOMPRESSED_DATA_FOLDER}/1"));
         assert_eq!(uncompressed_path.read_dir().unwrap().count(), 1)
     }
 

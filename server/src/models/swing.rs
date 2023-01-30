@@ -472,7 +472,7 @@ mod tests {
             fit_all_values &= model_type.fit_data_point(timestamp, *value);
             timestamp += SAMPLING_INTERVAL;
         }
-        return fit_all_values;
+        fit_all_values
     }
 
     // Tests for sum().

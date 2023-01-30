@@ -40,12 +40,12 @@ impl Error for ModelarDbError {}
 impl Display for ModelarDbError {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
         match self {
-            ModelarDbError::CompressionError(reason) => write!(f, "Compression Error: {}", reason),
+            ModelarDbError::CompressionError(reason) => write!(f, "Compression Error: {reason}"),
             ModelarDbError::ConfigurationError(reason) => {
-                write!(f, "Configuration Error: {}", reason)
+                write!(f, "Configuration Error: {reason}")
             }
             ModelarDbError::DataRetrievalError(reason) => {
-                write!(f, "Data Retrieval Error: {}", reason)
+                write!(f, "Data Retrieval Error: {reason}")
             }
         }
     }

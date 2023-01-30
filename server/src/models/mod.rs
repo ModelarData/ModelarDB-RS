@@ -445,7 +445,7 @@ mod tests {
             swing_could_fit_all = swing_could_fit_all && swing.fit_data_point(timestamp, value);
             gorilla.compress_value(value);
         }
-        SelectedModel::new(0, pmc_mean, swing, gorilla, &uncompressed_values)
+        SelectedModel::new(0, pmc_mean, swing, gorilla, uncompressed_values)
     }
 
     // Tests for len().

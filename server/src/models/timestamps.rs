@@ -257,8 +257,7 @@ fn decompress_all_irregular_timestamps(
             3 => read_decode_and_compute_delta(&mut bits, 12, last_delta), // Flag is 1110.
             4 => last_delta + bits.read_bits(32),                          // Flag is 1111.
             _ => panic!(
-                "Unknown timestamp encoding with {} leading one bits.",
-                leading_one_bits
+                "Unknown timestamp encoding with {leading_one_bits} leading one bits."
             ),
         };
 
@@ -338,7 +337,7 @@ mod tests {
         uncompressed_timestamps_builder.append_slice(uncompressed_timestamps);
         let uncompressed_timestamps = uncompressed_timestamps_builder.finish();
 
-        let compressed = compress_residual_timestamps(&uncompressed_timestamps.values());
+        let compressed = compress_residual_timestamps(uncompressed_timestamps.values());
         assert!(!compressed.is_empty());
         let mut decompressed_timestamps = TimestampBuilder::with_capacity(10);
         decompress_all_timestamps(

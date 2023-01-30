@@ -24,7 +24,7 @@ use datafusion::arrow::{array, ipc};
 use futures::stream;
 use serial_test::serial;
 use sysinfo::{Pid, PidExt, System, SystemExt};
-use tempfile;
+
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
 use tonic::Request;
@@ -56,7 +56,7 @@ fn test_can_create_table() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
-        create_apache_arrow_flight_service_client(&runtime, &HOST, PORT)
+        create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
             .expect("Cannot connect to flight service client.");
 
     create_table(
@@ -83,7 +83,7 @@ fn test_can_create_model_table() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
-        create_apache_arrow_flight_service_client(&runtime, &HOST, PORT)
+        create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
             .expect("Cannot connect to flight service client.");
 
     create_table(
@@ -110,7 +110,7 @@ fn test_can_create_and_listen_multiple_model_tables() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
-        create_apache_arrow_flight_service_client(&runtime, &HOST, PORT)
+        create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
             .expect("Cannot connect to flight service client.");
 
     let table_names = vec!["data1", "data2", "data3", "data4", "data5"];
@@ -142,7 +142,7 @@ fn test_can_get_schema() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
-        create_apache_arrow_flight_service_client(&runtime, &HOST, PORT)
+        create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
             .expect("Cannot connect to flight service client.");
 
     create_table(
@@ -174,7 +174,7 @@ fn test_can_ingest_data_point_with_tags() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
-        create_apache_arrow_flight_service_client(&runtime, &HOST, PORT)
+        create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
             .expect("Cannot connect to flight service client.");
 
     let data_point = generate_random_data_point(Some("location"));
@@ -198,7 +198,7 @@ fn test_can_ingest_data_point_with_tags() {
     let query = execute_query(
         &runtime,
         &mut flight_service_client,
-        format!("SELECT * FROM {}", TABLE_NAME),
+        format!("SELECT * FROM {TABLE_NAME}"),
     )
     .expect("Could not execute query.");
 
@@ -217,7 +217,7 @@ fn test_can_ingest_data_point_without_tags() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
-        create_apache_arrow_flight_service_client(&runtime, &HOST, PORT)
+        create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
             .expect("Cannot connect to flight service client.");
 
     let data_point = generate_random_data_point(None);
@@ -241,7 +241,7 @@ fn test_can_ingest_data_point_without_tags() {
     let query = execute_query(
         &runtime,
         &mut flight_service_client,
-        format!("SELECT * FROM {}", TABLE_NAME),
+        format!("SELECT * FROM {TABLE_NAME}"),
     )
     .expect("Could not execute query.");
 
@@ -260,11 +260,11 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
-        create_apache_arrow_flight_service_client(&runtime, &HOST, PORT)
+        create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
             .expect("Cannot connect to flight service client.");
 
     let data_points: Vec<RecordBatch> = (1..5)
-        .map(|i| generate_random_data_point(Some(&format!("location{}", i))))
+        .map(|i| generate_random_data_point(Some(&format!("location{i}"))))
         .collect();
     let flight_data = create_flight_data_from_data_points(&data_points);
 
@@ -286,7 +286,7 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
     let query = execute_query(
         &runtime,
         &mut flight_service_client,
-        format!("SELECT * FROM {}", TABLE_NAME),
+        format!("SELECT * FROM {TABLE_NAME}"),
     )
     .expect("Could not execute query.");
 
@@ -311,7 +311,7 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
                 .value(0);
 
             if original_timestamp == queried_timestamp {
-                let reconstructed_record_batch = &reconstruct_record_batch(&original, &queried);
+                let reconstructed_record_batch = &reconstruct_record_batch(original, queried);
                 assert_eq!(original, reconstructed_record_batch);
             }
         }
@@ -328,7 +328,7 @@ fn test_cannot_ingest_invalid_data_point() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
-        create_apache_arrow_flight_service_client(&runtime, &HOST, PORT)
+        create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
             .expect("Cannot connect to flight service client.");
 
     let data_point = generate_random_data_point(None);
@@ -352,7 +352,7 @@ fn test_cannot_ingest_invalid_data_point() {
     let query = execute_query(
         &runtime,
         &mut flight_service_client,
-        format!("SELECT * FROM {}", TABLE_NAME),
+        format!("SELECT * FROM {TABLE_NAME}"),
     )
     .expect("Could not execute query.");
 
@@ -369,12 +369,12 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client =
-        create_apache_arrow_flight_service_client(&runtime, &HOST, PORT)
+        create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
             .expect("Cannot connect to flight service client.");
 
     let mut data_points = vec![];
     for i in 1..5 {
-        let batch = generate_random_data_point(Some(&format!("location{}", i)));
+        let batch = generate_random_data_point(Some(&format!("location{i}")));
 
         data_points.push(batch);
     }
@@ -398,7 +398,7 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
     let optimized_query = execute_query(
         &runtime,
         &mut flight_service_client,
-        format!("SELECT MIN(value) FROM {}", TABLE_NAME),
+        format!("SELECT MIN(value) FROM {TABLE_NAME}"),
     )
     .expect("Could not execute query.");
 
@@ -406,7 +406,7 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
     let non_optimized_query = execute_query(
         &runtime,
         &mut flight_service_client,
-        format!("SELECT MIN(value) FROM {} WHERE 1=1", TABLE_NAME),
+        format!("SELECT MIN(value) FROM {TABLE_NAME} WHERE 1=1"),
     )
     .expect("Could not execute query.");
 
@@ -457,7 +457,7 @@ fn start_modelardbd(path: &Path) -> Child {
     // streams to it.
     thread::sleep(Duration::from_secs(5));
 
-    return process;
+    process
 }
 
 /// Return a new Apache Arrow Flight client to access the remote methods provided by the server over
@@ -467,7 +467,7 @@ fn create_apache_arrow_flight_service_client(
     host: &str,
     port: u16,
 ) -> Result<FlightServiceClient<Channel>, Box<dyn Error>> {
-    let address = format!("grpc://{}:{}", host, port);
+    let address = format!("grpc://{host}:{port}");
 
     runtime.block_on(async {
         let flight_service_client = FlightServiceClient::connect(address).await?;
@@ -485,16 +485,13 @@ fn create_table(
 ) {
     let cmd = match table_type {
         TableType::NormalTable => format!(
-            "CREATE TABLE {}(timestamp TIMESTAMP, values REAL, metadata REAL)",
-            table_name
+            "CREATE TABLE {table_name}(timestamp TIMESTAMP, values REAL, metadata REAL)"
         ),
         TableType::ModelTable => format!(
-            "CREATE MODEL TABLE {}(timestamp TIMESTAMP, value FIELD, tag TAG)",
-            table_name
+            "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD, tag TAG)"
         ),
         TableType::ModelTableNoTag => format!(
-            "CREATE MODEL TABLE {}(timestamp TIMESTAMP, value FIELD)",
-            table_name
+            "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD)"
         ),
     };
 
@@ -564,14 +561,14 @@ fn create_flight_data_from_data_points(data_points: &[RecordBatch]) -> Vec<Fligh
     for data_point in data_points {
         flight_data.push(
             (utils::flight_data_from_arrow_batch(
-                &data_point,
+                data_point,
                 &ipc::writer::IpcWriteOptions::default(),
             ))
             .1,
         );
     }
 
-    return flight_data;
+    flight_data
 }
 
 /// Send data points to the server through the `do_put()` method.
@@ -676,9 +673,9 @@ fn retrieve_schema(
             .expect("Could not retrieve schema.")
             .into_inner();
 
-        let schema = convert::try_schema_from_ipc_buffer(&schema_result.schema)
-            .expect("Could not convert SchemaResult to schema.");
-        schema
+        
+        convert::try_schema_from_ipc_buffer(&schema_result.schema)
+            .expect("Could not convert SchemaResult to schema.")
     })
 }
 
@@ -746,8 +743,8 @@ fn stop_modelardbd(mut flight_server: Child) {
         system.refresh_all();
         flight_server
             .kill()
-            .expect(&*format!("Could not kill process {}.", flight_server.id()));
-        flight_server.wait().expect(&*format!(
+            .expect(&format!("Could not kill process {}.", flight_server.id()));
+        flight_server.wait().expect(&format!(
             "Could not wait for process {}.",
             flight_server.id()
         ));
