@@ -48,9 +48,9 @@ use crate::types::{
     ValueBuilder,
 };
 
-/// An execution that reconstructs the data points stored as segments containing metadata and
-/// models. It is public so the additional rules added to Apache Arrow DataFusion's physical
-/// optimizer can pattern match on it.
+/// An execution plan that reconstructs the data points stored as compressed segments containing
+/// metadata and models. It is public so the additional rules added to Apache Arrow DataFusion's
+/// physical optimizer can pattern match on it.
 #[derive(Debug, Clone)]
 pub struct GridExec {
     /// Schema of the execution plan.
@@ -118,8 +118,8 @@ impl ExecutionPlan for GridExec {
         self.input.output_partitioning()
     }
 
-    /// Specify that the record batches produced by the execution plan will be ordered by
-    /// descendingly by univariate_id and then descendingly timestamp.
+    /// Specify that the record batches produced by the execution plan will be ordered descendingly
+    /// by univariate_id and then descendingly timestamp.
     fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
         Some(&self.output_ordering)
     }
@@ -129,20 +129,15 @@ impl ExecutionPlan for GridExec {
         vec![self.input.clone()]
     }
 
-    /// Return a new [`GridExec`] with the execution plan to read batches of rows from replaced.
-    /// [`DataFusionError::Plan`] is returned if `children` does not contain a single element.
+    /// Return a new [`GridExec`] with the execution plan to read batches of compressed segments
+    /// from replaced. [`DataFusionError::Plan`] is returned if `children` does not contain a single
+    /// element.
     fn with_new_children(
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         if children.len() == 1 {
-            Ok(Arc::new(GridExec {
-                schema: self.schema.clone(),
-                output_ordering: self.output_ordering.clone(),
-                limit: self.limit,
-                input: children[0].clone(),
-                metrics: self.metrics.clone(),
-            }))
+            Ok(GridExec::new(self.limit, children[0].clone()))
         } else {
             Err(DataFusionError::Plan(format!(
                 "A single child must be provided {self:?}"
@@ -150,9 +145,9 @@ impl ExecutionPlan for GridExec {
         }
     }
 
-    /// Create a stream that reads batches of rows with segments from the child stream, reconstructs
-    /// the data points from the metadata and models in the segments, and returns batches of rows
-    /// with data points.
+    /// Create a stream that reads batches of compressed segments from the child stream,
+    /// reconstructs the data points from the metadata and models in the segments, and returns
+    /// batches of rows with data points.
     fn execute(
         &self,
         partition: usize,
@@ -176,7 +171,7 @@ impl ExecutionPlan for GridExec {
         }
     }
 
-    /// Return a snapshot of the set of metrics being collected by the operator.
+    /// Return a snapshot of the set of metrics being collected by the execution plain.
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())
     }
@@ -195,7 +190,7 @@ struct GridStream {
     schema: SchemaRef,
     /// Number of rows requested by the query.
     _limit: Option<usize>,
-    /// Stream to read batches of rows from.
+    /// Stream to read batches of compressed segments from.
     input: SendableRecordBatchStream,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
     baseline_metrics: BaselineMetrics,
@@ -246,39 +241,29 @@ impl GridStream {
 
         // Reconstructs the data points from the segments.
         for row_index in 0..num_rows {
-            // unwrap() is safe as the storage engine created the strings.
-            let univariate_id = univariate_ids.value(row_index);
-            let model_type_id = model_type_ids.value(row_index);
-            let start_time = start_times.value(row_index);
-            let end_time = end_times.value(row_index);
-            let timestamps = timestamps.value(row_index);
-            let min_value = min_values.value(row_index);
-            let max_value = max_values.value(row_index);
-            let values = values.value(row_index);
-
             models::grid(
-                univariate_id,
-                model_type_id,
-                timestamps,
-                start_time,
-                end_time,
-                values,
-                min_value,
-                max_value,
+                univariate_ids.value(row_index),
+                model_type_ids.value(row_index),
+                timestamps.value(row_index),
+                start_times.value(row_index),
+                end_times.value(row_index),
+                values.value(row_index),
+                min_values.value(row_index),
+                max_values.value(row_index),
                 &mut univariate_id_builder,
                 &mut timestamp_builder,
                 &mut value_builder,
             );
         }
 
-        let column: Vec<ArrayRef> = vec![
+        let columns: Vec<ArrayRef> = vec![
             Arc::new(univariate_id_builder.finish()),
             Arc::new(timestamp_builder.finish()),
             Arc::new(value_builder.finish()),
         ];
 
         // Return the batch, unwrap() is safe as GridStream uses a static schema.
-        RecordBatch::try_new(self.schema.clone(), column).unwrap()
+        RecordBatch::try_new(self.schema.clone(), columns).unwrap()
     }
 }
 

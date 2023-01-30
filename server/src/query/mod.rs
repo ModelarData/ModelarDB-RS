@@ -138,7 +138,7 @@ impl ModelTable {
                 None,
                 None,
                 None,
-                &query_object_store,
+                query_object_store,
             )
             .await
             .unwrap();
@@ -340,11 +340,6 @@ impl TableProvider for ModelTable {
             }
         }
 
-        dbg!(&tag_columns_len);
-        dbg!(&field_indices_in_projection);
-        dbg!(&tag_indices_in_projection);
-        dbg!(&tag_names_in_projection);
-
         // unwrap() is safe as the store is set by create_session_context().
         let query_object_store = ctx
             .runtime_env()
@@ -366,7 +361,7 @@ impl TableProvider for ModelTable {
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         // Compute a mapping from hashes to tags.
-        let _hash_to_tags = self
+        let hash_to_tags = self
             .context
             .metadata_manager
             .mapping_from_hash_to_tags(&self.model_table_metadata.name, &tag_names_in_projection)
@@ -396,7 +391,12 @@ impl TableProvider for ModelTable {
             field_column_execution_plans.push(execution_plan);
         }
 
-        Ok(Arc::new(SortedJoinExec {}))
+        Ok(SortedJoinExec::new(
+            self.model_table_metadata.schema.clone(),
+            limit,
+            Arc::new(hash_to_tags),
+            field_column_execution_plans,
+        ))
     }
 }
 

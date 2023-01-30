@@ -293,13 +293,15 @@ impl CompressedDataManager {
         };
 
         // List all files in query_data_folder for the table named table_name.
-        let table_path = ObjectStorePath::from(format!("{COMPRESSED_DATA_FOLDER}/{table_name}/"));
+        let table_path = ObjectStorePath::from(format!(
+            "{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"
+        ));
         let table_files = query_data_folder
             .list(Some(&table_path))
             .await
             .map_err(|error| {
                 ModelarDbError::DataRetrievalError(format!(
-                    "Compressed data could not be listed for table '{table_name}': {error}"
+                    "Compressed data could not be listed for column '{column_index}' in table '{table_name}': {error}"
                 ))
             })?;
 
@@ -469,7 +471,8 @@ fn is_compressed_file_within_time_and_value_range(
     let file_min_value = split.next().unwrap().parse::<Value>().unwrap();
     let file_max_value = split.next().unwrap().parse::<Value>().unwrap();
     let file_max_greater_than_min = file_max_value.total_cmp(&min_value).is_ge();
-    let file_min_less_than_max = file_min_value.total_cmp(&max_value).is_le();
+    let file_min_less_than_max = file_min_value.total_cmp(&max_value).is_le()
+        || (file_min_value.is_nan() && max_value.is_infinite()); // INFINITY means no upper bound.
 
     // Return true if the file's compressed segments ends at or after the start time, starts at or
     // before the end time, has a maximum value that is larger than or equal to the minimum
