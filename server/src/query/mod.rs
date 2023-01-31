@@ -393,7 +393,6 @@ impl TableProvider for ModelTable {
 
         Ok(SortedJoinExec::new(
             self.model_table_metadata.schema.clone(),
-            limit,
             Arc::new(hash_to_tags),
             field_column_execution_plans,
         ))

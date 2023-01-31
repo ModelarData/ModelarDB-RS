@@ -26,7 +26,7 @@ use std::task::{Context as StdTaskContext, Poll};
 
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    ArrayRef, ArrowPrimitiveType, BinaryArray, Float32Array, UInt64Array, UInt8Array,
+    Array, ArrayRef, ArrowPrimitiveType, BinaryArray, Float32Array, UInt64Array, UInt8Array,
 };
 use datafusion::arrow::datatypes::{Field, Schema, SchemaRef};
 use datafusion::arrow::error::Result as ArrowResult;
@@ -153,10 +153,14 @@ impl ExecutionPlan for GridExec {
         partition: usize,
         task_context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+        // Must be read before GridStream as task_context are moved into input.
+        let batch_size = task_context.session_config().batch_size();
+
         Ok(Box::pin(GridStream::new(
             self.schema.clone(),
             self.limit,
             self.input.execute(partition, task_context)?,
+            batch_size,
             BaselineMetrics::new(&self.metrics, partition),
         )))
     }
@@ -188,10 +192,14 @@ impl ExecutionPlan for GridExec {
 struct GridStream {
     /// Schema of the stream.
     schema: SchemaRef,
-    /// Number of rows requested by the query.
-    _limit: Option<usize>,
     /// Stream to read batches of compressed segments from.
     input: SendableRecordBatchStream,
+    /// Size of the batches returned when this stream is pooled.
+    batch_size: usize,
+    /// Current batch of data points to return data points from when the stream is pooled.
+    current_batch: RecordBatch,
+    /// Next data point in the current batch of data points to return when the stream is pooled.
+    current_batch_offset: usize,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
     baseline_metrics: BaselineMetrics,
 }
@@ -201,21 +209,31 @@ impl GridStream {
         schema: SchemaRef,
         limit: Option<usize>,
         input: SendableRecordBatchStream,
+        batch_size: usize,
         baseline_metrics: BaselineMetrics,
     ) -> Self {
+        // Assumes limit is mostly used to request less than batch_size rows so one batch is enough.
+        // If it is a bit larger than batch size the second batch will contain too many data points.
+        // Also limit is not simply used as batch size to prevent OOM issues with a very big limits.
+        let batch_size = if let Some(limit) = limit {
+            usize::min(limit, batch_size)
+        } else {
+            batch_size
+        };
+
         GridStream {
-            schema,
-            _limit: limit,
+            schema: schema.clone(),
             input,
             baseline_metrics,
+            batch_size,
+            current_batch: RecordBatch::new_empty(schema),
+            current_batch_offset: 0,
         }
     }
 
-    // TODO: it is necessary to return batch_size data points to prevent skew?
-    // TODO: limit the batches of data points to only contain what is needed.
-    /// Reconstruct the data points from the metadata and models in the segments in `batch`, and
-    /// return batches of data points.
-    fn grid(&self, batch: &RecordBatch) -> RecordBatch {
+    /// Replace the current batch with a sorted [`RecordBatch`] that contains the remaining data
+    /// points in the current batch and those reconstructed from the compressed segments in `batch`.
+    fn grid_and_append_to_leftovers_in_current_batch(&mut self, batch: &RecordBatch) {
         // Record the time elapsed from the timer is created to it is dropped.
         let _timer = self.baseline_metrics.elapsed_compute().timer();
 
@@ -233,14 +251,29 @@ impl GridStream {
             _error_array
         );
 
-        // Each segment is guaranteed to contain at least one data point.
-        let num_rows = batch.num_rows();
-        let mut univariate_id_builder = UInt64Array::builder(num_rows);
-        let mut timestamp_builder = TimestampBuilder::with_capacity(num_rows);
-        let mut value_builder = ValueBuilder::with_capacity(num_rows);
+        // Allocate builders with approximately enough capacity. The builders are allocated with
+        // enough capacity for the remaining data points in the current batch and one data point
+        // from each segment in the new batch as each segment contains at least one data point.
+        let current_rows = self.current_batch.num_rows() - self.current_batch_offset;
+        let new_rows = batch.num_rows();
+        let mut univariate_id_builder = UInt64Array::builder(current_rows + new_rows);
+        let mut timestamp_builder = TimestampBuilder::with_capacity(current_rows + new_rows);
+        let mut value_builder = ValueBuilder::with_capacity(current_rows + new_rows);
 
-        // Reconstructs the data points from the segments.
-        for row_index in 0..num_rows {
+        // Copy over the data points from the current batch to keep the resulting batch sorted.
+        let current_batch = &self.current_batch; // Required as self cannot be passed to array!.
+        univariate_id_builder.append_slice(
+            &crate::array!(current_batch, 0, UInt64Array).values()[self.current_batch_offset..],
+        );
+        timestamp_builder.append_slice(
+            &crate::array!(current_batch, 1, TimestampArray).values()[self.current_batch_offset..],
+        );
+        value_builder.append_slice(
+            &crate::array!(current_batch, 2, ValueArray).values()[self.current_batch_offset..],
+        );
+
+        // Reconstructs the data points from the compressed segments.
+        for row_index in 0..new_rows {
             models::grid(
                 univariate_ids.value(row_index),
                 model_type_ids.value(row_index),
@@ -262,8 +295,9 @@ impl GridStream {
             Arc::new(value_builder.finish()),
         ];
 
-        // Return the batch, unwrap() is safe as GridStream uses a static schema.
-        RecordBatch::try_new(self.schema.clone(), columns).unwrap()
+        // Update the current batch, unwrap() is safe as GridStream uses a static schema.
+        self.current_batch = RecordBatch::try_new(self.schema.clone(), columns).unwrap();
+        self.current_batch_offset = 0;
     }
 }
 
@@ -271,19 +305,32 @@ impl Stream for GridStream {
     /// Specify that [`GridStream`] returns [`ArrowResult<RecordBatch>`] when polled.
     type Item = ArrowResult<RecordBatch>;
 
-    /// Try to poll the next element from the [`GridStream`] and returns:
-    /// * `Poll::Pending` if the next element is not yet ready.
-    /// * `Poll::Ready(Some(Ok(batch)))` if an element is ready.
+    /// Try to poll the next batch of data points from the [`GridStream`] and returns:
+    /// * `Poll::Pending` if the next batch is not yet ready.
+    /// * `Poll::Ready(Some(Ok(batch)))` if the next batch is ready.
     /// * `Poll::Ready(None)` if the stream is empty.
     fn poll_next(
         mut self: Pin<&mut Self>,
         cx: &mut StdTaskContext<'_>,
     ) -> Poll<Option<Self::Item>> {
-        let poll = self.input.poll_next_unpin(cx).map(|x| match x {
-            Some(Ok(batch)) => Some(Ok(self.grid(&batch))),
-            other => other,
-        });
-        self.baseline_metrics.record_poll(poll)
+        // Ensure the number of data points in the current batch is as big as the batch size.
+        if (self.current_batch.num_rows() - self.current_batch_offset) < self.batch_size {
+            let poll = self.input.poll_next_unpin(cx);
+            if let Poll::Ready(Some(Ok(batch))) = poll {
+                self.grid_and_append_to_leftovers_in_current_batch(&batch);
+            } else {
+                return self.baseline_metrics.record_poll(poll);
+            }
+        }
+
+        // The current batch is guaranteed to contains enough data points as input uses the same
+        // batch size and each compressed segment is guaranteed to represent one data point.
+        let batch = self
+            .current_batch
+            .slice(self.current_batch_offset, self.batch_size);
+        self.current_batch_offset += self.batch_size;
+        self.baseline_metrics
+            .record_poll(Poll::Ready(Some(Ok(batch))))
     }
 }
 

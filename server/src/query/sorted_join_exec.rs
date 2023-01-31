@@ -49,8 +49,6 @@ use crate::metadata::MetadataManager;
 pub struct SortedJoinExec {
     /// Schema of the execution plan.
     schema: SchemaRef,
-    /// Number of data points requested by the query.
-    limit: Option<usize>,
     /// Mapping from tag hash to tags.
     hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
     /// Execution plans to read batches of data points from.
@@ -62,13 +60,11 @@ pub struct SortedJoinExec {
 impl SortedJoinExec {
     pub fn new(
         schema: SchemaRef,
-        limit: Option<usize>,
         hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
         inputs: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Arc<Self> {
         Arc::new(SortedJoinExec {
             schema,
-            limit,
             hash_to_tags,
             inputs,
             metrics: ExecutionPlanMetricsSet::new(),
@@ -114,7 +110,6 @@ impl ExecutionPlan for SortedJoinExec {
         if children.len() == 1 {
             Ok(SortedJoinExec::new(
                 self.schema.clone(),
-                self.limit,
                 self.hash_to_tags.clone(),
                 children,
             ))
@@ -140,7 +135,6 @@ impl ExecutionPlan for SortedJoinExec {
 
         Ok(Box::pin(SortedJoinStream::new(
             self.schema.clone(),
-            self.limit,
             self.hash_to_tags.clone(),
             streams,
             BaselineMetrics::new(&self.metrics, partition),
@@ -165,15 +159,13 @@ impl ExecutionPlan for SortedJoinExec {
     /// Write a string-based representation of the operator to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "SortedJoinExec: limit={:?}", self.limit)
+        write!(f, "SortedJoinExec")
     }
 }
 
 struct SortedJoinStream {
     /// Schema of the stream.
     schema: SchemaRef,
-    /// Number of rows requested by the query.
-    _limit: Option<usize>,
     /// Mapping from tag hash to tags.
     hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
     /// Streams to read batches of data points from.
@@ -187,7 +179,6 @@ struct SortedJoinStream {
 impl SortedJoinStream {
     fn new(
         schema: SchemaRef,
-        limit: Option<usize>,
         hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
         inputs: Vec<SendableRecordBatchStream>,
         baseline_metrics: BaselineMetrics,
@@ -197,7 +188,6 @@ impl SortedJoinStream {
 
         SortedJoinStream {
             schema,
-            _limit: limit,
             hash_to_tags,
             inputs,
             batches,
@@ -260,9 +250,9 @@ impl Stream for SortedJoinStream {
     /// Specify that [`SortedJoinStream`] returns [`ArrowResult<RecordBatch>`] when polled.
     type Item = ArrowResult<RecordBatch>;
 
-    /// Try to poll the next element from the [`SortedJoinStream`] and returns:
-    /// * `Poll::Pending` if the next element is not yet ready.
-    /// * `Poll::Ready(Some(Ok(batch)))` if an element is ready.
+    /// Try to poll the next batch of data points from the [`SortedJoinStream`] and returns:
+    /// * `Poll::Pending` if the next batch is not yet ready.
+    /// * `Poll::Ready(Some(Ok(batch)))` if the next batch is ready.
     /// * `Poll::Ready(None)` if the stream is empty.
     fn poll_next(
         mut self: Pin<&mut Self>,
