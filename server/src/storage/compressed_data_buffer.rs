@@ -120,8 +120,6 @@ impl CompressedDataBuffer {
 mod tests {
     use super::*;
 
-    
-
     use crate::metadata::test_util as metadata_test_util;
     use crate::storage::test_util;
 

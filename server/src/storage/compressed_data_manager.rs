@@ -486,6 +486,7 @@ fn is_compressed_file_within_time_and_value_range(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::path::Path;
 
     use datafusion::arrow::compute;
@@ -754,12 +755,7 @@ mod tests {
         // The path to the returned compressed file should contain the table name, the start time,
         // end time, min value, and max value of the second segment.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/2000_2005_15.2_44.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("2000_2005_15.2_44.2"));
     }
 
     #[tokio::test]
@@ -789,12 +785,7 @@ mod tests {
         // The path to the returned compressed file should contain the table name, the start time,
         // end time, min value, and max value of the second segment.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/2000_2005_15.2_44.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("2000_2005_15.2_44.2"));
     }
 
     #[tokio::test]
@@ -824,12 +815,7 @@ mod tests {
         // The path to the returned compressed file should contain the table name, the start time,
         // end time, min value, and max value of the first segment.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/1000_1005_5.2_34.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("1000_1005_5.2_34.2"));
     }
 
     #[tokio::test]
@@ -859,12 +845,7 @@ mod tests {
         // The path to the returned compressed file should contain the table name, the start time,
         // end time, min value, and max value of the first segment.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/1000_1005_5.2_34.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("1000_1005_5.2_34.2"));
     }
 
     #[tokio::test]
@@ -904,19 +885,9 @@ mod tests {
         // should contain the table name, the start time, end time, min value, and max value of the
         // segment in each file.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/2000_2005_15.2_44.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("2000_2005_15.2_44.2"));
         let file_path = files.get(1).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/2000_2005_5.2_34.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("2000_2005_5.2_34.2"));
     }
 
     #[tokio::test]
@@ -957,19 +928,17 @@ mod tests {
         // should contain the table name, the start time, end time, min value, and max value of the
         // segment in each file.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/2000_2005_105.2_134.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("2000_2005_105.2_134.2"));
         let file_path = files.get(1).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/2000_2005_15.2_44.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("2000_2005_15.2_44.2"));
+    }
+
+    /// Return a full path to the file with `file_name`.
+    fn format_path(file_name: &str) -> String {
+        format!(
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/{file_name}_{}.parquet",
+            storage::TEST_UUID
+        )
     }
 
     /// Create and insert two compressed segments with a 1 second time difference offset by

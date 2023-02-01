@@ -307,8 +307,6 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
 mod tests {
     use super::*;
 
-    
-
     use crate::metadata::test_util;
 
     // Tests for UncompressedInMemoryDataBuffer.

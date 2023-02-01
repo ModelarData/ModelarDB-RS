@@ -26,7 +26,6 @@ mod data_transfer;
 mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
 
-use datafusion::arrow::array::UInt32Array;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{Error as IOError, Write};
@@ -36,6 +35,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fmt, mem};
 
 use bytes::buf::BufMut;
+use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::compute;
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -57,6 +57,7 @@ use tokio::sync::RwLock;
 use tonic::codegen::Bytes;
 use tonic::Status;
 use tracing::debug;
+use uuid::{uuid, Uuid};
 
 use crate::array;
 use crate::errors::ModelarDbError;
@@ -79,6 +80,10 @@ pub const QUERY_DATA_FOLDER_SCHEME_AND_HOST: &str = "query";
 
 /// The scheme with host at which the query data folder is stored.
 pub const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
+
+/// A static UUID for use in tests. It is not in a test utilities module so it can be used both
+/// inside the if cfg(test) block of [`create_time_and_value_range_file_name`] and in test modules.
+pub const TEST_UUID: Uuid = uuid!("44c57d06-333c-4935-8ae3-ed7bc53a08c4");
 
 /// The expected [first four bytes of any Apache Parquet file].
 ///
@@ -546,8 +551,8 @@ pub(self) fn create_apache_arrow_writer<W: Write>(
 }
 
 /// Create a file name that includes the start timestamp of the first segment in `batch`, the end
-/// timestamp of the last segment in `batch`, the minimum value stored in `batch`, and the maximum
-/// value stored in `batch`.
+/// timestamp of the last segment in `batch`, the minimum value stored in `batch`, the maximum value
+/// stored in `batch`, and an UUID to make it unique across edge and cloud in practice.
 pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> String {
     let start_times = array!(batch, 2, TimestampArray);
     let end_times = array!(batch, 3, TimestampArray);
@@ -562,12 +567,21 @@ pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> Strin
     let min_value = aggregate::min(min_values).unwrap();
     let max_value = aggregate::max(max_values).unwrap();
 
+    // An UUID is added to the file name to ensure it, in practice, is unique across edge and cloud.
+    // A static UUID is set when tests are executed to allow the tests to check that files exists.
+    let uuid = if cfg!(test) {
+        TEST_UUID
+    } else {
+        Uuid::new_v4()
+    };
+
     format!(
-        "{}_{}_{}_{}.parquet",
+        "{}_{}_{}_{}_{}.parquet",
         start_times.value(0),
         end_times.value(end_times.len() - 1),
         min_value,
-        max_value
+        max_value,
+        uuid
     )
 }
 

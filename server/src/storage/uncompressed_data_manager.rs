@@ -447,7 +447,6 @@ mod tests {
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
     use ringbuf::Rb;
-    
 
     use crate::metadata::{test_util, MetadataManager};
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
