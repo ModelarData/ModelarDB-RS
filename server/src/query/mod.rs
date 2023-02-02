@@ -52,7 +52,7 @@ use tokio::sync::RwLockWriteGuard;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::query::grid_exec::GridExec;
-use crate::query::sorted_join_exec::SortedJoinExec;
+use crate::query::sorted_join_exec::{SortedJoinElement, SortedJoinExec};
 use crate::storage;
 use crate::storage::StorageEngine;
 use crate::types::ArrowValue;
@@ -70,7 +70,7 @@ pub struct ModelTable {
     /// Metadata required to read from and write to the model table.
     model_table_metadata: Arc<ModelTableMetadata>,
     /// Field column to use for queries that do not include fields.
-    fallback_field_column: u64,
+    fallback_field_column: u16,
 }
 
 impl ModelTable {
@@ -83,7 +83,7 @@ impl ModelTable {
                 .fields()
                 .iter()
                 .position(|field| field.data_type() == &ArrowValue::DATA_TYPE)
-                .unwrap() // unwrap() is safe as model tables contains fields.
+                .unwrap() as u16 // unwrap() is safe as model tables contains fields.
         };
 
         // unwrap() is safe as the url is predefined as a constant in storage.
@@ -94,22 +94,13 @@ impl ModelTable {
             context,
             model_table_metadata,
             object_store_url,
-            fallback_field_column: fallback_field_column as u64,
+            fallback_field_column,
         })
     }
 
     /// Return the [`ModelTableMetadata`] for the table.
     pub fn model_table_metadata(&self) -> Arc<ModelTableMetadata> {
         self.model_table_metadata.clone()
-    }
-
-    /// Return the index of `tag_column_index` in the tables schema if it exists and is a tag
-    /// column, otherwise [`None`] is returned.
-    fn position_of_tag_column_index(&self, column_index: &usize) -> Option<usize> {
-        self.model_table_metadata
-            .tag_column_indices
-            .iter()
-            .position(|value| value == column_index)
     }
 
     /// Create an [`ExecutionPlan`] that will scan the column at `column_index` in the table with
@@ -313,37 +304,46 @@ impl TableProvider for ModelTable {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
+        let table_name = &self.model_table_metadata.name.as_str();
+        let schema = &self.model_table_metadata.schema;
+
         // Ensures a projection is present for looking up the columns to return.
         let projection: Vec<usize> = if let Some(projection) = projection {
             projection.to_vec()
         } else {
-            (0..self.model_table_metadata.schema.fields().len()).collect()
+            (0..schema.fields().len()).collect()
         };
 
         // So SortedJoinExec simply needs to append arrays to a vector, the order of the field and
         // tag columns in the projection is extracted and the execution plans SortedJoinExec read
         // columns from are arranged in the same order as the field columns.
-        let schema_column_len = self.model_table_metadata.schema.fields().len();
-        let tag_columns_len = self.model_table_metadata.tag_column_indices.len();
+        let tag_column_indices = &self.model_table_metadata.tag_column_indices;
+        let mut sorted_join_order: Vec<SortedJoinElement> = Vec::with_capacity(projection.len());
+        let mut tag_names_in_projection: Vec<&str> = Vec::with_capacity(tag_column_indices.len());
         let mut field_indices_in_projection: Vec<u16> =
-            Vec::with_capacity(schema_column_len - 1 - tag_columns_len);
-        let mut tag_indices_in_projection: Vec<usize> = Vec::with_capacity(tag_columns_len);
-        let mut tag_names_in_projection: Vec<&str> = Vec::with_capacity(tag_columns_len);
-
+            Vec::with_capacity(schema.fields.len() - 1 - tag_column_indices.len());
         for index in &projection {
             if *index == self.model_table_metadata.timestamp_column_index {
-                // TODO: hardcode timestamp index to 0 and figure out how to fix it afterwards.
-            } else if let Some(tag_column_index) = self.position_of_tag_column_index(index) {
-                // Storing the index of the index allows direct lookup in hash_to_tags.
-                tag_indices_in_projection.push(tag_column_index);
-                let tag_name = self.model_table_metadata.schema.fields[*index]
-                    .name()
-                    .as_str();
-                tag_names_in_projection.push(tag_name)
+                sorted_join_order.push(SortedJoinElement::Timestamp);
+            } else if tag_column_indices.contains(index) {
+                tag_names_in_projection.push(schema.fields[*index].name());
+                sorted_join_order.push(SortedJoinElement::Tag);
             } else {
                 field_indices_in_projection.push(*index as u16);
+                sorted_join_order.push(SortedJoinElement::Field);
             }
         }
+
+        // TODO: extract all of the predicates that consist of tag = tag_value from the query so the
+        // segments can be pruned by univariate_id in ParquetExec and hash_to_tags can be minimized.
+        let (parquet_predicates, grid_predicates) = rewrite_and_combine_filters(schema, filters);
+
+        // Compute a mapping from hashes to tags.
+        let hash_to_tags = self
+            .context
+            .metadata_manager
+            .mapping_from_hash_to_tags(table_name, &tag_names_in_projection)
+            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         // unwrap() is safe as the store is set by create_session_context().
         let query_object_store = ctx
@@ -351,30 +351,10 @@ impl TableProvider for ModelTable {
             .object_store(&self.object_store_url)
             .unwrap();
 
-        // TODO: extract all of the predicates that consist of tag = tag_value from the query so the
-        // row groups and segments can be pruned by univariate_id using ParquetExec and segments.
-        let tag_predicates = vec![];
-        let _univariate_ids = self
-            .context
-            .metadata_manager
-            .compute_univariate_ids_using_fields_and_tags(
-                &self.model_table_metadata.name,
-                Some(&projection),
-                self.fallback_field_column,
-                &tag_predicates,
-            )
-            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
-
-        // Compute a mapping from hashes to tags.
-        let hash_to_tags = self
-            .context
-            .metadata_manager
-            .mapping_from_hash_to_tags(&self.model_table_metadata.name, &tag_names_in_projection)
-            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
-
-        let table_name = &self.model_table_metadata.name.as_str();
-        let (parquet_predicates, grid_predicates) =
-            rewrite_and_combine_filters(&self.model_table_metadata.schema, filters);
+        // At least one field column must be read for the univariate_ids and timestamps.
+        if field_indices_in_projection.is_empty() {
+            field_indices_in_projection.push(self.fallback_field_column);
+        }
 
         // Request the matching files from the storage engine. The exclusive lock on the storage
         // engine is hold until object metas for all columns have been retrieved to ensure they
@@ -398,8 +378,10 @@ impl TableProvider for ModelTable {
             field_column_execution_plans.push(execution_plan);
         }
 
+        // unwrap() is safe as the projection is based on the schema.
         Ok(SortedJoinExec::new(
-            self.model_table_metadata.schema.clone(),
+            Arc::new(schema.project(&projection).unwrap()),
+            sorted_join_order,
             Arc::new(hash_to_tags),
             field_column_execution_plans,
         ))

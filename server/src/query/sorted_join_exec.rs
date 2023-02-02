@@ -42,6 +42,15 @@ use futures::stream::{Stream, StreamExt};
 
 use crate::metadata::MetadataManager;
 
+/// The different types of columns supported by [`SortedJoinExec`] for specifying the order in which
+/// the timestamp, field, and tag columns should be returned by [`SortedJoinElement`].
+#[derive(Debug, Clone)]
+pub enum SortedJoinElement {
+    Timestamp,
+    Field,
+    Tag,
+}
+
 /// An execution plan that join arrays of data points sorted by `univaraite_id` and `timestamp` from
 /// multiple execution plan and tags. It is public so the additional rules added to Apache Arrow
 /// DataFusion's physical optimizer can pattern match on it.
@@ -49,6 +58,8 @@ use crate::metadata::MetadataManager;
 pub struct SortedJoinExec {
     /// Schema of the execution plan.
     schema: SchemaRef,
+    /// Order of columns to return.
+    return_order: Vec<SortedJoinElement>,
     /// Mapping from tag hash to tags.
     hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
     /// Execution plans to read batches of data points from.
@@ -60,11 +71,13 @@ pub struct SortedJoinExec {
 impl SortedJoinExec {
     pub fn new(
         schema: SchemaRef,
+        return_order: Vec<SortedJoinElement>,
         hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
         inputs: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Arc<Self> {
         Arc::new(SortedJoinExec {
             schema,
+            return_order,
             hash_to_tags,
             inputs,
             metrics: ExecutionPlanMetricsSet::new(),
@@ -110,6 +123,7 @@ impl ExecutionPlan for SortedJoinExec {
         if children.len() == 1 {
             Ok(SortedJoinExec::new(
                 self.schema.clone(),
+                self.return_order.clone(),
                 self.hash_to_tags.clone(),
                 children,
             ))
@@ -135,6 +149,7 @@ impl ExecutionPlan for SortedJoinExec {
 
         Ok(Box::pin(SortedJoinStream::new(
             self.schema.clone(),
+            self.return_order.clone(),
             self.hash_to_tags.clone(),
             streams,
             BaselineMetrics::new(&self.metrics, partition),
@@ -166,6 +181,8 @@ impl ExecutionPlan for SortedJoinExec {
 struct SortedJoinStream {
     /// Schema of the stream.
     schema: SchemaRef,
+    /// Order of columns to return.
+    return_order: Vec<SortedJoinElement>,
     /// Mapping from tag hash to tags.
     hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
     /// Streams to read batches of data points from.
@@ -179,6 +196,7 @@ struct SortedJoinStream {
 impl SortedJoinStream {
     fn new(
         schema: SchemaRef,
+        return_order: Vec<SortedJoinElement>,
         hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
         inputs: Vec<SendableRecordBatchStream>,
         baseline_metrics: BaselineMetrics,
@@ -188,6 +206,7 @@ impl SortedJoinStream {
 
         SortedJoinStream {
             schema,
+            return_order,
             hash_to_tags,
             inputs,
             batches,
@@ -215,35 +234,61 @@ impl SortedJoinStream {
         reason_for_not_ok
     }
 
-    // TODO: add doc comment.
-    fn join_and_reset(&self) -> Poll<Option<ArrowResult<RecordBatch>>> {
-        // TODO: compute and assign arrays to columns dynamically.
-        // Batches are created from inputs in new() so they are always the same length.
+    /// Create a [`RecordBatch`] containing the requested timestamp, field, and tag columns, delete
+    /// the [`RecordBatches`](RecordBatch) read from the inputs, and return the [`RecordBatch`]
+    /// containing the requested timestamp, field, and tag columns.
+    fn sorted_join(&self) -> Poll<Option<ArrowResult<RecordBatch>>> {
         let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.schema.fields.len());
 
-        // The first column is retrieved separately so the timestamps and tags can be added.
-        // unwrap() is safe as this method is not called until a batch is received from all inputs.
+        // Compute the requested tag columns so they can be assigned to the batch by index.
+        // unwrap() is safe as an record batch is read for each input before this is called.
         let record_batch = self.batches[0].as_ref().unwrap();
-        columns.push(record_batch.column(1).clone());
-
-        // TODO: reconstruct all requested tag columns and assign the columns using projection.
         let univariate_ids = crate::array!(record_batch, 0, UInt64Array);
-        let mut tag_column = StringBuilder::new();
-        for univariate_id in univariate_ids.values() {
-            let tag_hash = MetadataManager::univariate_id_to_tag_hash(*univariate_id);
-            let tags = &self.hash_to_tags[&tag_hash];
-            tag_column.append_value(tags[0].clone());
-        }
-        columns.push(Arc::new(tag_column.finish()));
-        columns.push(record_batch.column(2).clone());
 
-        // Add the remaining columns.
-        // unwrap() is safe as this method is not called until a batch is received from all inputs.
-        for record_batch in &self.batches[1..] {
-            columns.push(record_batch.as_ref().unwrap().column(2).clone());
+        let mut tag_columns = if !self.hash_to_tags.is_empty() {
+            // unwrap() is safe as hash_to_tags is guaranteed not to be empty.
+            let tags = self.hash_to_tags.values().next().unwrap();
+            let capacity = univariate_ids.len();
+            let mut tag_columns: Vec<StringBuilder> = tags
+                .iter()
+                .map(|_vec| StringBuilder::with_capacity(capacity, capacity))
+                .collect();
+
+            for univariate_id in univariate_ids.values() {
+                let tag_hash = MetadataManager::univariate_id_to_tag_hash(*univariate_id);
+                let tags = &self.hash_to_tags[&tag_hash];
+                for (index, tag) in tags.iter().enumerate() {
+                    tag_columns[index].append_value(tag.clone());
+                }
+            }
+
+            tag_columns
+        } else {
+            vec![]
+        };
+
+        // The batches and tags columns are already in the correct order so they can be appended.
+        let mut field_index = 0;
+        let mut tag_index = 0;
+
+        for element in &self.return_order {
+            match element {
+                SortedJoinElement::Timestamp => columns.push(record_batch.column(1).clone()),
+                SortedJoinElement::Field => {
+                    // unwrap() is safe as an record batch is read for each input.
+                    let record_batch = self.batches[field_index].as_ref().unwrap();
+                    columns.push(record_batch.column(2).clone());
+                    field_index += 1;
+                }
+                SortedJoinElement::Tag => {
+                    let tags = Arc::new(tag_columns[tag_index].finish());
+                    columns.push(tags);
+                    tag_index += 1;
+                }
+            }
         }
 
-        // Return the batch, unwrap() is safe as SortedJoinStream uses a static schema.
+        // unwrap() is safe as SortedJoinStream has constructed columns to match the schema.
         let record_batch = RecordBatch::try_new(self.schema.clone(), columns).unwrap();
         Poll::Ready(Some(Ok(record_batch)))
     }
@@ -264,9 +309,7 @@ impl Stream for SortedJoinStream {
         if let Some(reason_for_not_ok) = self.poll_all_pending_inputs(cx) {
             reason_for_not_ok
         } else {
-            let poll = self.join_and_reset();
-            // TODO: Perform in join or better to keep join const? Maybe join_and_reset?
-            // Make only uid and timestamp extracted in join[0] and values only values in loop.
+            let poll = self.sorted_join();
             for batch in &mut self.batches {
                 *batch = None;
             }
