@@ -15,6 +15,7 @@ use bytes::Bytes;
 use datafusion::arrow::array::{
     Float32Array, PrimitiveArray, StringArray, TimestampMillisecondArray,
 };
+use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{
     DataType, Field, Schema, TimeUnit::Millisecond, TimestampMillisecondType,
 };
@@ -102,7 +103,7 @@ fn test_can_create_model_table() {
 
 #[test]
 #[serial]
-fn test_can_create_and_listen_multiple_model_tables() {
+fn test_can_create_and_list_multiple_model_tables() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let flight_server = start_modelardbd(temp_dir.path());
 
@@ -153,9 +154,9 @@ fn test_can_get_schema() {
     assert_eq!(
         schema,
         Schema::new(vec![
-            Field::new("univariate_id", DataType::UInt64, false),
             Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
-            Field::new("value", DataType::Float32, false)
+            Field::new("value", DataType::Float32, false),
+            Field::new("tag", DataType::Utf8, false)
         ])
     );
 
@@ -197,9 +198,7 @@ fn test_can_ingest_data_point_with_tags() {
     )
     .expect("Could not execute query.");
 
-    let reconstructed_record_batch = reconstruct_record_batch(&data_point, &query[0]);
-
-    assert_eq!(data_point, reconstructed_record_batch);
+    assert_eq!(data_point, query[0]);
 
     stop_modelardbd(flight_server);
 }
@@ -239,9 +238,7 @@ fn test_can_ingest_data_point_without_tags() {
     )
     .expect("Could not execute query.");
 
-    let reconstructed_record_batch = reconstruct_record_batch(&data_point, &query[0]);
-
-    assert_eq!(data_point, reconstructed_record_batch);
+    assert_eq!(data_point, query[0]);
 
     stop_modelardbd(flight_server);
 }
@@ -279,36 +276,12 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
     let query = execute_query(
         &runtime,
         &mut flight_service_client,
-        format!("SELECT * FROM {TABLE_NAME}"),
+        format!("SELECT * FROM {TABLE_NAME} ORDER BY timestamp"),
     )
     .expect("Could not execute query.");
 
-    // The loops matches the data points in the queried RecordBatches with the data points in the
-    // original RecordBatches and asserts that the data points with the same timestamps are equal.
-    for queried in &query {
-        for original in &data_points {
-            let original_timestamp = original
-                .clone()
-                .column(0)
-                .as_any()
-                .downcast_ref::<TimestampMillisecondArray>()
-                .expect("Cannot downcast value.")
-                .value(0);
-
-            let queried_timestamp = queried
-                .clone()
-                .column(1)
-                .as_any()
-                .downcast_ref::<TimestampMillisecondArray>()
-                .expect("Cannot downcast value.")
-                .value(0);
-
-            if original_timestamp == queried_timestamp {
-                let reconstructed_record_batch = &reconstruct_record_batch(original, queried);
-                assert_eq!(original, reconstructed_record_batch);
-            }
-        }
-    }
+    let combined = compute::concat_batches(&data_points[0].schema(), &data_points).unwrap();
+    assert_eq!(combined, query[0]);
 
     stop_modelardbd(flight_server);
 }
@@ -476,7 +449,7 @@ fn create_table(
 ) {
     let cmd = match table_type {
         TableType::NormalTable => {
-            format!("CREATE TABLE {table_name}(timestamp TIMESTAMP, values REAL, metadata REAL)")
+            format!("CREATE TABLE {table_name}(timestamp TIMESTAMP, value REAL, metadata REAL)")
         }
         TableType::ModelTable => {
             format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD, tag TAG)")
@@ -670,62 +643,6 @@ fn retrieve_schema(
         convert::try_schema_from_ipc_buffer(&schema_result.schema)
             .expect("Could not convert SchemaResult to schema.")
     })
-}
-
-/// Return a [`RecordBatch`] based on the queried [`RecordBatch`] and the tag and schema from the
-/// original [`RecordBatch`]. Needed as the server currently returns the raw univariate time series
-/// without tags instead of a multivariate time series with tags that match the model tables schema.
-fn reconstruct_record_batch(original: &RecordBatch, query: &RecordBatch) -> RecordBatch {
-    let timestamp = query
-        .column(1)
-        .as_any()
-        .downcast_ref::<TimestampMillisecondArray>()
-        .expect("Cannot downcast value.")
-        .value(0);
-
-    let value = query
-        .column(2)
-        .as_any()
-        .downcast_ref::<Float32Array>()
-        .expect("Cannot downcast value.")
-        .value(0);
-
-    let tag = if original.num_columns() == 3 {
-        Some(
-            original
-                .column(2)
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .unwrap_or(&StringArray::from(vec![""]))
-                .value(0)
-                .to_owned(),
-        )
-    } else {
-        None
-    };
-
-    let schema = original.schema();
-
-    if let Some(tag) = tag {
-        RecordBatch::try_new(
-            schema,
-            vec![
-                Arc::new(TimestampMillisecondArray::from(vec![timestamp])),
-                Arc::new(Float32Array::from(vec![value])),
-                Arc::new(StringArray::from(vec![tag])),
-            ],
-        )
-        .expect("Could not create a Record Batch from query.")
-    } else {
-        RecordBatch::try_new(
-            schema,
-            vec![
-                Arc::new(TimestampMillisecondArray::from(vec![timestamp])),
-                Arc::new(Float32Array::from(vec![value])),
-            ],
-        )
-        .expect("Could not create a Record Batch from query.")
-    }
 }
 
 /// Terminate the server and return when the process has been terminated.

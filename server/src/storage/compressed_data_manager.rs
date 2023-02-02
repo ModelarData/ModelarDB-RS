@@ -212,9 +212,7 @@ impl CompressedDataManager {
             .await?;
 
         // Compact the compressed Apache Parquet files if multiple are returned to ensure order.
-        if relevant_apache_parquet_files.len() == 1 {
-            Ok(relevant_apache_parquet_files)
-        } else {
+        if relevant_apache_parquet_files.len() > 1 {
             let object_meta = StorageEngine::merge_compressed_apache_parquet_files(
                 query_data_folder,
                 &relevant_apache_parquet_files,
@@ -229,6 +227,8 @@ impl CompressedDataManager {
             })?;
 
             Ok(vec![object_meta])
+        } else {
+            Ok(relevant_apache_parquet_files)
         }
     }
 
