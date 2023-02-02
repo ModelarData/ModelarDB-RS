@@ -33,15 +33,17 @@ use std::any::Any;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, SchemaRef};
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, SchemaRef, TimeUnit};
+use datafusion::common::ToDFSchema;
 use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::datasource::{
     datasource::TableProviderFilterPushDown, listing::PartitionedFile, TableProvider, TableType,
 };
 use datafusion::error::{DataFusionError, Result};
-use datafusion::execution::context::SessionState;
+use datafusion::execution::context::{ExecutionProps, SessionState};
 use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator};
 use datafusion::optimizer::utils;
+use datafusion::physical_expr::planner;
 use datafusion::physical_plan::{
     file_format::FileScanConfig, file_format::ParquetExec, ExecutionPlan, Statistics,
 };
@@ -113,19 +115,17 @@ impl ModelTable {
     /// Create an [`ExecutionPlan`] that will scan the column at `column_index` in the table with
     /// `table_name`. Returns a [`DataFusionError::Plan`] if the necessary metadata cannot be
     /// retrieved from the metadata database.
+    #[allow(clippy::too_many_arguments)]
     async fn scan_column(
         &self,
         storage_engine: &mut RwLockWriteGuard<'_, StorageEngine>,
         query_object_store: &Arc<dyn ObjectStore>,
         table_name: &str,
         column_index: u16,
-        predicate: Option<Expr>,
+        parquet_predicates: Option<Expr>,
+        grid_predicates: Option<Expr>,
         limit: Option<usize>,
-    ) -> Arc<dyn ExecutionPlan> {
-        // TODO: Read segments from parquet file and prune irrelevant segments by time.
-        // TODO: Reconstruct batches of data points from the segments (need to be static size? with FilterExec)
-        // TODO: Filter out irrelevant data points by time for the column to ensure each pipeline return same values.
-
+    ) -> Result<Arc<dyn ExecutionPlan>> {
         // unwrap() is safe to use as get_compressed_files() only fails if a table with the name
         // table_name and column with column_index does not exists, if end time is before start
         // time, or if max value is larger than min value.
@@ -175,96 +175,101 @@ impl ModelTable {
         };
 
         let apache_parquet_exec = Arc::new(
-            ParquetExec::new(file_scan_config, predicate, None)
+            ParquetExec::new(file_scan_config, parquet_predicates, None)
                 .with_pushdown_filters(true)
                 .with_reorder_filters(true),
         );
 
         // Create the gridding operator.
-        let grid_exec: Arc<dyn ExecutionPlan> = GridExec::new(limit, apache_parquet_exec);
+        let physical_grid_predicates = if let Some(grid_predicate) = grid_predicates {
+            let schema = grid_exec::grid_exec_schema();
+            let df_schema = schema.clone().to_dfschema()?;
 
-        // TODO: filter data points
-        grid_exec
+            Some(planner::create_physical_expr(
+                &grid_predicate,
+                &df_schema,
+                &schema,
+                &ExecutionProps::new(),
+            )?)
+        } else {
+            None
+        };
+
+        Ok(GridExec::new(
+            physical_grid_predicates,
+            limit,
+            apache_parquet_exec,
+        ))
     }
 }
 
-/// Rewrite `filters` in terms of the model table's schema to filters in
-/// terms of the schema used for compressed data by the storage engine. The
-/// rewritten filters are then combined into a single [`Expr`]. A [`None`]
-/// is returned if `filters` is empty.
-fn rewrite_and_combine_filters(filters: &[Expr]) -> Option<Expr> {
-    let rewritten_filters: Vec<Expr> = filters
+/// Rewrite and combine the `filters` that is written in terms of the model table's schema, to a
+/// filter that is written in terms of the schema used for compressed segments by the storage engine
+/// and a filter that is written in terms of the schema used by [`GridExec`] for its output. If the
+/// filters cannot be rewritten [`None`] is returned.
+fn rewrite_and_combine_filters(
+    schema: &SchemaRef,
+    filters: &[Expr],
+) -> (Option<Expr>, Option<Expr>) {
+    let rewritten_filters = filters
         .iter()
-        .map(|filter| match filter {
-            Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
-                if **left == logical_expr::col("timestamp") {
+        .filter_map(|filter| rewrite_filter(schema, filter));
+    let (parquet_rewritten_filters, grid_rewritten_filters): (Vec<Expr>, Vec<Expr>) =
+        rewritten_filters.unzip();
+    (
+        utils::conjunction(parquet_rewritten_filters),
+        utils::conjunction(grid_rewritten_filters),
+    )
+}
+
+/// Rewrite the `filter` that is written in terms of the model table's schema, to a filter that is
+/// written in terms of the schema used for compressed segments by the storage engine and a filter
+/// that is written in terms of the schema used by [`GridExec`] for its output. If the filter cannot
+/// be rewritten [`None`] is returned.
+fn rewrite_filter(schema: &SchemaRef, filter: &Expr) -> Option<(Expr, Expr)> {
+    match filter {
+        Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
+            if let Expr::Column(column) = &**left {
+                // unwrap() is safe as it has already been checked that the fields exists.
+                let field = schema.field_with_name(&column.name).unwrap();
+                // Type aliases cannot be used as a constructor and thus cannot be used here.
+                if *field.data_type() == DataType::Timestamp(TimeUnit::Millisecond, None) {
                     match op {
-                        Operator::Gt => {
-                            new_binary_expr(logical_expr::col("end_time"), *op, *right.clone())
-                        }
-                        Operator::GtEq => {
-                            new_binary_expr(logical_expr::col("end_time"), *op, *right.clone())
-                        }
-                        Operator::Lt => {
-                            new_binary_expr(logical_expr::col("start_time"), *op, *right.clone())
-                        }
-                        Operator::LtEq => {
-                            new_binary_expr(logical_expr::col("start_time"), *op, *right.clone())
-                        }
-                        Operator::Eq => new_binary_expr(
+                        Operator::Gt | Operator::GtEq => Some((
+                            new_binary_expr(logical_expr::col("end_time"), *op, *right.clone()),
+                            new_binary_expr(logical_expr::col("timestamp"), *op, *right.clone()),
+                        )),
+                        Operator::Lt | Operator::LtEq => Some((
+                            new_binary_expr(logical_expr::col("start_time"), *op, *right.clone()),
+                            new_binary_expr(logical_expr::col("timestamp"), *op, *right.clone()),
+                        )),
+                        Operator::Eq => Some((
                             new_binary_expr(
-                                logical_expr::col("start_time"),
-                                Operator::LtEq,
-                                *right.clone(),
+                                new_binary_expr(
+                                    logical_expr::col("start_time"),
+                                    Operator::LtEq,
+                                    *right.clone(),
+                                ),
+                                Operator::And,
+                                new_binary_expr(
+                                    logical_expr::col("end_time"),
+                                    Operator::GtEq,
+                                    *right.clone(),
+                                ),
                             ),
-                            Operator::And,
-                            new_binary_expr(
-                                logical_expr::col("end_time"),
-                                Operator::GtEq,
-                                *right.clone(),
-                            ),
-                        ),
-                        _ => filter.clone(),
-                    }
-                } else if **left == logical_expr::col("value") {
-                    match op {
-                        Operator::Gt => {
-                            new_binary_expr(logical_expr::col("max_value"), *op, *right.clone())
-                        }
-                        Operator::GtEq => {
-                            new_binary_expr(logical_expr::col("max_value"), *op, *right.clone())
-                        }
-                        Operator::Lt => {
-                            new_binary_expr(logical_expr::col("min_value"), *op, *right.clone())
-                        }
-                        Operator::LtEq => {
-                            new_binary_expr(logical_expr::col("min_value"), *op, *right.clone())
-                        }
-                        Operator::Eq => new_binary_expr(
-                            new_binary_expr(
-                                logical_expr::col("min_value"),
-                                Operator::LtEq,
-                                *right.clone(),
-                            ),
-                            Operator::And,
-                            new_binary_expr(
-                                logical_expr::col("max_value"),
-                                Operator::GtEq,
-                                *right.clone(),
-                            ),
-                        ),
-                        _ => filter.clone(),
+                            new_binary_expr(logical_expr::col("timestamp"), *op, *right.clone()),
+                        )),
+                        _ => None,
                     }
                 } else {
-                    filter.clone()
+                    None
                 }
+            } else {
+                None
             }
-            _ => filter.clone(),
-        })
-        .collect();
-
-    // Combine the rewritten filters into an expression.
-    utils::conjunction(rewritten_filters)
+        }
+        _other => None,
+    }
 }
 
 /// Create a [`Expr::BinaryExpr`].
@@ -368,7 +373,8 @@ impl TableProvider for ModelTable {
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         let table_name = &self.model_table_metadata.name.as_str();
-        let predicate = rewrite_and_combine_filters(filters);
+        let (parquet_predicates, grid_predicates) =
+            rewrite_and_combine_filters(&self.model_table_metadata.schema, filters);
 
         // Request the matching files from the storage engine. The exclusive lock on the storage
         // engine is hold until object metas for all columns have been retrieved to ensure they
@@ -383,10 +389,11 @@ impl TableProvider for ModelTable {
                     &query_object_store,
                     table_name,
                     field_column_index,
-                    predicate.clone(),
+                    parquet_predicates.clone(),
+                    grid_predicates.clone(),
                     limit,
                 )
-                .await;
+                .await?;
 
             field_column_execution_plans.push(execution_plan);
         }
@@ -406,24 +413,36 @@ mod tests {
     use datafusion::logical_expr::lit;
     use datafusion::prelude::Expr;
 
-    use crate::types::{Timestamp, Value};
+    use crate::metadata::test_util;
+    use crate::types::Timestamp;
 
     const TIMESTAMP_PREDICATE_VALUE: Timestamp = 37;
-    const VALUE_PREDICATE_VALUE: Value = 73.00;
 
     // Tests for rewrite_and_combine_filters().
     #[test]
     fn test_rewrite_empty_vec() {
-        assert!(rewrite_and_combine_filters(&[]).is_none());
+        let schema = test_util::model_table_metadata().schema;
+        let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &[]);
+        assert!(parquet_filter.is_none());
+        assert!(grid_filter.is_none());
     }
 
     #[test]
     fn test_rewrite_greater_than_timestamp() {
         let filters = new_timestamp_filters(Operator::Gt);
-        let predicate = rewrite_and_combine_filters(&filters).unwrap();
+        let schema = test_util::model_table_metadata().schema;
+        let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &filters);
+
         assert_binary_expr(
-            predicate,
+            parquet_filter.unwrap(),
             "end_time",
+            Operator::Gt,
+            lit(TIMESTAMP_PREDICATE_VALUE),
+        );
+
+        assert_binary_expr(
+            grid_filter.unwrap(),
+            "timestamp",
             Operator::Gt,
             lit(TIMESTAMP_PREDICATE_VALUE),
         );
@@ -432,10 +451,19 @@ mod tests {
     #[test]
     fn test_rewrite_greater_than_or_equal_timestamp() {
         let filters = new_timestamp_filters(Operator::GtEq);
-        let predicate = rewrite_and_combine_filters(&filters).unwrap();
+        let schema = test_util::model_table_metadata().schema;
+        let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &filters);
+
         assert_binary_expr(
-            predicate,
+            parquet_filter.unwrap(),
             "end_time",
+            Operator::GtEq,
+            lit(TIMESTAMP_PREDICATE_VALUE),
+        );
+
+        assert_binary_expr(
+            grid_filter.unwrap(),
+            "timestamp",
             Operator::GtEq,
             lit(TIMESTAMP_PREDICATE_VALUE),
         );
@@ -444,10 +472,19 @@ mod tests {
     #[test]
     fn test_rewrite_less_than_timestamp() {
         let filters = new_timestamp_filters(Operator::Lt);
-        let predicate = rewrite_and_combine_filters(&filters).unwrap();
+        let schema = test_util::model_table_metadata().schema;
+        let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &filters);
+
         assert_binary_expr(
-            predicate,
+            parquet_filter.unwrap(),
             "start_time",
+            Operator::Lt,
+            lit(TIMESTAMP_PREDICATE_VALUE),
+        );
+
+        assert_binary_expr(
+            grid_filter.unwrap(),
+            "timestamp",
             Operator::Lt,
             lit(TIMESTAMP_PREDICATE_VALUE),
         );
@@ -456,10 +493,19 @@ mod tests {
     #[test]
     fn test_rewrite_less_than_or_equal_timestamp() {
         let filters = new_timestamp_filters(Operator::LtEq);
-        let predicate = rewrite_and_combine_filters(&filters).unwrap();
+        let schema = test_util::model_table_metadata().schema;
+        let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &filters);
+
         assert_binary_expr(
-            predicate,
+            parquet_filter.unwrap(),
             "start_time",
+            Operator::LtEq,
+            lit(TIMESTAMP_PREDICATE_VALUE),
+        );
+
+        assert_binary_expr(
+            grid_filter.unwrap(),
+            "timestamp",
             Operator::LtEq,
             lit(TIMESTAMP_PREDICATE_VALUE),
         );
@@ -468,9 +514,10 @@ mod tests {
     #[test]
     fn test_rewrite_equal_timestamp() {
         let filters = new_timestamp_filters(Operator::Eq);
-        let predicate = rewrite_and_combine_filters(&filters).unwrap();
+        let schema = test_util::model_table_metadata().schema;
+        let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &filters);
 
-        if let Expr::BinaryExpr(BinaryExpr { left, op, right }) = predicate {
+        if let Expr::BinaryExpr(BinaryExpr { left, op, right }) = parquet_filter.unwrap() {
             assert_binary_expr(
                 *left,
                 "start_time",
@@ -487,6 +534,13 @@ mod tests {
         } else {
             panic!("Expr is not a BinaryExpr.");
         }
+
+        assert_binary_expr(
+            grid_filter.unwrap(),
+            "timestamp",
+            Operator::Eq,
+            lit(TIMESTAMP_PREDICATE_VALUE),
+        );
     }
 
     fn new_timestamp_filters(operator: Operator) -> Vec<Expr> {
@@ -494,86 +548,6 @@ mod tests {
             logical_expr::col("timestamp"),
             operator,
             lit(TIMESTAMP_PREDICATE_VALUE),
-        )]
-    }
-
-    #[test]
-    fn test_rewrite_greater_than_value() {
-        let filters = new_value_filters(Operator::Gt);
-        let predicate = rewrite_and_combine_filters(&filters).unwrap();
-        assert_binary_expr(
-            predicate,
-            "max_value",
-            Operator::Gt,
-            lit(VALUE_PREDICATE_VALUE),
-        );
-    }
-
-    #[test]
-    fn test_rewrite_greater_than_or_equal_value() {
-        let filters = new_value_filters(Operator::GtEq);
-        let predicate = rewrite_and_combine_filters(&filters).unwrap();
-        assert_binary_expr(
-            predicate,
-            "max_value",
-            Operator::GtEq,
-            lit(VALUE_PREDICATE_VALUE),
-        );
-    }
-
-    #[test]
-    fn test_rewrite_less_than_value() {
-        let filters = new_value_filters(Operator::Lt);
-        let predicate = rewrite_and_combine_filters(&filters).unwrap();
-        assert_binary_expr(
-            predicate,
-            "min_value",
-            Operator::Lt,
-            lit(VALUE_PREDICATE_VALUE),
-        );
-    }
-
-    #[test]
-    fn test_rewrite_less_than_or_equal_value() {
-        let filters = new_value_filters(Operator::LtEq);
-        let predicate = rewrite_and_combine_filters(&filters).unwrap();
-        assert_binary_expr(
-            predicate,
-            "min_value",
-            Operator::LtEq,
-            lit(VALUE_PREDICATE_VALUE),
-        );
-    }
-
-    #[test]
-    fn test_rewrite_equal_value() {
-        let filters = new_value_filters(Operator::Eq);
-        let predicate = rewrite_and_combine_filters(&filters).unwrap();
-
-        if let Expr::BinaryExpr(BinaryExpr { left, op, right }) = predicate {
-            assert_binary_expr(
-                *left,
-                "min_value",
-                Operator::LtEq,
-                lit(VALUE_PREDICATE_VALUE),
-            );
-            assert_eq!(op, Operator::And);
-            assert_binary_expr(
-                *right,
-                "max_value",
-                Operator::GtEq,
-                lit(VALUE_PREDICATE_VALUE),
-            );
-        } else {
-            panic!("Expr is not a BinaryExpr.");
-        }
-    }
-
-    fn new_value_filters(operator: Operator) -> Vec<Expr> {
-        vec![new_binary_expr(
-            logical_expr::col("value"),
-            operator,
-            lit(VALUE_PREDICATE_VALUE),
         )]
     }
 

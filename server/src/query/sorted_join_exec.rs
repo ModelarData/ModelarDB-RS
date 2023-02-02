@@ -195,8 +195,30 @@ impl SortedJoinStream {
         }
     }
 
-    fn join(&self) -> Poll<Option<ArrowResult<RecordBatch>>> {
+    /// Pools all inputs for [`RecordBatches`](RecordBatch) and returns [`None`] if a batch has been
+    /// returned from all inputs, otherwise a [`Some`] stating the reason why it failed is returned.
+    fn poll_all_pending_inputs(
+        &mut self,
+        cx: &mut StdTaskContext<'_>,
+    ) -> Option<Poll<Option<ArrowResult<RecordBatch>>>> {
+        let mut reason_for_not_ok = None;
+        for index in 0..self.batches.len() {
+            if self.batches[index].is_none() {
+                let poll = self.inputs[index].poll_next_unpin(cx);
+                if let Poll::Ready(Some(Ok(batch))) = poll {
+                    self.batches[index] = Some(batch);
+                } else {
+                    reason_for_not_ok = Some(poll);
+                }
+            }
+        }
+        reason_for_not_ok
+    }
+
+    // TODO: add doc comment.
+    fn join_and_reset(&self) -> Poll<Option<ArrowResult<RecordBatch>>> {
         // TODO: compute and assign arrays to columns dynamically.
+        // Batches are created from inputs in new() so they are always the same length.
         let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.schema.fields.len());
 
         // The first column is retrieved separately so the timestamps and tags can be added.
@@ -225,25 +247,6 @@ impl SortedJoinStream {
         let record_batch = RecordBatch::try_new(self.schema.clone(), columns).unwrap();
         Poll::Ready(Some(Ok(record_batch)))
     }
-
-    /// Pools all inputs for [`RecordBatches`](RecordBatch) and returns [`true`] if a batch have
-    /// been returned from all inputs, otherwise false.
-    fn poll_all_pending_inputs(&mut self, cx: &mut StdTaskContext<'_>) -> bool {
-        // TODO: return the actual value of poll as it may be None or Pending.
-        // Batches are created from inputs in new() so they are always the same length.
-        let mut received_a_batch_from_all_inputs = true;
-        for index in 0..self.batches.len() {
-            if self.batches[index].is_none() {
-                // Pending is returned by Stream.poll_next() if any of the inputs return Pending.
-                if let Poll::Ready(Some(Ok(batch))) = self.inputs[index].poll_next_unpin(cx) {
-                    self.batches[index] = Some(batch);
-                } else {
-                    received_a_batch_from_all_inputs = false;
-                }
-            }
-        }
-        received_a_batch_from_all_inputs
-    }
 }
 
 impl Stream for SortedJoinStream {
@@ -258,11 +261,16 @@ impl Stream for SortedJoinStream {
         mut self: Pin<&mut Self>,
         cx: &mut StdTaskContext<'_>,
     ) -> Poll<Option<Self::Item>> {
-        if self.poll_all_pending_inputs(cx) {
-            let poll = self.join();
-            self.baseline_metrics.record_poll(poll)
+        if let Some(reason_for_not_ok) = self.poll_all_pending_inputs(cx) {
+            reason_for_not_ok
         } else {
-            Poll::Pending
+            let poll = self.join_and_reset();
+            // TODO: Perform in join or better to keep join const? Maybe join_and_reset?
+            // Make only uid and timestamp extracted in join[0] and values only values in loop.
+            for batch in &mut self.batches {
+                *batch = None;
+            }
+            self.baseline_metrics.record_poll(poll)
         }
     }
 }

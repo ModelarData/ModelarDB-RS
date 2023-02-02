@@ -28,17 +28,19 @@ use async_trait::async_trait;
 use datafusion::arrow::array::{
     Array, ArrayRef, ArrowPrimitiveType, BinaryArray, Float32Array, UInt64Array, UInt8Array,
 };
+use datafusion::arrow::compute::filter_record_batch;
 use datafusion::arrow::datatypes::{Field, Schema, SchemaRef};
 use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::common::cast::as_boolean_array;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::expressions::{Column, PhysicalSortExpr};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::sorts::sort::SortOptions;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream, SendableRecordBatchStream,
-    Statistics,
+    DisplayFormatType, ExecutionPlan, Partitioning, PhysicalExpr, RecordBatchStream,
+    SendableRecordBatchStream, Statistics,
 };
 use futures::stream::{Stream, StreamExt};
 
@@ -47,6 +49,15 @@ use crate::types::{
     ArrowTimestamp, ArrowUnivariateId, ArrowValue, TimestampArray, TimestampBuilder, ValueArray,
     ValueBuilder,
 };
+
+/// Return the schema used for internal buffers by [`GridExec`].
+pub fn grid_exec_schema() -> SchemaRef {
+    Arc::new(Schema::new(vec![
+        Field::new("univariate_id", ArrowUnivariateId::DATA_TYPE, false),
+        Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+        Field::new("value", ArrowValue::DATA_TYPE, false),
+    ]))
+}
 
 /// An execution plan that reconstructs the data points stored as compressed segments containing
 /// metadata and models. It is public so the additional rules added to Apache Arrow DataFusion's
@@ -57,6 +68,8 @@ pub struct GridExec {
     schema: SchemaRef,
     /// Ordering of the plans output.
     output_ordering: Vec<PhysicalSortExpr>,
+    /// Predicate to filter data points by.
+    predicate: Option<Arc<dyn PhysicalExpr>>,
     /// Number of data points requested by the query.
     limit: Option<usize>,
     /// Execution plan to read batches of segments from.
@@ -66,15 +79,13 @@ pub struct GridExec {
 }
 
 impl GridExec {
-    pub fn new(limit: Option<usize>, input: Arc<dyn ExecutionPlan>) -> Arc<Self> {
-        // Schema.
-        let schema = Arc::new(Schema::new(vec![
-            Field::new("univariate_id", ArrowUnivariateId::DATA_TYPE, false),
-            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("value", ArrowValue::DATA_TYPE, false),
-        ]));
+    pub fn new(
+        predicate: Option<Arc<dyn PhysicalExpr>>,
+        limit: Option<usize>,
+        input: Arc<dyn ExecutionPlan>,
+    ) -> Arc<Self> {
+        let schema = grid_exec_schema();
 
-        // Output Ordering.
         let sort_options = SortOptions {
             descending: false,
             nulls_first: false,
@@ -92,6 +103,7 @@ impl GridExec {
         ];
 
         Arc::new(GridExec {
+            predicate,
             schema,
             output_ordering,
             limit,
@@ -137,7 +149,11 @@ impl ExecutionPlan for GridExec {
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         if children.len() == 1 {
-            Ok(GridExec::new(self.limit, children[0].clone()))
+            Ok(GridExec::new(
+                self.predicate.clone(),
+                self.limit,
+                children[0].clone(),
+            ))
         } else {
             Err(DataFusionError::Plan(format!(
                 "A single child must be provided {self:?}"
@@ -158,6 +174,7 @@ impl ExecutionPlan for GridExec {
 
         Ok(Box::pin(GridStream::new(
             self.schema.clone(),
+            self.predicate.clone(),
             self.limit,
             self.input.execute(partition, task_context)?,
             batch_size,
@@ -192,6 +209,8 @@ impl ExecutionPlan for GridExec {
 struct GridStream {
     /// Schema of the stream.
     schema: SchemaRef,
+    /// Predicate to filter data points by.
+    predicate: Option<Arc<dyn PhysicalExpr>>,
     /// Stream to read batches of compressed segments from.
     input: SendableRecordBatchStream,
     /// Size of the batches returned when this stream is pooled.
@@ -207,6 +226,7 @@ struct GridStream {
 impl GridStream {
     fn new(
         schema: SchemaRef,
+        predicate: Option<Arc<dyn PhysicalExpr>>,
         limit: Option<usize>,
         input: SendableRecordBatchStream,
         batch_size: usize,
@@ -223,6 +243,7 @@ impl GridStream {
 
         GridStream {
             schema: schema.clone(),
+            predicate,
             input,
             baseline_metrics,
             batch_size,
@@ -296,8 +317,18 @@ impl GridStream {
         ];
 
         // Update the current batch, unwrap() is safe as GridStream uses a static schema.
-        self.current_batch = RecordBatch::try_new(self.schema.clone(), columns).unwrap();
-        self.current_batch_offset = 0;
+        // For simplicity, all data points are reconstructed and than pruned by time.
+        let current_batch = RecordBatch::try_new(self.schema.clone(), columns).unwrap();
+
+        self.current_batch = if let Some(predicate) = &self.predicate {
+            // unwrap() is safe as the predicate has been written for the schema.
+            let column_value = predicate.evaluate(&current_batch).unwrap();
+            let array = column_value.into_array(current_batch.num_rows());
+            let boolean_array = as_boolean_array(&array).unwrap();
+            filter_record_batch(&current_batch, boolean_array).unwrap()
+        } else {
+            current_batch
+        };
     }
 }
 
@@ -313,22 +344,26 @@ impl Stream for GridStream {
         mut self: Pin<&mut Self>,
         cx: &mut StdTaskContext<'_>,
     ) -> Poll<Option<Self::Item>> {
-        // Ensure the number of data points in the current batch is as big as the batch size.
+        // Try to ensure there are enough data points in the current batch to match batch size.
         if (self.current_batch.num_rows() - self.current_batch_offset) < self.batch_size {
-            let poll = self.input.poll_next_unpin(cx);
-            if let Poll::Ready(Some(Ok(batch))) = poll {
-                self.grid_and_append_to_leftovers_in_current_batch(&batch);
-            } else {
-                return self.baseline_metrics.record_poll(poll);
+            match self.input.poll_next_unpin(cx) {
+                Poll::Ready(Some(Ok(batch))) => {
+                    self.grid_and_append_to_leftovers_in_current_batch(&batch);
+                }
+                Poll::Ready(None) if self.current_batch_offset < self.current_batch.num_rows() => {
+                    // Ignore Poll::Ready(None) as there are data points in the current buffer.
+                }
+                other => return self.baseline_metrics.record_poll(other),
             }
         }
 
-        // The current batch is guaranteed to contains enough data points as input uses the same
-        // batch size and each compressed segment is guaranteed to represent one data point.
-        let batch = self
-            .current_batch
-            .slice(self.current_batch_offset, self.batch_size);
-        self.current_batch_offset += self.batch_size;
+        // While input uses the same batch size as self and each compressed segment is guaranteed to
+        // represent one data point, the current batch may not contain enough data points, e.g., if
+        // the query contains a very specific predicate that filter out all but a very few segments.
+        let remaining_data_points = self.current_batch.num_rows() - self.current_batch_offset;
+        let length = usize::min(self.batch_size, remaining_data_points);
+        let batch = self.current_batch.slice(self.current_batch_offset, length);
+        self.current_batch_offset += batch.num_rows();
         self.baseline_metrics
             .record_poll(Poll::Ready(Some(Ok(batch))))
     }
