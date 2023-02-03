@@ -1,0 +1,11 @@
+version: "3.8"
+
+services:
+  modelardb:
+    build: .
+    ports:
+      - "9999:9999"
+    volumes:
+      - ./:/usr/src/app
+      - ./data:/data
+    container_name: modelardb
