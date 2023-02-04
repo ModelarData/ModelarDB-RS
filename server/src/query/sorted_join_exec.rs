@@ -13,11 +13,12 @@
  * limitations under the License.
  */
 
-//! Implementation of the Apache Arrow DataFusion operator [`SortedJoinExec`] and
-//! [`SortedJoinStream`] which joins multiple sorted array produced by
-//! [`GridExecs`](crate::query::grid_exec::GridExec) and combines them with the time series tags
-//! retrieved from the [`MetadataManager`](crate::metadata::MetadataManager) to create the complete
-//! results containing a timestamp column, one or more field columns, and zero or more tag columns.
+//! Implementation of the Apache Arrow DataFusion execution plan [`SortedJoinExec`] and its
+//! corresponding stream [`SortedJoinStream`] which joins multiple sorted array produced by
+//! [`GridExecs`](crate::query::grid_exec::GridExec) streams and combines them with the time series
+//! tags retrieved from the [`MetadataManager`](crate::metadata::MetadataManager) to create the
+//! complete results containing a timestamp column, one or more field columns, and zero or more tag
+//! columns.
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -52,7 +53,7 @@ pub enum SortedJoinElement {
 }
 
 /// An execution plan that join arrays of data points sorted by `univaraite_id` and `timestamp` from
-/// multiple execution plan and tags. It is public so the additional rules added to Apache Arrow
+/// multiple execution plans and tags. It is public so the additional rules added to Apache Arrow
 /// DataFusion's physical optimizer can pattern match on it.
 #[derive(Debug)]
 pub struct SortedJoinExec {
@@ -129,13 +130,13 @@ impl ExecutionPlan for SortedJoinExec {
             ))
         } else {
             Err(DataFusionError::Plan(format!(
-                "At least one child must be provided {self:?}",
+                "At least one child must be provided {self:?}.",
             )))
         }
     }
 
-    /// Create a stream that reads batches reconstructed data points from the child streams, joins
-    /// the arrays of data points with the timestamps and tags, and returns the result.
+    /// Create a stream that reads batches of reconstructed data points from the child streams,
+    /// joins the arrays of data points with the timestamps and tags, and returns the result.
     fn execute(
         &self,
         partition: usize,
@@ -241,7 +242,7 @@ impl SortedJoinStream {
         let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.schema.fields.len());
 
         // Compute the requested tag columns so they can be assigned to the batch by index.
-        // unwrap() is safe as an record batch is read for each input before this is called.
+        // unwrap() is safe as a record batch is read from each input before this method is called.
         let record_batch = self.batches[0].as_ref().unwrap();
         let univariate_ids = crate::array!(record_batch, 0, UInt64Array);
 
@@ -275,7 +276,7 @@ impl SortedJoinStream {
             match element {
                 SortedJoinElement::Timestamp => columns.push(record_batch.column(1).clone()),
                 SortedJoinElement::Field => {
-                    // unwrap() is safe as an record batch is read for each input.
+                    // unwrap() is safe as a record batch has already been read from each input.
                     let record_batch = self.batches[field_index].as_ref().unwrap();
                     columns.push(record_batch.column(2).clone());
                     field_index += 1;

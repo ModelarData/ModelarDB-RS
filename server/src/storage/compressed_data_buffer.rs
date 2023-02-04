@@ -75,7 +75,6 @@ impl CompressedDataBuffer {
         // Create the folder structure if it does not already exist.
         fs::create_dir_all(folder_path)?;
 
-
         // Create a new file that includes the start timestamp of the first segment in batch, the
         // end timestamp of the last segment in batch, the minimum value stored in batch, and the
         // maximum value stored in batch as the file name to support efficiently pruning files that

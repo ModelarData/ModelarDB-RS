@@ -44,10 +44,12 @@ pub(super) struct CompressedDataManager {
     pub(super) data_transfer: Option<DataTransfer>,
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
     local_data_folder: PathBuf,
-    /// The compressed segments before they are saved to persistent storage.
+    /// The compressed segments before they are saved to persistent storage. The key is the name of
+    /// the table and the index of the column the compressed segments represents data points for so
+    /// the Apache Parquet files can be partitioned by table and then column.
     compressed_data_buffers: HashMap<(String, u16), CompressedDataBuffer>,
-    /// FIFO queue of table names referring to [`CompressedDataBuffer`] that can be saved to
-    /// persistent storage.
+    /// FIFO queue of table names and column indices referring to [`CompressedDataBuffer`] that can
+    /// be saved to persistent storage.
     compressed_queue: VecDeque<(String, u16)>,
     /// How many bytes of memory that are left for storing compressed segments. A signed integer is
     /// used since compressed data is inserted and then the remaining bytes are checked. This means
@@ -176,62 +178,6 @@ impl CompressedDataManager {
         Ok(())
     }
 
-    /// Return an [`ObjectMeta`] for a compressed file in `query_data_folder` that belongs to the
-    /// column at `column_index` in the table with `table_name` and contains all of the compressed
-    /// segments within the given range of time and value. If some compressed data that belongs to
-    /// `column_index` in `table_name` is still in memory, save it to disk first. If no files belong
-    /// to the column at `column_index` for the table with `table_name` an empty [`Vec`] is
-    /// returned, while a [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
-    /// * A table with `table_name` does not exist.
-    /// * A column with `column_index` does not exist.
-    /// * The compressed files could not be listed.
-    /// * The end time is before the start time.
-    /// * The max value is smaller than the min value.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) async fn save_merge_and_get_saved_compressed_files(
-        &mut self,
-        table_name: &str,
-        column_index: u16,
-        start_time: Option<Timestamp>,
-        end_time: Option<Timestamp>,
-        min_value: Option<Value>,
-        max_value: Option<Value>,
-        query_data_folder: &Arc<dyn ObjectStore>,
-    ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
-        // Retrieve object_metas that represent the relevant files for table_name and column_index.
-        let relevant_apache_parquet_files = self
-            .save_and_get_saved_compressed_files(
-                table_name,
-                column_index,
-                start_time,
-                end_time,
-                min_value,
-                max_value,
-                query_data_folder,
-            )
-            .await?;
-
-        // Compact the compressed Apache Parquet files if multiple are returned to ensure order.
-        if relevant_apache_parquet_files.len() > 1 {
-            let object_meta = StorageEngine::merge_compressed_apache_parquet_files(
-                query_data_folder,
-                &relevant_apache_parquet_files,
-                query_data_folder,
-                &format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"),
-            )
-            .await
-            .map_err(|error| {
-                ModelarDbError::DataRetrievalError(format!(
-                    "Compressed data could not be merged for column '{column_index}' in table '{table_name}': {error}"
-                ))
-            })?;
-
-            Ok(vec![object_meta])
-        } else {
-            Ok(relevant_apache_parquet_files)
-        }
-    }
-
     /// Return an [`ObjectMeta`] for each compressed file in `query_data_folder` that belongs to the
     /// column at `column_index` in the table with `table_name` and contains compressed segments
     /// within the given range of time and value. If some compressed data that belongs to
@@ -356,9 +302,10 @@ impl CompressedDataManager {
         Ok(())
     }
 
-    /// Save the compressed data that belongs to the table with `table_name` to disk. The size of
-    /// the saved compressed data is added back to the remaining reserved memory. If the data is
-    /// saved successfully, return [`Ok`], otherwise return [`IOError`].
+    /// Save the compressed data that belongs to the column at `column_index` in the table with
+    /// `table_name` to disk. The size of the saved compressed data is added back to the remaining
+    /// reserved memory. If the data is saved successfully, return [`Ok`], otherwise return
+    /// [`IOError`].
     async fn save_compressed_data(
         &mut self,
         table_name: &str,

@@ -46,8 +46,8 @@ pub struct DataTransfer {
     local_data_folder: Arc<dyn ObjectStore>,
     /// The object store that the data should be transferred to.
     remote_data_folder: Arc<dyn ObjectStore>,
-    /// Map from table names to the combined size in bytes of the compressed files currently saved
-    /// for the table with that table name.
+    /// Map from table names and column indices to the combined size in bytes of the compressed
+    /// files currently saved for the column in that table.
     compressed_files: HashMap<(String, u16), usize>,
     /// The number of bytes that is required before transferring a batch of data to the remote
     /// object store.
@@ -121,21 +121,19 @@ impl DataTransfer {
         column_index: u16,
         file_path: &Path,
     ) -> Result<(), ParquetError> {
-        let table_column_name = (table_name.to_owned(), column_index);
+        let key = (table_name.to_owned(), column_index);
         let file_size = file_path.metadata()?.len() as usize;
 
         // entry() is not used as it would require the allocation of a new String for each lookup as
         // it must be given as a K, while get_mut() accepts the key as a &K so one K can be used.
-        if !self.compressed_files.contains_key(&table_column_name) {
-            self.compressed_files.insert(table_column_name.clone(), 0);
+        if !self.compressed_files.contains_key(&key) {
+            self.compressed_files.insert(key.clone(), 0);
         }
-        *self.compressed_files.get_mut(&table_column_name).unwrap() += file_size;
+        *self.compressed_files.get_mut(&key).unwrap() += file_size;
 
         // If the combined size of the files is larger than the batch size, transfer the data to the
         // remote object store.
-        if self.compressed_files.get(&table_column_name).unwrap()
-            >= &self.transfer_batch_size_in_bytes
-        {
+        if self.compressed_files.get(&key).unwrap() >= &self.transfer_batch_size_in_bytes {
             self.transfer_data(table_name, column_index).await?;
         }
 
@@ -159,9 +157,10 @@ impl DataTransfer {
         Ok(())
     }
 
-    /// Transfer the data stored locally for the table with `table_name` to the remote object store.
-    /// Once successfully transferred, the data is deleted from local storage. Return [`Ok`] if the
-    /// files were transferred successfully, otherwise [`ParquetError`].
+    /// Transfer the data stored locally for the column with `column_index` in table with
+    /// `table_name` to the remote object store. Once successfully transferred, the data is deleted
+    /// from local storage. Return [`Ok`] if the files were transferred successfully, otherwise
+    /// [`ParquetError`].
     async fn transfer_data(
         &mut self,
         table_name: &str,

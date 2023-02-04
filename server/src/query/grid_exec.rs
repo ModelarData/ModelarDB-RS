@@ -13,9 +13,9 @@
  * limitations under the License.
  */
 
-//! Implementation of the Apache Arrow DataFusion operator [`GridExec`] and [`GridStream`] which
-//! reconstructs the data points for a specific column from the compressed segments containing
-//! metadata and models.
+//! Implementation of the Apache Arrow DataFusion execution plan [`GridExec`] and its corresponding
+//! stream [`GridStream`] which reconstructs the data points for a specific column from the
+//! compressed segments containing metadata and models.
 
 use std::any::Any;
 use std::fmt;
@@ -131,7 +131,7 @@ impl ExecutionPlan for GridExec {
     }
 
     /// Specify that the record batches produced by the execution plan will be ordered descendingly
-    /// by univariate_id and then descendingly timestamp.
+    /// by univariate_id and then descendingly by timestamp.
     fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
         Some(&self.output_ordering)
     }
@@ -156,7 +156,7 @@ impl ExecutionPlan for GridExec {
             ))
         } else {
             Err(DataFusionError::Plan(format!(
-                "A single child must be provided {self:?}"
+                "A single child must be provided {self:?}."
             )))
         }
     }
@@ -233,8 +233,8 @@ impl GridStream {
         baseline_metrics: BaselineMetrics,
     ) -> Self {
         // Assumes limit is mostly used to request less than batch_size rows so one batch is enough.
-        // If it is a bit larger than batch size the second batch will contain too many data points.
-        // Also limit is not simply used as batch size to prevent OOM issues with a very big limits.
+        // If it is a bit larger than batch_size the second batch will contain too many data points.
+        // Also limit is not simply used as batch size to prevent OOM issues with a very big limit.
         let batch_size = if let Some(limit) = limit {
             usize::min(limit, batch_size)
         } else {
@@ -293,7 +293,7 @@ impl GridStream {
             &crate::array!(current_batch, 2, ValueArray).values()[self.current_batch_offset..],
         );
 
-        // Reconstructs the data points from the compressed segments.
+        // Reconstruct the data points from the compressed segments.
         for row_index in 0..new_rows {
             models::grid(
                 univariate_ids.value(row_index),
@@ -317,7 +317,7 @@ impl GridStream {
         ];
 
         // Update the current batch, unwrap() is safe as GridStream uses a static schema.
-        // For simplicity, all data points are reconstructed and than pruned by time.
+        // For simplicity, all data points are reconstructed and then pruned by time.
         let current_batch = RecordBatch::try_new(self.schema.clone(), columns).unwrap();
 
         self.current_batch = if let Some(predicate) = &self.predicate {

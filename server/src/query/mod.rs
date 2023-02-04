@@ -13,17 +13,9 @@
  * limitations under the License.
  */
 
-//! Implementation of the types required to query model tables through Apache Arrow DataFusion. The
-//! types are:
-//! * [`ModelTable`] which takes the projection, filters as [`Exprs`](Expr), and limit as input and
-//! produces the part of a physical query plan that produces the data points required for the query.
-//! * [`GridExec`] which takes the sorted compressed segments from the Apache Parquet files for a
-//! single column and reconstructs the data points they represent as three sorted arrays containing
-//! the data points' univariate ids, timestamps, and values.
-//! * [`SortedJoinExec`] which joins the sorted arrays produced by each [`GridExec`] and combines
-//! them with the time series tags retrieved from the
-//! [`MetadataManager`](crate::metadata::MetadataManager) to create the complete results containing
-//! a timestamp column, one or more field columns, and zero or more tag columns.
+//! Implementation of [`ModelTable`] which allows model tables to be queried through Apache Arrow
+//! DataFusion. It takes the projection, filters as [`Exprs`](Expr), and limit of a query as input
+//! and returns a physical query plan that produces all of the data points required for the query.
 
 // Public so the rules added to Apache Arrow DataFusion's physical optimizer can access GridExec.
 pub mod grid_exec;
@@ -83,7 +75,7 @@ impl ModelTable {
                 .fields()
                 .iter()
                 .position(|field| field.data_type() == &ArrowValue::DATA_TYPE)
-                .unwrap() as u16 // unwrap() is safe as model tables contains fields.
+                .unwrap() as u16 // unwrap() is safe as all model tables contain at least one field.
         };
 
         // unwrap() is safe as the url is predefined as a constant in storage.
@@ -117,7 +109,7 @@ impl ModelTable {
         grid_predicates: Option<Expr>,
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        // unwrap() is safe to use as get_compressed_files() only fails if a table with the name
+        // unwrap() is safe to use as compressed_files() only fails if a table with the name
         // table_name and column with column_index does not exists, if end time is before start
         // time, or if max value is larger than min value.
         // TODO: extract predicates on time and value and push them to the storage engine.
@@ -314,8 +306,8 @@ impl TableProvider for ModelTable {
             (0..schema.fields().len()).collect()
         };
 
-        // So SortedJoinExec simply needs to append arrays to a vector, the order of the field and
-        // tag columns in the projection is extracted and the execution plans SortedJoinExec read
+        // Since SortedJoinStream simply needs to append arrays to a vector, the order of the field
+        // and tag columns in the projection is extracted and the streams SortedJoinStream read
         // columns from are arranged in the same order as the field columns.
         let tag_column_indices = &self.model_table_metadata.tag_column_indices;
         let mut sorted_join_order: Vec<SortedJoinElement> = Vec::with_capacity(projection.len());
@@ -357,7 +349,7 @@ impl TableProvider for ModelTable {
         }
 
         // Request the matching files from the storage engine. The exclusive lock on the storage
-        // engine is hold until object metas for all columns have been retrieved to ensure they
+        // engine is held until object metas for all columns have been retrieved to ensure they
         // contain the same number of data points.
         let mut field_column_execution_plans: Vec<Arc<dyn ExecutionPlan>> =
             Vec::with_capacity(field_indices_in_projection.len());

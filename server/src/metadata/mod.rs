@@ -19,7 +19,7 @@
 //! of the data for the tables and the model table metadata are stored in Apache Arrow DataFusion's
 //! catalog, while this module stores the system's configuration and a mapping from model table name
 //! and tag values to hashes. These hashes can be combined with the corresponding model table's
-//! field column indexes to uniquely identify each univariate time series stored in the storage
+//! field column indices to uniquely identify each univariate time series stored in the storage
 //! engine by a univariate id.
 
 pub mod model_table_metadata;
@@ -45,8 +45,8 @@ use tracing::{error, info, warn};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::models::ErrorBound;
-use crate::storage::COMPRESSED_DATA_FOLDER;
 use crate::query::ModelTable;
+use crate::storage::COMPRESSED_DATA_FOLDER;
 use crate::types::{
     ArrowTimestamp, ArrowValue, CompressedSchema, MetricSchema, UncompressedSchema, UnivariateId,
 };
@@ -353,7 +353,7 @@ impl MetadataManager {
 
     /// Return a mapping from tag hashes to the tags in the columns with the names in
     /// `tag_column_names` for the time series in the model table with the name `model_table_name`.
-    /// Returns a [`Error`](rusqlite::Error) if the necessary data cannot be retrieved from the
+    /// Returns an [`Error`](rusqlite::Error) if the necessary data cannot be retrieved from the
     /// metadata database.
     pub fn mapping_from_hash_to_tags(
         &self,
@@ -369,9 +369,8 @@ impl MetadataManager {
         let connection = Connection::open(&self.metadata_database_path)?;
 
         let mut select_statement = connection.prepare(&format!(
-            "SELECT hash,{} FROM {}_tags",
+            "SELECT hash,{} FROM {model_table_name}_tags",
             tag_column_names.join(","),
-            model_table_name
         ))?;
         let mut rows = select_statement.query([])?;
 
@@ -381,7 +380,7 @@ impl MetadataManager {
             let signed_tag_hash = row.get::<usize, i64>(0)?;
             let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
 
-            // Add all of the tag in order so they can be directly appended to each row.
+            // Add all of the tags in order so they can be directly appended to each row.
             let mut tags = Vec::with_capacity(tag_column_names.len());
             for tag_column_index in 1..=tag_column_names.len() {
                 tags.push(row.get::<usize, String>(tag_column_index)?);
@@ -788,7 +787,6 @@ mod tests {
     use std::fs;
 
     use proptest::{collection, num, prop_assert_eq, proptest};
-    
 
     use crate::metadata::test_util;
 
