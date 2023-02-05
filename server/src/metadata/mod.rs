@@ -330,7 +330,7 @@ impl MetadataManager {
         (univariate_id & 1023) as u16
     }
 
-    /// Return a mapping from tag hash to table names. Returns a [`Error`](rusqlite::Error) if the
+    /// Return a mapping from tag hash to table names. Returns an [`Error`](rusqlite::Error) if the
     /// necessary data cannot be retrieved from the metadata database.
     pub fn mapping_from_hash_to_table_name(&self) -> Result<HashMap<u64, String>> {
         // Open a connection to the database containing the metadata.

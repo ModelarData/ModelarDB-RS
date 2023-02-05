@@ -52,7 +52,7 @@ pub enum SortedJoinElement {
     Tag,
 }
 
-/// An execution plan that join arrays of data points sorted by `univaraite_id` and `timestamp` from
+/// An execution plan that join arrays of data points sorted by `univariate_id` and `timestamp` from
 /// multiple execution plans and tags. It is public so the additional rules added to Apache Arrow
 /// DataFusion's physical optimizer can pattern match on it.
 #[derive(Debug)]
