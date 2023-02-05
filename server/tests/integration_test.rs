@@ -743,11 +743,10 @@ fn stop_modelardbd(mut flight_server: Child) {
         system.refresh_all();
         flight_server
             .kill()
-            .expect(&format!("Could not kill process {}.", flight_server.id()));
-        flight_server.wait().expect(&format!(
-            "Could not wait for process {}.",
-            flight_server.id()
-        ));
+            .unwrap_or_else(|_| panic!("Could not kill process {}.", flight_server.id()));
+        flight_server
+            .wait()
+            .unwrap_or_else(|_| panic!("Could not wait for process {}.", flight_server.id()));
         system.refresh_all();
     }
 }
