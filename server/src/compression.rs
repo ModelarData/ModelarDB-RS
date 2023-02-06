@@ -678,8 +678,8 @@ mod tests {
     }
 
     fn create_and_compress_time_series(
-        values: &Vec<f32>,
-        timestamps: &Vec<i64>,
+        values: &[f32],
+        timestamps: &[i64],
         error_bound: f32,
     ) -> (TimestampArray, RecordBatch) {
         let (uncompressed_timestamps, uncompressed_values) =
@@ -707,11 +707,10 @@ mod tests {
         );
 
         let mut total_compressed_length = 0;
-        for segment in 0..expected_model_type_ids.len() {
-            let expected_model_type_id = expected_model_type_ids[segment];
+        for (segment, expected_model_type_id) in expected_model_type_ids.iter().enumerate() {
             let model_type_id =
                 crate::array!(compressed_record_batch, 1, UInt8Array).value(segment);
-            assert_eq!(expected_model_type_id, model_type_id);
+            assert_eq!(*expected_model_type_id, model_type_id);
 
             let start_time =
                 crate::array!(compressed_record_batch, 2, TimestampArray).value(segment);
