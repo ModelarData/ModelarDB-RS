@@ -26,30 +26,38 @@ mod data_transfer;
 mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
 
-use datafusion::arrow::array::UInt32Array;
 use std::ffi::OsStr;
-use std::{fmt, mem};
 use std::fs::File;
 use std::io::{Error as IOError, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{fmt, mem};
 
+use bytes::buf::BufMut;
+use datafusion::arrow::array::UInt32Array;
+use datafusion::arrow::compute;
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::async_reader::ParquetRecordBatchStreamBuilder;
+use datafusion::parquet::arrow::async_reader::{
+    ParquetObjectReader, ParquetRecordBatchStreamBuilder,
+};
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::{Compression, Encoding};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
+use datafusion::parquet::format::SortingColumn;
 use futures::StreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
+use ringbuf::{HeapRb, Rb};
 use tokio::fs::File as TokioFile;
 use tokio::sync::RwLock;
+use tonic::codegen::Bytes;
 use tonic::Status;
-use ringbuf::{HeapRb, Rb};
+use tracing::debug;
+use uuid::{uuid, Uuid};
 
 use crate::array;
 use crate::errors::ModelarDbError;
@@ -72,6 +80,10 @@ pub const QUERY_DATA_FOLDER_SCHEME_AND_HOST: &str = "query";
 
 /// The scheme with host at which the query data folder is stored.
 pub const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
+
+/// A static UUID for use in tests. It is not in a test utilities module so it can be used both
+/// inside the if cfg(test) block of [`create_time_and_value_range_file_name`] and in test modules.
+pub const TEST_UUID: Uuid = uuid!("44c57d06-333c-4935-8ae3-ed7bc53a08c4");
 
 /// The expected [first four bytes of any Apache Parquet file].
 ///
@@ -119,7 +131,8 @@ impl StorageEngine {
             metadata_manager.compressed_schema(),
             compress_directly,
             used_disk_space_metric.clone(),
-        ).await?;
+        )
+        .await?;
 
         // Create the compressed data manager.
         let data_transfer = if let Some(remote_data_folder) = remote_data_folder {
@@ -176,9 +189,10 @@ impl StorageEngine {
             .insert_data_points(&mut self.metadata_manager, model_table, data_points)
             .await?;
 
-        for segments in compressed_segments {
+        for (univariate_id, compressed_segments) in compressed_segments {
+            let column_index = MetadataManager::univariate_id_to_column_index(univariate_id);
             self.compressed_data_manager
-                .insert_compressed_segments(&model_table.name, segments)
+                .insert_compressed_segments(&model_table.name, column_index, compressed_segments)
                 .await
                 .map_err(|error| error.to_string())?;
         }
@@ -189,7 +203,9 @@ impl StorageEngine {
     /// Retrieve the oldest finished [`UncompressedDataBuffer`] from [`UncompressedDataManager`] and
     /// return it. Return [`None`] if there are no finished
     /// [`UncompressedDataBuffers`](UncompressedDataBuffer).
-    pub async fn finished_uncompressed_data_buffer(&mut self) -> Option<Box<dyn UncompressedDataBuffer>> {
+    pub async fn finished_uncompressed_data_buffer(
+        &mut self,
+    ) -> Option<Box<dyn UncompressedDataBuffer>> {
         self.uncompressed_data_manager.finished_data_buffer().await
     }
 
@@ -198,23 +214,20 @@ impl StorageEngine {
     pub async fn flush(&mut self) -> Result<(), String> {
         // TODO: When the compression component is changed, just flush before managers.
         // Flush UncompressedDataManager.
-        let compressed_buffers = self.uncompressed_data_manager.flush().await;
+        let compressed_segments = self.uncompressed_data_manager.flush().await;
         let hash_to_table_name = self
             .metadata_manager
             .mapping_from_hash_to_table_name()
             .map_err(|error| error.to_string())?;
 
-        // The first 54-bits of each univariate_id is computed from the time series tags while the
-        // remaining 10-bits is the index of the column in the table, thus only the 54-bit tag hash
-        // is needed from each univariate_id to determine which table each time series belong to.
-        let tag_hash_one_bits: u64 = 18446744073709550592;
-        for (univariate_id, segment) in compressed_buffers {
-            let tag_hash = univariate_id & tag_hash_one_bits;
+        for (univariate_id, compressed_segments) in compressed_segments {
+            let tag_hash = MetadataManager::univariate_id_to_tag_hash(univariate_id);
+            let column_index = MetadataManager::univariate_id_to_column_index(univariate_id);
 
             // unwrap() is safe as new univariate ids have been added to the metadata database.
             let table_name = hash_to_table_name.get(&tag_hash).unwrap();
             self.compressed_data_manager
-                .insert_compressed_segments(table_name, segment)
+                .insert_compressed_segments(table_name, column_index, compressed_segments)
                 .await
                 .map_err(|error| error.to_string())?;
         }
@@ -241,29 +254,61 @@ impl StorageEngine {
         }
     }
 
-    /// Retrieve the compressed files that correspond to the table with `table_name` within the
-    /// given range of time and value. If a table with `table_name` does not exist, the end time is
-    /// before the start time, or the max value is larger than the min value,
-    /// [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned.
+    /// Retrieve the compressed sorted files that correspond to the column at `column_index` in the
+    /// table with `table_name` within the given range of time and value. If some compressed data
+    /// that belongs to `column_index` in `table_name` is still in memory, save it to disk first. If
+    /// no files belong to the column at `column_index` for the table with `table_name` an empty
+    /// [`Vec`] is returned, while a [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is
+    /// returned if:
+    /// * A table with `table_name` does not exist.
+    /// * A column with `column_index` does not exist.
+    /// * The compressed files could not be listed.
+    /// * The end time is before the start time.
+    /// * The max value is smaller than the min value.
+    #[allow(clippy::too_many_arguments)]
     pub async fn compressed_files(
         &mut self,
         table_name: &str,
+        column_index: u16,
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
         max_value: Option<Value>,
         query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
-        self.compressed_data_manager
+        // Retrieve object_metas that represent the relevant files for table_name and column_index.
+        let relevant_apache_parquet_files = self
+            .compressed_data_manager
             .save_and_get_saved_compressed_files(
                 table_name,
+                column_index,
                 start_time,
                 end_time,
                 min_value,
                 max_value,
                 query_data_folder,
             )
+            .await?;
+
+        // Merge the compressed Apache Parquet files if multiple are returned to ensure order.
+        if relevant_apache_parquet_files.len() > 1 {
+            let object_meta = StorageEngine::merge_compressed_apache_parquet_files(
+                query_data_folder,
+                &relevant_apache_parquet_files,
+                query_data_folder,
+                &format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"),
+            )
             .await
+            .map_err(|error| {
+                ModelarDbError::DataRetrievalError(format!(
+                    "Compressed data could not be merged for column '{column_index}' in table '{table_name}': {error}"
+                ))
+            })?;
+
+            Ok(vec![object_meta])
+        } else {
+            Ok(relevant_apache_parquet_files)
+        }
     }
 
     /// Collect and return the metrics of used uncompressed/compressed memory, used disk space, and ingested
@@ -305,6 +350,7 @@ impl StorageEngine {
     pub fn write_batch_to_apache_parquet_file(
         batch: RecordBatch,
         file_path: &Path,
+        sorting_columns: Option<Vec<SortingColumn>>,
     ) -> Result<(), ParquetError> {
         let error = ParquetError::General(format!(
             "Apache Parquet file at path '{}' could not be created.",
@@ -314,7 +360,7 @@ impl StorageEngine {
         // Check if the extension of the given path is correct.
         if file_path.extension().and_then(OsStr::to_str) == Some("parquet") {
             let file = File::create(file_path).map_err(|_e| error)?;
-            let mut writer = create_apache_arrow_writer(file, batch.schema())?;
+            let mut writer = create_apache_arrow_writer(file, batch.schema(), sorting_columns)?;
             writer.write(&batch)?;
             writer.close()?;
 
@@ -344,6 +390,82 @@ impl StorageEngine {
 
         let record_batch = stream.next().await.ok_or(error)??;
         Ok(record_batch)
+    }
+
+    /// Merge the Apache Parquet files in `input_data_folder`/`input_files` and write them to a
+    /// single Apache Parquet file in `output_data_folder`/`output_folder`. Return an [`ObjectMeta`]
+    /// that represent the merged file if it is written successfully, otherwise [`ParquetError`] is
+    /// returned.
+    pub async fn merge_compressed_apache_parquet_files(
+        input_data_folder: &Arc<dyn ObjectStore>,
+        input_files: &[ObjectMeta],
+        output_data_folder: &Arc<dyn ObjectStore>,
+        output_folder: &str,
+    ) -> Result<ObjectMeta, ParquetError> {
+        // TODO: ensure termination at any place does not duplicate or loss data.
+        // Read input files, for_each is not used so errors can be returned with ?.
+        let mut record_batches = Vec::with_capacity(input_files.len());
+        for input_file in input_files {
+            let reader = ParquetObjectReader::new(input_data_folder.clone(), input_file.clone());
+            let builder = ParquetRecordBatchStreamBuilder::new(reader).await?;
+            let mut stream = builder.with_batch_size(usize::MAX).build()?;
+
+            let record_batch = stream.next().await.ok_or_else(|| {
+                ParquetError::General(format!(
+                    "Apache Parquet file at path '{}' could not be read.",
+                    input_file.location
+                ))
+            })??;
+
+            record_batches.push(record_batch);
+        }
+
+        // Merge the record batches into a single combined record batch.
+        let schema = record_batches[0].schema();
+        let combined = compute::concat_batches(&schema, &record_batches)?;
+
+        // Compute the name of the output file based on data in combined.
+        let file_name = create_time_and_value_range_file_name(&combined);
+        let output_file_path = format!("{output_folder}/{file_name}").into();
+
+        // Specify that the file must be sorted by univariate_id and then by start_time.
+        let sorting_columns = Some(vec![
+            SortingColumn::new(0, false, false),
+            SortingColumn::new(2, false, false),
+        ]);
+
+        // Write the combined record batch to the output location.
+        let mut buf = vec![].writer();
+        let mut apache_arrow_writer =
+            create_apache_arrow_writer(&mut buf, schema, sorting_columns)?;
+        apache_arrow_writer.write(&combined)?;
+        apache_arrow_writer.close()?;
+
+        output_data_folder
+            .put(&output_file_path, Bytes::from(buf.into_inner()))
+            .await
+            .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
+
+        // Delete the input files as the output file has been written.
+        for input_file in input_files {
+            input_data_folder
+                .delete(&input_file.location)
+                .await
+                .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
+        }
+
+        debug!(
+            "Merged {} compressed files into single Apache Parquet file with {} rows.",
+            input_files.len(),
+            combined.num_rows()
+        );
+
+        // Return an ObjectMeta that represent the successfully merged and written file.
+        // unwrap() is safe as the file have just been written successfully to output_file_path.
+        output_data_folder
+            .head(&output_file_path)
+            .await
+            .map_err(|error| ParquetError::General(error.to_string()))
     }
 
     /// Return [`true`] if `file_path` is a readable Apache Parquet file, otherwise [`false`].
@@ -436,6 +558,7 @@ impl Metric {
 pub(self) fn create_apache_arrow_writer<W: Write>(
     writer: W,
     schema: SchemaRef,
+    sorting_columns: Option<Vec<SortingColumn>>,
 ) -> Result<ArrowWriter<W>, ParquetError> {
     let props = WriterProperties::builder()
         .set_encoding(Encoding::PLAIN)
@@ -443,6 +566,7 @@ pub(self) fn create_apache_arrow_writer<W: Write>(
         .set_dictionary_enabled(false)
         .set_statistics_enabled(EnabledStatistics::None)
         .set_bloom_filter_enabled(false)
+        .set_sorting_columns(sorting_columns)
         .build();
 
     let writer = ArrowWriter::try_new(writer, schema, Some(props))?;
@@ -450,8 +574,8 @@ pub(self) fn create_apache_arrow_writer<W: Write>(
 }
 
 /// Create a file name that includes the start timestamp of the first segment in `batch`, the end
-/// timestamp of the last segment in `batch`, the minimum value stored in `batch`, and the maximum
-/// value stored in `batch`.
+/// timestamp of the last segment in `batch`, the minimum value stored in `batch`, the maximum value
+/// stored in `batch`, and an UUID to make it unique across edge and cloud in practice.
 pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> String {
     let start_times = array!(batch, 2, TimestampArray);
     let end_times = array!(batch, 3, TimestampArray);
@@ -466,12 +590,21 @@ pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> Strin
     let min_value = aggregate::min(min_values).unwrap();
     let max_value = aggregate::max(max_values).unwrap();
 
+    // An UUID is added to the file name to ensure it, in practice, is unique across edge and cloud.
+    // A static UUID is set when tests are executed to allow the tests to check that files exists.
+    let uuid = if cfg!(test) {
+        TEST_UUID
+    } else {
+        Uuid::new_v4()
+    };
+
     format!(
-        "{}_{}_{}_{}.parquet",
+        "{}_{}_{}_{}_{}.parquet",
         start_times.value(0),
         end_times.value(end_times.len() - 1),
         min_value,
-        max_value
+        max_value,
+        uuid
     )
 }
 
@@ -493,8 +626,12 @@ mod tests {
         let batch = test_util::compressed_segments_record_batch();
 
         let apache_parquet_path = temp_dir.path().join("test.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(batch, apache_parquet_path.as_path())
-            .unwrap();
+        StorageEngine::write_batch_to_apache_parquet_file(
+            batch,
+            apache_parquet_path.as_path(),
+            None,
+        )
+        .unwrap();
 
         assert!(apache_parquet_path.exists());
     }
@@ -506,8 +643,12 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
         let apache_parquet_path = temp_dir.path().join("empty.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(batch, apache_parquet_path.as_path())
-            .unwrap();
+        StorageEngine::write_batch_to_apache_parquet_file(
+            batch,
+            apache_parquet_path.as_path(),
+            None,
+        )
+        .unwrap();
 
         assert!(apache_parquet_path.exists());
     }
@@ -527,8 +668,11 @@ mod tests {
         let batch = test_util::compressed_segments_record_batch();
 
         let apache_parquet_path = temp_dir.path().join(file_name);
-        let result =
-            StorageEngine::write_batch_to_apache_parquet_file(batch, apache_parquet_path.as_path());
+        let result = StorageEngine::write_batch_to_apache_parquet_file(
+            batch,
+            apache_parquet_path.as_path(),
+            None,
+        );
 
         assert!(result.is_err());
         assert!(!apache_parquet_path.exists());
@@ -589,6 +733,7 @@ mod tests {
         StorageEngine::write_batch_to_apache_parquet_file(
             batch.clone(),
             apache_parquet_path.as_path(),
+            None,
         )
         .unwrap();
 

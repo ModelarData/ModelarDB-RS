@@ -34,7 +34,7 @@ use tracing::{debug, info};
 use crate::errors::ModelarDbError;
 use crate::storage::compressed_data_buffer::CompressedDataBuffer;
 use crate::storage::data_transfer::DataTransfer;
-use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER, Metric};
+use crate::storage::{Metric, StorageEngine, COMPRESSED_DATA_FOLDER};
 use crate::types::{CompressedSchema, Timestamp, Value};
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
@@ -44,11 +44,13 @@ pub(super) struct CompressedDataManager {
     pub(super) data_transfer: Option<DataTransfer>,
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
     local_data_folder: PathBuf,
-    /// The compressed segments before they are saved to persistent storage.
-    compressed_data_buffers: HashMap<String, CompressedDataBuffer>,
-    /// FIFO queue of table names referring to [`CompressedDataBuffer`] that can be saved to
-    /// persistent storage.
-    compressed_queue: VecDeque<String>,
+    /// The compressed segments before they are saved to persistent storage. The key is the name of
+    /// the table and the index of the column the compressed segments represents data points for so
+    /// the Apache Parquet files can be partitioned by table and then column.
+    compressed_data_buffers: HashMap<(String, u16), CompressedDataBuffer>,
+    /// FIFO queue of table names and column indices referring to [`CompressedDataBuffer`] that can
+    /// be saved to persistent storage.
+    compressed_queue: VecDeque<(String, u16)>,
     /// How many bytes of memory that are left for storing compressed segments. A signed integer is
     /// used since compressed data is inserted and then the remaining bytes are checked. This means
     /// that the remaining bytes can briefly be negative until compressed data is saved to disk.
@@ -113,37 +115,41 @@ impl CompressedDataManager {
         let file_name = format!("{}.parquet", since_the_epoch.as_millis());
         let file_path = local_file_path.join(file_name);
 
-        StorageEngine::write_batch_to_apache_parquet_file(record_batch, file_path.as_path())
+        StorageEngine::write_batch_to_apache_parquet_file(record_batch, file_path.as_path(), None)
     }
 
     /// Insert the `compressed_segments` into the in-memory compressed data buffer for the table
-    /// with `table_name`. If `compressed_segments` is saved successfully, return [`Ok`], otherwise
-    /// return [`IOError`].
+    /// with `table_name` and the column at `column_index`. If `compressed_segments` is saved
+    /// successfully, return [`Ok`], otherwise return [`IOError`].
     pub(super) async fn insert_compressed_segments(
         &mut self,
         table_name: &str,
+        column_index: u16,
         compressed_segments: RecordBatch,
     ) -> Result<(), IOError> {
         debug!(
-            "Inserting batch with {} rows into compressed data buffer for table '{}'.",
+            "Inserting batch with {} rows into compressed data buffer for column '{}' in table '{}'.",
             compressed_segments.num_rows(),
+            column_index,
             table_name
         );
 
         // Since the compressed segments are already in memory, insert the segments into the
         // compressed data buffer first and check if the reserved memory limit is exceeded after.
-        let segments_size = if let Some(compressed_data_buffer) =
-            self.compressed_data_buffers.get_mut(table_name)
+        let segments_size = if let Some(compressed_data_buffer) = self
+            .compressed_data_buffers
+            .get_mut(&(table_name.to_owned(), column_index))
         {
             debug!(
-                "Found existing compressed data buffer for table '{}'.",
-                table_name
+                "Found existing compressed data buffer for column '{}' in table '{}'.",
+                column_index, table_name
             );
 
             compressed_data_buffer.append_compressed_segments(compressed_segments)
         } else {
             debug!(
-                "Could not find compressed data buffer for table '{}'. Creating compressed data buffer.",
+                "Could not find compressed data buffer for column '{}' in table '{}'. Creating compressed data buffer.",
+                column_index,
                 table_name
             );
 
@@ -151,16 +157,18 @@ impl CompressedDataManager {
             let segment_size =
                 compressed_data_buffer.append_compressed_segments(compressed_segments);
 
+            let key = (table_name.to_owned(), column_index);
             self.compressed_data_buffers
-                .insert(table_name.to_owned(), compressed_data_buffer);
-            self.compressed_queue.push_back(table_name.to_owned());
+                .insert(key.clone(), compressed_data_buffer);
+            self.compressed_queue.push_back(key);
 
             segment_size
         };
 
         // Update the remaining memory for compressed data and record the change.
         self.compressed_remaining_memory_in_bytes -= segments_size as isize;
-        self.used_compressed_memory_metric.append(segments_size as isize, true);
+        self.used_compressed_memory_metric
+            .append(segments_size as isize, true);
 
         // If the reserved memory limit is exceeded, save compressed data to disk.
         if self.compressed_remaining_memory_in_bytes < 0 {
@@ -171,17 +179,21 @@ impl CompressedDataManager {
     }
 
     /// Return an [`ObjectMeta`] for each compressed file in `query_data_folder` that belongs to the
-    /// table with `table_name` and contains compressed segments within the given range of time and
-    /// value. If some compressed data that belongs to `table_name` is still in memory, save it to
-    /// disk first. If no files belong to the table with `table_name` an empty [`Vec`] is returned,
-    /// while a [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
+    /// column at `column_index` in the table with `table_name` and contains compressed segments
+    /// within the given range of time and value. If some compressed data that belongs to
+    /// `column_index` in `table_name` is still in memory, save it to disk first. If no files belong
+    /// to the column at `column_index` for the table with `table_name` an empty [`Vec`] is
+    /// returned, while a [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
     /// * A table with `table_name` does not exist.
     /// * The compressed files could not be listed.
+    /// * A column with `column_index` does not exist.
     /// * The end time is before the start time.
     /// * The max value is smaller than the min value.
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn save_and_get_saved_compressed_files(
         &mut self,
         table_name: &str,
+        column_index: u16,
         start_time: Option<Timestamp>,
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
@@ -189,17 +201,20 @@ impl CompressedDataManager {
         query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
         // If there is any compressed data in memory, save it first.
-        if self.compressed_data_buffers.contains_key(table_name) {
+        if self
+            .compressed_data_buffers
+            .contains_key(&(table_name.to_owned(), column_index))
+        {
             // Remove the data from the queue of compressed time series that are ready to be saved.
             // unwrap() is safe since `compressed_data` has the same tables as `compressed_queue`.
             let data_index = self
                 .compressed_queue
                 .iter()
-                .position(|x| *x == table_name)
+                .position(|(x, y)| *x == table_name && *y == column_index)
                 .unwrap();
             self.compressed_queue.remove(data_index);
 
-            self.save_compressed_data(table_name)
+            self.save_compressed_data(table_name, column_index)
                 .await
                 .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
         }
@@ -224,14 +239,15 @@ impl CompressedDataManager {
         };
 
         // List all files in query_data_folder for the table named table_name.
-        let table_path =
-            ObjectStorePath::from(format!("{COMPRESSED_DATA_FOLDER}/{table_name}/"));
+        let table_path = ObjectStorePath::from(format!(
+            "{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"
+        ));
         let table_files = query_data_folder
             .list(Some(&table_path))
             .await
             .map_err(|error| {
                 ModelarDbError::DataRetrievalError(format!(
-                    "Compressed data could not be listed for table '{table_name}': {error}"
+                    "Compressed data could not be listed for column '{column_index}' in table '{table_name}': {error}"
                 ))
             })?;
 
@@ -265,8 +281,8 @@ impl CompressedDataManager {
         debug!("Out of memory for compressed data. Saving compressed data to disk.");
 
         while self.compressed_remaining_memory_in_bytes < 0 {
-            let table_name = self.compressed_queue.pop_front().unwrap();
-            self.save_compressed_data(&table_name).await?;
+            let (table_name, column_index) = self.compressed_queue.pop_front().unwrap();
+            self.save_compressed_data(&table_name, column_index).await?;
         }
         Ok(())
     }
@@ -279,24 +295,33 @@ impl CompressedDataManager {
         );
 
         while !self.compressed_queue.is_empty() {
-            let table = self.compressed_queue.pop_front().unwrap();
-            self.save_compressed_data(&table).await?;
+            let (table_name, column_index) = self.compressed_queue.pop_front().unwrap();
+            self.save_compressed_data(&table_name, column_index).await?;
         }
 
         Ok(())
     }
 
-    /// Save the compressed data that belongs to the table with `table_name` to disk. The size of
-    /// the saved compressed data is added back to the remaining reserved memory. If the data is
-    /// saved successfully, return [`Ok`], otherwise return [`IOError`].
-    async fn save_compressed_data(&mut self, table_name: &str) -> Result<(), IOError> {
+    /// Save the compressed data that belongs to the column at `column_index` in the table with
+    /// `table_name` to disk. The size of the saved compressed data is added back to the remaining
+    /// reserved memory. If the data is saved successfully, return [`Ok`], otherwise return
+    /// [`IOError`].
+    async fn save_compressed_data(
+        &mut self,
+        table_name: &str,
+        column_index: u16,
+    ) -> Result<(), IOError> {
         debug!("Saving compressed time series to disk.");
 
-        let mut compressed_data_buffer = self.compressed_data_buffers.remove(table_name).unwrap();
+        let mut compressed_data_buffer = self
+            .compressed_data_buffers
+            .remove(&(table_name.to_owned(), column_index))
+            .unwrap();
         let folder_path = self
             .local_data_folder
             .join(COMPRESSED_DATA_FOLDER)
-            .join(table_name);
+            .join(table_name)
+            .join(column_index.to_string());
 
         let file_path = compressed_data_buffer
             .save_to_apache_parquet(folder_path.as_path(), &self.compressed_schema)?;
@@ -304,11 +329,15 @@ impl CompressedDataManager {
         // Update the remaining memory for compressed data and record the change.
         let freed_memory = compressed_data_buffer.size_in_bytes as isize;
         self.compressed_remaining_memory_in_bytes += freed_memory;
-        self.used_compressed_memory_metric.append(-freed_memory, true);
+        self.used_compressed_memory_metric
+            .append(-freed_memory, true);
 
         // Record the change to the used disk space.
         let file_size = file_path.metadata()?.len() as isize;
-        self.used_disk_space_metric.write().await.append(file_size, true);
+        self.used_disk_space_metric
+            .write()
+            .await
+            .append(file_size, true);
 
         debug!(
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
@@ -320,7 +349,7 @@ impl CompressedDataManager {
         // transfer threshold, the files are transferred to the remote object store.
         if let Some(data_transfer) = &mut self.data_transfer {
             data_transfer
-                .add_compressed_file(table_name, file_path.as_path())
+                .add_compressed_file(table_name, column_index, file_path.as_path())
                 .await
                 .map_err(|error| IOError::new(Other, error.to_string()))?;
         }
@@ -389,7 +418,8 @@ fn is_compressed_file_within_time_and_value_range(
     let file_min_value = split.next().unwrap().parse::<Value>().unwrap();
     let file_max_value = split.next().unwrap().parse::<Value>().unwrap();
     let file_max_greater_than_min = file_max_value.total_cmp(&min_value).is_ge();
-    let file_min_less_than_max = file_min_value.total_cmp(&max_value).is_le();
+    let file_min_less_than_max = file_min_value.total_cmp(&max_value).is_le()
+        || (file_min_value.is_nan() && max_value.is_infinite()); // INFINITY means no upper bound.
 
     // Return true if the file's compressed segments ends at or after the start time, starts at or
     // before the end time, has a maximum value that is larger than or equal to the minimum
@@ -403,6 +433,7 @@ fn is_compressed_file_within_time_and_value_range(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::path::Path;
 
     use datafusion::arrow::compute;
@@ -416,6 +447,7 @@ mod tests {
     use crate::types::{TimestampArray, ValueArray};
 
     const TABLE_NAME: &str = "table";
+    const COLUMN_INDEX: u16 = 5;
 
     // Tests for insert_record_batch().
     #[tokio::test]
@@ -454,23 +486,19 @@ mod tests {
     async fn test_can_insert_compressed_segment_into_new_compressed_data_buffer() {
         let segments = test_util::compressed_segments_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
+        let key = (TABLE_NAME.to_owned(), COLUMN_INDEX);
 
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segments)
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments)
             .await
             .unwrap();
 
-        assert!(data_manager
-            .compressed_data_buffers
-            .contains_key(TABLE_NAME));
-        assert_eq!(
-            data_manager.compressed_queue.pop_front().unwrap(),
-            TABLE_NAME
-        );
+        assert!(data_manager.compressed_data_buffers.contains_key(&key));
+        assert_eq!(data_manager.compressed_queue.pop_front().unwrap(), key);
         assert!(
             data_manager
                 .compressed_data_buffers
-                .get(TABLE_NAME)
+                .get(&key)
                 .unwrap()
                 .size_in_bytes
                 > 0
@@ -481,26 +509,27 @@ mod tests {
     async fn test_can_insert_compressed_segment_into_existing_compressed_data_buffer() {
         let segments = test_util::compressed_segments_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
+        let key = (TABLE_NAME.to_owned(), COLUMN_INDEX);
 
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segments.clone())
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments.clone())
             .await
             .unwrap();
         let previous_size = data_manager
             .compressed_data_buffers
-            .get(TABLE_NAME)
+            .get(&key)
             .unwrap()
             .size_in_bytes;
 
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segments)
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments)
             .await
             .unwrap();
 
         assert!(
             data_manager
                 .compressed_data_buffers
-                .get(TABLE_NAME)
+                .get(&key)
                 .unwrap()
                 .size_in_bytes
                 > previous_size
@@ -517,7 +546,7 @@ mod tests {
         let max_compressed_segments = reserved_memory / test_util::COMPRESSED_SEGMENTS_SIZE;
         for _ in 0..max_compressed_segments + 1 {
             data_manager
-                .insert_compressed_segments(TABLE_NAME, segments.clone())
+                .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments.clone())
                 .await
                 .unwrap();
         }
@@ -536,7 +565,7 @@ mod tests {
         let reserved_memory = data_manager.compressed_remaining_memory_in_bytes;
 
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segments)
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments)
             .await
             .unwrap();
 
@@ -550,7 +579,7 @@ mod tests {
         let (_temp_dir, mut data_manager) = create_compressed_data_manager();
 
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segments.clone())
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments.clone())
             .await
             .unwrap();
 
@@ -563,7 +592,15 @@ mod tests {
 
         assert!(-1 < data_manager.compressed_remaining_memory_in_bytes);
         assert_eq!(data_manager.used_compressed_memory_metric.values.len(), 2);
-        assert_eq!(data_manager.used_disk_space_metric.read().await.values.len(), 1);
+        assert_eq!(
+            data_manager
+                .used_disk_space_metric
+                .read()
+                .await
+                .values
+                .len(),
+            1
+        );
     }
 
     /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
@@ -593,18 +630,26 @@ mod tests {
         // Insert compressed segments into the same table.
         let segment = test_util::compressed_segments_record_batch();
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segment.clone())
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segment.clone())
             .await
             .unwrap();
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segment)
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segment)
             .await
             .unwrap();
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
-            .save_and_get_saved_compressed_files(TABLE_NAME, None, None, None, None, &object_store)
+            .save_and_get_saved_compressed_files(
+                TABLE_NAME,
+                COLUMN_INDEX,
+                None,
+                None,
+                None,
+                None,
+                &object_store,
+            )
             .await;
 
         assert!(result.is_ok());
@@ -619,6 +664,7 @@ mod tests {
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager.save_and_get_saved_compressed_files(
             TABLE_NAME,
+            COLUMN_INDEX,
             None,
             None,
             None,
@@ -643,6 +689,7 @@ mod tests {
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager.save_and_get_saved_compressed_files(
             TABLE_NAME,
+            COLUMN_INDEX,
             start_time,
             None,
             None,
@@ -655,12 +702,7 @@ mod tests {
         // The path to the returned compressed file should contain the table name, the start time,
         // end time, min value, and max value of the second segment.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/2000_2005_15.2_44.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("2000_2005_15.2_44.2"));
     }
 
     #[tokio::test]
@@ -677,6 +719,7 @@ mod tests {
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager.save_and_get_saved_compressed_files(
             TABLE_NAME,
+            COLUMN_INDEX,
             None,
             None,
             min_value,
@@ -689,12 +732,7 @@ mod tests {
         // The path to the returned compressed file should contain the table name, the start time,
         // end time, min value, and max value of the second segment.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/2000_2005_15.2_44.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("2000_2005_15.2_44.2"));
     }
 
     #[tokio::test]
@@ -711,6 +749,7 @@ mod tests {
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager.save_and_get_saved_compressed_files(
             TABLE_NAME,
+            COLUMN_INDEX,
             None,
             end_time,
             None,
@@ -723,12 +762,7 @@ mod tests {
         // The path to the returned compressed file should contain the table name, the start time,
         // end time, min value, and max value of the first segment.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/1000_1005_5.2_34.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("1000_1005_5.2_34.2"));
     }
 
     #[tokio::test]
@@ -745,6 +779,7 @@ mod tests {
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager.save_and_get_saved_compressed_files(
             TABLE_NAME,
+            COLUMN_INDEX,
             None,
             None,
             None,
@@ -757,12 +792,7 @@ mod tests {
         // The path to the returned compressed file should contain the table name, the start time,
         // end time, min value, and max value of the first segment.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/1000_1005_5.2_34.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("1000_1005_5.2_34.2"));
     }
 
     #[tokio::test]
@@ -785,6 +815,7 @@ mod tests {
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager.save_and_get_saved_compressed_files(
             TABLE_NAME,
+            COLUMN_INDEX,
             start_time,
             end_time,
             None,
@@ -801,19 +832,9 @@ mod tests {
         // should contain the table name, the start time, end time, min value, and max value of the
         // segment in each file.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/2000_2005_15.2_44.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("2000_2005_15.2_44.2"));
         let file_path = files.get(1).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/2000_2005_5.2_34.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("2000_2005_5.2_34.2"));
     }
 
     #[tokio::test]
@@ -837,6 +858,7 @@ mod tests {
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager.save_and_get_saved_compressed_files(
             TABLE_NAME,
+            COLUMN_INDEX,
             None,
             None,
             min_value,
@@ -853,19 +875,17 @@ mod tests {
         // should contain the table name, the start time, end time, min value, and max value of the
         // segment in each file.
         let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/2000_2005_105.2_134.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("2000_2005_105.2_134.2"));
         let file_path = files.get(1).unwrap().location.to_string();
-        assert_eq!(
-            file_path,
-            format!(
-                "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/2000_2005_15.2_44.2.parquet"
-            )
-        );
+        assert_eq!(file_path, format_path("2000_2005_15.2_44.2"));
+    }
+
+    /// Return a full path to the file with `file_name`.
+    fn format_path(file_name: &str) -> String {
+        format!(
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/{file_name}_{}.parquet",
+            storage::TEST_UUID
+        )
     }
 
     /// Create and insert two compressed segments with a 1 second time difference offset by
@@ -878,7 +898,7 @@ mod tests {
         let segment_1 =
             test_util::compressed_segments_record_batch_with_time(1000 + start_time, value_offset);
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segment_1.clone())
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segment_1.clone())
             .await
             .unwrap();
         data_manager.flush().await.unwrap();
@@ -888,7 +908,7 @@ mod tests {
             10.0 + value_offset,
         );
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segment_2.clone())
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segment_2.clone())
             .await
             .unwrap();
         data_manager.flush().await.unwrap();
@@ -902,13 +922,14 @@ mod tests {
 
         let segment = test_util::compressed_segments_record_batch();
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segment)
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segment)
             .await
             .unwrap();
 
         let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
         let result = data_manager.save_and_get_saved_compressed_files(
             TABLE_NAME,
+            COLUMN_INDEX,
             Some(10),
             Some(1),
             None,
@@ -929,13 +950,14 @@ mod tests {
 
         let segment = test_util::compressed_segments_record_batch();
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segment)
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segment)
             .await
             .unwrap();
 
         let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
         let result = data_manager.save_and_get_saved_compressed_files(
             TABLE_NAME,
+            COLUMN_INDEX,
             None,
             None,
             Some(10.0),
@@ -956,15 +978,26 @@ mod tests {
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segments.clone())
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments.clone())
             .await
             .unwrap();
-        data_manager.save_compressed_data(TABLE_NAME).await.unwrap();
+        data_manager
+            .save_compressed_data(TABLE_NAME, COLUMN_INDEX)
+            .await
+            .unwrap();
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
-            .save_and_get_saved_compressed_files(TABLE_NAME, None, None, None, None, &object_store)
+            .save_and_get_saved_compressed_files(
+                TABLE_NAME,
+                COLUMN_INDEX,
+                None,
+                None,
+                None,
+                None,
+                &object_store,
+            )
             .await;
         assert!(result.is_ok());
 
@@ -973,7 +1006,8 @@ mod tests {
 
         // The file should have the first start time and the last end time as the file name.
         let file_name = storage::create_time_and_value_range_file_name(&segments);
-        let expected_file_path = format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{file_name}");
+        let expected_file_path =
+            format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/{file_name}");
 
         assert_eq!(
             files.get(0).unwrap().location,
@@ -987,22 +1021,33 @@ mod tests {
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segments)
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments)
             .await
             .unwrap();
-        data_manager.save_compressed_data(TABLE_NAME).await.unwrap();
+        data_manager
+            .save_compressed_data(TABLE_NAME, COLUMN_INDEX)
+            .await
+            .unwrap();
 
         // This second inserted segment should be saved when the compressed files are retrieved.
         let segment_2 = test_util::compressed_segments_record_batch_with_time(2000, 0.0);
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segment_2.clone())
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segment_2.clone())
             .await
             .unwrap();
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
-            .save_and_get_saved_compressed_files(TABLE_NAME, None, None, None, None, &object_store)
+            .save_and_get_saved_compressed_files(
+                TABLE_NAME,
+                COLUMN_INDEX,
+                None,
+                None,
+                None,
+                None,
+                &object_store,
+            )
             .await;
 
         assert!(result.is_ok());
@@ -1015,15 +1060,26 @@ mod tests {
         let (temp_dir, mut data_manager) = create_compressed_data_manager();
 
         data_manager
-            .insert_compressed_segments(TABLE_NAME, segments)
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments)
             .await
             .unwrap();
-        data_manager.save_compressed_data(TABLE_NAME).await.unwrap();
+        data_manager
+            .save_compressed_data(TABLE_NAME, COLUMN_INDEX)
+            .await
+            .unwrap();
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
-            .save_and_get_saved_compressed_files("NO_TABLE", None, None, None, None, &object_store)
+            .save_and_get_saved_compressed_files(
+                "NO_TABLE",
+                COLUMN_INDEX,
+                None,
+                None,
+                None,
+                None,
+                &object_store,
+            )
             .await;
         assert!(result.unwrap().is_empty());
     }

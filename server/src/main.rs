@@ -25,7 +25,7 @@ mod optimizer;
 mod parser;
 mod remote;
 mod storage;
-mod tables;
+mod query;
 mod types;
 
 use std::fs;

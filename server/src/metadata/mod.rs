@@ -19,7 +19,7 @@
 //! of the data for the tables and the model table metadata are stored in Apache Arrow DataFusion's
 //! catalog, while this module stores the system's configuration and a mapping from model table name
 //! and tag values to hashes. These hashes can be combined with the corresponding model table's
-//! field column indexes to uniquely identify each univariate time series stored in the storage
+//! field column indices to uniquely identify each univariate time series stored in the storage
 //! engine by a univariate id.
 
 pub mod model_table_metadata;
@@ -45,8 +45,8 @@ use tracing::{error, info, warn};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::models::ErrorBound;
+use crate::query::ModelTable;
 use crate::storage::COMPRESSED_DATA_FOLDER;
-use crate::tables::ModelTable;
 use crate::types::{
     ArrowTimestamp, ArrowValue, CompressedSchema, MetricSchema, UncompressedSchema, UnivariateId,
 };
@@ -320,17 +320,27 @@ impl MetadataManager {
         }
     }
 
-    /// Return a mapping from tag hash to table names. Returns a [`Error`](rusqlite::Error) if the
+    /// Extract the first 54-bits from `univariate_id` which is a hash computed from tags.
+    pub fn univariate_id_to_tag_hash(univariate_id: u64) -> u64 {
+        univariate_id & 18446744073709550592
+    }
+
+    /// Extract the last 10-bits from `univariate_id` which is the index of the time series column.
+    pub fn univariate_id_to_column_index(univariate_id: u64) -> u16 {
+        (univariate_id & 1023) as u16
+    }
+
+    /// Return a mapping from tag hash to table names. Returns an [`Error`](rusqlite::Error) if the
     /// necessary data cannot be retrieved from the metadata database.
     pub fn mapping_from_hash_to_table_name(&self) -> Result<HashMap<u64, String>> {
         // Open a connection to the database containing the metadata.
         let connection = Connection::open(&self.metadata_database_path)?;
 
-        let mut hash_to_table_name = HashMap::new();
         let mut select_statement =
             connection.prepare("SELECT hash, table_name FROM model_table_hash_table_name")?;
         let mut rows = select_statement.query([])?;
 
+        let mut hash_to_table_name = HashMap::new();
         while let Some(row) = rows.next()? {
             // SQLite use signed integers https://www.sqlite.org/datatype3.html.
             let signed_tag_hash = row.get::<usize, i64>(0)?;
@@ -339,6 +349,46 @@ impl MetadataManager {
         }
 
         Ok(hash_to_table_name)
+    }
+
+    /// Return a mapping from tag hashes to the tags in the columns with the names in
+    /// `tag_column_names` for the time series in the model table with the name `model_table_name`.
+    /// Returns an [`Error`](rusqlite::Error) if the necessary data cannot be retrieved from the
+    /// metadata database.
+    pub fn mapping_from_hash_to_tags(
+        &self,
+        model_table_name: &str,
+        tag_column_names: &Vec<&str>,
+    ) -> Result<HashMap<u64, Vec<String>>> {
+        // Return an empty HashMap if no tag column names are passed to keep the signature simple.
+        if tag_column_names.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        // Open a connection to the database containing the metadata.
+        let connection = Connection::open(&self.metadata_database_path)?;
+
+        let mut select_statement = connection.prepare(&format!(
+            "SELECT hash,{} FROM {model_table_name}_tags",
+            tag_column_names.join(","),
+        ))?;
+        let mut rows = select_statement.query([])?;
+
+        let mut hash_to_tags = HashMap::new();
+        while let Some(row) = rows.next()? {
+            // SQLite use signed integers https://www.sqlite.org/datatype3.html.
+            let signed_tag_hash = row.get::<usize, i64>(0)?;
+            let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
+
+            // Add all of the tags in order so they can be directly appended to each row.
+            let mut tags = Vec::with_capacity(tag_column_names.len());
+            for tag_column_index in 1..=tag_column_names.len() {
+                tags.push(row.get::<usize, String>(tag_column_index)?);
+            }
+            hash_to_tags.insert(tag_hash, tags);
+        }
+
+        Ok(hash_to_tags)
     }
 
     /// Compute the 64-bit univariate ids of the univariate time series to retrieve from the storage
@@ -660,13 +710,13 @@ impl MetadataManager {
         let ipc_message: IpcMessage = schema_as_ipc.try_into().map_err(|error: ArrowError| {
             rusqlite::Error::InvalidColumnType(1, error.to_string(), Blob)
         })?;
-        Ok(ipc_message.0)
+        Ok(ipc_message.0.to_vec())
     }
 
     /// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow
     /// schema, otherwise [`Error`](rusqlite::Error).
     fn convert_blob_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
-        let ipc_message = IpcMessage(schema_bytes);
+        let ipc_message = IpcMessage(schema_bytes.into());
         Schema::try_from(ipc_message).map_err(|error| {
             let message = format!("Blob is not a valid Schema: {error}");
             rusqlite::Error::InvalidColumnType(1, message, Blob)
@@ -737,7 +787,6 @@ mod tests {
     use std::fs;
 
     use proptest::{collection, num, prop_assert_eq, proptest};
-    
 
     use crate::metadata::test_util;
 
@@ -891,6 +940,27 @@ mod tests {
 
         assert!(result.is_ok());
         assert_eq!(metadata_manager.tag_value_hashes.keys().len(), 1);
+    }
+
+    proptest! {
+        #[test]
+        fn test_univariate_id_to_tag_hash_and_column_index(
+            tag_hash in num::u64::ANY,
+            column_index in num::u16::ANY,
+        ) {
+            // Combine tag hash and column index into a univariate id.
+            let tag_hash = tag_hash << 10; // 54-bits is used for the tag hash.
+            let column_index = column_index % 1024; // 10-bits is used for the column index.
+            let univariate_id = tag_hash | column_index as u64;
+
+            // Split the univariate_id into the tag hash and column index.
+            let computed_tag_hash = MetadataManager::univariate_id_to_tag_hash(univariate_id);
+            let computed_column_index = MetadataManager::univariate_id_to_column_index(univariate_id);
+
+            // Original and split should match.
+            prop_assert_eq!(tag_hash, computed_tag_hash);
+            prop_assert_eq!(column_index, computed_column_index);
+        }
     }
 
     #[test]
