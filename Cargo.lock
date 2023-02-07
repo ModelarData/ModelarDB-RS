@@ -1750,7 +1750,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "modelardb"
+name = "modelardb_client"
 version = "0.1.0"
 dependencies = [
  "arrow",
@@ -1763,7 +1763,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "modelardbd"
+name = "modelardb_common"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "once_cell",
+]
+
+[[package]]
+name = "modelardb_compression"
+version = "0.1.0"
+dependencies = [
+ "arrow",
+ "modelardb_common",
+ "proptest",
+ "rand",
+]
+
+[[package]]
+name = "modelardb_server"
 version = "0.1.0"
 dependencies = [
  "arrow-flight",
@@ -1772,10 +1790,11 @@ dependencies = [
  "datafusion",
  "futures",
  "log",
+ "modelardb_common",
+ "modelardb_compression",
  "object_store",
  "parquet",
  "proptest",
- "rand",
  "ringbuf",
  "rusqlite",
  "serial_test",
@@ -2286,9 +2305,9 @@ dependencies = [
 
 [[package]]
 name = "rayon-core"
-version = "1.10.1"
+version = "1.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cac410af5d00ab6884528b4ab69d1e8e146e8d471201800fa1b4524126de6ad3"
+checksum = "356a0625f1954f730c0201cdab48611198dc6ce21f4acff55089b5a78e6e835b"
 dependencies = [
  "crossbeam-channel",
  "crossbeam-deque",

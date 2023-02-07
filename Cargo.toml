@@ -1,8 +1,5 @@
 [workspace]
-members = [
-  "server",
-  "client"
-]
+members = ["crates/*"]
 
 [profile.release]
 lto = true
