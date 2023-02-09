@@ -1,0 +1,16 @@
+[package]
+name = "modelardb_compression_python"
+version = "0.1.0"
+license = "Apache-2.0"
+edition = "2021"
+authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
+
+[lib]
+name = "modelardb_compression_python"
+crate-type = ["cdylib"]
+
+[dependencies]
+arrow = { version = "31.0.0", features = ["ffi"] }
+modelardb_common = { path = "../modelardb_common" }
+modelardb_compression = { path = "../modelardb_compression" }
+pyo3 = { version = "0.17.3", features = ["extension-module"] }
