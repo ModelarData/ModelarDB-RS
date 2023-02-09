@@ -9,9 +9,9 @@ and
 
 ## Installation
 1. Install the [dependencies](https://github.com/ModelarData/ModelarDB-RS#installation) required to build ModelarDB's compression library.
-2. Install [maturin](https://github.com/PyO3/maturin): `pip3 install maturin`
-3. Build a wheel with the compression library and Python interface: `maturin build --release`
-4. Install the resulting wheel: `pip3 install ../../target/wheels/*.whl`
+2. Install and test the Python module using Python:
+   * Install: `python3 -m pip install .`
+   * Run Tests: `python3 -m unittest`
 
 ## Example
 ```python
