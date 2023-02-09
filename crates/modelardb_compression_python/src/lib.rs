@@ -151,3 +151,46 @@ fn fields_has_equal_types(schema_one: &Schema, schema_two: &Schema) -> bool {
         .zip(schema_two.fields())
         .all(|(field_one, field_two)| field_one.data_type() == field_two.data_type())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
+
+    use modelardb_common::types::{ArrowTimestamp, ArrowValue};
+
+    // Tests for fields_has_equal_types().
+    #[test]
+    fn test_empty_fields_has_equal_types() {
+        assert!(fields_has_equal_types(&Schema::empty(), &Schema::empty()))
+    }
+
+    #[test]
+    fn test_same_fields_has_equal_types() {
+        assert!(fields_has_equal_types(
+            &UNCOMPRESSED_SCHEMA.0.clone(),
+            &UNCOMPRESSED_SCHEMA.0.clone()
+        ))
+    }
+
+    #[test]
+    fn test_different_fields_has_equal_types() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("measured_at", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("wind_speed", ArrowValue::DATA_TYPE, false),
+        ]));
+
+        assert!(fields_has_equal_types(&schema, &UNCOMPRESSED_SCHEMA.0))
+    }
+
+    #[test]
+    fn test_different_fields_has_different_types() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("wind_direction", ArrowValue::DATA_TYPE, false),
+            Field::new("wind_speed", ArrowValue::DATA_TYPE, false),
+        ]));
+
+        assert!(!fields_has_equal_types(&schema, &UNCOMPRESSED_SCHEMA.0))
+    }
+}
