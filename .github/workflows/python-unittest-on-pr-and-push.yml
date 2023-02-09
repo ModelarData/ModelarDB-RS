@@ -17,6 +17,8 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
+    - name: Update pip
+      run: python3 -m pip install pip --force-reinstall
     - name: Install modelardb_compression_python
       run: python3 -m pip install .
       working-directory: crates/modelardb_compression_python
