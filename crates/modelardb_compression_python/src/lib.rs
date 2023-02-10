@@ -81,8 +81,8 @@ fn compress<'a>(
     convert::rust_record_batch_to_python(compressed, python)
 }
 
-/// Decompress a [`RecordBatch`] containing compressed segments to one more univariate time series.
-/// An [`ArrowException`] is returned if the schema of `compressed` does not match
+/// Decompress a [`RecordBatch`] containing compressed segments to one or more univariate time
+/// series. An [`ArrowException`] is returned if the schema of `compressed` does not match
 /// [`COMPRESSED_SCHEMA`] or if [`pyo3`] cannot convert the argument from Python to Rust and the
 /// result from Rust to Python.
 #[pyfunction]
@@ -91,7 +91,7 @@ fn decompress<'a>(compressed: &'a PyAny, python: Python<'a>) -> PyResult<&'a PyA
     let compressed = convert::python_record_batch_to_rust(compressed)?;
     if !fields_has_equal_types(&compressed.schema(), &COMPRESSED_SCHEMA.0) {
         let error = ArrowError::InvalidArgumentError(
-            "Compressed must only contain compressed segments with metadata and models.".to_owned(),
+            "Compressed can only contain compressed segments with metadata and models.".to_owned(),
         );
         return Err(convert::to_py_err(error));
     }
@@ -137,7 +137,7 @@ fn decompress<'a>(compressed: &'a PyAny, python: Python<'a>) -> PyResult<&'a PyA
         Arc::new(value_builder.finish()),
     ];
 
-    // unwrap() is safe as the arrays have the same length and the record batch match the schema.
+    // unwrap() is safe as the arrays have the same length and the record batch matches the schema.
     let decompressed = RecordBatch::try_new(QUERY_SCHEMA.0.clone(), columns).unwrap();
     convert::rust_record_batch_to_python(decompressed, python)
 }
@@ -157,7 +157,6 @@ mod tests {
     use super::*;
 
     use arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
-
     use modelardb_common::types::{ArrowTimestamp, ArrowValue};
 
     // Tests for fields_has_equal_types().

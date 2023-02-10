@@ -17,10 +17,6 @@ class ModelarDBCompressionPythonTest(unittest.TestCase):
         compressed = compress(self.__get_time_series(), 0.0, 1)
         self.assertEqual(1, compressed.column(0)[0].as_py())
 
-    def test_compress_with_univariate_id(self):
-        compressed = compress(self.__get_time_series(), 0.0, 1)
-        self.assertEqual(1, compressed.column(0)[0].as_py())
-
     def test_compress_decompress_lossless(self):
         time_series = self.__get_time_series()
         compressed = compress(time_series, 0.0, 1)

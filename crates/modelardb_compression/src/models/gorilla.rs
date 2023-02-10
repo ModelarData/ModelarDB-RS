@@ -222,10 +222,9 @@ mod tests {
     use super::*;
 
     use arrow::compute::kernels::aggregate;
-    use proptest::{bool, collection, prop_assert, prop_assert_eq, prop_assume, proptest};
-
     use modelardb_common::types::ValueArray;
     use proptest::num::f32 as ProptestValue;
+    use proptest::{bool, collection, prop_assert, prop_assert_eq, prop_assume, proptest};
 
     use crate::models;
 
