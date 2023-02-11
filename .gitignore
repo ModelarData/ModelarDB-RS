@@ -1,5 +1,6 @@
 target
 __pycache__
+*.pyc
 proptest-regressions
 .idea
 *.log

@@ -1,4 +1,4 @@
-/* Copyr ight 2023 The ModelarDB Contributors
+/* Copyright 2023 The ModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,7 +40,7 @@ fn modelardb_compression_python(_python: Python<'_>, py_module: &PyModule) -> Py
     Ok(())
 }
 
-/// Compress a [`RecordBatch`] containing an univariate time series within `error_bound`. An
+/// Compress a [`RecordBatch`] containing an univariate time series within `error_bound`. A
 /// `univariate_id` can optionally be set to specify which univariate time series the compressed
 /// segments was produced from, if none is set zero is used. An [`ArrowException`] is returned if
 /// the schema of `uncompressed` does not match [`UNCOMPRESSED_SCHEMA`] or if [`pyo3`] cannot
