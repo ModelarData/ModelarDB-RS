@@ -1804,6 +1804,7 @@ dependencies = [
  "modelardb_common",
  "modelardb_compression",
  "pyo3",
+ "pyo3-build-config 0.18.1",
 ]
 
 [[package]]
@@ -2250,7 +2251,7 @@ dependencies = [
  "libc",
  "memoffset 0.6.5",
  "parking_lot",
- "pyo3-build-config",
+ "pyo3-build-config 0.17.3",
  "pyo3-ffi",
  "pyo3-macros",
  "unindent",
@@ -2267,13 +2268,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "pyo3-build-config"
+version = "0.18.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "75439f995d07ddfad42b192dfcf3bc66a7ecfd8b4a1f5f6f046aa5c2c5d7677d"
+dependencies = [
+ "once_cell",
+ "target-lexicon",
+]
+
+[[package]]
 name = "pyo3-ffi"
 version = "0.17.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0f6cb136e222e49115b3c51c32792886defbfb0adead26a688142b346a0b9ffc"
 dependencies = [
  "libc",
- "pyo3-build-config",
+ "pyo3-build-config 0.17.3",
 ]
 
 [[package]]
