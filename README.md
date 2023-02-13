@@ -64,11 +64,11 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 ## Structure
 The ModelarDB project consists of the following crates:
 
-* [modelardb_client](https://github.com/ModelarData/ModelarDB-RS/tree/dev/split-into-crates/crates/modelardb_client) - ModelarDB's command-line client in the form of the binary `modelardb`.
-* [modelardb_common](https://github.com/ModelarData/ModelarDB-RS/tree/dev/split-into-crates/crates/modelardb_common) - Library providing shared functions, macros, and types for use by the other crates.
-* [modelardb_compression](https://github.com/ModelarData/ModelarDB-RS/tree/dev/split-into-crates/crates/modelardb_compression) - Library providing lossless and lossy model-based compression of time series.
-* [modelardb_compression_python](https://github.com/ModelarData/ModelarDB-RS/tree/dev/split-into-crates/crates/modelardb_compression_python) - Python interface for the modelardb_compression crate.
-* [modelardb_server](https://github.com/ModelarData/ModelarDB-RS/tree/dev/split-into-crates/crates/modelardb_server) - The ModelarDB server in the form of the binary `modelardbd`.
+* [modelardb_client](https://github.com/ModelarData/ModelarDB-RS/tree/master/crates/modelardb_client) - ModelarDB's command-line client in the form of the binary `modelardb`.
+* [modelardb_common](https://github.com/ModelarData/ModelarDB-RS/tree/master/crates/modelardb_common) - Library providing shared functions, macros, and types for use by the other crates.
+* [modelardb_compression](https://github.com/ModelarData/ModelarDB-RS/tree/master/crates/modelardb_compression) - Library providing lossless and lossy model-based compression of time series.
+* [modelardb_compression_python](https://github.com/ModelarData/ModelarDB-RS/tree/master/crates/modelardb_compression_python) - Python interface for the modelardb_compression crate.
+* [modelardb_server](https://github.com/ModelarData/ModelarDB-RS/tree/master/crates/modelardb_server) - The ModelarDB server in the form of the binary `modelardbd`.
 
 ## Development
 All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md)
