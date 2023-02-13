@@ -1,0 +1,30 @@
+[project]
+name = "modelardb_compression_python"
+description = "Python interface for MolelarDB's compression library"
+version = "0.1.0"
+license = { text="Apache-2.0" }
+authors = [
+  { name="Soeren Kejser Jensen",  email="devel@kejserjensen.dk" }
+]
+requires-python = ">=3.7"
+dependencies = [
+    "pyarrow"
+]
+readme = "README.md"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Other Audience",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Topic :: Scientific/Engineering",
+    "Topic :: System :: Archiving :: Compression",
+]
+
+[build-system]
+requires = ["maturin"]
+build-backend = "maturin"

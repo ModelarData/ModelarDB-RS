@@ -61,6 +61,15 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
    * Run Client: `cargo run --bin modelardb [server_address] [query_file]`
 5. Move `modelardbd` and `modelardb` from the `target` directory to any directory.
 
+## Structure
+The ModelarDB project consists of the following crates:
+
+* [modelardb_client](https://github.com/ModelarData/ModelarDB-RS/tree/dev/split-into-crates/crates/modelardb_client) - ModelarDB's command-line client in the form of the binary `modelardb`.
+* [modelardb_common](https://github.com/ModelarData/ModelarDB-RS/tree/dev/split-into-crates/crates/modelardb_common) - Library providing shared functions, macros, and types for use by the other crates.
+* [modelardb_compression](https://github.com/ModelarData/ModelarDB-RS/tree/dev/split-into-crates/crates/modelardb_compression) - Library providing lossless and lossy model-based compression of time series.
+* [modelardb_compression_python](https://github.com/ModelarData/ModelarDB-RS/tree/dev/split-into-crates/crates/modelardb_compression_python) - Python interface for the modelardb_compression crate.
+* [modelardb_server](https://github.com/ModelarData/ModelarDB-RS/tree/dev/split-into-crates/crates/modelardb_server) - The ModelarDB server in the form of the binary `modelardbd`.
+
 ## Development
 All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md)
 using [rustfmt](https://github.com/rust-lang/rustfmt). Subjects not covered in the style guide, or requirements specific to this repository, are covered here.
@@ -72,17 +81,25 @@ the doc comment can also include a description of each parameter, the return val
 All modules must have an accompanying doc comment that describes the general functionality of the module. A brief description
 of the public functions, structs, enums, or other central elements of the module can be included.
 
-### Testing
-All public and private functions must be covered by unit tests. Full coverage is required, which means all
-branches of computation within the function needs to be tested.
+### Testing and Linting
+All public and private functions must be appropriately covered by unit tests. Full coverage is intended, which means all
+branches of computation within each function should be thoroughly tested.
+
+In addition, the following commands must not return any warnings or errors for the code currently in master: [cargo build --all-targets](https://doc.rust-lang.org/cargo/commands/cargo-build.html), [cargo clippy --all-targets](https://github.com/rust-lang/rust-clippy), [cargo doc](https://doc.rust-lang.org/cargo/commands/cargo-doc.html), [cargo machete --with-metadata](https://github.com/bnjbvr/cargo-machete), and [cargo test --all-targets](https://doc.rust-lang.org/cargo/commands/cargo-test.html).
 
 ### Crates
-To avoid confusion and unnecessary dependencies, a list of utility crates are included. Note that this only includes crates
+To avoid confusion and unnecessary dependencies, a list of crates are included. Note that this only includes crates
 used for purposes such as logging, where multiple crates provide similar functionality.
 
 - Logging - [tracing](https://crates.io/crates/tracing)
 - Async Runtime - [tokio](https://crates.io/crates/tokio)
+- gRPC - [tonic](https://crates.io/crates/tonic)
+- UUID - [uuid](https://crates.io/crates/uuid)
+- SQLite - [rusqlite](https://crates.io/crates/rusqlite)
+- Memory Allocation - [snmalloc-rs](https://crates.io/crates/snmalloc-rs)
+- Hardware Information - [sysinfo](https://crates.io/crates/sysinfo)
 - Property-based Testing - [proptest](https://crates.io/crates/proptest)
+- Temporary Files and Directories - [tempfile](https://crates.io/crates/tempfile)
 
 ## Contributions
 Contributions to all aspects of ModelarDB are highly appreciated and do not need
