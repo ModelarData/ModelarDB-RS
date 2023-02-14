@@ -376,19 +376,19 @@ impl StorageEngine {
     pub async fn read_batch_from_apache_parquet_file(
         file_path: &Path,
     ) -> Result<RecordBatch, ParquetError> {
-        let error = ParquetError::General(format!(
-            "Apache Parquet file at path '{}' could not be read.",
-            file_path.display()
-        ));
-
         // Create a stream that can be used to read an Apache Parquet file.
         let file = TokioFile::open(file_path)
             .await
-            .map_err(|_e| error.clone())?;
+            .map_err(|error| ParquetError::General(error.to_string()))?;
         let builder = ParquetRecordBatchStreamBuilder::new(file).await?;
         let mut stream = builder.with_batch_size(usize::MAX).build()?;
 
-        let record_batch = stream.next().await.ok_or(error)??;
+        let record_batch = stream.next().await.ok_or_else(|| {
+            ParquetError::General(format!(
+                "Apache Parquet file at path '{}' could not be read.",
+                file_path.display()
+            ))
+        })??;
         Ok(record_batch)
     }
 
