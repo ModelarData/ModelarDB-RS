@@ -30,7 +30,6 @@ use datafusion::arrow::array::{
 };
 use datafusion::arrow::compute::filter_record_batch;
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::cast::as_boolean_array;
 use datafusion::error::{DataFusionError, Result};
@@ -324,8 +323,8 @@ impl GridStream {
 }
 
 impl Stream for GridStream {
-    /// Specify that [`GridStream`] returns [`ArrowResult<RecordBatch>`] when polled.
-    type Item = ArrowResult<RecordBatch>;
+    /// Specify that [`GridStream`] returns [`Result<RecordBatch>`] when polled.
+    type Item = Result<RecordBatch>;
 
     /// Try to poll the next batch of data points from the [`GridStream`] and returns:
     /// * `Poll::Pending` if the next batch is not yet ready.

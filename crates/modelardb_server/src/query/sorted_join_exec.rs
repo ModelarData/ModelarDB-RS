@@ -30,7 +30,6 @@ use std::task::{Context as StdTaskContext, Poll};
 
 use datafusion::arrow::array::{ArrayRef, StringBuilder, UInt64Array};
 use datafusion::arrow::datatypes::SchemaRef;
-use datafusion::arrow::error::Result as ArrowResult;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
@@ -220,7 +219,7 @@ impl SortedJoinStream {
     fn poll_all_pending_inputs(
         &mut self,
         cx: &mut StdTaskContext<'_>,
-    ) -> Option<Poll<Option<ArrowResult<RecordBatch>>>> {
+    ) -> Option<Poll<Option<Result<RecordBatch>>>> {
         let mut reason_for_not_ok = None;
         for index in 0..self.batches.len() {
             if self.batches[index].is_none() {
@@ -238,7 +237,7 @@ impl SortedJoinStream {
     /// Create a [`RecordBatch`] containing the requested timestamp, field, and tag columns, delete
     /// the [`RecordBatches`](RecordBatch) read from the inputs, and return the [`RecordBatch`]
     /// containing the requested timestamp, field, and tag columns.
-    fn sorted_join(&self) -> Poll<Option<ArrowResult<RecordBatch>>> {
+    fn sorted_join(&self) -> Poll<Option<Result<RecordBatch>>> {
         let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.schema.fields.len());
 
         // Compute the requested tag columns so they can be assigned to the batch by index.
@@ -296,8 +295,8 @@ impl SortedJoinStream {
 }
 
 impl Stream for SortedJoinStream {
-    /// Specify that [`SortedJoinStream`] returns [`ArrowResult<RecordBatch>`] when polled.
-    type Item = ArrowResult<RecordBatch>;
+    /// Specify that [`SortedJoinStream`] returns [`Result<RecordBatch>`] when polled.
+    type Item = Result<RecordBatch>;
 
     /// Try to poll the next batch of data points from the [`SortedJoinStream`] and returns:
     /// * `Poll::Pending` if the next batch is not yet ready.
