@@ -404,16 +404,21 @@ mod tests {
     /// This test ensures that the model with the fewest amount of bytes is selected.
     #[test]
     fn test_model_with_fewest_bytes_is_selected() {
-        let values: Vec<f32> =
-            compression_test_util::generate_values(25, StructureOfValues::Constant, None, None)
-                .into_iter()
-                .chain(compression_test_util::generate_values(
-                    25,
-                    StructureOfValues::Random,
-                    Some(0.0),
-                    Some(100.0),
-                ))
-                .collect();
+        let timestamps = (0..25).collect::<Vec<i64>>();
+        let values: Vec<f32> = compression_test_util::generate_values(
+            &timestamps,
+            StructureOfValues::Constant,
+            None,
+            None,
+        )
+        .into_iter()
+        .chain(compression_test_util::generate_values(
+            &timestamps,
+            StructureOfValues::Random,
+            Some(0.0),
+            Some(100.0),
+        ))
+        .collect();
         let timestamps = TimestampArray::from_iter_values(
             compression_test_util::generate_timestamps(values.len(), false),
         );
