@@ -420,12 +420,13 @@ impl StorageEngine {
             record_batches.push(record_batch);
         }
 
-        // Merge the record batches into a single combined record batch.
+        // Merge the record batches into a single combined and merged record batch.
         let schema = record_batches[0].schema();
         let combined = compute::concat_batches(&schema, &record_batches)?;
+        let merged = modelardb_compression::merge_segments(combined);
 
-        // Compute the name of the output file based on data in combined.
-        let file_name = create_time_and_value_range_file_name(&combined);
+        // Compute the name of the output file based on data in merged.
+        let file_name = create_time_and_value_range_file_name(&merged);
         let output_file_path = format!("{output_folder}/{file_name}").into();
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
@@ -434,11 +435,11 @@ impl StorageEngine {
             SortingColumn::new(2, false, false),
         ]);
 
-        // Write the combined record batch to the output location.
+        // Write the combined and merged record batch to the output location.
         let mut buf = vec![].writer();
         let mut apache_arrow_writer =
             create_apache_arrow_writer(&mut buf, schema, sorting_columns)?;
-        apache_arrow_writer.write(&combined)?;
+        apache_arrow_writer.write(&merged)?;
         apache_arrow_writer.close()?;
 
         output_data_folder
@@ -457,7 +458,7 @@ impl StorageEngine {
         debug!(
             "Merged {} compressed files into single Apache Parquet file with {} rows.",
             input_files.len(),
-            combined.num_rows()
+            merged.num_rows()
         );
 
         // Return an ObjectMeta that represent the successfully merged and written file.
@@ -577,18 +578,16 @@ pub(self) fn create_apache_arrow_writer<W: Write>(
 /// timestamp of the last segment in `batch`, the minimum value stored in `batch`, the maximum value
 /// stored in `batch`, and an UUID to make it unique across edge and cloud in practice.
 pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> String {
-    let start_times = modelardb_common::array!(batch, 2, TimestampArray);
-    let end_times = modelardb_common::array!(batch, 3, TimestampArray);
-
-    let min_values = modelardb_common::array!(batch, 5, ValueArray);
-    let max_values = modelardb_common::array!(batch, 6, ValueArray);
+    // unwrap() is safe as None is only returned if all of the values are None.
+    let start_time = aggregate::min(modelardb_common::array!(batch, 2, TimestampArray)).unwrap();
+    let end_time = aggregate::max(modelardb_common::array!(batch, 3, TimestampArray)).unwrap();
 
     // unwrap() is safe as None is only returned if all of the values are None.
     // Both aggregate::min() and aggregate::max() consider NaN to be greater than other non-null
     // values. So since min_values and max_values cannot contain null, min_value will be NaN if all
     // values in min_values are NaN while max_value will be NaN if any value in max_values is NaN.
-    let min_value = aggregate::min(min_values).unwrap();
-    let max_value = aggregate::max(max_values).unwrap();
+    let min_value = aggregate::min(modelardb_common::array!(batch, 5, ValueArray)).unwrap();
+    let max_value = aggregate::max(modelardb_common::array!(batch, 6, ValueArray)).unwrap();
 
     // An UUID is added to the file name to ensure it, in practice, is unique across edge and cloud.
     // A static UUID is set when tests are executed to allow the tests to check that files exists.
@@ -600,11 +599,7 @@ pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> Strin
 
     format!(
         "{}_{}_{}_{}_{}.parquet",
-        start_times.value(0),
-        end_times.value(end_times.len() - 1),
-        min_value,
-        max_value,
-        uuid
+        start_time, end_time, min_value, max_value, uuid
     )
 }
 
@@ -836,7 +831,7 @@ pub mod test_util {
     use modelardb_common::schemas::COMPRESSED_SCHEMA;
     use modelardb_common::types::{TimestampArray, ValueArray};
 
-    pub const COMPRESSED_SEGMENTS_SIZE: usize = 2424;
+    pub const COMPRESSED_SEGMENTS_SIZE: usize = 2360;
 
     /// Return a [`RecordBatch`] containing three compressed segments.
     pub fn compressed_segments_record_batch() -> RecordBatch {
@@ -856,7 +851,7 @@ pub mod test_util {
         let model_type_id = UInt8Array::from(vec![2, 3, 3]);
         let start_time = TimestampArray::from(start_times);
         let end_time = TimestampArray::from(end_times);
-        let timestamps = BinaryArray::from_vec(vec![b"000", b"001", b"010"]);
+        let timestamps = BinaryArray::from_vec(vec![b"", b"", b""]);
         let min_value = ValueArray::from(min_values);
         let max_value = ValueArray::from(max_values);
         let values = BinaryArray::from_vec(vec![b"1111", b"1000", b"0000"]);
