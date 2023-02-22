@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Integration tests for modelardb_server.
+//! Integration tests for modelardb_server's Apache Arrow Flight endpoints.
 
 use std::collections::HashMap;
 use std::env::{self, consts};

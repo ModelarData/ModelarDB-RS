@@ -847,7 +847,6 @@ pub mod test_util {
                     .map(|timestamp| (a * timestamp + b) as f32)
                     .collect()
             }
-
             // Generates randomized data.
             StructureOfValues::Random => {
                 let mut random = vec![];
@@ -859,7 +858,6 @@ pub mod test_util {
 
                 random
             }
-
             // Generates constant data.
             StructureOfValues::Constant => {
                 vec![thread_rng().gen(); timestamps.len()]

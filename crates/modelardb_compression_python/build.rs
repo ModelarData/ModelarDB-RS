@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Add the necessary
+//! Add the necessary linker arguments for each platform.
 
 fn main() {
     pyo3_build_config::add_extension_module_link_args();
