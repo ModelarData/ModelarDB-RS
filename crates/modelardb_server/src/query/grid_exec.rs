@@ -319,6 +319,9 @@ impl GridStream {
         } else {
             current_batch
         };
+
+        // As a new batch have been created the offset into this batch must be set to zero.
+        self.current_batch_offset = 0;
     }
 }
 
