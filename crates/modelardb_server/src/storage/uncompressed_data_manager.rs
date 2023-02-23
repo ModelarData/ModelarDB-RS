@@ -24,10 +24,7 @@ use std::sync::Arc;
 
 use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
-use modelardb_common::types::{
-    CompressedSchema, Timestamp, TimestampArray, UncompressedSchema, Value, ValueArray,
-};
-use modelardb_compression::models::ErrorBound;
+use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
 use tokio::sync::RwLock;
 use tracing::debug;
 
@@ -53,10 +50,10 @@ pub(super) struct UncompressedDataManager {
     /// How many bytes of memory that are left for storing
     /// [`UncompressedDataBuffers`](UncompressedDataBuffer).
     uncompressed_remaining_memory_in_bytes: usize,
-    /// Reference to the schema for uncompressed data buffers.
-    uncompressed_schema: UncompressedSchema,
-    /// Reference to the schema for compressed data buffers.
-    compressed_schema: CompressedSchema,
+    // TODO: is it better to use MetadataManager from context to share caches with tables.rs and
+    // storage/mod.rs or a separate MetadataManager to not require taking a lock?
+    /// Manager that contains and controls all metadata for both uncompressed and compressed data.
+    metadata_manager: MetadataManager,
     // TODO: This is a temporary field used to fix existing tests. Remove when configuration component is changed.
     /// If this is true, compress finished buffers directly instead of queueing them.
     compress_directly: bool,
@@ -75,9 +72,8 @@ impl UncompressedDataManager {
     /// [`IOError`] is returned.
     pub(super) async fn try_new(
         local_data_folder: PathBuf,
+        metadata_manager: MetadataManager,
         uncompressed_reserved_memory_in_bytes: usize,
-        uncompressed_schema: UncompressedSchema,
-        compressed_schema: CompressedSchema,
         compress_directly: bool,
         used_disk_space_metric: Arc<RwLock<Metric>>,
     ) -> Result<Self, IOError> {
@@ -117,11 +113,10 @@ impl UncompressedDataManager {
 
         Ok(Self {
             local_data_folder,
+            metadata_manager,
             active_uncompressed_data_buffers: HashMap::new(),
             finished_uncompressed_data_buffers: finished_data_buffers,
             uncompressed_remaining_memory_in_bytes: uncompressed_reserved_memory_in_bytes,
-            uncompressed_schema,
-            compressed_schema,
             compress_directly,
             used_uncompressed_memory_metric: Metric::new(),
             ingested_data_points_metric: Metric::new(),
@@ -217,6 +212,7 @@ impl UncompressedDataManager {
                 if let Some(buffer) = self
                     .insert_data_point(univariate_id, timestamp.unwrap(), value)
                     .await
+                    .map_err(|error| error.to_string())?
                 {
                     compressed_buffers.push((univariate_id, buffer));
                 };
@@ -228,8 +224,9 @@ impl UncompressedDataManager {
 
     // TODO: Update to handle finished buffers when compress_finished_buffer is removed.
     /// Compress the uncompressed data buffer that the [`UncompressedDataManager`] is currently
-    /// managing, and return the compressed buffers and their univariate ids.
-    pub(super) async fn flush(&mut self) -> Vec<(u64, RecordBatch)> {
+    /// managing, and return the compressed buffers and their univariate ids. Returns [`IOError`] if
+    /// the error bound cannot be retrieved from the [`MetadataManager`].
+    pub(super) async fn flush(&mut self) -> Result<Vec<(u64, RecordBatch)>, IOError> {
         // The univariate ids are copied to not have multiple borrows to self at the same time.
         let univariate_ids: Vec<u64> = self
             .active_uncompressed_data_buffers
@@ -243,21 +240,22 @@ impl UncompressedDataManager {
                 .active_uncompressed_data_buffers
                 .remove(&univariate_id)
                 .unwrap();
-            let record_batch = self.compress_finished_buffer(univariate_id, buffer).await;
+            let record_batch = self.compress_finished_buffer(univariate_id, buffer).await?;
             compressed_buffers.push((univariate_id, record_batch));
         }
-        compressed_buffers
+        Ok(compressed_buffers)
     }
 
     // TODO: When the compression component is changed, this function should return Ok or Err.
     /// Insert a single data point into its in-memory buffer. Return a compressed data buffer if the
-    /// inserted data point made the buffer full and thus finished, otherwise return [`None`].
+    /// inserted data point made the buffer full and thus finished, otherwise return [`Ok<None>`].
+    /// Returns [`IOError`] if the error bound cannot be retrieved from the [`MetadataManager`].
     async fn insert_data_point(
         &mut self,
         univariate_id: u64,
         timestamp: Timestamp,
         value: Value,
-    ) -> Option<RecordBatch> {
+    ) -> Result<Option<RecordBatch>, IOError> {
         debug!(
             "Inserting data point ({}, {}) into uncompressed data buffer for {}.",
             timestamp, value, univariate_id
@@ -286,10 +284,10 @@ impl UncompressedDataManager {
                 //       changed to queue the buffer and let the compression component retrieve the
                 //       finished buffer and insert it back when compressed.
                 if self.compress_directly {
-                    return Some(
+                    return Ok(Some(
                         self.compress_finished_buffer(univariate_id, finished_buffer)
-                            .await,
-                    );
+                            .await?,
+                    ));
                 } else {
                     self.finished_uncompressed_data_buffers
                         .push_back(Box::new(finished_buffer));
@@ -326,7 +324,7 @@ impl UncompressedDataManager {
                 .insert(univariate_id, buffer);
         }
 
-        None
+        Ok(None)
     }
 
     /// Remove the oldest finished [`UncompressedDataBuffer`] from the queue and return it. Returns
@@ -354,26 +352,26 @@ impl UncompressedDataManager {
 
     // TODO: Remove this when compression component is changed.
     /// Compress the full [`UncompressedInMemoryDataBuffer`] given as `in_memory_data_buffer` and
-    /// return the resulting compressed and merged segments as a [`RecordBatch`].
+    /// return the resulting compressed and merged segments as a [`RecordBatch`]. Returns
+    /// [`IOError`] if the error bound cannot be retrieved from the [`MetadataManager`].
     async fn compress_finished_buffer(
         &mut self,
         univariate_id: u64,
         mut in_memory_data_buffer: UncompressedInMemoryDataBuffer,
-    ) -> RecordBatch {
+    ) -> Result<RecordBatch, IOError> {
         // Add the size of the segment back to the remaining reserved bytes and record the change.
         let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
         self.uncompressed_remaining_memory_in_bytes += freed_memory;
         self.used_uncompressed_memory_metric
             .append(-(freed_memory as isize), true);
 
-        // unwrap() is safe to use since the error bound is not negative, infinite, or NAN.
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let error_bound = self
+            .metadata_manager
+            .error_bound(univariate_id)
+            .map_err(|error| IOError::new(IOErrorKind::NotFound, error.to_string()))?;
 
         // unwrap() is safe to use since get_record_batch() can only fail for spilled buffers.
-        let data_points = in_memory_data_buffer
-            .record_batch(&self.uncompressed_schema)
-            .await
-            .unwrap();
+        let data_points = in_memory_data_buffer.record_batch().await.unwrap();
         let uncompressed_timestamps = modelardb_common::array!(data_points, 0, TimestampArray);
         let uncompressed_values = modelardb_common::array!(data_points, 1, ValueArray);
 
@@ -383,11 +381,10 @@ impl UncompressedDataManager {
             uncompressed_timestamps,
             uncompressed_values,
             error_bound,
-            &self.compressed_schema,
         )
         .unwrap();
 
-        modelardb_compression::merge_segments(compressed_segments)
+        Ok(modelardb_compression::merge_segments(compressed_segments))
     }
 
     /// Spill the first [`UncompressedInMemoryDataBuffer`] in the queue of
@@ -400,10 +397,7 @@ impl UncompressedDataManager {
         // Iterate through the finished buffers to find a buffer that is backed by memory.
         for finished in self.finished_uncompressed_data_buffers.iter_mut() {
             if let Ok(uncompressed_on_disk_data_buffer) = finished
-                .spill_to_apache_parquet(
-                    self.local_data_folder.as_path(),
-                    &self.uncompressed_schema,
-                )
+                .spill_to_apache_parquet(self.local_data_folder.as_path())
                 .await
             {
                 // Add the size of the in-memory data buffer back to the remaining reserved bytes.
@@ -442,8 +436,8 @@ mod tests {
 
     use datafusion::arrow::array::ArrowPrimitiveType;
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
-    use modelardb_common::schemas::{COMPRESSED_SCHEMA, UNCOMPRESSED_SCHEMA};
     use modelardb_common::types::{ArrowTimestamp, ArrowValue};
+    use modelardb_compression::models::ErrorBound;
     use ringbuf::Rb;
 
     use crate::metadata::{test_util, MetadataManager};
@@ -459,10 +453,7 @@ mod tests {
         let mut buffer = UncompressedInMemoryDataBuffer::new(1);
         buffer.insert_data(100, 10.0);
         buffer
-            .spill_to_apache_parquet(
-                temp_dir.path(),
-                &modelardb_common::schemas::UNCOMPRESSED_SCHEMA,
-            )
+            .spill_to_apache_parquet(temp_dir.path())
             .await
             .unwrap();
 
@@ -544,6 +535,8 @@ mod tests {
         .unwrap();
 
         let error_bounds = vec![
+            ErrorBound::try_new(0.0).unwrap(),
+            ErrorBound::try_new(0.0).unwrap(),
             ErrorBound::try_new(0.0).unwrap(),
             ErrorBound::try_new(0.0).unwrap(),
         ];
@@ -809,7 +802,8 @@ mod tests {
         for i in 0..count {
             data_manager
                 .insert_data_point(univariate_id, i as i64, value)
-                .await;
+                .await
+                .unwrap();
         }
     }
 
@@ -818,13 +812,10 @@ mod tests {
     async fn create_managers(path: &Path) -> (MetadataManager, UncompressedDataManager) {
         let metadata_manager = test_util::test_metadata_manager(path);
 
-        let local_data_folder = metadata_manager.local_data_folder();
-
         let uncompressed_data_manager = UncompressedDataManager::try_new(
-            local_data_folder.to_owned(),
+            metadata_manager.local_data_folder().to_owned(),
+            metadata_manager.clone(),
             metadata_manager.uncompressed_reserved_memory_in_bytes,
-            UNCOMPRESSED_SCHEMA.clone(),
-            COMPRESSED_SCHEMA.clone(),
             false,
             Arc::new(RwLock::new(Metric::new())),
         )

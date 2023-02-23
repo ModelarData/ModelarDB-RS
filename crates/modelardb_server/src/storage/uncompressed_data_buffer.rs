@@ -29,9 +29,8 @@ use async_trait::async_trait;
 use datafusion::arrow::array::{Array, ArrayBuilder};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
-use modelardb_common::types::{
-    Timestamp, TimestampArray, TimestampBuilder, UncompressedSchema, Value, ValueBuilder,
-};
+use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
+use modelardb_common::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
 use tracing::debug;
 
 use crate::storage::{StorageEngine, UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER};
@@ -44,10 +43,7 @@ use crate::storage::{StorageEngine, UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRES
 #[async_trait]
 pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
     /// Return the data in the uncompressed data buffer as a [`RecordBatch`].
-    async fn record_batch(
-        &mut self,
-        uncompressed_schema: &UncompressedSchema,
-    ) -> Result<RecordBatch, ParquetError>;
+    async fn record_batch(&mut self) -> Result<RecordBatch, ParquetError>;
 
     /// Return the univariate id that uniquely identifies the univariate time series the buffer
     /// stores data points from.
@@ -66,7 +62,6 @@ pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
     async fn spill_to_apache_parquet(
         &mut self,
         local_data_folder: &Path,
-        uncompressed_schema: &UncompressedSchema,
     ) -> Result<UncompressedOnDiskDataBuffer, IOError>;
 }
 
@@ -145,15 +140,12 @@ impl fmt::Debug for UncompressedInMemoryDataBuffer {
 #[async_trait]
 impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
     /// Finish the array builders and return the data in a structured [`RecordBatch`].
-    async fn record_batch(
-        &mut self,
-        uncompressed_schema: &UncompressedSchema,
-    ) -> Result<RecordBatch, ParquetError> {
+    async fn record_batch(&mut self) -> Result<RecordBatch, ParquetError> {
         let timestamps = self.timestamps.finish();
         let values = self.values.finish();
 
         Ok(RecordBatch::try_new(
-            uncompressed_schema.0.clone(),
+            UNCOMPRESSED_SCHEMA.0.clone(),
             vec![Arc::new(timestamps), Arc::new(values)],
         )
         .unwrap())
@@ -180,11 +172,10 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
     async fn spill_to_apache_parquet(
         &mut self,
         local_data_folder: &Path,
-        uncompressed_schema: &UncompressedSchema,
     ) -> Result<UncompressedOnDiskDataBuffer, IOError> {
         // Since the schema is constant and the columns are always the same length, creating the
-        // RecordBatch should never fail and unwrap is therefore safe to use.
-        let batch = self.record_batch(uncompressed_schema).await.unwrap();
+        // RecordBatch should never fail and unwrap() is therefore safe to use.
+        let batch = self.record_batch().await.unwrap();
         UncompressedOnDiskDataBuffer::try_spill(self.univariate_id, local_data_folder, batch)
     }
 }
@@ -256,10 +247,7 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
     /// Read the data from the Apache Parquet file, delete the Apache Parquet file, and return the
     /// data as a [`RecordBatch`]. Return [`ParquetError`] if the Apache Parquet file cannot be read
     /// or deleted.
-    async fn record_batch(
-        &mut self,
-        _uncompressed_schema: &UncompressedSchema,
-    ) -> Result<RecordBatch, ParquetError> {
+    async fn record_batch(&mut self) -> Result<RecordBatch, ParquetError> {
         let record_batch =
             StorageEngine::read_batch_from_apache_parquet_file(self.file_path.as_path()).await?;
 
@@ -290,7 +278,6 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
     async fn spill_to_apache_parquet(
         &mut self,
         _local_data_folder: &Path,
-        _uncompressed_schema: &UncompressedSchema,
     ) -> Result<UncompressedOnDiskDataBuffer, IOError> {
         Err(IOError::new(
             Other,
@@ -305,8 +292,6 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
 
     // Tests for UncompressedInMemoryDataBuffer.
     #[test]
@@ -370,10 +355,7 @@ mod tests {
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
 
         let capacity = uncompressed_buffer.capacity();
-        let data = uncompressed_buffer
-            .record_batch(&UNCOMPRESSED_SCHEMA)
-            .await
-            .unwrap();
+        let data = uncompressed_buffer.record_batch().await.unwrap();
         assert_eq!(data.num_columns(), 2);
         assert_eq!(data.num_rows(), capacity);
     }
@@ -386,7 +368,7 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
         uncompressed_buffer
-            .spill_to_apache_parquet(temp_dir.path(), &UNCOMPRESSED_SCHEMA)
+            .spill_to_apache_parquet(temp_dir.path())
             .await
             .unwrap();
 
@@ -404,7 +386,7 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
         uncompressed_buffer
-            .spill_to_apache_parquet(temp_dir.path(), &UNCOMPRESSED_SCHEMA)
+            .spill_to_apache_parquet(temp_dir.path())
             .await
             .unwrap();
 
@@ -433,7 +415,7 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
         let uncompressed_on_disk_buffer = uncompressed_in_memory_buffer
-            .spill_to_apache_parquet(temp_dir.path(), &UNCOMPRESSED_SCHEMA)
+            .spill_to_apache_parquet(temp_dir.path())
             .await
             .unwrap();
 
@@ -448,14 +430,11 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
         let mut uncompressed_on_disk_buffer = uncompressed_in_memory_buffer
-            .spill_to_apache_parquet(temp_dir.path(), &UNCOMPRESSED_SCHEMA)
+            .spill_to_apache_parquet(temp_dir.path())
             .await
             .unwrap();
 
-        let data = uncompressed_on_disk_buffer
-            .record_batch(&UNCOMPRESSED_SCHEMA)
-            .await
-            .unwrap();
+        let data = uncompressed_on_disk_buffer.record_batch().await.unwrap();
 
         assert_eq!(data.num_columns(), 2);
         assert_eq!(data.num_rows(), capacity);
@@ -485,8 +464,7 @@ mod tests {
             file_path: Path::new("file_path").to_path_buf(),
         };
 
-        let schema = UNCOMPRESSED_SCHEMA.clone();
-        let result = uncompressed_buffer.spill_to_apache_parquet(Path::new(""), &schema);
+        let result = uncompressed_buffer.spill_to_apache_parquet(Path::new(""));
         assert!(result.await.is_err())
     }
 }

@@ -50,7 +50,6 @@ use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties}
 use datafusion::parquet::format::SortingColumn;
 use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
-use modelardb_common::schemas::{COMPRESSED_SCHEMA, UNCOMPRESSED_SCHEMA};
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
@@ -99,8 +98,8 @@ const UNCOMPRESSED_DATA_BUFFER_CAPACITY: usize = 64 * 1024;
 /// Manages all uncompressed and compressed data, both while being stored in memory during ingestion
 /// and when persisted to disk afterwards.
 pub struct StorageEngine {
-    // TODO: is it better to use MetadataManager from context to share caches
-    // with tables.rs or a separate MetadataManager to not require taking a lock?
+    // TODO: is it better to use MetadataManager from context to share caches with tables.rs and
+    // uncompressed_data_manager.rs or a separate MetadataManager to not require taking a lock?
     /// Manager that contains and controls all metadata for both uncompressed and compressed data.
     metadata_manager: MetadataManager,
     /// Manager that contains and controls all uncompressed data.
@@ -126,9 +125,8 @@ impl StorageEngine {
         // Create the uncompressed data manager.
         let uncompressed_data_manager = UncompressedDataManager::try_new(
             local_data_folder.clone(),
+            metadata_manager.clone(),
             metadata_manager.uncompressed_reserved_memory_in_bytes,
-            UNCOMPRESSED_SCHEMA.clone(),
-            COMPRESSED_SCHEMA.clone(),
             compress_directly,
             used_disk_space_metric.clone(),
         )
@@ -153,7 +151,6 @@ impl StorageEngine {
             data_transfer,
             local_data_folder,
             metadata_manager.compressed_reserved_memory_in_bytes,
-            COMPRESSED_SCHEMA.clone(),
             used_disk_space_metric,
         )?;
 
@@ -214,7 +211,11 @@ impl StorageEngine {
     pub async fn flush(&mut self) -> Result<(), String> {
         // TODO: When the compression component is changed, just flush before managers.
         // Flush UncompressedDataManager.
-        let compressed_segments = self.uncompressed_data_manager.flush().await;
+        let compressed_segments = self
+            .uncompressed_data_manager
+            .flush()
+            .await
+            .map_err(|error| error.to_string())?;
         let hash_to_table_name = self
             .metadata_manager
             .mapping_from_hash_to_table_name()

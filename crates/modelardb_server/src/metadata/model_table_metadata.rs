@@ -35,7 +35,7 @@ pub struct ModelTableMetadata {
     pub timestamp_column_index: usize,
     /// Indices of the tag columns in the schema.
     pub tag_column_indices: Vec<usize>,
-    /// Error bound of the field columns in the schema.
+    /// Error bound of the columns in the schema.
     pub error_bounds: Vec<ErrorBound>,
 }
 
@@ -45,7 +45,7 @@ impl ModelTableMetadata {
     /// * The timestamp or tag column indices does not match `schema`.
     /// * The types of the fields are not correct.
     /// * The timestamp column index is in the tag column indices.
-    /// * The number of error bounds does not match the number of fields.
+    /// * The number of error bounds does not match the number of columns.
     /// * There are duplicates in the tag column indices.
     /// * There are more than 1024 columns.
     /// * There are no field columns.
@@ -125,10 +125,10 @@ impl ModelTableMetadata {
             }
         }
 
-        // If an error bound is not defined for each field, return an error.
-        if field_column_indices.len() != error_bounds.len() {
+        // If an error bound is not defined for each column, return an error.
+        if schema.fields().len() != error_bounds.len() {
             return Err(ModelarDbError::ConfigurationError(
-                "An error bound must be defined for each field column.".to_owned(),
+                "An error bound must be defined for each column.".to_owned(),
             ));
         }
 
@@ -322,6 +322,10 @@ mod test {
                 Field::new("temperature", ArrowValue::DATA_TYPE, false),
             ]),
             vec![
+                ErrorBound::try_new(0.0).unwrap(),
+                ErrorBound::try_new(0.0).unwrap(),
+                ErrorBound::try_new(0.0).unwrap(),
+                ErrorBound::try_new(0.0).unwrap(),
                 ErrorBound::try_new(0.0).unwrap(),
                 ErrorBound::try_new(0.0).unwrap(),
                 ErrorBound::try_new(0.0).unwrap(),

@@ -27,8 +27,9 @@ use arrow::array::{
 };
 use arrow::record_batch::RecordBatch;
 use modelardb_common::errors::ModelarDbError;
+use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use modelardb_common::types::{
-    CompressedSchema, Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
+    Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
 
 use crate::models::{
@@ -50,13 +51,12 @@ pub const GORILLA_MAXIMUM_LENGTH: usize = 50;
 /// [`CompressionError`](ModelarDbError::CompressionError) if
 /// `uncompressed_timestamps` and `uncompressed_values` have different lengths,
 /// otherwise the resulting compressed segments are returned as a
-/// [`RecordBatch`] with the schema provided as `compressed_schema`.
+/// [`RecordBatch`] with the [`COMPRESSED_SCHEMA`] schema.
 pub fn try_compress(
     univariate_id: u64,
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
     error_bound: ErrorBound,
-    compressed_schema: &CompressedSchema,
 ) -> Result<RecordBatch, ModelarDbError> {
     // The uncompressed data must be passed as arrays instead of a RecordBatch
     // as a TimestampArray and a ValueArray is the only supported input.
@@ -87,7 +87,7 @@ pub fn try_compress(
         );
         current_index = compressed_segment_builder.finish(&mut compressed_record_batch_builder);
     }
-    Ok(compressed_record_batch_builder.finish(compressed_schema))
+    Ok(compressed_record_batch_builder.finish())
 }
 
 /// Merge the segments in `compressed_segments` which are from the same time series, contains
@@ -193,7 +193,7 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
                 }
             }
         }
-        merged_compressed_segments.finish(&CompressedSchema(compressed_segments.schema()))
+        merged_compressed_segments.finish()
     } else {
         compressed_segments
     }
@@ -432,9 +432,9 @@ impl CompressedSegmentBatchBuilder {
     }
 
     /// Return [`RecordBatch`] of compressed segments and consume the builder.
-    fn finish(mut self, compressed_schema: &CompressedSchema) -> RecordBatch {
+    fn finish(mut self) -> RecordBatch {
         RecordBatch::try_new(
-            compressed_schema.0.clone(),
+            COMPRESSED_SCHEMA.0.clone(),
             vec![
                 Arc::new(self.univariate_ids.finish()),
                 Arc::new(self.model_type_ids.finish()),
@@ -456,7 +456,6 @@ mod tests {
     use super::*;
 
     use arrow::array::UInt8Array;
-    use modelardb_common::schemas::COMPRESSED_SCHEMA;
 
     use crate::models;
     use crate::test_util::StructureOfValues;
@@ -718,7 +717,6 @@ mod tests {
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
-            &COMPRESSED_SCHEMA,
         )
         .unwrap();
         (uncompressed_timestamps, compressed_record_batch)
@@ -755,8 +753,7 @@ mod tests {
     // Tests for merge_segments().
     #[test]
     fn test_merge_compressed_segments_empty_batch() {
-        let merged_record_batch =
-            merge_segments(CompressedSegmentBatchBuilder::new(0).finish(&COMPRESSED_SCHEMA));
+        let merged_record_batch = merge_segments(CompressedSegmentBatchBuilder::new(0).finish());
         assert_eq!(0, merged_record_batch.num_rows())
     }
 
@@ -800,7 +797,7 @@ mod tests {
             );
         }
 
-        let compressed_record_batch = compressed_record_batch_builder.finish(&COMPRESSED_SCHEMA);
+        let compressed_record_batch = compressed_record_batch_builder.finish();
         let merged_record_batch = merge_segments(compressed_record_batch);
 
         // Extract the columns from the RecordBatch.
