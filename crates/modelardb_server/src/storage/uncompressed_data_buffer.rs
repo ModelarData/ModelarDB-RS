@@ -31,6 +31,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
 use modelardb_common::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
+use modelardb_compression::models::ErrorBound;
 use tracing::debug;
 
 use crate::storage::{StorageEngine, UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER};
@@ -48,6 +49,9 @@ pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
     /// Return the univariate id that uniquely identifies the univariate time series the buffer
     /// stores data points from.
     fn univariate_id(&self) -> u64;
+
+    /// Return the error bound the buffer must be compressed within.
+    fn error_bound(&self) -> ErrorBound;
 
     /// Return the total amount of memory used by the buffer.
     fn memory_size(&self) -> usize;
@@ -71,6 +75,8 @@ pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
 pub(super) struct UncompressedInMemoryDataBuffer {
     /// Id that uniquely identifies the time series the buffer stores data points from.
     univariate_id: u64,
+    /// Error bound the buffer must be compressed within.
+    error_bound: ErrorBound,
     /// Builder consisting of timestamps.
     timestamps: TimestampBuilder,
     /// Builder consisting of float values.
@@ -78,9 +84,10 @@ pub(super) struct UncompressedInMemoryDataBuffer {
 }
 
 impl UncompressedInMemoryDataBuffer {
-    pub(super) fn new(univariate_id: u64) -> Self {
+    pub(super) fn new(univariate_id: u64, error_bound: ErrorBound) -> Self {
         Self {
             univariate_id,
+            error_bound,
             timestamps: TimestampBuilder::with_capacity(UNCOMPRESSED_DATA_BUFFER_CAPACITY),
             values: ValueBuilder::with_capacity(UNCOMPRESSED_DATA_BUFFER_CAPACITY),
         }
@@ -157,6 +164,11 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
         self.univariate_id
     }
 
+    /// Return the error bound the buffer must be compressed within.
+    fn error_bound(&self) -> ErrorBound {
+        self.error_bound
+    }
+
     /// Return the total size of the [`UncompressedInMemoryDataBuffer`] in bytes.
     fn memory_size(&self) -> usize {
         UncompressedInMemoryDataBuffer::memory_size()
@@ -176,7 +188,12 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
         // Since the schema is constant and the columns are always the same length, creating the
         // RecordBatch should never fail and unwrap() is therefore safe to use.
         let batch = self.record_batch().await.unwrap();
-        UncompressedOnDiskDataBuffer::try_spill(self.univariate_id, local_data_folder, batch)
+        UncompressedOnDiskDataBuffer::try_spill(
+            self.univariate_id,
+            self.error_bound,
+            local_data_folder,
+            batch,
+        )
     }
 }
 
@@ -185,6 +202,8 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
 pub struct UncompressedOnDiskDataBuffer {
     /// Id that uniquely identifies the time series the buffer stores data points from.
     univariate_id: u64,
+    /// Error bound the buffer must be compressed within.
+    error_bound: ErrorBound,
     /// Path to the Apache Parquet file containing the uncompressed data in the
     /// [`UncompressedOnDiskDataBuffer`].
     file_path: PathBuf,
@@ -196,6 +215,7 @@ impl UncompressedOnDiskDataBuffer {
     /// return an [`UncompressedOnDiskDataBuffer`], otherwise return [`IOError`].
     pub(super) fn try_spill(
         univariate_id: u64,
+        error_bound: ErrorBound,
         local_data_folder: &Path,
         data_points: RecordBatch,
     ) -> Result<Self, IOError> {
@@ -215,17 +235,23 @@ impl UncompressedOnDiskDataBuffer {
 
         Ok(Self {
             univariate_id,
+            error_bound,
             file_path,
         })
     }
 
     /// Return an [`UncompressedOnDiskDataBuffer`] with the data points for `univariate_id` in
     /// `file_path` if a file at `file_path` exists, otherwise [`IOError`] is returned.
-    pub(super) fn try_new(univariate_id: u64, file_path: PathBuf) -> Result<Self, IOError> {
+    pub(super) fn try_new(
+        univariate_id: u64,
+        error_bound: ErrorBound,
+        file_path: PathBuf,
+    ) -> Result<Self, IOError> {
         file_path.try_exists()?;
 
         Ok(Self {
             univariate_id,
+            error_bound,
             file_path,
         })
     }
@@ -263,6 +289,11 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
         self.univariate_id
     }
 
+    /// Return the error bound the buffer must be compressed within.
+    fn error_bound(&self) -> ErrorBound {
+        self.error_bound
+    }
+
     /// Since the data is not kept in memory, return 0.
     fn memory_size(&self) -> usize {
         0
@@ -293,10 +324,13 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
 mod tests {
     use super::*;
 
+    const UNIVARIATE_ID: u64 = 1;
+
     // Tests for UncompressedInMemoryDataBuffer.
     #[test]
     fn test_get_in_memory_data_buffer_memory_size() {
-        let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(1);
+        let uncompressed_buffer =
+            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
 
         let expected = (uncompressed_buffer.timestamps.capacity() * mem::size_of::<Timestamp>())
             + (uncompressed_buffer.values.capacity() * mem::size_of::<Value>());
@@ -306,21 +340,24 @@ mod tests {
 
     #[test]
     fn test_get_in_memory_data_buffer_disk_size() {
-        let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(1);
+        let uncompressed_buffer =
+            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
 
         assert_eq!(uncompressed_buffer.disk_size(), 0);
     }
 
     #[test]
     fn test_get_in_memory_data_buffer_len() {
-        let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(1);
+        let uncompressed_buffer =
+            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
 
         assert_eq!(uncompressed_buffer.len(), 0);
     }
 
     #[test]
     fn test_can_insert_data_point_into_in_memory_data_buffer() {
-        let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(1);
+        let mut uncompressed_buffer =
+            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
         insert_data_points(1, &mut uncompressed_buffer);
 
         assert_eq!(uncompressed_buffer.len(), 1);
@@ -328,7 +365,8 @@ mod tests {
 
     #[test]
     fn test_check_is_in_memory_data_buffer_full() {
-        let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(1);
+        let mut uncompressed_buffer =
+            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
 
         assert!(uncompressed_buffer.is_full());
@@ -336,7 +374,8 @@ mod tests {
 
     #[test]
     fn test_check_is_in_memory_data_buffer_not_full() {
-        let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(1);
+        let uncompressed_buffer =
+            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
 
         assert!(!uncompressed_buffer.is_full());
     }
@@ -344,14 +383,16 @@ mod tests {
     #[test]
     #[should_panic(expected = "Cannot insert data into full UncompressedInMemoryDataBuffer.")]
     fn test_in_memory_data_buffer_panic_if_inserting_data_point_when_full() {
-        let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(1);
+        let mut uncompressed_buffer =
+            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
 
         insert_data_points(uncompressed_buffer.capacity() + 1, &mut uncompressed_buffer);
     }
 
     #[tokio::test]
     async fn test_get_record_batch_from_in_memory_data_buffer() {
-        let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(1);
+        let mut uncompressed_buffer =
+            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
 
         let capacity = uncompressed_buffer.capacity();
@@ -362,7 +403,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_in_memory_data_buffer_can_spill_not_full_buffer() {
-        let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(1);
+        let mut uncompressed_buffer =
+            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
         insert_data_points(1, &mut uncompressed_buffer);
         assert!(!uncompressed_buffer.is_full());
 
@@ -380,7 +422,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_in_memory_data_buffer_can_spill_full_buffer() {
-        let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(1);
+        let mut uncompressed_buffer =
+            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
         assert!(uncompressed_buffer.is_full());
 
@@ -400,7 +443,8 @@ mod tests {
     #[test]
     fn test_get_on_disk_data_buffer_memory_size() {
         let uncompressed_buffer = UncompressedOnDiskDataBuffer {
-            univariate_id: 1,
+            univariate_id: UNIVARIATE_ID,
+            error_bound: ErrorBound::try_new(0.0).unwrap(),
             file_path: Path::new("file_path").to_path_buf(),
         };
 
@@ -409,7 +453,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_on_disk_data_buffer_disk_size() {
-        let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(1);
+        let mut uncompressed_in_memory_buffer =
+            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
         let capacity = uncompressed_in_memory_buffer.capacity();
         insert_data_points(capacity, &mut uncompressed_in_memory_buffer);
 
@@ -424,7 +469,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_record_batch_from_on_disk_data_buffer() {
-        let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(1);
+        let mut uncompressed_in_memory_buffer =
+            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
         let capacity = uncompressed_in_memory_buffer.capacity();
         insert_data_points(capacity, &mut uncompressed_in_memory_buffer);
 
@@ -460,7 +506,8 @@ mod tests {
     #[tokio::test]
     async fn test_cannot_spill_on_disk_data_buffer() {
         let mut uncompressed_buffer = UncompressedOnDiskDataBuffer {
-            univariate_id: 1,
+            univariate_id: UNIVARIATE_ID,
+            error_bound: ErrorBound::try_new(0.0).unwrap(),
             file_path: Path::new("file_path").to_path_buf(),
         };
 

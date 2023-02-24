@@ -125,8 +125,7 @@ impl StorageEngine {
         // Create the uncompressed data manager.
         let uncompressed_data_manager = UncompressedDataManager::try_new(
             local_data_folder.clone(),
-            metadata_manager.clone(),
-            metadata_manager.uncompressed_reserved_memory_in_bytes,
+            &metadata_manager,
             compress_directly,
             used_disk_space_metric.clone(),
         )
