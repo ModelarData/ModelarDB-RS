@@ -27,28 +27,32 @@ use std::str;
 use std::sync::Arc;
 
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
-use arrow_flight::utils;
 use arrow_flight::{
-    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
+    utils, Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
 use bytes::Bytes;
-use datafusion::arrow::array::{ListBuilder, StringBuilder, UInt32Builder};
-use datafusion::arrow::ipc::writer::StreamWriter;
-use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
-use datafusion::arrow::{
-    array::ArrayRef, datatypes::Schema, datatypes::SchemaRef, error::ArrowError,
-    record_batch::RecordBatch,
+use datafusion::arrow::array::{ArrayRef, ListBuilder, StringBuilder, UInt32Builder};
+use datafusion::arrow::datatypes::{Schema, SchemaRef};
+use datafusion::arrow::error::ArrowError;
+use datafusion::arrow::ipc::writer::{
+    DictionaryTracker, IpcDataGenerator, IpcWriteOptions, StreamWriter,
 };
+use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::schema::SchemaProvider;
+use datafusion::common::DFSchema;
+use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
 use modelardb_common::schemas::METRIC_SCHEMA;
 use modelardb_common::types::TimestampBuilder;
 use tokio::runtime::Runtime;
+use tokio::sync::mpsc::{self, Sender};
+use tokio::task;
+use tokio_stream::wrappers::ReceiverStream;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
@@ -80,6 +84,60 @@ pub fn start_apache_arrow_flight_server(
                 .await
         })
         .map_err(|e| e.into())
+}
+
+/// Read [`RecordBatches`](RecordBatch) from `query_result_stream` and send them one at a time to
+/// [`FlightService`] using `sender`. Returns [`Status`] with the code [`tonic::Code::Internal`] if
+/// the result cannot be send through `sender`.
+async fn send_query_result(
+    df_schema: DFSchema,
+    mut query_result_stream: SendableRecordBatchStream,
+    sender: Sender<Result<FlightData, Status>>,
+) -> Result<(), Status> {
+    // Serialize and send the schema.
+    let options = IpcWriteOptions::default();
+    let schema_as_flight_data = SchemaAsIpc::new(&df_schema.into(), &options).into();
+    send_flight_data(&sender, Ok(schema_as_flight_data)).await?;
+
+    // Serialize and send the query result.
+    let data_generator = IpcDataGenerator::default();
+    let writer_options = IpcWriteOptions::default();
+    let mut dictionary_tracker = DictionaryTracker::new(false);
+
+    while let Some(maybe_record_batch) = query_result_stream.next().await {
+        // If a record batch is not returned the client is informed about the error.
+        let record_batch = match maybe_record_batch {
+            Ok(record_batch) => record_batch,
+            Err(error) => {
+                let status = Status::invalid_argument(error.to_string());
+                return send_flight_data(&sender, Err(status)).await;
+            }
+        };
+
+        // unwrap() is safe as the result is produced by Apache Arrow DataFusion.
+        let (encoded_dictionaries, encoded_batch) = data_generator
+            .encoded_batch(&record_batch, &mut dictionary_tracker, &writer_options)
+            .unwrap();
+
+        for encoded_dictionary in encoded_dictionaries {
+            send_flight_data(&sender, Ok(encoded_dictionary.into())).await?;
+        }
+        send_flight_data(&sender, Ok(encoded_batch.into())).await?;
+    }
+
+    Ok(())
+}
+
+/// Send `flight_data_or_error` to [`FlightService`] using `sender`. Returns [`Status`] with the
+/// code [`tonic::Code::Internal`] if the result cannot be send through `sender`.
+async fn send_flight_data(
+    sender: &Sender<Result<FlightData, Status>>,
+    flight_data_or_error: Result<FlightData, Status>,
+) -> Result<(), Status> {
+    sender
+        .send(flight_data_or_error)
+        .await
+        .map_err(|error| Status::internal(error.to_string()))
 }
 
 /// Handler for processing Apache Arrow Flight requests.
@@ -403,50 +461,39 @@ impl FlightService for FlightServiceHandler {
 
         // Extract the query.
         let query = str::from_utf8(&ticket.ticket)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            .map_err(|error| Status::invalid_argument(error.to_string()))?
+            .to_owned();
 
         // Plan the query.
         info!("Executing the query: {}.", query);
         let session = self.context.session.clone();
         let data_frame = session
-            .sql(query)
+            .sql(&query)
             .await
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-        // Serialize the schema.
-        let options = IpcWriteOptions::default();
-        let schema_as_flight_data = SchemaAsIpc::new(&data_frame.schema().into(), &options).into();
-        let mut result_set: Vec<Result<FlightData, Status>> = vec![Ok(schema_as_flight_data)];
-
-        // Serialize the query result.
-        let record_batches = data_frame
-            .collect()
+        // Execute the query.
+        let df_schema = data_frame.schema().to_owned();
+        let query_result_stream = data_frame
+            .execute_stream()
             .await
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-        let data_generator = IpcDataGenerator::default();
-        let writer_options = IpcWriteOptions::default();
-        let mut dictionary_tracker = DictionaryTracker::new(false);
+        // Send the result, a channel is needed as sync is not implemented for RecordBatchStream.
+        // A buffer size of two is used based on Apache Arrow DataFusion and Apache Arrow Ballista.
+        let (sender, receiver) = mpsc::channel(2);
 
-        let mut record_batches_as_flight_data: Vec<Result<FlightData, Status>> = record_batches
-            .iter()
-            .flat_map(|result| {
-                // unwrap() is safe as the result is produced by Apache Arrow DataFusion.
-                let (encoded_dictionaries, encoded_batch) = data_generator
-                    .encoded_batch(result, &mut dictionary_tracker, &writer_options)
-                    .unwrap();
+        task::spawn(async move {
+            // Errors cannot be send to the client if there is an error with the channel, if such an
+            // error occurs it is logged using error!(). Simply calling await! on the JoinHandle
+            // returned by task::spawn is also not an option as it waits until send_query_result()
+            // returns and thus creates a deadlock since the results are never read from receiver.
+            if let Err(error) = send_query_result(df_schema, query_result_stream, sender).await {
+                error!("Failed to send the result for '{}' due to: {}.", query, error);
+            }
+        });
 
-                encoded_dictionaries
-                    .into_iter()
-                    .map(|encoded_dictionary| Ok(encoded_dictionary.into()))
-                    .chain(std::iter::once(Ok(encoded_batch.into())))
-            })
-            .collect();
-        result_set.append(&mut record_batches_as_flight_data);
-
-        // Transmit the schema and the query result.
-        let output = stream::iter(result_set);
-        Ok(Response::new(Box::pin(output)))
+        Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
     }
 
     /// Insert data points into a table. The name of the table must be provided
