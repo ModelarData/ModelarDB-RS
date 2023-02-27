@@ -369,7 +369,7 @@ impl UncompressedDataManager {
         self.used_uncompressed_memory_metric
             .append(-(freed_memory as isize), true);
 
-        // unwrap() is safe to use since get_record_batch() can only fail for spilled buffers.
+        // unwrap() is safe to use since record_batch() can only fail for spilled buffers.
         let data_points = in_memory_data_buffer.record_batch().await.unwrap();
         let uncompressed_timestamps = modelardb_common::array!(data_points, 0, TimestampArray);
         let uncompressed_values = modelardb_common::array!(data_points, 1, ValueArray);

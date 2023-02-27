@@ -88,7 +88,7 @@ pub fn start_apache_arrow_flight_server(
 
 /// Read [`RecordBatches`](RecordBatch) from `query_result_stream` and send them one at a time to
 /// [`FlightService`] using `sender`. Returns [`Status`] with the code [`tonic::Code::Internal`] if
-/// the result cannot be send through `sender`.
+/// the result cannot be sent through `sender`.
 async fn send_query_result(
     df_schema: DFSchema,
     mut query_result_stream: SendableRecordBatchStream,
@@ -484,7 +484,7 @@ impl FlightService for FlightServiceHandler {
         let (sender, receiver) = mpsc::channel(2);
 
         task::spawn(async move {
-            // Errors cannot be send to the client if there is an error with the channel, if such an
+            // Errors cannot be sent to the client if there is an error with the channel, if such an
             // error occurs it is logged using error!(). Simply calling await! on the JoinHandle
             // returned by task::spawn is also not an option as it waits until send_query_result()
             // returns and thus creates a deadlock since the results are never read from receiver.

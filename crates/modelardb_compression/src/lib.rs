@@ -90,10 +90,12 @@ pub fn try_compress(
     Ok(compressed_record_batch_builder.finish())
 }
 
-/// Merge the segments in `compressed_segments` which are from the same time series, contains
-/// equivalent models, and can be merged without creating overlapping segments. Assumes that the
-/// segments for the time series and time range `compressed_segments` has segments for are all in
-/// `compressed_segments`.
+/// Merge segments in `compressed_segments` that:
+/// * Are from same time series.
+/// * Contains completely equivalent models.
+/// * Are consecutive in terms of time.
+/// Assumes that if the sequence of consecutive segments A B C exists for a time series and A C is
+/// in `compressed_segments` then B is also in `compressed_segments`.
 pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
     // Extract the columns from the RecordBatch.
     modelardb_common::arrays!(
@@ -113,7 +115,7 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
     let num_rows = compressed_segments.num_rows();
     let mut can_segments_be_merged = false;
     let mut univariate_id_to_previous_index = HashMap::new();
-    let mut indexes_to_merge_per_univaraite_id = HashMap::new();
+    let mut indices_to_merge_per_univariate_id = HashMap::new();
 
     for current_index in 0..num_rows {
         let univariate_id = univariate_ids.value(current_index);
@@ -130,7 +132,7 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
             max_values,
             values,
         ) {
-            indexes_to_merge_per_univaraite_id
+            indices_to_merge_per_univariate_id
                 .entry(univariate_id)
                 .or_insert_with(Vec::new)
                 .push(Some(current_index));
@@ -138,11 +140,11 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
             can_segments_be_merged = previous_index != current_index;
         } else {
             // unwrap() is safe as a segment is guaranteed to match itself.
-            let indexes_to_merge = indexes_to_merge_per_univaraite_id
+            let indices_to_merge = indices_to_merge_per_univariate_id
                 .get_mut(&univariate_id)
                 .unwrap();
-            indexes_to_merge.push(None);
-            indexes_to_merge.push(Some(current_index));
+            indices_to_merge.push(None);
+            indices_to_merge.push(Some(current_index));
         }
 
         univariate_id_to_previous_index.insert(univariate_id, current_index);
@@ -155,9 +157,9 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
         let mut index_of_last_segment = 0;
 
         let mut timestamp_builder = TimestampBuilder::new();
-        for (_, mut indexes_to_merge) in indexes_to_merge_per_univaraite_id {
-            indexes_to_merge.push(None);
-            for maybe_index in indexes_to_merge {
+        for (_, mut indices_to_merge) in indices_to_merge_per_univariate_id {
+            indices_to_merge.push(None);
+            for maybe_index in indices_to_merge {
                 if let Some(index) = maybe_index {
                     // Merge timestamps.
                     let start_time = start_times.value(index);
@@ -177,7 +179,7 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
                     let compressed_timestamps =
                         timestamps::compress_residual_timestamps(timestamps.values());
 
-                    // Merge segments. The first segment's model is used for the merged
+                    // Merge segments. The last segment's model is used for the merged
                     // segment as all of the segments contain the exact same model.
                     merged_compressed_segments.append_compressed_segment(
                         univariate_ids.value(index_of_last_segment),
@@ -866,7 +868,7 @@ mod tests {
     }
 
     #[test]
-    fn test_models_with_different_uids_cannot_be_merged() {
+    fn test_models_with_different_univariate_ids_cannot_be_merged() {
         assert!(!can_models_be_merged(
             0,
             1,
@@ -943,6 +945,7 @@ pub mod test_util {
         Linear,
         AlmostLinear,
     }
+
     /// Generate constant/random/linear/almost-linear test values with the
     /// [ThreadRng](rand::rngs::thread::ThreadRng) randomizer. The amount of values to be generated
     /// will match `timestamps` and their structure will match [`StructureOfValues`]. If `Random` is

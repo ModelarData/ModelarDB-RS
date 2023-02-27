@@ -420,10 +420,10 @@ impl StorageEngine {
             record_batches.push(record_batch);
         }
 
-        // Merge the record batches into a single combined and merged record batch.
+        // Merge the record batches into a single concatenated and merged record batch.
         let schema = record_batches[0].schema();
-        let combined = compute::concat_batches(&schema, &record_batches)?;
-        let merged = modelardb_compression::merge_segments(combined);
+        let concatenated = compute::concat_batches(&schema, &record_batches)?;
+        let merged = modelardb_compression::merge_segments(concatenated);
 
         // Compute the name of the output file based on data in merged.
         let file_name = create_time_and_value_range_file_name(&merged);
@@ -435,7 +435,7 @@ impl StorageEngine {
             SortingColumn::new(2, false, false),
         ]);
 
-        // Write the combined and merged record batch to the output location.
+        // Write the concatenated and merged record batch to the output location.
         let mut buf = vec![].writer();
         let mut apache_arrow_writer =
             create_apache_arrow_writer(&mut buf, schema, sorting_columns)?;
