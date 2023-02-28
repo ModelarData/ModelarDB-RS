@@ -401,7 +401,6 @@ mod tests {
 
     use arrow::array::UInt8Array;
     use modelardb_common::schemas::COMPRESSED_SCHEMA;
-    use rand::{thread_rng, Rng};
 
     use crate::models;
     use crate::test_util::StructureOfValues;
@@ -423,13 +422,9 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_constant_time_series() {
-        let values = test_util::generate_values(
-            TRY_COMPRESS_TEST_LENGTH,
-            StructureOfValues::Constant,
-            None,
-            None,
-        );
-        let timestamps = test_util::generate_timestamps(values.len(), false);
+        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
+        let values =
+            test_util::generate_values(&timestamps, StructureOfValues::Constant, None, None);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
@@ -443,13 +438,9 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_constant_time_series() {
-        let values = test_util::generate_values(
-            TRY_COMPRESS_TEST_LENGTH,
-            StructureOfValues::Constant,
-            None,
-            None,
-        );
-        let timestamps = test_util::generate_timestamps(values.len(), true);
+        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
+        let values =
+            test_util::generate_values(&timestamps, StructureOfValues::Constant, None, None);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
@@ -463,15 +454,13 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_almost_constant_time_series() {
-        // To generate almost constant time series, Random with a small
-        // margin between min_step and max_step is selected for generate_values.
+        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
         let values = test_util::generate_values(
-            TRY_COMPRESS_TEST_LENGTH,
+            &timestamps,
             StructureOfValues::Random,
             Some(9.8),
             Some(10.2),
         );
-        let timestamps = test_util::generate_timestamps(values.len(), false);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_FIVE);
@@ -485,15 +474,13 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_almost_constant_time_series() {
-        // To generate almost constant time series, the Random enum with a small
-        // margin between min_step and max_step is used in generate_values.
+        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
         let values = test_util::generate_values(
-            TRY_COMPRESS_TEST_LENGTH,
+            &timestamps,
             StructureOfValues::Random,
             Some(9.8),
             Some(10.2),
         );
-        let timestamps = test_util::generate_timestamps(values.len(), true);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_FIVE);
@@ -507,13 +494,8 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_linear_time_series() {
-        let values = test_util::generate_values(
-            TRY_COMPRESS_TEST_LENGTH,
-            StructureOfValues::Linear,
-            None,
-            None,
-        );
-        let timestamps = test_util::generate_timestamps(values.len(), false);
+        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
+        let values = test_util::generate_values(&timestamps, StructureOfValues::Linear, None, None);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
@@ -527,19 +509,8 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_linear_time_series() {
-        // Create a random linear equation and generate random timestamps.
-        // A linear equation must be created instead of using generate_values,
-        // since randomly generated irregular timestamps combined with linear values
-        // would not fit the equation.
-        let a: i64 = thread_rng().gen_range(-10..10);
-        let b: i64 = thread_rng().gen_range(1..50);
         let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
-
-        // Calculate the corresponding values on the y axis. These values are not f32 initially
-        // because precision errors may occur, and try_compress therefore fails to make a Swing model within
-        // ERROR_BOUND_ZERO.
-        let i64values: Vec<i64> = timestamps.iter().map(|&x| a * x + b).collect();
-        let values: Vec<f32> = i64values.iter().map(|&x| x as f32).collect();
+        let values = test_util::generate_values(&timestamps, StructureOfValues::Linear, None, None);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_FIVE);
@@ -553,13 +524,13 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_almost_linear_time_series() {
+        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
         let values = test_util::generate_values(
-            TRY_COMPRESS_TEST_LENGTH,
+            &timestamps,
             StructureOfValues::AlmostLinear,
-            Some(9.0),
-            Some(11.0),
+            Some(9.8),
+            Some(10.2),
         );
-        let timestamps = test_util::generate_timestamps(values.len(), false);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_FIVE);
@@ -573,16 +544,16 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_almost_linear_time_series() {
+        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
         let values = test_util::generate_values(
-            TRY_COMPRESS_TEST_LENGTH,
+            &timestamps,
             StructureOfValues::AlmostLinear,
             Some(9.8),
             Some(10.2),
         );
-        let timestamps = test_util::generate_timestamps(values.len(), true);
 
         let (uncompressed_timestamps, compressed_record_batch) =
-            create_and_compress_time_series(&values, &timestamps, 15.0);
+            create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_FIVE);
 
         assert_compressed_record_batch_with_segments_from_regular_time_series(
             &uncompressed_timestamps,
@@ -593,13 +564,13 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_random_time_series() {
+        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
         let values = test_util::generate_values(
-            TRY_COMPRESS_TEST_LENGTH,
+            &timestamps,
             StructureOfValues::Random,
             Some(0.0),
             Some(f32::MAX),
         );
-        let timestamps = test_util::generate_timestamps(values.len(), false);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
@@ -613,13 +584,13 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_random_time_series() {
+        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
         let values = test_util::generate_values(
-            TRY_COMPRESS_TEST_LENGTH,
+            &timestamps,
             StructureOfValues::Random,
             Some(0.0),
             Some(f32::MAX),
         );
-        let timestamps = test_util::generate_timestamps(values.len(), true);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
@@ -633,20 +604,21 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_random_linear_constant_time_series() {
+        let timestamps = test_util::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, false);
         let mut constant = test_util::generate_values(
-            TRY_COMPRESS_TEST_LENGTH,
+            &timestamps[0..TRY_COMPRESS_TEST_LENGTH],
             StructureOfValues::Constant,
             None,
             None,
         );
         let mut linear = test_util::generate_values(
-            TRY_COMPRESS_TEST_LENGTH,
+            &timestamps[TRY_COMPRESS_TEST_LENGTH..2 * TRY_COMPRESS_TEST_LENGTH],
             StructureOfValues::Linear,
             None,
             None,
         );
         let mut random = test_util::generate_values(
-            TRY_COMPRESS_TEST_LENGTH,
+            &timestamps[2 * TRY_COMPRESS_TEST_LENGTH..],
             StructureOfValues::Random,
             Some(0.0),
             Some(f32::MAX),
@@ -655,7 +627,6 @@ mod tests {
         values.append(&mut random);
         values.append(&mut linear);
         values.append(&mut constant);
-        let timestamps = test_util::generate_timestamps(values.len(), false);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
@@ -840,58 +811,58 @@ pub mod test_util {
     }
 
     /// Generate constant/random/linear/almost-linear test values with the
-    /// [ThreadRng](rand::rngs::thread::ThreadRng) randomizer. Select the amount of values to be generated
-    /// using `length` and type of values to be generated using [`StructureOfValues`]. If `Random` is
-    /// selected, `min` and `max` is the range of values which can be generated. If `AlmostLinear` is
-    /// selected, `min` and `max` is the maximum and minimum change that should be applied from one value
-    /// to the next. Returns the generated values as a [`Vec`].
+    /// [ThreadRng](rand::rngs::thread::ThreadRng) randomizer. The amount of values to be generated
+    /// will match `timestamps` and their structure will match [`StructureOfValues`]. If `Random` is
+    /// selected, `min` and `max` is the range of values which can be generated. If `AlmostLinear`
+    /// is selected, `min` and `max` is the maximum and minimum change that should be applied from
+    /// one value to the next. Returns the generated values as a [`Vec`].
     pub fn generate_values(
-        length: usize,
+        timestamps: &[i64],
         data_type: StructureOfValues,
         min: Option<f32>,
         max: Option<f32>,
     ) -> Vec<f32> {
-        let mut randomizer = thread_rng();
-        let mut values: Vec<f32> = vec![];
-
         match data_type {
             // Generates almost linear data.
             StructureOfValues::AlmostLinear => {
-                let mut random_linear = vec![];
-                let mut previous_value: f32 = 0.0;
-                for _ in 0..length {
-                    let next_value = (randomizer.sample(Uniform::from(min.unwrap()..max.unwrap())))
-                        + previous_value;
-                    random_linear.push(next_value);
-                    previous_value = next_value;
-                }
-                values.append(&mut random_linear);
-            }
+                let a: i64 = thread_rng().gen_range(-10..10);
+                let b: i64 = thread_rng().gen_range(1..50);
+                let mut randomizer = thread_rng();
 
+                timestamps
+                    .iter()
+                    .map(|timestamp| {
+                        (a * timestamp + b) as f32
+                            + randomizer.sample(Uniform::from(min.unwrap()..max.unwrap()))
+                    })
+                    .collect()
+            }
             // Generates linear data.
             StructureOfValues::Linear => {
-                let mut linear =
-                    Vec::from_iter((10..(length + 1) * 10).step_by(10).map(|v| v as f32));
-                values.append(&mut linear);
-            }
+                let a: i64 = thread_rng().gen_range(-10..10);
+                let b: i64 = thread_rng().gen_range(1..50);
 
+                timestamps
+                    .iter()
+                    .map(|timestamp| (a * timestamp + b) as f32)
+                    .collect()
+            }
             // Generates randomized data.
             StructureOfValues::Random => {
                 let mut random = vec![];
-                for _ in 0..length {
+                let mut randomizer = thread_rng();
+
+                for _ in 0..timestamps.len() {
                     random.push(randomizer.sample(Uniform::from(min.unwrap()..max.unwrap())));
                 }
-                values.append(&mut random);
-            }
 
+                random
+            }
             // Generates constant data.
             StructureOfValues::Constant => {
-                let mut constant = vec![50.0; length];
-                values.append(&mut constant);
+                vec![thread_rng().gen(); timestamps.len()]
             }
         }
-
-        values
     }
 
     /// Generate regular/irregular timestamps with the [ThreadRng](rand::rngs::thread::ThreadRng) randomizer.

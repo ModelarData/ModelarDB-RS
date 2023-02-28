@@ -26,5 +26,5 @@ classifiers = [
 ]
 
 [build-system]
-requires = ["maturin"]
+requires = ["maturin>=0.14"]
 build-backend = "maturin"
