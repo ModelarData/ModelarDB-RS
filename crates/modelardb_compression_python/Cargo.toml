@@ -24,13 +24,13 @@ name = "modelardb_compression_python"
 crate-type = ["cdylib"]
 
 [dependencies]
-arrow = { version = "32.0.0", features = ["ffi"] }
+arrow = { version = "33.0.0", features = ["ffi"] }
 modelardb_common = { path = "../modelardb_common" }
 modelardb_compression = { path = "../modelardb_compression" }
-pyo3 = { version = "0.17.3", features = ["extension-module"] }
+pyo3 = { version = "0.18.1", features = ["extension-module"] }
 
 [build-dependencies]
-pyo3-build-config = "0.17.3"
+pyo3-build-config = "0.18.1"
 
 [package.metadata.cargo-machete]
 ignored = ["pyo3_build_config"]

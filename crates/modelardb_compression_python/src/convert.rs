@@ -19,12 +19,13 @@
 //!
 //! [code published]: https://github.com/apache/arrow-rs/blob/master/arrow/src/pyarrow.rs
 
+use std::ptr::{addr_of, addr_of_mut};
 use std::sync::Arc;
 
 use arrow::array::{make_array, Array, ArrayData};
 use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
-use arrow::ffi::{ArrowArray, FFI_ArrowSchema};
+use arrow::ffi::{ArrowArray, FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::record_batch::RecordBatch;
 use pyo3::ffi::Py_uintptr_t;
 use pyo3::import_exception;
@@ -58,11 +59,11 @@ pub fn python_record_batch_to_rust(record_batch: &PyAny) -> PyResult<RecordBatch
 
 /// Convert an Apache Arrow schema from Python to Rust.
 fn python_schema_to_rust(schema: &PyAny) -> PyResult<Schema> {
-    // Create a pointer to the schema's C representation.
+    // Create a pointer to the schema's FFI representation.
     let ffi_arrow_schema = FFI_ArrowSchema::empty();
     let ffi_arrow_schema_ptr = &ffi_arrow_schema as *const FFI_ArrowSchema;
 
-    // Convert the schema to its C representation using a hidden method.
+    // Convert the schema to its FFI representation using a hidden method.
     schema.call_method1("_export_to_c", (ffi_arrow_schema_ptr as Py_uintptr_t,))?;
 
     // Construct and return the final arrow-rs schema.
@@ -71,22 +72,22 @@ fn python_schema_to_rust(schema: &PyAny) -> PyResult<Schema> {
 
 /// Convert an Apache Arrow array from Python to Rust.
 fn python_array_to_rust(array: &PyAny) -> PyResult<Arc<dyn Array>> {
-    // Create pointers to the array's components.
-    let (array_pointer, schema_pointer) = ArrowArray::into_raw(unsafe { ArrowArray::empty() });
+    // Create FFI representations for the array's components.
+    let mut ffi_arrow_array = FFI_ArrowArray::empty();
+    let mut ffi_arrow_schema = FFI_ArrowSchema::empty();
 
-    // Convert the array to its C representation using a hidden method.
+    // Convert the array to its FFI representation using a hidden method.
     array.call_method1(
         "_export_to_c",
         (
-            array_pointer as Py_uintptr_t,
-            schema_pointer as Py_uintptr_t,
+            addr_of_mut!(ffi_arrow_array) as Py_uintptr_t,
+            addr_of_mut!(ffi_arrow_schema) as Py_uintptr_t,
         ),
     )?;
 
-    // Construct and return the final arrow-rs schema.
-    let ffi_array =
-        unsafe { ArrowArray::try_from_raw(array_pointer, schema_pointer).map_err(to_py_err)? };
-    let array = make_array(ArrayData::try_from(ffi_array).map_err(to_py_err)?);
+    // Construct and return the final arrow-rs array.
+    let arrow_array = ArrowArray::new(ffi_arrow_array, ffi_arrow_schema);
+    let array = make_array(ArrayData::try_from(arrow_array).map_err(to_py_err)?);
 
     Ok(array)
 }
@@ -118,7 +119,7 @@ fn rust_schema_to_python<'a>(schema: &'a Schema, python: Python<'a>) -> PyResult
     let ffi_arrow_schema = FFI_ArrowSchema::try_from(schema).map_err(to_py_err)?;
     let ffi_arrow_schema_ptr = &ffi_arrow_schema as *const FFI_ArrowSchema;
 
-    // Construct the schema from its C representation using a hidden method and return it.
+    // Construct the schema from its FFI representation using a hidden method and return it.
     let module = python.import("pyarrow")?;
     let class = module.getattr("Schema")?;
     class.call_method1("_import_from_c", (ffi_arrow_schema_ptr as Py_uintptr_t,))
@@ -126,18 +127,18 @@ fn rust_schema_to_python<'a>(schema: &'a Schema, python: Python<'a>) -> PyResult
 
 /// Convert an Apache Arrow array from Rust to Python.
 fn rust_array_to_python<'a>(array: &'a Arc<dyn Array>, python: Python<'a>) -> PyResult<&'a PyAny> {
-    // Create pointers to the array's components.
-    let array = ArrowArray::try_from(array.into_data()).map_err(to_py_err)?;
-    let (array_pointer, schema_pointer) = ArrowArray::into_raw(array);
+    // Create FFI representations of the array's components.
+    let ffi_arrow_array = FFI_ArrowArray::new(array.data());
+    let ffi_arrow_schema = FFI_ArrowSchema::try_from(array.data_type()).map_err(to_py_err)?;
 
-    // Construct the array from its C representation using a hidden method and return it.
+    // Construct the array from its FFI representation using a hidden method and return it.
     let module = python.import("pyarrow")?;
     let class = module.getattr("Array")?;
     class.call_method1(
         "_import_from_c",
         (
-            array_pointer as Py_uintptr_t,
-            schema_pointer as Py_uintptr_t,
+            addr_of!(ffi_arrow_array) as Py_uintptr_t,
+            addr_of!(ffi_arrow_schema) as Py_uintptr_t,
         ),
     )
 }

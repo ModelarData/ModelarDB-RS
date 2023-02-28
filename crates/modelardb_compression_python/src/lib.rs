@@ -45,7 +45,8 @@ fn modelardb_compression_python(_python: Python<'_>, py_module: &PyModule) -> Py
 /// segments was produced from, if none is set zero is used. An [`ArrowException`] is returned if
 /// the schema of `uncompressed` does not match [`UNCOMPRESSED_SCHEMA`] or if [`pyo3`] cannot
 /// convert the arguments from Python to Rust and the result from Rust to Python.
-#[pyfunction(univariate_id = 0)]
+#[pyfunction]
+#[pyo3(signature = (uncompressed, error_bound, univariate_id = 0))]
 fn compress<'a>(
     uncompressed: &'a PyAny,
     error_bound: &'a PyAny,
