@@ -234,6 +234,30 @@ impl SortedJoinStream {
         reason_for_not_ok
     }
 
+    /// Ensure all [`RecordBatches`](RecordBatch) pooled from the inputs contain the same number of
+    /// rows and if not drop rows from the [`RecordBatches`](RecordBatch) that contain extra. This
+    /// can occur as compressed segments are not transferred atomically to the remote data folder.
+    fn set_batch_num_rows_to_smallest(&mut self) {
+        // unwrap() is safe as a record batch is read from each input before this method is called.
+        let first_batch_num_rows = self.batches[0].as_ref().unwrap().num_rows();
+
+        let mut all_same_num_rows = true;
+        let mut smallest_num_rows = usize::max_value();
+        for batch in &self.batches {
+            let batch_num_rows = batch.as_ref().unwrap().num_rows();
+            all_same_num_rows = all_same_num_rows && batch_num_rows == first_batch_num_rows;
+            smallest_num_rows = smallest_num_rows.min(batch_num_rows);
+        }
+
+        if !all_same_num_rows {
+            self.batches = self
+                .batches
+                .iter()
+                .map(|batch| Some(batch.as_ref().unwrap().slice(0, smallest_num_rows)))
+                .collect();
+        }
+    }
+
     /// Create a [`RecordBatch`] containing the requested timestamp, field, and tag columns, delete
     /// the [`RecordBatches`](RecordBatch) read from the inputs, and return the [`RecordBatch`]
     /// containing the requested timestamp, field, and tag columns.
@@ -309,6 +333,7 @@ impl Stream for SortedJoinStream {
         if let Some(reason_for_not_ok) = self.poll_all_pending_inputs(cx) {
             reason_for_not_ok
         } else {
+            self.set_batch_num_rows_to_smallest();
             let poll = self.sorted_join();
             for batch in &mut self.batches {
                 *batch = None;

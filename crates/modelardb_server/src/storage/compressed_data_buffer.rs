@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::format::SortingColumn;
-use modelardb_common::types::CompressedSchema;
+use modelardb_common::schemas::COMPRESSED_SCHEMA;
 
 use crate::storage;
 use crate::storage::StorageEngine;
@@ -61,7 +61,6 @@ impl CompressedDataBuffer {
     pub(super) fn save_to_apache_parquet(
         &mut self,
         folder_path: &Path,
-        compressed_schema: &CompressedSchema,
     ) -> Result<PathBuf, IOError> {
         debug_assert!(
             !self.compressed_segments.is_empty(),
@@ -70,7 +69,7 @@ impl CompressedDataBuffer {
 
         // Combine the compressed segments into a single RecordBatch.
         let batch =
-            compute::concat_batches(&compressed_schema.0, &self.compressed_segments).unwrap();
+            compute::concat_batches(&COMPRESSED_SCHEMA.0, &self.compressed_segments).unwrap();
 
         // Create the folder structure if it does not already exist.
         fs::create_dir_all(folder_path)?;
@@ -119,8 +118,6 @@ impl CompressedDataBuffer {
 mod tests {
     use super::*;
 
-    use modelardb_common::schemas::COMPRESSED_SCHEMA;
-
     use crate::storage::test_util;
 
     #[test]
@@ -149,7 +146,7 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
         compressed_data_buffer
-            .save_to_apache_parquet(temp_dir.path(), &COMPRESSED_SCHEMA)
+            .save_to_apache_parquet(temp_dir.path())
             .unwrap();
 
         // Data should be saved to a file with the start time, end time, min value, and max value of
@@ -164,7 +161,7 @@ mod tests {
         let mut empty_compressed_data_buffer = CompressedDataBuffer::new();
 
         empty_compressed_data_buffer
-            .save_to_apache_parquet(Path::new("table"), &COMPRESSED_SCHEMA)
+            .save_to_apache_parquet(Path::new("table"))
             .unwrap();
     }
 

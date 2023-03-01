@@ -16,8 +16,21 @@
 /// Extract an [`array`](arrow::array::Array) from a
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) and cast it to the specified type:
 ///
-/// ``` ignore
-/// let array = modelardb_common::array!(record_batch, 0, UInt8Array);
+/// ```
+/// # use std::sync::Arc;
+/// #
+/// # use arrow::record_batch::RecordBatch;
+/// # use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
+/// # use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
+/// #
+/// # let record_batch = RecordBatch::try_new(
+/// #     UNCOMPRESSED_SCHEMA.0.clone(),
+/// #     vec![
+/// #         Arc::new(TimestampArray::from(Vec::<Timestamp>::new())),
+/// #         Arc::new(ValueArray::from(Vec::<Value>::new())),
+/// #     ],
+/// # ).unwrap();
+/// let array = modelardb_common::array!(record_batch, 0, TimestampArray);
 /// ```
 ///
 /// # Panics
@@ -38,7 +51,28 @@ macro_rules! array {
 /// from a [`RecordBatch`](arrow::record_batch::RecordBatch), cast them to the required type, and
 /// assign the resulting arrays to the specified variables:
 ///
-/// ``` ignore
+/// ```
+/// # use std::sync::Arc;
+/// #
+/// # use arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt8Array};
+/// # use arrow::record_batch::RecordBatch;
+/// # use modelardb_common::schemas::COMPRESSED_SCHEMA;
+/// # use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
+/// #
+/// # let record_batch = RecordBatch::try_new(
+/// #     COMPRESSED_SCHEMA.0.clone(),
+/// #     vec![
+/// #         Arc::new(UInt64Array::from(Vec::<u64>::new())),
+/// #         Arc::new(UInt8Array::from(Vec::<u8>::new())),
+/// #         Arc::new(TimestampArray::from(Vec::<Timestamp>::new())),
+/// #         Arc::new(TimestampArray::from(Vec::<Timestamp>::new())),
+/// #         Arc::new(BinaryArray::from(Vec::<&[u8]>::new())),
+/// #         Arc::new(ValueArray::from(Vec::<Value>::new())),
+/// #         Arc::new(ValueArray::from(Vec::<Value>::new())),
+/// #         Arc::new(BinaryArray::from(Vec::<&[u8]>::new())),
+/// #         Arc::new(Float32Array::from(Vec::<f32>::new())),
+/// #     ],
+/// # ).unwrap();
 /// modelardb_common::arrays!(record_batch, univariate_ids, model_type_ids, start_times, end_times,
 /// timestamps, min_values, max_values, values, errors);
 /// ```

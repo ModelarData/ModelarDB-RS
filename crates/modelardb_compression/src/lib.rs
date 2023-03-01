@@ -27,8 +27,9 @@ use arrow::array::{
 };
 use arrow::record_batch::RecordBatch;
 use modelardb_common::errors::ModelarDbError;
+use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use modelardb_common::types::{
-    CompressedSchema, Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
+    Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
 
 use crate::models::{
@@ -50,13 +51,12 @@ pub const GORILLA_MAXIMUM_LENGTH: usize = 50;
 /// [`CompressionError`](ModelarDbError::CompressionError) if
 /// `uncompressed_timestamps` and `uncompressed_values` have different lengths,
 /// otherwise the resulting compressed segments are returned as a
-/// [`RecordBatch`] with the schema provided as `compressed_schema`.
+/// [`RecordBatch`] with the [`COMPRESSED_SCHEMA`] schema.
 pub fn try_compress(
     univariate_id: u64,
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
     error_bound: ErrorBound,
-    compressed_schema: &CompressedSchema,
 ) -> Result<RecordBatch, ModelarDbError> {
     // The uncompressed data must be passed as arrays instead of a RecordBatch
     // as a TimestampArray and a ValueArray is the only supported input.
@@ -87,90 +87,149 @@ pub fn try_compress(
         );
         current_index = compressed_segment_builder.finish(&mut compressed_record_batch_builder);
     }
-    Ok(compressed_record_batch_builder.finish(compressed_schema))
+    Ok(compressed_record_batch_builder.finish())
 }
 
-/// Merges the segments in `compressed_segments` that contain equivalent models.
-/// Assumes that the segments in `compressed_segments` are all from the same
-/// time series and that the segments are all sorted according to time.
-#[allow(dead_code)]
+/// Merge segments in `compressed_segments` that:
+/// * Are from same time series.
+/// * Contain the exact same models.
+/// * Are consecutive in terms of time.
+/// Assumes that if the consecutive segments A, B, and C exist for a time series and the segments A
+/// and C are in `compressed_segments` then B is also in `compressed_segments`. If only A and C are
+/// in `compressed_segments` a segment that overlaps with B will be created if A and C are merged.
 pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
-    // TODO: merge segments with none equivalent models.
-
     // Extract the columns from the RecordBatch.
-    let univariate_ids = modelardb_common::array!(compressed_segments, 0, UInt64Array);
-    let model_type_ids = modelardb_common::array!(compressed_segments, 1, UInt8Array);
-    let start_times = modelardb_common::array!(compressed_segments, 2, TimestampArray);
-    let end_times = modelardb_common::array!(compressed_segments, 3, TimestampArray);
-    let timestamps = modelardb_common::array!(compressed_segments, 4, BinaryArray);
-    let min_values = modelardb_common::array!(compressed_segments, 5, ValueArray);
-    let max_values = modelardb_common::array!(compressed_segments, 6, ValueArray);
-    let values = modelardb_common::array!(compressed_segments, 7, BinaryArray);
-    let errors = modelardb_common::array!(compressed_segments, 8, Float32Array);
+    modelardb_common::arrays!(
+        compressed_segments,
+        univariate_ids,
+        model_type_ids,
+        start_times,
+        end_times,
+        timestamps,
+        min_values,
+        max_values,
+        values,
+        errors
+    );
 
-    // For each segment, check if it can be merged with another segment.
+    // For each segment, check if it can be merged with another adjacent segment.
     let num_rows = compressed_segments.num_rows();
-    let mut compressed_segments_to_merge = HashMap::with_capacity(num_rows);
+    let mut can_segments_be_merged = false;
+    let mut univariate_id_to_previous_index = HashMap::new();
+    let mut indices_to_merge_per_univariate_id = HashMap::new();
 
-    for index in 0..num_rows {
-        // f32 are converted to u32 with the same bitwise representation as f32
-        // and f64 does not implement std::hash::Hash and thus cannot be hashed.
-        let model = (
-            model_type_ids.value(index),
-            values.value(index),
-            min_values.value(index).to_bits(),
-            max_values.value(index).to_bits(),
-        );
+    for current_index in 0..num_rows {
+        let univariate_id = univariate_ids.value(current_index);
+        let previous_index = *univariate_id_to_previous_index
+            .get(&univariate_id)
+            .unwrap_or(&current_index);
 
-        // Lookup the entry in the HashMap for model, create an empty Vec if an
-        // entry for model did not exist, and append index to the entry's Vec.
-        compressed_segments_to_merge
-            .entry(model)
-            .or_insert_with(Vec::new)
-            .push(index);
+        if can_models_be_merged(
+            previous_index,
+            current_index,
+            univariate_ids,
+            model_type_ids,
+            min_values,
+            max_values,
+            values,
+        ) {
+            indices_to_merge_per_univariate_id
+                .entry(univariate_id)
+                .or_insert_with(Vec::new)
+                .push(Some(current_index));
+
+            can_segments_be_merged = previous_index != current_index;
+        } else {
+            // unwrap() is safe as a segment is guaranteed to match itself.
+            let indices_to_merge = indices_to_merge_per_univariate_id
+                .get_mut(&univariate_id)
+                .unwrap();
+            indices_to_merge.push(None);
+            indices_to_merge.push(Some(current_index));
+        }
+
+        univariate_id_to_previous_index.insert(univariate_id, current_index);
     }
 
     // If none of the segments can be merged return the original compressed
     // segments, otherwise return the smaller set of merged compressed segments.
-    if compressed_segments_to_merge.len() < num_rows {
+    if can_segments_be_merged {
         let mut merged_compressed_segments = CompressedSegmentBatchBuilder::new(num_rows);
-        for (_, indices) in compressed_segments_to_merge {
-            // Merge timestamps.
-            let mut timestamp_builder = TimestampBuilder::new();
-            for index in &indices {
-                let start_time = start_times.value(*index);
-                let end_time = end_times.value(*index);
-                let timestamps = timestamps.value(*index);
-                timestamps::decompress_all_timestamps(
-                    start_time,
-                    end_time,
-                    timestamps,
-                    &mut timestamp_builder,
-                );
-            }
-            let timestamps = timestamp_builder.finish();
-            let compressed_timestamps =
-                timestamps::compress_residual_timestamps(timestamps.values());
+        let mut index_of_last_segment = 0;
 
-            // Merge segments. The first segment's model is used for the merged
-            // segment as all of the segments contain the exact same model.
-            let index = indices[0];
-            merged_compressed_segments.append_compressed_segment(
-                univariate_ids.value(index),
-                model_type_ids.value(index),
-                timestamps.value(0),
-                timestamps.value(timestamps.len() - 1),
-                &compressed_timestamps,
-                min_values.value(index),
-                max_values.value(index),
-                values.value(index),
-                errors.value(index),
-            );
+        let mut timestamp_builder = TimestampBuilder::new();
+        for (_, mut indices_to_merge) in indices_to_merge_per_univariate_id {
+            indices_to_merge.push(None);
+            for maybe_index in indices_to_merge {
+                if let Some(index) = maybe_index {
+                    // Merge timestamps.
+                    let start_time = start_times.value(index);
+                    let end_time = end_times.value(index);
+                    let timestamps = timestamps.value(index);
+
+                    timestamps::decompress_all_timestamps(
+                        start_time,
+                        end_time,
+                        timestamps,
+                        &mut timestamp_builder,
+                    );
+
+                    index_of_last_segment = index;
+                } else {
+                    let timestamps = timestamp_builder.finish();
+                    let compressed_timestamps =
+                        timestamps::compress_residual_timestamps(timestamps.values());
+
+                    // Merge segments. The last segment's model is used for the merged
+                    // segment as all of the segments contain the exact same model.
+                    merged_compressed_segments.append_compressed_segment(
+                        univariate_ids.value(index_of_last_segment),
+                        model_type_ids.value(index_of_last_segment),
+                        timestamps.value(0),
+                        timestamps.value(timestamps.len() - 1),
+                        &compressed_timestamps,
+                        min_values.value(index_of_last_segment),
+                        max_values.value(index_of_last_segment),
+                        values.value(index_of_last_segment),
+                        errors.value(index_of_last_segment),
+                    );
+                }
+            }
         }
-        merged_compressed_segments.finish(&CompressedSchema(compressed_segments.schema()))
+        merged_compressed_segments.finish()
     } else {
         compressed_segments
     }
+}
+
+/// Return [`true`] if the models at `previous_index` and `current_index` represent values from the
+/// same time series, are of the same type, and are equivalent, otherwise [`false`]. Assumes the
+/// arrays are the same length and that `previous_index` and `current_index` only access values in
+/// the arrays.
+fn can_models_be_merged(
+    previous_index: usize,
+    current_index: usize,
+    univariate_ids: &UInt64Array,
+    model_type_ids: &UInt8Array,
+    min_values: &ValueArray,
+    max_values: &ValueArray,
+    values: &BinaryArray,
+) -> bool {
+    // f32 are converted to u32 with the same bitwise representation as f32
+    // and f64 does not implement std::hash::Hash and thus cannot be hashed.
+    (
+        univariate_ids.value(previous_index),
+        model_type_ids.value(previous_index),
+        min_values.value(previous_index).to_bits(),
+        max_values.value(previous_index).to_bits(),
+        values.value(previous_index),
+    ) == (
+        univariate_ids.value(current_index),
+        model_type_ids.value(current_index),
+        min_values.value(current_index).to_bits(),
+        max_values.value(current_index).to_bits(),
+        values.value(current_index),
+    )
 }
 
 /// A compressed segment being built from an uncompressed segment using the
@@ -376,9 +435,9 @@ impl CompressedSegmentBatchBuilder {
     }
 
     /// Return [`RecordBatch`] of compressed segments and consume the builder.
-    fn finish(mut self, compressed_schema: &CompressedSchema) -> RecordBatch {
+    fn finish(mut self) -> RecordBatch {
         RecordBatch::try_new(
-            compressed_schema.0.clone(),
+            COMPRESSED_SCHEMA.0.clone(),
             vec![
                 Arc::new(self.univariate_ids.finish()),
                 Arc::new(self.model_type_ids.finish()),
@@ -400,7 +459,6 @@ mod tests {
     use super::*;
 
     use arrow::array::UInt8Array;
-    use modelardb_common::schemas::COMPRESSED_SCHEMA;
 
     use crate::models;
     use crate::test_util::StructureOfValues;
@@ -662,7 +720,6 @@ mod tests {
             &uncompressed_timestamps,
             &uncompressed_values,
             error_bound,
-            &COMPRESSED_SCHEMA,
         )
         .unwrap();
         (uncompressed_timestamps, compressed_record_batch)
@@ -699,8 +756,7 @@ mod tests {
     // Tests for merge_segments().
     #[test]
     fn test_merge_compressed_segments_empty_batch() {
-        let merged_record_batch =
-            merge_segments(CompressedSegmentBatchBuilder::new(0).finish(&COMPRESSED_SCHEMA));
+        let merged_record_batch = merge_segments(CompressedSegmentBatchBuilder::new(0).finish());
         assert_eq!(0, merged_record_batch.num_rows())
     }
 
@@ -716,7 +772,7 @@ mod tests {
         // Add a mix of different segments that can be merged into two segments.
         let mut compressed_record_batch_builder = CompressedSegmentBatchBuilder::new(10);
 
-        for start_time in (100..2000).step_by(400) {
+        for start_time in (100..2100).step_by(400) {
             compressed_record_batch_builder.append_compressed_segment(
                 univariate_id,
                 model_type_id,
@@ -728,7 +784,9 @@ mod tests {
                 values,
                 0.0,
             );
+        }
 
+        for start_time in (2500..4500).step_by(400) {
             compressed_record_batch_builder.append_compressed_segment(
                 univariate_id,
                 model_type_id + 1,
@@ -742,7 +800,7 @@ mod tests {
             );
         }
 
-        let compressed_record_batch = compressed_record_batch_builder.finish(&COMPRESSED_SCHEMA);
+        let compressed_record_batch = compressed_record_batch_builder.finish();
         let merged_record_batch = merge_segments(compressed_record_batch);
 
         // Extract the columns from the RecordBatch.
@@ -795,10 +853,89 @@ mod tests {
         assert_eq!(0.0, errors.value(positive));
         assert_eq!(10.0, errors.value(negative));
     }
+
+    // Tests for can_models_be_merged().
+    #[test]
+    fn test_models_can_be_merged() {
+        assert!(can_models_be_merged(
+            0,
+            1,
+            &UInt64Array::from_iter_values([1, 1]),
+            &UInt8Array::from_iter_values([1, 1]),
+            &ValueArray::from_iter_values([1.0, 1.0]),
+            &ValueArray::from_iter_values([2.0, 2.0]),
+            &BinaryArray::from_iter_values([[1], [1]])
+        ))
+    }
+
+    #[test]
+    fn test_models_with_different_univariate_ids_cannot_be_merged() {
+        assert!(!can_models_be_merged(
+            0,
+            1,
+            &UInt64Array::from_iter_values([1, 2]),
+            &UInt8Array::from_iter_values([1, 1]),
+            &ValueArray::from_iter_values([1.0, 1.0]),
+            &ValueArray::from_iter_values([2.0, 2.0]),
+            &BinaryArray::from_iter_values([[1], [1]])
+        ))
+    }
+
+    #[test]
+    fn test_models_with_different_model_types_cannot_be_merged() {
+        assert!(!can_models_be_merged(
+            0,
+            1,
+            &UInt64Array::from_iter_values([1, 1]),
+            &UInt8Array::from_iter_values([1, 2]),
+            &ValueArray::from_iter_values([1.0, 1.0]),
+            &ValueArray::from_iter_values([2.0, 2.0]),
+            &BinaryArray::from_iter_values([[1], [1]])
+        ))
+    }
+
+    #[test]
+    fn test_models_with_different_min_values_cannot_be_merged() {
+        assert!(!can_models_be_merged(
+            0,
+            1,
+            &UInt64Array::from_iter_values([1, 1]),
+            &UInt8Array::from_iter_values([1, 1]),
+            &ValueArray::from_iter_values([1.0, 2.0]),
+            &ValueArray::from_iter_values([2.0, 2.0]),
+            &BinaryArray::from_iter_values([[1], [1]])
+        ))
+    }
+
+    #[test]
+    fn test_models_with_different_max_values_cannot_be_merged() {
+        assert!(!can_models_be_merged(
+            0,
+            1,
+            &UInt64Array::from_iter_values([1, 1]),
+            &UInt8Array::from_iter_values([1, 1]),
+            &ValueArray::from_iter_values([1.0, 1.0]),
+            &ValueArray::from_iter_values([2.0, 3.0]),
+            &BinaryArray::from_iter_values([[1], [1]])
+        ))
+    }
+
+    #[test]
+    fn test_models_with_different_values_cannot_be_merged() {
+        assert!(!can_models_be_merged(
+            0,
+            1,
+            &UInt64Array::from_iter_values([1, 1]),
+            &UInt8Array::from_iter_values([1, 1]),
+            &ValueArray::from_iter_values([1.0, 1.0]),
+            &ValueArray::from_iter_values([2.0, 2.0]),
+            &BinaryArray::from_iter_values([[1], [2]])
+        ))
+    }
 }
 
-#[cfg(test)]
 /// Separate module for utility functions.
+#[cfg(test)]
 pub mod test_util {
     use rand::distributions::Uniform;
     use rand::{thread_rng, Rng};

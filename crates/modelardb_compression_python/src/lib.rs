@@ -69,14 +69,9 @@ fn compress<'a>(
     let values = modelardb_common::array!(uncompressed, 1, ValueArray);
 
     // unwrap() is safe as the timestamps and values are guaranteed to be the same length.
-    let compressed = modelardb_compression::try_compress(
-        univariate_id,
-        timestamps,
-        values,
-        error_bound,
-        &COMPRESSED_SCHEMA,
-    )
-    .unwrap();
+    let compressed =
+        modelardb_compression::try_compress(univariate_id, timestamps, values, error_bound)
+            .unwrap();
 
     // Convert and return the finished compressed PyArrow record batch.
     convert::rust_record_batch_to_python(compressed, python)

@@ -371,8 +371,8 @@ fn semantic_checks_for_create_model_table(
     let tag_column_indices =
         compute_indices_of_columns_with_data_type(column_defs, SQLDataType::Text);
 
-    // Extract the error bounds for the field columns.
-    let error_bounds = extract_error_bounds_for_field_columns(column_defs)?;
+    // Extract the error bounds for all columns.
+    let error_bounds = extract_error_bounds_for_all_columns(column_defs)?;
 
     // Return the metadata required to create a model table.
     ModelTableMetadata::try_new(
@@ -636,25 +636,28 @@ fn make_decimal_type(precision: Option<u64>, scale: Option<u64>) -> DataFusionRe
 }
 /* End of code copied from datafusion-sql v14.0.0/v15.0.0. */
 
-/// Extract the error bounds from the fields columns in `column_defs`.
-fn extract_error_bounds_for_field_columns(
+/// Extract the error bounds from the columns in `column_defs`. The error bound for the timestamp
+/// and tag columns will be zero so the error bound of each column can be accessed using its index.
+fn extract_error_bounds_for_all_columns(
     column_defs: &[ColumnDef],
 ) -> Result<Vec<ErrorBound>, ParserError> {
-    let field_column_indices =
-        compute_indices_of_columns_with_data_type(column_defs, SQLDataType::Real);
     let mut error_bounds = vec![];
 
-    for field_column_index in field_column_indices {
-        let column_def = &column_defs[field_column_index];
-
-        let error_bound_value = match &column_def.options[0].option {
-            ColumnOption::Comment(error_bound_string) => error_bound_string.parse::<f32>().unwrap(),
-            _ => {
-                return Err(ParserError::ParserError(format!(
-                    "No error bound is defined for {}.",
-                    column_def.name.value
-                )));
+    for column_def in column_defs {
+        let error_bound_value = if column_def.data_type == SQLDataType::Real {
+            match &column_def.options[0].option {
+                ColumnOption::Comment(error_bound_string) => {
+                    error_bound_string.parse::<f32>().unwrap()
+                }
+                _ => {
+                    return Err(ParserError::ParserError(format!(
+                        "No error bound is defined for {}.",
+                        column_def.name.value
+                    )));
+                }
             }
+        } else {
+            0.0
         };
 
         let error_bound = ErrorBound::try_new(error_bound_value)
@@ -662,6 +665,7 @@ fn extract_error_bounds_for_field_columns(
 
         error_bounds.push(error_bound);
     }
+
     Ok(error_bounds)
 }
 

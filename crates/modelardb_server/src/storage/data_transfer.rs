@@ -247,7 +247,7 @@ mod tests {
 
     const TABLE_NAME: &str = "table";
     const COLUMN_INDEX: u16 = 5;
-    const COMPRESSED_FILE_SIZE: usize = 2147;
+    const COMPRESSED_FILE_SIZE: usize = 2126;
 
     // Tests for path_is_compressed_file().
     #[test]
@@ -480,11 +480,11 @@ mod tests {
         ));
         assert!(target_path.exists());
 
-        // The file should have 3 * number_of_files rows since each compressed file has 3 rows.
+        // The file should have three rows since the rows in the compressed files are merged.
         let batch = StorageEngine::read_batch_from_apache_parquet_file(target_path.as_path())
             .await
             .unwrap();
-        assert_eq!(batch.num_rows(), 3 * paths.len());
+        assert_eq!(batch.num_rows(), 3);
 
         assert_eq!(
             *data_transfer

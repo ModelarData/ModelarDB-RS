@@ -255,6 +255,30 @@ impl MetadataManager {
         }
     }
 
+    /// Return the error bound for `univariate_id`. Returns an [`Error`](rusqlite::Error) if the
+    /// necessary data cannot be retrieved from the metadata database.
+    pub fn error_bound(&self, univariate_id: u64) -> Result<ErrorBound> {
+        // Open a connection to the database containing the metadata.
+        let connection = Connection::open(&self.metadata_database_path)?;
+
+        // SQLite use signed integers https://www.sqlite.org/datatype3.html.
+        let tag_hash = MetadataManager::univariate_id_to_tag_hash(univariate_id);
+        let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
+        let mut select_statement = connection.prepare(&format!(
+            "SELECT error_bounds FROM model_table_metadata, model_table_hash_table_name
+             WHERE model_table_metadata.table_name = model_table_hash_table_name.table_name
+             AND hash = {signed_tag_hash}",
+        ))?;
+        let mut rows = select_statement.query([])?;
+
+        // unwrap() is safe as a model table must be created before data can be inserted into it.
+        let error_bounds_bytes = rows.next()?.unwrap().get::<usize, Vec<u8>>(0)?;
+        let error_bounds =
+            MetadataManager::convert_slice_u8_to_vec_error_bounds(&error_bounds_bytes)?;
+        let column_index = MetadataManager::univariate_id_to_column_index(univariate_id);
+        Ok(error_bounds[column_index as usize])
+    }
+
     /// Extract the first 54-bits from `univariate_id` which is a hash computed from tags.
     pub fn univariate_id_to_tag_hash(univariate_id: u64) -> u64 {
         univariate_id & 18446744073709550592
@@ -1101,7 +1125,7 @@ mod tests {
             row.get::<usize, Vec<u8>>(3).unwrap()
         );
         assert_eq!(
-            vec![0, 0, 0, 0, 0, 0, 0, 0],
+            vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             row.get::<usize, Vec<u8>>(4).unwrap()
         );
 
@@ -1256,6 +1280,8 @@ pub mod test_util {
         ]);
 
         let error_bounds = vec![
+            ErrorBound::try_new(0.0).unwrap(),
+            ErrorBound::try_new(0.0).unwrap(),
             ErrorBound::try_new(0.0).unwrap(),
             ErrorBound::try_new(0.0).unwrap(),
         ];

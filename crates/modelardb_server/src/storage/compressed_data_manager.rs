@@ -27,7 +27,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
-use modelardb_common::types::{CompressedSchema, Timestamp, Value};
+use modelardb_common::types::{Timestamp, Value};
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
 use tokio::sync::RwLock;
@@ -55,8 +55,6 @@ pub(super) struct CompressedDataManager {
     /// used since compressed data is inserted and then the remaining bytes are checked. This means
     /// that the remaining bytes can briefly be negative until compressed data is saved to disk.
     compressed_remaining_memory_in_bytes: isize,
-    /// Reference to the schema for compressed data buffers.
-    compressed_schema: CompressedSchema,
     /// Metric for the used compressed memory in bytes, updated every time the used memory changes.
     pub(super) used_compressed_memory_metric: Metric,
     /// Metric for the total used disk space in bytes, updated every time a new compressed file is
@@ -71,7 +69,6 @@ impl CompressedDataManager {
         data_transfer: Option<DataTransfer>,
         local_data_folder: PathBuf,
         compressed_reserved_memory_in_bytes: usize,
-        compressed_schema: CompressedSchema,
         used_disk_space_metric: Arc<RwLock<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the compressed data manager exists.
@@ -83,7 +80,6 @@ impl CompressedDataManager {
             compressed_data_buffers: HashMap::new(),
             compressed_queue: VecDeque::new(),
             compressed_remaining_memory_in_bytes: compressed_reserved_memory_in_bytes as isize,
-            compressed_schema,
             used_compressed_memory_metric: Metric::new(),
             used_disk_space_metric,
         })
@@ -323,8 +319,7 @@ impl CompressedDataManager {
             .join(table_name)
             .join(column_index.to_string());
 
-        let file_path = compressed_data_buffer
-            .save_to_apache_parquet(folder_path.as_path(), &self.compressed_schema)?;
+        let file_path = compressed_data_buffer.save_to_apache_parquet(folder_path.as_path())?;
 
         // Update the remaining memory for compressed data and record the change.
         let freed_memory = compressed_data_buffer.size_in_bytes as isize;
@@ -437,7 +432,6 @@ mod tests {
     use std::path::Path;
 
     use datafusion::arrow::compute;
-    use modelardb_common::schemas::COMPRESSED_SCHEMA;
     use modelardb_common::types::{TimestampArray, ValueArray};
     use object_store::local::LocalFileSystem;
     use ringbuf::Rb;
@@ -615,7 +609,6 @@ mod tests {
                 None,
                 local_data_folder,
                 metadata_manager.compressed_reserved_memory_in_bytes,
-                COMPRESSED_SCHEMA.clone(),
                 Arc::new(RwLock::new(Metric::new())),
             )
             .unwrap(),

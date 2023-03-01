@@ -305,7 +305,6 @@ mod tests {
     use super::*;
 
     use arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt8Array};
-    use modelardb_common::schemas::COMPRESSED_SCHEMA;
     use modelardb_common::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
     use proptest::num::f32 as ProptestValue;
     use proptest::strategy::Strategy;
@@ -563,8 +562,7 @@ mod tests {
             (START_TIME..end_time).step_by(SAMPLING_INTERVAL as usize),
         );
         let values = ValueArray::from_iter_values(values);
-        let segments =
-            crate::try_compress(1, &timestamps, &values, error_bound, &COMPRESSED_SCHEMA).unwrap();
+        let segments = crate::try_compress(1, &timestamps, &values, error_bound).unwrap();
 
         // Extract the individual columns from the record batch.
         modelardb_common::arrays!(
