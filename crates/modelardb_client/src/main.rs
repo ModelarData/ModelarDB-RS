@@ -29,6 +29,7 @@ use std::sync::Arc;
 
 use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
+use rustyline::history::FileHistory;
 use arrow::ipc::convert;
 use arrow::record_batch::RecordBatch;
 use arrow::util::pretty;
@@ -169,7 +170,7 @@ fn repl(
     mut flight_service_client: FlightServiceClient<Channel>,
 ) -> Result<(), Box<dyn Error>> {
     // Create the read-eval-print loop.
-    let mut editor = Editor::<ClientHelper>::new()?;
+    let mut editor = Editor::<ClientHelper, FileHistory>::new()?;
     let table_names = retrieve_table_names(&runtime, &mut flight_service_client)?;
     editor.set_helper(Some(ClientHelper::new(table_names)));
 
@@ -182,7 +183,7 @@ fn repl(
 
     // Execute actions, commands, and queries and print the result.
     while let Ok(line) = editor.readline("ModelarDB> ") {
-        editor.add_history_entry(line.as_str());
+        editor.add_history_entry(line.as_str())?;
         if let Err(message) =
             execute_and_print_action_command_or_query(&runtime, &mut flight_service_client, &line)
         {

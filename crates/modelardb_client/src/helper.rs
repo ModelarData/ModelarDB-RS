@@ -89,7 +89,7 @@ impl Completer for ClientHelper {
     ) -> Result<(usize, Vec<Self::Candidate>), ReadlineError> {
         // The prefix and candidate are converted to uppercase to make the comparison
         // case-insensitive. However, the unmodified candidates are returned to preserve their case.
-        let (start, prefix) = completion::extract_word(line, pos, None, " ".as_bytes());
+        let (start, prefix) = completion::extract_word(line, pos, None, |c| c == ' ');
         let uppercase_prefix = prefix.to_uppercase();
         let candidates: Vec<String> = self
             .completion_candidates

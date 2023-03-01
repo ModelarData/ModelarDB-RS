@@ -24,15 +24,15 @@ name = "modelardbd"
 path = "src/main.rs"
 
 [dependencies]
-arrow-flight = "32.0.0"
+arrow-flight = "33.0.0"
 async-trait = "0.1.64"
 bytes = "1.4.0"
-datafusion = "18.0.0"
+datafusion = "19.0.0"
 futures = "0.3.26"
 modelardb_common = { path = "../modelardb_common" }
 modelardb_compression = { path = "../modelardb_compression" }
 object_store = { version = "0.5.4", features = ["aws"] }
-parquet = { version = "32.0.0", features = ["object_store"] }
+parquet = { version = "33.0.0", features = ["object_store"] }
 ringbuf = "0.3.2"
 rusqlite = { version = "0.28.0", features = ["bundled"] }
 snmalloc-rs = "0.3.3"
@@ -49,8 +49,8 @@ tracing-subscriber = "0.3.16"
 [dev-dependencies]
 proptest = "1.1.0"
 serial_test = "1.0.0"
-sysinfo = "0.27.7"
-tempfile = "3.3.0"
+sysinfo = "0.28.1"
+tempfile = "3.4.0"
 
 [package.metadata.cargo-machete]
 ignored = ["log"]
