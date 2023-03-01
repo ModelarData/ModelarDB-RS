@@ -1,5 +1,5 @@
 # ModelarDB
-:warning: **ModelarDB is alpha software and not yet ready for production use.**
+:warning: **The current version of ModelarDB is alpha software and not yet ready for production use.**
 
 ModelarDB is an efficient high-performance time series management system that is designed to efficiently ingest, transfer, store, and analyze high-frequency time series across the edge and cloud. It provides state-of-the-art lossless compression, lossy compression, and query performance by efficiently compressing time series on the edge using multiple different types of models such as constant and linear functions. As a result, the high-frequency time series can be transferred to the cloud through a connection with very limited bandwidth and stored in the cloud at a low cost. The compressed time series can be efficiently queried on both the edge and in the cloud using a relational interface and SQL without any knowledge about the model-based representation. A query optimizer automatically rewrites the queries to exploit the model-based representation.
 
@@ -43,7 +43,7 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 5. Move `modelardbd` and `modelardb` from the `target` directory to any directory.
 
 ## Usage
-`modelardbd` supports two execution modes *edge* and *cloud*. For storage, `modelardbd` uses local storage and an Amazon S3-compatible object store (optional in edge mode). The execution mode dictates where queries are executed, when `modelardbd` is deployed in edge mode it executes queries against local storage and when it is deployed in cloud mode it executes queries against the object store. For both deployment modes, `modelardbd` automatically compresses the ingested time series using multiple different types of models and continuously transfers this compressed representation from local storage to the object store. Be aware that sharing metadata between multiple instances of `modelardbd` is currently under development, thus only the instance of `modelardbd` that ingested a time series can currently query it.
+`modelardbd` supports two execution modes *edge* and *cloud*. For storage, `modelardbd` uses local storage and an Amazon S3-compatible object store (optional in edge mode). The execution mode dictates where queries are executed. When `modelardbd` is deployed in edge mode it executes queries against local storage and when it is deployed in cloud mode it executes queries against the object store. For both deployment modes, `modelardbd` automatically compresses the ingested time series using multiple different types of models and continuously transfers this compressed representation from local storage to the object store. Be aware that sharing metadata between multiple instances of `modelardbd` is currently under development, thus only the instance of `modelardbd` that ingested a time series can currently query it.
 
 ### Start Server
 To run `modelardbd` in edge mode using only local storage, i.e., without transferring the ingested time series to an object store, simply pass the path to the local folder `modelardbd` should use as its data folder:
@@ -91,16 +91,16 @@ ModelarDB includes a command-line client in the form of `modelardb`. To interact
 modelardb
 ```
 
-If `modelardbd` is not running on the same host, the host `modelardb` should connect to must be specified:
+If `modelardbd` is not running on the same host, the host `modelardb` should connect to must be specified. `modelardbd`'s Apache Arrow Flight interface accepts requests on port `9999` so it is not necessary to specify a port:
 
 ```shell
-modelardb 127.0.0.1
+modelardb 10.0.0.37
 ```
 
 `modelardb` can also execute SQL statements from a file passed as a command-line argument:
 
 ```shell
-modelardb 127.0.0.1 path_to_file_with_sql_statements.sql
+modelardb 10.0.0.37 path_to_file_with_sql_statements.sql
 ```
 
 `modelardbd` can also be queried programmatically [from many different programming languages](https://arrow.apache.org/docs/index.html) using Apache Arrow Flight. The following Python example shows how to execute a simple SQL query against `modelardbd` and process the resulting stream of data points using [`pyarrow`](https://pypi.org/project/pyarrow/) and [`pandas`](https://pypi.org/project/pandas/). A PEP 249 compatible connector is also available for Python in the form of [PyModelarDB](https://github.com/ModelarData/PyModelarDB).
@@ -119,13 +119,14 @@ for flight_stream_chunk in flight_stream_reader:
 ```
 
 ### Ingest Data
-Before time series can be ingested into `modelardbd` a model table must be created. A model table is a specialized table for time series which must contain a single column with timestamps, one or more columns with fields (measurements as floating-point values), and zero or more columns with tags (metadata as strings). Model tables can be created using `CREATE MODEL TABLE` statements with the column types `TIMESTAMP`, `FIELD`, and `TAG`. For `FIELD` an error bound can optionally be specified in parentheses to enable lossy compression with a per value error bound, e.g., `FIELD(1)` creates a column with a one percent error bound. `FIELD` columns default to an error bound of zero when none is specified. `modelardb` also supports normal tables created through `CREATE TABLE` statements.
+Before time series can be ingested into `modelardbd`, a model table must be created. From a user's perspective a model table functions like any other table and can be queried using SQL. However, the implementation of model table are highly optimized for time series and a model table must contain a single column with timestamps, one or more columns with fields (measurements as floating-point values), and zero or more columns with tags (metadata as strings). Model tables can be created using `CREATE MODEL TABLE` statements with the column types `TIMESTAMP`, `FIELD`, and `TAG`. For `FIELD` an error bound can optionally be specified in parentheses to enable lossy compression with a relative per value error bound, e.g., `FIELD(1.0)` creates a column with a one percent error bound. `FIELD` columns default to an error bound of zero when none is specified. `modelardb` also supports normal tables created through `CREATE TABLE` statements.
 
 As both `CREATE MODEL TABLE` and `CREATE TABLE` are just SQL statements, both types of tables can be created using `modelardb` or programmatically using Apache Arrow Flight. For example, a model table storing a simple multivariate time series with weather data collected at different wind turbines can be created as follows:
 
 ```shell
-CREATE MODEL TABLE wind_turbine(timestamp TIMESTAMP, wind_turbine TAG, wind_direction FIELD, wind_speed FIELD(1))
+CREATE MODEL TABLE wind_turbine(timestamp TIMESTAMP, wind_turbine TAG, wind_direction FIELD, wind_speed FIELD(1.0))
 ```
+
 The following example shows how to create the same model table in Python using Apache Arrow Flight:
 
 ```python
@@ -133,7 +134,7 @@ from pyarrow import flight
 
 flight_client = flight.FlightClient("grpc://127.0.0.1:9999")
 
-sql = "CREATE MODEL TABLE wind_turbine(timestamp TIMESTAMP, wind_turbine TAG, wind_direction FIELD, wind_speed FIELD(1))"
+sql = "CREATE MODEL TABLE wind_turbine(timestamp TIMESTAMP, wind_turbine TAG, wind_direction FIELD, wind_speed FIELD(1.0))"
 action = flight.Action("CommandStatementUpdate", str.encode(sql))
 result = flight_client.do_action(action)
 
@@ -162,7 +163,7 @@ writer.write(table)
 writer.close()
 ```
 
-While this example simply ingests three data points from memory, it is simple to extend so it reads from other data sources. For example, [this Python script](https://github.com/ModelarData/Utilities/blob/main/Apache-Parquet-Loader/main.py) makes it simple to bulk load time series from Apache Parquet files with the same schema by reading the Apache Parquet files, creating a model table that matches their schema if it does not exist, and transferring the data in the Apache Parquet files to `modelardbd` using Apache Arrow Flight.
+While this example simply ingests three data points from memory, it is simple to extend such that it reads from other data sources. For example, [this Python script](https://github.com/ModelarData/Utilities/blob/main/Apache-Parquet-Loader/main.py) makes it simple to bulk load time series from Apache Parquet files with the same schema by reading the Apache Parquet files, creating a model table that matches their schema if it does not exist, and transferring the data in the Apache Parquet files to `modelardbd` using Apache Arrow Flight.
 
 Time series can also be ingested into `modelardbd` using [Telegraf](https://www.influxdata.com/time-series-platform/telegraf/) with the [Apache Arrow Flight output plugin](https://github.com/ModelarData/Telegraf-Output-Apache-Arrow-Flight). By using Telegraf, data points can be efficiently streamed into `modelardbd` from a large [collection of data sources](https://www.influxdata.com/time-series-platform/telegraf/telegraf-input-plugin/) such as [MQTT](https://mqtt.org/) and [OPC-UA](https://opcfoundation.org/about/opc-technologies/opc-ua/).
 
