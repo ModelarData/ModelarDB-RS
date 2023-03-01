@@ -94,7 +94,7 @@ pub fn try_compress(
 /// * Are from same time series.
 /// * Contain the exact same models.
 /// * Are consecutive in terms of time.
-/// Assumes that if the consecutive segments A, B, and C exists for a time series and the segments A
+/// Assumes that if the consecutive segments A, B, and C exist for a time series and the segments A
 /// and C are in `compressed_segments` then B is also in `compressed_segments`. If only A and C are
 /// in `compressed_segments` a segment that overlaps with B will be created if A and C are merged.
 pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
