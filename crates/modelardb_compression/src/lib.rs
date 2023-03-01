@@ -14,7 +14,7 @@
  */
 
 //! Compress batches of sorted data points represented by a [`TimestampArray`] and a [`ValueArray`]
-//! using the model types in [`models`](crate::models) to produce compressed segments.
+//! using the model types in [`models`](models) to produce compressed segments.
 
 pub mod models;
 
@@ -45,7 +45,7 @@ pub const GORILLA_MAXIMUM_LENGTH: usize = 50;
 /// Compress `uncompressed_timestamps` using a start time, end time, and a
 /// sampling interval if regular and delta-of-deltas followed by a variable
 /// length binary encoding if irregular. `uncompressed_values` is compressed
-/// within `error_bound` using the model types in [`models`](crate::models).
+/// within `error_bound` using the model types in [`models`](models).
 /// Assumes `uncompressed_timestamps` and `uncompressed_values` are sorted
 /// according to `uncompressed_timestamps`. Returns
 /// [`CompressionError`](ModelarDbError::CompressionError) if
@@ -233,7 +233,7 @@ fn can_models_be_merged(
 }
 
 /// A compressed segment being built from an uncompressed segment using the
-/// model types in [`models`](crate::models). Each of the model types is used to
+/// model types in [`models`](models). Each of the model types is used to
 /// fit models to the data points, and then the model that uses the fewest
 /// number of bytes per value is selected.
 struct CompressedSegmentBuilder<'a> {
@@ -952,19 +952,19 @@ pub mod test_util {
     /// will match `timestamps` and their structure will match [`StructureOfValues`]. If `Random` is
     /// selected, `min` and `max` is the range of values which can be generated. If `AlmostLinear`
     /// is selected, `min` and `max` is the maximum and minimum change that should be applied from
-    /// one value to the next. Returns the generated values as a [`Vec`].
+    /// one value to the next. Returns the generated values as a [`Vec<f32>`].
     pub fn generate_values(
         timestamps: &[i64],
         data_type: StructureOfValues,
         min: Option<f32>,
         max: Option<f32>,
     ) -> Vec<f32> {
+        let mut randomizer = thread_rng();
         match data_type {
             // Generates almost linear data.
             StructureOfValues::AlmostLinear => {
                 let a: i64 = thread_rng().gen_range(-10..10);
                 let b: i64 = thread_rng().gen_range(1..50);
-                let mut randomizer = thread_rng();
 
                 timestamps
                     .iter()
@@ -976,7 +976,10 @@ pub mod test_util {
             }
             // Generates linear data.
             StructureOfValues::Linear => {
-                let a: i64 = thread_rng().gen_range(-10..10);
+                let mut a: i64 = 0;
+                while a == 0{
+                    a = thread_rng().gen_range(-10..10);
+                }
                 let b: i64 = thread_rng().gen_range(1..50);
 
                 timestamps
