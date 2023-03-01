@@ -91,7 +91,7 @@ ModelarDB includes a command-line client in the form of `modelardb`. To interact
 modelardb
 ```
 
-If `modelardbd` is not running on the same host, the host `modelardb` should connect to must be specified. `modelardbd`'s Apache Arrow Flight interface accepts requests on port `9999` so it is not necessary to specify a port:
+If `modelardbd` is not running on the same host, the host `modelardb` should connect to must be specified. `modelardbd`'s Apache Arrow Flight interface accept requests on port `9999` so it is not necessary to specify a port:
 
 ```shell
 modelardb 10.0.0.37
@@ -119,7 +119,7 @@ for flight_stream_chunk in flight_stream_reader:
 ```
 
 ### Ingest Data
-Before time series can be ingested into `modelardbd`, a model table must be created. From a user's perspective a model table functions like any other table and can be queried using SQL. However, the implementation of model table are highly optimized for time series and a model table must contain a single column with timestamps, one or more columns with fields (measurements as floating-point values), and zero or more columns with tags (metadata as strings). Model tables can be created using `CREATE MODEL TABLE` statements with the column types `TIMESTAMP`, `FIELD`, and `TAG`. For `FIELD` an error bound can optionally be specified in parentheses to enable lossy compression with a relative per value error bound, e.g., `FIELD(1.0)` creates a column with a one percent error bound. `FIELD` columns default to an error bound of zero when none is specified. `modelardb` also supports normal tables created through `CREATE TABLE` statements.
+Before time series can be ingested into `modelardbd`, a model table must be created. From a user's perspective a model table functions like any other table and can be queried using SQL. However, the implementation of model table is highly optimized for time series and a model table must contain a single column with timestamps, one or more columns with fields (measurements as floating-point values), and zero or more columns with tags (metadata as strings). Model tables can be created using `CREATE MODEL TABLE` statements with the column types `TIMESTAMP`, `FIELD`, and `TAG`. For `FIELD` an error bound can optionally be specified in parentheses to enable lossy compression with a relative per value error bound, e.g., `FIELD(1.0)` creates a column with a one percent error bound. `FIELD` columns default to an error bound of zero when none is specified. `modelardb` also supports normal tables created through `CREATE TABLE` statements.
 
 As both `CREATE MODEL TABLE` and `CREATE TABLE` are just SQL statements, both types of tables can be created using `modelardb` or programmatically using Apache Arrow Flight. For example, a model table storing a simple multivariate time series with weather data collected at different wind turbines can be created as follows:
 
