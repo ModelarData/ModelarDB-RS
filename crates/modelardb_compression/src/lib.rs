@@ -963,7 +963,10 @@ pub mod test_util {
         match data_type {
             // Generates almost linear data.
             StructureOfValues::AlmostLinear => {
-                let a: i64 = thread_rng().gen_range(-10..10);
+                let mut a: i64 = 0;
+                while a == 0{
+                    a = thread_rng().gen_range(-10..10);
+                }
                 let b: i64 = thread_rng().gen_range(1..50);
 
                 timestamps
