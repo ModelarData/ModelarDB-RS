@@ -35,13 +35,13 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Millisecon
 use datafusion::arrow::ipc::convert;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
-use futures::stream;
+use futures::{stream, StreamExt};
 use serial_test::serial;
 use sysinfo::{Pid, PidExt, System, SystemExt};
 
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
-use tonic::Request;
+use tonic::{Request};
 
 /// The different types of tables used in the integration tests.
 enum TableType {
@@ -164,6 +164,68 @@ fn test_can_get_schema() {
             Field::new("tag", DataType::Utf8, false)
         ])
     );
+
+    stop_modelardbd(flight_server);
+}
+
+#[test]
+#[serial]
+fn test_can_list_actions(){
+    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
+    let flight_server = start_modelardbd(temp_dir.path());
+
+    let runtime = Runtime::new().expect("Unable to initialize runtime.");
+    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
+        .expect("Cannot connect to flight service client.");
+
+    let mut actions = Vec::new();
+    runtime.block_on(async {
+        let mut response = flight_service_client
+            .list_actions(Request::new(arrow_flight::Empty {}))
+            .await
+            .expect("Could not retrieve actions.")
+            .into_inner();
+
+
+        while let Some(action) = response.next().await{
+            actions.push(action.expect("Could not append action to vector.").r#type)
+        }
+    });
+
+    assert_eq!(actions, vec!["CommandStatementUpdate", "FlushMemory", "FlushEdge", "CollectMetrics"]);
+
+    stop_modelardbd(flight_server);
+}
+
+#[test]
+#[serial]
+fn test_can_collect_metrics(){
+    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
+    let flight_server = start_modelardbd(temp_dir.path());
+
+    let runtime = Runtime::new().expect("Unable to initialize runtime.");
+    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
+        .expect("Cannot connect to flight service client.");
+
+    let action = Action {
+        r#type: "CollectMetrics".to_owned(),
+        body: Bytes::new(),
+    };
+
+    let mut metrics = Vec::new();
+    runtime.block_on(async {
+        let mut response = flight_service_client
+            .do_action(Request::new(action))
+            .await
+            .expect("Could not collect metrics.")
+            .into_inner();
+
+        while let Some(metric) = response.next().await{
+            metrics.push(metric.expect("Could not append metric to vector."));
+        }
+    });
+
+    assert!(!metrics.is_empty());
 
     stop_modelardbd(flight_server);
 }
