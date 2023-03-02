@@ -623,11 +623,10 @@ fn flush_data_to_disk(runtime: &Runtime, flight_service_client: &mut FlightServi
         r#type: "FlushMemory".to_owned(),
         body: Bytes::new(),
     };
-    let request = Request::new(action);
 
     runtime.block_on(async {
         flight_service_client
-            .do_action(request)
+            .do_action(Request::new(action))
             .await
             .expect("Could not flush data.");
     })
