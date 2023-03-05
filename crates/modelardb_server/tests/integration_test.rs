@@ -179,17 +179,14 @@ fn test_can_list_actions() {
         .expect("Cannot connect to flight service client.");
 
     let mut actions = runtime.block_on(async {
-        let response = flight_service_client
+        flight_service_client
             .list_actions(Request::new(arrow_flight::Empty {}))
             .await
             .expect("Could not retrieve actions.")
-            .into_inner();
-        let actions = response
+            .into_inner()
             .map(|action| action.expect("Could not retrieve action.").r#type)
             .collect::<Vec<String>>()
-            .await;
-
-        actions
+            .await
     });
 
     // Sort() is called on the vector to ensure that the assertion will pass even if the order of
@@ -219,23 +216,18 @@ fn test_can_collect_metrics() {
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
         .expect("Cannot connect to flight service client.");
 
-    let action = Action {
-        r#type: "CollectMetrics".to_owned(),
-        body: Bytes::new(),
-    };
-
     let metrics = runtime.block_on(async {
-        let response = flight_service_client
-            .do_action(Request::new(action))
+        flight_service_client
+            .do_action(Request::new(Action {
+                r#type: "CollectMetrics".to_owned(),
+                body: Bytes::new(),
+            }))
             .await
             .expect("Could not collect metrics.")
-            .into_inner();
-        let metrics = response
+            .into_inner()
             .map(|metric| metric.expect("").body)
             .collect::<Vec<Bytes>>()
-            .await;
-
-        metrics
+            .await
     });
 
     assert!(!metrics.is_empty());

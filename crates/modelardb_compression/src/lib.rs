@@ -42,16 +42,14 @@ use crate::models::{
 /// will never exceed the user-defined error bounds.
 pub const GORILLA_MAXIMUM_LENGTH: usize = 50;
 
-/// Compress `uncompressed_timestamps` using a start time, end time, and a
-/// sampling interval if regular and delta-of-deltas followed by a variable
-/// length binary encoding if irregular. `uncompressed_values` is compressed
-/// within `error_bound` using the model types in [`models`].
-/// Assumes `uncompressed_timestamps` and `uncompressed_values` are sorted
-/// according to `uncompressed_timestamps`. Returns
-/// [`CompressionError`](ModelarDbError::CompressionError) if
-/// `uncompressed_timestamps` and `uncompressed_values` have different lengths,
-/// otherwise the resulting compressed segments are returned as a
-/// [`RecordBatch`] with the [`COMPRESSED_SCHEMA`] schema.
+/// Compress `uncompressed_timestamps` using a start time, end time, and a sampling interval if
+/// regular and delta-of-deltas followed by a variable length binary encoding if irregular.
+/// `uncompressed_values` is compressed within `error_bound` using the model types in [`models`].
+/// Assumes `uncompressed_timestamps` and `uncompressed_values` are sorted according to
+/// `uncompressed_timestamps`. Returns [`CompressionError`](ModelarDbError::CompressionError) if
+/// `uncompressed_timestamps` and `uncompressed_values` have different lengths, otherwise the
+///  resulting compressed segments are returned as a [`RecordBatch`] with the [`COMPRESSED_SCHEMA`]
+///  schema.
 pub fn try_compress(
     univariate_id: u64,
     uncompressed_timestamps: &TimestampArray,
@@ -232,10 +230,9 @@ fn can_models_be_merged(
     )
 }
 
-/// A compressed segment being built from an uncompressed segment using the
-/// model types in [`models`]. Each of the model types is used to
-/// fit models to the data points, and then the model that uses the fewest
-/// number of bytes per value is selected.
+/// A compressed segment being built from an uncompressed segment using the model types in
+/// [`models`]. Each of the model types is used to fit models to the data points, and then the
+/// model that uses the fewest number of bytes per value is selected.
 struct CompressedSegmentBuilder<'a> {
     /// The id of the time series from which the compressed segment is created.
     univariate_id: u64,
