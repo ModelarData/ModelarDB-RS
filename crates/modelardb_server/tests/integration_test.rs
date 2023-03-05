@@ -41,7 +41,7 @@ use sysinfo::{Pid, PidExt, System, SystemExt};
 
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
-use tonic::{Request};
+use tonic::Request;
 
 /// The different types of tables used in the integration tests.
 enum TableType {
@@ -170,7 +170,7 @@ fn test_can_get_schema() {
 
 #[test]
 #[serial]
-fn test_can_list_actions(){
+fn test_can_list_actions() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let flight_server = start_modelardbd(temp_dir.path());
 
@@ -178,28 +178,40 @@ fn test_can_list_actions(){
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
         .expect("Cannot connect to flight service client.");
 
-    let mut actions = Vec::new();
-    runtime.block_on(async {
-        let mut response = flight_service_client
+    let mut actions = runtime.block_on(async {
+        let response = flight_service_client
             .list_actions(Request::new(arrow_flight::Empty {}))
             .await
             .expect("Could not retrieve actions.")
             .into_inner();
+        let actions = response
+            .map(|action| action.expect("Could not retrieve action.").r#type)
+            .collect::<Vec<String>>()
+            .await;
 
-
-        while let Some(action) = response.next().await{
-            actions.push(action.expect("Could not append action to vector.").r#type)
-        }
+        actions
     });
 
-    assert_eq!(actions, vec!["CommandStatementUpdate", "FlushMemory", "FlushEdge", "CollectMetrics"]);
+    // Sort() is called on the vector to ensure that the assertion will pass even if the order of
+    // the actions returned by the endpoint changes.
+    actions.sort();
+
+    assert_eq!(
+        actions,
+        vec![
+            "CollectMetrics",
+            "CommandStatementUpdate",
+            "FlushEdge",
+            "FlushMemory",
+        ]
+    );
 
     stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
-fn test_can_collect_metrics(){
+fn test_can_collect_metrics() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let flight_server = start_modelardbd(temp_dir.path());
 
@@ -212,17 +224,18 @@ fn test_can_collect_metrics(){
         body: Bytes::new(),
     };
 
-    let mut metrics = Vec::new();
-    runtime.block_on(async {
-        let mut response = flight_service_client
+    let metrics = runtime.block_on(async {
+        let response = flight_service_client
             .do_action(Request::new(action))
             .await
             .expect("Could not collect metrics.")
             .into_inner();
+        let metrics = response
+            .map(|metric| metric.expect("").body)
+            .collect::<Vec<Bytes>>()
+            .await;
 
-        while let Some(metric) = response.next().await{
-            metrics.push(metric.expect("Could not append metric to vector."));
-        }
+        metrics
     });
 
     assert!(!metrics.is_empty());

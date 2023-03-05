@@ -14,7 +14,7 @@
  */
 
 //! Compress batches of sorted data points represented by a [`TimestampArray`] and a [`ValueArray`]
-//! using the model types in [`models`](models) to produce compressed segments.
+//! using the model types in [`models`] to produce compressed segments.
 
 pub mod models;
 
@@ -45,7 +45,7 @@ pub const GORILLA_MAXIMUM_LENGTH: usize = 50;
 /// Compress `uncompressed_timestamps` using a start time, end time, and a
 /// sampling interval if regular and delta-of-deltas followed by a variable
 /// length binary encoding if irregular. `uncompressed_values` is compressed
-/// within `error_bound` using the model types in [`models`](models).
+/// within `error_bound` using the model types in [`models`].
 /// Assumes `uncompressed_timestamps` and `uncompressed_values` are sorted
 /// according to `uncompressed_timestamps`. Returns
 /// [`CompressionError`](ModelarDbError::CompressionError) if
@@ -233,7 +233,7 @@ fn can_models_be_merged(
 }
 
 /// A compressed segment being built from an uncompressed segment using the
-/// model types in [`models`](models). Each of the model types is used to
+/// model types in [`models`]. Each of the model types is used to
 /// fit models to the data points, and then the model that uses the fewest
 /// number of bytes per value is selected.
 struct CompressedSegmentBuilder<'a> {
@@ -963,8 +963,9 @@ pub mod test_util {
         match data_type {
             // Generates almost linear data.
             StructureOfValues::AlmostLinear => {
+                // The variable a is regenerated if it is 0, to avoid generating constant data.
                 let mut a: i64 = 0;
-                while a == 0{
+                while a == 0 {
                     a = thread_rng().gen_range(-10..10);
                 }
                 let b: i64 = thread_rng().gen_range(1..50);
@@ -979,8 +980,9 @@ pub mod test_util {
             }
             // Generates linear data.
             StructureOfValues::Linear => {
+                // The variable a is regenerated if it is 0, to avoid generating constant data.
                 let mut a: i64 = 0;
-                while a == 0{
+                while a == 0 {
                     a = thread_rng().gen_range(-10..10);
                 }
                 let b: i64 = thread_rng().gen_range(1..50);
