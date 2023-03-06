@@ -62,7 +62,7 @@ fn test_can_create_table() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Cannot connect to flight service client.");
+        .expect("Could not connect to flight service client.");
 
     create_table(
         &runtime,
@@ -88,7 +88,7 @@ fn test_can_create_model_table() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Cannot connect to flight service client.");
+        .expect("Could not connect to flight service client.");
 
     create_table(
         &runtime,
@@ -114,7 +114,7 @@ fn test_can_create_and_list_multiple_model_tables() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Cannot connect to flight service client.");
+        .expect("Could not connect to flight service client.");
 
     let table_names = vec!["data1", "data2", "data3", "data4", "data5"];
     for table_name in &table_names {
@@ -145,7 +145,7 @@ fn test_can_get_schema() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Cannot connect to flight service client.");
+        .expect("Could not connect to flight service client.");
 
     create_table(
         &runtime,
@@ -176,7 +176,7 @@ fn test_can_list_actions() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Cannot connect to flight service client.");
+        .expect("Could not connect to flight service client.");
 
     let mut actions = runtime.block_on(async {
         flight_service_client
@@ -214,7 +214,7 @@ fn test_can_collect_metrics() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Cannot connect to flight service client.");
+        .expect("Could not connect to flight service client.");
 
     let metrics = runtime.block_on(async {
         flight_service_client
@@ -225,7 +225,7 @@ fn test_can_collect_metrics() {
             .await
             .expect("Could not collect metrics.")
             .into_inner()
-            .map(|metric| metric.expect("").body)
+            .map(|metric| metric.expect("Could not collect metric.").body)
             .collect::<Vec<Bytes>>()
             .await
     });
@@ -243,7 +243,7 @@ fn test_can_ingest_data_point_with_tags() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Cannot connect to flight service client.");
+        .expect("Could not connect to flight service client.");
 
     let data_point = generate_random_data_point(Some("location"));
     let flight_data = create_flight_data_from_data_points(&[data_point.clone()]);
@@ -283,7 +283,7 @@ fn test_can_ingest_data_point_without_tags() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Cannot connect to flight service client.");
+        .expect("Could not connect to flight service client.");
 
     let data_point = generate_random_data_point(None);
     let flight_data = create_flight_data_from_data_points(&[data_point.clone()]);
@@ -323,7 +323,7 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Cannot connect to flight service client.");
+        .expect("Could not connect to flight service client.");
 
     let data_points: Vec<RecordBatch> = (1..5)
         .map(|i| generate_random_data_point(Some(&format!("location{i}"))))
@@ -366,7 +366,7 @@ fn test_cannot_ingest_invalid_data_point() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Cannot connect to flight service client.");
+        .expect("Could not connect to flight service client.");
 
     let data_point = generate_random_data_point(None);
     let flight_data = create_flight_data_from_data_points(&[data_point]);
@@ -406,7 +406,7 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Cannot connect to flight service client.");
+        .expect("Could not connect to flight service client.");
 
     let mut data_points = vec![];
     for i in 1..5 {
@@ -549,7 +549,7 @@ fn create_table(
 fn generate_random_data_point(tag: Option<&str>) -> RecordBatch {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .expect("Cannot generate the time.")
+        .expect("Could not generate the time.")
         .as_micros() as i64;
 
     let value = (timestamp % 100) as f32;
