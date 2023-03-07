@@ -18,15 +18,16 @@
 use std::collections::HashMap;
 use std::env::{self, consts};
 use std::error::Error;
+use std::panic::catch_unwind;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::string::String;
 use std::sync::Arc;
-use std::thread;
+use std::{panic, thread};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::utils;
+use arrow_flight::{utils, PutResult};
 use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor};
 use bytes::Bytes;
 use datafusion::arrow::array::{Float32Array, StringArray, TimestampMillisecondArray};
@@ -41,7 +42,7 @@ use sysinfo::{Pid, PidExt, System, SystemExt};
 
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
-use tonic::Request;
+use tonic::{Request, Response, Status, Streaming};
 
 /// The different types of tables used in the integration tests.
 enum TableType {
@@ -341,7 +342,8 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
         &runtime,
         &mut flight_service_client,
         flight_data,
-    );
+    )
+    .expect("Could not send data points to server.");
 
     flush_data_to_disk(&runtime, &mut flight_service_client);
 
@@ -364,43 +366,33 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
 /// [FlightData] received from this test, which doesn't match that schema.
 #[test]
 #[serial]
-#[should_panic]
 fn test_cannot_ingest_invalid_data_point() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let flight_server = start_modelardbd(temp_dir.path());
 
-    let runtime = Runtime::new().expect("Unable to initialize runtime.");
-    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Could not connect to flight service client.");
+    let result = catch_unwind_silent(|| {
+        let runtime = Runtime::new().expect("Unable to initialize runtime.");
+        let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
+            .expect("Cannot connect to flight service client.");
 
-    let data_point = generate_random_data_point(None);
-    let flight_data = create_flight_data_from_data_points(&[data_point]);
+        let data_point = generate_random_data_point(None);
+        let flight_data = create_flight_data_from_data_points(&[data_point]);
 
-    create_table(
-        &runtime,
-        &mut flight_service_client,
-        TABLE_NAME,
-        TableType::ModelTable,
-    );
+        create_table(
+            &runtime,
+            &mut flight_service_client,
+            TABLE_NAME,
+            TableType::ModelTable,
+        );
+        send_data_points_to_apache_arrow_flight_server(
+            &runtime,
+            &mut flight_service_client,
+            flight_data,
+        ).unwrap()
+    });
+    assert!(result.is_err());
 
-    send_data_points_to_apache_arrow_flight_server(
-        &runtime,
-        &mut flight_service_client,
-        flight_data,
-    );
-
-    flush_data_to_disk(&runtime, &mut flight_service_client);
-
-    let query = execute_query(
-        &runtime,
-        &mut flight_service_client,
-        format!("SELECT * FROM {TABLE_NAME}"),
-    )
-    .expect("Could not execute query.");
-
-    assert!(query.is_empty());
-
-    stop_modelardbd(flight_server);
+    stop_modelardbd(flight_server)
 }
 
 #[test]
@@ -432,7 +424,8 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
         &runtime,
         &mut flight_service_client,
         flight_data,
-    );
+    )
+    .expect("Could not send data points to server.");
 
     flush_data_to_disk(&runtime, &mut flight_service_client);
 
@@ -619,12 +612,14 @@ fn send_data_points_to_apache_arrow_flight_server(
     runtime: &Runtime,
     client: &mut FlightServiceClient<Channel>,
     flight_data: Vec<FlightData>,
-) {
-    runtime.block_on(async {
+) -> Result<Response<Streaming<PutResult>>, Status> {
+    let mut streaming = runtime.block_on(async {
         let flight_data_stream = stream::iter(flight_data);
 
-        let mut _streaming = client.do_put(flight_data_stream).await;
-    })
+        client.do_put(flight_data_stream).await
+    });
+
+    streaming
 }
 
 /// Flush the data in the StorageEngine to disk through the `do_action()` method.
@@ -735,4 +730,12 @@ fn stop_modelardbd(mut flight_server: Child) {
             .unwrap_or_else(|_| panic!("Could not wait for process {}.", flight_server.id()));
         system.refresh_all();
     }
+}
+
+fn catch_unwind_silent<F: FnOnce() -> R + panic::UnwindSafe, R>(f: F) -> std::thread::Result<R> {
+    let prev_hook = panic::take_hook();
+    panic::set_hook(Box::new(|_| {}));
+    let result = panic::catch_unwind(f);
+    panic::set_hook(prev_hook);
+    result
 }
