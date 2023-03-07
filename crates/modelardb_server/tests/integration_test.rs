@@ -358,8 +358,13 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
     stop_modelardbd(flight_server);
 }
 
+/// This test should panic, because the
+/// [flight_data_to_arrow_batch](utils::flight_data_to_arrow_batch) utility used on the server
+/// cannot convert the [FlightData] to a [RecordBatch] using the server-local table schema and the
+/// [FlightData] received from this test, which doesn't match that schema.
 #[test]
 #[serial]
+#[should_panic]
 fn test_cannot_ingest_invalid_data_point() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let flight_server = start_modelardbd(temp_dir.path());
