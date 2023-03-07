@@ -8,4 +8,4 @@ RUN apt-get update && apt-get -y install cmake protobuf-compiler
 
 RUN cargo build
 
-CMD ["target/debug/modelardbd", "edge", "data"]
+CMD ["target/debug/modelardbd", "edge", "data", "s3://modelardata"]
