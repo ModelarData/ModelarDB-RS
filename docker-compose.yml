@@ -1,8 +1,8 @@
 version: "3.8"
 
 services:
-  modelardb:
-    container_name: modelardb
+  modelardbd:
+    container_name: modelardbd
     build: .
     ports:
       - "9999:9999"
