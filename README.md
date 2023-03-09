@@ -62,7 +62,7 @@ AWS_ENDPOINT
 AWS_ALLOW_HTTP
 ```
 
-For example, to use a local instance of [Minio](https://min.io/), assuming the access key id `KURo1eQeMhDeVsrz` and the secret access key `sp7TDyD2ZruJ0VdFHmkacT1Y90PVPF7p` has been created through [Minio's web interface](http://127.0.0.1:9001/access-keys), set the environment variables as follows:
+For example, to use a local instance of [MinIO](https://min.io/), assuming the access key id `KURo1eQeMhDeVsrz` and the secret access key `sp7TDyD2ZruJ0VdFHmkacT1Y90PVPF7p` has been created through [MinIO's web interface](http://127.0.0.1:9001/access-keys), set the environment variables as follows:
 
 ```shell
 AWS_ACCESS_KEY_ID="KURo1eQeMhDeVsrz"
@@ -72,7 +72,7 @@ AWS_ENDPOINT="http://127.0.0.1:9000"
 AWS_ALLOW_HTTP="true"
 ```
 
-Then, assuming a bucket named `wind-turbine` has been created through [Minio's web interface](http://127.0.0.1:9001/buckets), `modelardbd` can be run in edge mode with automatic transfer of the ingested time series to the Minio bucket `wind-turbine`:
+Then, assuming a bucket named `wind-turbine` has been created through [MinIO's web interface](http://127.0.0.1:9001/buckets), `modelardbd` can be run in edge mode with automatic transfer of the ingested time series to the MinIO bucket `wind-turbine`:
 
 ```shell
 modelardbd edge path_to_local_data_folder s3://wind-turbine
@@ -209,32 +209,33 @@ used for purposes such as logging, where multiple crates provide similar functio
 
 ## Docker
 An environment that includes a local [MinIO](https://min.io/) instance and an edge node using the [MinIO](https://min.io/)
-server as the remote object store, can be set up using [Docker](https://docs.docker.com/). Note that since 
+instance as the remote object store, can be set up using [Docker](https://docs.docker.com/). Note that since 
 [Rust](https://www.rust-lang.org/) is a compiled language and a more dynamic `modelardbd` configuration might be needed,
 it is not recommended to use the [Docker](https://docs.docker.com/) environment during active development of `modelardbd`. 
 It is however ideal to use during more static deployments or when developing components that utilize `modelardbd`.
 
 Downloading [Docker Desktop](https://docs.docker.com/desktop/) is recommended to make maintenance of the created 
-containers easier. Once [Docker](https://docs.docker.com/) is set up, navigate to the `ModelarDB-RS` folder.
-The [MinIO](https://min.io/) server can be created by running the services defined in 
-[docker-compose-minio.yml](docker-compose-minio.yml). The services can be built and started using the following command.
+containers easier. Once [Docker](https://docs.docker.com/) is set up, the [MinIO](https://min.io/) instance can be 
+created by running the services defined in [docker-compose-minio.yml](docker-compose-minio.yml). The services can 
+be built and started using the command:
 
 ```shell
 docker-compose -p modelardata-minio -f docker-compose-minio.yml up
 ```
 
-After the [MinIO](https://min.io/) server service is created, a [MinIO](https://min.io/) client is created to initialize
-the development bucket `modelardata`, if it does not already exist. To browse the created [MinIO](https://min.io/) blob
-store, a graphical user interface can be used. Open http://localhost:9001 to view it in the browser. The default username
-and password, `minioadmin`, can be used to log in. Note that the [MinIO](https://min.io/) server is handled in a separate
-compose file in case a similar [MinIO](https://min.io/) server instance already exists.
+After the [MinIO](https://min.io/) service is created, a [MinIO](https://min.io/) client is created to initialize
+the development bucket `modelardata`, if it does not already exist. [MinIO](https://min.io/) can be administered through 
+its [web interface](http://localhost:9001). The default username and password, `minioadmin`, can be used to log in.
+A separate compose file is used for [MinIO](https://min.io/) so an existing [MinIO](https://min.io/) instance can be 
+used when `modelardbd` is deployed using [Docker](https://docker.com/), if necessary.
 
-Similarly, the `modelardbd` instance itself can be built and started from the same folder using the following command.
-The started instance can be accessed from `grpc://127.0.0.1:9999`.
+Similarly, the `modelardbd` instance can be built and started using the command:
 
 ```shell
 docker-compose -p modelardbd up              
 ```
+
+The instance can then be accessed using the Apache Arrow Flight interface at `grpc://127.0.0.1:9999`.
 
 ## Contributions
 Contributions to all aspects of ModelarDB are highly appreciated and do not need
