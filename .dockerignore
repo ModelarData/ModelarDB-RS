@@ -1,0 +1,10 @@
+target
+Dockerfile
+docker-compose.yml
+docker-compose-minio.yml
+.dockerignore
+.git
+.gitignore
+.github
+LICENSE
+README.md
