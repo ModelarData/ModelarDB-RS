@@ -26,5 +26,3 @@ services:
       AWS_DEFAULT_REGION:
       AWS_ENDPOINT: http://host.docker.internal:9000
       AWS_ALLOW_HTTP: true
-    volumes:
-      - ./:/usr/src/app

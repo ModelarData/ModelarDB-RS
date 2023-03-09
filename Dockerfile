@@ -1,4 +1,3 @@
-FROM rust:1.67
 # Copyright 2023 The ModelarDB Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,12 +12,14 @@ FROM rust:1.67
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-WORKDIR /usr/src/myapp
+FROM rust:latest
+
+WORKDIR /usr/src/app
 
 COPY . .
 
-RUN apt-get update && apt-get -y install cmake protobuf-compiler
+RUN apt-get update && apt-get -y install cmake
 
-RUN cargo build
+RUN cargo build --release
 
-CMD ["target/debug/modelardbd", "edge", "data", "s3://modelardata"]
+CMD ["target/release/modelardbd", "edge", "data", "s3://modelardata"]
