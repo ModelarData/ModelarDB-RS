@@ -93,7 +93,7 @@ impl DataTransfer {
         };
 
         // Record the initial used disk space.
-        let initial_disk_space: usize = compressed_files.values().into_iter().sum();
+        let initial_disk_space: usize = compressed_files.values().sum();
         data_transfer
             .used_disk_space_metric
             .write()
