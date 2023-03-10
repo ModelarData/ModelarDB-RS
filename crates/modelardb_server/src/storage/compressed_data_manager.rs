@@ -438,6 +438,7 @@ mod tests {
     use tempfile::{self, TempDir};
 
     use crate::metadata::test_util as metadata_test_util;
+    use crate::PORT;
     use crate::storage::{self, test_util};
 
     const TABLE_NAME: &str = "table";
@@ -876,7 +877,7 @@ mod tests {
     /// Return a full path to the file with `file_name`.
     fn format_path(file_name: &str) -> String {
         format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/{file_name}_{}.parquet",
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/{file_name}_{}_{PORT}.parquet",
             storage::TEST_UUID
         )
     }

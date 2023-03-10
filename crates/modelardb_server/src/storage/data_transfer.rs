@@ -242,6 +242,7 @@ mod tests {
 
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
+    use crate::PORT;
 
     use crate::storage::{self, test_util};
 
@@ -475,7 +476,7 @@ mod tests {
 
         // The transferred file should have a time range file name that matches the compressed data.
         let target_path = target.path().join(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/0_5_5.2_34.2_{}.parquet",
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/0_5_5.2_34.2_{}_{PORT}.parquet",
             storage::TEST_UUID
         ));
         assert!(target_path.exists());

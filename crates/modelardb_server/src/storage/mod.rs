@@ -63,6 +63,7 @@ use uuid::{uuid, Uuid};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
+use crate::PORT;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::uncompressed_data_buffer::UncompressedDataBuffer;
@@ -576,7 +577,8 @@ pub(self) fn create_apache_arrow_writer<W: Write>(
 
 /// Create a file name that includes the start timestamp of the first segment in `batch`, the end
 /// timestamp of the last segment in `batch`, the minimum value stored in `batch`, the maximum value
-/// stored in `batch`, and an UUID to make it unique across edge and cloud in practice.
+/// stored in `batch`, an UUID to make it unique across edge and cloud in practice, and an ID that
+/// uniquely identifies the edge.
 pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> String {
     // unwrap() is safe as None is only returned if all of the values are None.
     let start_time = aggregate::min(modelardb_common::array!(batch, 2, TimestampArray)).unwrap();
@@ -597,9 +599,12 @@ pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> Strin
         Uuid::new_v4()
     };
 
+    // TODO: Use part of the UUID or the entire Apache Arrow Flight URL to identify the edge.
+    let edge_id = PORT.to_string();
+
     format!(
-        "{}_{}_{}_{}_{}.parquet",
-        start_time, end_time, min_value, max_value, uuid
+        "{}_{}_{}_{}_{}_{}.parquet",
+        start_time, end_time, min_value, max_value, uuid, edge_id
     )
 }
 

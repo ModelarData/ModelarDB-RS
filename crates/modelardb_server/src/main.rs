@@ -41,6 +41,8 @@ use crate::storage::StorageEngine;
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
+const PORT: i16 = 9999;
+
 /// Folders for storing metadata and Apache Parquet files.
 pub struct DataFolders {
     /// Folder for storing metadata and Apache Parquet files on the local file
@@ -137,7 +139,7 @@ fn main() -> Result<(), String> {
     setup_ctrl_c_handler(&context, &runtime);
 
     // Start the Apache Arrow Flight interface.
-    remote::start_apache_arrow_flight_server(context, &runtime, 9999)
+    remote::start_apache_arrow_flight_server(context, &runtime, PORT)
         .map_err(|error| error.to_string())?;
 
     Ok(())
