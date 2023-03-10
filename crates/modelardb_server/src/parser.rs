@@ -114,11 +114,11 @@ impl ModelarDbDialect {
                     // An error bound may also be specified for field columns.
                     let error_bound = if parser.peek_token() == Token::LParen {
                         parser.expect_token(&Token::LParen)?;
-                        let error_bound = parser.parse_literal_uint()?;
+                        let error_bound = self.parse_positive_literal_f32(parser)?;
                         parser.expect_token(&Token::RParen)?;
                         error_bound
                     } else {
-                        0
+                        0.0
                     };
 
                     // An error bound column option does not exist, so
@@ -173,6 +173,20 @@ impl ModelarDbDialect {
         match token_with_location.token {
             Token::Word(word) => Ok(word.value),
             _ => parser.expected("literal string", token_with_location),
+        }
+    }
+
+    /// Return its value as a [`f32`] if the next [`Token`] is a
+    /// [`Token::Number`], otherwise a [`ParserError`] is returned.
+    fn parse_positive_literal_f32(&self, parser: &mut Parser) -> Result<f32, ParserError> {
+        let token_with_location = parser.next_token();
+        match token_with_location.token {
+            Token::Number(maybe_f32, _) => maybe_f32.parse::<f32>().map_err(|error| {
+                ParserError::ParserError(format!(
+                    "Failed to parse '{maybe_f32}' into a positive f32 due to: {error}"
+                ))
+            }),
+            _ => parser.expected("literal float", token_with_location),
         }
     }
 
@@ -681,7 +695,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table() {
-        let sql = "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_one FIELD, field_two FIELD(10), tag TAG)";
+        let sql = "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_one FIELD, field_two FIELD(10.5), tag TAG)";
         if let Statement::CreateTable { name, columns, .. } = tokenize_and_parse_sql(sql).unwrap() {
             assert!(name == new_object_name("table_name"));
             let expected_columns = vec![
@@ -693,12 +707,12 @@ mod tests {
                 ModelarDbDialect::new_column_def(
                     "field_one",
                     SQLDataType::Real,
-                    new_column_option_def_error_bound(0),
+                    new_column_option_def_error_bound(0.0),
                 ),
                 ModelarDbDialect::new_column_def(
                     "field_two",
                     SQLDataType::Real,
-                    new_column_option_def_error_bound(10),
+                    new_column_option_def_error_bound(10.5),
                 ),
                 ModelarDbDialect::new_column_def("tag", SQLDataType::Text, vec![]),
             ];
@@ -712,7 +726,7 @@ mod tests {
         ObjectName(vec![Ident::new(name)])
     }
 
-    fn new_column_option_def_error_bound(error_bound: usize) -> Vec<ColumnOptionDef> {
+    fn new_column_option_def_error_bound(error_bound: f32) -> Vec<ColumnOptionDef> {
         vec![ColumnOptionDef {
             name: None,
             option: ColumnOption::Comment(error_bound.to_string()),
@@ -739,7 +753,7 @@ mod tests {
     fn test_tokenize_and_parse_create_model_table_without_model() {
         // Checks if sqlparser can parse fields/tags without ModelarDbDialect.
         assert!(tokenize_and_parse_sql(
-            "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD, field FIELD(10), tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD, field FIELD(10.5), tag TAG)",
         )
         .is_ok());
     }
