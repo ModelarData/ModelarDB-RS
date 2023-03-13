@@ -567,6 +567,13 @@ impl FlightService for FlightServiceHandler {
     /// uncompressed and compressed data, disk space used, and the number of data points ingested
     /// over time. Note that the metrics are cleared when collected, thus only the metrics
     /// recorded since the last call to `CollectMetrics` are returned.
+    /// * `UpdateRemoteObjectStore`: Update the remote object store, overriding the current
+    /// remote object store, if it exists. Each argument in the body should start with the size
+    /// of the argument, immediately followed by the argument value. The first argument should be
+    /// the object store type, specifically either 'minio' or 'azureblobstorage'. The remaining
+    /// arguments should be the arguments required to connect to the object store.
+    /// * `DeleteRemoteObjectStore`: Delete the current remote object store. Note that data is no
+    /// longer transferred after deleting and is therefore only saved locally.
     async fn do_action(
         &self,
         request: Request<Action>,
