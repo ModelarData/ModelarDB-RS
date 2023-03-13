@@ -140,6 +140,19 @@ async fn send_flight_data(
         .map_err(|error| Status::internal(error.to_string()))
 }
 
+/// Assumes `data` is a slice containing one or more arguments with the following format:
+/// size of argument (2 bytes) followed by the argument (size bytes). Returns a tuple containing
+/// the first argument's bytes and `data` with the extracted argument's bytes removed.
+fn extract_argument_bytes(data: &[u8]) -> (&[u8], &[u8]) {
+    let size_bytes: [u8; 2] = data[..2].try_into().expect("Size of argument is not 2 bytes.");
+    let size = u16::from_be_bytes(size_bytes) as usize;
+
+    let argument_bytes = &data[2..(size + 2)];
+    let remaining_bytes = &data[(size + 2)..];
+
+    (argument_bytes, remaining_bytes)
+}
+
 /// Handler for processing Apache Arrow Flight requests.
 /// [`FlightServiceHandler`] is based on the [Apache Arrow Flight examples]
 /// published under Apache2.
