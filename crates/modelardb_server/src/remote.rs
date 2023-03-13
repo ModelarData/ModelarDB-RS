@@ -489,7 +489,10 @@ impl FlightService for FlightServiceHandler {
             // returned by task::spawn is also not an option as it waits until send_query_result()
             // returns and thus creates a deadlock since the results are never read from receiver.
             if let Err(error) = send_query_result(df_schema, query_result_stream, sender).await {
-                error!("Failed to send the result for '{}' due to: {}.", query, error);
+                error!(
+                    "Failed to send the result for '{}' due to: {}.",
+                    query, error
+                );
             }
         });
 
@@ -669,10 +672,34 @@ impl FlightService for FlightServiceHandler {
                     body: batch_bytes.into(),
                 })
             }))))
+        } else if action.r#type == "DeleteObjectStore" {
+            // TODO: If on an edge node, the remote object store should be set to None in the data transfer
+            //       component which means the whole data transfer component should be set to None in the
+            //       compressed data manager.
+            // TODO: What should happen when deleting the object store on the cloud node?
+            // TODO: Add a method to the storage engine to delete the object store.
+        } else if action.r#type == "CreateObjectStore" {
+            // TODO: Add an action to create a new object store. If one already exists, it should be replaced.
+            // TODO: If on a cloud node, both the remote data folder and the query data folder should be updated.
+            // TODO: The query data folder should be updated in the session context.
+            // TODO: Maybe wait with handling updating in the cloud node and just do the edge node.
+            // TODO: If on a edge node the remote object store should be updated for the data transfer
+            //       component if one already exists. If not, a data transfer component should be created
+            //       and added to the compressed data manager.
+            // TODO: The type of object store should be the first argument. If it is not minio or
+            //       azureblobstorage an error should be returned.
+            // TODO: The next arguments should be the connection parameters. If they do not match an error
+            //       should be returned.
+            // TODO: The connection should be checked with the function in main. If it is invalid, an error
+            //       should be returned.
+            // TODO: Add a method to the storage engine to create/update the object store.
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
     }
+
+    // TODO: Add the two new actions to the list actions endpoint.
+    // TODO: Add the two new actions to the list actions integration test.
 
     /// Return all available actions, including both a name and a description for each action.
     async fn list_actions(
