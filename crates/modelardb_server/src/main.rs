@@ -107,7 +107,7 @@ fn main() -> Result<(), String> {
     check_remote_data_folder(&runtime, &data_folders.remote_data_folder)?;
 
     // Create the components for the Context.
-    let metadata_manager = MetadataManager::try_new(&data_folders.local_data_folder)
+    let metadata_manager = MetadataManager::try_new(&data_folders.local_data_folder, node_type)
         .map_err(|error| format!("Unable to create a MetadataManager: {error}"))?;
     let session = create_session_context(data_folders.query_data_folder);
     let storage_engine = RwLock::new(
