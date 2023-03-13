@@ -19,9 +19,9 @@
 mod metadata;
 mod optimizer;
 mod parser;
+mod query;
 mod remote;
 mod storage;
-mod query;
 
 use std::fs;
 use std::path::PathBuf;
@@ -42,6 +42,13 @@ use crate::storage::StorageEngine;
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
 const PORT: i16 = 9999;
+
+/// The different possible node types, assigned when the node is started.
+#[derive(Clone)]
+pub enum NodeType {
+    Cloud,
+    Edge,
+}
 
 /// Folders for storing metadata and Apache Parquet files.
 pub struct DataFolders {
@@ -87,7 +94,7 @@ fn main() -> Result<(), String> {
     // collecting more command line arguments than required for that pattern.
     let arguments: Vec<String> = args.by_ref().take(4).collect();
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
-    let data_folders = parse_command_line_arguments(&arguments)?;
+    let (node_type, data_folders) = parse_command_line_arguments(&arguments)?;
 
     // Create a Tokio runtime for executing asynchronous tasks. The runtime is
     // not in the context so it can be passed to the components in the context.
@@ -145,27 +152,36 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-/// Parse the command lines arguments into an instance of [`DataFolders`]. If
-/// the necessary command line arguments are not provided, too many arguments
-/// are provided, or if the arguments are malformed, [`String`] is returned.
-fn parse_command_line_arguments(arguments: &[&str]) -> Result<DataFolders, String> {
+/// Parse the command lines arguments into a [`NodeType`] and an instance of [`DataFolders`]. If
+/// the necessary command line arguments are not provided, too many arguments are provided, or
+/// if the arguments are malformed, [`String`] is returned.
+fn parse_command_line_arguments(arguments: &[&str]) -> Result<(NodeType, DataFolders), String> {
     // Match the provided command line arguments to the supported inputs.
     match arguments {
-        &["cloud", local_data_folder, remote_data_folder] => Ok(DataFolders {
-            local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
-            remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
-            query_data_folder: argument_to_remote_object_store(remote_data_folder)?,
-        }),
-        &["edge", local_data_folder, remote_data_folder] => Ok(DataFolders {
-            local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
-            remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
-            query_data_folder: argument_to_local_object_store(local_data_folder)?,
-        }),
-        &["edge", local_data_folder] | &[local_data_folder] => Ok(DataFolders {
-            local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
-            remote_data_folder: None,
-            query_data_folder: argument_to_local_object_store(local_data_folder)?,
-        }),
+        &["cloud", local_data_folder, remote_data_folder] => Ok((
+            NodeType::Cloud,
+            DataFolders {
+                local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
+                remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
+                query_data_folder: argument_to_remote_object_store(remote_data_folder)?,
+            },
+        )),
+        &["edge", local_data_folder, remote_data_folder] => Ok((
+            NodeType::Edge,
+            DataFolders {
+                local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
+                remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
+                query_data_folder: argument_to_local_object_store(local_data_folder)?,
+            },
+        )),
+        &["edge", local_data_folder] | &[local_data_folder] => Ok((
+            NodeType::Edge,
+            DataFolders {
+                local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
+                remote_data_folder: None,
+                query_data_folder: argument_to_local_object_store(local_data_folder)?,
+            },
+        )),
         _ => {
             // The errors are consciously ignored as the program is terminating.
             let binary_path = std::env::current_exe().unwrap();
@@ -283,8 +299,6 @@ mod tests {
 
     use std::env;
 
-    
-
     // Tests for parse_command_line_arguments().
     #[test]
     fn test_parse_empty_command_line_arguments() {
@@ -360,12 +374,8 @@ mod tests {
     }
 
     fn new_data_folders(input: &[&str]) -> (PathBuf, Option<Arc<dyn ObjectStore>>) {
-        let DataFolders {
-            local_data_folder,
-            remote_data_folder,
-            query_data_folder: _query_data_folder,
-        } = parse_command_line_arguments(input).unwrap();
+        let (_, data_folders) = parse_command_line_arguments(input).unwrap();
 
-        (local_data_folder, remote_data_folder)
+        (data_folders.local_data_folder, data_folders.remote_data_folder)
     }
 }
