@@ -672,13 +672,7 @@ impl FlightService for FlightServiceHandler {
                     body: batch_bytes.into(),
                 })
             }))))
-        } else if action.r#type == "DeleteObjectStore" {
-            // TODO: If on an edge node, the remote object store should be set to None in the data transfer
-            //       component which means the whole data transfer component should be set to None in the
-            //       compressed data manager.
-            // TODO: What should happen when deleting the object store on the cloud node?
-            // TODO: Add a method to the storage engine to delete the object store.
-        } else if action.r#type == "CreateObjectStore" {
+        } else if action.r#type == "UpdateRemoteObjectStore" {
             // TODO: Add an action to create a new object store. If one already exists, it should be replaced.
             // TODO: If on a cloud node, both the remote data folder and the query data folder should be updated.
             // TODO: The query data folder should be updated in the session context.
@@ -693,12 +687,21 @@ impl FlightService for FlightServiceHandler {
             // TODO: The connection should be checked with the function in main. If it is invalid, an error
             //       should be returned.
             // TODO: Add a method to the storage engine to create/update the object store.
+
+            Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "DeleteRemoteObjectStore" {
+            // TODO: If on an edge node, the remote object store should be set to None in the data transfer
+            //       component which means the whole data transfer component should be set to None in the
+            //       compressed data manager.
+            // TODO: What should happen when deleting the object store on the cloud node?
+            // TODO: Add a method to the storage engine to delete the object store.
+
+            Ok(Response::new(Box::pin(stream::empty())))
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
     }
 
-    // TODO: Add the two new actions to the list actions endpoint.
     // TODO: Add the two new actions to the list actions integration test.
 
     /// Return all available actions, including both a name and a description for each action.
@@ -728,10 +731,24 @@ impl FlightService for FlightServiceHandler {
         let collect_metrics = ActionType {
             r#type: "CollectMetrics".to_owned(),
             description:
-                "Collect internal metrics describing the amount of used memory for uncompressed \
+            "Collect internal metrics describing the amount of used memory for uncompressed \
             and compressed data, used disk space, and ingested data points over time. The metrics are \
             cleared when collected."
-                    .to_owned(),
+                .to_owned(),
+        };
+
+        let create_object_store = ActionType {
+            r#type: "UpdateRemoteObjectStore".to_owned(),
+            description: "Update the remote object store, overriding the current remote object \
+            store, if it exists."
+                .to_owned(),
+        };
+
+        let delete_object_store = ActionType {
+            r#type: "DeleteRemoteObjectStore".to_owned(),
+            description: "Delete the current remote object store. This stops all data transfers \
+            until a new remote object store is registered."
+                .to_owned(),
         };
 
         let output = stream::iter(vec![
@@ -739,6 +756,8 @@ impl FlightService for FlightServiceHandler {
             Ok(flush_data_to_disk),
             Ok(flush_edge_action),
             Ok(collect_metrics),
+            Ok(create_object_store),
+            Ok(delete_object_store),
         ]);
 
         Ok(Response::new(Box::pin(output)))
