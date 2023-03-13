@@ -64,7 +64,7 @@ pub struct MetadataManager {
     /// tag combinations.
     tag_value_hashes: HashMap<String, u64>,
     /// The type of the node used to determine the behaviour when modifying the remote object store.
-    node_type: NodeType,
+    pub node_type: NodeType,
     /// Amount of memory to reserve for storing uncompressed data buffers.
     pub uncompressed_reserved_memory_in_bytes: usize,
     /// Amount of memory to reserve for storing compressed data buffers.

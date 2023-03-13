@@ -59,7 +59,7 @@ use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::Context;
+use crate::{Context, NodeType};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
@@ -680,13 +680,6 @@ impl FlightService for FlightServiceHandler {
                 })
             }))))
         } else if action.r#type == "UpdateRemoteObjectStore" {
-            // TODO: Add an action to create a new object store. If one already exists, it should be replaced.
-            // TODO: If on a cloud node, both the remote data folder and the query data folder should be updated.
-            // TODO: The query data folder should be updated in the session context.
-            // TODO: Maybe wait with handling updating in the cloud node and just do the edge node.
-            // TODO: If on a edge node the remote object store should be updated for the data transfer
-            //       component if one already exists. If not, a data transfer component should be created
-            //       and added to the compressed data manager.
             // TODO: The type of object store should be the first argument. If it is not minio or
             //       azureblobstorage an error should be returned.
             // TODO: The next arguments should be the connection parameters. If they do not match an error
@@ -695,21 +688,45 @@ impl FlightService for FlightServiceHandler {
             //       should be returned.
             // TODO: Add a method to the storage engine to create/update the object store.
 
-            Ok(Response::new(Box::pin(stream::empty())))
-        } else if action.r#type == "DeleteRemoteObjectStore" {
-            // TODO: If on an edge node, the remote object store should be set to None in the data transfer
-            //       component which means the whole data transfer component should be set to None in the
-            //       compressed data manager.
-            // TODO: What should happen when deleting the object store on the cloud node?
-            // TODO: Add a method to the storage engine to delete the object store.
+            match self.context.metadata_manager.node_type {
+                NodeType::Cloud => {
+                    // TODO: If on a cloud node, both the remote data folder and the query data folder should be updated.
+                    // TODO: The query data folder should be updated in the session context.
+                    Err(Status::unimplemented(
+                        "It is not possible to update the remote object store on cloud nodes yet.",
+                    ))
+                }
+                NodeType::Edge => {
+                    // TODO: If on a edge node the remote object store should be updated for the data transfer
+                    //       component if one already exists. If not, a data transfer component should be created
+                    //       and added to the compressed data manager.
 
-            Ok(Response::new(Box::pin(stream::empty())))
+                    // Confirm the remote object store was updated.
+                    Ok(Response::new(Box::pin(stream::empty())))
+                }
+            }
+        } else if action.r#type == "DeleteRemoteObjectStore" {
+            match self.context.metadata_manager.node_type {
+                NodeType::Cloud => {
+                    // TODO: What should happen when deleting the object store on the cloud node?
+                    Err(Status::unimplemented(
+                        "It is not possible to delete the remote object store on cloud nodes yet.",
+                    ))
+                }
+                NodeType::Edge => {
+                    // TODO: If on an edge node, the remote object store should be set to None in the data transfer
+                    //       component which means the whole data transfer component should be set to None in the
+                    //       compressed data manager.
+                    // TODO: Add a method to the storage engine to delete the object store.
+
+                    // Confirm the remote object store was deleted.
+                    Ok(Response::new(Box::pin(stream::empty())))
+                }
+            }
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
     }
-
-    // TODO: Add the two new actions to the list actions integration test.
 
     /// Return all available actions, including both a name and a description for each action.
     async fn list_actions(
