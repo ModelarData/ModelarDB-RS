@@ -44,6 +44,8 @@ use datafusion::common::DFSchema;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
+use object_store::aws::AmazonS3;
+use object_store::azure::MicrosoftAzure;
 use modelardb_common::schemas::METRIC_SCHEMA;
 use modelardb_common::types::TimestampBuilder;
 use tokio::runtime::Runtime;
@@ -140,17 +142,36 @@ async fn send_flight_data(
         .map_err(|error| Status::internal(error.to_string()))
 }
 
+/// Parse the arguments in `data` and return an [`Amazon S3`](AmazonS3) object store if `data`
+/// contains the necessary arguments. If `data` is missing arguments or if the created
+/// [`Amazon S3`](AmazonS3) object store connection is invalid, [`Status`] is returned.
+fn parse_s3_arguments(data: &[u8]) -> Result<AmazonS3, Status> {
+    Err(Status::unimplemented("Not yet possible to parse S3 arguments."))
+}
+
+/// Parse the arguments in `data` and return an [`Azure Blob Storage`](MicrosoftAzure) object store
+/// if `data` contains the necessary arguments. If `data` is missing arguments or if the created
+/// [`Azure Blob Storage`](MicrosoftAzure) object store connection is invalid, [`Status`] is returned.
+fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<MicrosoftAzure, Status> {
+    Err(Status::unimplemented("Not yet possible to parse Azure Blob Storage arguments."))
+}
+
 /// Assumes `data` is a slice containing one or more arguments with the following format:
 /// size of argument (2 bytes) followed by the argument (size bytes). Returns a tuple containing
 /// the first argument's bytes and `data` with the extracted argument's bytes removed.
-fn extract_argument_bytes(data: &[u8]) -> (&[u8], &[u8]) {
-    let size_bytes: [u8; 2] = data[..2].try_into().expect("Size of argument is not 2 bytes.");
+fn extract_argument_bytes(data: &[u8]) -> Result<(&[u8], &[u8]), Status> {
+    let size_bytes: [u8; 2] = data[..2]
+        .try_into()
+        .map_err(|_| {
+            Status::internal("Size of argument is not 2 bytes.")
+        })?;
+
     let size = u16::from_be_bytes(size_bytes) as usize;
 
     let argument_bytes = &data[2..(size + 2)];
     let remaining_bytes = &data[(size + 2)..];
 
-    (argument_bytes, remaining_bytes)
+    Ok((argument_bytes, remaining_bytes))
 }
 
 /// Handler for processing Apache Arrow Flight requests.
@@ -583,7 +604,7 @@ impl FlightService for FlightServiceHandler {
     /// * `UpdateRemoteObjectStore`: Update the remote object store, overriding the current
     /// remote object store, if it exists. Each argument in the body should start with the size
     /// of the argument, immediately followed by the argument value. The first argument should be
-    /// the object store type, specifically either 'minio' or 'azureblobstorage'. The remaining
+    /// the object store type, specifically either 's3' or 'azureblobstorage'. The remaining
     /// arguments should be the arguments required to connect to the object store.
     /// * `DeleteRemoteObjectStore`: Delete the current remote object store. Note that data is no
     /// longer transferred after deleting and is therefore only saved locally.
@@ -693,13 +714,8 @@ impl FlightService for FlightServiceHandler {
                 })
             }))))
         } else if action.r#type == "UpdateRemoteObjectStore" {
-            // TODO: The type of object store should be the first argument. If it is not minio or
-            //       azureblobstorage an error should be returned.
-            // TODO: The next arguments should be the connection parameters. If they do not match an error
-            //       should be returned.
-            // TODO: The connection should be checked with the function in main. If it is invalid, an error
-            //       should be returned.
-            // TODO: Add a method to the storage engine to create/update the object store.
+            // If the type of the new remote object store is not "s3" or "azureblobstorage", return an error.
+
 
             match self.context.metadata_manager.node_type {
                 NodeType::Cloud => {
@@ -713,6 +729,12 @@ impl FlightService for FlightServiceHandler {
                     // TODO: If on a edge node the remote object store should be updated for the data transfer
                     //       component if one already exists. If not, a data transfer component should be created
                     //       and added to the compressed data manager.
+                    // TODO: The next arguments should be the connection parameters. If they do not match an error
+                    //       should be returned.
+                    // TODO: The connection should be checked with the function in main. If it is invalid, an error
+                    //       should be returned.
+                    // TODO: Add a method to the storage engine to create/update the object store.
+                    // TODO: Add test functions to the utility repo to test deleting and updating remote object store.
 
                     // Confirm the remote object store was updated.
                     Ok(Response::new(Box::pin(stream::empty())))

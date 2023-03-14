@@ -31,7 +31,7 @@ datafusion = "20.0.0"
 futures = "0.3.27"
 modelardb_common = { path = "../modelardb_common" }
 modelardb_compression = { path = "../modelardb_compression" }
-object_store = { version = "0.5.5", features = ["aws"] }
+object_store = { version = "0.5.5", features = ["aws", "azure"] }
 parquet = { version = "34.0.0", features = ["object_store"] }
 ringbuf = "0.3.2"
 rusqlite = { version = "0.28.0", features = ["bundled"] }
