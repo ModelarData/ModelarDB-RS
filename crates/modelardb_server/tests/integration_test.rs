@@ -23,7 +23,7 @@ use std::process::{Child, Command, Stdio};
 use std::string::String;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::{panic, thread};
+use std::thread;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::utils;
@@ -366,7 +366,7 @@ fn test_cannot_ingest_invalid_data_point() {
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Cannot connect to flight service client.");
+        .expect("Could not connect to flight service client.");
 
     let data_point = generate_random_data_point(None);
     let flight_data = create_flight_data_from_data_points(&[data_point]);
@@ -383,6 +383,8 @@ fn test_cannot_ingest_invalid_data_point() {
         &mut flight_service_client,
         flight_data,
     );
+
+    flush_data_to_disk(&runtime, &mut flight_service_client);
 
     let query = execute_query(
         &runtime,
