@@ -37,7 +37,7 @@ use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator};
 use datafusion::optimizer::utils;
 use datafusion::physical_expr::planner;
 use datafusion::physical_plan::{
-    file_format::FileScanConfig, file_format::ParquetExec, ExecutionPlan, Statistics,
+    file_format::FileScanConfig, file_format::ParquetExec, ExecutionPlan, PhysicalExpr, Statistics,
 };
 use modelardb_common::schemas::{COMPRESSED_SCHEMA, QUERY_SCHEMA};
 use modelardb_common::types::ArrowValue;
@@ -158,26 +158,18 @@ impl ModelTable {
             infinite_source: false,
         };
 
+        let physical_parquet_predicates =
+            convert_expr_to_physical_expr(parquet_predicates, COMPRESSED_SCHEMA.0.clone())?;
+
         let apache_parquet_exec = Arc::new(
-            ParquetExec::new(file_scan_config, parquet_predicates, None)
+            ParquetExec::new(file_scan_config, physical_parquet_predicates, None)
                 .with_pushdown_filters(true)
                 .with_reorder_filters(true),
         );
 
         // Create the gridding operator.
-        let physical_grid_predicates = if let Some(grid_predicate) = grid_predicates {
-            let schema = QUERY_SCHEMA.0.clone();
-            let df_schema = schema.clone().to_dfschema()?;
-
-            Some(planner::create_physical_expr(
-                &grid_predicate,
-                &df_schema,
-                &schema,
-                &ExecutionProps::new(),
-            )?)
-        } else {
-            None
-        };
+        let physical_grid_predicates =
+            convert_expr_to_physical_expr(grid_predicates, QUERY_SCHEMA.0.clone())?;
 
         Ok(GridExec::new(
             physical_grid_predicates,
@@ -204,6 +196,25 @@ fn rewrite_and_combine_filters(
         utils::conjunction(parquet_rewritten_filters),
         utils::conjunction(grid_rewritten_filters),
     )
+}
+
+/// Convert `predicates` to a [`PhysicalExpr`] with the types in `schema`.
+fn convert_expr_to_physical_expr(
+    predicates: Option<Expr>,
+    schema: SchemaRef,
+) -> Result<Option<Arc<dyn PhysicalExpr>>> {
+    if let Some(predicate) = predicates {
+        let df_schema = schema.clone().to_dfschema()?;
+
+        Ok(Some(planner::create_physical_expr(
+            &predicate,
+            &df_schema,
+            &schema,
+            &ExecutionProps::new(),
+        )?))
+    } else {
+        Ok(None)
+    }
 }
 
 /// Rewrite the `filter` that is written in terms of the model table's schema, to a filter that is
