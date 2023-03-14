@@ -18,16 +18,15 @@
 use std::collections::HashMap;
 use std::env::{self, consts};
 use std::error::Error;
-use std::panic::catch_unwind;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::string::String;
 use std::sync::Arc;
-use std::{panic, thread};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{panic, thread};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::{utils, PutResult};
+use arrow_flight::utils;
 use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor};
 use bytes::Bytes;
 use datafusion::arrow::array::{Float32Array, StringArray, TimestampMillisecondArray};
@@ -42,7 +41,7 @@ use sysinfo::{Pid, PidExt, System, SystemExt};
 
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
-use tonic::{Request, Response, Status, Streaming};
+use tonic::Request;
 
 /// The different types of tables used in the integration tests.
 enum TableType {
@@ -342,8 +341,7 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
         &runtime,
         &mut flight_service_client,
         flight_data,
-    )
-    .expect("Could not send data points to server.");
+    );
 
     flush_data_to_disk(&runtime, &mut flight_service_client);
 
@@ -360,37 +358,39 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
     stop_modelardbd(flight_server);
 }
 
-/// This test should panic, because the
-/// [flight_data_to_arrow_batch](utils::flight_data_to_arrow_batch) utility used on the server
-/// cannot convert the [FlightData] to a [RecordBatch] using the server-local table schema and the
-/// [FlightData] received from this test, which doesn't match that schema.
 #[test]
 #[serial]
 fn test_cannot_ingest_invalid_data_point() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let flight_server = start_modelardbd(temp_dir.path());
 
-    let result = catch_unwind_silent(|| {
-        let runtime = Runtime::new().expect("Unable to initialize runtime.");
-        let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-            .expect("Cannot connect to flight service client.");
+    let runtime = Runtime::new().expect("Unable to initialize runtime.");
+    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
+        .expect("Cannot connect to flight service client.");
 
-        let data_point = generate_random_data_point(None);
-        let flight_data = create_flight_data_from_data_points(&[data_point]);
+    let data_point = generate_random_data_point(None);
+    let flight_data = create_flight_data_from_data_points(&[data_point]);
 
-        create_table(
-            &runtime,
-            &mut flight_service_client,
-            TABLE_NAME,
-            TableType::ModelTable,
-        );
-        send_data_points_to_apache_arrow_flight_server(
-            &runtime,
-            &mut flight_service_client,
-            flight_data,
-        ).unwrap()
-    });
-    assert!(result.is_err());
+    create_table(
+        &runtime,
+        &mut flight_service_client,
+        TABLE_NAME,
+        TableType::ModelTable,
+    );
+
+    send_data_points_to_apache_arrow_flight_server(
+        &runtime,
+        &mut flight_service_client,
+        flight_data,
+    );
+
+    let query = execute_query(
+        &runtime,
+        &mut flight_service_client,
+        format!("SELECT * FROM {TABLE_NAME}"),
+    )
+    .expect("Could not execute query.");
+    assert!(query.is_empty());
 
     stop_modelardbd(flight_server)
 }
@@ -424,8 +424,7 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
         &runtime,
         &mut flight_service_client,
         flight_data,
-    )
-    .expect("Could not send data points to server.");
+    );
 
     flush_data_to_disk(&runtime, &mut flight_service_client);
 
@@ -481,9 +480,14 @@ fn start_binary(binary: &str) -> Command {
 fn start_modelardbd(path: &Path) -> Child {
     // Spawn the Apache Arrow Flight Server. stdout is piped to /dev/null so the logged data_points
     // are not printed when the unit tests and the integration tests are run using "cargo test".
+    // stderr is piped to /dev/null so the server does not print the panic that occurs during
+    // test_cannot_ingest_invalid_data_point. This panic occurs because the
+    // flight_data_to_arrow_batch utility used on the server cannot convert the FlightData to a
+    // RecordBatch using the server-local table schema.
     let process = start_binary("modelardbd")
         .arg(path)
         .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .expect("Failed to start Apache Arrow Flight Server");
 
@@ -612,14 +616,12 @@ fn send_data_points_to_apache_arrow_flight_server(
     runtime: &Runtime,
     client: &mut FlightServiceClient<Channel>,
     flight_data: Vec<FlightData>,
-) -> Result<Response<Streaming<PutResult>>, Status> {
-    let mut streaming = runtime.block_on(async {
+) {
+    runtime.block_on(async {
         let flight_data_stream = stream::iter(flight_data);
 
-        client.do_put(flight_data_stream).await
+        let _ = client.do_put(flight_data_stream).await;
     });
-
-    streaming
 }
 
 /// Flush the data in the StorageEngine to disk through the `do_action()` method.
@@ -730,12 +732,4 @@ fn stop_modelardbd(mut flight_server: Child) {
             .unwrap_or_else(|_| panic!("Could not wait for process {}.", flight_server.id()));
         system.refresh_all();
     }
-}
-
-fn catch_unwind_silent<F: FnOnce() -> R + panic::UnwindSafe, R>(f: F) -> std::thread::Result<R> {
-    let prev_hook = panic::take_hook();
-    panic::set_hook(Box::new(|_| {}));
-    let result = panic::catch_unwind(f);
-    panic::set_hook(prev_hook);
-    result
 }
