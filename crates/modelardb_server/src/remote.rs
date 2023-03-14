@@ -44,10 +44,9 @@ use datafusion::common::DFSchema;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
-use object_store::aws::AmazonS3;
-use object_store::azure::MicrosoftAzure;
 use modelardb_common::schemas::METRIC_SCHEMA;
 use modelardb_common::types::TimestampBuilder;
+use object_store::ObjectStore;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
@@ -142,18 +141,26 @@ async fn send_flight_data(
         .map_err(|error| Status::internal(error.to_string()))
 }
 
-/// Parse the arguments in `data` and return an [`Amazon S3`](AmazonS3) object store if `data`
-/// contains the necessary arguments. If `data` is missing arguments or if the created
-/// [`Amazon S3`](AmazonS3) object store connection is invalid, [`Status`] is returned.
-fn parse_s3_arguments(data: &[u8]) -> Result<AmazonS3, Status> {
-    Err(Status::unimplemented("Not yet possible to parse S3 arguments."))
+/// Parse the arguments in `data` and return an [`Amazon S3`](object_store::aws::AmazonS3) object
+/// store if `data` contains the necessary arguments. If `data` is missing arguments or if the
+/// created [`Amazon S3`](AmazonS3) object store connection is invalid, [`Status`] is returned.
+fn parse_s3_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore>, Status> {
+    // TODO: Check that the connection is valid with the given arguments.
+
+    Err(Status::unimplemented(
+        "Not yet possible to parse S3 arguments.",
+    ))
 }
 
-/// Parse the arguments in `data` and return an [`Azure Blob Storage`](MicrosoftAzure) object store
-/// if `data` contains the necessary arguments. If `data` is missing arguments or if the created
+/// Parse the arguments in `data` and return an [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
+/// object store if `data` contains the necessary arguments. If `data` is missing arguments or if the created
 /// [`Azure Blob Storage`](MicrosoftAzure) object store connection is invalid, [`Status`] is returned.
-fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<MicrosoftAzure, Status> {
-    Err(Status::unimplemented("Not yet possible to parse Azure Blob Storage arguments."))
+fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore>, Status> {
+    // TODO: Check that the connection is valid with the given arguments.
+
+    Err(Status::unimplemented(
+        "Not yet possible to parse Azure Blob Storage arguments.",
+    ))
 }
 
 /// Assumes `data` is a slice containing one or more arguments with the following format:
@@ -162,9 +169,7 @@ fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<MicrosoftAzure, Sta
 fn extract_argument_bytes(data: &[u8]) -> Result<(&[u8], &[u8]), Status> {
     let size_bytes: [u8; 2] = data[..2]
         .try_into()
-        .map_err(|_| {
-            Status::internal("Size of argument is not 2 bytes.")
-        })?;
+        .map_err(|_| Status::internal("Size of argument is not 2 bytes."))?;
 
     let size = u16::from_be_bytes(size_bytes) as usize;
 
@@ -715,7 +720,17 @@ impl FlightService for FlightServiceHandler {
             }))))
         } else if action.r#type == "UpdateRemoteObjectStore" {
             // If the type of the new remote object store is not "s3" or "azureblobstorage", return an error.
+            let (type_bytes, offset_data) = extract_argument_bytes(&action.body)?;
+            let object_store_type = str::from_utf8(type_bytes)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
+            let object_store = match object_store_type {
+                "s3" => parse_s3_arguments(offset_data),
+                "azureblobstorage" => parse_azure_blob_storage_arguments(offset_data),
+                _ => Err(Status::unimplemented(
+                    format!("{object_store_type} is currently not supported."),
+                ))
+            }?;
 
             match self.context.metadata_manager.node_type {
                 NodeType::Cloud => {
@@ -729,12 +744,7 @@ impl FlightService for FlightServiceHandler {
                     // TODO: If on a edge node the remote object store should be updated for the data transfer
                     //       component if one already exists. If not, a data transfer component should be created
                     //       and added to the compressed data manager.
-                    // TODO: The next arguments should be the connection parameters. If they do not match an error
-                    //       should be returned.
-                    // TODO: The connection should be checked with the function in main. If it is invalid, an error
-                    //       should be returned.
                     // TODO: Add a method to the storage engine to create/update the object store.
-                    // TODO: Add test functions to the utility repo to test deleting and updating remote object store.
 
                     // Confirm the remote object store was updated.
                     Ok(Response::new(Box::pin(stream::empty())))
