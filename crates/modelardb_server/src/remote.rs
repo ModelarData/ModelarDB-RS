@@ -145,6 +145,8 @@ async fn send_flight_data(
 /// store if `data` contains the necessary arguments. If `data` is missing arguments or if the
 /// created [`Amazon S3`](AmazonS3) object store connection is invalid, [`Status`] is returned.
 fn parse_s3_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore>, Status> {
+    let (endpoint, offset_data) = extract_argument(data)?;
+
     // TODO: Check that the connection is valid with the given arguments.
 
     Err(Status::unimplemented(
@@ -165,18 +167,19 @@ fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore
 
 /// Assumes `data` is a slice containing one or more arguments with the following format:
 /// size of argument (2 bytes) followed by the argument (size bytes). Returns a tuple containing
-/// the first argument's bytes and `data` with the extracted argument's bytes removed.
-fn extract_argument_bytes(data: &[u8]) -> Result<(&[u8], &[u8]), Status> {
+/// the first argument and `data` with the extracted argument's bytes removed.
+fn extract_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
     let size_bytes: [u8; 2] = data[..2]
         .try_into()
         .map_err(|_| Status::internal("Size of argument is not 2 bytes."))?;
 
     let size = u16::from_be_bytes(size_bytes) as usize;
 
-    let argument_bytes = &data[2..(size + 2)];
+    let argument = str::from_utf8(&data[2..(size + 2)])
+        .map_err(|error| Status::invalid_argument(error.to_string()))?;
     let remaining_bytes = &data[(size + 2)..];
 
-    Ok((argument_bytes, remaining_bytes))
+    Ok((argument, remaining_bytes))
 }
 
 /// Handler for processing Apache Arrow Flight requests.
@@ -720,16 +723,14 @@ impl FlightService for FlightServiceHandler {
             }))))
         } else if action.r#type == "UpdateRemoteObjectStore" {
             // If the type of the new remote object store is not "s3" or "azureblobstorage", return an error.
-            let (type_bytes, offset_data) = extract_argument_bytes(&action.body)?;
-            let object_store_type = str::from_utf8(type_bytes)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            let (object_store_type, offset_data) = extract_argument(&action.body)?;
 
             let object_store = match object_store_type {
                 "s3" => parse_s3_arguments(offset_data),
                 "azureblobstorage" => parse_azure_blob_storage_arguments(offset_data),
-                _ => Err(Status::unimplemented(
-                    format!("{object_store_type} is currently not supported."),
-                ))
+                _ => Err(Status::unimplemented(format!(
+                    "{object_store_type} is currently not supported."
+                ))),
             }?;
 
             match self.context.metadata_manager.node_type {
