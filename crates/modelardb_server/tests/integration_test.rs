@@ -392,10 +392,9 @@ fn test_cannot_ingest_invalid_data_point() {
         format!("SELECT * FROM {TABLE_NAME}"),
     )
     .expect("Could not execute query.");
-
     assert!(query.is_empty());
 
-    stop_modelardbd(flight_server);
+    stop_modelardbd(flight_server)
 }
 
 #[test]
@@ -483,9 +482,14 @@ fn start_binary(binary: &str) -> Command {
 fn start_modelardbd(path: &Path) -> Child {
     // Spawn the Apache Arrow Flight Server. stdout is piped to /dev/null so the logged data_points
     // are not printed when the unit tests and the integration tests are run using "cargo test".
+    // stderr is piped to /dev/null so the server does not print the panic that occurs during
+    // test_cannot_ingest_invalid_data_point. This panic occurs because the
+    // flight_data_to_arrow_batch utility used on the server cannot convert the FlightData to a
+    // RecordBatch using the server-local table schema.
     let process = start_binary("modelardbd")
         .arg(path)
         .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .spawn()
         .expect("Failed to start Apache Arrow Flight Server");
 
@@ -618,8 +622,8 @@ fn send_data_points_to_apache_arrow_flight_server(
     runtime.block_on(async {
         let flight_data_stream = stream::iter(flight_data);
 
-        let mut _streaming = client.do_put(flight_data_stream).await;
-    })
+        let _ = client.do_put(flight_data_stream).await;
+    });
 }
 
 /// Flush the data in the StorageEngine to disk through the `do_action()` method.
