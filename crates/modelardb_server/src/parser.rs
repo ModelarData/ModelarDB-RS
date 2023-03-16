@@ -88,10 +88,10 @@ impl ModelarDbDialect {
 
         // Check that the table name is not a restricted keyword.
         for keyword in ALL_KEYWORDS {
-            if table_name == keyword.to_uppercase() || table_name == keyword.to_lowercase() {
+            if table_name.to_uppercase() == keyword.to_string() {
                 return Err(ParserError::ParserError(format!(
                     "Reserved keyword '{}' cannot be used as a table name.",
-                    table_name.to_uppercase()
+                    table_name
                 )));
             }
         }
