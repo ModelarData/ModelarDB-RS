@@ -44,10 +44,11 @@ use datafusion::common::DFSchema;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
-use object_store::aws::AmazonS3Builder;
-use object_store::azure::MicrosoftAzureBuilder;
 use modelardb_common::schemas::METRIC_SCHEMA;
 use modelardb_common::types::TimestampBuilder;
+use object_store::aws::AmazonS3Builder;
+use object_store::azure::MicrosoftAzureBuilder;
+use object_store::path::Path;
 use object_store::ObjectStore;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
@@ -146,7 +147,7 @@ async fn send_flight_data(
 /// Parse the arguments in `data` and return an [`Amazon S3`](object_store::aws::AmazonS3) object
 /// store if `data` contains the necessary arguments. If `data` is missing arguments or if the
 /// created [`Amazon S3`](AmazonS3) object store connection is invalid, [`Status`] is returned.
-fn parse_s3_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore>, Status> {
+async fn parse_s3_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore>, Status> {
     let (endpoint, offset_data) = extract_argument(data)?;
     let (bucket_name, offset_data) = extract_argument(offset_data)?;
     let (access_key_id, offset_data) = extract_argument(offset_data)?;
@@ -161,17 +162,17 @@ fn parse_s3_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore>, Status> {
         .build()
         .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-    // TODO: Check that the connection is valid with the given arguments.
-
-    Err(Status::unimplemented(
-        "Not yet possible to parse S3 arguments.",
-    ))
+    // Check that the connection is valid with the given arguments.
+    match s3.get(&Path::from("")).await {
+        Ok(_) => Ok(Box::new(s3)),
+        Err(error) => Err(Status::invalid_argument(error.to_string()))
+    }
 }
 
 /// Parse the arguments in `data` and return an [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
 /// object store if `data` contains the necessary arguments. If `data` is missing arguments or if the created
 /// [`Azure Blob Storage`](MicrosoftAzure) object store connection is invalid, [`Status`] is returned.
-fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore>, Status> {
+async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore>, Status> {
     let (account, offset_data) = extract_argument(data)?;
     let (access_key, offset_data) = extract_argument(offset_data)?;
     let (container_name, _offset_data) = extract_argument(offset_data)?;
@@ -183,11 +184,11 @@ fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore
         .build()
         .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-    // TODO: Check that the connection is valid with the given arguments.
-
-    Err(Status::unimplemented(
-        "Not yet possible to parse Azure Blob Storage arguments.",
-    ))
+    // Check that the connection is valid with the given arguments.
+    match azure_blob_storage.get(&Path::from("")).await {
+        Ok(_) => Ok(Box::new(azure_blob_storage)),
+        Err(error) => Err(Status::invalid_argument(error.to_string()))
+    }
 }
 
 /// Assumes `data` is a slice containing one or more arguments with the following format:
@@ -749,7 +750,7 @@ impl FlightService for FlightServiceHandler {
             let (object_store_type, offset_data) = extract_argument(&action.body)?;
 
             let object_store = match object_store_type {
-                "s3" => parse_s3_arguments(offset_data),
+                "s3" => parse_s3_arguments(offset_data).await,
                 "azureblobstorage" => parse_azure_blob_storage_arguments(offset_data),
                 _ => Err(Status::unimplemented(format!(
                     "{object_store_type} is currently not supported."
@@ -760,20 +761,17 @@ impl FlightService for FlightServiceHandler {
                 NodeType::Cloud => {
                     // TODO: If on a cloud node, both the remote data folder and the query data folder should be updated.
                     // TODO: The query data folder should be updated in the session context.
-                    Err(Status::unimplemented(
-                        "It is not possible to update the remote object store on cloud nodes yet.",
-                    ))
                 }
                 NodeType::Edge => {
                     // TODO: If on a edge node the remote object store should be updated for the data transfer
                     //       component if one already exists. If not, a data transfer component should be created
                     //       and added to the compressed data manager.
                     // TODO: Add a method to the storage engine to create/update the object store.
-
-                    // Confirm the remote object store was updated.
-                    Ok(Response::new(Box::pin(stream::empty())))
                 }
             }
+
+            // Confirm the remote object store was updated.
+            Ok(Response::new(Box::pin(stream::empty())))
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
