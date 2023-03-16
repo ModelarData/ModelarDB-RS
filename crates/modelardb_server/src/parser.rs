@@ -30,7 +30,7 @@ use sqlparser::ast::{
     HiveDistributionStyle, HiveFormat, Ident, ObjectName, Statement, TimezoneInfo,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
-use sqlparser::keywords::{ALL_KEYWORDS, Keyword};
+use sqlparser::keywords::{Keyword, ALL_KEYWORDS};
 use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::Token;
 
@@ -87,11 +87,12 @@ impl ModelarDbDialect {
         let table_name = self.parse_word_value(parser)?;
 
         // Check that the table name is not a restricted keyword.
-        for keyword in ALL_KEYWORDS{
-            if table_name == keyword.to_string(){
+        for keyword in ALL_KEYWORDS {
+            if table_name == keyword.to_uppercase() || table_name == keyword.to_lowercase() {
                 return Err(ParserError::ParserError(format!(
-                    "Reserved keyword '{}' cannot be used as a table name.", table_name
-                )))
+                    "Reserved keyword '{}' cannot be used as a table name.",
+                    table_name.to_uppercase()
+                )));
             }
         }
 
