@@ -30,7 +30,7 @@ use sqlparser::ast::{
     HiveDistributionStyle, HiveFormat, Ident, ObjectName, Statement, TimezoneInfo,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
-use sqlparser::keywords::Keyword;
+use sqlparser::keywords::{ALL_KEYWORDS, Keyword};
 use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::Token;
 
@@ -85,6 +85,15 @@ impl ModelarDbDialect {
         self.expect_word_value(parser, "MODEL")?;
         parser.expect_keyword(Keyword::TABLE)?;
         let table_name = self.parse_word_value(parser)?;
+
+        // Check that the table name is not a restricted keyword.
+        for keyword in ALL_KEYWORDS{
+            if table_name == keyword.to_string(){
+                return Err(ParserError::ParserError(format!(
+                    "Reserved keyword '{}' cannot be used as a table name.", table_name
+                )))
+            }
+        }
 
         // (column name and column type*).
         let columns = self.parse_columns(parser)?;
@@ -708,7 +717,7 @@ mod tests {
     fn test_tokenize_and_parse_create_model_table() {
         let sql = "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_one FIELD, field_two FIELD(10.5), tag TAG)";
         if let Statement::CreateTable { name, columns, .. } = tokenize_and_parse_sql(sql).unwrap() {
-            assert!(name == new_object_name("table_name"));
+            assert_eq!(name, new_object_name("table_name"));
             let expected_columns = vec![
                 ModelarDbDialect::new_column_def(
                     "timestamp",
@@ -860,6 +869,6 @@ mod tests {
 
         let expected_error =
             ParserError::ParserError("Multiple SQL commands are not supported.".to_owned());
-        assert!(error.unwrap_err() == expected_error);
+        assert_eq!(error.unwrap_err(), expected_error);
     }
 }
