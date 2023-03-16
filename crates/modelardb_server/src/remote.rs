@@ -639,8 +639,6 @@ impl FlightService for FlightServiceHandler {
     /// of the argument, immediately followed by the argument value. The first argument should be
     /// the object store type, specifically either 's3' or 'azureblobstorage'. The remaining
     /// arguments should be the arguments required to connect to the object store.
-    /// * `DeleteRemoteObjectStore`: Delete the current remote object store. Note that data is no
-    /// longer transferred after deleting and is therefore only saved locally.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -776,24 +774,6 @@ impl FlightService for FlightServiceHandler {
                     Ok(Response::new(Box::pin(stream::empty())))
                 }
             }
-        } else if action.r#type == "DeleteRemoteObjectStore" {
-            match self.context.metadata_manager.node_type {
-                NodeType::Cloud => {
-                    // TODO: What should happen when deleting the object store on the cloud node?
-                    Err(Status::unimplemented(
-                        "It is not possible to delete the remote object store on cloud nodes yet.",
-                    ))
-                }
-                NodeType::Edge => {
-                    // TODO: If on an edge node, the remote object store should be set to None in the data transfer
-                    //       component which means the whole data transfer component should be set to None in the
-                    //       compressed data manager.
-                    // TODO: Add a method to the storage engine to delete the object store.
-
-                    // Confirm the remote object store was deleted.
-                    Ok(Response::new(Box::pin(stream::empty())))
-                }
-            }
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
@@ -832,17 +812,10 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let create_object_store = ActionType {
+        let update_remote_object_store = ActionType {
             r#type: "UpdateRemoteObjectStore".to_owned(),
             description: "Update the remote object store, overriding the current remote object \
             store, if it exists."
-                .to_owned(),
-        };
-
-        let delete_object_store = ActionType {
-            r#type: "DeleteRemoteObjectStore".to_owned(),
-            description: "Delete the current remote object store. This stops all data transfers \
-            until a new remote object store is registered."
                 .to_owned(),
         };
 
@@ -851,8 +824,7 @@ impl FlightService for FlightServiceHandler {
             Ok(flush_data_to_disk),
             Ok(flush_edge_action),
             Ok(collect_metrics),
-            Ok(create_object_store),
-            Ok(delete_object_store),
+            Ok(update_remote_object_store),
         ]);
 
         Ok(Response::new(Box::pin(output)))

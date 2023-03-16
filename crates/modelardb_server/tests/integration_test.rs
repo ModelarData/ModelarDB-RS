@@ -198,7 +198,6 @@ fn test_can_list_actions() {
         vec![
             "CollectMetrics",
             "CommandStatementUpdate",
-            "DeleteRemoteObjectStore",
             "FlushEdge",
             "FlushMemory",
             "UpdateRemoteObjectStore",
