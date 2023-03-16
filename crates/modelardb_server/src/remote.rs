@@ -44,6 +44,8 @@ use datafusion::common::DFSchema;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
+use object_store::aws::AmazonS3Builder;
+use object_store::azure::MicrosoftAzureBuilder;
 use modelardb_common::schemas::METRIC_SCHEMA;
 use modelardb_common::types::TimestampBuilder;
 use object_store::ObjectStore;
@@ -146,6 +148,18 @@ async fn send_flight_data(
 /// created [`Amazon S3`](AmazonS3) object store connection is invalid, [`Status`] is returned.
 fn parse_s3_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore>, Status> {
     let (endpoint, offset_data) = extract_argument(data)?;
+    let (bucket_name, offset_data) = extract_argument(offset_data)?;
+    let (access_key_id, offset_data) = extract_argument(offset_data)?;
+    let (secret_access_key, _offset_data) = extract_argument(offset_data)?;
+
+    let s3 = AmazonS3Builder::new()
+        .with_region("")
+        .with_endpoint(endpoint)
+        .with_bucket_name(bucket_name)
+        .with_access_key_id(access_key_id)
+        .with_secret_access_key(secret_access_key)
+        .build()
+        .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
     // TODO: Check that the connection is valid with the given arguments.
 
@@ -158,6 +172,17 @@ fn parse_s3_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore>, Status> {
 /// object store if `data` contains the necessary arguments. If `data` is missing arguments or if the created
 /// [`Azure Blob Storage`](MicrosoftAzure) object store connection is invalid, [`Status`] is returned.
 fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore>, Status> {
+    let (account, offset_data) = extract_argument(data)?;
+    let (access_key, offset_data) = extract_argument(offset_data)?;
+    let (container_name, _offset_data) = extract_argument(offset_data)?;
+
+    let azure_blob_storage = MicrosoftAzureBuilder::new()
+        .with_account(account)
+        .with_access_key(access_key)
+        .with_container_name(container_name)
+        .build()
+        .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
     // TODO: Check that the connection is valid with the given arguments.
 
     Err(Status::unimplemented(
