@@ -44,7 +44,7 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 const PORT: i16 = 9999;
 
 /// The different possible node types, assigned when the node is started.
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum NodeType {
     Cloud,
     Edge,

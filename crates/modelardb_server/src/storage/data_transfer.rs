@@ -45,7 +45,7 @@ pub struct DataTransfer {
     /// The object store containing all compressed data managed by the [`StorageEngine`].
     local_data_folder: Arc<dyn ObjectStore>,
     /// The object store that the data should be transferred to.
-    remote_data_folder: Arc<dyn ObjectStore>,
+    pub remote_data_folder: Arc<dyn ObjectStore>,
     /// Map from table names and column indices to the combined size in bytes of the compressed
     /// files currently saved for the column in that table.
     compressed_files: HashMap<(String, u16), usize>,

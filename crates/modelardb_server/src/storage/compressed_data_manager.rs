@@ -43,7 +43,7 @@ pub(super) struct CompressedDataManager {
     /// Component that transfers saved compressed data to the remote data folder when it is necessary.
     pub(super) data_transfer: Option<DataTransfer>,
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
-    local_data_folder: PathBuf,
+    pub(crate) local_data_folder: PathBuf,
     /// The compressed segments before they are saved to persistent storage. The key is the name of
     /// the table and the index of the column the compressed segments represents data points for so
     /// the Apache Parquet files can be partitioned by table and then column.

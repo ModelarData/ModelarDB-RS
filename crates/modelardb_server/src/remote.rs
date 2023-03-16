@@ -147,7 +147,7 @@ async fn send_flight_data(
 /// Parse the arguments in `data` and return an [`Amazon S3`](object_store::aws::AmazonS3) object
 /// store if `data` contains the necessary arguments. If `data` is missing arguments or if the
 /// created [`Amazon S3`](AmazonS3) object store connection is invalid, [`Status`] is returned.
-async fn parse_s3_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore>, Status> {
+async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status> {
     let (endpoint, offset_data) = extract_argument(data)?;
     let (bucket_name, offset_data) = extract_argument(offset_data)?;
     let (access_key_id, offset_data) = extract_argument(offset_data)?;
@@ -164,15 +164,15 @@ async fn parse_s3_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore>, Status>
 
     // Check that the connection is valid with the given arguments.
     match s3.get(&Path::from("")).await {
-        Ok(_) => Ok(Box::new(s3)),
-        Err(error) => Err(Status::invalid_argument(error.to_string()))
+        Ok(_) => Ok(Arc::new(s3)),
+        Err(error) => Err(Status::invalid_argument(error.to_string())),
     }
 }
 
 /// Parse the arguments in `data` and return an [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
 /// object store if `data` contains the necessary arguments. If `data` is missing arguments or if the created
 /// [`Azure Blob Storage`](MicrosoftAzure) object store connection is invalid, [`Status`] is returned.
-async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Box<dyn ObjectStore>, Status> {
+async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status> {
     let (account, offset_data) = extract_argument(data)?;
     let (access_key, offset_data) = extract_argument(offset_data)?;
     let (container_name, _offset_data) = extract_argument(offset_data)?;
@@ -186,8 +186,8 @@ async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Box<dyn Objec
 
     // Check that the connection is valid with the given arguments.
     match azure_blob_storage.get(&Path::from("")).await {
-        Ok(_) => Ok(Box::new(azure_blob_storage)),
-        Err(error) => Err(Status::invalid_argument(error.to_string()))
+        Ok(_) => Ok(Arc::new(azure_blob_storage)),
+        Err(error) => Err(Status::invalid_argument(error.to_string())),
     }
 }
 
@@ -751,23 +751,26 @@ impl FlightService for FlightServiceHandler {
 
             let object_store = match object_store_type {
                 "s3" => parse_s3_arguments(offset_data).await,
-                "azureblobstorage" => parse_azure_blob_storage_arguments(offset_data),
+                "azureblobstorage" => parse_azure_blob_storage_arguments(offset_data).await,
                 _ => Err(Status::unimplemented(format!(
                     "{object_store_type} is currently not supported."
                 ))),
             }?;
 
-            match self.context.metadata_manager.node_type {
-                NodeType::Cloud => {
-                    // TODO: If on a cloud node, both the remote data folder and the query data folder should be updated.
-                    // TODO: The query data folder should be updated in the session context.
-                }
-                NodeType::Edge => {
-                    // TODO: If on a edge node the remote object store should be updated for the data transfer
-                    //       component if one already exists. If not, a data transfer component should be created
-                    //       and added to the compressed data manager.
-                    // TODO: Add a method to the storage engine to create/update the object store.
-                }
+            // Update the object store used for data transfers.
+            let mut storage_engine = self.context.storage_engine.write().await;
+            storage_engine
+                .update_remote_data_folder(object_store)
+                .await
+                .map_err(|error| {
+                    Status::internal(format!(
+                        "Could not update remote data folder: {error}"
+                    ))
+                })?;
+
+            // If on a cloud node, both the remote data folder and the query data folder should be updated.
+            if self.context.metadata_manager.node_type == NodeType::Cloud {
+                // TODO: The query data folder should be updated in the session context.
             }
 
             // Confirm the remote object store was updated.
