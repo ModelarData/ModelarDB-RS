@@ -873,4 +873,32 @@ mod tests {
             ParserError::ParserError("Multiple SQL commands are not supported.".to_owned());
         assert_eq!(error.unwrap_err(), expected_error);
     }
+
+    #[test]
+    fn test_tokenize_and_parse_create_model_table_with_lowercase_keyword_as_table_name() {
+        for keyword in ALL_KEYWORDS {
+            assert!(tokenize_and_parse_sql(
+                format!(
+                    "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG",
+                    keyword.to_lowercase()
+                )
+                .as_str()
+            )
+            .is_err())
+        }
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_model_table_with_uppercase_keyword_as_table_name() {
+        for keyword in ALL_KEYWORDS {
+            assert!(tokenize_and_parse_sql(
+                format!(
+                    "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG",
+                    keyword.to_uppercase()
+                )
+                .as_str()
+            )
+            .is_err())
+        }
+    }
 }
