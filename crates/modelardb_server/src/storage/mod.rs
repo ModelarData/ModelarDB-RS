@@ -63,11 +63,11 @@ use uuid::{uuid, Uuid};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
-use crate::PORT;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::uncompressed_data_buffer::UncompressedDataBuffer;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
+use crate::PORT;
 
 /// The folder storing uncompressed data in the data folders.
 pub const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
@@ -95,6 +95,8 @@ const APACHE_PARQUET_FILE_SIGNATURE: &[u8] = &[80, 65, 82, 49]; // PAR1.
 /// size of the buffer has to be a multiple of 64 bytes to avoid the actual capacity being larger
 /// than the requested due to internal alignment when allocating memory for the two array builders.
 const UNCOMPRESSED_DATA_BUFFER_CAPACITY: usize = 64 * 1024;
+
+const TRANSFER_BATCH_SIZE_IN_BYTES: usize = 64 * 1024 * 1024; // 64 MiB;
 
 /// Manages all uncompressed and compressed data, both while being stored in memory during ingestion
 /// and when persisted to disk afterwards.
@@ -138,7 +140,7 @@ impl StorageEngine {
                 DataTransfer::try_new(
                     local_data_folder.clone(),
                     remote_data_folder,
-                    64 * 1024 * 1024, // 64 MiB.
+                    TRANSFER_BATCH_SIZE_IN_BYTES,
                     used_disk_space_metric.clone(),
                 )
                 .await?,
@@ -343,6 +345,30 @@ impl StorageEngine {
                     .finish(),
             ),
         ]
+    }
+
+    /// Update the remote data folder used to transfer data in the data transfer component.
+    /// If one does not already exists, create a new data transfer component. If the remote
+    /// data folder was successfully updated, return [`Ok`], otherwise return [`IOError`].
+    pub async fn update_remote_data_folder(
+        &mut self,
+        remote_data_folder: Arc<dyn ObjectStore>,
+    ) -> Result<(), IOError> {
+        if let Some(data_transfer) = &mut self.compressed_data_manager.data_transfer {
+            data_transfer.remote_data_folder = remote_data_folder;
+        } else {
+            let data_transfer = DataTransfer::try_new(
+                self.compressed_data_manager.local_data_folder.clone(),
+                remote_data_folder,
+                TRANSFER_BATCH_SIZE_IN_BYTES,
+                self.compressed_data_manager.used_disk_space_metric.clone(),
+            )
+            .await?;
+
+            self.compressed_data_manager.data_transfer = Some(data_transfer);
+        }
+
+        Ok(())
     }
 
     /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`
