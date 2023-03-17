@@ -885,7 +885,7 @@ mod tests {
             let keyword_lowercase = keyword.to_lowercase();
             let error = tokenize_and_parse_sql(
                 format!(
-                    "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG",
+                    "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
                     keyword_lowercase
                 )
                 .as_str(),
@@ -895,13 +895,10 @@ mod tests {
 
             assert_eq!(
                 error.unwrap_err(),
-                ParserError::ParserError(
-                    format!(
-                        "Reserved keyword '{}' cannot be used as a table name.",
-                        keyword_lowercase
-                    )
-                    .to_string()
-                )
+                ParserError::ParserError(format!(
+                    "Reserved keyword '{}' cannot be used as a table name.",
+                    keyword_lowercase
+                ))
             );
         }
     }
@@ -917,7 +914,7 @@ mod tests {
             let keyword_uppercase = keyword.to_uppercase();
             let error = tokenize_and_parse_sql(
                 format!(
-                    "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG",
+                    "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
                     keyword_uppercase
                 )
                 .as_str(),
@@ -927,13 +924,10 @@ mod tests {
 
             assert_eq!(
                 error.unwrap_err(),
-                ParserError::ParserError(
-                    format!(
-                        "Reserved keyword '{}' cannot be used as a table name.",
-                        keyword_uppercase
-                    )
-                    .to_string()
-                )
+                ParserError::ParserError(format!(
+                    "Reserved keyword '{}' cannot be used as a table name.",
+                    keyword_uppercase
+                ))
             );
         }
     }
