@@ -870,35 +870,71 @@ mod tests {
         assert!(error.is_err());
 
         let expected_error =
-            ParserError::ParserError("Multiple SQL commands are not supported.".to_owned());
+            ParserError::ParserError("Multiple SQL commands are not supported.".to_string());
         assert_eq!(error.unwrap_err(), expected_error);
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_lowercase_keyword_as_table_name() {
         for keyword in ALL_KEYWORDS {
-            assert!(tokenize_and_parse_sql(
+            // END-EXEC cannot be parsed by the SQL parser because of the hyphen, and is therefore
+            // skipped in this test.
+            if keyword == &"END-EXEC" {
+                continue;
+            }
+            let keyword_lowercase = keyword.to_lowercase();
+            let error = tokenize_and_parse_sql(
                 format!(
                     "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG",
-                    keyword.to_lowercase()
+                    keyword_lowercase
                 )
-                .as_str()
-            )
-            .is_err())
+                .as_str(),
+            );
+
+            assert!(error.is_err());
+
+            assert_eq!(
+                error.unwrap_err(),
+                ParserError::ParserError(
+                    format!(
+                        "Reserved keyword '{}' cannot be used as a table name.",
+                        keyword_lowercase
+                    )
+                    .to_string()
+                )
+            );
         }
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_uppercase_keyword_as_table_name() {
         for keyword in ALL_KEYWORDS {
-            assert!(tokenize_and_parse_sql(
+            // END-EXEC cannot be parsed by the SQL parser because of the hyphen, and is therefore
+            // skipped in this test.
+            if keyword == &"END-EXEC" {
+                continue;
+            }
+            let keyword_uppercase = keyword.to_uppercase();
+            let error = tokenize_and_parse_sql(
                 format!(
                     "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG",
-                    keyword.to_uppercase()
+                    keyword_uppercase
                 )
-                .as_str()
-            )
-            .is_err())
+                .as_str(),
+            );
+
+            assert!(error.is_err());
+
+            assert_eq!(
+                error.unwrap_err(),
+                ParserError::ParserError(
+                    format!(
+                        "Reserved keyword '{}' cannot be used as a table name.",
+                        keyword_uppercase
+                    )
+                    .to_string()
+                )
+            );
         }
     }
 }
