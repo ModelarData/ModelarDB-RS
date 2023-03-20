@@ -878,7 +878,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_table_with_lowercase_keyword_as_table_name() {
         parse_and_assert_if_keyword_is_restricted_in_table_name(
-            |str| str.to_lowercase(),
+            str::to_lowercase,
             "CREATE TABLE {}(timestamp TIMESTAMP, values REAL, metadata REAL)",
         )
     }
@@ -886,7 +886,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_table_with_uppercase_keyword_as_table_name() {
         parse_and_assert_if_keyword_is_restricted_in_table_name(
-            |str| str.to_uppercase(),
+            str::to_uppercase,
             "CREATE TABLE {}(timestamp TIMESTAMP, values REAL, metadata REAL)",
         )
     }
@@ -894,7 +894,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_lowercase_keyword_as_table_name() {
         parse_and_assert_if_keyword_is_restricted_in_table_name(
-            |str| str.to_lowercase(),
+            str::to_lowercase,
             "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
     }
@@ -902,13 +902,13 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_uppercase_keyword_as_table_name() {
         parse_and_assert_if_keyword_is_restricted_in_table_name(
-            |str| str.to_uppercase(),
+            str::to_uppercase,
             "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
     }
 
     fn parse_and_assert_if_keyword_is_restricted_in_table_name(
-        table_name: fn(&str) -> String,
+        keyword_to_table_name: fn(&str) -> String,
         sql: &str,
     ) {
         for keyword in ALL_KEYWORDS {
@@ -917,8 +917,10 @@ mod tests {
             if keyword == &"END-EXEC" {
                 continue;
             }
-            let statement =
-                tokenize_and_parse_sql(sql.replace("{}", table_name(keyword).as_str()).as_str());
+            let statement = tokenize_and_parse_sql(
+                sql.replace("{}", keyword_to_table_name(keyword).as_str())
+                    .as_str(),
+            );
 
             let error = semantic_checks_for_create_table(&statement.unwrap());
 
@@ -928,7 +930,7 @@ mod tests {
                 error.unwrap_err(),
                 ParserError::ParserError(format!(
                     "Reserved keyword '{}' cannot be used as a table name.",
-                    table_name(keyword)
+                    keyword_to_table_name(keyword)
                 ))
             );
         }
