@@ -86,17 +86,6 @@ impl ModelarDbDialect {
         parser.expect_keyword(Keyword::TABLE)?;
         let table_name = self.parse_word_value(parser)?;
 
-        // Check that the table name is not a restricted keyword.
-        let table_name_uppercase = table_name.to_uppercase();
-        for keyword in ALL_KEYWORDS {
-            if &table_name_uppercase == keyword {
-                return Err(ParserError::ParserError(format!(
-                    "Reserved keyword '{}' cannot be used as a table name.",
-                    table_name
-                )));
-            }
-        }
-
         // (column name and column type*).
         let columns = self.parse_columns(parser)?;
 
@@ -307,6 +296,7 @@ pub fn tokenize_and_parse_sql(sql: &str) -> Result<Statement, ParserError> {
 /// A top-level statement (SELECT, INSERT, CREATE, UPDATE, etc.) that have been
 /// tokenized, parsed, and for which semantics checks have verified that it is
 /// compatible with ModelarDB. CREATE TABLE and CREATE MODEL TABLE is supported.
+#[derive(Debug)]
 pub enum ValidStatement {
     /// CREATE TABLE.
     CreateTable { name: String, schema: Schema },
@@ -343,6 +333,17 @@ pub fn semantic_checks_for_create_table(
         if normalized_name.contains(char::is_whitespace) {
             let message = "Table name cannot contain whitespace.";
             return Err(ParserError::ParserError(message.to_owned()));
+        }
+
+        // Check if the table name is a restricted keyword.
+        let table_name_uppercase = normalized_name.to_uppercase();
+        for keyword in ALL_KEYWORDS {
+            if &table_name_uppercase == keyword {
+                return Err(ParserError::ParserError(format!(
+                    "Reserved keyword '{}' cannot be used as a table name.",
+                    name
+                )));
+            }
         }
 
         // Check if the table name is a valid object_store path and database table name.
@@ -875,58 +876,61 @@ mod tests {
     }
 
     #[test]
+    fn test_tokenize_and_parse_create_table_with_lowercase_keyword_as_table_name() {
+        parse_and_assert_that_keywords_are_restricted_in_table_name(
+            str::to_lowercase,
+            "CREATE TABLE {}(timestamp TIMESTAMP, values REAL, metadata REAL)",
+        )
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_table_with_uppercase_keyword_as_table_name() {
+        parse_and_assert_that_keywords_are_restricted_in_table_name(
+            str::to_uppercase,
+            "CREATE TABLE {}(timestamp TIMESTAMP, values REAL, metadata REAL)",
+        )
+    }
+
+    #[test]
     fn test_tokenize_and_parse_create_model_table_with_lowercase_keyword_as_table_name() {
-        for keyword in ALL_KEYWORDS {
-            // END-EXEC cannot be parsed by the SQL parser because of the hyphen, and is therefore
-            // skipped in this test.
-            if keyword == &"END-EXEC" {
-                continue;
-            }
-            let keyword_lowercase = keyword.to_lowercase();
-            let error = tokenize_and_parse_sql(
-                format!(
-                    "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
-                    keyword_lowercase
-                )
-                .as_str(),
-            );
-
-            assert!(error.is_err());
-
-            assert_eq!(
-                error.unwrap_err(),
-                ParserError::ParserError(format!(
-                    "Reserved keyword '{}' cannot be used as a table name.",
-                    keyword_lowercase
-                ))
-            );
-        }
+        parse_and_assert_that_keywords_are_restricted_in_table_name(
+            str::to_lowercase,
+            "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
+        )
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_uppercase_keyword_as_table_name() {
+        parse_and_assert_that_keywords_are_restricted_in_table_name(
+            str::to_uppercase,
+            "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
+        )
+    }
+
+    fn parse_and_assert_that_keywords_are_restricted_in_table_name(
+        keyword_to_table_name: fn(&str) -> String,
+        sql: &str,
+    ) {
         for keyword in ALL_KEYWORDS {
             // END-EXEC cannot be parsed by the SQL parser because of the hyphen, and is therefore
             // skipped in this test.
             if keyword == &"END-EXEC" {
                 continue;
             }
-            let keyword_uppercase = keyword.to_uppercase();
-            let error = tokenize_and_parse_sql(
-                format!(
-                    "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
-                    keyword_uppercase
-                )
-                .as_str(),
+            let statement = tokenize_and_parse_sql(
+                sql.replace("{}", keyword_to_table_name(keyword).as_str())
+                    .as_str(),
             );
 
-            assert!(error.is_err());
+            let result = semantic_checks_for_create_table(&statement.unwrap());
+
+            assert!(result.is_err());
 
             assert_eq!(
-                error.unwrap_err(),
+                result.unwrap_err(),
                 ParserError::ParserError(format!(
                     "Reserved keyword '{}' cannot be used as a table name.",
-                    keyword_uppercase
+                    keyword_to_table_name(keyword)
                 ))
             );
         }
