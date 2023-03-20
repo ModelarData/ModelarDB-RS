@@ -771,6 +771,9 @@ impl FlightService for FlightServiceHandler {
             // If on a cloud node, both the remote data folder and the query data folder should be updated.
             if self.context.metadata_manager.node_type == NodeType::Cloud {
                 // TODO: The query data folder should be updated in the session context.
+                // TODO: Find a way to do this, ideally without adding a RwLock to the context.
+                // TODO: Adding a RwLock to the session within the context does not work.
+                // TODO: Adding a RwLock to the context introduces some issues with registering tables.
             }
 
             // Confirm the remote object store was updated.
