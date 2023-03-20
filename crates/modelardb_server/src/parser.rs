@@ -877,7 +877,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_table_with_lowercase_keyword_as_table_name() {
-        parse_and_assert_if_keyword_is_restricted_in_table_name(
+        parse_and_assert_that_keywords_are_restricted_in_table_name(
             str::to_lowercase,
             "CREATE TABLE {}(timestamp TIMESTAMP, values REAL, metadata REAL)",
         )
@@ -885,7 +885,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_table_with_uppercase_keyword_as_table_name() {
-        parse_and_assert_if_keyword_is_restricted_in_table_name(
+        parse_and_assert_that_keywords_are_restricted_in_table_name(
             str::to_uppercase,
             "CREATE TABLE {}(timestamp TIMESTAMP, values REAL, metadata REAL)",
         )
@@ -893,7 +893,7 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_lowercase_keyword_as_table_name() {
-        parse_and_assert_if_keyword_is_restricted_in_table_name(
+        parse_and_assert_that_keywords_are_restricted_in_table_name(
             str::to_lowercase,
             "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
@@ -901,13 +901,13 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_uppercase_keyword_as_table_name() {
-        parse_and_assert_if_keyword_is_restricted_in_table_name(
+        parse_and_assert_that_keywords_are_restricted_in_table_name(
             str::to_uppercase,
             "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
         )
     }
 
-    fn parse_and_assert_if_keyword_is_restricted_in_table_name(
+    fn parse_and_assert_that_keywords_are_restricted_in_table_name(
         keyword_to_table_name: fn(&str) -> String,
         sql: &str,
     ) {
@@ -922,12 +922,12 @@ mod tests {
                     .as_str(),
             );
 
-            let error = semantic_checks_for_create_table(&statement.unwrap());
+            let result = semantic_checks_for_create_table(&statement.unwrap());
 
-            assert!(error.is_err());
+            assert!(result.is_err());
 
             assert_eq!(
-                error.unwrap_err(),
+                result.unwrap_err(),
                 ParserError::ParserError(format!(
                     "Reserved keyword '{}' cannot be used as a table name.",
                     keyword_to_table_name(keyword)
