@@ -877,77 +877,60 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_table_with_lowercase_keyword_as_table_name() {
-        for keyword in ALL_KEYWORDS {
-            // END-EXEC cannot be parsed by the SQL parser because of the hyphen, and is therefore
-            // skipped in this test.
-            if keyword == &"END-EXEC" {
-                continue;
-            }
-            parse_and_assert_if_keyword_is_restricted_in_table_name(
-                &keyword.to_lowercase().as_str(),
-                "CREATE TABLE {}(timestamp TIMESTAMP, values REAL, metadata REAL)",
-            )
-        }
+        parse_and_assert_if_keyword_is_restricted_in_table_name(
+            |str| str.to_lowercase(),
+            "CREATE TABLE {}(timestamp TIMESTAMP, values REAL, metadata REAL)",
+        )
     }
 
     #[test]
     fn test_tokenize_and_parse_create_table_with_uppercase_keyword_as_table_name() {
-        for keyword in ALL_KEYWORDS {
-            // END-EXEC cannot be parsed by the SQL parser because of the hyphen, and is therefore
-            // skipped in this test.
-            if keyword == &"END-EXEC" {
-                continue;
-            }
-            parse_and_assert_if_keyword_is_restricted_in_table_name(
-                &keyword.to_uppercase().as_str(),
-                "CREATE TABLE {}(timestamp TIMESTAMP, values REAL, metadata REAL)",
-            )
-        }
+        parse_and_assert_if_keyword_is_restricted_in_table_name(
+            |str| str.to_uppercase(),
+            "CREATE TABLE {}(timestamp TIMESTAMP, values REAL, metadata REAL)",
+        )
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_lowercase_keyword_as_table_name() {
-        for keyword in ALL_KEYWORDS {
-            // END-EXEC cannot be parsed by the SQL parser because of the hyphen, and is therefore
-            // skipped in this test.
-            if keyword == &"END-EXEC" {
-                continue;
-            }
-            parse_and_assert_if_keyword_is_restricted_in_table_name(
-                &keyword.to_lowercase().as_str(),
-                "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
-            )
-        }
+        parse_and_assert_if_keyword_is_restricted_in_table_name(
+            |str| str.to_lowercase(),
+            "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
+        )
     }
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_uppercase_keyword_as_table_name() {
+        parse_and_assert_if_keyword_is_restricted_in_table_name(
+            |str| str.to_uppercase(),
+            "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
+        )
+    }
+
+    fn parse_and_assert_if_keyword_is_restricted_in_table_name(
+        table_name: fn(&str) -> String,
+        sql: &str,
+    ) {
         for keyword in ALL_KEYWORDS {
             // END-EXEC cannot be parsed by the SQL parser because of the hyphen, and is therefore
             // skipped in this test.
             if keyword == &"END-EXEC" {
                 continue;
             }
-            parse_and_assert_if_keyword_is_restricted_in_table_name(
-                &keyword.to_uppercase().as_str(),
-                "CREATE MODEL TABLE {}(timestamp TIMESTAMP, field FIELD, tag TAG)",
-            )
+            let statement =
+                tokenize_and_parse_sql(sql.replace("{}", table_name(keyword).as_str()).as_str());
+
+            let error = semantic_checks_for_create_table(&statement.unwrap());
+
+            assert!(error.is_err());
+
+            assert_eq!(
+                error.unwrap_err(),
+                ParserError::ParserError(format!(
+                    "Reserved keyword '{}' cannot be used as a table name.",
+                    table_name(keyword)
+                ))
+            );
         }
-    }
-
-    fn parse_and_assert_if_keyword_is_restricted_in_table_name(keyword: &&str, sql: &str) {
-        let statement = tokenize_and_parse_sql(sql.replace("{}", keyword).as_str());
-
-        let error = semantic_checks_for_create_table(&statement.unwrap());
-
-        assert!(error.is_err());
-
-        assert_eq!(
-            error.unwrap_err(),
-            ParserError::ParserError(format!(
-                "Reserved keyword '{}' cannot be used as a table name.",
-                keyword
-            ))
-        );
     }
 }
