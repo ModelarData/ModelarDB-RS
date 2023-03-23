@@ -155,6 +155,7 @@ async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status>
 
     let s3 = AmazonS3Builder::new()
         .with_region("")
+        .with_allow_http(true)
         .with_endpoint(endpoint)
         .with_bucket_name(bucket_name)
         .with_access_key_id(access_key_id)
@@ -162,11 +163,7 @@ async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status>
         .build()
         .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-    // Check that the connection is valid with the given arguments.
-    match s3.get(&Path::from("")).await {
-        Ok(_) => Ok(Arc::new(s3)),
-        Err(error) => Err(Status::invalid_argument(error.to_string())),
-    }
+    check_object_store(Arc::new(s3)).await
 }
 
 /// Parse the arguments in `data` and return an [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
@@ -184,11 +181,7 @@ async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Arc<dyn Objec
         .build()
         .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-    // Check that the connection is valid with the given arguments.
-    match azure_blob_storage.get(&Path::from("")).await {
-        Ok(_) => Ok(Arc::new(azure_blob_storage)),
-        Err(error) => Err(Status::invalid_argument(error.to_string())),
-    }
+    check_object_store(Arc::new(azure_blob_storage)).await
 }
 
 /// Assumes `data` is a slice containing one or more arguments with the following format:
@@ -206,6 +199,18 @@ fn extract_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
     let remaining_bytes = &data[(size + 2)..];
 
     Ok((argument, remaining_bytes))
+}
+
+/// Check that the connection is valid with the given arguments. Note that an "object not found"
+/// error is returned even if the connection is valid. We therefore check for the specific error.
+async fn check_object_store(object_store: Arc<dyn ObjectStore>) -> Result<Arc<dyn ObjectStore>, Status> {
+    match object_store.get(&Path::from("")).await {
+        Ok(_) => Ok(object_store),
+        Err(ref error) if error.to_string().contains("Object at location  not found") => {
+            Ok(object_store)
+        }
+        Err(error) => Err(Status::invalid_argument(error.to_string())),
+    }
 }
 
 /// Handler for processing Apache Arrow Flight requests.
@@ -763,9 +768,7 @@ impl FlightService for FlightServiceHandler {
                 .update_remote_data_folder(object_store)
                 .await
                 .map_err(|error| {
-                    Status::internal(format!(
-                        "Could not update remote data folder: {error}"
-                    ))
+                    Status::internal(format!("Could not update remote data folder: {error}"))
                 })?;
 
             // If on a cloud node, both the remote data folder and the query data folder should be updated.
