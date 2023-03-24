@@ -146,7 +146,8 @@ async fn send_flight_data(
 
 /// Parse the arguments in `data` and return an [`Amazon S3`](object_store::aws::AmazonS3) object
 /// store if `data` contains the necessary arguments. If `data` is missing arguments or if the
-/// created [`Amazon S3`](AmazonS3) object store connection is invalid, [`Status`] is returned.
+/// created [`Amazon S3`](object_store::aws::AmazonS3) object store connection is invalid,
+/// [`Status`] is returned.
 async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status> {
     let (endpoint, offset_data) = extract_argument(data)?;
     let (bucket_name, offset_data) = extract_argument(offset_data)?;
@@ -168,7 +169,8 @@ async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status>
 
 /// Parse the arguments in `data` and return an [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
 /// object store if `data` contains the necessary arguments. If `data` is missing arguments or if the created
-/// [`Azure Blob Storage`](MicrosoftAzure) object store connection is invalid, [`Status`] is returned.
+/// [`Azure Blob Storage`](object_store::azure::MicrosoftAzure) object store connection is invalid,
+/// [`Status`] is returned.
 async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status> {
     let (account, offset_data) = extract_argument(data)?;
     let (access_key, offset_data) = extract_argument(offset_data)?;
