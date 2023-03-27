@@ -123,7 +123,7 @@ impl UncompressedInMemoryDataBuffer {
         self.timestamps.len()
     }
 
-    /// Return [`true`] if the [`UncompressedInMemoryDataBuffer`] have not been updated by
+    /// Return [`true`] if the [`UncompressedInMemoryDataBuffer`] has not been updated by
     /// [`RECORD_BATCH_OFFSET_REQUIRED_FOR_UNUSED`] [`RecordBatches`](`RecordBatch`) compared to the
     /// [`RecordBatch`] with index `current_batch_index` ingested by the current process.
     pub(super) fn is_unused(&self, current_batch_index: u64) -> bool {
