@@ -154,17 +154,22 @@ async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status>
     let (access_key_id, offset_data) = extract_argument(offset_data)?;
     let (secret_access_key, _offset_data) = extract_argument(offset_data)?;
 
-    let s3 = AmazonS3Builder::new()
-        .with_region("")
-        .with_allow_http(true)
-        .with_endpoint(endpoint)
-        .with_bucket_name(bucket_name)
-        .with_access_key_id(access_key_id)
-        .with_secret_access_key(secret_access_key)
-        .build()
-        .map_err(|error| Status::invalid_argument(error.to_string()))?;
+    let s3 = Arc::new(
+        AmazonS3Builder::new()
+            .with_region("")
+            .with_allow_http(true)
+            .with_endpoint(endpoint)
+            .with_bucket_name(bucket_name)
+            .with_access_key_id(access_key_id)
+            .with_secret_access_key(secret_access_key)
+            .build()
+            .map_err(|error| Status::invalid_argument(error.to_string()))?,
+    );
 
-    check_object_store(Arc::new(s3)).await
+    match s3.get(&Path::from("")).await {
+        Ok(_) => Ok(s3),
+        Err(error) => Err(Status::invalid_argument(error.to_string())),
+    }
 }
 
 /// Parse the arguments in `data` and return an [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
@@ -176,14 +181,24 @@ async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Arc<dyn Objec
     let (access_key, offset_data) = extract_argument(offset_data)?;
     let (container_name, _offset_data) = extract_argument(offset_data)?;
 
-    let azure_blob_storage = MicrosoftAzureBuilder::new()
-        .with_account(account)
-        .with_access_key(access_key)
-        .with_container_name(container_name)
-        .build()
-        .map_err(|error| Status::invalid_argument(error.to_string()))?;
+    let azure_blob_storage = Arc::new(
+        MicrosoftAzureBuilder::new()
+            .with_account(account)
+            .with_access_key(access_key)
+            .with_container_name(container_name)
+            .build()
+            .map_err(|error| Status::invalid_argument(error.to_string()))?,
+    );
 
-    check_object_store(Arc::new(azure_blob_storage)).await
+    match azure_blob_storage.get(&Path::from("")).await {
+        Ok(_) => Ok(azure_blob_storage),
+        // Note that the same error is returned if the object was not found due to the object not
+        // existing and due to the container not existing.
+        Err(error) => match error {
+            object_store::Error::NotFound { .. } => Ok(azure_blob_storage),
+            _ => Err(Status::invalid_argument(error.to_string())),
+        },
+    }
 }
 
 /// Assumes `data` is a slice containing one or more arguments with the following format:
@@ -201,18 +216,6 @@ fn extract_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
     let remaining_bytes = &data[(size + 2)..];
 
     Ok((argument, remaining_bytes))
-}
-
-/// Check that the connection is valid with the given arguments. Note that an "object not found"
-/// error is returned even if the connection is valid. We therefore check for the specific error.
-async fn check_object_store(object_store: Arc<dyn ObjectStore>) -> Result<Arc<dyn ObjectStore>, Status> {
-    match object_store.get(&Path::from("")).await {
-        Ok(_) => Ok(object_store),
-        Err(ref error) if error.to_string().contains("Object at location  not found") => {
-            Ok(object_store)
-        }
-        Err(error) => Err(Status::invalid_argument(error.to_string())),
-    }
 }
 
 /// Handler for processing Apache Arrow Flight requests.
