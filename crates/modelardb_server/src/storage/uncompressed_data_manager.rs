@@ -42,9 +42,9 @@ pub(super) struct UncompressedDataManager {
     /// Path to the folder containing all uncompressed data managed by the
     /// [`StorageEngine`](crate::storage::StorageEngine).
     local_data_folder: PathBuf,
-    /// Counter incremented for each batch of data points ingested. The value is assigned to each
-    /// buffer that is updated by that call and used to flush buffers that is no longer updated.
-    current_batch: u64,
+    /// Counter incremented for each [`RecordBatch`] of data points ingested. The value is assigned
+    /// to buffers that are created or updated and is used to flush buffers that are no longer used.
+    current_batch_index: u64,
     /// The [`UncompressedDataBuffers`](UncompressedDataBuffer) currently being filled with ingested
     /// data points.
     active_uncompressed_data_buffers: HashMap<u64, UncompressedInMemoryDataBuffer>,
@@ -116,7 +116,7 @@ impl UncompressedDataManager {
 
         Ok(Self {
             local_data_folder,
-            current_batch: 0,
+            current_batch_index: 0,
             active_uncompressed_data_buffers: HashMap::new(),
             finished_uncompressed_data_buffers: finished_data_buffers,
             uncompressed_remaining_memory_in_bytes: metadata_manager
@@ -224,15 +224,15 @@ impl UncompressedDataManager {
             }
         }
 
-        // Unused buffers are only finished after ingesting a batch so that the buffers required for
-        // any of the data points in the batch are never finished and thus has to be reallocated.
+        // Unused buffers are purposely only finished at the end of insert_data_points() so that the
+        // buffers required for any of the data points in the current batch are never finished.
         let mut compressed_unused_buffers = self
             .finish_unused_buffers()
             .await
             .map_err(|error| error.to_string())?;
         compressed_buffers.append(&mut compressed_unused_buffers);
 
-        self.current_batch += 1;
+        self.current_batch_index += 1;
 
         Ok(compressed_buffers)
     }
@@ -284,7 +284,7 @@ impl UncompressedDataManager {
             .get_mut(&univariate_id)
         {
             debug!("Found existing buffer for {}.", univariate_id);
-            buffer.insert_data(self.current_batch, timestamp, value);
+            buffer.insert_data(self.current_batch_index, timestamp, value);
 
             if buffer.is_full() {
                 debug!(
@@ -316,8 +316,11 @@ impl UncompressedDataManager {
             }
 
             // Create a new buffer and reduce the remaining amount of reserved memory by its size.
-            let mut buffer =
-                UncompressedInMemoryDataBuffer::new(univariate_id, self.current_batch, error_bound);
+            let mut buffer = UncompressedInMemoryDataBuffer::new(
+                univariate_id,
+                self.current_batch_index,
+                error_bound,
+            );
 
             let used_memory = UncompressedInMemoryDataBuffer::memory_size();
             self.uncompressed_remaining_memory_in_bytes -= used_memory;
@@ -329,7 +332,7 @@ impl UncompressedDataManager {
                 self.uncompressed_remaining_memory_in_bytes, univariate_id
             );
 
-            buffer.insert_data(self.current_batch, timestamp, value);
+            buffer.insert_data(self.current_batch_index, timestamp, value);
             self.active_uncompressed_data_buffers
                 .insert(univariate_id, buffer);
         }
@@ -371,7 +374,7 @@ impl UncompressedDataManager {
             Vec::with_capacity(self.active_uncompressed_data_buffers.len());
 
         for (univariate_id, buffer) in &self.active_uncompressed_data_buffers {
-            if !buffer.updated_by(self.current_batch) {
+            if buffer.is_unused(self.current_batch_index) {
                 univariate_ids_of_unused_buffers.push(*univariate_id);
             }
         }
@@ -385,13 +388,13 @@ impl UncompressedDataManager {
                 .remove(&univariate_id)
                 .unwrap();
 
-            debug!(
-                "Finished in-memory buffer for {} as it is no longer used.",
-                univariate_id
-            );
-
             if let Some(record_batch) = self.finish_buffer(univariate_id, buffer).await? {
                 compressed_buffers.push((univariate_id, record_batch));
+
+                debug!(
+                    "Finished in-memory buffer for {} as it is no longer used.",
+                    univariate_id
+                );
             }
         }
 
@@ -509,7 +512,7 @@ mod tests {
     use crate::metadata::{test_util, MetadataManager};
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
 
-    const CURRENT_BATCH: u64 = 0;
+    const CURRENT_BATCH_INDEX: u64 = 0;
     const UNIVARIATE_ID: u64 = 17854860594986067969;
 
     // Tests for UncompressedDataManager.
@@ -519,8 +522,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let error_bound = ErrorBound::try_new(0.0).unwrap();
         let mut buffer =
-            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, CURRENT_BATCH, error_bound);
-        buffer.insert_data(100, 0, 10.0);
+            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, CURRENT_BATCH_INDEX, error_bound);
+        buffer.insert_data(CURRENT_BATCH_INDEX, 100, 10.0);
         buffer
             .spill_to_apache_parquet(temp_dir.path())
             .await
@@ -706,10 +709,14 @@ mod tests {
         );
 
         // Insert using insert_data_points() to finish unused buffers.
-        let record_batch = RecordBatch::new_empty(model_table_metadata.schema.clone());
+        let empty_record_batch = RecordBatch::new_empty(model_table_metadata.schema.clone());
 
         data_manager
-            .insert_data_points(&mut metadata_manager, &model_table_metadata, &record_batch)
+            .insert_data_points(
+                &mut metadata_manager,
+                &model_table_metadata,
+                &empty_record_batch,
+            )
             .await
             .unwrap();
 
