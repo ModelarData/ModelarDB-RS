@@ -74,9 +74,6 @@ pub const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
 /// The folder storing compressed data in the data folders.
 pub const COMPRESSED_DATA_FOLDER: &str = "compressed";
 
-/// The scheme and host at which the query data folder is stored.
-pub const QUERY_DATA_FOLDER_SCHEME_AND_HOST: &str = "query";
-
 /// The scheme with host at which the query data folder is stored.
 pub const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
 

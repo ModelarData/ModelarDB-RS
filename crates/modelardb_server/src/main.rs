@@ -19,9 +19,9 @@
 mod metadata;
 mod optimizer;
 mod parser;
+mod query;
 mod remote;
 mod storage;
-mod query;
 
 use std::fs;
 use std::path::PathBuf;
@@ -239,13 +239,13 @@ fn check_remote_data_folder(
 /// on reconstructed data points created from the segments for model tables.
 fn create_session_context(query_data_folder: Arc<dyn ObjectStore>) -> SessionContext {
     let session_config = SessionConfig::new();
-
     let session_runtime = Arc::new(RuntimeEnv::default());
-    session_runtime.register_object_store(
-        storage::QUERY_DATA_FOLDER_SCHEME_AND_HOST,
-        storage::QUERY_DATA_FOLDER_SCHEME_AND_HOST,
-        query_data_folder,
-    );
+
+    // unwrap() is safe as storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST is a const containing an URL.
+    let object_store_url = storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST
+        .try_into()
+        .unwrap();
+    session_runtime.register_object_store(&object_store_url, query_data_folder);
 
     let session_state = SessionState::with_config_rt(session_config, session_runtime)
         .with_physical_optimizer_rules(vec![Arc::new(
@@ -280,8 +280,6 @@ mod tests {
     use super::*;
 
     use std::env;
-
-    
 
     // Tests for parse_command_line_arguments().
     #[test]
