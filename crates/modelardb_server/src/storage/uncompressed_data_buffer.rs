@@ -37,7 +37,7 @@ use tracing::debug;
 use crate::storage::{StorageEngine, UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER};
 
 /// Number of [`RecordBatches`](RecordBatch) that must be ingested without modifying an
-/// [`UncompressedInMemoryDataBuffer `] before it is considered unused and can be finished.
+/// [`UncompressedInMemoryDataBuffer`] before it is considered unused and can be finished.
 const RECORD_BATCH_OFFSET_REQUIRED_FOR_UNUSED: u64 = 1;
 
 /// Functionality shared by [`UncompressedInMemoryDataBuffer`] and [`UncompressedOnDiskDataBuffer`].
@@ -404,7 +404,6 @@ mod tests {
 
     #[test]
     fn test_check_if_in_memory_data_buffer_is_unused() {
-        // CURRENT_BATCH_INDEX is purposely not used to make all of the batch indexes visible in the test.
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
             CURRENT_BATCH_INDEX - 1,
