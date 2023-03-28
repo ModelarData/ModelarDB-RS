@@ -36,6 +36,10 @@ use tracing::debug;
 
 use crate::storage::{StorageEngine, UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER};
 
+/// Number of [`RecordBatches`](RecordBatch) that must be ingested without modifying an
+/// [`UncompressedInMemoryDataBuffer`] before it is considered unused and can be finished.
+const RECORD_BATCH_OFFSET_REQUIRED_FOR_UNUSED: u64 = 1;
+
 /// Functionality shared by [`UncompressedInMemoryDataBuffer`] and [`UncompressedOnDiskDataBuffer`].
 /// Since the data buffers are part of the asynchronous storage engine the buffers must be [`Sync`]
 /// and [`Send`]. Both [`UncompressedInMemoryDataBuffer`] and [`UncompressedOnDiskDataBuffer`]
@@ -75,6 +79,8 @@ pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
 pub(super) struct UncompressedInMemoryDataBuffer {
     /// Id that uniquely identifies the time series the buffer stores data points from.
     univariate_id: u64,
+    /// Index of the last batch that caused the buffer to be updated.
+    updated_by_batch_index: u64,
     /// Error bound the buffer must be compressed within.
     error_bound: ErrorBound,
     /// Builder consisting of timestamps.
@@ -84,9 +90,14 @@ pub(super) struct UncompressedInMemoryDataBuffer {
 }
 
 impl UncompressedInMemoryDataBuffer {
-    pub(super) fn new(univariate_id: u64, error_bound: ErrorBound) -> Self {
+    pub(super) fn new(
+        univariate_id: u64,
+        current_batch_index: u64,
+        error_bound: ErrorBound,
+    ) -> Self {
         Self {
             univariate_id,
+            updated_by_batch_index: current_batch_index,
             error_bound,
             timestamps: TimestampBuilder::with_capacity(UNCOMPRESSED_DATA_BUFFER_CAPACITY),
             values: ValueBuilder::with_capacity(UNCOMPRESSED_DATA_BUFFER_CAPACITY),
@@ -112,13 +123,27 @@ impl UncompressedInMemoryDataBuffer {
         self.timestamps.len()
     }
 
-    /// Add `timestamp` and `value` to the [`UncompressedInMemoryDataBuffer`].
-    pub(super) fn insert_data(&mut self, timestamp: Timestamp, value: Value) {
+    /// Return [`true`] if the [`UncompressedInMemoryDataBuffer`] has not been updated by
+    /// [`RECORD_BATCH_OFFSET_REQUIRED_FOR_UNUSED`] [`RecordBatches`](`RecordBatch`) compared to the
+    /// [`RecordBatch`] with index `current_batch_index` ingested by the current process.
+    pub(super) fn is_unused(&self, current_batch_index: u64) -> bool {
+        self.updated_by_batch_index + RECORD_BATCH_OFFSET_REQUIRED_FOR_UNUSED <= current_batch_index
+    }
+
+    /// Add `timestamp` and `value` to the [`UncompressedInMemoryDataBuffer`] from the
+    /// [`RecordBatch`] ingested by the process with the index `current_batch_index`.
+    pub(super) fn insert_data(
+        &mut self,
+        current_batch_index: u64,
+        timestamp: Timestamp,
+        value: Value,
+    ) {
         debug_assert!(
             !self.is_full(),
             "Cannot insert data into full UncompressedInMemoryDataBuffer."
         );
 
+        self.updated_by_batch_index = current_batch_index;
         self.timestamps.append_value(timestamp);
         self.values.append_value(value);
 
@@ -136,10 +161,11 @@ impl fmt::Debug for UncompressedInMemoryDataBuffer {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(
             f,
-            "UncompressedInMemoryDataBuffer({}, {}, {})",
+            "UncompressedInMemoryDataBuffer({}, {}, {}, {})",
             self.univariate_id,
             self.len(),
-            self.capacity()
+            self.capacity(),
+            self.updated_by_batch_index,
         )
     }
 }
@@ -324,13 +350,17 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
 mod tests {
     use super::*;
 
+    const CURRENT_BATCH_INDEX: u64 = 1;
     const UNIVARIATE_ID: u64 = 1;
 
     // Tests for UncompressedInMemoryDataBuffer.
     #[test]
     fn test_get_in_memory_data_buffer_memory_size() {
-        let uncompressed_buffer =
-            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
+        let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            CURRENT_BATCH_INDEX,
+            ErrorBound::try_new(0.0).unwrap(),
+        );
 
         let expected = (uncompressed_buffer.timestamps.capacity() * mem::size_of::<Timestamp>())
             + (uncompressed_buffer.values.capacity() * mem::size_of::<Value>());
@@ -340,33 +370,63 @@ mod tests {
 
     #[test]
     fn test_get_in_memory_data_buffer_disk_size() {
-        let uncompressed_buffer =
-            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
+        let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            CURRENT_BATCH_INDEX,
+            ErrorBound::try_new(0.0).unwrap(),
+        );
 
         assert_eq!(uncompressed_buffer.disk_size(), 0);
     }
 
     #[test]
     fn test_get_in_memory_data_buffer_len() {
-        let uncompressed_buffer =
-            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
+        let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            CURRENT_BATCH_INDEX,
+            ErrorBound::try_new(0.0).unwrap(),
+        );
 
         assert_eq!(uncompressed_buffer.len(), 0);
     }
 
     #[test]
     fn test_can_insert_data_point_into_in_memory_data_buffer() {
-        let mut uncompressed_buffer =
-            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
+        let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            CURRENT_BATCH_INDEX,
+            ErrorBound::try_new(0.0).unwrap(),
+        );
         insert_data_points(1, &mut uncompressed_buffer);
 
         assert_eq!(uncompressed_buffer.len(), 1);
     }
 
     #[test]
+    fn test_check_if_in_memory_data_buffer_is_unused() {
+        let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            CURRENT_BATCH_INDEX - 1,
+            ErrorBound::try_new(0.0).unwrap(),
+        );
+
+        assert!(!uncompressed_buffer.is_unused(CURRENT_BATCH_INDEX - 1));
+        assert!(uncompressed_buffer.is_unused(CURRENT_BATCH_INDEX));
+
+        // Insert the data points as a batch with the index CURRENT_BATCH_INDEX.
+        insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
+
+        assert!(!uncompressed_buffer.is_unused(CURRENT_BATCH_INDEX));
+        assert!(uncompressed_buffer.is_unused(CURRENT_BATCH_INDEX + 1));
+    }
+
+    #[test]
     fn test_check_is_in_memory_data_buffer_full() {
-        let mut uncompressed_buffer =
-            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
+        let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            CURRENT_BATCH_INDEX,
+            ErrorBound::try_new(0.0).unwrap(),
+        );
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
 
         assert!(uncompressed_buffer.is_full());
@@ -374,8 +434,11 @@ mod tests {
 
     #[test]
     fn test_check_is_in_memory_data_buffer_not_full() {
-        let uncompressed_buffer =
-            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
+        let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            CURRENT_BATCH_INDEX,
+            ErrorBound::try_new(0.0).unwrap(),
+        );
 
         assert!(!uncompressed_buffer.is_full());
     }
@@ -383,16 +446,22 @@ mod tests {
     #[test]
     #[should_panic(expected = "Cannot insert data into full UncompressedInMemoryDataBuffer.")]
     fn test_in_memory_data_buffer_panic_if_inserting_data_point_when_full() {
-        let mut uncompressed_buffer =
-            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
+        let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            CURRENT_BATCH_INDEX,
+            ErrorBound::try_new(0.0).unwrap(),
+        );
 
         insert_data_points(uncompressed_buffer.capacity() + 1, &mut uncompressed_buffer);
     }
 
     #[tokio::test]
     async fn test_get_record_batch_from_in_memory_data_buffer() {
-        let mut uncompressed_buffer =
-            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
+        let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            CURRENT_BATCH_INDEX,
+            ErrorBound::try_new(0.0).unwrap(),
+        );
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
 
         let capacity = uncompressed_buffer.capacity();
@@ -403,8 +472,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_in_memory_data_buffer_can_spill_not_full_buffer() {
-        let mut uncompressed_buffer =
-            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
+        let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            CURRENT_BATCH_INDEX,
+            ErrorBound::try_new(0.0).unwrap(),
+        );
         insert_data_points(1, &mut uncompressed_buffer);
         assert!(!uncompressed_buffer.is_full());
 
@@ -422,8 +494,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_in_memory_data_buffer_can_spill_full_buffer() {
-        let mut uncompressed_buffer =
-            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
+        let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            CURRENT_BATCH_INDEX,
+            ErrorBound::try_new(0.0).unwrap(),
+        );
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
         assert!(uncompressed_buffer.is_full());
 
@@ -453,8 +528,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_on_disk_data_buffer_disk_size() {
-        let mut uncompressed_in_memory_buffer =
-            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
+        let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            CURRENT_BATCH_INDEX,
+            ErrorBound::try_new(0.0).unwrap(),
+        );
         let capacity = uncompressed_in_memory_buffer.capacity();
         insert_data_points(capacity, &mut uncompressed_in_memory_buffer);
 
@@ -469,8 +547,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_record_batch_from_on_disk_data_buffer() {
-        let mut uncompressed_in_memory_buffer =
-            UncompressedInMemoryDataBuffer::new(UNIVARIATE_ID, ErrorBound::try_new(0.0).unwrap());
+        let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            CURRENT_BATCH_INDEX,
+            ErrorBound::try_new(0.0).unwrap(),
+        );
         let capacity = uncompressed_in_memory_buffer.capacity();
         insert_data_points(capacity, &mut uncompressed_in_memory_buffer);
 
@@ -499,7 +580,7 @@ mod tests {
         let value: Value = 30.0;
 
         for _ in 0..count {
-            uncompressed_buffer.insert_data(timestamp, value);
+            uncompressed_buffer.insert_data(CURRENT_BATCH_INDEX, timestamp, value);
         }
     }
 
