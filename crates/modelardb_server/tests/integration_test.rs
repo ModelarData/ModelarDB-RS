@@ -200,6 +200,7 @@ fn test_can_list_actions() {
             "CommandStatementUpdate",
             "FlushEdge",
             "FlushMemory",
+            "UpdateRemoteObjectStore",
         ]
     );
 

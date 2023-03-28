@@ -41,6 +41,16 @@ use crate::storage::StorageEngine;
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
+/// The port of the Apache Arrow Flight Server.
+const PORT: u16 = 9999;
+
+/// The different possible modes of a ModelarDB server, assigned when the server is started.
+#[derive(Clone, PartialEq, Eq)]
+pub enum ServerMode {
+    Cloud,
+    Edge,
+}
+
 /// Folders for storing metadata and Apache Parquet files.
 pub struct DataFolders {
     /// Folder for storing metadata and Apache Parquet files on the local file
@@ -85,7 +95,7 @@ fn main() -> Result<(), String> {
     // collecting more command line arguments than required for that pattern.
     let arguments: Vec<String> = args.by_ref().take(4).collect();
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
-    let data_folders = parse_command_line_arguments(&arguments)?;
+    let (server_mode, data_folders) = parse_command_line_arguments(&arguments)?;
 
     // Create a Tokio runtime for executing asynchronous tasks. The runtime is
     // not in the context so it can be passed to the components in the context.
@@ -98,7 +108,7 @@ fn main() -> Result<(), String> {
     check_remote_data_folder(&runtime, &data_folders.remote_data_folder)?;
 
     // Create the components for the Context.
-    let metadata_manager = MetadataManager::try_new(&data_folders.local_data_folder)
+    let metadata_manager = MetadataManager::try_new(&data_folders.local_data_folder, server_mode)
         .map_err(|error| format!("Unable to create a MetadataManager: {error}"))?;
     let session = create_session_context(data_folders.query_data_folder);
     let storage_engine = RwLock::new(
@@ -137,33 +147,42 @@ fn main() -> Result<(), String> {
     setup_ctrl_c_handler(&context, &runtime);
 
     // Start the Apache Arrow Flight interface.
-    remote::start_apache_arrow_flight_server(context, &runtime, 9999)
+    remote::start_apache_arrow_flight_server(context, &runtime, PORT)
         .map_err(|error| error.to_string())?;
 
     Ok(())
 }
 
-/// Parse the command lines arguments into an instance of [`DataFolders`]. If
-/// the necessary command line arguments are not provided, too many arguments
-/// are provided, or if the arguments are malformed, [`String`] is returned.
-fn parse_command_line_arguments(arguments: &[&str]) -> Result<DataFolders, String> {
+/// Parse the command lines arguments into a [`ServerMode`] and an instance of [`DataFolders`]. If
+/// the necessary command line arguments are not provided, too many arguments are provided, or
+/// if the arguments are malformed, [`String`] is returned.
+fn parse_command_line_arguments(arguments: &[&str]) -> Result<(ServerMode, DataFolders), String> {
     // Match the provided command line arguments to the supported inputs.
     match arguments {
-        &["cloud", local_data_folder, remote_data_folder] => Ok(DataFolders {
-            local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
-            remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
-            query_data_folder: argument_to_remote_object_store(remote_data_folder)?,
-        }),
-        &["edge", local_data_folder, remote_data_folder] => Ok(DataFolders {
-            local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
-            remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
-            query_data_folder: argument_to_local_object_store(local_data_folder)?,
-        }),
-        &["edge", local_data_folder] | &[local_data_folder] => Ok(DataFolders {
-            local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
-            remote_data_folder: None,
-            query_data_folder: argument_to_local_object_store(local_data_folder)?,
-        }),
+        &["cloud", local_data_folder, remote_data_folder] => Ok((
+            ServerMode::Cloud,
+            DataFolders {
+                local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
+                remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
+                query_data_folder: argument_to_remote_object_store(remote_data_folder)?,
+            },
+        )),
+        &["edge", local_data_folder, remote_data_folder] => Ok((
+            ServerMode::Edge,
+            DataFolders {
+                local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
+                remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
+                query_data_folder: argument_to_local_object_store(local_data_folder)?,
+            },
+        )),
+        &["edge", local_data_folder] | &[local_data_folder] => Ok((
+            ServerMode::Edge,
+            DataFolders {
+                local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
+                remote_data_folder: None,
+                query_data_folder: argument_to_local_object_store(local_data_folder)?,
+            },
+        )),
         _ => {
             // The errors are consciously ignored as the program is terminating.
             let binary_path = std::env::current_exe().unwrap();
@@ -356,12 +375,8 @@ mod tests {
     }
 
     fn new_data_folders(input: &[&str]) -> (PathBuf, Option<Arc<dyn ObjectStore>>) {
-        let DataFolders {
-            local_data_folder,
-            remote_data_folder,
-            query_data_folder: _query_data_folder,
-        } = parse_command_line_arguments(input).unwrap();
+        let (_, data_folders) = parse_command_line_arguments(input).unwrap();
 
-        (local_data_folder, remote_data_folder)
+        (data_folders.local_data_folder, data_folders.remote_data_folder)
     }
 }

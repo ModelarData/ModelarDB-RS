@@ -45,11 +45,11 @@ pub struct DataTransfer {
     /// The object store containing all compressed data managed by the [`StorageEngine`].
     local_data_folder: Arc<dyn ObjectStore>,
     /// The object store that the data should be transferred to.
-    remote_data_folder: Arc<dyn ObjectStore>,
+    pub remote_data_folder: Arc<dyn ObjectStore>,
     /// Map from table names and column indices to the combined size in bytes of the compressed
     /// files currently saved for the column in that table.
     compressed_files: HashMap<(String, u16), usize>,
-    /// The number of bytes that is required before transferring a batch of data to the remote
+    /// The number of bytes that are required before transferring a batch of data to the remote
     /// object store.
     transfer_batch_size_in_bytes: usize,
     /// Metric for the total used disk space in bytes, updated when data is transferred.
@@ -243,7 +243,9 @@ mod tests {
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
 
-    use crate::storage::{self, test_util};
+    use crate::PORT;
+    use crate::storage::TEST_UUID;
+    use crate::storage::test_util;
 
     const TABLE_NAME: &str = "table";
     const COLUMN_INDEX: u16 = 5;
@@ -475,8 +477,7 @@ mod tests {
 
         // The transferred file should have a time range file name that matches the compressed data.
         let target_path = target.path().join(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/0_5_5.2_34.2_{}.parquet",
-            storage::TEST_UUID
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/0_5_5.2_34.2_{TEST_UUID}_{PORT}.parquet",
         ));
         assert!(target_path.exists());
 

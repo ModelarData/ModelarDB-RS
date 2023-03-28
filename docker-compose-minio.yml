@@ -35,5 +35,6 @@ services:
       /bin/sh -c "
       /usr/bin/mc config host add modelardata-minio http://minio-server:9000 minioadmin minioadmin;
       /usr/bin/mc mb modelardata-minio/modelardata;
+      /usr/bin/mc mb modelardata-minio/modelardata-test;
       exit 0;
       "

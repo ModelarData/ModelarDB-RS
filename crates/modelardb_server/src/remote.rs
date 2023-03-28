@@ -46,6 +46,10 @@ use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
 use modelardb_common::schemas::METRIC_SCHEMA;
 use modelardb_common::types::TimestampBuilder;
+use object_store::aws::AmazonS3Builder;
+use object_store::azure::MicrosoftAzureBuilder;
+use object_store::path::Path;
+use object_store::ObjectStore;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
@@ -59,14 +63,14 @@ use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::Context;
+use crate::{Context, ServerMode};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
 pub fn start_apache_arrow_flight_server(
     context: Arc<Context>,
     runtime: &Arc<Runtime>,
-    port: i16,
+    port: u16,
 ) -> Result<(), Box<dyn Error>> {
     let localhost_with_port = "0.0.0.0:".to_owned() + &port.to_string();
     let localhost_with_port: SocketAddr = localhost_with_port.parse()?;
@@ -138,6 +142,82 @@ async fn send_flight_data(
         .send(flight_data_or_error)
         .await
         .map_err(|error| Status::internal(error.to_string()))
+}
+
+/// Parse the arguments in `data` and return an [`Amazon S3`](object_store::aws::AmazonS3) object
+/// store if `data` contains the necessary arguments. If `data` is missing arguments or if the
+/// created [`Amazon S3`](object_store::aws::AmazonS3) object store connection is invalid,
+/// [`Status`] is returned.
+async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status> {
+    let (endpoint, offset_data) = extract_argument(data)?;
+    let (bucket_name, offset_data) = extract_argument(offset_data)?;
+    let (access_key_id, offset_data) = extract_argument(offset_data)?;
+    let (secret_access_key, _offset_data) = extract_argument(offset_data)?;
+
+    let s3 = Arc::new(
+        AmazonS3Builder::new()
+            .with_region("")
+            .with_allow_http(true)
+            .with_endpoint(endpoint)
+            .with_bucket_name(bucket_name)
+            .with_access_key_id(access_key_id)
+            .with_secret_access_key(secret_access_key)
+            .build()
+            .map_err(|error| Status::invalid_argument(error.to_string()))?,
+    );
+
+    // Check that the connection is valid by attempting to retrieve a file that does not exist.
+    match s3.get(&Path::from("")).await {
+        Ok(_) => Ok(s3),
+        Err(error) => Err(Status::invalid_argument(error.to_string())),
+    }
+}
+
+/// Parse the arguments in `data` and return an [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
+/// object store if `data` contains the necessary arguments. If `data` is missing arguments or if the created
+/// [`Azure Blob Storage`](object_store::azure::MicrosoftAzure) object store connection is invalid,
+/// [`Status`] is returned.
+async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status> {
+    let (account, offset_data) = extract_argument(data)?;
+    let (access_key, offset_data) = extract_argument(offset_data)?;
+    let (container_name, _offset_data) = extract_argument(offset_data)?;
+
+    let azure_blob_storage = Arc::new(
+        MicrosoftAzureBuilder::new()
+            .with_account(account)
+            .with_access_key(access_key)
+            .with_container_name(container_name)
+            .build()
+            .map_err(|error| Status::invalid_argument(error.to_string()))?,
+    );
+
+    // Check that the connection is valid by attempting to retrieve a file that does not exist.
+    match azure_blob_storage.get(&Path::from("")).await {
+        Ok(_) => Ok(azure_blob_storage),
+        // Note that the same error is returned if the object was not found due to the object not
+        // existing and due to the container not existing.
+        Err(error) => match error {
+            object_store::Error::NotFound { .. } => Ok(azure_blob_storage),
+            _ => Err(Status::invalid_argument(error.to_string())),
+        },
+    }
+}
+
+/// Assumes `data` is a slice containing one or more arguments with the following format:
+/// size of argument (2 bytes) followed by the argument (size bytes). Returns a tuple containing
+/// the first argument and `data` with the extracted argument's bytes removed.
+fn extract_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
+    let size_bytes: [u8; 2] = data[..2]
+        .try_into()
+        .map_err(|_| Status::internal("Size of argument is not 2 bytes."))?;
+
+    let size = u16::from_be_bytes(size_bytes) as usize;
+
+    let argument = str::from_utf8(&data[2..(size + 2)])
+        .map_err(|error| Status::invalid_argument(error.to_string()))?;
+    let remaining_bytes = &data[(size + 2)..];
+
+    Ok((argument, remaining_bytes))
 }
 
 /// Handler for processing Apache Arrow Flight requests.
@@ -489,7 +569,10 @@ impl FlightService for FlightServiceHandler {
             // returned by task::spawn is also not an option as it waits until send_query_result()
             // returns and thus creates a deadlock since the results are never read from receiver.
             if let Err(error) = send_query_result(df_schema, query_result_stream, sender).await {
-                error!("Failed to send the result for '{}' due to: {}.", query, error);
+                error!(
+                    "Failed to send the result for '{}' due to: {}.",
+                    query, error
+                );
             }
         });
 
@@ -564,6 +647,11 @@ impl FlightService for FlightServiceHandler {
     /// uncompressed and compressed data, disk space used, and the number of data points ingested
     /// over time. Note that the metrics are cleared when collected, thus only the metrics
     /// recorded since the last call to `CollectMetrics` are returned.
+    /// * `UpdateRemoteObjectStore`: Update the remote object store, overriding the current
+    /// remote object store, if it exists. Each argument in the body should start with the size
+    /// of the argument, immediately followed by the argument value. The first argument should be
+    /// the object store type, specifically either 's3' or 'azureblobstorage'. The remaining
+    /// arguments should be the arguments required to connect to the object store.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -669,6 +757,37 @@ impl FlightService for FlightServiceHandler {
                     body: batch_bytes.into(),
                 })
             }))))
+        } else if action.r#type == "UpdateRemoteObjectStore" {
+            // If on a cloud node, both the remote data folder and the query data folder should be updated.
+            if self.context.metadata_manager.server_mode == ServerMode::Cloud {
+                // TODO: The query data folder should be updated in the session context.
+                return Err(Status::unimplemented(
+                    "Currently not possible to update remote object store on cloud nodes.",
+                ))
+            }
+
+            // If the type of the new remote object store is not "s3" or "azureblobstorage", return an error.
+            let (object_store_type, offset_data) = extract_argument(&action.body)?;
+
+            let object_store = match object_store_type {
+                "s3" => parse_s3_arguments(offset_data).await,
+                "azureblobstorage" => parse_azure_blob_storage_arguments(offset_data).await,
+                _ => Err(Status::unimplemented(format!(
+                    "{object_store_type} is currently not supported."
+                ))),
+            }?;
+
+            // Update the object store used for data transfers.
+            let mut storage_engine = self.context.storage_engine.write().await;
+            storage_engine
+                .update_remote_data_folder(object_store)
+                .await
+                .map_err(|error| {
+                    Status::internal(format!("Could not update remote data folder: {error}"))
+                })?;
+
+            // Confirm the remote object store was updated.
+            Ok(Response::new(Box::pin(stream::empty())))
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
@@ -701,10 +820,17 @@ impl FlightService for FlightServiceHandler {
         let collect_metrics = ActionType {
             r#type: "CollectMetrics".to_owned(),
             description:
-                "Collect internal metrics describing the amount of used memory for uncompressed \
+            "Collect internal metrics describing the amount of used memory for uncompressed \
             and compressed data, used disk space, and ingested data points over time. The metrics are \
             cleared when collected."
-                    .to_owned(),
+                .to_owned(),
+        };
+
+        let update_remote_object_store = ActionType {
+            r#type: "UpdateRemoteObjectStore".to_owned(),
+            description: "Update the remote object store, overriding the current remote object \
+            store, if it exists."
+                .to_owned(),
         };
 
         let output = stream::iter(vec![
@@ -712,6 +838,7 @@ impl FlightService for FlightServiceHandler {
             Ok(flush_data_to_disk),
             Ok(flush_edge_action),
             Ok(collect_metrics),
+            Ok(update_remote_object_store),
         ]);
 
         Ok(Response::new(Box::pin(output)))

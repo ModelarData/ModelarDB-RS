@@ -43,7 +43,7 @@ pub(super) struct CompressedDataManager {
     /// Component that transfers saved compressed data to the remote data folder when it is necessary.
     pub(super) data_transfer: Option<DataTransfer>,
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
-    local_data_folder: PathBuf,
+    pub(crate) local_data_folder: PathBuf,
     /// The compressed segments before they are saved to persistent storage. The key is the name of
     /// the table and the index of the column the compressed segments represents data points for so
     /// the Apache Parquet files can be partitioned by table and then column.
@@ -438,7 +438,8 @@ mod tests {
     use tempfile::{self, TempDir};
 
     use crate::metadata::test_util as metadata_test_util;
-    use crate::storage::{self, test_util};
+    use crate::storage::{self, test_util, TEST_UUID};
+    use crate::PORT;
 
     const TABLE_NAME: &str = "table";
     const COLUMN_INDEX: u16 = 5;
@@ -876,8 +877,7 @@ mod tests {
     /// Return a full path to the file with `file_name`.
     fn format_path(file_name: &str) -> String {
         format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/{file_name}_{}.parquet",
-            storage::TEST_UUID
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/{file_name}_{TEST_UUID}_{PORT}.parquet",
         )
     }
 

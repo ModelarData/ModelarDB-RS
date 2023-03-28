@@ -67,6 +67,7 @@ use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::uncompressed_data_buffer::UncompressedDataBuffer;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
+use crate::PORT;
 
 /// The folder storing uncompressed data in the data folders.
 pub const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
@@ -91,6 +92,9 @@ const APACHE_PARQUET_FILE_SIGNATURE: &[u8] = &[80, 65, 82, 49]; // PAR1.
 /// size of the buffer has to be a multiple of 64 bytes to avoid the actual capacity being larger
 /// than the requested due to internal alignment when allocating memory for the two array builders.
 const UNCOMPRESSED_DATA_BUFFER_CAPACITY: usize = 64 * 1024;
+
+/// The number of bytes that are required before transferring a batch of data to the remote object store.
+const TRANSFER_BATCH_SIZE_IN_BYTES: usize = 64 * 1024 * 1024; // 64 MiB;
 
 /// Manages all uncompressed and compressed data, both while being stored in memory during ingestion
 /// and when persisted to disk afterwards.
@@ -134,7 +138,7 @@ impl StorageEngine {
                 DataTransfer::try_new(
                     local_data_folder.clone(),
                     remote_data_folder,
-                    64 * 1024 * 1024, // 64 MiB.
+                    TRANSFER_BATCH_SIZE_IN_BYTES,
                     used_disk_space_metric.clone(),
                 )
                 .await?,
@@ -339,6 +343,30 @@ impl StorageEngine {
                     .finish(),
             ),
         ]
+    }
+
+    /// Update the remote data folder, used to transfer data to in the data transfer component.
+    /// If one does not already exists, create a new data transfer component. If the remote
+    /// data folder was successfully updated, return [`Ok`], otherwise return [`IOError`].
+    pub async fn update_remote_data_folder(
+        &mut self,
+        remote_data_folder: Arc<dyn ObjectStore>,
+    ) -> Result<(), IOError> {
+        if let Some(data_transfer) = &mut self.compressed_data_manager.data_transfer {
+            data_transfer.remote_data_folder = remote_data_folder;
+        } else {
+            let data_transfer = DataTransfer::try_new(
+                self.compressed_data_manager.local_data_folder.clone(),
+                remote_data_folder,
+                TRANSFER_BATCH_SIZE_IN_BYTES,
+                self.compressed_data_manager.used_disk_space_metric.clone(),
+            )
+            .await?;
+
+            self.compressed_data_manager.data_transfer = Some(data_transfer);
+        }
+
+        Ok(())
     }
 
     /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`
@@ -573,7 +601,8 @@ pub(self) fn create_apache_arrow_writer<W: Write>(
 
 /// Create a file name that includes the start timestamp of the first segment in `batch`, the end
 /// timestamp of the last segment in `batch`, the minimum value stored in `batch`, the maximum value
-/// stored in `batch`, and an UUID to make it unique across edge and cloud in practice.
+/// stored in `batch`, an UUID to make it unique across edge and cloud in practice, and an ID that
+/// uniquely identifies the edge.
 pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> String {
     // unwrap() is safe as None is only returned if all of the values are None.
     let start_time = aggregate::min(modelardb_common::array!(batch, 2, TimestampArray)).unwrap();
@@ -594,9 +623,12 @@ pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> Strin
         Uuid::new_v4()
     };
 
+    // TODO: Use part of the UUID or the entire Apache Arrow Flight URL to identify the edge.
+    let edge_id = PORT.to_string();
+
     format!(
-        "{}_{}_{}_{}_{}.parquet",
-        start_time, end_time, min_value, max_value, uuid
+        "{}_{}_{}_{}_{}_{}.parquet",
+        start_time, end_time, min_value, max_value, uuid, edge_id
     )
 }
 

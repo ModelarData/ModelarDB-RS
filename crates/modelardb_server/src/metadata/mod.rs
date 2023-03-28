@@ -48,7 +48,7 @@ use tracing::{error, info, warn};
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::query::ModelTable;
 use crate::storage::COMPRESSED_DATA_FOLDER;
-use crate::Context;
+use crate::{Context, ServerMode};
 
 /// Name used for the file containing the SQLite database storing the metadata.
 pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
@@ -63,6 +63,8 @@ pub struct MetadataManager {
     /// Cache of tag value hashes used to signify when to persist new unsaved
     /// tag combinations.
     tag_value_hashes: HashMap<String, u64>,
+    /// The mode of the server used to determine the behaviour when modifying the remote object store.
+    pub server_mode: ServerMode,
     /// Amount of memory to reserve for storing uncompressed data buffers.
     pub uncompressed_reserved_memory_in_bytes: usize,
     /// Amount of memory to reserve for storing compressed data buffers.
@@ -72,7 +74,7 @@ pub struct MetadataManager {
 impl MetadataManager {
     /// Return [`MetadataManager`] if a connection can be made to the metadata database in
     /// `local_data_folder`, otherwise [`Error`](rusqlite::Error) is returned.
-    pub fn try_new(local_data_folder: &Path) -> Result<Self> {
+    pub fn try_new(local_data_folder: &Path, server_mode: ServerMode) -> Result<Self> {
         if !Self::is_path_a_data_folder(local_data_folder) {
             warn!("The data folder is not empty and does not contain data from ModelarDB");
         }
@@ -84,6 +86,7 @@ impl MetadataManager {
         let metadata_manager = Self {
             metadata_database_path,
             tag_value_hashes: HashMap::new(),
+            server_mode,
             // Default values for parameters.
             uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
             compressed_reserved_memory_in_bytes: 512 * 1024 * 1024,   // 512 MiB
@@ -1253,7 +1256,7 @@ pub mod test_util {
     /// compressed data, and the data folder set to `path`. Reducing the amount of reserved memory
     /// makes it faster to run unit tests.
     pub fn test_metadata_manager(path: &Path) -> MetadataManager {
-        let mut metadata_manager = MetadataManager::try_new(path).unwrap();
+        let mut metadata_manager = MetadataManager::try_new(path, ServerMode::Edge).unwrap();
 
         metadata_manager.uncompressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB
         metadata_manager.compressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB
