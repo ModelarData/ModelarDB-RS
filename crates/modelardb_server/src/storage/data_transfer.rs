@@ -245,7 +245,7 @@ mod tests {
 
     use crate::PORT;
     use crate::storage::TEST_UUID;
-    use crate::storage::{self, test_util};
+    use crate::storage::test_util;
 
     const TABLE_NAME: &str = "table";
     const COLUMN_INDEX: u16 = 5;
