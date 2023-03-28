@@ -63,14 +63,14 @@ use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::{Context, NodeType};
+use crate::{Context, ServerMode};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
 pub fn start_apache_arrow_flight_server(
     context: Arc<Context>,
     runtime: &Arc<Runtime>,
-    port: i16,
+    port: u16,
 ) -> Result<(), Box<dyn Error>> {
     let localhost_with_port = "0.0.0.0:".to_owned() + &port.to_string();
     let localhost_with_port: SocketAddr = localhost_with_port.parse()?;
@@ -166,6 +166,7 @@ async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status>
             .map_err(|error| Status::invalid_argument(error.to_string()))?,
     );
 
+    // Check that the connection is valid by attempting to retrieve a file that does not exist.
     match s3.get(&Path::from("")).await {
         Ok(_) => Ok(s3),
         Err(error) => Err(Status::invalid_argument(error.to_string())),
@@ -190,6 +191,7 @@ async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Arc<dyn Objec
             .map_err(|error| Status::invalid_argument(error.to_string()))?,
     );
 
+    // Check that the connection is valid by attempting to retrieve a file that does not exist.
     match azure_blob_storage.get(&Path::from("")).await {
         Ok(_) => Ok(azure_blob_storage),
         // Note that the same error is returned if the object was not found due to the object not
@@ -756,6 +758,14 @@ impl FlightService for FlightServiceHandler {
                 })
             }))))
         } else if action.r#type == "UpdateRemoteObjectStore" {
+            // If on a cloud node, both the remote data folder and the query data folder should be updated.
+            if self.context.metadata_manager.server_mode == ServerMode::Cloud {
+                // TODO: The query data folder should be updated in the session context.
+                return Err(Status::unimplemented(
+                    "Currently not possible to update remote object store on cloud nodes.",
+                ))
+            }
+
             // If the type of the new remote object store is not "s3" or "azureblobstorage", return an error.
             let (object_store_type, offset_data) = extract_argument(&action.body)?;
 
@@ -775,14 +785,6 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| {
                     Status::internal(format!("Could not update remote data folder: {error}"))
                 })?;
-
-            // If on a cloud node, both the remote data folder and the query data folder should be updated.
-            if self.context.metadata_manager.node_type == NodeType::Cloud {
-                // TODO: The query data folder should be updated in the session context.
-                // TODO: Find a way to do this, ideally without adding a RwLock to the context.
-                // TODO: Adding a RwLock to the session within the context does not work.
-                // TODO: Adding a RwLock to the context introduces some issues with registering tables.
-            }
 
             // Confirm the remote object store was updated.
             Ok(Response::new(Box::pin(stream::empty())))

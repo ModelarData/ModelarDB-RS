@@ -41,11 +41,12 @@ use crate::storage::StorageEngine;
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
-const PORT: i16 = 9999;
+/// The port of the Apache Arrow Flight Server.
+const PORT: u16 = 9999;
 
-/// The different possible node types, assigned when the node is started.
-#[derive(Clone, PartialEq)]
-pub enum NodeType {
+/// The different possible modes of a ModelarDB server, assigned when the server is started.
+#[derive(Clone, PartialEq, Eq)]
+pub enum ServerMode {
     Cloud,
     Edge,
 }
@@ -94,7 +95,7 @@ fn main() -> Result<(), String> {
     // collecting more command line arguments than required for that pattern.
     let arguments: Vec<String> = args.by_ref().take(4).collect();
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
-    let (node_type, data_folders) = parse_command_line_arguments(&arguments)?;
+    let (server_mode, data_folders) = parse_command_line_arguments(&arguments)?;
 
     // Create a Tokio runtime for executing asynchronous tasks. The runtime is
     // not in the context so it can be passed to the components in the context.
@@ -107,7 +108,7 @@ fn main() -> Result<(), String> {
     check_remote_data_folder(&runtime, &data_folders.remote_data_folder)?;
 
     // Create the components for the Context.
-    let metadata_manager = MetadataManager::try_new(&data_folders.local_data_folder, node_type)
+    let metadata_manager = MetadataManager::try_new(&data_folders.local_data_folder, server_mode)
         .map_err(|error| format!("Unable to create a MetadataManager: {error}"))?;
     let session = create_session_context(data_folders.query_data_folder);
     let storage_engine = RwLock::new(
@@ -152,14 +153,14 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-/// Parse the command lines arguments into a [`NodeType`] and an instance of [`DataFolders`]. If
+/// Parse the command lines arguments into a [`ServerMode`] and an instance of [`DataFolders`]. If
 /// the necessary command line arguments are not provided, too many arguments are provided, or
 /// if the arguments are malformed, [`String`] is returned.
-fn parse_command_line_arguments(arguments: &[&str]) -> Result<(NodeType, DataFolders), String> {
+fn parse_command_line_arguments(arguments: &[&str]) -> Result<(ServerMode, DataFolders), String> {
     // Match the provided command line arguments to the supported inputs.
     match arguments {
         &["cloud", local_data_folder, remote_data_folder] => Ok((
-            NodeType::Cloud,
+            ServerMode::Cloud,
             DataFolders {
                 local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                 remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
@@ -167,7 +168,7 @@ fn parse_command_line_arguments(arguments: &[&str]) -> Result<(NodeType, DataFol
             },
         )),
         &["edge", local_data_folder, remote_data_folder] => Ok((
-            NodeType::Edge,
+            ServerMode::Edge,
             DataFolders {
                 local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                 remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
@@ -175,7 +176,7 @@ fn parse_command_line_arguments(arguments: &[&str]) -> Result<(NodeType, DataFol
             },
         )),
         &["edge", local_data_folder] | &[local_data_folder] => Ok((
-            NodeType::Edge,
+            ServerMode::Edge,
             DataFolders {
                 local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                 remote_data_folder: None,

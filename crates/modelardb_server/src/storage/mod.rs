@@ -96,6 +96,7 @@ const APACHE_PARQUET_FILE_SIGNATURE: &[u8] = &[80, 65, 82, 49]; // PAR1.
 /// than the requested due to internal alignment when allocating memory for the two array builders.
 const UNCOMPRESSED_DATA_BUFFER_CAPACITY: usize = 64 * 1024;
 
+/// The number of bytes that are required before transferring a batch of data to the remote object store.
 const TRANSFER_BATCH_SIZE_IN_BYTES: usize = 64 * 1024 * 1024; // 64 MiB;
 
 /// Manages all uncompressed and compressed data, both while being stored in memory during ingestion
@@ -347,7 +348,7 @@ impl StorageEngine {
         ]
     }
 
-    /// Update the remote data folder used to transfer data in the data transfer component.
+    /// Update the remote data folder, used to transfer data to in the data transfer component.
     /// If one does not already exists, create a new data transfer component. If the remote
     /// data folder was successfully updated, return [`Ok`], otherwise return [`IOError`].
     pub async fn update_remote_data_folder(
