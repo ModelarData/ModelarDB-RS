@@ -87,6 +87,13 @@ To run `modelardbd` in cloud mode simply replace `edge` with `cloud` as shown be
 modelardbd cloud path_to_local_data_folder s3://bucket-name
 ```
 
+Note that the server uses `9999` as the default port. The port can be changed by specifying a different port with an
+environment variable:
+
+```shell
+PORT=9998
+```
+
 ### Execute SQL
 ModelarDB includes a command-line client in the form of `modelardb`. To interactively execute SQL statements against a local instance of `modelardbd` through a REPL, simply run `modelardb`:
 
