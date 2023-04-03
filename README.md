@@ -91,7 +91,7 @@ Note that the server uses `9999` as the default port. The port can be changed by
 environment variable:
 
 ```shell
-PORT=9998
+MODELARDBD_PORT=9998
 ```
 
 ### Execute SQL

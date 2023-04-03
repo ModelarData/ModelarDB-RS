@@ -42,8 +42,8 @@ use crate::storage::StorageEngine;
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
-/// The port of the Apache Arrow Flight Server. If the `PORT` environment variable is not set, 9999 is used.
-pub static PORT: Lazy<u16> = Lazy::new(|| match env::var("PORT") {
+/// The port of the Apache Arrow Flight Server. If the environment variable is not set, 9999 is used.
+pub static PORT: Lazy<u16> = Lazy::new(|| match env::var("MODELARDBD_PORT") {
     Ok(port) => port.parse().unwrap(),
     Err(_) => 9999,
 });
