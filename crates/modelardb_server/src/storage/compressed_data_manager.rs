@@ -877,7 +877,8 @@ mod tests {
     /// Return a full path to the file with `file_name`.
     fn format_path(file_name: &str) -> String {
         format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/{file_name}_{TEST_UUID}_{PORT}.parquet",
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/{file_name}_{TEST_UUID}_{}.parquet",
+            *PORT
         )
     }
 

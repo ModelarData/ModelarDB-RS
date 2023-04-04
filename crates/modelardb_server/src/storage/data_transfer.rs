@@ -477,7 +477,8 @@ mod tests {
 
         // The transferred file should have a time range file name that matches the compressed data.
         let target_path = target.path().join(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/0_5_5.2_34.2_{TEST_UUID}_{PORT}.parquet",
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/0_5_5.2_34.2_{TEST_UUID}_{}.parquet",
+            *PORT
         ));
         assert!(target_path.exists());
 
