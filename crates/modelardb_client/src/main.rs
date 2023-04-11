@@ -29,7 +29,6 @@ use std::sync::Arc;
 
 use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
-use rustyline::history::FileHistory;
 use arrow::ipc::convert;
 use arrow::record_batch::RecordBatch;
 use arrow::util::pretty;
@@ -38,6 +37,7 @@ use arrow_flight::utils;
 use arrow_flight::Ticket;
 use arrow_flight::{Action, Criteria, FlightDescriptor};
 use bytes::Bytes;
+use rustyline::history::FileHistory;
 use rustyline::Editor;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
@@ -48,15 +48,16 @@ use crate::helper::ClientHelper;
 /// Default host to connect to.
 const DEFAULT_HOST: &str = "127.0.0.1";
 
-/// Default port to connect to. The server and client currently does not support changing the port.
+/// Default port to connect to.
 const DEFAULT_PORT: u16 = 9999;
 
 /// Error to emit when the server does not provide a response when one is expected.
 const TRANSPORT_ERROR: &str = "transport error: no messages received.";
 
-/// Parse the command line arguments to extract the host running the server to connect to and the
-/// file containing the queries to execute on the server. If the server host is not provided it
-/// defaults to [`DEFAULT_HOST`], and if the file containing queries is not provided a
+/// Parse the command line arguments to extract the host running the server to connect to, the
+/// server port to connect to, and the file containing the queries to execute on the server. If the
+/// server host is not provided it defaults to [`DEFAULT_HOST`], if the server port is not provided
+/// it defaults to [`DEFAULT_PORT`], and if the file containing queries is not provided a
 /// read-eval-print loop is opened. Returns [`String`] if the command line arguments cannot be
 /// parsed, the client cannot connect to the server, or the file containing the queries cannot be
 /// read.
@@ -68,11 +69,11 @@ fn main() -> Result<(), String> {
         let binary_path = env::current_exe().unwrap();
         let binary_name = binary_path.file_name().unwrap();
         Err(format!(
-            "Usage: {} [server_address] [query_file].",
+            "Usage: {} [server host or host:port] [query_file].",
             binary_name.to_str().unwrap()
         ))?;
     }
-    let (maybe_host, maybe_query_file_path) = parse_command_line_arguments(args);
+    let (maybe_host, maybe_port, maybe_query_file_path) = parse_command_line_arguments(args);
 
     // Create the Tokio runtime.
     let runtime =
@@ -80,8 +81,9 @@ fn main() -> Result<(), String> {
 
     // Connect to the server.
     let host = maybe_host.unwrap_or_else(|| DEFAULT_HOST.to_owned());
-    let flight_service_client = connect(&runtime, &host, DEFAULT_PORT)
-        .map_err(|error| format!("Cannot connect to {host}: {error}"))?;
+    let port = maybe_port.unwrap_or_else(|| DEFAULT_PORT.to_owned());
+    let flight_service_client = connect(&runtime, &host, port)
+        .map_err(|error| format!("Cannot connect to {host}:{port}: {error}"))?;
 
     // Execute the queries.
     if let Some(query_file) = maybe_query_file_path {
@@ -92,15 +94,16 @@ fn main() -> Result<(), String> {
     .map_err(|error| format!("Cannot execute queries: {error}"))
 }
 
-/// Parse the command line arguments in `args` and return a pair with the address of the server to
-/// connect to and the file containing the queries to execute on the server. If one of the command
-/// line arguments is not provided it is replaced with [`None`] in the returned pair.
-fn parse_command_line_arguments(mut args: Args) -> (Option<String>, Option<String>) {
+/// Parse the command line arguments in `args` and return a triple with the host of the server to
+/// connect to, the port to connect to, and the file containing the queries to execute on the
+/// server. If one of these command line arguments is not provided it is replaced with [`None`]."
+fn parse_command_line_arguments(mut args: Args) -> (Option<String>, Option<u16>, Option<String>) {
     // Drop the path of the executable.
     args.next();
 
     // Parse command line arguments.
     let mut host = None;
+    let mut port = None;
     let mut query_file = None;
 
     for arg in args {
@@ -108,13 +111,23 @@ fn parse_command_line_arguments(mut args: Args) -> (Option<String>, Option<Strin
         if metadata.is_ok() && metadata.unwrap().is_file() {
             // Assumes all files contains queries.
             query_file = Some(arg);
+        } else if arg.contains(':') {
+            // Assumes anything with : is host:port.
+            let host_and_port = arg.splitn(2, ':').collect::<Vec<&str>>();
+            host = Some(host_and_port[0].to_owned());
+            port = Some(
+                host_and_port[1]
+                    .parse()
+                    .map_err(|_| "for host:port port must be from 1 to 65535.")
+                    .unwrap(),
+            );
         } else {
             // Assumes anything else is a host.
             host = Some(arg);
         }
     }
 
-    (host, query_file)
+    (host, port, query_file)
 }
 
 /// Connect to the server at `host`:`port`. Returns [`Error`] if a connection to the server cannot
