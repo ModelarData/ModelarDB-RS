@@ -101,10 +101,16 @@ ModelarDB includes a command-line client in the form of `modelardb`. To interact
 modelardb
 ```
 
-If `modelardbd` is not running on the same host, the host `modelardb` should connect to must be specified. `modelardbd`'s Apache Arrow Flight interface accept requests on port `9999` so it is not necessary to specify a port:
+If `modelardbd` is not running on the same host, the host `modelardb` should connect to must be specified. `modelardbd`'s Apache Arrow Flight interface accept requests on port `9999` by default so it is generally not necessary to specify a port:
 
 ```shell
 modelardb 10.0.0.37
+```
+
+However, if `modelardbd` has been configured to use another port using the environment variable `MODELARDBD_PORT`, the same port must also be passed to the client:
+
+```shell
+modelardb 10.0.0.37:9998
 ```
 
 `modelardb` can also execute SQL statements from a file passed as a command-line argument:
