@@ -24,10 +24,10 @@ name = "modelardb"
 path = "src/main.rs"
 
 [dependencies]
-arrow = "34.0.0"
-arrow-flight = "34.0.0"
+arrow = "36.0.0"
+arrow-flight = "36.0.0"
 bytes = "1.4.0"
 dirs = "5.0.0"
 rustyline = "11.0.0"
-tokio = "1.26.0"
+tokio = "1.27.0"
 tonic = "0.8.3"

@@ -20,5 +20,5 @@ edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
-arrow = "34.0.0"
+arrow = "36.0.0"
 once_cell = "1.17.1"
