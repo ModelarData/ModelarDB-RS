@@ -40,6 +40,7 @@ use datafusion::arrow::compute;
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::parquet::basic::ZstdLevel;
 use datafusion::parquet::arrow::async_reader::{
     ParquetObjectReader, ParquetRecordBatchStreamBuilder,
 };
@@ -588,7 +589,7 @@ pub(self) fn create_apache_arrow_writer<W: Write>(
 ) -> Result<ArrowWriter<W>, ParquetError> {
     let props = WriterProperties::builder()
         .set_encoding(Encoding::PLAIN)
-        .set_compression(Compression::ZSTD)
+        .set_compression(Compression::ZSTD(ZstdLevel::default()))
         .set_dictionary_enabled(false)
         .set_statistics_enabled(EnabledStatistics::None)
         .set_bloom_filter_enabled(false)
@@ -860,7 +861,7 @@ pub mod test_util {
     use modelardb_common::schemas::COMPRESSED_SCHEMA;
     use modelardb_common::types::{TimestampArray, ValueArray};
 
-    pub const COMPRESSED_SEGMENTS_SIZE: usize = 2536;
+    pub const COMPRESSED_SEGMENTS_SIZE: usize = 2680;
 
     /// Return a [`RecordBatch`] containing three compressed segments.
     pub fn compressed_segments_record_batch() -> RecordBatch {
