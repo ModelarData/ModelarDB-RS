@@ -46,7 +46,7 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 pub static PORT: Lazy<u16> = Lazy::new(|| match env::var("MODELARDBD_PORT") {
     Ok(port) => port
         .parse()
-        .map_err(|_| "MODELARDBD_PORT must be a port from 1 to 65535 if set")
+        .map_err(|_| "MODELARDBD_PORT must be between 1 and 65535.")
         .unwrap(),
     Err(_) => 9999,
 });

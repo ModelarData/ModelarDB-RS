@@ -96,7 +96,7 @@ fn main() -> Result<(), String> {
 
 /// Parse the command line arguments in `args` and return a triple with the host of the server to
 /// connect to, the port to connect to, and the file containing the queries to execute on the
-/// server. If one of these command line arguments is not provided it is replaced with [`None`]."
+/// server. If one of these command line arguments is not provided it is replaced with [`None`].
 fn parse_command_line_arguments(mut args: Args) -> (Option<String>, Option<u16>, Option<String>) {
     // Drop the path of the executable.
     args.next();
@@ -118,7 +118,7 @@ fn parse_command_line_arguments(mut args: Args) -> (Option<String>, Option<u16>,
             port = Some(
                 host_and_port[1]
                     .parse()
-                    .map_err(|_| "for host:port port must be from 1 to 65535.")
+                    .map_err(|_| "port must be between 1 and 65535.")
                     .unwrap(),
             );
         } else {
