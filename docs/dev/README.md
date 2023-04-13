@@ -14,20 +14,26 @@ The ModelarDB project consists of the following crates:
 
 ## Development
 All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md)
-using [rustfmt](https://github.com/rust-lang/rustfmt). Subjects not covered in the style guide, or requirements specific to this repository, are covered here.
+using [rustfmt](https://github.com/rust-lang/rustfmt). Subjects not covered in the style guide, or requirements specific 
+to this repository, are covered here.
 
 ### Documentation
-All public and private functions must have an accompanying doc comment that describes the purpose of the function. For complex functions,
-the doc comment can also include a description of each parameter, the return value, and examples.
+All public and private functions must have an accompanying doc comment that describes the purpose of the function. For 
+complex functions, the doc comment can also include a description of each parameter, the return value, and examples.
 
-All modules must have an accompanying doc comment that describes the general functionality of the module. A brief description
-of the public functions, structs, enums, or other central elements of the module can be included.
+All modules must have an accompanying doc comment that describes the general functionality of the module. A brief 
+description of the public functions, structs, enums, or other central elements of the module can be included.
 
 ### Testing and Linting
 All public and private functions must be appropriately covered by unit tests. Full coverage is intended, which means all
 branches of computation within each function should be thoroughly tested.
 
-In addition, the following commands must not return any warnings or errors for the code currently in master: [cargo build --all-targets](https://doc.rust-lang.org/cargo/commands/cargo-build.html), [cargo clippy --all-targets](https://github.com/rust-lang/rust-clippy), [cargo doc](https://doc.rust-lang.org/cargo/commands/cargo-doc.html), [cargo machete --with-metadata](https://github.com/bnjbvr/cargo-machete), and [cargo test --all-targets](https://doc.rust-lang.org/cargo/commands/cargo-test.html).
+In addition, the following commands must not return any warnings or errors for the code currently in master: 
+[cargo build --all-targets](https://doc.rust-lang.org/cargo/commands/cargo-build.html), 
+[cargo clippy --all-targets](https://github.com/rust-lang/rust-clippy), 
+[cargo doc](https://doc.rust-lang.org/cargo/commands/cargo-doc.html), 
+[cargo machete --with-metadata](https://github.com/bnjbvr/cargo-machete), 
+and [cargo test --all-targets](https://doc.rust-lang.org/cargo/commands/cargo-test.html).
 
 ### Crates
 To avoid confusion and unnecessary dependencies, a list of crates is included. Note that this only includes crates
