@@ -12,6 +12,20 @@ The ModelarDB project consists of the following crates:
 * [modelardb_compression_python](https://github.com/ModelarData/ModelarDB-RS/tree/master/crates/modelardb_compression_python) - Python interface for the modelardb_compression crate.
 * [modelardb_server](https://github.com/ModelarData/ModelarDB-RS/tree/master/crates/modelardb_server) - The ModelarDB server in the form of the binary `modelardbd`.
 
+## Components
+Each major component in the ModelarDB project is described in detail to support further development of the components 
+and ease integration between components. The ModelarDB project consists of the following major components:
+
+* [Arrow Flight API]() - TODO: Write documentation for Arrow Flight API.
+* [Storage Engine](storage-engine.md) - Component to handle all uncompressed and compressed data ingested by the ModelarDB server.
+* [Compression]() - TODO: Write documentation for Compression component.
+* [Query Engine]() - TODO: Write documentation for Query Engine.
+* [Metadata]() - TODO: Write documentation for Metadata component.
+
+Beyond describing each individual component in detail we also provide a larger overview of the architecture of 
+ModelarDB, focusing on the integration between the above described components to accomplish the goals of the system.
+TODO: Add link to architecture documentation when new architecture is implemented and documented.
+
 ## Development
 All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md)
 using [rustfmt](https://github.com/rust-lang/rustfmt). Subjects not covered in the style guide, or requirements specific 
