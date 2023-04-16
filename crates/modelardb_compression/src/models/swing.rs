@@ -544,16 +544,17 @@ mod tests {
 
     #[test]
     fn test_can_reconstruct_sequence_of_linear_increasing_values_within_error_bound_zero() {
-        test_can_reconstruct_sequence_of_linear_values_within_error_bound_zero(vec![
-            42.0, 84.0, 126.0, 168.0, 210.0,
-        ])
+        test_can_reconstruct_sequence_of_linear_values_within_error_bound_zero(
+            (42..=4200).step_by(42).map(|value| value as f32).collect(),
+        )
     }
 
     #[test]
     fn test_can_reconstruct_sequence_of_linear_decreasing_values_within_error_bound_zero() {
-        test_can_reconstruct_sequence_of_linear_values_within_error_bound_zero(vec![
-            210.0, 168.0, 126.0, 84.0, 42.0,
-        ])
+        let mut values: Vec<Value> = (42..=4200).step_by(42).map(|value| value as f32).collect();
+        values.reverse();
+
+        test_can_reconstruct_sequence_of_linear_values_within_error_bound_zero(values);
     }
 
     fn test_can_reconstruct_sequence_of_linear_values_within_error_bound_zero(values: Vec<Value>) {
