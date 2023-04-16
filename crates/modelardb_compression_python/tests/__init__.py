@@ -37,11 +37,11 @@ class ModelarDBCompressionPythonTest(unittest.TestCase):
         self.assertEqual(
             time_series.column(0).to_pylist(), decompressed.column(1).to_pylist()
         )
-        self.assertEqual(5 * [10.239999771118164], decompressed.column(2).to_pylist())
+        self.assertEqual(50 * [10.25], decompressed.column(2).to_pylist())
 
     def __get_time_series(self):
-        timestamps = pyarrow.array([100, 200, 300, 400, 500], pyarrow.timestamp("ms"))
-        values = pyarrow.array([10.2, 10.3, 10.2, 10.3, 10.2], pyarrow.float32())
+        timestamps = pyarrow.array(range(100, 5100, 100), pyarrow.timestamp("ms"))
+        values = pyarrow.array(25 * [10.2, 10.3], pyarrow.float32())
         return RecordBatch.from_arrays(
             [timestamps, values], names=["timestamps", "values"]
         )
