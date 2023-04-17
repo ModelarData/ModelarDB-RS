@@ -6,7 +6,7 @@ data until it can be saved to disk. The main objective is to avoid unnecessary I
 structure for uncompressed and compressed data, only using file buffers when necessary.
 
 Beyond providing functionality for processing the ingested data, the storage engine is also responsible for providing
-a consistent interface for all I/O operations. This Includes both reading and writing files to local storage and
+a consistent interface for all I/O operations. This includes both reading and writing files to local storage and
 transferring compressed data to the remote object store.
 
 ### Uncompressed data

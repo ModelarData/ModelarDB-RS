@@ -17,7 +17,7 @@ Each major component in the ModelarDB project is described in detail to support 
 and ease integration between components. The ModelarDB project consists of the following major components:
 
 * [Arrow Flight API]() - TODO: Write documentation for Arrow Flight API.
-* [Storage Engine](storage-engine.md) - Component to handle all uncompressed and compressed data ingested by the ModelarDB server.
+* [Storage Engine](storage-engine.md) - Component to handle all uncompressed and compressed data in the ModelarDB server.
 * [Compression]() - TODO: Write documentation for Compression component.
 * [Query Engine]() - TODO: Write documentation for Query Engine.
 * [Metadata]() - TODO: Write documentation for Metadata component.
