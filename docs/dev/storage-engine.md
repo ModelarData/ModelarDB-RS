@@ -8,3 +8,9 @@ structure for uncompressed and compressed data, only using file buffers when nec
 Beyond providing functionality for processing the ingested data, the storage engine is also responsible for providing
 a consistent interface for all I/O operations. This Includes both reading and writing files to local storage and
 transferring compressed data to the remote object store.
+
+### Uncompressed data
+
+### Compressed data
+
+### Data transfer
