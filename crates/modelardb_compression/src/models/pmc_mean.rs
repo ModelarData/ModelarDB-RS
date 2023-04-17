@@ -20,6 +20,7 @@
 //! [Poor Man’s Compression paper]: https://ieeexplore.ieee.org/document/1260811
 //! [ModelarDB paper]: https://www.vldb.org/pvldb/vol11/p1688-jensen.pdf
 
+use modelardb_common::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
 use modelardb_common::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
 
 use crate::models;
@@ -81,7 +82,9 @@ impl PMCMean {
 
     /// Return the number of bytes the current model uses per data point on average.
     pub fn bytes_per_value(&self) -> f32 {
-        models::VALUE_SIZE_IN_BYTES as f32 / self.length as f32
+        // No additional data is needed for PMC-Mean as the value can be read from min_value or
+        // max_value which is already stored as part of the metadata in the compressed segments.
+        COMPRESSED_METADATA_SIZE_IN_BYTES.to_owned() as f32 / self.length as f32
     }
 
     /// Return the current model. For a model of type PMC-Mean, its coefficient

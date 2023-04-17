@@ -50,6 +50,18 @@ pub static COMPRESSED_SCHEMA: Lazy<CompressedSchema> = Lazy::new(|| {
     ])))
 });
 
+/// Minimum size of the metadata required for a compressed segment. Meaning that the sizes of
+/// `timestamps` and `values` are not included as they are [`DataType::Binary`] and thus their size
+/// depend on which model is selected to represent the values for that compressed segment.
+pub static COMPRESSED_METADATA_SIZE_IN_BYTES: Lazy<usize> = Lazy::new(|| {
+    COMPRESSED_SCHEMA
+        .0
+        .fields()
+        .iter()
+        .map(|field| field.data_type().primitive_width().unwrap_or(0))
+        .sum()
+});
+
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`](arrow::datatypes::Schema) used for
 /// internally collected metrics.
 pub static METRIC_SCHEMA: Lazy<MetricSchema> = Lazy::new(|| {

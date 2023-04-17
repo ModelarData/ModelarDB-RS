@@ -32,15 +32,7 @@ use modelardb_common::types::{
     Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
 
-use crate::models::{
-    gorilla::Gorilla, pmc_mean::PMCMean, swing::Swing, timestamps, ErrorBound, SelectedModel,
-};
-
-// TODO: use Gorilla as a fallback to remove GORILLA_MAXIMUM_LENGTH.
-/// Maximum number of data points that models of type Gorilla can represent per
-/// compressed segment. As models of type Gorilla use lossless compression they
-/// will never exceed the user-defined error bounds.
-pub const GORILLA_MAXIMUM_LENGTH: usize = 50;
+use crate::models::{pmc_mean::PMCMean, swing::Swing, timestamps, ErrorBound, SelectedModel};
 
 /// Compress `uncompressed_timestamps` using a start time, end time, and a sampling interval if
 /// regular and delta-of-deltas followed by a variable length binary encoding if irregular.
@@ -48,44 +40,145 @@ pub const GORILLA_MAXIMUM_LENGTH: usize = 50;
 /// Assumes `uncompressed_timestamps` and `uncompressed_values` are sorted according to
 /// `uncompressed_timestamps`. Returns [`CompressionError`](ModelarDbError::CompressionError) if
 /// `uncompressed_timestamps` and `uncompressed_values` have different lengths, otherwise the
-///  resulting compressed segments are returned as a [`RecordBatch`] with the [`COMPRESSED_SCHEMA`]
-///  schema.
+/// resulting compressed segments are returned as a [`RecordBatch`] with the [`COMPRESSED_SCHEMA`]
+/// schema.
 pub fn try_compress(
     univariate_id: u64,
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
     error_bound: ErrorBound,
 ) -> Result<RecordBatch, ModelarDbError> {
-    // The uncompressed data must be passed as arrays instead of a RecordBatch
-    // as a TimestampArray and a ValueArray is the only supported input.
-    // However, as a result it is necessary to verify they have the same length.
+    // The uncompressed data must be passed as arrays instead of a RecordBatch as a TimestampArray
+    // and a ValueArray is the only supported input. However, as a result it is necessary to verify
+    // they have the same length.
     if uncompressed_timestamps.len() != uncompressed_values.len() {
         return Err(ModelarDbError::CompressionError(
             "Uncompressed timestamps and uncompressed values have different lengths.".to_owned(),
         ));
     }
 
-    // Enough memory for end_index elements are allocated to never require
-    // reallocation as one model is created per data point in the worst case.
+    // Enough memory for end_index compressed segments are allocated to never require reallocation
+    // as one compressed segment is created per data point in the absolute worst case.
     let end_index = uncompressed_timestamps.len();
     let mut compressed_record_batch_builder = CompressedSegmentBatchBuilder::new(end_index);
 
     // Compress the uncompressed timestamps and uncompressed values.
     let mut current_index = 0;
+    let mut residual_start_index = 0;
     while current_index < end_index {
-        // Create a compressed segment that represents the data points from
-        // current_index to index within error_bound where index <= end_index.
-        let compressed_segment_builder = CompressedSegmentBuilder::new(
-            univariate_id,
+        // Propose a model that represents the values from current_index to index within error_bound
+        // where index <= end_index.
+        let compressed_model_builder = CompressedModelBuilder::new(
             current_index,
             end_index,
             uncompressed_timestamps,
             uncompressed_values,
             error_bound,
         );
-        current_index = compressed_segment_builder.finish(&mut compressed_record_batch_builder);
+
+        let selected_model = compressed_model_builder.finish();
+
+        // The selected model is only stored as part of a compressed segment if it uses less storage
+        // space per value than the uncompressed values it represents.
+        if selected_model.bytes_per_value <= models::VALUE_SIZE_IN_BYTES as f32 {
+            // Compress residual data points with Gorilla and store them in a compressed segment.
+            if residual_start_index != current_index {
+                compress_and_store_residual_value_range(
+                    univariate_id,
+                    residual_start_index,
+                    current_index - 1,
+                    uncompressed_timestamps,
+                    uncompressed_values,
+                    &mut compressed_record_batch_builder,
+                )
+            }
+
+            // Store the selected model and the corresponding timestamps in a compressed segment.
+            store_selected_model_in_batch_builder(
+                univariate_id,
+                current_index,
+                &selected_model,
+                uncompressed_timestamps,
+                &mut compressed_record_batch_builder,
+            );
+
+            // Update the indices to specify that all data points until now has been compressed.
+            current_index = selected_model.end_index + 1;
+            residual_start_index = current_index;
+        } else {
+            // The potentially lossy models could not efficiently encode the sub-sequence starting
+            // at current_index, the residual values will instead be compressed using Gorilla.
+            current_index += 1;
+        }
     }
+
+    // Compress the last residual data points with Gorilla and store them in a compressed segment.
+    if residual_start_index != current_index {
+        compress_and_store_residual_value_range(
+            univariate_id,
+            residual_start_index,
+            current_index - 1,
+            uncompressed_timestamps,
+            uncompressed_values,
+            &mut compressed_record_batch_builder,
+        )
+    }
+
     Ok(compressed_record_batch_builder.finish())
+}
+
+/// For the time series with `univariate_id`, compress the values from `start_index` to `end_index`
+/// in `uncompressed_values` using [`Gorilla`] and store the resulting model with the corresponding
+/// timestamps from `uncompressed_timestamps` as a segment in `compressed_record_batch_builder`.
+fn compress_and_store_residual_value_range(
+    univariate_id: u64,
+    start_index: usize,
+    end_index: usize,
+    uncompressed_timestamps: &TimestampArray,
+    uncompressed_values: &ValueArray,
+    compressed_record_batch_builder: &mut CompressedSegmentBatchBuilder,
+) {
+    let selected_model =
+        models::compress_residual_value_range(start_index, end_index, uncompressed_values);
+
+    store_selected_model_in_batch_builder(
+        univariate_id,
+        start_index,
+        &selected_model,
+        uncompressed_timestamps,
+        compressed_record_batch_builder,
+    );
+}
+
+/// Store the `selected_model` which represents values from the time series with `univariate_id`
+/// from `start_index to `end_index` as part of a segment in `compressed_record_batch_builder`.
+fn store_selected_model_in_batch_builder(
+    univariate_id: u64,
+    start_index: usize,
+    selected_model: &SelectedModel,
+    uncompressed_timestamps: &TimestampArray,
+    compressed_record_batch_builder: &mut CompressedSegmentBatchBuilder,
+) {
+    // Add timestamps and error.
+    let end_index = selected_model.end_index;
+    let start_time = uncompressed_timestamps.value(start_index);
+    let end_time = uncompressed_timestamps.value(end_index);
+    let timestamps = timestamps::compress_residual_timestamps(
+        &uncompressed_timestamps.values()[start_index..=end_index],
+    );
+    let error = f32::NAN; // TODO: compute and store the actual error.
+
+    compressed_record_batch_builder.append_compressed_segment(
+        univariate_id,
+        selected_model.model_type_id,
+        start_time,
+        end_time,
+        &timestamps,
+        selected_model.min_value,
+        selected_model.max_value,
+        &selected_model.values,
+        error,
+    );
 }
 
 /// Merge segments in `compressed_segments` that:
@@ -230,61 +323,43 @@ fn can_models_be_merged(
     )
 }
 
-/// A compressed segment being built from an uncompressed segment using the model types in
-/// [`models`]. Each of the model types is used to fit models to the data points, and then the
-/// model that uses the fewest number of bytes per value is selected.
-struct CompressedSegmentBuilder<'a> {
-    /// The id of the time series from which the compressed segment is created.
-    univariate_id: u64,
-    /// The regular timestamps of the uncompressed segment the compressed
-    /// segment is being built from.
-    uncompressed_timestamps: &'a TimestampArray,
-    /// The values of the uncompressed segment the compressed segment is being
-    /// built from.
-    uncompressed_values: &'a ValueArray,
-    /// Index of the first data point in `uncompressed_timestamps` and
-    /// `uncompressed_values` the compressed segment represents.
+/// A compressed model being built from an uncompressed segment using the potentially lossy model
+/// types in [`models`]. Each of the potentially lossy model types is used to fit models to the data
+/// points, and then the model that uses the fewest number of bytes per value is selected.
+struct CompressedModelBuilder {
+    /// Index of the first data point in `uncompressed_timestamps` and `uncompressed_values` the
+    /// compressed model represents values for.
     start_index: usize,
-    /// Constant function that currently represents the values in
-    /// `uncompressed_values` from `start_index` to `start_index` +
-    /// `pmc_mean.length`.
+    /// Constant function that currently represents the values in `uncompressed_values` from
+    /// `start_index` to `start_index` + `pmc_mean.length`.
     pmc_mean: PMCMean,
-    /// Indicates if `pmc_mean` could represent all values in
-    /// `uncompressed_values` from `start_index` to `current_index` in `new()`.
+    /// Indicates if `pmc_mean` could represent all values in `uncompressed_values` from
+    /// `start_index` to `current_index` in `new()`.
     pmc_mean_could_fit_all: bool,
-    /// Linear function that represents the values in `uncompressed_values` from
-    /// `start_index` to `start_index` + `swing.length`.
+    /// Linear function that represents the values in `uncompressed_values` from `start_index` to
+    /// `start_index` + `swing.length`.
     swing: Swing,
-    /// Indicates if `swing` could represent all values in `uncompressed_values`
-    /// from `start_index` to `current_index` in `new()`.
+    /// Indicates if `swing` could represent all values in `uncompressed_values` from `start_index`
+    /// to `current_index` in `new()`.
     swing_could_fit_all: bool,
-    /// Values in `uncompressed_values` from `start_index` to `start_index` +
-    /// `gorilla.length` compressed using lossless compression.
-    gorilla: Gorilla,
 }
 
-impl<'a> CompressedSegmentBuilder<'a> {
-    /// Create a compressed segment that represents the regular timestamps in
-    /// `uncompressed_timestamps` and the values in `uncompressed_values` from
+impl CompressedModelBuilder {
+    /// Create a compressed model that represents the values in `uncompressed_values` from
     /// `start_index` to index within `error_bound` where index <= `end_index`.
     fn new(
-        univariate_id: u64,
         start_index: usize,
         end_index: usize,
-        uncompressed_timestamps: &'a TimestampArray,
-        uncompressed_values: &'a ValueArray,
+        uncompressed_timestamps: &TimestampArray,
+        uncompressed_values: &ValueArray,
         error_bound: ErrorBound,
     ) -> Self {
         let mut compressed_segment_builder = Self {
-            univariate_id,
-            uncompressed_timestamps,
-            uncompressed_values,
             start_index,
             pmc_mean: PMCMean::new(error_bound),
             pmc_mean_could_fit_all: true,
             swing: Swing::new(error_bound),
             swing_could_fit_all: true,
-            gorilla: Gorilla::new(),
         };
 
         let mut current_index = start_index;
@@ -309,60 +384,17 @@ impl<'a> CompressedSegmentBuilder<'a> {
 
         self.swing_could_fit_all =
             self.swing_could_fit_all && self.swing.fit_data_point(timestamp, value);
-
-        // Gorilla uses lossless compression and cannot exceed the error bound.
-        if self.gorilla.length < GORILLA_MAXIMUM_LENGTH {
-            self.gorilla.compress_value(value);
-        }
     }
 
     /// Return [`true`] if any of the current models can represent additional
     /// values, otherwise [`false`].
     fn can_fit_more(&self) -> bool {
-        self.pmc_mean_could_fit_all
-            || self.swing_could_fit_all
-            || self.gorilla.length < GORILLA_MAXIMUM_LENGTH
+        self.pmc_mean_could_fit_all || self.swing_could_fit_all
     }
 
-    /// Store the model that requires the smallest number of bits per value in
-    /// `compressed_record_batch_builder`. Returns the index of the first value
-    /// in `uncompressed_values` the selected model could not represent.
-    fn finish(self, compressed_record_batch_builder: &mut CompressedSegmentBatchBuilder) -> usize {
-        // The model that uses the fewest number of bytes per value is selected.
-        let SelectedModel {
-            model_type_id,
-            end_index,
-            min_value,
-            max_value,
-            values,
-        } = SelectedModel::new(
-            self.start_index,
-            self.pmc_mean,
-            self.swing,
-            self.gorilla,
-            self.uncompressed_values,
-        );
-
-        // Add timestamps and error.
-        let start_time = self.uncompressed_timestamps.value(self.start_index);
-        let end_time = self.uncompressed_timestamps.value(end_index);
-        let timestamps = timestamps::compress_residual_timestamps(
-            &self.uncompressed_timestamps.values()[self.start_index..=end_index],
-        );
-        let error = f32::NAN; // TODO: compute and store the actual error.
-
-        compressed_record_batch_builder.append_compressed_segment(
-            self.univariate_id,
-            model_type_id,
-            start_time,
-            end_time,
-            &timestamps,
-            min_value,
-            max_value,
-            &values,
-            error,
-        );
-        end_index + 1
+    /// Return the model that requires the fewest number of bytes per value.
+    fn finish(self) -> SelectedModel {
+        SelectedModel::new(self.start_index, self.pmc_mean, self.swing)
     }
 }
 

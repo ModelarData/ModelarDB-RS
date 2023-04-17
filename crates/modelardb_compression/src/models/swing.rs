@@ -23,6 +23,7 @@
 //! [Swing and Slide paper]: https://dl.acm.org/doi/10.14778/1687627.1687645
 //! [ModelarDB paper]: https://www.vldb.org/pvldb/vol11/p1688-jensen.pdf
 
+use modelardb_common::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
 use modelardb_common::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
 
 use crate::models::ErrorBound;
@@ -186,7 +187,8 @@ impl Swing {
 
     /// Return the number of bytes the current model uses per data point on average.
     pub fn bytes_per_value(&self) -> f32 {
-        (2.0 * models::VALUE_SIZE_IN_BYTES as f32) / self.length as f32
+        // One additional byte is needed for Swing to store if it is increasing or decreasing.
+        (COMPRESSED_METADATA_SIZE_IN_BYTES.to_owned() as f32 + 1.0) / self.length as f32
     }
 
     /// Return the current model. For a model of type Swing, the first and last
@@ -542,16 +544,17 @@ mod tests {
 
     #[test]
     fn test_can_reconstruct_sequence_of_linear_increasing_values_within_error_bound_zero() {
-        test_can_reconstruct_sequence_of_linear_values_within_error_bound_zero(vec![
-            42.0, 84.0, 126.0, 168.0, 210.0,
-        ])
+        test_can_reconstruct_sequence_of_linear_values_within_error_bound_zero(
+            (42..=4200).step_by(42).map(|value| value as f32).collect(),
+        )
     }
 
     #[test]
     fn test_can_reconstruct_sequence_of_linear_decreasing_values_within_error_bound_zero() {
-        test_can_reconstruct_sequence_of_linear_values_within_error_bound_zero(vec![
-            210.0, 168.0, 126.0, 84.0, 42.0,
-        ])
+        let mut values: Vec<Value> = (42..=4200).step_by(42).map(|value| value as f32).collect();
+        values.reverse();
+
+        test_can_reconstruct_sequence_of_linear_values_within_error_bound_zero(values);
     }
 
     fn test_can_reconstruct_sequence_of_linear_values_within_error_bound_zero(values: Vec<Value>) {

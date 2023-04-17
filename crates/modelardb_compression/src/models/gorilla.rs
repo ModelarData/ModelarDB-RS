@@ -22,6 +22,7 @@
 //!
 //! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 
+use modelardb_common::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
 use modelardb_common::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
 
 use crate::models;
@@ -119,7 +120,9 @@ impl Gorilla {
 
     /// Return the number of bytes currently used per data point on average.
     pub fn bytes_per_value(&self) -> f32 {
-        self.compressed_values.len() as f32 / self.length as f32
+        // Gorilla does not use metadata for encoding values, only the data in compressed_values.
+        (COMPRESSED_METADATA_SIZE_IN_BYTES.to_owned() + self.compressed_values.len()) as f32
+            / self.length as f32
     }
 
     /// Return the values compressed using XOR and a variable length binary
