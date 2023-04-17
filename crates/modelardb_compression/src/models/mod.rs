@@ -441,7 +441,7 @@ mod tests {
         SelectedModel::new(0, pmc_mean, swing)
     }
 
-    // Tests for compress_residual_value_range()
+    // Tests for compress_residual_value_range().
     #[test]
     fn test_compress_all_residual_value_range() {
         let uncompressed_values = ValueArray::from(vec![73.0, 37.0, 37.0, 37.0, 73.0]);

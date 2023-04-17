@@ -58,7 +58,7 @@ pub fn try_compress(
     }
 
     // Enough memory for end_index compressed segments are allocated to never require reallocation
-    // as one compressed segments is created per data point in the absolute worst case.
+    // as one compressed segment is created per data point in the absolute worst case.
     let end_index = uncompressed_timestamps.len();
     let mut compressed_record_batch_builder = CompressedSegmentBatchBuilder::new(end_index);
 
@@ -81,7 +81,7 @@ pub fn try_compress(
         // The selected model is only stored as part of a compressed segment if it uses less storage
         // space per value than the uncompressed values it represents.
         if selected_model.bytes_per_value <= models::VALUE_SIZE_IN_BYTES as f32 {
-            // Compress residual data points with gorilla and store them in a compressed segments.
+            // Compress residual data points with Gorilla and store them in a compressed segment.
             if residual_start_index != current_index {
                 compress_and_store_residual_value_range(
                     univariate_id,
@@ -93,7 +93,7 @@ pub fn try_compress(
                 )
             }
 
-            // Store the selected model and the corresponding timestamps in a compressed segments.
+            // Store the selected model and the corresponding timestamps in a compressed segment.
             store_selected_model_in_batch_builder(
                 univariate_id,
                 current_index,
@@ -102,17 +102,17 @@ pub fn try_compress(
                 &mut compressed_record_batch_builder,
             );
 
-            // Update the indexes to specify that all data points until now has been compressed.
+            // Update the indices to specify that all data points until now has been compressed.
             current_index = selected_model.end_index + 1;
             residual_start_index = current_index;
         } else {
             // The potentially lossy models could not efficiently encode the sub-sequence starting
-            // at current_index, the residual values will instead be compressed using gorilla.
+            // at current_index, the residual values will instead be compressed using Gorilla.
             current_index += 1;
         }
     }
 
-    // Compress the last residual data points with gorilla and store them in a compressed segment.
+    // Compress the last residual data points with Gorilla and store them in a compressed segment.
     if residual_start_index != current_index {
         compress_and_store_residual_value_range(
             univariate_id,
@@ -392,9 +392,8 @@ impl CompressedModelBuilder {
         self.pmc_mean_could_fit_all || self.swing_could_fit_all
     }
 
-    /// Return the model that requires the smallest number of bits per value if used for a segment.
+    /// Return the model that requires the fewest number of bytes per value.
     fn finish(self) -> SelectedModel {
-        // The model that uses the fewest number of bytes per value is selected.
         SelectedModel::new(self.start_index, self.pmc_mean, self.swing)
     }
 }

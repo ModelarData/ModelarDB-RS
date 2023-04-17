@@ -51,7 +51,7 @@ pub static COMPRESSED_SCHEMA: Lazy<CompressedSchema> = Lazy::new(|| {
 });
 
 /// Size of the metadata required for a compressed segment. Meaning that the size of `timestamps`
-/// and `values` are not included as they are binary and thus depends which model is selected.
+/// and `values` are not included as they are binary and thus depends on which model is selected.
 pub static COMPRESSED_METADATA_SIZE_IN_BYTES: Lazy<usize> = Lazy::new(|| {
     COMPRESSED_SCHEMA
         .0

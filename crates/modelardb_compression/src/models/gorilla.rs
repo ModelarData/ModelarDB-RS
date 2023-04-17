@@ -121,7 +121,7 @@ impl Gorilla {
     /// Return the number of bytes currently used per data point on average.
     pub fn bytes_per_value(&self) -> f32 {
         // Gorilla does not use metadata for encoding values, only the data in compressed_values.
-        (COMPRESSED_METADATA_SIZE_IN_BYTES.to_owned() as f32 + self.compressed_values.len() as f32)
+        (COMPRESSED_METADATA_SIZE_IN_BYTES.to_owned() + self.compressed_values.len()) as f32
             / self.length as f32
     }
 

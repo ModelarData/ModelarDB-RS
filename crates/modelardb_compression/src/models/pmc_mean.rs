@@ -82,7 +82,8 @@ impl PMCMean {
 
     /// Return the number of bytes the current model uses per data point on average.
     pub fn bytes_per_value(&self) -> f32 {
-        // No data is needed for PMC-Mean as the value can be read from min_value or max_value.
+        // No additional data is needed for PMC-Mean as the value can be read from min_value or
+        // max_value which is already stored as part of the metadata in the compressed segments.
         COMPRESSED_METADATA_SIZE_IN_BYTES.to_owned() as f32 / self.length as f32
     }
 
