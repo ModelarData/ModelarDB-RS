@@ -232,18 +232,18 @@ fn argument_to_local_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>
 
 /// Create an [`ObjectStore`] that represents the remote path in `argument`.
 fn argument_to_remote_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>, String> {
-    match &argument[..5] {
-        "s3://" => {
+    match argument.get(..5) {
+        Some("s3://") => {
             let object_store = AmazonS3Builder::from_env()
-                .with_bucket_name(&argument[5..])
+                .with_bucket_name(argument.get(5..).unwrap())
                 .build()
                 .map_err(|error| error.to_string())?;
 
             Ok(Arc::new(object_store))
         }
-        "azureblobstorage://" => {
+        Some("azureblobstorage://") => {
             let object_store = MicrosoftAzureBuilder::from_env()
-                .with_container_name(&argument[5..])
+                .with_container_name(argument.get(19..).unwrap())
                 .build()
                 .map_err(|error| error.to_string())?;
 
