@@ -29,7 +29,10 @@ use std::{env, fs};
 
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
-use object_store::{aws::AmazonS3Builder, local::LocalFileSystem, path::Path, ObjectStore};
+use object_store::{
+    aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, local::LocalFileSystem, path::Path,
+    ObjectStore,
+};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -229,14 +232,27 @@ fn argument_to_local_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>
 
 /// Create an [`ObjectStore`] that represents the remote path in `argument`.
 fn argument_to_remote_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>, String> {
-    if let Some(bucket_name) = argument.strip_prefix("s3://") {
-        let object_store = AmazonS3Builder::from_env()
-            .with_bucket_name(bucket_name)
-            .build()
-            .map_err(|error| error.to_string())?;
-        Ok(Arc::new(object_store))
-    } else {
-        Err("Remote data folder must be s3://bucket-name.".to_owned())
+    match &argument[..5] {
+        "s3://" => {
+            let object_store = AmazonS3Builder::from_env()
+                .with_bucket_name(&argument[5..])
+                .build()
+                .map_err(|error| error.to_string())?;
+
+            Ok(Arc::new(object_store))
+        }
+        "azureblobstorage://" => {
+            let object_store = MicrosoftAzureBuilder::from_env()
+                .with_container_name(&argument[5..])
+                .build()
+                .map_err(|error| error.to_string())?;
+
+            Ok(Arc::new(object_store))
+        }
+        _ => Err(
+            "Remote data folder must be s3://bucket-name or azureblobstorage://container-name."
+                .to_owned(),
+        ),
     }
 }
 
