@@ -116,7 +116,7 @@ fn main() -> Result<(), String> {
     // If a remote data folder was provided, check that it can be accessed. This check is performed
     // after parse_command_line_arguments() as the Tokio Runtime is required.
     if let Some(remote_data_folder) = &data_folders.remote_data_folder {
-        // unwrap() is safe since if there is a remote data folder, there is always third argument.
+        // unwrap() is safe since if there is a remote data folder, there is always a third argument.
         let remote_data_folder_type = arguments.get(2).unwrap().split_once("://").unwrap().0;
 
         runtime.block_on(async {
