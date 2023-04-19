@@ -115,7 +115,11 @@ fn main() -> Result<(), String> {
 
     // Check if a remote data folder was provided and can be accessed. These checks are performed
     // after parse_command_line_arguments() as the Tokio Runtime is required.
-    check_remote_data_folder(&runtime, &data_folders.remote_data_folder)?;
+    if let Some(remote_data_folder) = &data_folders.remote_data_folder {
+        runtime.block_on(async {
+            validate_remote_data_folder("s3", remote_data_folder).await
+        })?;
+    }
 
     // Create the components for the Context.
     let metadata_manager =
@@ -256,21 +260,28 @@ fn argument_to_remote_object_store(argument: &str) -> Result<Arc<dyn ObjectStore
     }
 }
 
-/// Check if a remote data folder was provided and can be accessed. If a remote data folder is
-/// provided but cannot be accessed, return the error that occurred as a [`String`].
-fn check_remote_data_folder(
-    runtime: &Runtime,
-    remote_data_folder: &Option<Arc<dyn ObjectStore>>,
+/// Validate that the remote data folder can be accessed. If the remote data folder cannot be
+/// accessed, return the error that occurred as a [`String`].
+async fn validate_remote_data_folder(
+    remote_data_folder_type: &str,
+    remote_data_folder: &Arc<dyn ObjectStore>,
 ) -> Result<(), String> {
-    if let Some(remote_data_folder) = remote_data_folder {
-        runtime.block_on(async {
-            remote_data_folder
-                .get(&Path::from(""))
-                .await
-                .map_err(|error| error.to_string())
-        })?;
+    // Check that the connection is valid by attempting to retrieve a file that does not exist.
+    match remote_data_folder.get(&Path::from("")).await {
+        Ok(_) => Ok(()),
+        Err(error) => match error {
+            object_store::Error::NotFound { .. } => {
+                // Note that for Azure Blob Storage the same error is returned if the object was not
+                // found due to the object not existing and due to the container not existing.
+                if remote_data_folder_type == "azureblobstorage" {
+                    Ok(())
+                } else {
+                    Err(error.to_string())
+                }
+            },
+            _ => Err(error.to_string()),
+        },
     }
-    Ok(())
 }
 
 /// Create a new [`SessionContext`] for interacting with Apache Arrow
