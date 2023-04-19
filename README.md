@@ -81,6 +81,22 @@ Then, assuming a bucket named `wind-turbine` has been created through [MinIO's w
 modelardbd edge path_to_local_data_folder s3://wind-turbine
 ```
 
+`modelardbd` also supports using [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/) 
+for the remote object store. To use [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/), 
+set the following environment variables instead:
+
+```shell
+AZURE_STORAGE_ACCOUNT_NAME
+AZURE_STORAGE_ACCESS_KEY
+```
+
+`modelardbd` can then be run in edge mode with transfer of the ingested time series to the 
+[Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/) container `wind-turbine`:
+
+```shell
+modelardbd edge path_to_local_data_folder azureblobstorage://wind-turbine
+```
+
 To run `modelardbd` in cloud mode simply replace `edge` with `cloud` as shown below. Be aware that both a local data folder and an object store are required when `modelardbd` is run in cloud mode.
 
 ```shell
