@@ -85,6 +85,7 @@ pub fn try_compress(
             if residual_start_index != current_index {
                 compress_and_store_residual_value_range(
                     univariate_id,
+                    error_bound,
                     residual_start_index,
                     current_index - 1,
                     uncompressed_timestamps,
@@ -116,6 +117,7 @@ pub fn try_compress(
     if residual_start_index != current_index {
         compress_and_store_residual_value_range(
             univariate_id,
+            error_bound,
             residual_start_index,
             current_index - 1,
             uncompressed_timestamps,
@@ -132,14 +134,19 @@ pub fn try_compress(
 /// timestamps from `uncompressed_timestamps` as a segment in `compressed_record_batch_builder`.
 fn compress_and_store_residual_value_range(
     univariate_id: u64,
+    error_bound: ErrorBound,
     start_index: usize,
     end_index: usize,
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
     compressed_record_batch_builder: &mut CompressedSegmentBatchBuilder,
 ) {
-    let selected_model =
-        models::compress_residual_value_range(start_index, end_index, uncompressed_values);
+    let selected_model = models::compress_residual_value_range(
+        error_bound,
+        start_index,
+        end_index,
+        uncompressed_values,
+    );
 
     store_selected_model_in_batch_builder(
         univariate_id,

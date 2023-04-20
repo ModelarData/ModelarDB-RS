@@ -18,8 +18,6 @@
 //! each type. The module itself contains general functionality used by the
 //! model types.
 
-// TODO: Test irregular and regular time series in models/* and compression.rs.
-
 pub mod bits;
 pub mod gorilla;
 pub mod pmc_mean;
@@ -49,10 +47,10 @@ pub(super) const VALUE_SIZE_IN_BYTES: u8 = mem::size_of::<Value>() as u8;
 /// Size of [`Value`] in bits.
 pub(super) const VALUE_SIZE_IN_BITS: u8 = 8 * VALUE_SIZE_IN_BYTES;
 
-/// General error bound that is guaranteed to not be negative, infinite, or NAN.
-/// For [`PMCMean`] and [`Swing`] the error bound is interpreted as a relative
-/// per value error bound in percentage, while [`Gorilla`] uses lossless
-/// compression.
+/// General error bound that is guaranteed to not be negative, infinite, or NAN. For [`PMCMean`],
+/// [`Swing`], and [`Gorilla`],  the error bound is interpreted as a relative per value error bound
+/// in percentage. [`Gorilla`] only uses lossy compression if it receives a value that can be
+/// compressed within the error bound, thus it will never exceed the error bound.
 #[derive(Debug, Copy, Clone)]
 pub struct ErrorBound(f32);
 
@@ -184,6 +182,7 @@ impl SelectedModel {
 /// Compress the values from `start_index` to `end_index` in `uncompressed_values` using
 /// [`Gorilla`].
 pub fn compress_residual_value_range(
+    error_bound: ErrorBound,
     start_index: usize,
     end_index: usize,
     uncompressed_values: &ValueArray,
@@ -202,7 +201,7 @@ pub fn compress_residual_value_range(
             Value::max(current_max, *value)
         });
 
-    let mut gorilla = Gorilla::new();
+    let mut gorilla = Gorilla::new(error_bound);
     for value in uncompressed_values {
         gorilla.compress_value(*value)
     }
@@ -412,7 +411,11 @@ mod tests {
 
     #[test]
     fn test_different_value_is_within_non_zero_error_bound() {
-        assert!(is_value_within_error_bound(ErrorBound::try_new(10.0).unwrap(), 10.0, 11.0));
+        assert!(is_value_within_error_bound(
+            ErrorBound::try_new(10.0).unwrap(),
+            10.0,
+            11.0
+        ));
     }
 
     // Tests for SelectedModel.
@@ -509,11 +512,17 @@ mod tests {
     }
 
     // Tests for compress_residual_value_range().
+    // TODO
     #[test]
     fn test_compress_all_residual_value_range() {
+        let error_bound = ErrorBound::try_new(0.0).unwrap();
         let uncompressed_values = ValueArray::from(vec![73.0, 37.0, 37.0, 37.0, 73.0]);
-        let selected_model =
-            compress_residual_value_range(0, uncompressed_values.len() - 1, &uncompressed_values);
+        let selected_model = compress_residual_value_range(
+            error_bound,
+            0,
+            uncompressed_values.len() - 1,
+            &uncompressed_values,
+        );
 
         assert_eq!(GORILLA_ID, selected_model.model_type_id);
         assert_eq!(uncompressed_values.len() - 1, selected_model.end_index);
@@ -524,8 +533,9 @@ mod tests {
 
     #[test]
     fn test_compress_some_residual_value_range() {
+        let error_bound = ErrorBound::try_new(0.0).unwrap();
         let uncompressed_values = ValueArray::from(vec![73.0, 37.0, 37.0, 37.0, 73.0]);
-        let selected_model = compress_residual_value_range(1, 3, &uncompressed_values);
+        let selected_model = compress_residual_value_range(error_bound, 1, 3, &uncompressed_values);
 
         assert_eq!(GORILLA_ID, selected_model.model_type_id);
         assert_eq!(3, selected_model.end_index);
