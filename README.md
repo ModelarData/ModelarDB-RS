@@ -28,12 +28,18 @@ later as an [open-source project](https://github.com/ModelarData/ModelarDB). Whi
 the benefits of using a model-based representation for time series, it has been superseded by this much more efficient 
 Rust-based implementation.
 
-The documentation for ModelarDB is separated into a [user](docs/user/README.md) section and a [development](docs/dev/README.md) 
-section. The [user](docs/user/README.md) section contains installation instructions for setting up ModelarDB on any 
-major operating system and usage instructions for running a server, ingesting data, and querying data. The 
-[development](docs/dev/README.md) section outlines the structure of the project, describes the guidelines that should
-be adhered to when contributing to the project, and provides instructions for setting up a [Docker](https://docs.docker.com/)
-environment.
+## Installation
+Refer to the [Installation](docs/user/README.md#installation) section of the [User](docs/user/README.md) documentation for installation instructions 
+for setting up ModelarDB on any major operating system.
+
+## Usage
+Usage instructions for running a server, ingesting data, and querying data using ModelarDB is included in the 
+[Usage](docs/user/README.md#usage) section of the [User](docs/user/README.md) documentation.
+
+## Development
+Refer to the [Development](docs/dev/README.md) section of the documentation for an overview of the structure of the 
+project, a description of the guidelines that should be adhered to when contributing to the project, and instructions 
+for setting up a [Docker](https://docs.docker.com/) environment.
 
 ## License
 ModelarDB is licensed under version 2.0 of the Apache License and a copy of the
