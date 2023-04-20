@@ -167,7 +167,7 @@ async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status>
 
     validate_remote_data_folder("s3", &s3)
         .await
-        .map_err(|error| Status::invalid_argument(error.to_string()))?;
+        .map_err(Status::invalid_argument)?;
 
     Ok(s3)
 }
@@ -192,7 +192,7 @@ async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Arc<dyn Objec
 
     validate_remote_data_folder("azureblobstorage", &azure_blob_storage)
         .await
-        .map_err(|error| Status::invalid_argument(error.to_string()))?;
+        .map_err(Status::invalid_argument)?;
 
     Ok(azure_blob_storage)
 }
