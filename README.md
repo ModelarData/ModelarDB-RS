@@ -21,16 +21,11 @@ for communicating with clients, [Apache Arrow DataFusion](https://github.com/apa
 engine, [Apache Arrow](https://github.com/apache/arrow-rs) as its in-memory data format, and 
 [Apache Parquet](https://github.com/apache/arrow-rs/tree/master/parquet) as its on-disk data format.
 
-The prototype of ModelarDB was implemented using [Apache Spark](https://www.h2database.com/html/main.html), 
-[Apache Cassandra](https://cassandra.apache.org/_/index.html), and [H2](https://www.h2database.com/html/main.html) 
-and was developed as part of a [research project](https://github.com/skejserjensen/ModelarDB) at Aalborg University and 
-later as an [open-source project](https://github.com/ModelarData/ModelarDB). While this JVM-based prototype validated 
-the benefits of using a model-based representation for time series, it has been superseded by this much more efficient 
-Rust-based implementation.
-
 ## Installation
-Refer to the [Installation](docs/user/README.md#installation) section of the [User](docs/user/README.md) documentation for installation instructions 
-for setting up ModelarDB on any major operating system.
+Refer to the [Installation](docs/user/README.md#installation) section of the [User](docs/user/README.md) documentation 
+for installation instructions on setting up ModelarDB on four major operating systems. To support quickly deploying 
+ModelarDB, instructions for setting up a [Docker](https://docs.docker.com/) environment are included in the 
+[Docker](docs/user/README.md#docker) section.
 
 ## Usage
 Usage instructions for running a server, ingesting data, and querying data using ModelarDB is included in the 
@@ -38,8 +33,16 @@ Usage instructions for running a server, ingesting data, and querying data using
 
 ## Development
 Refer to the [Development](docs/dev/README.md) section of the documentation for an overview of the structure of the 
-project, a description of the guidelines that should be adhered to when contributing to the project, and instructions 
-for setting up a [Docker](https://docs.docker.com/) environment.
+project, a detailed description of each major component, and an outline of the guidelines that should be adhered 
+to when contributing to the project.
+
+## Research-Based
+The prototype of ModelarDB was implemented using [Apache Spark](https://www.h2database.com/html/main.html),
+[Apache Cassandra](https://cassandra.apache.org/_/index.html), and [H2](https://www.h2database.com/html/main.html)
+and was developed as part of a [research project](https://github.com/skejserjensen/ModelarDB) at Aalborg University and
+later as an [open-source project](https://github.com/ModelarData/ModelarDB). While this JVM-based prototype validated
+the benefits of using a model-based representation for time series, it has been superseded by this much more efficient
+Rust-based implementation.
 
 ## License
 ModelarDB is licensed under version 2.0 of the Apache License and a copy of the
