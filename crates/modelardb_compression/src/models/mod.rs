@@ -90,6 +90,23 @@ impl PartialOrd<ErrorBound> for f32 {
     }
 }
 
+/// Determine if `approximate_value` is within `error_bound` of `real_value`.
+pub fn is_value_within_error_bound(
+    error_bound: ErrorBound,
+    real_value: Value,
+    approximate_value: Value,
+) -> bool {
+    // Needed because result becomes NAN and approximate_value is rejected
+    // if approximate_value and real_value are zero, and because NAN != NAN.
+    if equal_or_nan(real_value as f64, approximate_value as f64) {
+        true
+    } else {
+        let difference = real_value - approximate_value;
+        let result = Value::abs(difference / real_value);
+        (result * 100.0) <= error_bound
+    }
+}
+
 /// Model that uses the fewest number of bytes per value.
 pub struct SelectedModel {
     /// Id of the model type that created this model.
@@ -314,6 +331,7 @@ mod tests {
     use compression_test_util::StructureOfValues;
     use modelardb_common::types::TimestampArray;
     use proptest::num;
+    use proptest::num::f32 as ProptestValue;
     use proptest::{prop_assert, prop_assume, proptest};
 
     use crate::test_util as compression_test_util;
@@ -346,6 +364,55 @@ mod tests {
     #[test]
     fn test_error_bound_cannot_be_nan() {
         assert!(ErrorBound::try_new(f32::NAN).is_err())
+    }
+
+    // is_value_within_error_bound().
+    proptest! {
+    #[test]
+    fn test_same_value_is_always_within_error_bound(value in ProptestValue::ANY) {
+        prop_assert!(is_value_within_error_bound(ErrorBound::try_new(0.0).unwrap(), value, value));
+    }
+
+    fn test_other_value_is_never_within_error_bound_of_positive_infinity(value in ProptestValue::ANY) {
+        prop_assume!(value != Value::INFINITY);
+        prop_assert!(is_value_within_error_bound(
+            ErrorBound::try_new(f32::MAX).unwrap(), Value::INFINITY, value));
+    }
+
+    fn test_other_value_is_never_within_error_bound_of_negative_infinity(value in ProptestValue::ANY) {
+        prop_assume!(value != Value::NEG_INFINITY);
+        prop_assert!(is_value_within_error_bound(
+            ErrorBound::try_new(f32::MAX).unwrap(), Value::NEG_INFINITY, value));
+    }
+
+    fn test_other_value_is_never_within_error_bound_of_nan(value in ProptestValue::ANY) {
+        prop_assume!(!value.is_nan());
+        prop_assert!(is_value_within_error_bound(
+            ErrorBound::try_new(f32::MAX).unwrap(), Value::NAN, value));
+    }
+
+    fn test_positive_infinity_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
+        prop_assume!(value != Value::INFINITY);
+        prop_assert!(is_value_within_error_bound(
+            ErrorBound::try_new(f32::MAX).unwrap(), value, Value::INFINITY));
+    }
+
+    fn test_negative_infinity_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
+        prop_assume!(value != Value::NEG_INFINITY);
+        prop_assert!(is_value_within_error_bound(
+            ErrorBound::try_new(f32::MAX).unwrap(), value, Value::NEG_INFINITY));
+    }
+
+    fn test_nan_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
+        prop_assume!(!value.is_nan());
+        prop_assert!(is_value_within_error_bound(
+            ErrorBound::try_new(f32::MAX).unwrap(), value, Value::NAN));
+    }
+    }
+
+    #[test]
+    fn test_different_value_is_within_non_zero_error_bound() {
+        assert!(is_value_within_error_bound(ErrorBound::try_new(10.0).unwrap(), 10.0, 11.0));
     }
 
     // Tests for SelectedModel.
@@ -458,8 +525,7 @@ mod tests {
     #[test]
     fn test_compress_some_residual_value_range() {
         let uncompressed_values = ValueArray::from(vec![73.0, 37.0, 37.0, 37.0, 73.0]);
-        let selected_model =
-            compress_residual_value_range(1, 3, &uncompressed_values);
+        let selected_model = compress_residual_value_range(1, 3, &uncompressed_values);
 
         assert_eq!(GORILLA_ID, selected_model.model_type_id);
         assert_eq!(3, selected_model.end_index);

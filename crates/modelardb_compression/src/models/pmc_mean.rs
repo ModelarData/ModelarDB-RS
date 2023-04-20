@@ -61,8 +61,8 @@ impl PMCMean {
         let next_sum_of_values = self.sum_of_values + value as f64;
         let next_length = self.length + 1;
         let average = (next_sum_of_values / next_length as f64) as Value;
-        if self.is_value_within_error_bound(next_min_value, average)
-            && self.is_value_within_error_bound(next_max_value, average)
+        if models::is_value_within_error_bound(self.error_bound, next_min_value, average)
+            && models::is_value_within_error_bound(self.error_bound, next_max_value, average)
         {
             self.min_value = next_min_value;
             self.max_value = next_max_value;
@@ -91,20 +91,6 @@ impl PMCMean {
     /// is the average value of the time series segment the model represents.
     pub fn model(&self) -> Value {
         (self.sum_of_values / self.length as f64) as Value
-    }
-
-    /// Determine if `approximate_value` is within [`PMCMean's`](PMCMean)
-    /// relative error bound of `real_value`.
-    fn is_value_within_error_bound(&self, real_value: Value, approximate_value: Value) -> bool {
-        // Needed because result becomes NAN and approximate_value is rejected
-        // if approximate_value and real_value are zero, and because NAN != NAN.
-        if models::equal_or_nan(real_value as f64, approximate_value as f64) {
-            true
-        } else {
-            let difference = real_value - approximate_value;
-            let result = Value::abs(difference / real_value);
-            (result * 100.0) <= self.error_bound
-        }
     }
 }
 
