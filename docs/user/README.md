@@ -1,9 +1,7 @@
 # ModelarDB Installation and Usage
 This document describes how to set up and use ModelarDB. Installation instructions are provided for 
-Linux, macOS, FreeBSD, and Windows. Once installed, using ModelarDB is consistent across all platforms.
-
-ModelarDB intentionally does not gather usage data. So, all users are highly encouraged to post comments, suggestions, 
-and bugs as GitHub issues, especially if a limitation of ModelarDB prevents it from being used in a particular domain. 
+Linux, macOS, FreeBSD, and Windows. To support running ModelarDB in a containerized environment, instructions for 
+setting up a Docker environment are also provided. Once installed, using ModelarDB is consistent across all platforms.
 
 ## Installation
 ### Linux
@@ -22,20 +20,20 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 
 ### Windows
 1. Install a supported version of [Visual Studio](https://visualstudio.microsoft.com/vs/older-downloads/) with Visual C++:
-    * Visual Studio 2019 ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
-    * Visual Studio 2022 ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
+   - Visual Studio 2019 ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
+   - Visual Studio 2022 ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
 2. Install [CMake](https://cmake.org/) and select one of the following options during installation:
-    * _Add CMake to the system PATH for all users_
-    * _Add CMake to the system PATH for current user_
+   - _Add CMake to the system PATH for all users_
+   - _Add CMake to the system PATH for current user_
 
 ### All
 3. Install the latest stable [Rust Toolchain](https://rustup.rs/).
 4. Build, test, and run the system using Cargo:
-    * Debug Build: `cargo build`
-    * Release Build: `cargo build --release`
-    * Run Tests: `cargo test`
-    * Run Server: `cargo run --bin modelardbd path_to_local_data_folder`
-    * Run Client: `cargo run --bin modelardb [server_address] [query_file]`
+   - Debug Build: `cargo build`
+   - Release Build: `cargo build --release`
+   - Run Tests: `cargo test`
+   - Run Server: `cargo run --bin modelardbd path_to_local_data_folder`
+   - Run Client: `cargo run --bin modelardb [server_address] [query_file]`
 5. Move `modelardbd` and `modelardb` from the `target` directory to any directory.
 
 ## Usage
@@ -232,7 +230,7 @@ be built and started using the command:
 docker-compose -p modelardata-minio -f docker-compose-minio.yml up
 ```
 
-After the [MinIO](https://min.io/) service is created, a [MinIO](https://min.io/) client is created to initialize
+After the [MinIO](https://min.io/) service is created, a [MinIO](https://min.io/) client is used to initialize
 the development bucket `modelardata`, if it does not already exist. [MinIO](https://min.io/) can be administered through
 its [web interface](http://localhost:9001). The default username and password, `minioadmin`, can be used to log in.
 A separate compose file is used for [MinIO](https://min.io/) so an existing [MinIO](https://min.io/) instance can be

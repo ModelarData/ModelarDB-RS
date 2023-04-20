@@ -21,6 +21,9 @@ for communicating with clients, [Apache Arrow DataFusion](https://github.com/apa
 engine, [Apache Arrow](https://github.com/apache/arrow-rs) as its in-memory data format, and 
 [Apache Parquet](https://github.com/apache/arrow-rs/tree/master/parquet) as its on-disk data format.
 
+ModelarDB intentionally does not gather usage data. So, all users are highly encouraged to post comments, suggestions,
+and bugs as GitHub issues, especially if a limitation of ModelarDB prevents it from being used in a particular domain.
+
 ## Installation
 Refer to the [Installation](docs/user/README.md#installation) section of the [User](docs/user/README.md) documentation 
 for installation instructions on setting up ModelarDB on four major operating systems. To support quickly deploying 
