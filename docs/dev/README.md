@@ -46,7 +46,8 @@ to this repository, are covered here.
 
 ### Documentation
 All public and private functions must have an accompanying doc comment that describes the purpose of the function. For 
-complex functions, the doc comment can also include a description of each parameter, the return value, and examples.
+complex functions, the doc comment should also include a description of each parameter, the return value, 
+and, if beneficial, examples.
 
 All modules must have an accompanying doc comment that describes the general functionality of the module. A brief 
 description of the public functions, structs, enums, or other central elements of the module can be included.

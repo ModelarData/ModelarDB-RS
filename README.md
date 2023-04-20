@@ -26,12 +26,12 @@ and bugs as GitHub issues, especially if a limitation of ModelarDB prevents it f
 
 ## Installation
 Refer to the [Installation](docs/user/README.md#installation) section of the [User](docs/user/README.md) documentation 
-for installation instructions on setting up ModelarDB on four major operating systems. To support quickly deploying 
+for installation instructions on setting up ModelarDB on four major operating systems. To easily experiment with 
 ModelarDB, instructions for setting up a [Docker](https://docs.docker.com/) environment are included in the 
 [Docker](docs/user/README.md#docker) section.
 
 ## Usage
-Usage instructions for running a server, ingesting data, and querying data using ModelarDB is included in the 
+Usage instructions for running a server, ingesting data, and querying data using ModelarDB are included in the 
 [Usage](docs/user/README.md#usage) section of the [User](docs/user/README.md) documentation.
 
 ## Development

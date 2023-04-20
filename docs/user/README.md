@@ -20,8 +20,8 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 
 ### Windows
 1. Install a supported version of [Visual Studio](https://visualstudio.microsoft.com/vs/older-downloads/) with Visual C++:
-   - Visual Studio 2019 ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
-   - Visual Studio 2022 ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
+   - [Visual Studio 2019](https://visualstudio.microsoft.com/vs/older-downloads/#visual-studio-2019-and-other-products) ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
+   - [Visual Studio 2022](https://visualstudio.microsoft.com/vs/) ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
 2. Install [CMake](https://cmake.org/) and select one of the following options during installation:
    - _Add CMake to the system PATH for all users_
    - _Add CMake to the system PATH for current user_
@@ -37,9 +37,9 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 5. Move `modelardbd` and `modelardb` from the `target` directory to any directory.
 
 ## Usage
-`modelardbd` supports two execution modes *edge* and *cloud*. For storage, `modelardbd` uses local storage and an Amazon 
+`modelardbd` supports two execution modes, *edge* and *cloud*. For storage, `modelardbd` uses local storage and an Amazon 
 S3-compatible object store (optional in edge mode). The execution mode dictates where queries are executed. When 
-`modelardbd` is deployed in edge mode it executes queries against local storage and when it is deployed in cloud mode 
+`modelardbd` is deployed in edge mode, it executes queries against local storage and when it is deployed in cloud mode, 
 it executes queries against the object store. For both deployment modes, `modelardbd` automatically compresses the 
 ingested time series using multiple different types of models and continuously transfers this compressed representation 
 from local storage to the object store. Be aware that sharing metadata between multiple instances of `modelardbd` is 
@@ -219,7 +219,7 @@ An environment that includes a local [MinIO](https://min.io/) instance and an ed
 instance as the remote object store, can be set up using [Docker](https://docs.docker.com/). Note that since
 [Rust](https://www.rust-lang.org/) is a compiled language and a more dynamic `modelardbd` configuration might be needed,
 it is not recommended to use the [Docker](https://docs.docker.com/) environment during active development of `modelardbd`.
-It is however ideal to use during more static deployments or when developing components that utilize `modelardbd`.
+It is however ideal to use for experimenting with `modelardbd` or when developing components that utilize `modelardbd`.
 
 Downloading [Docker Desktop](https://docs.docker.com/desktop/) is recommended to make maintenance of the created
 containers easier. Once [Docker](https://docs.docker.com/) is set up, the [MinIO](https://min.io/) instance can be
