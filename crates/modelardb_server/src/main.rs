@@ -77,7 +77,7 @@ impl FromStr for RemoteDataFolderType {
             "s3" => Ok(RemoteDataFolderType::S3),
             "azureblobstorage" => Ok(RemoteDataFolderType::AzureBlobStorage),
             _ => Err(format!(
-                "'{}' is not a valid value for ObjectStoreType.",
+                "'{}' is not a valid value for RemoteDataFolderType.",
                 value
             )),
         }
