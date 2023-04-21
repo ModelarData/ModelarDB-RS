@@ -48,7 +48,7 @@ pub(super) const VALUE_SIZE_IN_BYTES: u8 = mem::size_of::<Value>() as u8;
 pub(super) const VALUE_SIZE_IN_BITS: u8 = 8 * VALUE_SIZE_IN_BYTES;
 
 /// General error bound that is guaranteed to not be negative, infinite, or NAN. For [`PMCMean`],
-/// [`Swing`], and [`Gorilla`],  the error bound is interpreted as a relative per value error bound
+/// [`Swing`], and [`Gorilla`], the error bound is interpreted as a relative per value error bound
 /// in percentage. [`Gorilla`] only uses lossy compression if it receives a value that can be
 /// compressed within the error bound, thus it will never exceed the error bound.
 #[derive(Debug, Copy, Clone)]
@@ -365,46 +365,52 @@ mod tests {
         assert!(ErrorBound::try_new(f32::NAN).is_err())
     }
 
-    // is_value_within_error_bound().
+    // Tests for is_value_within_error_bound().
     proptest! {
     #[test]
     fn test_same_value_is_always_within_error_bound(value in ProptestValue::ANY) {
         prop_assert!(is_value_within_error_bound(ErrorBound::try_new(0.0).unwrap(), value, value));
     }
 
+    #[test]
     fn test_other_value_is_never_within_error_bound_of_positive_infinity(value in ProptestValue::ANY) {
         prop_assume!(value != Value::INFINITY);
-        prop_assert!(is_value_within_error_bound(
+        prop_assert!(!is_value_within_error_bound(
             ErrorBound::try_new(f32::MAX).unwrap(), Value::INFINITY, value));
     }
 
+    #[test]
     fn test_other_value_is_never_within_error_bound_of_negative_infinity(value in ProptestValue::ANY) {
         prop_assume!(value != Value::NEG_INFINITY);
-        prop_assert!(is_value_within_error_bound(
+        prop_assert!(!is_value_within_error_bound(
             ErrorBound::try_new(f32::MAX).unwrap(), Value::NEG_INFINITY, value));
     }
 
+    #[test]
     fn test_other_value_is_never_within_error_bound_of_nan(value in ProptestValue::ANY) {
         prop_assume!(!value.is_nan());
-        prop_assert!(is_value_within_error_bound(
+        prop_assert!(!is_value_within_error_bound(
             ErrorBound::try_new(f32::MAX).unwrap(), Value::NAN, value));
     }
 
+    #[test]
     fn test_positive_infinity_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
         prop_assume!(value != Value::INFINITY);
-        prop_assert!(is_value_within_error_bound(
+        prop_assert!(!is_value_within_error_bound(
             ErrorBound::try_new(f32::MAX).unwrap(), value, Value::INFINITY));
     }
 
+    #[test]
     fn test_negative_infinity_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
         prop_assume!(value != Value::NEG_INFINITY);
-        prop_assert!(is_value_within_error_bound(
+        prop_assert!(!is_value_within_error_bound(
             ErrorBound::try_new(f32::MAX).unwrap(), value, Value::NEG_INFINITY));
     }
 
+    #[test]
     fn test_nan_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
         prop_assume!(!value.is_nan());
-        prop_assert!(is_value_within_error_bound(
+        prop_assert!(!is_value_within_error_bound(
             ErrorBound::try_new(f32::MAX).unwrap(), value, Value::NAN));
     }
     }
@@ -512,7 +518,6 @@ mod tests {
     }
 
     // Tests for compress_residual_value_range().
-    // TODO
     #[test]
     fn test_compress_all_residual_value_range() {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
