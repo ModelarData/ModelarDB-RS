@@ -40,12 +40,10 @@ project, a detailed description of each major component, and an outline of the g
 to when contributing to the project.
 
 ## Research-Based
-The deprecated prototype of ModelarDB was implemented using [Apache Spark](https://www.h2database.com/html/main.html),
-[Apache Cassandra](https://cassandra.apache.org/_/index.html), and [H2](https://www.h2database.com/html/main.html)
-and was developed as part of a [research project](https://github.com/skejserjensen/ModelarDB) at Aalborg University and
-later as an [open-source project](https://github.com/ModelarData/ModelarDB). While the deprecated JVM-based prototype 
-validated the benefits of using a model-based representation for time series, it has been superseded by this current,
-much more efficient, Rust-based implementation.
+A deprecated JVM-based prototype of ModelarDB was developed as part of a [research project](https://github.com/skejserjensen/ModelarDB) 
+at Aalborg University and later as an [open-source project](https://github.com/ModelarData/ModelarDB). While the 
+deprecated JVM-based prototype validated the benefits of using a model-based representation for time series, it 
+has been superseded by this current, much more efficient, Rust-based implementation.
 
 ## License
 ModelarDB is licensed under version 2.0 of the Apache License and a copy of the
