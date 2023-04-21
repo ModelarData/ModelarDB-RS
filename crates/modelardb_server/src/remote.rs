@@ -62,7 +62,7 @@ use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::{validate_remote_data_folder, Context, ServerMode};
+use crate::{validate_remote_data_folder, Context, ServerMode, RemoteDataFolderType};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
@@ -165,7 +165,7 @@ async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status>
             .map_err(|error| Status::invalid_argument(error.to_string()))?,
     );
 
-    validate_remote_data_folder("s3", &s3)
+    validate_remote_data_folder(RemoteDataFolderType::S3, &s3)
         .await
         .map_err(Status::invalid_argument)?;
 
@@ -190,7 +190,7 @@ async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Arc<dyn Objec
             .map_err(|error| Status::invalid_argument(error.to_string()))?,
     );
 
-    validate_remote_data_folder("azureblobstorage", &azure_blob_storage)
+    validate_remote_data_folder(RemoteDataFolderType::AzureBlobStorage, &azure_blob_storage)
         .await
         .map_err(Status::invalid_argument)?;
 
