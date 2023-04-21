@@ -46,7 +46,7 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 5. Move `modelardbd` and `modelardb` from the `target` directory to any directory.
 
 ## Usage
-`modelardbd` supports two execution modes *edge* and *cloud*. For storage, `modelardbd` uses local storage and an Amazon S3-compatible object store (optional in edge mode). The execution mode dictates where queries are executed. When `modelardbd` is deployed in edge mode it executes queries against local storage and when it is deployed in cloud mode it executes queries against the object store. For both deployment modes, `modelardbd` automatically compresses the ingested time series using multiple different types of models and continuously transfers this compressed representation from local storage to the object store. Be aware that sharing metadata between multiple instances of `modelardbd` is currently under development, thus only the instance of `modelardbd` that ingested a time series can currently query it.
+`modelardbd` supports two execution modes *edge* and *cloud*. For storage, `modelardbd` uses local storage and an Amazon S3-compatible or Azure Blob Storage object store (optional in edge mode). The execution mode dictates where queries are executed. When `modelardbd` is deployed in edge mode it executes queries against local storage and when it is deployed in cloud mode it executes queries against the object store. For both deployment modes, `modelardbd` automatically compresses the ingested time series using multiple different types of models and continuously transfers this compressed representation from local storage to the object store. Be aware that sharing metadata between multiple instances of `modelardbd` is currently under development, thus only the instance of `modelardbd` that ingested a time series can currently query it.
 
 ### Start Server
 To run `modelardbd` in edge mode using only local storage, i.e., without transferring the ingested time series to an object store, simply pass the path to the local folder `modelardbd` should use as its data folder:
@@ -90,8 +90,9 @@ AZURE_STORAGE_ACCOUNT_NAME
 AZURE_STORAGE_ACCESS_KEY
 ```
 
-`modelardbd` can then be run in edge mode with transfer of the ingested time series to the 
-[Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/) container `wind-turbine`:
+Assuming a container named `wind-turbine` already exists, `modelardbd` can then be run in edge mode with transfer of 
+the ingested time series to the [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/) 
+container `wind-turbine`:
 
 ```shell
 modelardbd edge path_to_local_data_folder azureblobstorage://wind-turbine
