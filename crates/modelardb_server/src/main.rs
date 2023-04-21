@@ -140,11 +140,11 @@ fn main() -> Result<(), String> {
     // after parse_command_line_arguments() as the Tokio Runtime is required.
     if let Some(remote_data_folder) = &data_folders.remote_data_folder {
         // unwrap() is safe since if there is a remote data folder, there is always a valid third argument.
-        let remote_data_folder_type = arguments.get(2).unwrap().split_once("://").unwrap().0;
-        let object_store_type = RemoteDataFolderType::from_str(remote_data_folder_type).unwrap();
+        let object_store_type = arguments.get(2).unwrap().split_once("://").unwrap().0;
+        let remote_data_folder_type = RemoteDataFolderType::from_str(object_store_type).unwrap();
 
         runtime.block_on(async {
-            validate_remote_data_folder(object_store_type, remote_data_folder).await
+            validate_remote_data_folder(remote_data_folder_type, remote_data_folder).await
         })?;
     }
 
