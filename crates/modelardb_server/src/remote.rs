@@ -48,7 +48,6 @@ use modelardb_common::schemas::METRIC_SCHEMA;
 use modelardb_common::types::TimestampBuilder;
 use object_store::aws::AmazonS3Builder;
 use object_store::azure::MicrosoftAzureBuilder;
-use object_store::path::Path;
 use object_store::ObjectStore;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
@@ -63,7 +62,7 @@ use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::{Context, ServerMode};
+use crate::{validate_remote_data_folder, Context, ServerMode, RemoteDataFolderType};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
@@ -154,7 +153,7 @@ async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status>
     let (access_key_id, offset_data) = extract_argument(offset_data)?;
     let (secret_access_key, _offset_data) = extract_argument(offset_data)?;
 
-    let s3 = Arc::new(
+    let s3: Arc<dyn ObjectStore> = Arc::new(
         AmazonS3Builder::new()
             .with_region("")
             .with_allow_http(true)
@@ -166,11 +165,11 @@ async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status>
             .map_err(|error| Status::invalid_argument(error.to_string()))?,
     );
 
-    // Check that the connection is valid by attempting to retrieve a file that does not exist.
-    match s3.get(&Path::from("")).await {
-        Ok(_) => Ok(s3),
-        Err(error) => Err(Status::invalid_argument(error.to_string())),
-    }
+    validate_remote_data_folder(RemoteDataFolderType::S3, &s3)
+        .await
+        .map_err(Status::invalid_argument)?;
+
+    Ok(s3)
 }
 
 /// Parse the arguments in `data` and return an [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
@@ -182,7 +181,7 @@ async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Arc<dyn Objec
     let (access_key, offset_data) = extract_argument(offset_data)?;
     let (container_name, _offset_data) = extract_argument(offset_data)?;
 
-    let azure_blob_storage = Arc::new(
+    let azure_blob_storage: Arc<dyn ObjectStore> = Arc::new(
         MicrosoftAzureBuilder::new()
             .with_account(account)
             .with_access_key(access_key)
@@ -191,16 +190,11 @@ async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Arc<dyn Objec
             .map_err(|error| Status::invalid_argument(error.to_string()))?,
     );
 
-    // Check that the connection is valid by attempting to retrieve a file that does not exist.
-    match azure_blob_storage.get(&Path::from("")).await {
-        Ok(_) => Ok(azure_blob_storage),
-        // Note that the same error is returned if the object was not found due to the object not
-        // existing and due to the container not existing.
-        Err(error) => match error {
-            object_store::Error::NotFound { .. } => Ok(azure_blob_storage),
-            _ => Err(Status::invalid_argument(error.to_string())),
-        },
-    }
+    validate_remote_data_folder(RemoteDataFolderType::AzureBlobStorage, &azure_blob_storage)
+        .await
+        .map_err(Status::invalid_argument)?;
+
+    Ok(azure_blob_storage)
 }
 
 /// Assumes `data` is a slice containing one or more arguments with the following format:
@@ -763,7 +757,7 @@ impl FlightService for FlightServiceHandler {
                 // TODO: The query data folder should be updated in the session context.
                 return Err(Status::unimplemented(
                     "Currently not possible to update remote object store on cloud nodes.",
-                ))
+                ));
             }
 
             // If the type of the new remote object store is not "s3" or "azureblobstorage", return an error.
