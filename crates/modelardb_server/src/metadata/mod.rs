@@ -748,6 +748,7 @@ mod tests {
 
     use std::fs;
 
+    use proptest::strategy::Strategy;
     use proptest::{collection, num, prop_assert_eq, proptest};
 
     use crate::metadata::test_util;
@@ -1204,14 +1205,21 @@ mod tests {
         }
 
         #[test]
-        fn test_error_bound_to_u8_and_u8_to_error_bound(values in collection::vec(num::f32::POSITIVE, 0..50)) {
-            let error_bounds: Vec<ErrorBound> = values
+        fn test_error_bound_to_u8_and_u8_to_error_bound(
+            percentages in collection::vec(num::f32::POSITIVE, 0..50).prop_map(|percentages| 
+                percentages.iter().map(|percentage| percentage % 100.0).collect::<Vec<f32>>())
+        ) {
+            // The stragegy computing percentages is not perfect as it cannot generate the value
+            // 100.0, but it does not seem possible to create a simple stragegy that can generate
+            // any positive f32 value from 0.0 to 100.0.
+            let error_bounds: Vec<ErrorBound> = percentages
                 .iter()
-                .map(|value| ErrorBound::try_new(*value).unwrap())
+                .map(|percentage| ErrorBound::try_new(*percentage).unwrap())
                 .collect();
             let bytes = MetadataManager::convert_slice_error_bounds_to_vec_u8(&error_bounds);
             let usizes = MetadataManager::convert_slice_u8_to_vec_error_bounds(&bytes).unwrap();
-            prop_assert_eq!(values, usizes);
+
+            prop_assert_eq!(percentages, usizes);
         }
     }
 }
