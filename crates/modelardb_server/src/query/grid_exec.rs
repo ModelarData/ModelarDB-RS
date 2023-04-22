@@ -256,6 +256,7 @@ impl GridStream {
             min_values,
             max_values,
             values,
+            _residuals,
             _error_array
         );
 

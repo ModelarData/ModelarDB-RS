@@ -862,7 +862,7 @@ pub mod test_util {
     use modelardb_common::schemas::COMPRESSED_SCHEMA;
     use modelardb_common::types::{TimestampArray, ValueArray};
 
-    pub const COMPRESSED_SEGMENTS_SIZE: usize = 2055;
+    pub const COMPRESSED_SEGMENTS_SIZE: usize = 2351;
 
     /// Return a [`RecordBatch`] containing three compressed segments.
     pub fn compressed_segments_record_batch() -> RecordBatch {
@@ -886,6 +886,7 @@ pub mod test_util {
         let min_value = ValueArray::from(min_values);
         let max_value = ValueArray::from(max_values);
         let values = BinaryArray::from_vec(vec![b"1111", b"1000", b"0000"]);
+        let residuals = BinaryArray::from_vec(vec![b"", b"", b""]);
         let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
 
         let schema = COMPRESSED_SCHEMA.clone();
@@ -901,6 +902,7 @@ pub mod test_util {
                 Arc::new(min_value),
                 Arc::new(max_value),
                 Arc::new(values),
+                Arc::new(residuals),
                 Arc::new(error),
             ],
         )

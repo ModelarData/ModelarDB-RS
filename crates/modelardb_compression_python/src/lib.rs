@@ -103,6 +103,7 @@ fn decompress<'a>(compressed: &'a PyAny, python: Python<'a>) -> PyResult<&'a PyA
         min_values,
         max_values,
         values,
+        _residuals,
         _error_array
     );
 

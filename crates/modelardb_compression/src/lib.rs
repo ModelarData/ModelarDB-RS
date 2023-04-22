@@ -207,6 +207,7 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
         min_values,
         max_values,
         values,
+        _residuals,
         errors
     );
 
@@ -426,6 +427,10 @@ struct CompressedSegmentBatchBuilder {
     /// the values of each compressed segment in the batch within an error
     /// bound.
     values: BinaryBuilder,
+    /// Values between this and the next segment, compressed using [`Gorilla`],
+    /// that the models could not represent efficiently within the error bound
+    /// and which are too few for a new segment due to the amount of metadata.
+    residuals: BinaryBuilder,
     /// Actual error of each compressed segment in the batch.
     error: Float32Builder,
 }
@@ -441,6 +446,7 @@ impl CompressedSegmentBatchBuilder {
             min_values: ValueBuilder::with_capacity(capacity),
             max_values: ValueBuilder::with_capacity(capacity),
             values: BinaryBuilder::with_capacity(capacity, capacity),
+            residuals: BinaryBuilder::with_capacity(capacity, capacity),
             error: Float32Builder::with_capacity(capacity),
         }
     }
@@ -467,6 +473,7 @@ impl CompressedSegmentBatchBuilder {
         self.min_values.append_value(min_value);
         self.max_values.append_value(max_value);
         self.values.append_value(values);
+        self.residuals.append_value(values); // TODO: Pass the actual residual
         self.error.append_value(error);
     }
 
@@ -483,6 +490,7 @@ impl CompressedSegmentBatchBuilder {
                 Arc::new(self.min_values.finish()),
                 Arc::new(self.max_values.finish()),
                 Arc::new(self.values.finish()),
+                Arc::new(self.residuals.finish()),
                 Arc::new(self.error.finish()),
             ],
         )
@@ -840,13 +848,19 @@ mod tests {
         let merged_record_batch = merge_segments(compressed_record_batch);
 
         // Extract the columns from the RecordBatch.
-        let start_times = modelardb_common::array!(merged_record_batch, 2, TimestampArray);
-        let end_times = modelardb_common::array!(merged_record_batch, 3, TimestampArray);
-        let timestamps = modelardb_common::array!(merged_record_batch, 4, BinaryArray);
-        let min_values = modelardb_common::array!(merged_record_batch, 5, ValueArray);
-        let max_values = modelardb_common::array!(merged_record_batch, 6, ValueArray);
-        let values = modelardb_common::array!(merged_record_batch, 7, BinaryArray);
-        let errors = modelardb_common::array!(merged_record_batch, 8, Float32Array);
+        modelardb_common::arrays!(
+            merged_record_batch,
+            _univariate_ids,
+            _model_type_ids,
+            start_times,
+            end_times,
+            timestamps,
+            min_values,
+            max_values,
+            values,
+            _residuals,
+            errors
+        );
 
         // Assert that the number of segments are correct.
         assert_eq!(2, merged_record_batch.num_rows());

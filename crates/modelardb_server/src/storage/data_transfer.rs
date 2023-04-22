@@ -249,7 +249,7 @@ mod tests {
 
     const TABLE_NAME: &str = "table";
     const COLUMN_INDEX: u16 = 5;
-    const COMPRESSED_FILE_SIZE: usize = 2126;
+    const COMPRESSED_FILE_SIZE: usize = 2348;
 
     // Tests for path_is_compressed_file().
     #[test]

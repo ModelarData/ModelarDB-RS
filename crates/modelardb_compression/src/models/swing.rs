@@ -578,6 +578,7 @@ mod tests {
             min_value_array,
             max_value_array,
             values_array,
+            _residual_array,
             _error_array
         );
 
