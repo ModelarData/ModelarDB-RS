@@ -56,7 +56,7 @@ impl ErrorBound {
     /// Return [`ErrorBound`] if `percentage` is a value from 0.0% to 100.0%, otherwise
     /// [`CompressionError`](ModelarDbError::CompressionError) is returned.
     pub fn try_new(percentage: f32) -> Result<Self, ModelarDbError> {
-        if !(0.0..=100.0).contains(&percentage) || percentage.is_infinite() || percentage.is_nan() {
+        if !(0.0..=100.0).contains(&percentage) {
             Err(ModelarDbError::CompressionError(
                 "Error bound must be a value from 0.0% to 100.0%.".to_owned(),
             ))
