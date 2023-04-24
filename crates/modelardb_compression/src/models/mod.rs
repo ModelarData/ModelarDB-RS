@@ -377,42 +377,42 @@ mod tests {
     fn test_other_value_is_never_within_error_bound_of_positive_infinity(value in ProptestValue::ANY) {
         prop_assume!(value != Value::INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(f32::MAX).unwrap(), Value::INFINITY, value));
+            ErrorBound::try_new(100.0).unwrap(), Value::INFINITY, value));
     }
 
     #[test]
     fn test_other_value_is_never_within_error_bound_of_negative_infinity(value in ProptestValue::ANY) {
         prop_assume!(value != Value::NEG_INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(f32::MAX).unwrap(), Value::NEG_INFINITY, value));
+            ErrorBound::try_new(100.0).unwrap(), Value::NEG_INFINITY, value));
     }
 
     #[test]
     fn test_other_value_is_never_within_error_bound_of_nan(value in ProptestValue::ANY) {
         prop_assume!(!value.is_nan());
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(f32::MAX).unwrap(), Value::NAN, value));
+            ErrorBound::try_new(100.0).unwrap(), Value::NAN, value));
     }
 
     #[test]
     fn test_positive_infinity_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
         prop_assume!(value != Value::INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(f32::MAX).unwrap(), value, Value::INFINITY));
+            ErrorBound::try_new(100.0).unwrap(), value, Value::INFINITY));
     }
 
     #[test]
     fn test_negative_infinity_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
         prop_assume!(value != Value::NEG_INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(f32::MAX).unwrap(), value, Value::NEG_INFINITY));
+            ErrorBound::try_new(100.0).unwrap(), value, Value::NEG_INFINITY));
     }
 
     #[test]
     fn test_nan_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
         prop_assume!(!value.is_nan());
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(f32::MAX).unwrap(), value, Value::NAN));
+            ErrorBound::try_new(100.0).unwrap(), value, Value::NAN));
     }
     }
 
