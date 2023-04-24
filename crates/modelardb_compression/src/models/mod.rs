@@ -18,8 +18,6 @@
 //! each type. The module itself contains general functionality used by the
 //! model types.
 
-// TODO: Test irregular and regular time series in models/* and compression.rs.
-
 pub mod bits;
 pub mod gorilla;
 pub mod pmc_mean;
@@ -49,10 +47,10 @@ pub(super) const VALUE_SIZE_IN_BYTES: u8 = mem::size_of::<Value>() as u8;
 /// Size of [`Value`] in bits.
 pub(super) const VALUE_SIZE_IN_BITS: u8 = 8 * VALUE_SIZE_IN_BYTES;
 
-/// General error bound that is guaranteed to not be negative, infinite, or NAN.
-/// For [`PMCMean`] and [`Swing`] the error bound is interpreted as a relative
-/// per value error bound in percentage, while [`Gorilla`] uses lossless
-/// compression.
+/// General error bound that is guaranteed to not be negative, infinite, or NAN. For [`PMCMean`],
+/// [`Swing`], and [`Gorilla`], the error bound is interpreted as a relative per value error bound
+/// in percentage. [`Gorilla`] only uses lossy compression if it receives a value that can be
+/// compressed within the error bound, thus it will never exceed the error bound.
 #[derive(Debug, Copy, Clone)]
 pub struct ErrorBound(f32);
 
@@ -87,6 +85,23 @@ impl PartialEq<ErrorBound> for f32 {
 impl PartialOrd<ErrorBound> for f32 {
     fn partial_cmp(&self, other: &ErrorBound) -> Option<Ordering> {
         self.partial_cmp(&other.0)
+    }
+}
+
+/// Determine if `approximate_value` is within `error_bound` of `real_value`.
+pub fn is_value_within_error_bound(
+    error_bound: ErrorBound,
+    real_value: Value,
+    approximate_value: Value,
+) -> bool {
+    // Needed because result becomes NAN and approximate_value is rejected
+    // if approximate_value and real_value are zero, and because NAN != NAN.
+    if equal_or_nan(real_value as f64, approximate_value as f64) {
+        true
+    } else {
+        let difference = real_value - approximate_value;
+        let result = Value::abs(difference / real_value);
+        (result * 100.0) <= error_bound
     }
 }
 
@@ -167,6 +182,7 @@ impl SelectedModel {
 /// Compress the values from `start_index` to `end_index` in `uncompressed_values` using
 /// [`Gorilla`].
 pub fn compress_residual_value_range(
+    error_bound: ErrorBound,
     start_index: usize,
     end_index: usize,
     uncompressed_values: &ValueArray,
@@ -185,7 +201,7 @@ pub fn compress_residual_value_range(
             Value::max(current_max, *value)
         });
 
-    let mut gorilla = Gorilla::new();
+    let mut gorilla = Gorilla::new(error_bound);
     for value in uncompressed_values {
         gorilla.compress_value(*value)
     }
@@ -314,6 +330,7 @@ mod tests {
     use compression_test_util::StructureOfValues;
     use modelardb_common::types::TimestampArray;
     use proptest::num;
+    use proptest::num::f32 as ProptestValue;
     use proptest::{prop_assert, prop_assume, proptest};
 
     use crate::test_util as compression_test_util;
@@ -346,6 +363,65 @@ mod tests {
     #[test]
     fn test_error_bound_cannot_be_nan() {
         assert!(ErrorBound::try_new(f32::NAN).is_err())
+    }
+
+    // Tests for is_value_within_error_bound().
+    proptest! {
+    #[test]
+    fn test_same_value_is_always_within_error_bound(value in ProptestValue::ANY) {
+        prop_assert!(is_value_within_error_bound(ErrorBound::try_new(0.0).unwrap(), value, value));
+    }
+
+    #[test]
+    fn test_other_value_is_never_within_error_bound_of_positive_infinity(value in ProptestValue::ANY) {
+        prop_assume!(value != Value::INFINITY);
+        prop_assert!(!is_value_within_error_bound(
+            ErrorBound::try_new(f32::MAX).unwrap(), Value::INFINITY, value));
+    }
+
+    #[test]
+    fn test_other_value_is_never_within_error_bound_of_negative_infinity(value in ProptestValue::ANY) {
+        prop_assume!(value != Value::NEG_INFINITY);
+        prop_assert!(!is_value_within_error_bound(
+            ErrorBound::try_new(f32::MAX).unwrap(), Value::NEG_INFINITY, value));
+    }
+
+    #[test]
+    fn test_other_value_is_never_within_error_bound_of_nan(value in ProptestValue::ANY) {
+        prop_assume!(!value.is_nan());
+        prop_assert!(!is_value_within_error_bound(
+            ErrorBound::try_new(f32::MAX).unwrap(), Value::NAN, value));
+    }
+
+    #[test]
+    fn test_positive_infinity_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
+        prop_assume!(value != Value::INFINITY);
+        prop_assert!(!is_value_within_error_bound(
+            ErrorBound::try_new(f32::MAX).unwrap(), value, Value::INFINITY));
+    }
+
+    #[test]
+    fn test_negative_infinity_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
+        prop_assume!(value != Value::NEG_INFINITY);
+        prop_assert!(!is_value_within_error_bound(
+            ErrorBound::try_new(f32::MAX).unwrap(), value, Value::NEG_INFINITY));
+    }
+
+    #[test]
+    fn test_nan_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
+        prop_assume!(!value.is_nan());
+        prop_assert!(!is_value_within_error_bound(
+            ErrorBound::try_new(f32::MAX).unwrap(), value, Value::NAN));
+    }
+    }
+
+    #[test]
+    fn test_different_value_is_within_non_zero_error_bound() {
+        assert!(is_value_within_error_bound(
+            ErrorBound::try_new(10.0).unwrap(),
+            10.0,
+            11.0
+        ));
     }
 
     // Tests for SelectedModel.
@@ -444,9 +520,14 @@ mod tests {
     // Tests for compress_residual_value_range().
     #[test]
     fn test_compress_all_residual_value_range() {
+        let error_bound = ErrorBound::try_new(0.0).unwrap();
         let uncompressed_values = ValueArray::from(vec![73.0, 37.0, 37.0, 37.0, 73.0]);
-        let selected_model =
-            compress_residual_value_range(0, uncompressed_values.len() - 1, &uncompressed_values);
+        let selected_model = compress_residual_value_range(
+            error_bound,
+            0,
+            uncompressed_values.len() - 1,
+            &uncompressed_values,
+        );
 
         assert_eq!(GORILLA_ID, selected_model.model_type_id);
         assert_eq!(uncompressed_values.len() - 1, selected_model.end_index);
@@ -457,9 +538,9 @@ mod tests {
 
     #[test]
     fn test_compress_some_residual_value_range() {
+        let error_bound = ErrorBound::try_new(0.0).unwrap();
         let uncompressed_values = ValueArray::from(vec![73.0, 37.0, 37.0, 37.0, 73.0]);
-        let selected_model =
-            compress_residual_value_range(1, 3, &uncompressed_values);
+        let selected_model = compress_residual_value_range(error_bound, 1, 3, &uncompressed_values);
 
         assert_eq!(GORILLA_ID, selected_model.model_type_id);
         assert_eq!(3, selected_model.end_index);

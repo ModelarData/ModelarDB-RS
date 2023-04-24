@@ -13,12 +13,12 @@
  * limitations under the License.
  */
 
-//! Implementation of the Gorilla model type which uses the lossless compression
-//! method for floating-point values proposed for the time series management
-//! system Gorilla in the [Gorilla paper]. As this compression method compresses
-//! the values of a time series segment using XOR and a variable length binary
-//! encoding, aggregates are computed by iterating over all values in the
-//! segment.
+//! Implementation of the Gorilla model type which uses the lossless compression method for
+//! floating-point values proposed for the time series management system Gorilla in the [Gorilla
+//! paper]. The compression method described in the paper has been extended with support for lossy
+//! compression by replacing values with the previous value if possible within the error bound. As
+//! this compression method compresses the values of a time series segment using XOR and a variable
+//! length binary encoding, aggregates are computed by iterating over all values in the segment.
 //!
 //! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 
@@ -27,10 +27,13 @@ use modelardb_common::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Valu
 
 use crate::models;
 use crate::models::bits::{BitReader, BitVecBuilder};
+use crate::models::ErrorBound;
 
 /// The state the Gorilla model type needs while compressing the values of a
 /// time series segment.
 pub struct Gorilla {
+    /// Maximum relative error for the value of each data point.
+    error_bound: ErrorBound,
     /// Last value compressed and added to `compressed_values`.
     last_value: Value,
     /// Number of leading zero bits for the last value that was compressed by
@@ -42,12 +45,13 @@ pub struct Gorilla {
     /// Values compressed using XOR and a variable length binary encoding.
     compressed_values: BitVecBuilder,
     /// The number of values stored in `compressed_values`.
-    pub length: usize, // TODO: use Gorilla as a fallback to remove pub.
+    length: usize,
 }
 
 impl Gorilla {
-    pub fn new() -> Self {
+    pub fn new(error_bound: ErrorBound) -> Self {
         Self {
+            error_bound,
             last_value: 0.0,
             last_leading_zero_bits: u8::MAX,
             last_trailing_zero_bits: 0,
@@ -59,6 +63,14 @@ impl Gorilla {
     /// Compress `value` using XOR and a variable length binary encoding and
     /// append the compressed value to an internal buffer in [`Gorilla`].
     pub fn compress_value(&mut self, value: Value) {
+        // The best case for Gorilla is storing duplicate values.
+        let value = if models::is_value_within_error_bound(self.error_bound, value, self.last_value)
+        {
+            self.last_value
+        } else {
+            value
+        };
+
         let value_as_integer = value.to_bits();
         let last_value_as_integer = self.last_value.to_bits();
         let value_xor_last_value = value_as_integer ^ last_value_as_integer;
@@ -129,12 +141,6 @@ impl Gorilla {
     /// encoding.
     pub fn compressed_values(self) -> Vec<u8> {
         self.compressed_values.finish()
-    }
-}
-
-impl Default for Gorilla {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
@@ -234,14 +240,18 @@ mod tests {
     // Tests for Gorilla.
     #[test]
     fn test_empty_sequence() {
-        assert!(Gorilla::new().compressed_values().is_empty());
+        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        assert!(Gorilla::new(error_bound).compressed_values().is_empty());
     }
 
     proptest! {
     #[test]
     fn test_append_single_value(value in ProptestValue::ANY) {
-        let mut model_type = Gorilla::new();
+        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let mut model_type = Gorilla::new(error_bound);
+
         model_type.compress_value(value);
+
         prop_assert!(models::equal_or_nan(value as f64, model_type.last_value as f64));
         prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
         prop_assert_eq!(model_type.last_trailing_zero_bits, 0);
@@ -249,9 +259,12 @@ mod tests {
 
     #[test]
     fn test_append_repeated_values(value in ProptestValue::ANY) {
-        let mut model_type = Gorilla::new();
+        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let mut model_type = Gorilla::new(error_bound);
+
         model_type.compress_value(value);
         model_type.compress_value(value);
+
         prop_assert!(models::equal_or_nan(value as f64, model_type.last_value as f64));
         prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
         prop_assert_eq!(model_type.last_trailing_zero_bits, 0);
@@ -260,9 +273,12 @@ mod tests {
 
     #[test]
     fn test_append_different_values_with_leading_zero_bits() {
-        let mut model_type = Gorilla::new();
+        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let mut model_type = Gorilla::new(error_bound);
+
         model_type.compress_value(37.0);
         model_type.compress_value(73.0);
+
         assert!(models::equal_or_nan(73.0, model_type.last_value as f64));
         assert_eq!(model_type.last_leading_zero_bits, 8);
         assert_eq!(model_type.last_trailing_zero_bits, 17);
@@ -270,13 +286,40 @@ mod tests {
 
     #[test]
     fn test_append_different_values_without_leading_zero_bits() {
-        let mut model_type = Gorilla::new();
+        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let mut model_type = Gorilla::new(error_bound);
+
         model_type.compress_value(37.0);
         model_type.compress_value(71.0);
         model_type.compress_value(73.0);
+
         assert!(models::equal_or_nan(73.0, model_type.last_value as f64));
         assert_eq!(model_type.last_leading_zero_bits, 8);
         assert_eq!(model_type.last_trailing_zero_bits, 17);
+    }
+
+    #[test]
+    fn test_append_values_within_error_bound() {
+        let error_bound = ErrorBound::try_new(10.0).unwrap();
+        let mut model_type = Gorilla::new(error_bound);
+
+        model_type.compress_value(10.0);
+        let before_last_value = model_type.last_value;
+        let before_last_leading_zero_bits = model_type.last_leading_zero_bits;
+        let before_last_trailing_zero_bits = model_type.last_trailing_zero_bits;
+
+        model_type.compress_value(11.0);
+
+        // State should be unchanged when the value is within the error bound.
+        assert_eq!(before_last_value, model_type.last_value);
+        assert_eq!(
+            before_last_leading_zero_bits,
+            model_type.last_leading_zero_bits
+        );
+        assert_eq!(
+            before_last_trailing_zero_bits,
+            model_type.last_trailing_zero_bits
+        );
     }
 
     // Tests for sum().
@@ -326,7 +369,8 @@ mod tests {
     }
 
     fn compress_values_using_gorilla(values: &[Value]) -> Vec<u8> {
-        let mut model_type = Gorilla::new();
+        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let mut model_type = Gorilla::new(error_bound);
         for value in values {
             model_type.compress_value(*value);
         }
