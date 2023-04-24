@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn test_cannot_fit_other_value_and_positive_infinity(value in ProptestValue::ANY) {
         prop_assume!(value != Value::INFINITY);
-        let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(100.0).unwrap();
         let mut model_type = Swing::new(error_bound_max);
         prop_assert!(model_type.fit_data_point(START_TIME, value));
         prop_assert!(!model_type.fit_data_point(END_TIME, Value::INFINITY));
@@ -398,7 +398,7 @@ mod tests {
     #[test]
     fn test_cannot_fit_other_value_and_negative_infinity(value in ProptestValue::ANY) {
         prop_assume!(value != Value::NEG_INFINITY);
-        let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(100.0).unwrap();
         let mut model_type = Swing::new(error_bound_max);
         prop_assert!(model_type.fit_data_point(START_TIME, value));
         prop_assert!(!model_type.fit_data_point(END_TIME, Value::NEG_INFINITY));
@@ -407,7 +407,7 @@ mod tests {
     #[test]
     fn test_cannot_fit_other_value_and_nan(value in ProptestValue::ANY) {
         prop_assume!(!value.is_nan());
-        let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(100.0).unwrap();
         let mut model_type = Swing::new(error_bound_max);
         prop_assert!(model_type.fit_data_point(START_TIME, value));
         prop_assert!(!model_type.fit_data_point(END_TIME, Value::NAN));
@@ -416,7 +416,7 @@ mod tests {
     #[test]
     fn test_cannot_fit_positive_infinity_and_other_value(value in ProptestValue::ANY) {
         prop_assume!(value != Value::INFINITY);
-        let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(100.0).unwrap();
         let mut model_type = Swing::new(error_bound_max);
         prop_assert!(model_type.fit_data_point(START_TIME, Value::INFINITY));
         prop_assert!(!model_type.fit_data_point(END_TIME, value));
@@ -425,7 +425,7 @@ mod tests {
     #[test]
     fn test_cannot_fit_negative_infinity_and_other_value(value in ProptestValue::ANY) {
         prop_assume!(value != Value::NEG_INFINITY);
-        let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(100.0).unwrap();
         let mut model_type = Swing::new(error_bound_max);
         prop_assert!(model_type.fit_data_point(START_TIME, Value::NEG_INFINITY));
         prop_assert!(!model_type.fit_data_point(END_TIME, value));
@@ -434,7 +434,7 @@ mod tests {
     #[test]
     fn test_cannot_fit_nan_and_other_value(value in ProptestValue::ANY) {
         prop_assume!(!value.is_nan());
-        let error_bound_max = ErrorBound::try_new(Value::MAX).unwrap();
+        let error_bound_max = ErrorBound::try_new(100.0).unwrap();
         let mut model_type = Swing::new(error_bound_max);
         prop_assert!(model_type.fit_data_point(START_TIME, Value::NAN));
         prop_assert!(!model_type.fit_data_point(END_TIME, value));

@@ -47,28 +47,25 @@ pub(super) const VALUE_SIZE_IN_BYTES: u8 = mem::size_of::<Value>() as u8;
 /// Size of [`Value`] in bits.
 pub(super) const VALUE_SIZE_IN_BITS: u8 = 8 * VALUE_SIZE_IN_BYTES;
 
-/// General error bound that is guaranteed to not be negative, infinite, or NAN. For [`PMCMean`],
-/// [`Swing`], and [`Gorilla`], the error bound is interpreted as a relative per value error bound
-/// in percentage. [`Gorilla`] only uses lossy compression if it receives a value that can be
-/// compressed within the error bound, thus it will never exceed the error bound.
+/// Error bound in percentage that is guaranteed to be from 0.0% to 100.0%. For both [`PMCMean`],
+/// [`Swing`], and [`Gorilla`] the error bound is interpreted as a relative per value error bound.
 #[derive(Debug, Copy, Clone)]
 pub struct ErrorBound(f32);
 
 impl ErrorBound {
-    /// Return [`ErrorBound`] if `error_bound` is a positive finite value,
-    /// otherwise [`CompressionError`](ModelarDbError::CompressionError).
-    pub fn try_new(error_bound: f32) -> Result<Self, ModelarDbError> {
-        if error_bound < 0.0 || error_bound.is_infinite() || error_bound.is_nan() {
+    /// Return [`ErrorBound`] if `percentage` is a value from 0.0% to 100.0%, otherwise
+    /// [`CompressionError`](ModelarDbError::CompressionError) is returned.
+    pub fn try_new(percentage: f32) -> Result<Self, ModelarDbError> {
+        if !(0.0..=100.0).contains(&percentage) {
             Err(ModelarDbError::CompressionError(
-                "Error bound cannot be negative, infinite, or NAN.".to_owned(),
+                "Error bound must be a value from 0.0% to 100.0%.".to_owned(),
             ))
         } else {
-            Ok(Self(error_bound))
+            Ok(Self(percentage))
         }
     }
 
-    /// Return the memory representation of the error bound as a byte array in
-    /// little-endian byte order.
+    /// Return the [`f32`] error bound as a byte array in little-endian order.
     pub fn to_le_bytes(self) -> [u8; 4] {
         self.0.to_le_bytes()
     }
@@ -340,13 +337,17 @@ mod tests {
     // Tests for ErrorBound.
     proptest! {
     #[test]
-    fn test_error_bound_can_be_positive(error_bound in num::f32::POSITIVE) {
-        assert!(ErrorBound::try_new(error_bound).is_ok())
+    fn test_error_bound_can_be_positive_if_less_than_one_hundred(percentage in num::f32::POSITIVE) {
+        if percentage <= 100.0 {
+            assert!(ErrorBound::try_new(percentage).is_ok())
+        } else {
+            assert!(ErrorBound::try_new(percentage).is_err())
+        }
     }
 
     #[test]
-    fn test_error_bound_cannot_be_negative(error_bound in num::f32::NEGATIVE) {
-        assert!(ErrorBound::try_new(error_bound).is_err())
+    fn test_error_bound_cannot_be_negative(percentage in num::f32::NEGATIVE) {
+        assert!(ErrorBound::try_new(percentage).is_err())
     }
     }
 
@@ -376,42 +377,42 @@ mod tests {
     fn test_other_value_is_never_within_error_bound_of_positive_infinity(value in ProptestValue::ANY) {
         prop_assume!(value != Value::INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(f32::MAX).unwrap(), Value::INFINITY, value));
+            ErrorBound::try_new(100.0).unwrap(), Value::INFINITY, value));
     }
 
     #[test]
     fn test_other_value_is_never_within_error_bound_of_negative_infinity(value in ProptestValue::ANY) {
         prop_assume!(value != Value::NEG_INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(f32::MAX).unwrap(), Value::NEG_INFINITY, value));
+            ErrorBound::try_new(100.0).unwrap(), Value::NEG_INFINITY, value));
     }
 
     #[test]
     fn test_other_value_is_never_within_error_bound_of_nan(value in ProptestValue::ANY) {
         prop_assume!(!value.is_nan());
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(f32::MAX).unwrap(), Value::NAN, value));
+            ErrorBound::try_new(100.0).unwrap(), Value::NAN, value));
     }
 
     #[test]
     fn test_positive_infinity_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
         prop_assume!(value != Value::INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(f32::MAX).unwrap(), value, Value::INFINITY));
+            ErrorBound::try_new(100.0).unwrap(), value, Value::INFINITY));
     }
 
     #[test]
     fn test_negative_infinity_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
         prop_assume!(value != Value::NEG_INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(f32::MAX).unwrap(), value, Value::NEG_INFINITY));
+            ErrorBound::try_new(100.0).unwrap(), value, Value::NEG_INFINITY));
     }
 
     #[test]
     fn test_nan_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
         prop_assume!(!value.is_nan());
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(f32::MAX).unwrap(), value, Value::NAN));
+            ErrorBound::try_new(100.0).unwrap(), value, Value::NAN));
     }
     }
 
