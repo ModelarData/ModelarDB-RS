@@ -19,6 +19,7 @@ use std::sync::Arc;
 
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use modelardb_common::arguments::collect_command_line_arguments;
 
 use crate::remote::start_apache_arrow_flight_server;
 
@@ -38,9 +39,14 @@ fn main() -> Result<(), String> {
         Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {error}"))?,
     );
 
-    let mut args = std::env::args();
-    args.next(); // Skip the executable.
+    // TODO: Create a common file with functionality for parsing.
+    // TODO: Add function to it for collecting the command line arguments.
+    // TODO: Add function to it for getting a remote object store from an argument.
+    // TODO: Move function to it for validating remote object store.
+    // TODO: Use common functionality in the server main and here.
+    // TODO: Add function here to connect to database.
 
+    let arguments = collect_command_line_arguments(3);
     start_apache_arrow_flight_server().map_err(|error| error.to_string())?;
 
     Ok(())

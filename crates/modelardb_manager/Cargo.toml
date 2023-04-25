@@ -26,6 +26,7 @@ path = "src/main.rs"
 [dependencies]
 arrow-flight = "36.0.0"
 futures = "0.3.28"
+modelardb_common = { path = "../modelardb_common" }
 tokio = { version = "1.27.0", features = ["rt-multi-thread", "signal"] }
 tonic = "0.8.3"
 tracing-subscriber = "0.3.16"

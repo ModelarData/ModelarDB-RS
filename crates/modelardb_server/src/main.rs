@@ -40,6 +40,7 @@ use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use modelardb_common::arguments::collect_command_line_arguments;
 
 use crate::metadata::MetadataManager;
 use crate::storage::StorageEngine;
@@ -120,14 +121,7 @@ fn main() -> Result<(), String> {
     let stdout_log = tracing_subscriber::fmt::layer();
     tracing_subscriber::registry().with(stdout_log).init();
 
-    let mut args = std::env::args();
-    args.next(); // Skip the executable.
-
-    // Collect at most the maximum number of command line arguments plus one.
-    // The plus one argument is collected to trigger the default pattern in
-    // parse_command_line_arguments() if too many arguments are passed without
-    // collecting more command line arguments than required for that pattern.
-    let arguments: Vec<String> = args.by_ref().take(4).collect();
+    let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
     let (server_mode, data_folders) = parse_command_line_arguments(&arguments)?;
 

@@ -21,7 +21,5 @@ pub fn collect_command_line_arguments(maximum_arguments: usize) -> Vec<String> {
     // Collect at most the maximum number of command line arguments plus one. The plus one argument
     // is collected to trigger the default pattern when parsing the command line arguments with
     // pattern matching, making it possible to handle errors caused by too many arguments.
-    let arguments: Vec<String> = args.by_ref().take(maximum_arguments + 1).collect();
-
-    arguments.iter().map(|arg| arg.as_str().to_string()).collect()
+    args.by_ref().take(maximum_arguments + 1).collect()
 }
