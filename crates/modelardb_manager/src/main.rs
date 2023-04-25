@@ -13,11 +13,34 @@
  * limitations under the License.
  */
 
+//! Implementation of the ModelarDB manager main function.
+
+use std::sync::Arc;
+
+use tokio::runtime::Runtime;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
 use crate::remote::start_apache_arrow_flight_server;
 
 mod remote;
 
+/// Parse the command line arguments to extract the metadata database and the remote object store
+/// and start an Apache Arrow Flight server. Returns [`String`] if the command line arguments
+/// cannot be parsed, if the metadata cannot be read from the database, or if the Apache Arrow
+/// Flight server cannot be started.
 fn main() -> Result<(), String> {
+    // Initialize a tracing layer that logs events to stdout.
+    let stdout_log = tracing_subscriber::fmt::layer();
+    tracing_subscriber::registry().with(stdout_log).init();
+
+    // Create a Tokio runtime for executing asynchronous tasks.
+    let runtime = Arc::new(
+        Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {error}"))?,
+    );
+
+    let mut args = std::env::args();
+    args.next(); // Skip the executable.
+
     start_apache_arrow_flight_server().map_err(|error| error.to_string())?;
 
     Ok(())
