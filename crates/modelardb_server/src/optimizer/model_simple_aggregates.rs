@@ -51,6 +51,7 @@ fn new_aggregate(
             *aggregate_exec.mode(),
             aggregate_exec.group_expr().clone(),
             vec![model_aggregate_expr],
+            vec![],
             grid_exec.children()[0].clone(), //Removes the GridExec
             aggregate_exec.input_schema(),
         )
@@ -136,7 +137,7 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
 }
 
 // Aggregate Expressions.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum ModelAggregateType {
     Count,
     Min,
@@ -167,6 +168,18 @@ impl ModelAggregateExpr {
             aggregate_type,
             data_type,
         })
+    }
+}
+
+impl PartialEq<dyn Any> for ModelAggregateExpr {
+    fn eq(&self, other: &dyn Any) -> bool {
+        if let Some(other_model_aggregate_expr) = other.downcast_ref::<ModelAggregateExpr>() {
+            self.name == other_model_aggregate_expr.name
+                && self.aggregate_type == other_model_aggregate_expr.aggregate_type
+                && self.data_type == other_model_aggregate_expr.data_type
+        } else {
+            false
+        }
     }
 }
 

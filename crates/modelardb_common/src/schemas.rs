@@ -69,7 +69,7 @@ pub static METRIC_SCHEMA: Lazy<MetricSchema> = Lazy::new(|| {
         Field::new("metric", DataType::Utf8, false),
         Field::new(
             "timestamps",
-            DataType::List(Box::new(Field::new(
+            DataType::List(Arc::new(Field::new(
                 "item",
                 ArrowTimestamp::DATA_TYPE,
                 true,
@@ -78,7 +78,7 @@ pub static METRIC_SCHEMA: Lazy<MetricSchema> = Lazy::new(|| {
         ),
         Field::new(
             "values",
-            DataType::List(Box::new(Field::new("item", DataType::UInt32, true))),
+            DataType::List(Arc::new(Field::new("item", DataType::UInt32, true))),
             false,
         ),
     ])))
