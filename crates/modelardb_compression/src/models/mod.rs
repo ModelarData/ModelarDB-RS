@@ -106,6 +106,9 @@ pub fn is_value_within_error_bound(
 pub struct SelectedModel {
     /// Id of the model type that created this model.
     pub model_type_id: u8,
+    /// Index of the first data point in the `UncompressedDataBuffer` that the
+    /// selected model represents.
+    pub start_index: usize,
     /// Index of the last data point in the `UncompressedDataBuffer` that the
     /// selected model represents.
     pub end_index: usize,
@@ -149,6 +152,7 @@ impl SelectedModel {
 
         Self {
             model_type_id: PMC_MEAN_ID,
+            start_index,
             end_index,
             min_value: value,
             max_value: value,
@@ -167,6 +171,7 @@ impl SelectedModel {
 
         Self {
             model_type_id: SWING_ID,
+            start_index,
             end_index,
             min_value,
             max_value,
@@ -207,6 +212,7 @@ pub fn compress_residual_value_range(
 
     SelectedModel {
         model_type_id: GORILLA_ID,
+        start_index,
         end_index,
         min_value,
         max_value,
