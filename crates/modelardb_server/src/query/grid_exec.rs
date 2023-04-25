@@ -26,7 +26,7 @@ use std::task::{Context as StdTaskContext, Poll};
 
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    Array, ArrayRef, BinaryArray, Float32Array, UInt64Array, UInt8Array,
+    Array, ArrayRef, BinaryArray, Float32Array, UInt64Array, UInt64Builder, UInt8Array,
 };
 use datafusion::arrow::compute::filter_record_batch;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -265,7 +265,7 @@ impl GridStream {
         // from each segment in the new batch as each segment contains at least one data point.
         let current_rows = self.current_batch.num_rows() - self.current_batch_offset;
         let new_rows = batch.num_rows();
-        let mut univariate_id_builder = UInt64Array::builder(current_rows + new_rows);
+        let mut univariate_id_builder = UInt64Builder::with_capacity(current_rows + new_rows);
         let mut timestamp_builder = TimestampBuilder::with_capacity(current_rows + new_rows);
         let mut value_builder = ValueBuilder::with_capacity(current_rows + new_rows);
 
