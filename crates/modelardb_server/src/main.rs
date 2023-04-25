@@ -32,15 +32,12 @@ use std::{env, fs};
 
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
-use object_store::{
-    aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, local::LocalFileSystem, path::Path,
-    ObjectStore,
-};
+use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use modelardb_common::arguments::collect_command_line_arguments;
+use modelardb_common::arguments::{collect_command_line_arguments, argument_to_remote_object_store};
 
 use crate::metadata::MetadataManager;
 use crate::storage::StorageEngine;
@@ -254,32 +251,6 @@ fn argument_to_local_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>
     let object_store =
         LocalFileSystem::new_with_prefix(argument).map_err(|error| error.to_string())?;
     Ok(Arc::new(object_store))
-}
-
-/// Create an [`ObjectStore`] that represents the remote path in `argument`.
-fn argument_to_remote_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>, String> {
-    match argument.split_once("://") {
-        Some(("s3", bucket_name)) => {
-            let object_store = AmazonS3Builder::from_env()
-                .with_bucket_name(bucket_name)
-                .build()
-                .map_err(|error| error.to_string())?;
-
-            Ok(Arc::new(object_store))
-        }
-        Some(("azureblobstorage", container_name)) => {
-            let object_store = MicrosoftAzureBuilder::from_env()
-                .with_container_name(container_name)
-                .build()
-                .map_err(|error| error.to_string())?;
-
-            Ok(Arc::new(object_store))
-        }
-        _ => Err(
-            "Remote data folder must be s3://bucket-name or azureblobstorage://container-name."
-                .to_owned(),
-        ),
-    }
 }
 
 /// Validate that the remote data folder can be accessed. If the remote data folder cannot be

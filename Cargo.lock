@@ -1825,6 +1825,7 @@ name = "modelardb_common"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "object_store",
  "once_cell",
 ]
 
