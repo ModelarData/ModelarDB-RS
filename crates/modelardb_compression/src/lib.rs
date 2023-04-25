@@ -79,7 +79,7 @@ pub fn try_compress(
     let mut previous_selected_model: Option<SelectedModel> = None;
     while current_start_index < end_index {
         // Select a model to represent the values from current_start_index to index within
-        // error_bound where index <= end_index.
+        // error_bound where index < end_index.
         let compressed_model_builder = CompressedModelBuilder::new(
             current_start_index,
             end_index,
@@ -94,15 +94,17 @@ pub fn try_compress(
         // storage space per value than the uncompressed values it represents.
         if selected_model.bytes_per_value <= models::VALUE_SIZE_IN_BYTES as f32 {
             // Flush the previously selected model and any residual value if either exists.
-            store_compressed_segment_if_any_model_or_residuals(
-                univariate_id,
-                error_bound,
-                &previous_selected_model,
-                selected_model.start_index.saturating_sub(1),  // The start_index may be zero.
-                uncompressed_timestamps,
-                uncompressed_values,
-                &mut compressed_record_batch_builder,
-            );
+            if current_start_index > 0 {
+                store_compressed_segments_with_model_and_or_residuals(
+                    univariate_id,
+                    error_bound,
+                    &previous_selected_model,
+                    current_start_index - 1,
+                    uncompressed_timestamps,
+                    uncompressed_values,
+                    &mut compressed_record_batch_builder,
+                );
+            }
 
             // Start fitting the next model to the first value located right after this model.
             current_start_index = selected_model.end_index + 1;
@@ -118,7 +120,7 @@ pub fn try_compress(
         }
     }
 
-    store_compressed_segment_if_any_model_or_residuals(
+    store_compressed_segments_with_model_and_or_residuals(
         univariate_id,
         error_bound,
         &previous_selected_model,
@@ -131,7 +133,10 @@ pub fn try_compress(
     Ok(compressed_record_batch_builder.finish())
 }
 
-fn store_compressed_segment_if_any_model_or_residuals(
+/// Create a single compressed segment that store `maybe_selected_model` and any residuals; two
+/// compressed segments, with the first storing `maybe_selected_model` and the second storing
+/// residuals; or a compressed segment that store residuals if `maybe_selected_model` is [`None`].
+fn store_compressed_segments_with_model_and_or_residuals(
     univariate_id: u64,
     error_bound: ErrorBound,
     maybe_selected_model: &Option<SelectedModel>,
@@ -192,8 +197,8 @@ fn store_compressed_segment_if_any_model_or_residuals(
 
 /// Create a compressed segment that represents the values from `selected_model.start_index` to and
 /// including `selected_model.end_index` as `selected_model.values` and, if
-/// `selected_model.end_index < residuals_end_index`, the residuals from `selected_model.end_index + 1`
-/// to and including `residuals_end_index`. Assumes the number of residuals are less than or
+/// `selected_model.end_index < residuals_end_index`, the residuals from `selected_model.end_index
+/// + 1` to and including `residuals_end_index`. Assumes the number of residuals are less than or
 /// equal to [`RESIDUAL_VALUES_MAX_LENGTH`].
 fn store_selected_model_and_any_residual_in_a_segment(
     univariate_id: u64,
@@ -212,10 +217,10 @@ fn store_selected_model_and_any_residual_in_a_segment(
     // Compress residual values using Gorilla if any exists.
     if selected_model.end_index < residuals_end_index {
         // TODO: Compute the XOR to the last value of the model for the first value.
-        let residual_start_index = selected_model.end_index + 1;
+        let residuals_start_index = selected_model.end_index + 1;
         let mut selected_model_for_residuals = models::compress_residual_value_range(
             error_bound,
-            residual_start_index,
+            residuals_start_index,
             residuals_end_index,
             uncompressed_values,
         );
@@ -223,7 +228,7 @@ fn store_selected_model_and_any_residual_in_a_segment(
         min_value = Value::min(min_value, selected_model_for_residuals.min_value);
         max_value = Value::max(max_value, selected_model_for_residuals.max_value);
 
-        let residuals_length = (selected_model.end_index - selected_model.start_index) as u8 + 1;
+        let residuals_length = (residuals_end_index - residuals_start_index) as u8 + 1;
         selected_model_for_residuals.values.push(residuals_length);
         residuals = selected_model_for_residuals.values;
     };
@@ -242,9 +247,10 @@ fn store_selected_model_and_any_residual_in_a_segment(
     );
 }
 
-/// For the time series with `univariate_id`, compress the values from `start_index` to `end_index`
-/// in `uncompressed_values` using [`Gorilla`] and store the resulting model with the corresponding
-/// timestamps from `uncompressed_timestamps` as a segment in `compressed_record_batch_builder`.
+/// For the time series with `univariate_id`, compress the values from `start_index` to and
+/// including `end_index` in `uncompressed_values` using [`Gorilla`] and store the resulting model
+/// with the corresponding timestamps from `uncompressed_timestamps` as a segment in
+/// `compressed_record_batch_builder`.
 fn store_residuals_as_a_model_in_a_separate_segment(
     univariate_id: u64,
     error_bound: ErrorBound,

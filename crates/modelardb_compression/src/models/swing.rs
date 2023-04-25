@@ -578,7 +578,7 @@ mod tests {
             min_value_array,
             max_value_array,
             values_array,
-            _residual_array,
+            residuals_array,
             _error_array
         );
 
@@ -594,12 +594,13 @@ mod tests {
         models::grid(
             0,
             model_type_id_array.value(0),
-            timestamps_array.value(0),
             start_time_array.value(0),
             end_time_array.value(0),
-            values_array.value(0),
+            timestamps_array.value(0),
             min_value_array.value(0),
             max_value_array.value(0),
+            values_array.value(0),
+            residuals_array.value(0),
             &mut reconstructed_ids,
             &mut reconstructed_timestamps,
             &mut reconstructed_values,
