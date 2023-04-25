@@ -19,3 +19,4 @@ pub mod errors;
 pub mod macros;
 pub mod schemas;
 pub mod types;
+pub mod arguments;
