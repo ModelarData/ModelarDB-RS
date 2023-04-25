@@ -13,6 +13,12 @@
  * limitations under the License.
  */
 
-fn main() {
-    println!("Hello, world!");
+use crate::remote::start_apache_arrow_flight_server;
+
+mod remote;
+
+fn main() -> Result<(), String> {
+    start_apache_arrow_flight_server().map_err(|error| error.to_string())?;
+
+    Ok(())
 }

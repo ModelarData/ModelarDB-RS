@@ -24,3 +24,6 @@ name = "modelardbdm"
 path = "src/main.rs"
 
 [dependencies]
+arrow-flight = "36.0.0"
+futures = "0.3.28"
+tonic = "0.8.3"

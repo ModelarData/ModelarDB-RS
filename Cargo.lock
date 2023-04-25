@@ -1850,6 +1850,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "modelardb_manager"
+version = "0.1.0"
+dependencies = [
+ "arrow-flight",
+ "futures",
+ "tonic",
+]
+
+[[package]]
 name = "modelardb_server"
 version = "0.1.0"
 dependencies = [
