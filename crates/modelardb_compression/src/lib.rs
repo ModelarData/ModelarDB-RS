@@ -64,7 +64,7 @@ pub fn try_compress(
         ));
     }
 
-    // If there is no uncompressed data to compress an empty [`RecordBatch`] can be returned.
+    // If there is no uncompressed data to compress, an empty [`RecordBatch`] can be returned.
     if uncompressed_timestamps.is_empty() {
         return Ok(RecordBatch::new_empty(COMPRESSED_SCHEMA.0.clone()));
     }
@@ -109,9 +109,9 @@ pub fn try_compress(
             // Start fitting the next model to the first value located right after this model.
             current_start_index = selected_model.end_index + 1;
 
-            // The selected model will be stored as part of a segment when the next model is
+            // The selected model will be stored as part of the segment when the next model is
             // selected so the few residual values that may exist between them can be stored as
-            // part the segment with previous_selected_model instead of a separate segment.
+            // part the segment with previous_selected_model instead of as a separate segment.
             previous_selected_model = Some(selected_model);
         } else {
             // The potentially lossy models could not efficiently encode the sub-sequence starting
@@ -133,9 +133,12 @@ pub fn try_compress(
     Ok(compressed_record_batch_builder.finish())
 }
 
-/// Create a single compressed segment that store `maybe_selected_model` and any residuals; two
-/// compressed segments, with the first storing `maybe_selected_model` and the second storing
-/// residuals; or a compressed segment that store residuals if `maybe_selected_model` is [`None`].
+/// Create segment(s) that store `maybe_selected_model` and residuals as either:
+/// - One compressed segment that stores `maybe_selected_model` and a small number of residuals.
+/// - Two compressed segments with the first storing `maybe_selected_model` and the second storing
+/// a large number of residuals. 
+/// - One compressed segment that stores residuals as a single model if `maybe_selected_model` is
+/// [`None`].
 fn store_compressed_segments_with_model_and_or_residuals(
     univariate_id: u64,
     error_bound: ErrorBound,
@@ -1173,7 +1176,7 @@ mod tests {
     }
 
     #[test]
-    fn test_equal_models_second_residuals_can_be_merged() {
+    fn test_equal_models_with_residuals_in_second_can_be_merged() {
         assert!(can_models_be_merged(
             0,
             1,

@@ -293,7 +293,7 @@ pub fn grid(
     let residuals_length = if residuals.is_empty() {
         0
     } else {
-        // The number of the residuals are stored as the last byte.
+        // The number of residuals are stored as the last byte.
         residuals[residuals.len() - 1]
     };
 
