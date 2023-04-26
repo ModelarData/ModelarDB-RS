@@ -32,12 +32,15 @@ use std::{env, fs};
 
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
-use object_store::{local::LocalFileSystem, path::Path, ObjectStore};
+use modelardb_common::arguments::{
+    argument_to_remote_object_store, collect_command_line_arguments, validate_remote_data_folder,
+    RemoteDataFolderType,
+};
+use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use modelardb_common::arguments::{collect_command_line_arguments, argument_to_remote_object_store};
 
 use crate::metadata::MetadataManager;
 use crate::storage::StorageEngine;
@@ -59,28 +62,6 @@ pub static PORT: Lazy<u16> = Lazy::new(|| match env::var("MODELARDBD_PORT") {
 pub enum ServerMode {
     Cloud,
     Edge,
-}
-
-/// The object stores that are currently supported as remote data folders.
-#[derive(PartialEq, Eq)]
-enum RemoteDataFolderType {
-    S3,
-    AzureBlobStorage,
-}
-
-impl FromStr for RemoteDataFolderType {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "s3" => Ok(RemoteDataFolderType::S3),
-            "azureblobstorage" => Ok(RemoteDataFolderType::AzureBlobStorage),
-            _ => Err(format!(
-                "'{}' is not a valid value for RemoteDataFolderType.",
-                value
-            )),
-        }
-    }
 }
 
 /// Folders for storing metadata and Apache Parquet files.
@@ -251,30 +232,6 @@ fn argument_to_local_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>
     let object_store =
         LocalFileSystem::new_with_prefix(argument).map_err(|error| error.to_string())?;
     Ok(Arc::new(object_store))
-}
-
-/// Validate that the remote data folder can be accessed. If the remote data folder cannot be
-/// accessed, return the error that occurred as a [`String`].
-async fn validate_remote_data_folder(
-    remote_data_folder_type: RemoteDataFolderType,
-    remote_data_folder: &Arc<dyn ObjectStore>,
-) -> Result<(), String> {
-    // Check that the connection is valid by attempting to retrieve a file that does not exist.
-    match remote_data_folder.get(&Path::from("")).await {
-        Ok(_) => Ok(()),
-        Err(error) => match error {
-            object_store::Error::NotFound { .. } => {
-                // Note that for Azure Blob Storage the same error is returned if the object was not
-                // found due to the object not existing and due to the container not existing.
-                if remote_data_folder_type == RemoteDataFolderType::AzureBlobStorage {
-                    Ok(())
-                } else {
-                    Err(error.to_string())
-                }
-            }
-            _ => Err(error.to_string()),
-        },
-    }
 }
 
 /// Create a new [`SessionContext`] for interacting with Apache Arrow

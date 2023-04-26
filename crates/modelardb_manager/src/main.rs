@@ -39,8 +39,12 @@ fn main() -> Result<(), String> {
         Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {error}"))?,
     );
 
-    // TODO: Move function to it for validating remote object store.
+    // TODO: Maybe add two functions so the top one can be used here and in server main and the bottom one in remote.
+    //       The top one would use the bottom one and only contain what is currently in server main.
+
+    // TODO: Consider moving the other parsing of arguments into here for consistency.
     // TODO: Use common functionality in the server main and here.
+    // TODO: Add a function like parse_command_line_arguments with a pattern for the single manager pattern and a handler for too many arguments.
     // TODO: Add function here to connect to database.
 
     let arguments = collect_command_line_arguments(3);
