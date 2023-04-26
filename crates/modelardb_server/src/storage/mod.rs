@@ -40,11 +40,11 @@ use datafusion::arrow::compute;
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::basic::ZstdLevel;
 use datafusion::parquet::arrow::async_reader::{
     ParquetObjectReader, ParquetRecordBatchStreamBuilder,
 };
 use datafusion::parquet::arrow::ArrowWriter;
+use datafusion::parquet::basic::ZstdLevel;
 use datafusion::parquet::basic::{Compression, Encoding};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
@@ -640,7 +640,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use datafusion::arrow::datatypes::Schema;
+    use datafusion::arrow::datatypes::{Field, Schema};
     use object_store::local::LocalFileSystem;
     use tempfile::{self, TempDir};
 
@@ -663,7 +663,8 @@ mod tests {
 
     #[test]
     fn test_write_empty_batch_to_apache_parquet_file() {
-        let schema = Schema::new(vec![]);
+        let fields: Vec<Field> = vec![];
+        let schema = Schema::new(fields);
         let batch = RecordBatch::new_empty(Arc::new(schema));
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -861,7 +862,7 @@ pub mod test_util {
     use modelardb_common::schemas::COMPRESSED_SCHEMA;
     use modelardb_common::types::{TimestampArray, ValueArray};
 
-    pub const COMPRESSED_SEGMENTS_SIZE: usize = 2680;
+    pub const COMPRESSED_SEGMENTS_SIZE: usize = 2055;
 
     /// Return a [`RecordBatch`] containing three compressed segments.
     pub fn compressed_segments_record_batch() -> RecordBatch {

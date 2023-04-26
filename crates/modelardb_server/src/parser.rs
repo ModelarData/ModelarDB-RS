@@ -532,30 +532,33 @@ fn column_defs_to_schema(column_defs: &Vec<ColumnDef>) -> Result<Schema, DataFus
     Ok(Schema::new(fields))
 }
 
-/* Start of code copied from datafusion-sql v14.0.0/v15.0.0/v20.0.0. */
-// The following two functions have been copied from datafusion-sql v14.0.0/v15.0.0/v20.0.0 as
-// parser.rs used the version of convert_simple_data_type() implemented as a free function in
+/* Start of code copied from datafusion-sql v14.0.0/v15.0.0/v20.0.0/23.0.0. */
+// The following two functions have been copied from datafusion-sql v14.0.0/v15.0.0/v20.0.0/23.0.0
+// as parser.rs used the version of convert_simple_data_type() implemented as a free function in
 // datafusion-sql v14.0.0 to convert from sqlparser::ast::DataType (SQLDataType) to
 // datafusion::arrow::datatypes::DataType and it was changed to a private instance method in
 // datafusion-sql v15.0.0. As Apache Arrow DataFusion no longer seems to provide an API for
 // converting from SQLDataType to DataType, the version of convert_simple_data_type() in
-// datafusion-sql v14.0.0 has been copied to parser.rs and has been updated according to the changes
-// made in datafusion-sql v15.0.0 and datafusion-sql v20.0.0 to the greatest degree possible. As the
-// private function make_decimal_type() is used by convert_simple_data_type() it has also been
-// copied from datafusion-sql v15.0.0. As these functions have been copied from datafusion-sql they
-// should be updated whenever a new version of datafusion-sql is released. Also significant effort
-// should be made to try and replace these two functions with calls to Apache Arrow DataFusion's
-// public API whenever a new version of Apache Arrow DataFusion is released.
+// datafusion-sql v14.0.0 has been copied to parser.rs and has been updated according to the
+// changes made in datafusion-sql v15.0.0, datafusion-sql v20.0.0, and datafusion-sql v23.0.0 to
+// the greatest degree possible. As the private function make_decimal_type() is used by
+// convert_simple_data_type() it has also been copied from datafusion-sql v15.0.0. As these
+// functions have been copied from datafusion-sql they should be updated whenever a new version of
+// datafusion-sql is released. Also significant effort should be made to try and replace these two
+// functions with calls to Apache Arrow DataFusion's public API whenever a new version of Apache
+// Arrow DataFusion is released.
 
 /// Convert a simple [`SQLDataType`] to the relational representation of the [`DataType`]. This
-/// function is copied from [datafusion-sql v14.0.0] and updated with the changes in [datafusion-sql
-/// v15.0.0] and [datafusion-sql v20.0.0] as it was changed from a public function to a private
-/// method in [datafusion-sql v15.0.0] and extended in [datafusion-sql v20.0.0]. All versions of
-/// datafusion-sql were released under version 2.0 of the Apache License.
+/// function is copied from [datafusion-sql v14.0.0] and updated with the changes in
+/// [datafusion-sql v15.0.0], [datafusion-sql v20.0.0], and [datafusion-sql v23.0.0] as it was
+/// changed from a public function to a private method in [datafusion-sql v15.0.0] and extended in
+/// [datafusion-sql v20.0.0] and [datafusion-sql v23.0.0]. All versions of datafusion-sql were
+/// released under version 2.0 of the Apache License.
 ///
 /// [datafusion-sql v14.0.0]: https://github.com/apache/arrow-datafusion/blob/14.0.0/datafusion/sql/src/planner.rs#L2812
 /// [datafusion-sql v15.0.0]: https://github.com/apache/arrow-datafusion/blob/15.0.0/datafusion/sql/src/planner.rs#L2790
 /// [datafusion-sql v20.0.0]: https://github.com/apache/arrow-datafusion/blob/20.0.0/datafusion/sql/src/planner.rs#L235
+/// [datafusion-sql v23.0.0]: https://github.com/apache/arrow-datafusion/blob/23.0.0/datafusion/sql/src/planner.rs#L304
 pub fn convert_simple_data_type(sql_type: &SQLDataType) -> DataFusionResult<DataType> {
     match sql_type {
         SQLDataType::Boolean => Ok(DataType::Boolean),
@@ -582,7 +585,7 @@ pub fn convert_simple_data_type(sql_type: &SQLDataType) -> DataFusionResult<Data
             } else {
                 None
             };
-            Ok(DataType::Timestamp(TimeUnit::Nanosecond, tz))
+            Ok(DataType::Timestamp(TimeUnit::Nanosecond, tz.map(Into::into)))
         }
         SQLDataType::Date => Ok(DataType::Date32),
         SQLDataType::Time(None, tz_info) => {

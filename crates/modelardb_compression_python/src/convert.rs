@@ -128,7 +128,7 @@ fn rust_schema_to_python<'a>(schema: &'a Schema, python: Python<'a>) -> PyResult
 /// Convert an Apache Arrow array from Rust to Python.
 fn rust_array_to_python<'a>(array: &'a Arc<dyn Array>, python: Python<'a>) -> PyResult<&'a PyAny> {
     // Create FFI representations of the array's components.
-    let ffi_arrow_array = FFI_ArrowArray::new(array.data());
+    let ffi_arrow_array = FFI_ArrowArray::new(&array.to_data());
     let ffi_arrow_schema = FFI_ArrowSchema::try_from(array.data_type()).map_err(to_py_err)?;
 
     // Construct the array from its FFI representation using a hidden method and return it.
