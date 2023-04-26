@@ -109,9 +109,9 @@ pub fn try_compress(
             // Start fitting the next model to the first value located right after this model.
             current_start_index = selected_model.end_index + 1;
 
-            // The selected model will be stored as part of the segment when the next model is
+            // The selected model will be stored as part of a segment when the next model is
             // selected so the few residual values that may exist between them can be stored as
-            // part the segment with previous_selected_model instead of as a separate segment.
+            // part of the segment with previous_selected_model instead of as a separate segment.
             previous_selected_model = Some(selected_model);
         } else {
             // The potentially lossy models could not efficiently encode the sub-sequence starting
@@ -133,10 +133,11 @@ pub fn try_compress(
     Ok(compressed_record_batch_builder.finish())
 }
 
-/// Create segment(s) that store `maybe_selected_model` and residuals as either:
-/// - One compressed segment that stores `maybe_selected_model` and a small number of residuals.
+/// Create segment(s) that store `maybe_selected_model` and residual values as either:
+/// - One compressed segment that stores `maybe_selected_model` and residuals if the number of
+/// residuals are less than or equal to [`RESIDUAL_VALUES_MAX_LENGTH`].
 /// - Two compressed segments with the first storing `maybe_selected_model` and the second storing
-/// a large number of residuals. 
+/// residuals if the number of residuals are greater than [`RESIDUAL_VALUES_MAX_LENGTH`]. 
 /// - One compressed segment that stores residuals as a single model if `maybe_selected_model` is
 /// [`None`].
 fn store_compressed_segments_with_model_and_or_residuals(
@@ -150,7 +151,7 @@ fn store_compressed_segments_with_model_and_or_residuals(
 ) {
     // If the first values in `uncompressed_values` are residuals they cannot be part of a segment.
     if let Some(selected_model) = maybe_selected_model {
-        if (residual_end_index - selected_model.end_index) < RESIDUAL_VALUES_MAX_LENGTH.into() {
+        if (residual_end_index - selected_model.end_index) <= RESIDUAL_VALUES_MAX_LENGTH.into() {
             // Few or no residuals exists so the model and any residuals are put into one segment.
             store_selected_model_and_any_residual_in_a_segment(
                 univariate_id,
