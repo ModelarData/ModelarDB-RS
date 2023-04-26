@@ -32,10 +32,8 @@ use std::{env, fs};
 
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
-use modelardb_common::arguments::{
-    argument_to_remote_object_store, collect_command_line_arguments, validate_remote_data_folder,
-    RemoteDataFolderType,
-};
+use modelardb_common::arguments::{argument_to_remote_object_store, collect_command_line_arguments};
+use modelardb_common::remote_data_folder::{RemoteDataFolderType, validate_remote_data_folder};
 use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
