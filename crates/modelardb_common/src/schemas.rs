@@ -46,6 +46,7 @@ pub static COMPRESSED_SCHEMA: Lazy<CompressedSchema> = Lazy::new(|| {
         Field::new("min_value", ArrowValue::DATA_TYPE, false),
         Field::new("max_value", ArrowValue::DATA_TYPE, false),
         Field::new("values", DataType::Binary, false),
+        Field::new("residuals", DataType::Binary, false),
         Field::new("error", DataType::Float32, false),
     ])))
 });

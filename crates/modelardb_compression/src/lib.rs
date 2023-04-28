@@ -34,6 +34,13 @@ use modelardb_common::types::{
 
 use crate::models::{pmc_mean::PMCMean, swing::Swing, timestamps, ErrorBound, SelectedModel};
 
+/// Maximum number of residuals that can be stored as part of a compressed segment. The number of
+/// residuals in a segment is stored as the last value in the `residuals` [`BinaryArray`] so
+/// [`GridExec`](crate::query::grid_exec::GridExec) can compute which timestamps are associated
+/// with the residuals, so an [`u8`] is used for simplicity. Longer sub-sequences of data points
+/// that are marked as residuals are stored as separate segments to allow for efficient pruning.
+const RESIDUAL_VALUES_MAX_LENGTH: u8 = 255;
+
 /// Compress `uncompressed_timestamps` using a start time, end time, and a sampling interval if
 /// regular and delta-of-deltas followed by a variable length binary encoding if irregular.
 /// `uncompressed_values` is compressed within `error_bound` using the model types in [`models`].
@@ -57,19 +64,24 @@ pub fn try_compress(
         ));
     }
 
+    // If there is no uncompressed data to compress, an empty [`RecordBatch`] can be returned.
+    if uncompressed_timestamps.is_empty() {
+        return Ok(RecordBatch::new_empty(COMPRESSED_SCHEMA.0.clone()));
+    }
+
     // Enough memory for end_index compressed segments are allocated to never require reallocation
     // as one compressed segment is created per data point in the absolute worst case.
     let end_index = uncompressed_timestamps.len();
     let mut compressed_record_batch_builder = CompressedSegmentBatchBuilder::new(end_index);
 
     // Compress the uncompressed timestamps and uncompressed values.
-    let mut current_index = 0;
-    let mut residual_start_index = 0;
-    while current_index < end_index {
-        // Propose a model that represents the values from current_index to index within error_bound
-        // where index <= end_index.
+    let mut current_start_index = 0;
+    let mut previous_selected_model: Option<SelectedModel> = None;
+    while current_start_index < end_index {
+        // Select a model to represent the values from current_start_index to index within
+        // error_bound where index < end_index.
         let compressed_model_builder = CompressedModelBuilder::new(
-            current_index,
+            current_start_index,
             end_index,
             uncompressed_timestamps,
             uncompressed_values,
@@ -78,61 +90,172 @@ pub fn try_compress(
 
         let selected_model = compressed_model_builder.finish();
 
-        // The selected model is only stored as part of a compressed segment if it uses less storage
-        // space per value than the uncompressed values it represents.
+        // The selected model will only be stored as part of a compressed segment if it uses less
+        // storage space per value than the uncompressed values it represents.
         if selected_model.bytes_per_value <= models::VALUE_SIZE_IN_BYTES as f32 {
-            // Compress residual data points with Gorilla and store them in a compressed segment.
-            if residual_start_index != current_index {
-                compress_and_store_residual_value_range(
+            // Flush the previously selected model and any residual value if either exists.
+            if current_start_index > 0 {
+                store_compressed_segments_with_model_and_or_residuals(
                     univariate_id,
                     error_bound,
-                    residual_start_index,
-                    current_index - 1,
+                    &previous_selected_model,
+                    current_start_index - 1,
                     uncompressed_timestamps,
                     uncompressed_values,
                     &mut compressed_record_batch_builder,
-                )
+                );
             }
 
-            // Store the selected model and the corresponding timestamps in a compressed segment.
-            store_selected_model_in_batch_builder(
-                univariate_id,
-                current_index,
-                &selected_model,
-                uncompressed_timestamps,
-                &mut compressed_record_batch_builder,
-            );
+            // Start fitting the next model to the first value located right after this model.
+            current_start_index = selected_model.end_index + 1;
 
-            // Update the indices to specify that all data points until now has been compressed.
-            current_index = selected_model.end_index + 1;
-            residual_start_index = current_index;
+            // The selected model will be stored as part of a segment when the next model is
+            // selected so the few residual values that may exist between them can be stored as
+            // part of the segment with previous_selected_model instead of as a separate segment.
+            previous_selected_model = Some(selected_model);
         } else {
             // The potentially lossy models could not efficiently encode the sub-sequence starting
-            // at current_index, the residual values will instead be compressed using Gorilla.
-            current_index += 1;
+            // at current_start_index, so residual values will instead be compressed using Gorilla.
+            current_start_index += 1;
         }
     }
 
-    // Compress the last residual data points with Gorilla and store them in a compressed segment.
-    if residual_start_index != current_index {
-        compress_and_store_residual_value_range(
-            univariate_id,
-            error_bound,
-            residual_start_index,
-            current_index - 1,
-            uncompressed_timestamps,
-            uncompressed_values,
-            &mut compressed_record_batch_builder,
-        )
-    }
+    store_compressed_segments_with_model_and_or_residuals(
+        univariate_id,
+        error_bound,
+        &previous_selected_model,
+        end_index - 1,
+        uncompressed_timestamps,
+        uncompressed_values,
+        &mut compressed_record_batch_builder,
+    );
 
     Ok(compressed_record_batch_builder.finish())
 }
 
-/// For the time series with `univariate_id`, compress the values from `start_index` to `end_index`
-/// in `uncompressed_values` using [`Gorilla`] and store the resulting model with the corresponding
-/// timestamps from `uncompressed_timestamps` as a segment in `compressed_record_batch_builder`.
-fn compress_and_store_residual_value_range(
+/// Create segment(s) that store `maybe_selected_model` and residual values as either:
+/// - One compressed segment that stores `maybe_selected_model` and residuals if the number of
+/// residuals are less than or equal to [`RESIDUAL_VALUES_MAX_LENGTH`].
+/// - Two compressed segments with the first storing `maybe_selected_model` and the second storing
+/// residuals if the number of residuals are greater than [`RESIDUAL_VALUES_MAX_LENGTH`]. 
+/// - One compressed segment that stores residuals as a single model if `maybe_selected_model` is
+/// [`None`].
+fn store_compressed_segments_with_model_and_or_residuals(
+    univariate_id: u64,
+    error_bound: ErrorBound,
+    maybe_selected_model: &Option<SelectedModel>,
+    residual_end_index: usize,
+    uncompressed_timestamps: &TimestampArray,
+    uncompressed_values: &ValueArray,
+    compressed_record_batch_builder: &mut CompressedSegmentBatchBuilder,
+) {
+    // If the first values in `uncompressed_values` are residuals they cannot be part of a segment.
+    if let Some(selected_model) = maybe_selected_model {
+        if (residual_end_index - selected_model.end_index) <= RESIDUAL_VALUES_MAX_LENGTH.into() {
+            // Few or no residuals exists so the model and any residuals are put into one segment.
+            store_selected_model_and_any_residual_in_a_segment(
+                univariate_id,
+                error_bound,
+                selected_model,
+                residual_end_index,
+                uncompressed_timestamps,
+                uncompressed_values,
+                compressed_record_batch_builder,
+            );
+        } else {
+            // Many residuals exists so the selected model and residuals are put into two segments.
+            store_selected_model_and_any_residual_in_a_segment(
+                univariate_id,
+                error_bound,
+                selected_model,
+                selected_model.end_index, // No residuals are stored.
+                uncompressed_timestamps,
+                uncompressed_values,
+                compressed_record_batch_builder,
+            );
+
+            store_residuals_as_a_model_in_a_separate_segment(
+                univariate_id,
+                error_bound,
+                selected_model.end_index + 1,
+                residual_end_index,
+                uncompressed_timestamps,
+                uncompressed_values,
+                compressed_record_batch_builder,
+            );
+        }
+    } else {
+        // The residuals are stored as a separate segment as the first sub-sequence of values in
+        // `uncompressed_values` are residuals, thus the residuals must be stored in a segment.
+        store_residuals_as_a_model_in_a_separate_segment(
+            univariate_id,
+            error_bound,
+            0,
+            residual_end_index,
+            uncompressed_timestamps,
+            uncompressed_values,
+            compressed_record_batch_builder,
+        );
+    }
+}
+
+/// Create a compressed segment that represents the values from `selected_model.start_index` to and
+/// including `selected_model.end_index` as `selected_model.values` and, if
+/// `selected_model.end_index < residuals_end_index`, the residuals from `selected_model.end_index
+/// + 1` to and including `residuals_end_index`. Assumes the number of residuals are less than or
+/// equal to [`RESIDUAL_VALUES_MAX_LENGTH`].
+fn store_selected_model_and_any_residual_in_a_segment(
+    univariate_id: u64,
+    error_bound: ErrorBound,
+    selected_model: &SelectedModel,
+    residuals_end_index: usize,
+    uncompressed_timestamps: &TimestampArray,
+    uncompressed_values: &ValueArray,
+    compressed_record_batch_builder: &mut CompressedSegmentBatchBuilder,
+) {
+    // Metadata that may be updated by residuals.
+    let mut min_value = selected_model.min_value;
+    let mut max_value = selected_model.max_value;
+    let mut residuals = vec![];
+
+    // Compress residual values using Gorilla if any exists.
+    if selected_model.end_index < residuals_end_index {
+        // TODO: Compute the XOR to the last value of the model for the first value.
+        let residuals_start_index = selected_model.end_index + 1;
+        let mut selected_model_for_residuals = models::compress_residual_value_range(
+            error_bound,
+            residuals_start_index,
+            residuals_end_index,
+            uncompressed_values,
+        );
+
+        min_value = Value::min(min_value, selected_model_for_residuals.min_value);
+        max_value = Value::max(max_value, selected_model_for_residuals.max_value);
+
+        let residuals_length = (residuals_end_index - residuals_start_index) as u8 + 1;
+        selected_model_for_residuals.values.push(residuals_length);
+        residuals = selected_model_for_residuals.values;
+    };
+
+    compress_timestamps_and_store_segment_in_batch_builder(
+        univariate_id,
+        selected_model.model_type_id,
+        selected_model.start_index,
+        residuals_end_index,
+        min_value,
+        max_value,
+        &selected_model.values,
+        &residuals,
+        uncompressed_timestamps,
+        compressed_record_batch_builder,
+    );
+}
+
+/// For the time series with `univariate_id`, compress the values from `start_index` to and
+/// including `end_index` in `uncompressed_values` using [`Gorilla`] and store the resulting model
+/// with the corresponding timestamps from `uncompressed_timestamps` as a segment in
+/// `compressed_record_batch_builder`.
+fn store_residuals_as_a_model_in_a_separate_segment(
     univariate_id: u64,
     error_bound: ErrorBound,
     start_index: usize,
@@ -148,42 +271,53 @@ fn compress_and_store_residual_value_range(
         uncompressed_values,
     );
 
-    store_selected_model_in_batch_builder(
+    compress_timestamps_and_store_segment_in_batch_builder(
         univariate_id,
-        start_index,
-        &selected_model,
+        selected_model.model_type_id,
+        selected_model.start_index,
+        selected_model.end_index,
+        selected_model.min_value,
+        selected_model.max_value,
+        &selected_model.values,
+        &[],
         uncompressed_timestamps,
         compressed_record_batch_builder,
     );
 }
 
-/// Store the `selected_model` which represents values from the time series with `univariate_id`
-/// from `start_index to `end_index` as part of a segment in `compressed_record_batch_builder`.
-fn store_selected_model_in_batch_builder(
+/// Compress the timestamps from `start_index` to `end_index` and store them with the model
+/// (`min_value`, `max_value`, and `values`) and possible `residuals` in a compressed segment.
+#[allow(clippy::too_many_arguments)]
+fn compress_timestamps_and_store_segment_in_batch_builder(
     univariate_id: u64,
+    model_type_id: u8,
     start_index: usize,
-    selected_model: &SelectedModel,
+    end_index: usize,
+    min_value: Value,
+    max_value: Value,
+    values: &[u8],
+    residuals: &[u8],
     uncompressed_timestamps: &TimestampArray,
     compressed_record_batch_builder: &mut CompressedSegmentBatchBuilder,
 ) {
-    // Add timestamps and error.
-    let end_index = selected_model.end_index;
     let start_time = uncompressed_timestamps.value(start_index);
     let end_time = uncompressed_timestamps.value(end_index);
     let timestamps = timestamps::compress_residual_timestamps(
         &uncompressed_timestamps.values()[start_index..=end_index],
     );
+
     let error = f32::NAN; // TODO: compute and store the actual error.
 
     compressed_record_batch_builder.append_compressed_segment(
         univariate_id,
-        selected_model.model_type_id,
+        model_type_id,
         start_time,
         end_time,
         &timestamps,
-        selected_model.min_value,
-        selected_model.max_value,
-        &selected_model.values,
+        min_value,
+        max_value,
+        values,
+        residuals,
         error,
     );
 }
@@ -207,6 +341,7 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
         min_values,
         max_values,
         values,
+        residuals,
         errors
     );
 
@@ -230,6 +365,7 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
             min_values,
             max_values,
             values,
+            residuals,
         ) {
             indices_to_merge_per_univariate_id
                 .entry(univariate_id)
@@ -289,6 +425,7 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
                         min_values.value(index_of_last_segment),
                         max_values.value(index_of_last_segment),
                         values.value(index_of_last_segment),
+                        residuals.value(index_of_last_segment),
                         errors.value(index_of_last_segment),
                     );
                 }
@@ -300,10 +437,11 @@ pub fn merge_segments(compressed_segments: RecordBatch) -> RecordBatch {
     }
 }
 
-/// Return [`true`] if the models at `previous_index` and `current_index` represent values from the
-/// same time series, are of the same type, and are equivalent, otherwise [`false`]. Assumes the
-/// arrays are the same length and that `previous_index` and `current_index` only access values in
-/// the arrays.
+/// Return [`true`] if the segment at `previous_index` does not store any residuals and the models
+/// at `previous_index` and `current_index` represent values from the same time series, are of the
+/// same type, and are equivalent, otherwise [`false`]. Assumes the arrays are the same length and
+/// that `previous_index` and `current_index` only access values in the arrays.
+#[allow(clippy::too_many_arguments)]
 fn can_models_be_merged(
     previous_index: usize,
     current_index: usize,
@@ -312,7 +450,14 @@ fn can_models_be_merged(
     min_values: &ValueArray,
     max_values: &ValueArray,
     values: &BinaryArray,
+    residuals: &BinaryArray,
 ) -> bool {
+    // The query pipeline assumes residuals are values located after the values reconstructed by
+    // the main model in the segment, thus residuals at previous_index is currently not supported.
+    if previous_index != current_index && !residuals.value(previous_index).is_empty() {
+        return false;
+    }
+
     // f32 are converted to u32 with the same bitwise representation as f32
     // and f64 does not implement std::hash::Hash and thus cannot be hashed.
     (
@@ -426,6 +571,10 @@ struct CompressedSegmentBatchBuilder {
     /// the values of each compressed segment in the batch within an error
     /// bound.
     values: BinaryBuilder,
+    /// Values between this and the next segment, compressed using [`Gorilla`],
+    /// that the models could not represent efficiently within the error bound
+    /// and which are too few for a new segment due to the amount of metadata.
+    residuals: BinaryBuilder,
     /// Actual error of each compressed segment in the batch.
     error: Float32Builder,
 }
@@ -441,6 +590,7 @@ impl CompressedSegmentBatchBuilder {
             min_values: ValueBuilder::with_capacity(capacity),
             max_values: ValueBuilder::with_capacity(capacity),
             values: BinaryBuilder::with_capacity(capacity, capacity),
+            residuals: BinaryBuilder::with_capacity(capacity, capacity),
             error: Float32Builder::with_capacity(capacity),
         }
     }
@@ -457,6 +607,7 @@ impl CompressedSegmentBatchBuilder {
         min_value: Value,
         max_value: Value,
         values: &[u8],
+        residuals: &[u8],
         error: f32,
     ) {
         self.univariate_ids.append_value(univariate_id);
@@ -467,6 +618,7 @@ impl CompressedSegmentBatchBuilder {
         self.min_values.append_value(min_value);
         self.max_values.append_value(max_value);
         self.values.append_value(values);
+        self.residuals.append_value(residuals);
         self.error.append_value(error);
     }
 
@@ -483,6 +635,7 @@ impl CompressedSegmentBatchBuilder {
                 Arc::new(self.min_values.finish()),
                 Arc::new(self.max_values.finish()),
                 Arc::new(self.values.finish()),
+                Arc::new(self.residuals.finish()),
                 Arc::new(self.error.finish()),
             ],
         )
@@ -517,14 +670,16 @@ mod tests {
     #[test]
     fn test_try_compress_regular_constant_time_series() {
         let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
-        let values =
+        let mut values =
             test_util::generate_values(&timestamps, StructureOfValues::Constant, None, None);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
+        let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
-        assert_compressed_record_batch_with_segments_from_regular_time_series(
+        assert_compressed_record_batch_with_segments_from_time_series(
             &uncompressed_timestamps,
+            &uncompressed_values,
             &compressed_record_batch,
             &[models::PMC_MEAN_ID],
         )
@@ -533,14 +688,16 @@ mod tests {
     #[test]
     fn test_try_compress_irregular_constant_time_series() {
         let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
-        let values =
+        let mut values =
             test_util::generate_values(&timestamps, StructureOfValues::Constant, None, None);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
+        let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
-        assert_compressed_record_batch_with_segments_from_regular_time_series(
+        assert_compressed_record_batch_with_segments_from_time_series(
             &uncompressed_timestamps,
+            &uncompressed_values,
             &compressed_record_batch,
             &[models::PMC_MEAN_ID],
         )
@@ -549,7 +706,7 @@ mod tests {
     #[test]
     fn test_try_compress_regular_almost_constant_time_series() {
         let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
-        let values = test_util::generate_values(
+        let mut values = test_util::generate_values(
             &timestamps,
             StructureOfValues::Random,
             Some(9.8),
@@ -558,9 +715,11 @@ mod tests {
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_FIVE);
+        let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
-        assert_compressed_record_batch_with_segments_from_regular_time_series(
+        assert_compressed_record_batch_with_segments_from_time_series(
             &uncompressed_timestamps,
+            &uncompressed_values,
             &compressed_record_batch,
             &[models::PMC_MEAN_ID],
         )
@@ -569,7 +728,7 @@ mod tests {
     #[test]
     fn test_try_compress_irregular_almost_constant_time_series() {
         let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
-        let values = test_util::generate_values(
+        let mut values = test_util::generate_values(
             &timestamps,
             StructureOfValues::Random,
             Some(9.8),
@@ -578,9 +737,11 @@ mod tests {
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_FIVE);
+        let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
-        assert_compressed_record_batch_with_segments_from_regular_time_series(
+        assert_compressed_record_batch_with_segments_from_time_series(
             &uncompressed_timestamps,
+            &uncompressed_values,
             &compressed_record_batch,
             &[models::PMC_MEAN_ID],
         )
@@ -589,13 +750,16 @@ mod tests {
     #[test]
     fn test_try_compress_regular_linear_time_series() {
         let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
-        let values = test_util::generate_values(&timestamps, StructureOfValues::Linear, None, None);
+        let mut values =
+            test_util::generate_values(&timestamps, StructureOfValues::Linear, None, None);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
+        let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
-        assert_compressed_record_batch_with_segments_from_regular_time_series(
+        assert_compressed_record_batch_with_segments_from_time_series(
             &uncompressed_timestamps,
+            &uncompressed_values,
             &compressed_record_batch,
             &[models::SWING_ID],
         )
@@ -604,13 +768,16 @@ mod tests {
     #[test]
     fn test_try_compress_irregular_linear_time_series() {
         let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
-        let values = test_util::generate_values(&timestamps, StructureOfValues::Linear, None, None);
+        let mut values =
+            test_util::generate_values(&timestamps, StructureOfValues::Linear, None, None);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_FIVE);
+        let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
-        assert_compressed_record_batch_with_segments_from_regular_time_series(
+        assert_compressed_record_batch_with_segments_from_time_series(
             &uncompressed_timestamps,
+            &uncompressed_values,
             &compressed_record_batch,
             &[models::SWING_ID],
         )
@@ -619,7 +786,7 @@ mod tests {
     #[test]
     fn test_try_compress_regular_almost_linear_time_series() {
         let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
-        let values = test_util::generate_values(
+        let mut values = test_util::generate_values(
             &timestamps,
             StructureOfValues::AlmostLinear,
             Some(9.8),
@@ -628,9 +795,11 @@ mod tests {
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_FIVE);
+        let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
-        assert_compressed_record_batch_with_segments_from_regular_time_series(
+        assert_compressed_record_batch_with_segments_from_time_series(
             &uncompressed_timestamps,
+            &uncompressed_values,
             &compressed_record_batch,
             &[models::SWING_ID],
         )
@@ -639,7 +808,7 @@ mod tests {
     #[test]
     fn test_try_compress_irregular_almost_linear_time_series() {
         let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
-        let values = test_util::generate_values(
+        let mut values = test_util::generate_values(
             &timestamps,
             StructureOfValues::AlmostLinear,
             Some(9.8),
@@ -648,9 +817,11 @@ mod tests {
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_FIVE);
+        let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
-        assert_compressed_record_batch_with_segments_from_regular_time_series(
+        assert_compressed_record_batch_with_segments_from_time_series(
             &uncompressed_timestamps,
+            &uncompressed_values,
             &compressed_record_batch,
             &[models::SWING_ID],
         )
@@ -659,7 +830,7 @@ mod tests {
     #[test]
     fn test_try_compress_regular_random_time_series() {
         let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
-        let values = test_util::generate_values(
+        let mut values = test_util::generate_values(
             &timestamps,
             StructureOfValues::Random,
             Some(0.0),
@@ -668,9 +839,11 @@ mod tests {
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
+        let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
-        assert_compressed_record_batch_with_segments_from_regular_time_series(
+        assert_compressed_record_batch_with_segments_from_time_series(
             &uncompressed_timestamps,
+            &uncompressed_values,
             &compressed_record_batch,
             &[models::GORILLA_ID],
         )
@@ -679,7 +852,7 @@ mod tests {
     #[test]
     fn test_try_compress_irregular_random_time_series() {
         let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
-        let values = test_util::generate_values(
+        let mut values = test_util::generate_values(
             &timestamps,
             StructureOfValues::Random,
             Some(0.0),
@@ -688,9 +861,11 @@ mod tests {
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
+        let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
-        assert_compressed_record_batch_with_segments_from_regular_time_series(
+        assert_compressed_record_batch_with_segments_from_time_series(
             &uncompressed_timestamps,
+            &uncompressed_values,
             &compressed_record_batch,
             &[models::GORILLA_ID],
         )
@@ -699,6 +874,64 @@ mod tests {
     #[test]
     fn test_try_compress_regular_random_linear_constant_time_series() {
         let timestamps = test_util::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, false);
+        try_compress_random_linear_constant_time_series(timestamps);
+    }
+
+    #[test]
+    fn test_try_compress_irregular_random_linear_constant_time_series() {
+        let timestamps = test_util::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, true);
+        try_compress_random_linear_constant_time_series(timestamps);
+    }
+
+    fn try_compress_random_linear_constant_time_series(timestamps: Vec<i64>) {
+        let mut random = test_util::generate_values(
+            &timestamps[0..TRY_COMPRESS_TEST_LENGTH],
+            StructureOfValues::Random,
+            Some(0.0),
+            Some(f32::MAX),
+        );
+        let mut linear = test_util::generate_values(
+            &timestamps[TRY_COMPRESS_TEST_LENGTH..2 * TRY_COMPRESS_TEST_LENGTH],
+            StructureOfValues::Linear,
+            None,
+            None,
+        );
+        let mut constant = test_util::generate_values(
+            &timestamps[2 * TRY_COMPRESS_TEST_LENGTH..],
+            StructureOfValues::Constant,
+            None,
+            None,
+        );
+        let mut values = vec![];
+        values.append(&mut random);
+        values.append(&mut linear);
+        values.append(&mut constant);
+
+        let (uncompressed_timestamps, compressed_record_batch) =
+            create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
+        let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
+
+        assert_compressed_record_batch_with_segments_from_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            &compressed_record_batch,
+            &[models::GORILLA_ID, models::SWING_ID, models::PMC_MEAN_ID],
+        )
+    }
+
+    #[test]
+    fn test_try_compress_constant_linear_random_regular_time_series() {
+        let timestamps = test_util::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, false);
+        try_compress_constant_linear_random_time_series(timestamps);
+    }
+
+    #[test]
+    fn test_try_compress_constant_linear_random_irregular_time_series() {
+        let timestamps = test_util::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, true);
+        try_compress_constant_linear_random_time_series(timestamps);
+    }
+
+    fn try_compress_constant_linear_random_time_series(timestamps: Vec<i64>) {
         let mut constant = test_util::generate_values(
             &timestamps[0..TRY_COMPRESS_TEST_LENGTH],
             StructureOfValues::Constant,
@@ -718,17 +951,19 @@ mod tests {
             Some(f32::MAX),
         );
         let mut values = vec![];
-        values.append(&mut random);
-        values.append(&mut linear);
         values.append(&mut constant);
+        values.append(&mut linear);
+        values.append(&mut random);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
+        let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
-        assert_compressed_record_batch_with_segments_from_regular_time_series(
+        assert_compressed_record_batch_with_segments_from_time_series(
             &uncompressed_timestamps,
+            &uncompressed_values,
             &compressed_record_batch,
-            &[models::GORILLA_ID, models::SWING_ID, models::PMC_MEAN_ID],
+            &[models::PMC_MEAN_ID, models::SWING_ID],
         )
     }
 
@@ -761,8 +996,9 @@ mod tests {
         (uncompressed_timestamps, compressed_record_batch)
     }
 
-    fn assert_compressed_record_batch_with_segments_from_regular_time_series(
+    fn assert_compressed_record_batch_with_segments_from_time_series(
         uncompressed_timestamps: &TimestampArray,
+        uncompressed_values: &ValueArray,
         compressed_record_batch: &RecordBatch,
         expected_model_type_ids: &[u8],
     ) {
@@ -771,22 +1007,48 @@ mod tests {
             compressed_record_batch.num_rows()
         );
 
-        let mut total_compressed_length = 0;
-        for (segment, expected_model_type_id) in expected_model_type_ids.iter().enumerate() {
-            let model_type_id =
-                modelardb_common::array!(compressed_record_batch, 1, UInt8Array).value(segment);
-            assert_eq!(*expected_model_type_id, model_type_id);
+        let mut univariate_id_builder = UInt64Builder::new();
+        let mut timestamp_builder = TimestampBuilder::new();
+        let mut value_builder = ValueBuilder::new();
 
-            let start_time =
-                modelardb_common::array!(compressed_record_batch, 2, TimestampArray).value(segment);
-            let end_time =
-                modelardb_common::array!(compressed_record_batch, 3, TimestampArray).value(segment);
-            let timestamps =
-                modelardb_common::array!(compressed_record_batch, 4, BinaryArray).value(segment);
+        modelardb_common::arrays!(
+            compressed_record_batch,
+            univariate_ids,
+            model_type_ids,
+            start_times,
+            end_times,
+            timestamps,
+            min_values,
+            max_values,
+            values,
+            residuals,
+            _error_array
+        );
 
-            total_compressed_length += models::len(start_time, end_time, timestamps);
+        for (row_index, expected_model_type_id) in expected_model_type_ids.iter().enumerate() {
+            models::grid(
+                univariate_ids.value(row_index),
+                model_type_ids.value(row_index),
+                start_times.value(row_index),
+                end_times.value(row_index),
+                timestamps.value(row_index),
+                min_values.value(row_index),
+                max_values.value(row_index),
+                values.value(row_index),
+                residuals.value(row_index),
+                &mut univariate_id_builder,
+                &mut timestamp_builder,
+                &mut value_builder,
+            );
+
+            assert_eq!(model_type_ids.value(row_index), *expected_model_type_id);
         }
-        assert_eq!(uncompressed_timestamps.len(), total_compressed_length);
+
+        assert_eq!(
+            uncompressed_timestamps.len(),
+            timestamp_builder.finish().len()
+        );
+        assert_eq!(uncompressed_values.len(), value_builder.finish().len());
     }
 
     // Tests for merge_segments().
@@ -802,6 +1064,7 @@ mod tests {
         let univariate_id = 1;
         let model_type_id = 1;
         let values = &[];
+        let residuals = &[];
         let min_value = 5.0;
         let max_value = 5.0;
 
@@ -818,6 +1081,7 @@ mod tests {
                 min_value,
                 max_value,
                 values,
+                residuals,
                 0.0,
             );
         }
@@ -832,6 +1096,7 @@ mod tests {
                 -min_value,
                 -max_value,
                 values,
+                residuals,
                 10.0,
             );
         }
@@ -840,13 +1105,19 @@ mod tests {
         let merged_record_batch = merge_segments(compressed_record_batch);
 
         // Extract the columns from the RecordBatch.
-        let start_times = modelardb_common::array!(merged_record_batch, 2, TimestampArray);
-        let end_times = modelardb_common::array!(merged_record_batch, 3, TimestampArray);
-        let timestamps = modelardb_common::array!(merged_record_batch, 4, BinaryArray);
-        let min_values = modelardb_common::array!(merged_record_batch, 5, ValueArray);
-        let max_values = modelardb_common::array!(merged_record_batch, 6, ValueArray);
-        let values = modelardb_common::array!(merged_record_batch, 7, BinaryArray);
-        let errors = modelardb_common::array!(merged_record_batch, 8, Float32Array);
+        modelardb_common::arrays!(
+            merged_record_batch,
+            _univariate_ids,
+            _model_type_ids,
+            start_times,
+            end_times,
+            timestamps,
+            min_values,
+            max_values,
+            values,
+            _residuals,
+            errors
+        );
 
         // Assert that the number of segments are correct.
         assert_eq!(2, merged_record_batch.num_rows());
@@ -892,7 +1163,7 @@ mod tests {
 
     // Tests for can_models_be_merged().
     #[test]
-    fn test_models_can_be_merged() {
+    fn test_equal_models_without_residuals_can_be_merged() {
         assert!(can_models_be_merged(
             0,
             1,
@@ -900,7 +1171,22 @@ mod tests {
             &UInt8Array::from_iter_values([1, 1]),
             &ValueArray::from_iter_values([1.0, 1.0]),
             &ValueArray::from_iter_values([2.0, 2.0]),
-            &BinaryArray::from_iter_values([[1], [1]])
+            &BinaryArray::from_iter_values([[1], [1]]),
+            &BinaryArray::from_iter_values([[], []])
+        ))
+    }
+
+    #[test]
+    fn test_equal_models_with_residuals_in_second_can_be_merged() {
+        assert!(can_models_be_merged(
+            0,
+            1,
+            &UInt64Array::from_iter_values([1, 1]),
+            &UInt8Array::from_iter_values([1, 1]),
+            &ValueArray::from_iter_values([1.0, 1.0]),
+            &ValueArray::from_iter_values([2.0, 2.0]),
+            &BinaryArray::from_iter_values([[1], [1]]),
+            &BinaryArray::from_iter_values([vec![], vec![1]])
         ))
     }
 
@@ -913,7 +1199,8 @@ mod tests {
             &UInt8Array::from_iter_values([1, 1]),
             &ValueArray::from_iter_values([1.0, 1.0]),
             &ValueArray::from_iter_values([2.0, 2.0]),
-            &BinaryArray::from_iter_values([[1], [1]])
+            &BinaryArray::from_iter_values([[1], [1]]),
+            &BinaryArray::from_iter_values([[], []])
         ))
     }
 
@@ -926,7 +1213,8 @@ mod tests {
             &UInt8Array::from_iter_values([1, 2]),
             &ValueArray::from_iter_values([1.0, 1.0]),
             &ValueArray::from_iter_values([2.0, 2.0]),
-            &BinaryArray::from_iter_values([[1], [1]])
+            &BinaryArray::from_iter_values([[1], [1]]),
+            &BinaryArray::from_iter_values([[], []])
         ))
     }
 
@@ -939,7 +1227,8 @@ mod tests {
             &UInt8Array::from_iter_values([1, 1]),
             &ValueArray::from_iter_values([1.0, 2.0]),
             &ValueArray::from_iter_values([2.0, 2.0]),
-            &BinaryArray::from_iter_values([[1], [1]])
+            &BinaryArray::from_iter_values([[1], [1]]),
+            &BinaryArray::from_iter_values([[], []])
         ))
     }
 
@@ -952,7 +1241,8 @@ mod tests {
             &UInt8Array::from_iter_values([1, 1]),
             &ValueArray::from_iter_values([1.0, 1.0]),
             &ValueArray::from_iter_values([2.0, 3.0]),
-            &BinaryArray::from_iter_values([[1], [1]])
+            &BinaryArray::from_iter_values([[1], [1]]),
+            &BinaryArray::from_iter_values([[], []])
         ))
     }
 
@@ -965,7 +1255,36 @@ mod tests {
             &UInt8Array::from_iter_values([1, 1]),
             &ValueArray::from_iter_values([1.0, 1.0]),
             &ValueArray::from_iter_values([2.0, 2.0]),
-            &BinaryArray::from_iter_values([[1], [2]])
+            &BinaryArray::from_iter_values([[1], [2]]),
+            &BinaryArray::from_iter_values([[], []])
+        ))
+    }
+
+    #[test]
+    fn test_models_with_residuals_in_first_cannot_be_merged() {
+        assert!(!can_models_be_merged(
+            0,
+            1,
+            &UInt64Array::from_iter_values([1, 1]),
+            &UInt8Array::from_iter_values([1, 1]),
+            &ValueArray::from_iter_values([1.0, 1.0]),
+            &ValueArray::from_iter_values([2.0, 2.0]),
+            &BinaryArray::from_iter_values([[1], [1]]),
+            &BinaryArray::from_iter_values([&vec![1], &vec![]])
+        ))
+    }
+
+    #[test]
+    fn test_models_with_residuals_in_both_cannot_be_merged() {
+        assert!(!can_models_be_merged(
+            0,
+            1,
+            &UInt64Array::from_iter_values([1, 1]),
+            &UInt8Array::from_iter_values([1, 1]),
+            &ValueArray::from_iter_values([1.0, 1.0]),
+            &ValueArray::from_iter_values([2.0, 2.0]),
+            &BinaryArray::from_iter_values([[1], [1]]),
+            &BinaryArray::from_iter_values([[1], [1]])
         ))
     }
 }

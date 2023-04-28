@@ -278,6 +278,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
             _min_values,
             _max_values,
             _values,
+            _residuals,
             _error_array
         );
 
@@ -564,6 +565,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
             min_values,
             max_values,
             values,
+            _residuals,
             _error_array
         );
 
@@ -685,6 +687,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
             min_values,
             max_values,
             values,
+            _residuals,
             _error_array
         );
 

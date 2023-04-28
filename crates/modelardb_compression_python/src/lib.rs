@@ -103,6 +103,7 @@ fn decompress<'a>(compressed: &'a PyAny, python: Python<'a>) -> PyResult<&'a PyA
         min_values,
         max_values,
         values,
+        residuals,
         _error_array
     );
 
@@ -114,12 +115,13 @@ fn decompress<'a>(compressed: &'a PyAny, python: Python<'a>) -> PyResult<&'a PyA
         models::grid(
             univariate_ids.value(row_index),
             model_type_ids.value(row_index),
-            timestamps.value(row_index),
             start_times.value(row_index),
             end_times.value(row_index),
-            values.value(row_index),
+            timestamps.value(row_index),
             min_values.value(row_index),
             max_values.value(row_index),
+            values.value(row_index),
+            residuals.value(row_index),
             &mut univariate_id_builder,
             &mut timestamp_builder,
             &mut value_builder,

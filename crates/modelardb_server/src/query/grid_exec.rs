@@ -26,7 +26,7 @@ use std::task::{Context as StdTaskContext, Poll};
 
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    Array, ArrayRef, BinaryArray, Float32Array, UInt64Array, UInt8Array,
+    Array, ArrayRef, BinaryArray, Float32Array, UInt64Array, UInt64Builder, UInt8Array,
 };
 use datafusion::arrow::compute::filter_record_batch;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -256,6 +256,7 @@ impl GridStream {
             min_values,
             max_values,
             values,
+            residuals,
             _error_array
         );
 
@@ -264,7 +265,7 @@ impl GridStream {
         // from each segment in the new batch as each segment contains at least one data point.
         let current_rows = self.current_batch.num_rows() - self.current_batch_offset;
         let new_rows = batch.num_rows();
-        let mut univariate_id_builder = UInt64Array::builder(current_rows + new_rows);
+        let mut univariate_id_builder = UInt64Builder::with_capacity(current_rows + new_rows);
         let mut timestamp_builder = TimestampBuilder::with_capacity(current_rows + new_rows);
         let mut value_builder = ValueBuilder::with_capacity(current_rows + new_rows);
 
@@ -288,12 +289,13 @@ impl GridStream {
             models::grid(
                 univariate_ids.value(row_index),
                 model_type_ids.value(row_index),
-                timestamps.value(row_index),
                 start_times.value(row_index),
                 end_times.value(row_index),
-                values.value(row_index),
+                timestamps.value(row_index),
                 min_values.value(row_index),
                 max_values.value(row_index),
+                values.value(row_index),
+                residuals.value(row_index),
                 &mut univariate_id_builder,
                 &mut timestamp_builder,
                 &mut value_builder,

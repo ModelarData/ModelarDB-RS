@@ -106,6 +106,9 @@ pub fn is_value_within_error_bound(
 pub struct SelectedModel {
     /// Id of the model type that created this model.
     pub model_type_id: u8,
+    /// Index of the first data point in the `UncompressedDataBuffer` that the
+    /// selected model represents.
+    pub start_index: usize,
     /// Index of the last data point in the `UncompressedDataBuffer` that the
     /// selected model represents.
     pub end_index: usize,
@@ -149,6 +152,7 @@ impl SelectedModel {
 
         Self {
             model_type_id: PMC_MEAN_ID,
+            start_index,
             end_index,
             min_value: value,
             max_value: value,
@@ -167,6 +171,7 @@ impl SelectedModel {
 
         Self {
             model_type_id: SWING_ID,
+            start_index,
             end_index,
             min_value,
             max_value,
@@ -207,6 +212,7 @@ pub fn compress_residual_value_range(
 
     SelectedModel {
         model_type_id: GORILLA_ID,
+        start_index,
         end_index,
         min_value,
         max_value,
@@ -265,32 +271,46 @@ pub fn sum(
     }
 }
 
-/// Reconstruct the data points for a time series segment whose values are
-/// represented by a model. Each data point is split into its three components
-/// and appended to `univariate_ids`, `timestamps`, and `values`.
+/// Reconstruct the data points for a time series segment whose values are represented by a model
+/// and residuals. Each data point is split into its three components and appended to
+/// `univariate_ids`, `timestamps`, and `values`.
 #[allow(clippy::too_many_arguments)]
 pub fn grid(
     univariate_id: UnivariateId,
     model_type_id: u8,
-    timestamps: &[u8],
     start_time: Timestamp,
     end_time: Timestamp,
-    values: &[u8],
+    timestamps: &[u8],
     min_value: Value,
     max_value: Value,
+    values: &[u8],
+    residuals: &[u8],
     univariate_id_builder: &mut UnivariateIdBuilder,
     timestamp_builder: &mut TimestampBuilder,
     value_builder: &mut ValueBuilder,
 ) {
-    timestamps::decompress_all_timestamps(start_time, end_time, timestamps, timestamp_builder);
-    let new_timestamps = &timestamp_builder.values_slice()[value_builder.values_slice().len()..];
+    // Extract the number of residuals stored.
+    let residuals_length = if residuals.is_empty() {
+        0
+    } else {
+        // The number of residuals are stored as the last byte.
+        residuals[residuals.len() - 1]
+    };
 
+    // Decompress all of timestamps.
+    let model_timestamps_start = timestamp_builder.values_slice().len();
+    timestamps::decompress_all_timestamps(start_time, end_time, timestamps, timestamp_builder);
+    let model_timestamps_end = timestamp_builder.values_slice().len() - residuals_length as usize;
+    let model_timestamps =
+        &timestamp_builder.values_slice()[model_timestamps_start..model_timestamps_end];
+
+    // Reconstruct the values from the model.
     match model_type_id {
         PMC_MEAN_ID => pmc_mean::grid(
             univariate_id,
             min_value, // For PMC-Mean, min and max is the same value.
             univariate_id_builder,
-            new_timestamps,
+            model_timestamps,
             value_builder,
         ),
         SWING_ID => swing::grid(
@@ -301,17 +321,28 @@ pub fn grid(
             max_value,
             values,
             univariate_id_builder,
-            new_timestamps,
+            model_timestamps,
             value_builder,
         ),
         GORILLA_ID => gorilla::grid(
             univariate_id,
             values,
             univariate_id_builder,
-            new_timestamps,
+            model_timestamps,
             value_builder,
         ),
         _ => panic!("Unknown model type."),
+    }
+
+    // Reconstruct the values from the residuals.
+    if residuals_length > 0 {
+        gorilla::grid(
+            univariate_id,
+            &residuals[..residuals.len() - 1],
+            univariate_id_builder,
+            &timestamp_builder.values_slice()[model_timestamps_end..],
+            value_builder,
+        );
     }
 }
 
