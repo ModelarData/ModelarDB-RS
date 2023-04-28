@@ -80,7 +80,7 @@ macro_rules! array {
 ///
 /// # Panics
 ///
-/// Panics if `batch` does not contain nine columns or if the columns are not UInt64Array,
+/// Panics if `batch` does not contain ten columns or if the columns are not UInt64Array,
 /// UInt8Array, TimestampArray, TimestampArray, BinaryArray, ValueArray, ValueArray, BinaryArray,
 /// BinaryArray, and Float32Array.
 #[macro_export]
