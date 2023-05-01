@@ -541,9 +541,9 @@ mod tests {
         let (mut metadata_manager, mut data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
-        let (model_table_metadata, data) = uncompressed_data(1);
+        let (model_table_metadata, generation_exprs_original, data) = uncompressed_data(1);
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, &generation_exprs_original)
             .unwrap();
         data_manager
             .insert_data_points(&mut metadata_manager, &model_table_metadata, &data)
@@ -565,9 +565,9 @@ mod tests {
         let (mut metadata_manager, mut data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
-        let (model_table_metadata, data) = uncompressed_data(2);
+        let (model_table_metadata, generation_exprs_original, data) = uncompressed_data(2);
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, &generation_exprs_original)
             .unwrap();
         data_manager
             .insert_data_points(&mut metadata_manager, &model_table_metadata, &data)
@@ -585,8 +585,10 @@ mod tests {
 
     /// Create a record batch with data that resembles uncompressed data with a single tag and two
     /// field columns. The returned data has `row_count` rows, with a different tag for each row.
-    /// Also create model table metadata for a model table that matches the created data.
-    fn uncompressed_data(row_count: usize) -> (ModelTableMetadata, RecordBatch) {
+    /// Also create model table metadata and expr for a model table that matches the created data.
+    fn uncompressed_data(
+        row_count: usize,
+    ) -> (ModelTableMetadata, Vec<Option<String>>, RecordBatch) {
         let tags: Vec<String> = (0..row_count).map(|tag| tag.to_string()).collect();
         let timestamps: Vec<Timestamp> = (0..row_count).map(|ts| ts as Timestamp).collect();
         let values: Vec<Value> = (0..row_count).map(|value| value as Value).collect();
@@ -616,11 +618,23 @@ mod tests {
             ErrorBound::try_new(0.0).unwrap(),
         ];
 
-        let model_table_metadata =
-            ModelTableMetadata::try_new("model_table".to_owned(), schema, 1, vec![0], error_bounds)
-                .unwrap();
+        let generation_exprs = vec![None, None, None, None];
+        let generation_exprs_original = generation_exprs
+            .iter()
+            .map(|_expr| Some("".to_owned()))
+            .collect();
 
-        (model_table_metadata, data)
+        let model_table_metadata = ModelTableMetadata::try_new(
+            "model_table".to_owned(),
+            schema,
+            1,
+            vec![0],
+            error_bounds,
+            generation_exprs,
+        )
+        .unwrap();
+
+        (model_table_metadata, generation_exprs_original, data)
     }
 
     #[tokio::test]
@@ -976,12 +990,24 @@ mod tests {
             ErrorBound::try_new(0.0).unwrap(),
         ];
 
-        let model_table =
-            ModelTableMetadata::try_new("Table".to_owned(), schema, 0, vec![2], error_bounds)
-                .unwrap();
+        let generation_exprs = vec![None, None, None];
+        let generation_exprs_original = generation_exprs
+            .iter()
+            .map(|_expr| Some("".to_owned()))
+            .collect::<Vec<Option<String>>>();
+
+        let model_table = ModelTableMetadata::try_new(
+            "Table".to_owned(),
+            schema,
+            0,
+            vec![2],
+            error_bounds,
+            generation_exprs,
+        )
+        .unwrap();
 
         metadata_manager
-            .save_model_table_metadata(&model_table)
+            .save_model_table_metadata(&model_table, &generation_exprs_original)
             .unwrap();
 
         metadata_manager

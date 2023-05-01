@@ -62,7 +62,7 @@ use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::{validate_remote_data_folder, Context, ServerMode, RemoteDataFolderType};
+use crate::{validate_remote_data_folder, Context, RemoteDataFolderType, ServerMode};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
@@ -430,6 +430,7 @@ impl FlightServiceHandler {
     fn register_and_save_model_table(
         &self,
         model_table_metadata: ModelTableMetadata,
+        generation_exprs_original: &[Option<String>],
     ) -> Result<(), Status> {
         // Save the model table in the Apache Arrow DataFusion catalog.
         let model_table_metadata = Arc::new(model_table_metadata);
@@ -445,7 +446,7 @@ impl FlightServiceHandler {
         // Persist the new model table to the metadata database.
         self.context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, generation_exprs_original)
             .map_err(|error| Status::internal(error.to_string()))?;
 
         info!("Created model table '{}'.", model_table_metadata.name);
@@ -673,10 +674,16 @@ impl FlightService for FlightServiceHandler {
                     self.check_if_table_exists(&name).await?;
                     self.register_and_save_table(name, schema).await?;
                 }
-                ValidStatement::CreateModelTable(model_table_metadata) => {
+                ValidStatement::CreateModelTable {
+                    model_table_metadata,
+                    generation_exprs_original,
+                } => {
                     self.check_if_table_exists(&model_table_metadata.name)
                         .await?;
-                    self.register_and_save_model_table(model_table_metadata)?;
+                    self.register_and_save_model_table(
+                        model_table_metadata,
+                        &generation_exprs_original,
+                    )?;
                 }
             };
 

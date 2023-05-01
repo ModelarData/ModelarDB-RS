@@ -37,15 +37,18 @@ use std::sync::Arc;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
+use datafusion::common::ToDFSchema;
 use datafusion::execution::options::ParquetReadOptions;
+use datafusion::logical_expr::Expr;
 use modelardb_common::types::UnivariateId;
 use modelardb_compression::models::ErrorBound;
-use rusqlite::types::Type::Blob;
+use rusqlite::types::Type::{Blob, Text};
 use rusqlite::{params, Connection, Result, Row};
 use tokio::runtime::Runtime;
 use tracing::{error, info, warn};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::parser;
 use crate::query::ModelTable;
 use crate::storage::COMPRESSED_DATA_FOLDER;
 use crate::{Context, ServerMode};
@@ -134,7 +137,8 @@ impl MetadataManager {
                 schema BLOB NOT NULL,
                 timestamp_column_index INTEGER NOT NULL,
                 tag_column_indices BLOB NOT NULL,
-                error_bounds BLOB NOT NULL
+                error_bounds BLOB NOT NULL,
+                generation_exprs TEXT NOT NULL
         ) STRICT",
             (),
         )?;
@@ -179,7 +183,7 @@ impl MetadataManager {
         &mut self,
         model_table: &ModelTableMetadata,
         tag_values: &[String],
-    ) -> Result<u64, rusqlite::Error> {
+    ) -> Result<u64> {
         let cache_key = {
             let mut cache_key_list = tag_values.to_vec();
             cache_key_list.push(model_table.name.clone());
@@ -475,11 +479,7 @@ impl MetadataManager {
     /// Read the rows in the table_metadata table and use these to register tables in Apache Arrow
     /// DataFusion. If the metadata database could not be opened or the table could not be queried,
     /// return [`rusqlite::Error`].
-    pub fn register_tables(
-        &self,
-        context: &Arc<Context>,
-        runtime: &Arc<Runtime>,
-    ) -> Result<(), rusqlite::Error> {
+    pub fn register_tables(&self, context: &Arc<Context>, runtime: &Arc<Runtime>) -> Result<()> {
         let connection = Connection::open(&self.metadata_database_path)?;
 
         let mut select_statement = connection.prepare("SELECT table_name FROM table_metadata")?;
@@ -527,12 +527,25 @@ impl MetadataManager {
     }
 
     /// Save the created model table to the metadata database. This includes creating a tags table
-    /// for the model table, adding a row to the model_table_metadata table, and adding a row to the
-    /// model_table_field_columns table for each field column.
+    /// for the model table, adding a row to the model_table_metadata table, and adding a row to
+    /// the model_table_field_columns table for each field column. The `generation_exprs_original`
+    /// must be passed in addition to `model_table_metadata` as [`Expr`] does not have support for
+    /// serialization and deserialization, thus the original string-based representations are used.
     pub fn save_model_table_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
+        generation_exprs_original: &[Option<String>],
     ) -> Result<()> {
+        // Both representations of the generation expressions must have the same number of items.
+        if model_table_metadata.generation_exprs.len() != generation_exprs_original.len() {
+            // InvalidParameterCount is intended to be used if the number of arguments to a query
+            // is incorrect, but it is the rusqlite::Error that must closely describe this error.
+            return Err(rusqlite::Error::InvalidParameterCount(
+                generation_exprs_original.len(),
+                model_table_metadata.generation_exprs.len(),
+            ));
+        }
+
         // Convert the schema to bytes so it can be saved as a BLOB in the metadata database.
         let schema_bytes = MetadataManager::convert_schema_to_blob(&model_table_metadata.schema)?;
 
@@ -566,7 +579,7 @@ impl MetadataManager {
         // Add a new row in the model_table_metadata table to persist the model table.
         transaction.execute(
             "INSERT INTO model_table_metadata (table_name, schema, timestamp_column_index,
-             tag_column_indices, error_bounds) VALUES (?1, ?2, ?3, ?4, ?5)",
+             tag_column_indices, error_bounds, generation_exprs) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 model_table_metadata.name,
                 schema_bytes,
@@ -576,7 +589,8 @@ impl MetadataManager {
                 ),
                 MetadataManager::convert_slice_error_bounds_to_vec_u8(
                     &model_table_metadata.error_bounds
-                )
+                ),
+                MetadataManager::convert_slice_generation_expr_to_string(generation_exprs_original)
             ],
         )?;
 
@@ -609,7 +623,7 @@ impl MetadataManager {
     /// Convert the rows in the model_table_metadata table to [`ModelTableMetadata`] and use these
     /// to register model tables in Apache Arrow DataFusion. If the metadata database could not be
     /// opened or the table could not be queried, return [`rusqlite::Error`].
-    pub fn register_model_tables(&self, context: &Arc<Context>) -> Result<(), rusqlite::Error> {
+    pub fn register_model_tables(&self, context: &Arc<Context>) -> Result<()> {
         let connection = Connection::open(&self.metadata_database_path)?;
 
         let mut select_statement = connection.prepare(
@@ -646,6 +660,12 @@ impl MetadataManager {
         let error_bounds =
             MetadataManager::convert_slice_u8_to_vec_error_bounds(&error_bounds_bytes)?;
 
+        let generation_exprs_string = row.get::<usize, String>(5)?;
+        let generation_exprs = MetadataManager::convert_string_to_vec_generation_expr(
+            schema.clone(),
+            &generation_exprs_string,
+        )?;
+
         // Create model table metadata.
         let model_table_metadata = Arc::new(ModelTableMetadata {
             name: name.clone(),
@@ -653,6 +673,7 @@ impl MetadataManager {
             timestamp_column_index: row.get(2)?,
             tag_column_indices,
             error_bounds,
+            generation_exprs,
         });
 
         // Register model table.
@@ -740,6 +761,52 @@ impl MetadataManager {
                 .collect())
         }
     }
+
+    /// Convert a [`&[Option<String>]`] of generation expressions to a single [`String`].
+    fn convert_slice_generation_expr_to_string(generation_exprs: &[Option<String>]) -> String {
+        generation_exprs
+            .iter()
+            .map(|maybe_generation_expr| {
+                if let Some(generation_expr) = maybe_generation_expr {
+                    generation_expr
+                } else {
+                    ""
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(";")
+    }
+
+    /// Convert a [`&str`] to a [`Vec<Option<Expr>>`] if the string contains expressions separated
+    /// by semicolon that can be fully parsed in the context of `schema` (i.e. only references
+    /// columns in `schema`), otherwise [`Error`](rusqlite::Error) is returned.
+    fn convert_string_to_vec_generation_expr(
+        schema: Schema,
+        generation_exprs: &str,
+    ) -> Result<Vec<Option<Expr>>> {
+        let df_schema = schema.to_dfschema().map_err(|error| {
+            let message = format!("String is not valid generation expressions: {error}");
+            rusqlite::Error::InvalidColumnType(5, message, Text)
+        })?;
+
+        // A loop is used instead of map() to allow for errors to be retuned using the ? operator.
+        let mut parsed_exprs = vec![];
+        for maybe_generation_expr in generation_exprs.split(';') {
+            let maybe_parsed_expr = if maybe_generation_expr.is_empty() {
+                None
+            } else {
+                let parsed_expr = parser::parse_sql_expression(&df_schema, maybe_generation_expr)
+                    .map_err(|error| {
+                    let message = format!("String is not a valid generation expression: {error}");
+                    rusqlite::Error::InvalidColumnType(5, message, Text)
+                })?;
+                Some(parsed_expr)
+            };
+            parsed_exprs.push(maybe_parsed_expr);
+        }
+
+        Ok(parsed_exprs)
+    }
 }
 
 #[cfg(test)]
@@ -748,6 +815,7 @@ mod tests {
 
     use std::fs;
 
+    use datafusion::logical_expr::Expr;
     use proptest::strategy::Strategy;
     use proptest::{collection, num, prop_assert_eq, proptest};
 
@@ -795,8 +863,7 @@ mod tests {
 
         connection
             .execute(
-                "SELECT table_name, schema, timestamp_column_index,
-                 tag_column_indices FROM model_table_metadata",
+                "SELECT table_name, schema, timestamp_column_index, tag_column_indices, error_bounds, generation_exprs FROM model_table_metadata",
                 params![],
             )
             .unwrap();
@@ -829,9 +896,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
 
-        let model_table_metadata = test_util::model_table_metadata();
+        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
             .unwrap();
 
         let result = metadata_manager
@@ -867,9 +934,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
 
-        let model_table_metadata = test_util::model_table_metadata();
+        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
             .unwrap();
 
         metadata_manager
@@ -922,9 +989,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
 
-        let model_table_metadata = test_util::model_table_metadata();
+        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
             .unwrap();
 
         // Lookup univariate ids using fields and tags for an empty table.
@@ -1018,9 +1085,9 @@ mod tests {
         metadata_manager: &mut MetadataManager,
         tag_values: &[&str],
     ) {
-        let model_table_metadata = test_util::model_table_metadata();
+        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
             .unwrap();
 
         for tag_value in tag_values {
@@ -1092,9 +1159,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
 
-        let model_table_metadata = test_util::model_table_metadata();
+        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
             .unwrap();
 
         // Retrieve the model table from the metadata database.
@@ -1111,8 +1178,8 @@ mod tests {
         // Retrieve the rows in model_table_metadata from the metadata database.
         let mut select_statement = connection
             .prepare(
-                "SELECT table_name, schema, timestamp_column_index,
-                        tag_column_indices, error_bounds FROM model_table_metadata",
+                "SELECT table_name, schema, timestamp_column_index, tag_column_indices,
+                        error_bounds, generation_exprs FROM model_table_metadata",
             )
             .unwrap();
         let mut rows = select_statement.query(()).unwrap();
@@ -1132,6 +1199,8 @@ mod tests {
             vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             row.get::<usize, Vec<u8>>(4).unwrap()
         );
+
+        assert_eq!(";;;", row.get::<usize, String>(5).unwrap());
 
         assert!(rows.next().unwrap().is_none());
 
@@ -1165,10 +1234,10 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = test_util::test_context(temp_dir.path());
 
-        let model_table_metadata = test_util::model_table_metadata();
+        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
         context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
             .unwrap();
 
         // Register the model table with Apache Arrow DataFusion.
@@ -1185,8 +1254,7 @@ mod tests {
 
     #[test]
     fn test_blob_to_schema_and_schema_to_blob() {
-        let model_table_metadata = test_util::model_table_metadata();
-        let schema = model_table_metadata.schema;
+        let schema = test_util::model_table_metadata().0.schema;
 
         // Serialize a schema to bytes.
         let bytes = MetadataManager::convert_schema_to_blob(&schema).unwrap();
@@ -1206,7 +1274,7 @@ mod tests {
 
         #[test]
         fn test_error_bound_to_u8_and_u8_to_error_bound(
-            percentages in collection::vec(num::f32::POSITIVE, 0..50).prop_map(|percentages| 
+            percentages in collection::vec(num::f32::POSITIVE, 0..50).prop_map(|percentages|
                 percentages.iter().map(|percentage| percentage % 100.0).collect::<Vec<f32>>())
         ) {
             // The stragegy computing percentages is not perfect as it cannot generate the value
@@ -1221,6 +1289,41 @@ mod tests {
 
             prop_assert_eq!(percentages, usizes);
         }
+    }
+
+    #[test]
+    fn test_generation_exprs_to_string_and_string_to_generation_exprs() {
+        let schemaref = test_util::model_table_metadata().0.schema;
+        let schema = Arc::try_unwrap(schemaref).unwrap();
+
+        let generation_exprs_input = vec![
+            None,
+            Some("37".to_owned()),
+            Some("field_1 + 73".to_owned()),
+            Some("field_1 + field_2".to_owned()),
+            Some("cos(field_1 * pi() / 180)".to_owned()),
+            Some("sin(field_1 * pi() / 180)".to_owned()),
+            Some("tan(field_1 * pi() / 180)".to_owned()),
+        ];
+
+        let df_schema = schema.clone().to_dfschema().unwrap();
+        let generation_exprs_expected = generation_exprs_input
+            .iter()
+            .map(|maybe_generation_expr| {
+                maybe_generation_expr.as_ref().map(|generation_expr| {
+                    parser::parse_sql_expression(&df_schema, generation_expr).unwrap()
+                })
+            })
+            .collect::<Vec<Option<Expr>>>();
+
+        let generation_expr_string =
+            MetadataManager::convert_slice_generation_expr_to_string(&generation_exprs_input);
+
+        let generation_exprs_output =
+            MetadataManager::convert_string_to_vec_generation_expr(schema, &generation_expr_string)
+                .unwrap();
+
+        assert_eq!(generation_exprs_expected, generation_exprs_output)
     }
 }
 
@@ -1280,9 +1383,10 @@ pub mod test_util {
         SessionContext::with_state(state)
     }
 
-    /// Return a [`ModelTableMetadata`] for a model table with a schema containing a tag column, a
-    /// timestamp column, and two field columns.
-    pub fn model_table_metadata() -> ModelTableMetadata {
+    /// Return a pair with the first element being the [`ModelTableMetadata`] for a model table
+    /// with a schema containing a tag column, a timestamp column, and two field columns, and the
+    /// second element being the original generation expressions.
+    pub fn model_table_metadata() -> (ModelTableMetadata, Vec<Option<String>>) {
         let schema = Schema::new(vec![
             Field::new("tag", DataType::Utf8, false),
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
@@ -1297,7 +1401,23 @@ pub mod test_util {
             ErrorBound::try_new(0.0).unwrap(),
         ];
 
-        ModelTableMetadata::try_new("model_table".to_owned(), schema, 1, vec![0], error_bounds)
-            .unwrap()
+        let generation_exprs = vec![None, None, None, None];
+        let generation_exprs_original = generation_exprs
+            .iter()
+            .map(|_expr| Some("".to_owned()))
+            .collect();
+
+        (
+            ModelTableMetadata::try_new(
+                "model_table".to_owned(),
+                schema,
+                1,
+                vec![0],
+                error_bounds,
+                generation_exprs,
+            )
+            .unwrap(),
+            generation_exprs_original,
+        )
     }
 }
