@@ -856,6 +856,8 @@ impl ContextProvider for EmptyContextProvider {
 mod tests {
     use super::*;
 
+    use crate::metadata::test_util;
+
     // Tests for tokenize_and_parse_sql().
     #[test]
     fn test_tokenize_and_parse_empty_sql() {
@@ -1146,10 +1148,18 @@ mod tests {
             "tan(field_1 * pi() / 180)",
         ];
 
+
+        let schemaref = test_util::model_table_metadata().0.schema;
+        let df_schema = Arc::try_unwrap(schemaref).unwrap().to_dfschema().unwrap();
+
         let dialect = ModelarDbDialect::new();
         for generation_expr in generation_exprs_sql {
+            // Assert that the generation expressions can be reconstructed to a SQL expression.
             let mut parser = Parser::new(&dialect).try_with_sql(generation_expr).unwrap();
             assert_eq!(generation_expr, parser.parse_expr().unwrap().to_string());
+
+            // Assert that the expression can be parsed to a Apache Arrow DataFusion expression.
+            parse_sql_expression(&df_schema, generation_expr).unwrap();
         }
     }
 }

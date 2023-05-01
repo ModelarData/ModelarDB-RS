@@ -529,7 +529,7 @@ fn create_table(
             format!("CREATE TABLE {table_name}(timestamp TIMESTAMP, value REAL, metadata REAL)")
         }
         TableType::ModelTable => {
-            format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD, tag TAG)")
+            format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD(0.0), tag TAG)")
         }
         TableType::ModelTableNoTag => {
             format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD)")

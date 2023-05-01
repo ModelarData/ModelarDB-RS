@@ -39,10 +39,9 @@ use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use datafusion::common::ToDFSchema;
 use datafusion::execution::options::ParquetReadOptions;
-use datafusion::logical_expr::Expr;
 use modelardb_common::types::UnivariateId;
 use modelardb_compression::models::ErrorBound;
-use rusqlite::types::Type::{Blob, Text};
+use rusqlite::types::Type::Blob;
 use rusqlite::{params, Connection, Result, Row};
 use tokio::runtime::Runtime;
 use tracing::{error, info, warn};
@@ -116,8 +115,8 @@ impl MetadataManager {
     /// * The model_table_metadata table contains the main metadata for model tables.
     /// * The model_table_hash_table_name contains a mapping from each tag hash to the name of the
     /// model table that contains the time series with that tag hash.
-    /// * The model_table_field_columns table contains the name and index of the field columns in
-    /// each model table.
+    /// * The model_table_field_columns table contains the name, index, error bound, and generation
+    /// expression of the field columns in each model table.
     /// If the tables exist or were created, return [`Ok`], otherwise return [`rusqlite::Error`].
     fn create_metadata_database_tables(&self) -> Result<()> {
         let connection = Connection::open(&self.metadata_database_path)?;
@@ -136,9 +135,7 @@ impl MetadataManager {
                 table_name TEXT PRIMARY KEY,
                 schema BLOB NOT NULL,
                 timestamp_column_index INTEGER NOT NULL,
-                tag_column_indices BLOB NOT NULL,
-                error_bounds BLOB NOT NULL,
-                generation_exprs TEXT NOT NULL
+                tag_column_indices BLOB NOT NULL
         ) STRICT",
             (),
         )?;
@@ -154,11 +151,14 @@ impl MetadataManager {
 
         // Create the model_table_field_columns SQLite table if it does not
         // exist. Note that column_index will only use a maximum of 10 bits.
+        // generation_expr is NULL if the field is stored as segments.
         connection.execute(
             "CREATE TABLE IF NOT EXISTS model_table_field_columns (
                 table_name TEXT NOT NULL,
                 column_name TEXT NOT NULL,
                 column_index INTEGER NOT NULL,
+                error_bound REAL NOT NULL,
+                generation_expr TEXT, 
                 PRIMARY KEY (table_name, column_name)
         ) STRICT",
             (),
@@ -270,20 +270,18 @@ impl MetadataManager {
 
         // SQLite use signed integers https://www.sqlite.org/datatype3.html.
         let tag_hash = MetadataManager::univariate_id_to_tag_hash(univariate_id);
+        let column_index = MetadataManager::univariate_id_to_column_index(univariate_id);
         let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
         let mut select_statement = connection.prepare(&format!(
-            "SELECT error_bounds FROM model_table_metadata, model_table_hash_table_name
-             WHERE model_table_metadata.table_name = model_table_hash_table_name.table_name
-             AND hash = {signed_tag_hash}",
+            "SELECT error_bound FROM model_table_field_columns, model_table_hash_table_name
+             WHERE model_table_field_columns.table_name = model_table_hash_table_name.table_name
+             AND hash = {signed_tag_hash} AND column_index = {column_index}",
         ))?;
         let mut rows = select_statement.query([])?;
 
-        // unwrap() is safe as a model table must be created before data can be inserted into it.
-        let error_bounds_bytes = rows.next()?.unwrap().get::<usize, Vec<u8>>(0)?;
-        let error_bounds =
-            MetadataManager::convert_slice_u8_to_vec_error_bounds(&error_bounds_bytes)?;
-        let column_index = MetadataManager::univariate_id_to_column_index(univariate_id);
-        Ok(error_bounds[column_index as usize])
+        // unwrap() is safe as the error bound is checked before it is written to the metadata database.
+        let percentage = rows.next()?.unwrap().get::<usize, f32>(0)?;
+        Ok(ErrorBound::try_new(percentage).unwrap())
     }
 
     /// Extract the first 54-bits from `univariate_id` which is a hash computed from tags.
@@ -495,8 +493,8 @@ impl MetadataManager {
         Ok(())
     }
 
-    /// Use a row from the table_metadata table to register the table in Apache Arrow DataFusion. If
-    /// the metadata database could not be opened or the table could not be queried, return
+    /// Use a row from the table_metadata table to register the table in Apache Arrow DataFusion.
+    /// If the metadata database could not be opened or the table could not be queried, return
     /// [`Error`].
     fn register_table(
         &self,
@@ -529,8 +527,8 @@ impl MetadataManager {
     /// Save the created model table to the metadata database. This includes creating a tags table
     /// for the model table, adding a row to the model_table_metadata table, and adding a row to
     /// the model_table_field_columns table for each field column. The `generation_exprs_original`
-    /// must be passed in addition to `model_table_metadata` as [`Expr`] does not have support for
-    /// serialization and deserialization, thus the original string-based representations are used.
+    /// must be passed in addition to `model_table_metadata` as the parsed expressions does not
+    /// have support for (de)serialization, thus the original representations are stored instead.
     pub fn save_model_table_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
@@ -579,7 +577,7 @@ impl MetadataManager {
         // Add a new row in the model_table_metadata table to persist the model table.
         transaction.execute(
             "INSERT INTO model_table_metadata (table_name, schema, timestamp_column_index,
-             tag_column_indices, error_bounds, generation_exprs) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+             tag_column_indices) VALUES (?1, ?2, ?3, ?4)",
             params![
                 model_table_metadata.name,
                 schema_bytes,
@@ -587,17 +585,13 @@ impl MetadataManager {
                 MetadataManager::convert_slice_usize_to_vec_u8(
                     &model_table_metadata.tag_column_indices
                 ),
-                MetadataManager::convert_slice_error_bounds_to_vec_u8(
-                    &model_table_metadata.error_bounds
-                ),
-                MetadataManager::convert_slice_generation_expr_to_string(generation_exprs_original)
             ],
         )?;
 
         // Add a row for each field column to the model_table_field_columns table.
         let mut insert_statement = transaction.prepare(
-            "INSERT INTO model_table_field_columns (table_name, column_name, column_index)
-        VALUES (?1, ?2, ?3)",
+            "INSERT INTO model_table_field_columns (table_name, column_name, column_index,
+             error_bound, generation_expr) VALUES (?1, ?2, ?3, ?4, ?5)",
         )?;
 
         for (index, field) in model_table_metadata.schema.fields().iter().enumerate() {
@@ -609,7 +603,9 @@ impl MetadataManager {
                 insert_statement.execute(params![
                     model_table_metadata.name,
                     field.name(),
-                    index
+                    index,
+                    model_table_metadata.error_bounds[index].into_inner(),
+                    generation_exprs_original[index].clone(),
                 ])?;
             }
         }
@@ -627,14 +623,14 @@ impl MetadataManager {
         let connection = Connection::open(&self.metadata_database_path)?;
 
         let mut select_statement = connection.prepare(
-            "SELECT table_name, schema, timestamp_column_index, tag_column_indices, error_bounds
+            "SELECT table_name, schema, timestamp_column_index, tag_column_indices
             FROM model_table_metadata",
         )?;
 
         let mut rows = select_statement.query(())?;
 
         while let Some(row) = rows.next()? {
-            if let Err(error) = MetadataManager::register_model_table(row, context) {
+            if let Err(error) = MetadataManager::register_model_table(&connection, row, context) {
                 error!("Failed to register model table due to: {}.", error);
             }
         }
@@ -645,8 +641,12 @@ impl MetadataManager {
     /// Convert a row from the model_table_metadata table to a [`ModelTableMetadata`] and use it to
     /// register model tables in Apache Arrow DataFusion. If the metadata database could not be
     /// opened or the table could not be queried, return [`Error`].
-    fn register_model_table(row: &Row, context: &Arc<Context>) -> Result<(), Box<dyn Error>> {
-        let name = row.get::<usize, String>(0)?;
+    fn register_model_table(
+        connection: &Connection,
+        row: &Row,
+        context: &Arc<Context>,
+    ) -> Result<(), Box<dyn Error>> {
+        let table_name = row.get::<usize, String>(0)?;
 
         // Convert the BLOBs to the concrete types.
         let schema_bytes = row.get::<usize, Vec<u8>>(1)?;
@@ -656,19 +656,25 @@ impl MetadataManager {
         let tag_column_indices =
             MetadataManager::convert_slice_u8_to_vec_usize(&tag_column_indices_bytes)?;
 
-        let error_bounds_bytes = row.get::<usize, Vec<u8>>(4)?;
-        let error_bounds =
-            MetadataManager::convert_slice_u8_to_vec_error_bounds(&error_bounds_bytes)?;
+        let error_bounds = MetadataManager::error_bounds(connection, &table_name)?;
 
-        let generation_exprs_string = row.get::<usize, String>(5)?;
-        let generation_exprs = MetadataManager::convert_string_to_vec_generation_expr(
-            schema.clone(),
-            &generation_exprs_string,
-        )?;
+        // unwrap() is safe as the schema is checked before it is written to the metadata database.
+        let df_schema = schema.clone().to_dfschema().unwrap();
+        let generation_expr_strings = MetadataManager::generation_exprs(connection, &table_name)?;
+        let generation_exprs = generation_expr_strings
+            .iter()
+            .map(|maybe_generation_expr| {
+                maybe_generation_expr.as_ref().map(|generation_expr| {
+                    // unwrap() is safe as the generation expression is checked before it is
+                    // written to the metadata database.
+                    parser::parse_sql_expression(&df_schema, generation_expr).unwrap()
+                })
+            })
+            .collect();
 
         // Create model table metadata.
         let model_table_metadata = Arc::new(ModelTableMetadata {
-            name: name.clone(),
+            name: table_name.clone(),
             schema: Arc::new(schema),
             timestamp_column_index: row.get(2)?,
             tag_column_indices,
@@ -678,11 +684,11 @@ impl MetadataManager {
 
         // Register model table.
         context.session.register_table(
-            name.as_str(),
+            table_name.as_str(),
             ModelTable::new(context.clone(), model_table_metadata),
         )?;
 
-        info!("Registered model table '{}'.", name);
+        info!("Registered model table '{}'.", table_name);
         Ok(())
     }
 
@@ -731,81 +737,48 @@ impl MetadataManager {
         }
     }
 
-    /// Convert a [`&[ErrorBound]`] to a [`Vec<u8>`].
-    fn convert_slice_error_bounds_to_vec_u8(error_bounds: &[ErrorBound]) -> Vec<u8> {
-        error_bounds
-            .iter()
-            .flat_map(|eb| eb.to_le_bytes())
-            .collect()
-    }
+    /// Return the error bounds for the model table with `table_name` using `connection`. If a
+    /// model table with the that does not exist, [`rusqlite::Error`] is returned.
+    fn error_bounds(connection: &Connection, table_name: &str) -> Result<Vec<ErrorBound>> {
+        let mut select_statement = connection.prepare(&format!(
+            "SELECT column_index, error_bound FROM model_table_field_columns
+             WHERE table_name = '{table_name}' ORDER BY column_index"
+        ))?;
 
-    /// Convert a [`&[u8]`] to a [`Vec<ErrorBound>`] if the length of `bytes` divides evenly by
-    /// [`mem::size_of::<f32>()`], otherwise [`Error`](rusqlite::Error) is returned.
-    fn convert_slice_u8_to_vec_error_bounds(bytes: &[u8]) -> Result<Vec<ErrorBound>> {
-        if bytes.len() % mem::size_of::<f32>() != 0 {
-            // rusqlite defines UNKNOWN_COLUMN as usize::MAX.
-            Err(rusqlite::Error::InvalidColumnType(
-                usize::MAX,
-                "Blob is not a vector of error bounds".to_owned(),
-                Blob,
-            ))
-        } else {
-            Ok(bytes
-                .chunks(mem::size_of::<f32>())
-                .map(|byte_slice| {
-                    // unwrap() is safe as bytes divides evenly by mem::size_of::<f32>().
-                    let error_bound_value = f32::from_le_bytes(byte_slice.try_into().unwrap());
-                    // unwrap() is safe as the error bound was checked on write.
-                    ErrorBound::try_new(error_bound_value).unwrap()
-                })
-                .collect())
-        }
-    }
+        let mut rows = select_statement.query(())?;
 
-    /// Convert a [`&[Option<String>]`] of generation expressions to a single [`String`].
-    fn convert_slice_generation_expr_to_string(generation_exprs: &[Option<String>]) -> String {
-        generation_exprs
-            .iter()
-            .map(|maybe_generation_expr| {
-                if let Some(generation_expr) = maybe_generation_expr {
-                    generation_expr
-                } else {
-                    ""
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(";")
-    }
+        let mut column_to_error_bound = vec![];
+        while let Some(row) = rows.next()? {
+            for _ in column_to_error_bound.len()..row.get::<usize, usize>(0)? {
+                column_to_error_bound.push(ErrorBound::try_new(0.0).unwrap());
+            }
 
-    /// Convert a [`&str`] to a [`Vec<Option<Expr>>`] if the string contains expressions separated
-    /// by semicolon that can be fully parsed in the context of `schema` (i.e. only references
-    /// columns in `schema`), otherwise [`Error`](rusqlite::Error) is returned.
-    fn convert_string_to_vec_generation_expr(
-        schema: Schema,
-        generation_exprs: &str,
-    ) -> Result<Vec<Option<Expr>>> {
-        let df_schema = schema.to_dfschema().map_err(|error| {
-            let message = format!("String is not valid generation expressions: {error}");
-            rusqlite::Error::InvalidColumnType(5, message, Text)
-        })?;
-
-        // A loop is used instead of map() to allow for errors to be retuned using the ? operator.
-        let mut parsed_exprs = vec![];
-        for maybe_generation_expr in generation_exprs.split(';') {
-            let maybe_parsed_expr = if maybe_generation_expr.is_empty() {
-                None
-            } else {
-                let parsed_expr = parser::parse_sql_expression(&df_schema, maybe_generation_expr)
-                    .map_err(|error| {
-                    let message = format!("String is not a valid generation expression: {error}");
-                    rusqlite::Error::InvalidColumnType(5, message, Text)
-                })?;
-                Some(parsed_expr)
-            };
-            parsed_exprs.push(maybe_parsed_expr);
+            // unwrap() is safe as the error bound is checked before it is stored.
+            column_to_error_bound.push(ErrorBound::try_new(row.get::<usize, f32>(1)?).unwrap());
         }
 
-        Ok(parsed_exprs)
+        Ok(column_to_error_bound)
+    }
+
+    /// Return the generation expressions for the model table with `table_name` using `connection`.
+    /// If a model table with that name does not exist, [`rusqlite::Error`] is returned.
+    fn generation_exprs(connection: &Connection, table_name: &str) -> Result<Vec<Option<String>>> {
+        let mut select_statement = connection.prepare(&format!(
+            "SELECT column_index, generation_expr FROM model_table_field_columns
+             WHERE table_name = '{table_name}' ORDER BY column_index"
+        ))?;
+
+        let mut rows = select_statement.query(())?;
+
+        let mut column_to_generation_expr = vec![];
+        while let Some(row) = rows.next()? {
+            for _ in column_to_generation_expr.len()..row.get::<usize, usize>(0)? {
+                column_to_generation_expr.push(None)
+            }
+            column_to_generation_expr.push(row.get::<usize, Option<String>>(1)?);
+        }
+
+        Ok(column_to_generation_expr)
     }
 }
 
@@ -815,8 +788,6 @@ mod tests {
 
     use std::fs;
 
-    use datafusion::logical_expr::Expr;
-    use proptest::strategy::Strategy;
     use proptest::{collection, num, prop_assert_eq, proptest};
 
     use crate::metadata::test_util;
@@ -863,7 +834,8 @@ mod tests {
 
         connection
             .execute(
-                "SELECT table_name, schema, timestamp_column_index, tag_column_indices, error_bounds, generation_exprs FROM model_table_metadata",
+                "SELECT table_name, schema, timestamp_column_index, tag_column_indices
+                FROM model_table_metadata",
                 params![],
             )
             .unwrap();
@@ -877,7 +849,8 @@ mod tests {
 
         connection
             .execute(
-                "SELECT table_name, column_name, column_index FROM model_table_field_columns",
+                "SELECT table_name, column_name, column_index, error_bound, generation_expr
+                 FROM model_table_field_columns",
                 params![],
             )
             .unwrap();
@@ -1178,8 +1151,8 @@ mod tests {
         // Retrieve the rows in model_table_metadata from the metadata database.
         let mut select_statement = connection
             .prepare(
-                "SELECT table_name, schema, timestamp_column_index, tag_column_indices,
-                        error_bounds, generation_exprs FROM model_table_metadata",
+                "SELECT table_name, schema, timestamp_column_index, tag_column_indices
+                 FROM model_table_metadata",
             )
             .unwrap();
         let mut rows = select_statement.query(()).unwrap();
@@ -1195,20 +1168,14 @@ mod tests {
             vec![0, 0, 0, 0, 0, 0, 0, 0],
             row.get::<usize, Vec<u8>>(3).unwrap()
         );
-        assert_eq!(
-            vec![0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            row.get::<usize, Vec<u8>>(4).unwrap()
-        );
-
-        assert_eq!(";;;", row.get::<usize, String>(5).unwrap());
 
         assert!(rows.next().unwrap().is_none());
 
         // Retrieve the rows in model_table_field_columns from the metadata database.
         let mut select_statement = connection
             .prepare(
-                "SELECT table_name, column_name, column_index
-                      FROM model_table_field_columns",
+                "SELECT table_name, column_name, column_index, error_bound, generation_expr
+                 FROM model_table_field_columns",
             )
             .unwrap();
         let mut rows = select_statement.query(()).unwrap();
@@ -1217,11 +1184,15 @@ mod tests {
         assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
         assert_eq!("field_1", row.get::<usize, String>(1).unwrap());
         assert_eq!(2, row.get::<usize, i32>(2).unwrap());
+        assert_eq!(1.0, row.get::<usize, f32>(3).unwrap());
+        assert_eq!(None, row.get::<usize, Option<String>>(4).unwrap());
 
         let row = rows.next().unwrap().unwrap();
         assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
         assert_eq!("field_2", row.get::<usize, String>(1).unwrap());
         assert_eq!(3, row.get::<usize, i32>(2).unwrap());
+        assert_eq!(5.0, row.get::<usize, f32>(3).unwrap());
+        assert_eq!(None, row.get::<usize, Option<String>>(4).unwrap());
 
         assert!(rows.next().unwrap().is_none());
     }
@@ -1271,59 +1242,47 @@ mod tests {
             let usizes = MetadataManager::convert_slice_u8_to_vec_usize(&bytes).unwrap();
             prop_assert_eq!(values, usizes);
         }
-
-        #[test]
-        fn test_error_bound_to_u8_and_u8_to_error_bound(
-            percentages in collection::vec(num::f32::POSITIVE, 0..50).prop_map(|percentages|
-                percentages.iter().map(|percentage| percentage % 100.0).collect::<Vec<f32>>())
-        ) {
-            // The stragegy computing percentages is not perfect as it cannot generate the value
-            // 100.0, but it does not seem possible to create a simple stragegy that can generate
-            // any positive f32 value from 0.0 to 100.0.
-            let error_bounds: Vec<ErrorBound> = percentages
-                .iter()
-                .map(|percentage| ErrorBound::try_new(*percentage).unwrap())
-                .collect();
-            let bytes = MetadataManager::convert_slice_error_bounds_to_vec_u8(&error_bounds);
-            let usizes = MetadataManager::convert_slice_u8_to_vec_error_bounds(&bytes).unwrap();
-
-            prop_assert_eq!(percentages, usizes);
-        }
     }
 
     #[test]
-    fn test_generation_exprs_to_string_and_string_to_generation_exprs() {
-        let schemaref = test_util::model_table_metadata().0.schema;
-        let schema = Arc::try_unwrap(schemaref).unwrap();
+    fn test_error_bound() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = test_util::test_context(temp_dir.path());
 
-        let generation_exprs_input = vec![
-            None,
-            Some("37".to_owned()),
-            Some("field_1 + 73".to_owned()),
-            Some("field_1 + field_2".to_owned()),
-            Some("cos(field_1 * pi() / 180)".to_owned()),
-            Some("sin(field_1 * pi() / 180)".to_owned()),
-            Some("tan(field_1 * pi() / 180)".to_owned()),
-        ];
+        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
+        context
+            .metadata_manager
+            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
+            .unwrap();
 
-        let df_schema = schema.clone().to_dfschema().unwrap();
-        let generation_exprs_expected = generation_exprs_input
+        let database_path = temp_dir.path().join(METADATA_DATABASE_NAME);
+        let connection = Connection::open(database_path).unwrap();
+        let error_bounds = MetadataManager::error_bounds(&connection, "model_table").unwrap();
+        let percentages: Vec<f32> = error_bounds
             .iter()
-            .map(|maybe_generation_expr| {
-                maybe_generation_expr.as_ref().map(|generation_expr| {
-                    parser::parse_sql_expression(&df_schema, generation_expr).unwrap()
-                })
-            })
-            .collect::<Vec<Option<Expr>>>();
+            .map(|error_bound| error_bound.into_inner())
+            .collect();
 
-        let generation_expr_string =
-            MetadataManager::convert_slice_generation_expr_to_string(&generation_exprs_input);
+        assert_eq!(percentages, &[0.0, 0.0, 1.0, 5.0]);
+    }
 
-        let generation_exprs_output =
-            MetadataManager::convert_string_to_vec_generation_expr(schema, &generation_expr_string)
-                .unwrap();
+    #[test]
+    fn test_generation_expr() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = test_util::test_context(temp_dir.path());
 
-        assert_eq!(generation_exprs_expected, generation_exprs_output)
+        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
+        context
+            .metadata_manager
+            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
+            .unwrap();
+
+        let database_path = temp_dir.path().join(METADATA_DATABASE_NAME);
+        let connection = Connection::open(database_path).unwrap();
+        let generation_expr =
+            MetadataManager::generation_exprs(&connection, "model_table").unwrap();
+
+        assert_eq!(generation_expr, &[None, None, None, None]);
     }
 }
 
@@ -1397,15 +1356,12 @@ pub mod test_util {
         let error_bounds = vec![
             ErrorBound::try_new(0.0).unwrap(),
             ErrorBound::try_new(0.0).unwrap(),
-            ErrorBound::try_new(0.0).unwrap(),
-            ErrorBound::try_new(0.0).unwrap(),
+            ErrorBound::try_new(1.0).unwrap(),
+            ErrorBound::try_new(5.0).unwrap(),
         ];
 
         let generation_exprs = vec![None, None, None, None];
-        let generation_exprs_original = generation_exprs
-            .iter()
-            .map(|_expr| Some("".to_owned()))
-            .collect();
+        let generation_exprs_original = generation_exprs.iter().map(|_expr| None).collect();
 
         (
             ModelTableMetadata::try_new(

@@ -65,9 +65,9 @@ impl ErrorBound {
         }
     }
 
-    /// Return the [`f32`] error bound as a byte array in little-endian order.
-    pub fn to_le_bytes(self) -> [u8; 4] {
-        self.0.to_le_bytes()
+    /// Consumes `self`, returning the error bound as a [`f32`].
+    pub fn into_inner(self) -> f32 {
+        self.0
     }
 }
 
