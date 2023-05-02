@@ -22,8 +22,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -D warnings
+  RUSTFLAGS: -C instrument-coverage -D warnings
   RUSTDOCFLAGS: -D warnings
+  LLVM_PROFILE_FILE: modelardb-%p-%m.profraw
 
 jobs:
   cargo_build_lint_and_test:
@@ -36,10 +37,16 @@ jobs:
 
     steps:
     - uses: actions/checkout@v3
+
     - name: Rustup Update
       run: rustup update
-    - name: Cargo Install
+    - name: Rustup Add llvm-tools
+      run: rustup component add llvm-tools-preview
+    - name: Cargo Install grcov
+      run: cargo install grcov
+    - name: Cargo Install machete
       run: cargo install cargo-machete
+
     - name: Cargo Build
       run: cargo build --verbose --all-targets
     - name: Cargo Clippy
@@ -50,3 +57,10 @@ jobs:
       run: cargo machete --with-metadata
     - name: Cargo Test
       run: cargo test --verbose --all-targets
+
+    - name: grcov --output-types html
+      run: grcov . --source-dir . --binary-path ./target/debug/ --output-types html --branch --ignore-not-existing -o ./target/debug/coverage/
+    - uses: actions/upload-artifact@v3
+      with:
+        name: Code Coverage ${{ matrix.operating-system }}
+        path: ./target/debug/coverage/
