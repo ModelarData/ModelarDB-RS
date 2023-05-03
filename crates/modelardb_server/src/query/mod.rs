@@ -18,6 +18,7 @@
 //! and returns a physical query plan that produces all of the data points required for the query.
 
 // Public so the rules added to Apache Arrow DataFusion's physical optimizer can access GridExec.
+pub mod generated_as_exec;
 pub mod grid_exec;
 pub mod sorted_join_exec;
 
@@ -36,17 +37,17 @@ use datafusion::execution::context::{ExecutionProps, SessionState};
 use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator};
 use datafusion::optimizer::utils;
 use datafusion::physical_expr::planner;
-use datafusion::physical_plan::{
-    file_format::FileScanConfig, file_format::ParquetExec, ExecutionPlan, PhysicalExpr, Statistics,
-};
+use datafusion::physical_plan::file_format::{FileScanConfig, ParquetExec};
+use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr, Statistics};
 use modelardb_common::schemas::{COMPRESSED_SCHEMA, QUERY_SCHEMA};
 use modelardb_common::types::ArrowValue;
 use object_store::ObjectStore;
 use tokio::sync::RwLockWriteGuard;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::query::generated_as_exec::GeneratedAsColumnType; //GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
-use crate::query::sorted_join_exec::{SortedJoinElement, SortedJoinExec};
+use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
 use crate::storage;
 use crate::storage::StorageEngine;
 use crate::Context;
@@ -158,8 +159,14 @@ impl ModelTable {
             infinite_source: false,
         };
 
-        let physical_parquet_predicates =
-            convert_expr_to_physical_expr(parquet_predicates, COMPRESSED_SCHEMA.0.clone())?;
+        let physical_parquet_predicates = if let Some(parquet_predicates) = parquet_predicates {
+            Some(convert_expr_to_physical_expr(
+                &parquet_predicates,
+                COMPRESSED_SCHEMA.0.clone(),
+            )?)
+        } else {
+            None
+        };
 
         let apache_parquet_exec = Arc::new(
             ParquetExec::new(file_scan_config, physical_parquet_predicates, None)
@@ -168,8 +175,14 @@ impl ModelTable {
         );
 
         // Create the gridding operator.
-        let physical_grid_predicates =
-            convert_expr_to_physical_expr(grid_predicates, QUERY_SCHEMA.0.clone())?;
+        let physical_grid_predicates = if let Some(grid_predicates) = grid_predicates {
+            Some(convert_expr_to_physical_expr(
+                &grid_predicates,
+                QUERY_SCHEMA.0.clone(),
+            )?)
+        } else {
+            None
+        };
 
         Ok(GridExec::new(
             physical_grid_predicates,
@@ -198,23 +211,10 @@ fn rewrite_and_combine_filters(
     )
 }
 
-/// Convert `predicates` to a [`PhysicalExpr`] with the types in `schema`.
-fn convert_expr_to_physical_expr(
-    predicates: Option<Expr>,
-    schema: SchemaRef,
-) -> Result<Option<Arc<dyn PhysicalExpr>>> {
-    if let Some(predicate) = predicates {
-        let df_schema = schema.clone().to_dfschema()?;
-
-        Ok(Some(planner::create_physical_expr(
-            &predicate,
-            &df_schema,
-            &schema,
-            &ExecutionProps::new(),
-        )?))
-    } else {
-        Ok(None)
-    }
+/// Convert `expr` to a [`PhysicalExpr`] with the types in `schema`.
+fn convert_expr_to_physical_expr(expr: &Expr, schema: SchemaRef) -> Result<Arc<dyn PhysicalExpr>> {
+    let df_schema = schema.clone().to_dfschema()?;
+    planner::create_physical_expr(expr, &df_schema, &schema, &ExecutionProps::new())
 }
 
 /// Rewrite the `filter` that is written in terms of the model table's schema, to a filter that is
@@ -318,23 +318,40 @@ impl TableProvider for ModelTable {
             (0..schema.fields().len()).collect()
         };
 
+        // unwrap() is safe as the projection is based on the schema.
+        let schema_after_projection = Arc::new(schema.project(&projection).unwrap());
+
         // Since SortedJoinStream simply needs to append arrays to a vector, the order of the field
         // and tag columns in the projection is extracted and the streams SortedJoinStream read
         // columns from are arranged in the same order as the field columns.
         let tag_column_indices = &self.model_table_metadata.tag_column_indices;
-        let mut sorted_join_order: Vec<SortedJoinElement> = Vec::with_capacity(projection.len());
+        let mut sorted_join_order: Vec<SortedJoinColumnType> = Vec::with_capacity(projection.len());
         let mut tag_names_in_projection: Vec<&str> = Vec::with_capacity(tag_column_indices.len());
-        let mut field_indices_in_projection: Vec<u16> =
+        let mut generated_as_order: Vec<GeneratedAsColumnType> =
+            Vec::with_capacity(schema.fields.len());
+        let mut stored_field_indices_in_projection: Vec<u16> =
             Vec::with_capacity(schema.fields.len() - 1 - tag_column_indices.len());
+
         for index in &projection {
             if *index == self.model_table_metadata.timestamp_column_index {
-                sorted_join_order.push(SortedJoinElement::Timestamp);
+                sorted_join_order.push(SortedJoinColumnType::Timestamp);
+                generated_as_order.push(GeneratedAsColumnType::Stored(*index));
             } else if tag_column_indices.contains(index) {
                 tag_names_in_projection.push(schema.fields[*index].name());
-                sorted_join_order.push(SortedJoinElement::Tag);
+                sorted_join_order.push(SortedJoinColumnType::Tag);
+                generated_as_order.push(GeneratedAsColumnType::Stored(*index));
+            } else if let Some(generation_expr) =
+                &self.model_table_metadata.generation_exprs[*index]
+            {
+                let physical_expr = convert_expr_to_physical_expr(
+                    generation_expr,
+                    schema_after_projection.clone(),
+                )?;
+                generated_as_order.push(GeneratedAsColumnType::Generated(physical_expr));
             } else {
-                field_indices_in_projection.push(*index as u16);
-                sorted_join_order.push(SortedJoinElement::Field);
+                stored_field_indices_in_projection.push(*index as u16);
+                sorted_join_order.push(SortedJoinColumnType::Field);
+                generated_as_order.push(GeneratedAsColumnType::Stored(*index));
             }
         }
 
@@ -356,17 +373,17 @@ impl TableProvider for ModelTable {
             .unwrap();
 
         // At least one field column must be read for the univariate_ids and timestamps.
-        if field_indices_in_projection.is_empty() {
-            field_indices_in_projection.push(self.fallback_field_column);
+        if stored_field_indices_in_projection.is_empty() {
+            stored_field_indices_in_projection.push(self.fallback_field_column);
         }
 
         // Request the matching files from the storage engine. The exclusive lock on the storage
         // engine is held until object metas for all columns have been retrieved to ensure they
         // contain the same number of data points.
         let mut field_column_execution_plans: Vec<Arc<dyn ExecutionPlan>> =
-            Vec::with_capacity(field_indices_in_projection.len());
+            Vec::with_capacity(stored_field_indices_in_projection.len());
         let mut storage_engine = self.context.storage_engine.write().await;
-        for field_column_index in field_indices_in_projection {
+        for field_column_index in stored_field_indices_in_projection {
             let execution_plan = self
                 .scan_column(
                     &mut storage_engine,
@@ -382,9 +399,8 @@ impl TableProvider for ModelTable {
             field_column_execution_plans.push(execution_plan);
         }
 
-        // unwrap() is safe as the projection is based on the schema.
         Ok(SortedJoinExec::new(
-            Arc::new(schema.project(&projection).unwrap()),
+            schema_after_projection,
             sorted_join_order,
             Arc::new(hash_to_tags),
             field_column_execution_plans,
