@@ -36,12 +36,21 @@ use datafusion::physical_plan::{
 use futures::stream::Stream;
 use futures::StreamExt;
 
-/// The different types of columns sorted by [`GeneratedAsExec`], used for specifying the order in
-/// which the stored columns and the generated columns should be returned by [`GeneratedAsStream`].
+///  A column the [`GeneratedAsExec`] must add to each of the [`RecordBatches`](RecordBatch) using
+/// [`GeneratedAsStream`] with the location it must be at and the [`PhysicalExpr`] that compute it.
 #[derive(Debug, Clone)]
-pub enum GeneratedAsColumnType {
-    Stored(usize),
-    Generated(Arc<dyn PhysicalExpr>),
+pub struct ColumnToGenerate {
+    index: usize,
+    physical_expr: Arc<dyn PhysicalExpr>,
+}
+
+impl ColumnToGenerate {
+    pub fn new(index: usize, physical_expr: Arc<dyn PhysicalExpr>) -> Self {
+        ColumnToGenerate {
+            index,
+            physical_expr,
+        }
+    }
 }
 
 /// An execution plan that generates one or more new columns from a [`RecordBatch`] using
@@ -52,8 +61,8 @@ pub enum GeneratedAsColumnType {
 pub struct GeneratedAsExec {
     /// Schema of the execution plan.
     schema: SchemaRef,
-    /// Order of columns to return.
-    return_order: Vec<GeneratedAsColumnType>,
+    /// Columns to generation and the index they should be at.
+    columns_to_generate: Vec<ColumnToGenerate>,
     /// Execution plan to read batches of segments from.
     input: Arc<dyn ExecutionPlan>,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
@@ -63,12 +72,12 @@ pub struct GeneratedAsExec {
 impl GeneratedAsExec {
     fn new(
         schema: SchemaRef,
-        return_order: Vec<GeneratedAsColumnType>,
+        columns_to_generate: Vec<ColumnToGenerate>,
         input: Arc<dyn ExecutionPlan>,
     ) -> Arc<Self> {
         Arc::new(GeneratedAsExec {
             schema,
-            return_order,
+            columns_to_generate,
             input,
             metrics: ExecutionPlanMetricsSet::new(),
         })
@@ -112,7 +121,7 @@ impl ExecutionPlan for GeneratedAsExec {
         if children.len() == 1 {
             Ok(GeneratedAsExec::new(
                 self.schema.clone(),
-                self.return_order.clone(),
+                self.columns_to_generate.clone(),
                 children.swap_remove(0),
             ))
         } else {
@@ -131,7 +140,7 @@ impl ExecutionPlan for GeneratedAsExec {
     ) -> Result<SendableRecordBatchStream> {
         Ok(Box::pin(GeneratedAsStream::new(
             self.schema.clone(),
-            self.return_order.clone(),
+            self.columns_to_generate.clone(),
             self.input.execute(partition, task_context)?,
             BaselineMetrics::new(&self.metrics, partition),
         )))
@@ -164,8 +173,8 @@ impl ExecutionPlan for GeneratedAsExec {
 struct GeneratedAsStream {
     /// Schema of the stream.
     schema: SchemaRef,
-    /// Order of columns to return.
-    return_order: Vec<GeneratedAsColumnType>,
+    /// Columns to generation and the index they should be at.
+    columns_to_generate: Vec<ColumnToGenerate>,
     /// Stream to read batches of rows from.
     input: SendableRecordBatchStream,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
@@ -175,13 +184,13 @@ struct GeneratedAsStream {
 impl GeneratedAsStream {
     fn new(
         schema: SchemaRef,
-        return_order: Vec<GeneratedAsColumnType>,
+        columns_to_generate: Vec<ColumnToGenerate>,
         input: SendableRecordBatchStream,
         baseline_metrics: BaselineMetrics,
     ) -> Self {
         GeneratedAsStream {
             schema,
-            return_order,
+            columns_to_generate,
             input,
             baseline_metrics,
         }
@@ -202,23 +211,31 @@ impl Stream for GeneratedAsStream {
     ) -> Poll<Option<Self::Item>> {
         match self.input.poll_next_unpin(cx) {
             Poll::Ready(Some(Ok(batch))) => {
-                let num_rows = batch.num_rows();
+                let mut columns = Vec::with_capacity(self.schema.fields().len());
 
-                // unwrap() is safe as the physical_exprs are checked before being past to new().
-                let columns = self
-                    .return_order
-                    .iter()
-                    .map(|column_type| match column_type {
-                        GeneratedAsColumnType::Stored(index) => batch.column(*index).clone(),
-                        GeneratedAsColumnType::Generated(physical_expr) => {
-                            physical_expr.evaluate(&batch).unwrap().into_array(num_rows)
-                        }
-                    })
-                    .collect();
+                for column_to_generate in &self.columns_to_generate {
+                    // Add stored columns until the next generated columns.
+                    for index in columns.len()..=column_to_generate.index {
+                        columns.push(batch.column(index).clone());
+                    }
+
+                    // Compute the values of the next generated column and add it.
+                    columns.push(
+                        column_to_generate
+                            .physical_expr
+                            .evaluate(&batch)
+                            .unwrap()
+                            .into_array(batch.num_rows()),
+                    );
+                }
+
+                // Add the remaining stored columns to the record batch.
+                for index in columns.len()..self.schema.fields().len() {
+                    columns.push(batch.column(index).clone());
+                }
 
                 // unwrap() is safe as GeneratedAsStream has ordered columns to match the schema.
                 let batch = RecordBatch::try_new(self.schema.clone(), columns).unwrap();
-
                 self.baseline_metrics
                     .record_poll(Poll::Ready(Some(Ok(batch))))
             }

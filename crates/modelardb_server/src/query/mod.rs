@@ -45,7 +45,7 @@ use object_store::ObjectStore;
 use tokio::sync::RwLockWriteGuard;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
-use crate::query::generated_as_exec::GeneratedAsColumnType; //GeneratedAsExec};
+use crate::query::generated_as_exec::ColumnToGenerate; //GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
 use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
 use crate::storage;
@@ -321,13 +321,14 @@ impl TableProvider for ModelTable {
         // unwrap() is safe as the projection is based on the schema.
         let schema_after_projection = Arc::new(schema.project(&projection).unwrap());
 
-        // Since SortedJoinStream simply needs to append arrays to a vector, the order of the field
-        // and tag columns in the projection is extracted and the streams SortedJoinStream read
-        // columns from are arranged in the same order as the field columns.
+        // Since SortedJoinStream and GeneratedAsStream simply needs to append arrays to a vector,
+        // the order of the field and tag columns in the projection is extracted and the streams
+        // SortedJoinStream read columns from are arranged in the same order as the field columns.
         let tag_column_indices = &self.model_table_metadata.tag_column_indices;
+
         let mut sorted_join_order: Vec<SortedJoinColumnType> = Vec::with_capacity(projection.len());
-        let mut tag_names_in_projection: Vec<&str> = Vec::with_capacity(tag_column_indices.len());
-        let mut generated_as_order: Vec<GeneratedAsColumnType> =
+        let mut tag_column_order: Vec<&str> = Vec::with_capacity(tag_column_indices.len());
+        let mut generated_as_order: Vec<ColumnToGenerate> =
             Vec::with_capacity(schema.fields.len());
         let mut stored_field_indices_in_projection: Vec<u16> =
             Vec::with_capacity(schema.fields.len() - 1 - tag_column_indices.len());
@@ -335,11 +336,9 @@ impl TableProvider for ModelTable {
         for index in &projection {
             if *index == self.model_table_metadata.timestamp_column_index {
                 sorted_join_order.push(SortedJoinColumnType::Timestamp);
-                generated_as_order.push(GeneratedAsColumnType::Stored(*index));
             } else if tag_column_indices.contains(index) {
-                tag_names_in_projection.push(schema.fields[*index].name());
+                tag_column_order.push(schema.fields[*index].name());
                 sorted_join_order.push(SortedJoinColumnType::Tag);
-                generated_as_order.push(GeneratedAsColumnType::Stored(*index));
             } else if let Some(generation_expr) =
                 &self.model_table_metadata.generation_exprs[*index]
             {
@@ -347,11 +346,11 @@ impl TableProvider for ModelTable {
                     generation_expr,
                     schema_after_projection.clone(),
                 )?;
-                generated_as_order.push(GeneratedAsColumnType::Generated(physical_expr));
+
+                generated_as_order.push(ColumnToGenerate::new(*index, physical_expr));
             } else {
                 stored_field_indices_in_projection.push(*index as u16);
                 sorted_join_order.push(SortedJoinColumnType::Field);
-                generated_as_order.push(GeneratedAsColumnType::Stored(*index));
             }
         }
 
@@ -363,7 +362,7 @@ impl TableProvider for ModelTable {
         let hash_to_tags = self
             .context
             .metadata_manager
-            .mapping_from_hash_to_tags(table_name, &tag_names_in_projection)
+            .mapping_from_hash_to_tags(table_name, &tag_column_order)
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         // unwrap() is safe as the store is set by create_session_context().
