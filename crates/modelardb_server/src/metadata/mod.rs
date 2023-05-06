@@ -37,7 +37,7 @@ use std::sync::Arc;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
-use datafusion::common::ToDFSchema;
+use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::execution::options::ParquetReadOptions;
 use modelardb_common::types::UnivariateId;
 use modelardb_compression::models::ErrorBound;
@@ -51,6 +51,8 @@ use crate::parser;
 use crate::query::ModelTable;
 use crate::storage::COMPRESSED_DATA_FOLDER;
 use crate::{Context, ServerMode};
+
+use self::model_table_metadata::GeneratedColumn;
 
 /// Name used for the file containing the SQLite database storing the metadata.
 pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
@@ -151,14 +153,15 @@ impl MetadataManager {
 
         // Create the model_table_field_columns SQLite table if it does not
         // exist. Note that column_index will only use a maximum of 10 bits.
-        // generation_expr is NULL if the field is stored as segments.
+        // generated_column_* is NULL if the fields are stored as segments.
         connection.execute(
             "CREATE TABLE IF NOT EXISTS model_table_field_columns (
                 table_name TEXT NOT NULL,
                 column_name TEXT NOT NULL,
                 column_index INTEGER NOT NULL,
                 error_bound REAL NOT NULL,
-                generation_expr TEXT, 
+                generated_column_expr TEXT,
+                generated_column_sources BLOB,
                 PRIMARY KEY (table_name, column_name)
         ) STRICT",
             (),
@@ -526,24 +529,11 @@ impl MetadataManager {
 
     /// Save the created model table to the metadata database. This includes creating a tags table
     /// for the model table, adding a row to the model_table_metadata table, and adding a row to
-    /// the model_table_field_columns table for each field column. The `generation_exprs_original`
-    /// must be passed in addition to `model_table_metadata` as the parsed expressions does not
-    /// have support for (de)serialization, thus the original representations are stored instead.
+    /// the model_table_field_columns table for each field column.
     pub fn save_model_table_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
-        generation_exprs_original: &[Option<String>],
     ) -> Result<()> {
-        // Both representations of the generation expressions must have the same number of items.
-        if model_table_metadata.generation_exprs.len() != generation_exprs_original.len() {
-            // InvalidParameterCount is intended to be used if the number of arguments to a query
-            // is incorrect, but it is the rusqlite::Error that must closely describe this error.
-            return Err(rusqlite::Error::InvalidParameterCount(
-                generation_exprs_original.len(),
-                model_table_metadata.generation_exprs.len(),
-            ));
-        }
-
         // Convert the schema to bytes so it can be saved as a BLOB in the metadata database.
         let schema_bytes = MetadataManager::convert_schema_to_blob(&model_table_metadata.schema)?;
 
@@ -591,7 +581,8 @@ impl MetadataManager {
         // Add a row for each field column to the model_table_field_columns table.
         let mut insert_statement = transaction.prepare(
             "INSERT INTO model_table_field_columns (table_name, column_name, column_index,
-             error_bound, generation_expr) VALUES (?1, ?2, ?3, ?4, ?5)",
+                  error_bound, generated_column_expr, generated_column_sources)
+                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )?;
 
         for (index, field) in model_table_metadata.schema.fields().iter().enumerate() {
@@ -600,12 +591,28 @@ impl MetadataManager {
             let in_tag_indices = model_table_metadata.tag_column_indices.contains(&index);
 
             if !is_timestamp && !in_tag_indices {
+                let (generated_column_expr, generated_column_sources) = if let Some(
+                    generated_column,
+                ) =
+                    &model_table_metadata.generated_columns[index]
+                {
+                    (
+                        Some(generated_column.original_expr.clone()),
+                        Some(MetadataManager::convert_slice_usize_to_vec_u8(
+                            &generated_column.source_columns,
+                        )),
+                    )
+                } else {
+                    (None, None)
+                };
+
                 insert_statement.execute(params![
                     model_table_metadata.name,
                     field.name(),
                     index,
                     model_table_metadata.error_bounds[index].into_inner(),
-                    generation_exprs_original[index].clone(),
+                    generated_column_expr,
+                    generated_column_sources,
                 ])?;
             }
         }
@@ -660,17 +667,8 @@ impl MetadataManager {
 
         // unwrap() is safe as the schema is checked before it is written to the metadata database.
         let df_schema = schema.clone().to_dfschema().unwrap();
-        let generation_expr_strings = MetadataManager::generation_exprs(connection, &table_name)?;
-        let generation_exprs = generation_expr_strings
-            .iter()
-            .map(|maybe_generation_expr| {
-                maybe_generation_expr.as_ref().map(|generation_expr| {
-                    // unwrap() is safe as the generation expression is checked before it is
-                    // written to the metadata database.
-                    parser::parse_sql_expression(&df_schema, generation_expr).unwrap()
-                })
-            })
-            .collect();
+        let generated_columns =
+            MetadataManager::generated_columns(connection, &table_name, &df_schema)?;
 
         // Create model table metadata.
         let model_table_metadata = Arc::new(ModelTableMetadata {
@@ -679,7 +677,7 @@ impl MetadataManager {
             timestamp_column_index: row.get(2)?,
             tag_column_indices,
             error_bounds,
-            generation_exprs,
+            generated_columns,
         });
 
         // Register model table.
@@ -760,25 +758,47 @@ impl MetadataManager {
         Ok(column_to_error_bound)
     }
 
-    /// Return the generation expressions for the model table with `table_name` using `connection`.
-    /// If a model table with that name does not exist, [`rusqlite::Error`] is returned.
-    fn generation_exprs(connection: &Connection, table_name: &str) -> Result<Vec<Option<String>>> {
+    /// Return the generated columns for the model table with `table_name` and `df_schema` using
+    /// `connection`. If a model table with `table_name` does not exist, [`rusqlite::Error`] is
+    /// returned.
+    fn generated_columns(
+        connection: &Connection,
+        table_name: &str,
+        df_schema: &DFSchema,
+    ) -> Result<Vec<Option<GeneratedColumn>>> {
         let mut select_statement = connection.prepare(&format!(
-            "SELECT column_index, generation_expr FROM model_table_field_columns
-             WHERE table_name = '{table_name}' ORDER BY column_index"
+            "SELECT column_index, generated_column_expr, generated_column_sources
+             FROM model_table_field_columns WHERE table_name = '{table_name}'
+             ORDER BY column_index"
         ))?;
 
         let mut rows = select_statement.query(())?;
 
-        let mut column_to_generation_expr = vec![];
+        let mut generated_columns = vec![];
         while let Some(row) = rows.next()? {
-            for _ in column_to_generation_expr.len()..row.get::<usize, usize>(0)? {
-                column_to_generation_expr.push(None)
+            for _ in generated_columns.len()..row.get::<usize, usize>(0)? {
+                generated_columns.push(None)
             }
-            column_to_generation_expr.push(row.get::<usize, Option<String>>(1)?);
+
+            if let Some(original_expr) = row.get::<usize, Option<String>>(1)? {
+                // unwrap() is safe as the expression is checked before it is written to the database.
+                let expr = parser::parse_sql_expression(df_schema, &original_expr).unwrap();
+                let source_columns = &row.get::<usize, Option<Vec<u8>>>(2)?.unwrap();
+
+                let generated_column = GeneratedColumn {
+                    expr,
+                    source_columns: MetadataManager::convert_slice_u8_to_vec_usize(source_columns)
+                        .unwrap(),
+                    original_expr: None,
+                };
+
+                generated_columns.push(Some(generated_column));
+            } else {
+                generated_columns.push(None);
+            }
         }
 
-        Ok(column_to_generation_expr)
+        Ok(generated_columns)
     }
 }
 
@@ -849,8 +869,8 @@ mod tests {
 
         connection
             .execute(
-                "SELECT table_name, column_name, column_index, error_bound, generation_expr
-                 FROM model_table_field_columns",
+                "SELECT table_name, column_name, column_index, error_bound, generated_column_expr,
+                 generated_column_sources FROM model_table_field_columns",
                 params![],
             )
             .unwrap();
@@ -869,9 +889,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
 
-        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
+        let model_table_metadata = test_util::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         let result = metadata_manager
@@ -907,9 +927,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
 
-        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
+        let model_table_metadata = test_util::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         metadata_manager
@@ -962,9 +982,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
 
-        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
+        let model_table_metadata = test_util::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         // Lookup univariate ids using fields and tags for an empty table.
@@ -1058,9 +1078,9 @@ mod tests {
         metadata_manager: &mut MetadataManager,
         tag_values: &[&str],
     ) {
-        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
+        let model_table_metadata = test_util::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         for tag_value in tag_values {
@@ -1132,9 +1152,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
 
-        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
+        let model_table_metadata = test_util::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         // Retrieve the model table from the metadata database.
@@ -1174,8 +1194,8 @@ mod tests {
         // Retrieve the rows in model_table_field_columns from the metadata database.
         let mut select_statement = connection
             .prepare(
-                "SELECT table_name, column_name, column_index, error_bound, generation_expr
-                 FROM model_table_field_columns",
+                "SELECT table_name, column_name, column_index, error_bound, generated_column_expr,
+                 generated_column_sources FROM model_table_field_columns",
             )
             .unwrap();
         let mut rows = select_statement.query(()).unwrap();
@@ -1186,6 +1206,7 @@ mod tests {
         assert_eq!(2, row.get::<usize, i32>(2).unwrap());
         assert_eq!(1.0, row.get::<usize, f32>(3).unwrap());
         assert_eq!(None, row.get::<usize, Option<String>>(4).unwrap());
+        assert_eq!(None, row.get::<usize, Option<Vec<u8>>>(5).unwrap());
 
         let row = rows.next().unwrap().unwrap();
         assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
@@ -1193,6 +1214,7 @@ mod tests {
         assert_eq!(3, row.get::<usize, i32>(2).unwrap());
         assert_eq!(5.0, row.get::<usize, f32>(3).unwrap());
         assert_eq!(None, row.get::<usize, Option<String>>(4).unwrap());
+        assert_eq!(None, row.get::<usize, Option<Vec<u8>>>(5).unwrap());
 
         assert!(rows.next().unwrap().is_none());
     }
@@ -1205,10 +1227,10 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = test_util::test_context(temp_dir.path());
 
-        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
+        let model_table_metadata = test_util::model_table_metadata();
         context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         // Register the model table with Apache Arrow DataFusion.
@@ -1225,7 +1247,7 @@ mod tests {
 
     #[test]
     fn test_blob_to_schema_and_schema_to_blob() {
-        let schema = test_util::model_table_metadata().0.schema;
+        let schema = test_util::model_table_metadata().schema;
 
         // Serialize a schema to bytes.
         let bytes = MetadataManager::convert_schema_to_blob(&schema).unwrap();
@@ -1249,10 +1271,10 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = test_util::test_context(temp_dir.path());
 
-        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
+        let model_table_metadata = test_util::model_table_metadata();
         context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         let database_path = temp_dir.path().join(METADATA_DATABASE_NAME);
@@ -1267,22 +1289,25 @@ mod tests {
     }
 
     #[test]
-    fn test_generation_expr() {
+    fn test_generated_columns() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = test_util::test_context(temp_dir.path());
 
-        let (model_table_metadata, generation_expr_original) = test_util::model_table_metadata();
+        let model_table_metadata = test_util::model_table_metadata();
         context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, &generation_expr_original)
+            .save_model_table_metadata(&model_table_metadata)
             .unwrap();
 
         let database_path = temp_dir.path().join(METADATA_DATABASE_NAME);
         let connection = Connection::open(database_path).unwrap();
-        let generation_expr =
-            MetadataManager::generation_exprs(&connection, "model_table").unwrap();
+        let df_schema = model_table_metadata.schema.to_dfschema().unwrap();
+        let generated_columns =
+            MetadataManager::generated_columns(&connection, "model_table", &df_schema).unwrap();
 
-        assert_eq!(generation_expr, &[None, None, None, None]);
+        for generated_column in generated_columns {
+            assert!(generated_column.is_none());
+        }
     }
 }
 
@@ -1345,7 +1370,7 @@ pub mod test_util {
     /// Return a pair with the first element being the [`ModelTableMetadata`] for a model table
     /// with a schema containing a tag column, a timestamp column, and two field columns, and the
     /// second element being the original generation expressions.
-    pub fn model_table_metadata() -> (ModelTableMetadata, Vec<Option<String>>) {
+    pub fn model_table_metadata() -> ModelTableMetadata {
         let schema = Schema::new(vec![
             Field::new("tag", DataType::Utf8, false),
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
@@ -1360,20 +1385,16 @@ pub mod test_util {
             ErrorBound::try_new(5.0).unwrap(),
         ];
 
-        let generation_exprs = vec![None, None, None, None];
-        let generation_exprs_original = generation_exprs.iter().map(|_expr| None).collect();
+        let generated_columns = vec![None, None, None, None];
 
-        (
-            ModelTableMetadata::try_new(
-                "model_table".to_owned(),
-                schema,
-                1,
-                vec![0],
-                error_bounds,
-                generation_exprs,
-            )
-            .unwrap(),
-            generation_exprs_original,
+        ModelTableMetadata::try_new(
+            "model_table".to_owned(),
+            schema,
+            1,
+            vec![0],
+            error_bounds,
+            generated_columns,
         )
+        .unwrap()
     }
 }

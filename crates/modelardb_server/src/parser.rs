@@ -40,7 +40,8 @@ use sqlparser::keywords::{Keyword, ALL_KEYWORDS};
 use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::Token;
 
-use crate::metadata::{model_table_metadata::ModelTableMetadata, MetadataManager};
+use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
+use crate::metadata::MetadataManager;
 
 /// Constant specifying that a model table should be created.
 pub const CREATE_MODEL_TABLE_ENGINE: &str = "ModelTable";
@@ -316,10 +317,7 @@ pub enum ValidStatement {
     /// CREATE TABLE.
     CreateTable { name: String, schema: Schema },
     /// CREATE MODEL TABLE.
-    CreateModelTable {
-        model_table_metadata: ModelTableMetadata,
-        generation_exprs_original: Vec<Option<String>>,
-    },
+    CreateModelTable(ModelTableMetadata),
 }
 
 /// Perform semantic checks to ensure that the CREATE TABLE and CREATE MODEL
@@ -375,12 +373,9 @@ pub fn semantic_checks_for_create_table(
         // Create a ValidStatement with the information for creating the table.
         let _expected_engine = CREATE_MODEL_TABLE_ENGINE.to_owned();
         if let Some(_expected_engine) = engine {
-            let (model_table_metadata, generation_exprs_original) =
+            let model_table_metadata =
                 semantic_checks_for_create_model_table(normalized_name, columns)?;
-            Ok(ValidStatement::CreateModelTable {
-                model_table_metadata,
-                generation_exprs_original,
-            })
+            Ok(ValidStatement::CreateModelTable(model_table_metadata))
         } else {
             Ok(ValidStatement::CreateTable {
                 name: normalized_name,
@@ -399,7 +394,7 @@ pub fn semantic_checks_for_create_table(
 fn semantic_checks_for_create_model_table(
     name: String,
     column_defs: &Vec<ColumnDef>,
-) -> Result<(ModelTableMetadata, Vec<Option<String>>), ParserError> {
+) -> Result<ModelTableMetadata, ParserError> {
     // Convert column definitions to a schema.
     let schema = column_defs_to_schema(column_defs)
         .map_err(|error| ParserError::ParserError(error.to_string()))?;
@@ -424,7 +419,7 @@ fn semantic_checks_for_create_model_table(
     let error_bounds = extract_error_bounds_for_all_columns(column_defs)?;
 
     // Extract the generation expressions for all columns.
-    let (original, parsed) = extract_generation_exprs_for_all_columns(column_defs)
+    let generated_columns = extract_generation_exprs_for_all_columns(column_defs)
         .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
     // Return the metadata required to create a model table.
@@ -434,11 +429,11 @@ fn semantic_checks_for_create_model_table(
         timestamp_column_indices[0],
         tag_column_indices,
         error_bounds,
-        parsed,
+        generated_columns,
     )
     .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
-    Ok((model_table_metadata, original))
+    Ok(model_table_metadata)
 }
 
 /// Return [`ParserError`] if [`Statement`] is not a [`Statement::CreateTable`]
@@ -737,13 +732,12 @@ fn extract_error_bounds_for_all_columns(
     Ok(error_bounds)
 }
 
-/// Extract the generation expressions from the field columns in `column_defs`. The generation
-/// expression for the timestamp columns, stored field columns, tag columns will be [`None`] so the
-/// generation expression of each generated field column can be accessed using its column index.
-#[allow(clippy::type_complexity)]
+/// Extract the [`GeneratedColumn`] from the field columns in `column_defs`. The [`GeneratedColumn`]
+/// for the timestamp columns, stored field columns, tag columns will be [`None`] so the
+/// [`GeneratedColumn`] of each generated field column can be accessed using its column index.
 fn extract_generation_exprs_for_all_columns(
     column_defs: &[ColumnDef],
-) -> Result<(Vec<Option<String>>, Vec<Option<DFExpr>>), DataFusionError> {
+) -> Result<Vec<Option<GeneratedColumn>>, DataFusionError> {
     let context_provider = EmptyContextProvider {
         options: ConfigOptions::default(),
     };
@@ -752,8 +746,7 @@ fn extract_generation_exprs_for_all_columns(
     let df_schema = schema.to_dfschema()?;
     let mut planner_context = PlannerContext::new();
 
-    let mut generation_exprs_original = Vec::with_capacity(column_defs.len());
-    let mut generation_exprs_parsed = Vec::with_capacity(column_defs.len());
+    let mut generated_columns = Vec::with_capacity(column_defs.len());
 
     for column_def in column_defs {
         if column_def.data_type == SQLDataType::Real {
@@ -767,15 +760,26 @@ fn extract_generation_exprs_for_all_columns(
                         // The expression is saved as a string so it can be stored in the metadata
                         // database, it is not in ModelTableMetadata as it not used for queries.
                         let sql_expr = generation_expr.as_ref().unwrap();
-                        generation_exprs_original.push(Some(sql_expr.to_string()));
+                        let original_expr = Some(sql_expr.to_string());
 
-                        // unwrap() is safe as generation_expr is always set to Some(expr).
-                        let rel_expr = sql_to_rel.sql_to_expr(
+                        let expr = sql_to_rel.sql_to_expr(
                             sql_expr.clone(),
                             &df_schema,
                             &mut planner_context,
                         )?;
-                        generation_exprs_parsed.push(Some(rel_expr))
+
+                        // unwrap() is safe as the loop iterates over the columns in the schema.
+                        let source_columns = expr
+                            .to_columns()?
+                            .iter()
+                            .map(|column| df_schema.index_of_column(column).unwrap())
+                            .collect();
+
+                        generated_columns.push(Some(GeneratedColumn {
+                            expr,
+                            source_columns,
+                            original_expr,
+                        }));
                     }
                     _ => {
                         return Err(DataFusionError::Internal(format!(
@@ -786,17 +790,15 @@ fn extract_generation_exprs_for_all_columns(
                 }
             } else {
                 // A second option is not provided for this column.
-                generation_exprs_original.push(None);
-                generation_exprs_parsed.push(None);
+                generated_columns.push(None);
             }
         } else {
             // column_def is a timestamp column or a tag column.
-            generation_exprs_original.push(None);
-            generation_exprs_parsed.push(None);
+            generated_columns.push(None);
         }
     }
 
-    Ok((generation_exprs_original, generation_exprs_parsed))
+    Ok(generated_columns)
 }
 
 /// Parse `sql_expr` into a [`DFExpr`] if it is a correctly formatted SQL arithmetic expression
@@ -1148,8 +1150,7 @@ mod tests {
             "tan(field_1 * pi() / 180)",
         ];
 
-
-        let schemaref = test_util::model_table_metadata().0.schema;
+        let schemaref = test_util::model_table_metadata().schema;
         let df_schema = Arc::try_unwrap(schemaref).unwrap().to_dfschema().unwrap();
 
         let dialect = ModelarDbDialect::new();

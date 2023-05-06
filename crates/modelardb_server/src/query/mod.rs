@@ -328,8 +328,7 @@ impl TableProvider for ModelTable {
 
         let mut sorted_join_order: Vec<SortedJoinColumnType> = Vec::with_capacity(projection.len());
         let mut tag_column_order: Vec<&str> = Vec::with_capacity(tag_column_indices.len());
-        let mut generated_as_order: Vec<ColumnToGenerate> =
-            Vec::with_capacity(schema.fields.len());
+        let mut generated_as_order: Vec<ColumnToGenerate> = Vec::with_capacity(schema.fields.len());
         let mut stored_field_indices_in_projection: Vec<u16> =
             Vec::with_capacity(schema.fields.len() - 1 - tag_column_indices.len());
 
@@ -339,11 +338,11 @@ impl TableProvider for ModelTable {
             } else if tag_column_indices.contains(index) {
                 tag_column_order.push(schema.fields[*index].name());
                 sorted_join_order.push(SortedJoinColumnType::Tag);
-            } else if let Some(generation_expr) =
-                &self.model_table_metadata.generation_exprs[*index]
+            } else if let Some(generated_column) =
+                &self.model_table_metadata.generated_columns[*index]
             {
                 let physical_expr = convert_expr_to_physical_expr(
-                    generation_expr,
+                    &generated_column.expr,
                     schema_after_projection.clone(),
                 )?;
 
@@ -422,7 +421,7 @@ mod tests {
     // Tests for rewrite_and_combine_filters().
     #[test]
     fn test_rewrite_empty_vec() {
-        let schema = test_util::model_table_metadata().0.schema;
+        let schema = test_util::model_table_metadata().schema;
         let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &[]);
         assert!(parquet_filter.is_none());
         assert!(grid_filter.is_none());
@@ -431,7 +430,7 @@ mod tests {
     #[test]
     fn test_rewrite_greater_than_timestamp() {
         let filters = new_timestamp_filters(Operator::Gt);
-        let schema = test_util::model_table_metadata().0.schema;
+        let schema = test_util::model_table_metadata().schema;
         let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &filters);
 
         assert_binary_expr(
@@ -452,7 +451,7 @@ mod tests {
     #[test]
     fn test_rewrite_greater_than_or_equal_timestamp() {
         let filters = new_timestamp_filters(Operator::GtEq);
-        let schema = test_util::model_table_metadata().0.schema;
+        let schema = test_util::model_table_metadata().schema;
         let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &filters);
 
         assert_binary_expr(
@@ -473,7 +472,7 @@ mod tests {
     #[test]
     fn test_rewrite_less_than_timestamp() {
         let filters = new_timestamp_filters(Operator::Lt);
-        let schema = test_util::model_table_metadata().0.schema;
+        let schema = test_util::model_table_metadata().schema;
         let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &filters);
 
         assert_binary_expr(
@@ -494,7 +493,7 @@ mod tests {
     #[test]
     fn test_rewrite_less_than_or_equal_timestamp() {
         let filters = new_timestamp_filters(Operator::LtEq);
-        let schema = test_util::model_table_metadata().0.schema;
+        let schema = test_util::model_table_metadata().schema;
         let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &filters);
 
         assert_binary_expr(
@@ -515,7 +514,7 @@ mod tests {
     #[test]
     fn test_rewrite_equal_timestamp() {
         let filters = new_timestamp_filters(Operator::Eq);
-        let schema = test_util::model_table_metadata().0.schema;
+        let schema = test_util::model_table_metadata().schema;
         let (parquet_filter, grid_filter) = rewrite_and_combine_filters(&schema, &filters);
 
         if let Expr::BinaryExpr(BinaryExpr { left, op, right }) = parquet_filter.unwrap() {

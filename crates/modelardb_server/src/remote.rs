@@ -430,7 +430,6 @@ impl FlightServiceHandler {
     fn register_and_save_model_table(
         &self,
         model_table_metadata: ModelTableMetadata,
-        generation_exprs_original: Vec<Option<String>>,
     ) -> Result<(), Status> {
         // Save the model table in the Apache Arrow DataFusion catalog.
         let model_table_metadata = Arc::new(model_table_metadata);
@@ -446,7 +445,7 @@ impl FlightServiceHandler {
         // Persist the new model table to the metadata database.
         self.context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, &generation_exprs_original)
+            .save_model_table_metadata(&model_table_metadata)
             .map_err(|error| Status::internal(error.to_string()))?;
 
         info!("Created model table '{}'.", model_table_metadata.name);
@@ -674,16 +673,10 @@ impl FlightService for FlightServiceHandler {
                     self.check_if_table_exists(&name).await?;
                     self.register_and_save_table(name, schema).await?;
                 }
-                ValidStatement::CreateModelTable {
-                    model_table_metadata,
-                    generation_exprs_original,
-                } => {
+                ValidStatement::CreateModelTable(model_table_metadata) => {
                     self.check_if_table_exists(&model_table_metadata.name)
                         .await?;
-                    self.register_and_save_model_table(
-                        model_table_metadata,
-                        generation_exprs_original,
-                    )?;
+                    self.register_and_save_model_table(model_table_metadata)?;
                 }
             };
 

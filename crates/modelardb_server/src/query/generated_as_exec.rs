@@ -61,7 +61,7 @@ impl ColumnToGenerate {
 pub struct GeneratedAsExec {
     /// Schema of the execution plan.
     schema: SchemaRef,
-    /// Columns to generation and the index they should be at.
+    /// Columns to generate and the index they should be at.
     columns_to_generate: Vec<ColumnToGenerate>,
     /// Execution plan to read batches of segments from.
     input: Arc<dyn ExecutionPlan>,
@@ -173,7 +173,7 @@ impl ExecutionPlan for GeneratedAsExec {
 struct GeneratedAsStream {
     /// Schema of the stream.
     schema: SchemaRef,
-    /// Columns to generation and the index they should be at.
+    /// Columns to generate and the index they should be at.
     columns_to_generate: Vec<ColumnToGenerate>,
     /// Stream to read batches of rows from.
     input: SendableRecordBatchStream,
