@@ -26,7 +26,9 @@ use datafusion::arrow::datatypes::{
 };
 use datafusion::common::{DFSchema, DataFusionError, Result as DataFusionResult, ToDFSchema};
 use datafusion::config::ConfigOptions;
+use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::{AggregateUDF, Expr as DFExpr, ScalarUDF, TableSource};
+use datafusion::physical_expr::planner;
 use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
 use datafusion::sql::TableReference;
 use modelardb_common::types::ArrowTimestamp;
@@ -743,8 +745,9 @@ fn extract_generation_exprs_for_all_columns(
     };
     let sql_to_rel = SqlToRel::new(&context_provider);
     let schema = sql_to_rel.build_schema(column_defs.to_vec())?;
-    let df_schema = schema.to_dfschema()?;
+    let df_schema = schema.clone().to_dfschema()?;
     let mut planner_context = PlannerContext::new();
+    let execution_props = ExecutionProps::new();
 
     let mut generated_columns = Vec::with_capacity(column_defs.len());
 
@@ -762,10 +765,22 @@ fn extract_generation_exprs_for_all_columns(
                         let sql_expr = generation_expr.as_ref().unwrap();
                         let original_expr = Some(sql_expr.to_string());
 
+                        // Ensure the parsed sqlparser expression can be converted to a logical
+                        // Apache Arrow DataFusion expression within the context of schema.
                         let expr = sql_to_rel.sql_to_expr(
                             sql_expr.clone(),
                             &df_schema,
                             &mut planner_context,
+                        )?;
+
+                        // Ensure the logical Apache Arrow DataFusion expression can be converted to
+                        // a physical Apache Arrow DataFusion expression within the context of
+                        // schema. This is done to ensure the user-defined expression is correct.
+                        let _physical_expr = planner::create_physical_expr(
+                            &expr,
+                            &df_schema,
+                            &schema,
+                            &execution_props,
                         )?;
 
                         // unwrap() is safe as the loop iterates over the columns in the schema.
@@ -867,11 +882,13 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table() {
-        let sql = "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_one FIELD, field_two FIELD(10.5), field_three FIELD as SIN(field_one * PI() / 180), tag TAG)";
+    fn test_tokenize_parse_semantic_check_create_model_table() {
+        let sql = "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_one FIELD, field_two FIELD(10.5),
+                         field_three FIELD AS SIN(CAST(field_one AS DOUBLE) * PI() / 180.0), tag TAG)";
 
-        if let Statement::CreateTable { name, columns, .. } = tokenize_and_parse_sql(sql).unwrap() {
-            assert_eq!(name, new_object_name("table_name"));
+        let statement = tokenize_and_parse_sql(sql).unwrap();
+        if let Statement::CreateTable { name, columns, .. } = &statement {
+            assert_eq!(*name, new_object_name("table_name"));
             let expected_columns = vec![
                 ModelarDbDialect::new_column_def(
                     "timestamp",
@@ -893,12 +910,15 @@ mod tests {
                     SQLDataType::Real,
                     new_column_option_def_error_bound_and_generation_expr(
                         0.0,
-                        Some("SIN(field_one * PI() / 180)"),
+                        Some("SIN(CAST(field_one AS DOUBLE) * PI() / 180.0)"),
                     ),
                 ),
                 ModelarDbDialect::new_column_def("tag", SQLDataType::Text, vec![]),
             ];
-            assert_eq!(columns, expected_columns);
+            assert_eq!(*columns, expected_columns);
+
+            // unwrap() asserts that the semantic check have all passed as it otherwise panics.
+            semantic_checks_for_create_table(&statement).unwrap();
         } else {
             panic!("CREATE TABLE DDL did not parse to a Statement::CreateTable.");
         }
@@ -1162,5 +1182,14 @@ mod tests {
             // Assert that the expression can be parsed to a Apache Arrow DataFusion expression.
             parse_sql_expression(&df_schema, generation_expr).unwrap();
         }
+    }
+
+    #[test]
+    fn test_semantic_checks_for_create_model_table_ensure_generated_as_expression_are_correct() {
+        let statement = tokenize_and_parse_sql(
+            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS field_1 + 3773.0, tag TAG)",
+        ).unwrap();
+
+        assert!(semantic_checks_for_create_table(&statement).is_err());
     }
 }
