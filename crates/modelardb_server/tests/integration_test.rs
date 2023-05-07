@@ -43,6 +43,10 @@ use tokio::runtime::Runtime;
 use tonic::transport::Channel;
 use tonic::Request;
 
+const TABLE_NAME: &str = "table_name";
+const HOST: &str = "127.0.0.1";
+const PORT: u16 = 9999;
+
 /// The different types of tables used in the integration tests.
 enum TableType {
     NormalTable,
@@ -50,15 +54,86 @@ enum TableType {
     ModelTableNoTag,
 }
 
-const TABLE_NAME: &str = "table_name";
-const HOST: &str = "127.0.0.1";
-const PORT: u16 = 9999;
+/// Instance of modelardbd used for testing. [`Child`] is wrapped in a struct to allow `drop()` to
+/// be implemented so modelardbd is stopped no matter if the a test succeeds, fails, or panics.
+struct ModelarDBD {
+    process: Child,
+}
+
+impl ModelarDBD {
+    /// Execute the binary with the server and return a handle to the process.
+    fn new(path: &Path) -> Self {
+        // Spawn the Apache Arrow Flight Server. stdout is piped to /dev/null so the logged data_points
+        // are not printed when the unit tests and the integration tests are run using "cargo test".
+        // stderr is piped to /dev/null so the server does not print the panic that occurs during
+        // test_cannot_ingest_invalid_data_point. This panic occurs because the
+        // flight_data_to_arrow_batch utility used on the server cannot convert the FlightData to a
+        // RecordBatch using the server-local table schema.
+        let process = ModelarDBD::start_binary("modelardbd")
+            .arg(path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .expect("Failed to start Apache Arrow Flight Server");
+
+        // The thread needs to sleep to ensure that the server has properly started before sending
+        // streams to it.
+        thread::sleep(Duration::from_secs(5));
+
+        ModelarDBD { process }
+    }
+
+    /// Execute the binary with the integration tests and return a handle to the process.
+    fn start_binary(binary: &str) -> Command {
+        // Create path to binary.
+        let mut path = ModelarDBD::binary_directory();
+        path.push(binary);
+        path.set_extension(consts::EXE_EXTENSION);
+
+        assert!(path.exists());
+
+        // Create command process.
+        Command::new(path.into_os_string())
+    }
+
+    /// Return the path to the directory containing the binary with the integration tests.
+    fn binary_directory() -> PathBuf {
+        let current_executable = env::current_exe().expect("Failed to get the path of the binary.");
+
+        let parent_directory = current_executable
+            .parent()
+            .expect("Failed to get the parent directory.");
+
+        let binary_directory = parent_directory
+            .parent()
+            .expect("Failed to get the directory of the binary.");
+
+        binary_directory.to_owned()
+    }
+}
+
+impl Drop for ModelarDBD {
+    fn drop(&mut self) {
+        let mut system = System::new_all();
+
+        while let Some(_process) = system.process(Pid::from_u32(self.process.id())) {
+            system.refresh_all();
+            self.process
+                .kill()
+                .unwrap_or_else(|_| panic!("Could not kill process {}.", self.process.id()));
+            self.process
+                .wait()
+                .unwrap_or_else(|_| panic!("Could not wait for process {}.", self.process.id()));
+            system.refresh_all();
+        }
+    }
+}
 
 #[test]
 #[serial]
 fn test_can_create_table() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let _modelardbd = ModelarDBD::new(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
@@ -76,15 +151,13 @@ fn test_can_create_table() {
 
     assert_eq!(retrieved_table_names.len(), 1);
     assert_eq!(retrieved_table_names[0], TABLE_NAME);
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_create_model_table() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let _modelardbd = ModelarDBD::new(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
@@ -102,15 +175,13 @@ fn test_can_create_model_table() {
 
     assert_eq!(retrieved_table_names.len(), 1);
     assert_eq!(retrieved_table_names[0], TABLE_NAME);
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_create_and_list_multiple_model_tables() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let _modelardbd = ModelarDBD::new(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
@@ -133,15 +204,13 @@ fn test_can_create_and_list_multiple_model_tables() {
     for table_name in table_names {
         assert!(retrieved_table_names.contains(&table_name.to_owned()))
     }
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_get_schema() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let _modelardbd = ModelarDBD::new(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
@@ -164,15 +233,13 @@ fn test_can_get_schema() {
             Field::new("tag", DataType::Utf8, false)
         ])
     );
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_list_actions() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let _modelardbd = ModelarDBD::new(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
@@ -203,15 +270,13 @@ fn test_can_list_actions() {
             "UpdateRemoteObjectStore",
         ]
     );
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_collect_metrics() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let _modelardbd = ModelarDBD::new(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
@@ -232,15 +297,13 @@ fn test_can_collect_metrics() {
     });
 
     assert!(!metrics.is_empty());
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_ingest_data_point_with_tags() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let _modelardbd = ModelarDBD::new(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
@@ -256,11 +319,7 @@ fn test_can_ingest_data_point_with_tags() {
         TableType::ModelTable,
     );
 
-    send_data_points_to_apache_arrow_flight_server(
-        &runtime,
-        &mut flight_service_client,
-        flight_data,
-    );
+    send_data_points_to_apache_arrow_modelardbd(&runtime, &mut flight_service_client, flight_data);
 
     flush_data_to_disk(&runtime, &mut flight_service_client);
 
@@ -272,15 +331,13 @@ fn test_can_ingest_data_point_with_tags() {
     .expect("Could not execute query.");
 
     assert_eq!(data_point, query[0]);
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_ingest_data_point_without_tags() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let _modelardbd = ModelarDBD::new(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
@@ -296,11 +353,7 @@ fn test_can_ingest_data_point_without_tags() {
         TableType::ModelTableNoTag,
     );
 
-    send_data_points_to_apache_arrow_flight_server(
-        &runtime,
-        &mut flight_service_client,
-        flight_data,
-    );
+    send_data_points_to_apache_arrow_modelardbd(&runtime, &mut flight_service_client, flight_data);
 
     flush_data_to_disk(&runtime, &mut flight_service_client);
 
@@ -312,15 +365,13 @@ fn test_can_ingest_data_point_without_tags() {
     .expect("Could not execute query.");
 
     assert_eq!(data_point, query[0]);
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_ingest_multiple_time_series_with_different_tags() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let _modelardbd = ModelarDBD::new(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
@@ -338,11 +389,7 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
         TableType::ModelTable,
     );
 
-    send_data_points_to_apache_arrow_flight_server(
-        &runtime,
-        &mut flight_service_client,
-        flight_data,
-    );
+    send_data_points_to_apache_arrow_modelardbd(&runtime, &mut flight_service_client, flight_data);
 
     flush_data_to_disk(&runtime, &mut flight_service_client);
 
@@ -355,15 +402,13 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
 
     let combined = compute::concat_batches(&data_points[0].schema(), &data_points).unwrap();
     assert_eq!(combined, query[0]);
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_cannot_ingest_invalid_data_point() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let _modelardbd = ModelarDBD::new(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
@@ -379,11 +424,7 @@ fn test_cannot_ingest_invalid_data_point() {
         TableType::ModelTable,
     );
 
-    send_data_points_to_apache_arrow_flight_server(
-        &runtime,
-        &mut flight_service_client,
-        flight_data,
-    );
+    send_data_points_to_apache_arrow_modelardbd(&runtime, &mut flight_service_client, flight_data);
 
     flush_data_to_disk(&runtime, &mut flight_service_client);
 
@@ -394,15 +435,13 @@ fn test_cannot_ingest_invalid_data_point() {
     )
     .expect("Could not execute query.");
     assert!(query.is_empty());
-
-    stop_modelardbd(flight_server)
 }
 
 #[test]
 #[serial]
 fn test_optimized_query_results_equals_non_optimized_query_results() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let _modelardbd = ModelarDBD::new(temp_dir.path());
 
     let runtime = Runtime::new().expect("Unable to initialize runtime.");
     let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
@@ -423,11 +462,7 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
         TableType::ModelTable,
     );
 
-    send_data_points_to_apache_arrow_flight_server(
-        &runtime,
-        &mut flight_service_client,
-        flight_data,
-    );
+    send_data_points_to_apache_arrow_modelardbd(&runtime, &mut flight_service_client, flight_data);
 
     flush_data_to_disk(&runtime, &mut flight_service_client);
 
@@ -447,58 +482,6 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
     .expect("Could not execute query.");
 
     assert_eq!(optimized_query, non_optimized_query);
-
-    stop_modelardbd(flight_server);
-}
-
-/// Return the path to the directory containing the binary with the integration tests.
-fn binary_directory() -> PathBuf {
-    let current_executable = env::current_exe().expect("Failed to get the path of the binary.");
-
-    let parent_directory = current_executable
-        .parent()
-        .expect("Failed to get the parent directory.");
-
-    let binary_directory = parent_directory
-        .parent()
-        .expect("Failed to get the directory of the binary.");
-
-    binary_directory.to_owned()
-}
-
-/// Execute the binary with the integration tests and return a handle to the process.
-fn start_binary(binary: &str) -> Command {
-    // Create path to binary.
-    let mut path = binary_directory();
-    path.push(binary);
-    path.set_extension(consts::EXE_EXTENSION);
-
-    assert!(path.exists());
-
-    // Create command process.
-    Command::new(path.into_os_string())
-}
-
-/// Execute the binary with the server and return a handle to the process.
-fn start_modelardbd(path: &Path) -> Child {
-    // Spawn the Apache Arrow Flight Server. stdout is piped to /dev/null so the logged data_points
-    // are not printed when the unit tests and the integration tests are run using "cargo test".
-    // stderr is piped to /dev/null so the server does not print the panic that occurs during
-    // test_cannot_ingest_invalid_data_point. This panic occurs because the
-    // flight_data_to_arrow_batch utility used on the server cannot convert the FlightData to a
-    // RecordBatch using the server-local table schema.
-    let process = start_binary("modelardbd")
-        .arg(path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("Failed to start Apache Arrow Flight Server");
-
-    // The thread needs to sleep to ensure that the server has properly started before sending
-    // streams to it.
-    thread::sleep(Duration::from_secs(5));
-
-    process
 }
 
 /// Return a new Apache Arrow Flight client to access the remote methods provided by the server over
@@ -529,7 +512,9 @@ fn create_table(
             format!("CREATE TABLE {table_name}(timestamp TIMESTAMP, value REAL, metadata REAL)")
         }
         TableType::ModelTable => {
-            format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD(0.0), tag TAG)")
+            format!(
+                "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD(0.0), tag TAG)"
+            )
         }
         TableType::ModelTableNoTag => {
             format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD)")
@@ -615,7 +600,7 @@ fn create_flight_data_from_data_points(data_points: &[RecordBatch]) -> Vec<Fligh
 }
 
 /// Send data points to the server through the `do_put()` method.
-fn send_data_points_to_apache_arrow_flight_server(
+fn send_data_points_to_apache_arrow_modelardbd(
     runtime: &Runtime,
     client: &mut FlightServiceClient<Channel>,
     flight_data: Vec<FlightData>,
@@ -719,20 +704,4 @@ fn retrieve_schema(
         convert::try_schema_from_ipc_buffer(&schema_result.schema)
             .expect("Could not convert SchemaResult to schema.")
     })
-}
-
-/// Terminate the server and return when the process has been terminated.
-fn stop_modelardbd(mut flight_server: Child) {
-    let mut system = System::new_all();
-
-    while let Some(_process) = system.process(Pid::from_u32(flight_server.id())) {
-        system.refresh_all();
-        flight_server
-            .kill()
-            .unwrap_or_else(|_| panic!("Could not kill process {}.", flight_server.id()));
-        flight_server
-            .wait()
-            .unwrap_or_else(|_| panic!("Could not wait for process {}.", flight_server.id()));
-        system.refresh_all();
-    }
 }
