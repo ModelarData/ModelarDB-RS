@@ -169,11 +169,14 @@ impl UncompressedDataManager {
         // Prepare the field columns for iteration. The column index is saved with the corresponding
         // array.
         let field_column_arrays: Vec<(usize, &ValueArray)> = model_table
-            .schema
+            .ingestion_schema
             .fields()
             .iter()
             .filter_map(|field| {
-                let index = model_table.schema.index_of(field.name().as_str()).unwrap();
+                let index = model_table
+                    .ingestion_schema
+                    .index_of(field.name().as_str())
+                    .unwrap();
 
                 // Field columns are the columns that are not the timestamp column or one of the tag
                 // columns.

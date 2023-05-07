@@ -671,9 +671,11 @@ impl MetadataManager {
             MetadataManager::generated_columns(connection, &table_name, &df_schema)?;
 
         // Create model table metadata.
+        let schema = Arc::new(schema);
         let model_table_metadata = Arc::new(ModelTableMetadata {
             name: table_name.clone(),
-            schema: Arc::new(schema),
+            schema: schema.clone(),
+            ingestion_schema: schema,
             timestamp_column_index: row.get(2)?,
             tag_column_indices,
             error_bounds,

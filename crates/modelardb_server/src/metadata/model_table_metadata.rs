@@ -19,7 +19,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Schema};
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::logical_expr::expr::Expr;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::{ArrowTimestamp, ArrowValue};
@@ -30,8 +30,10 @@ use modelardb_compression::models::ErrorBound;
 pub struct ModelTableMetadata {
     /// Name of the model table.
     pub name: String,
-    /// Schema of the data in the model table.
+    /// Full schema of the data in the model table.
     pub schema: Arc<Schema>,
+    /// Reduced schema of the data in the model table without generated column.
+    pub ingestion_schema: Arc<Schema>,
     /// Index of the timestamp column in the schema.
     pub timestamp_column_index: usize,
     /// Indices of the tag columns in the schema.
@@ -145,23 +147,14 @@ impl ModelTableMetadata {
             ));
         }
 
-        // If there are circular dependencies between two generated columns, return an error.
-        for (generated_column_index, maybe_generated_column) in generated_columns.iter().enumerate()
-        {
-            if let Some(generated_column) = maybe_generated_column {
-                for generated_column_source_column_index in &generated_column.source_columns {
-                    if let Some(generated_source_column) =
-                        &generated_columns[*generated_column_source_column_index]
-                    {
-                        if generated_source_column
-                            .source_columns
-                            .contains(&generated_column_index)
-                        {
-                            return Err(ModelarDbError::ConfigurationError(
-                                "A circular dependency must not exist between generated field columns.".to_owned()
-                            ));
-                        }
-                    }
+        // If a generated field column depends on other generated field columns, return an error.
+        for generated_column in generated_columns.iter().flatten() {
+            for source_column in &generated_column.source_columns {
+                if generated_columns[*source_column].is_some() {
+                    return Err(ModelarDbError::ConfigurationError(
+                        "A generated field column cannot depend on generated field columns."
+                            .to_owned(),
+                    ));
                 }
             }
         }
@@ -187,9 +180,33 @@ impl ModelTableMetadata {
             ));
         }
 
+        // Remove the generated field columns from the ingestion schema as these should never be
+        // provided as part of the record batches when inserting data points into the model table.
+        let schema = Arc::new(schema);
+        let ingestion_schema = if generated_columns.iter().any(Option::is_some) {
+            // schema.fields() and generated_columns are known to be of equal length.
+            let fields = schema
+                .fields()
+                .iter()
+                .enumerate()
+                .filter_map(|(field_index, field)| {
+                    if generated_columns[field_index].is_none() {
+                        Some(field.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<Arc<Field>>>();
+
+            Arc::new(Schema::new(fields))
+        } else {
+            schema.clone()
+        };
+
         Ok(Self {
             name: table_name,
-            schema: Arc::new(schema),
+            schema,
+            ingestion_schema,
             tag_column_indices,
             timestamp_column_index,
             error_bounds,
@@ -392,15 +409,16 @@ mod test {
     }
 
     #[test]
-    fn test_cannot_create_model_table_metadata_with_generated_columns_with_ciular_dependencies() {
+    fn test_cannot_create_model_table_metadata_with_generated_columns_using_generated_columns() {
         let (schema, error_bounds, mut generated_columns) =
             model_table_schema_error_bounds_and_generated_columns();
 
         generated_columns[5] = Some(GeneratedColumn {
             expr: Expr::Wildcard,
-            source_columns: vec![6],
+            source_columns: vec![],
             original_expr: None,
         });
+
         generated_columns[6] = Some(GeneratedColumn {
             expr: Expr::Wildcard,
             source_columns: vec![5],
