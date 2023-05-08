@@ -178,19 +178,27 @@ impl StorageEngine {
     /// were successfully inserted, otherwise return [`String`].
     pub async fn insert_data_points(
         &mut self,
-        model_table: &ModelTableMetadata,
+        model_table_metadata: &ModelTableMetadata,
         data_points: &RecordBatch,
     ) -> Result<(), String> {
         // TODO: When the compression component is changed, just insert the data points.
         let compressed_segments = self
             .uncompressed_data_manager
-            .insert_data_points(&mut self.metadata_manager, model_table, data_points)
+            .insert_data_points(
+                &mut self.metadata_manager,
+                model_table_metadata,
+                data_points,
+            )
             .await?;
 
         for (univariate_id, compressed_segments) in compressed_segments {
             let column_index = MetadataManager::univariate_id_to_column_index(univariate_id);
             self.compressed_data_manager
-                .insert_compressed_segments(&model_table.name, column_index, compressed_segments)
+                .insert_compressed_segments(
+                    &model_table_metadata.name,
+                    column_index,
+                    compressed_segments,
+                )
                 .await
                 .map_err(|error| error.to_string())?;
         }

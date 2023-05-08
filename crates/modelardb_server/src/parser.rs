@@ -401,35 +401,17 @@ fn semantic_checks_for_create_model_table(
     let schema = column_defs_to_schema(column_defs)
         .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
-    // Check that one timestamp column exists.
-    let timestamp_column_indices = compute_indices_of_columns_with_data_type(
-        column_defs,
-        SQLDataType::Timestamp(None, TimezoneInfo::None),
-    );
-
-    if timestamp_column_indices.len() != 1 {
-        return Err(ParserError::ParserError(
-            "A model table must contain one timestamp column.".to_owned(),
-        ));
-    }
-
-    // Compute the indices of the tag columns.
-    let tag_column_indices =
-        compute_indices_of_columns_with_data_type(column_defs, SQLDataType::Text);
-
-    // Extract the error bounds for all columns.
+    // Extract the error bounds for all columns. It is here to keep the parser types in the parser.
     let error_bounds = extract_error_bounds_for_all_columns(column_defs)?;
 
-    // Extract the generation expressions for all columns.
+    // Extract the expressions for all columns. It is here to keep the parser types in the parser.
     let generated_columns = extract_generation_exprs_for_all_columns(column_defs)
         .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
     // Return the metadata required to create a model table.
     let model_table_metadata = ModelTableMetadata::try_new(
         name,
-        schema,
-        timestamp_column_indices[0],
-        tag_column_indices,
+        Arc::new(schema),
         error_bounds,
         generated_columns,
     )
@@ -518,19 +500,6 @@ fn check_unsupported_feature_is_disabled(enabled: bool, feature: &str) -> Result
     } else {
         Ok(())
     }
-}
-
-/// Compute the indices of all columns in `column_defs` with `data_type`.
-fn compute_indices_of_columns_with_data_type(
-    column_defs: &[ColumnDef],
-    data_type: SQLDataType,
-) -> Vec<usize> {
-    column_defs
-        .iter()
-        .enumerate()
-        .filter(|(_index, column_def)| column_def.data_type == data_type)
-        .map(|(index, _column_def)| index)
-        .collect()
 }
 
 /// Return [`Schema`] if the types of the `column_defs` are supported, otherwise

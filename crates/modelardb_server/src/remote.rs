@@ -349,10 +349,8 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
-            let data_points = self.flight_data_to_record_batch(
-                &flight_data?,
-                &model_table_metadata.ingestion_schema,
-            )?;
+            let data_points =
+                self.flight_data_to_record_batch(&flight_data?, &model_table_metadata.schema)?;
             let mut storage_engine = self.context.storage_engine.write().await;
 
             // Note that the storage engine returns when the data is stored in memory, which means

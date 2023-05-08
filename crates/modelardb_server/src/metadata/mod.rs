@@ -135,9 +135,7 @@ impl MetadataManager {
         connection.execute(
             "CREATE TABLE IF NOT EXISTS model_table_metadata (
                 table_name TEXT PRIMARY KEY,
-                schema BLOB NOT NULL,
-                timestamp_column_index INTEGER NOT NULL,
-                tag_column_indices BLOB NOT NULL
+                query_schema BLOB NOT NULL
         ) STRICT",
             (),
         )?;
@@ -184,12 +182,12 @@ impl MetadataManager {
     /// table cannot be accessed, [`rusqlite::Error`] is returned.
     pub fn lookup_or_compute_tag_hash(
         &mut self,
-        model_table: &ModelTableMetadata,
+        model_table_metadata: &ModelTableMetadata,
         tag_values: &[String],
     ) -> Result<u64> {
         let cache_key = {
             let mut cache_key_list = tag_values.to_vec();
-            cache_key_list.push(model_table.name.clone());
+            cache_key_list.push(model_table_metadata.name.clone());
 
             cache_key_list.join(";")
         };
@@ -212,10 +210,10 @@ impl MetadataManager {
             // Save the tag hash in the cache and in the metadata database model_table_tags table.
             self.tag_value_hashes.insert(cache_key, tag_hash);
 
-            let tag_columns: String = model_table
+            let tag_columns: String = model_table_metadata
                 .tag_column_indices
                 .iter()
-                .map(|index| model_table.schema.field(*index).name().clone())
+                .map(|index| model_table_metadata.schema.field(*index).name().clone())
                 .collect::<Vec<String>>()
                 .join(",");
 
@@ -239,7 +237,7 @@ impl MetadataManager {
             transaction.execute(
                 format!(
                     "INSERT OR IGNORE INTO {}_tags (hash{}{}) VALUES ({}{}{})",
-                    model_table.name,
+                    model_table_metadata.name,
                     maybe_separator,
                     tag_columns,
                     signed_tag_hash,
@@ -253,7 +251,7 @@ impl MetadataManager {
             transaction.execute(
                 format!(
                     "INSERT OR IGNORE INTO model_table_hash_table_name (hash, table_name) VALUES ({}, '{}')",
-                    signed_tag_hash, model_table.name
+                    signed_tag_hash, model_table_metadata.name
                 )
                 .as_str(),
                 (),
@@ -534,19 +532,20 @@ impl MetadataManager {
         &self,
         model_table_metadata: &ModelTableMetadata,
     ) -> Result<()> {
-        // Convert the schema to bytes so it can be saved as a BLOB in the metadata database.
-        let schema_bytes = MetadataManager::convert_schema_to_blob(&model_table_metadata.schema)?;
+        // Convert the query schema to bytes so it can be saved as a BLOB in the metadata database.
+        let query_schema_bytes =
+            MetadataManager::convert_schema_to_blob(&model_table_metadata.query_schema)?;
 
         // Create a transaction to ensure the database state is consistent across tables.
         let mut connection = Connection::open(&self.metadata_database_path)?;
         let transaction = connection.transaction()?;
 
-        // Add a column definition for each tag column in the schema.
+        // Add a column definition for each tag column in the query schema.
         let tag_columns: String = model_table_metadata
             .tag_column_indices
             .iter()
             .map(|index| {
-                let field = model_table_metadata.schema.field(*index);
+                let field = model_table_metadata.query_schema.field(*index);
                 format!("{} TEXT NOT NULL", field.name())
             })
             .collect::<Vec<String>>()
@@ -566,16 +565,8 @@ impl MetadataManager {
 
         // Add a new row in the model_table_metadata table to persist the model table.
         transaction.execute(
-            "INSERT INTO model_table_metadata (table_name, schema, timestamp_column_index,
-             tag_column_indices) VALUES (?1, ?2, ?3, ?4)",
-            params![
-                model_table_metadata.name,
-                schema_bytes,
-                model_table_metadata.timestamp_column_index,
-                MetadataManager::convert_slice_usize_to_vec_u8(
-                    &model_table_metadata.tag_column_indices
-                ),
-            ],
+            "INSERT INTO model_table_metadata (table_name, query_schema) VALUES (?1, ?2)",
+            params![model_table_metadata.name, query_schema_bytes,],
         )?;
 
         // Add a row for each field column to the model_table_field_columns table.
@@ -629,10 +620,8 @@ impl MetadataManager {
     pub fn register_model_tables(&self, context: &Arc<Context>) -> Result<()> {
         let connection = Connection::open(&self.metadata_database_path)?;
 
-        let mut select_statement = connection.prepare(
-            "SELECT table_name, schema, timestamp_column_index, tag_column_indices
-            FROM model_table_metadata",
-        )?;
+        let mut select_statement =
+            connection.prepare("SELECT table_name, query_schema FROM model_table_metadata")?;
 
         let mut rows = select_statement.query(())?;
 
@@ -656,31 +645,23 @@ impl MetadataManager {
         let table_name = row.get::<usize, String>(0)?;
 
         // Convert the BLOBs to the concrete types.
-        let schema_bytes = row.get::<usize, Vec<u8>>(1)?;
-        let schema = MetadataManager::convert_blob_to_schema(schema_bytes)?;
-
-        let tag_column_indices_bytes = row.get::<usize, Vec<u8>>(3)?;
-        let tag_column_indices =
-            MetadataManager::convert_slice_u8_to_vec_usize(&tag_column_indices_bytes)?;
+        let query_schema_bytes = row.get::<usize, Vec<u8>>(1)?;
+        let query_schema = MetadataManager::convert_blob_to_schema(query_schema_bytes)?;
 
         let error_bounds = MetadataManager::error_bounds(connection, &table_name)?;
 
         // unwrap() is safe as the schema is checked before it is written to the metadata database.
-        let df_schema = schema.clone().to_dfschema().unwrap();
+        let df_query_schema = query_schema.clone().to_dfschema().unwrap();
         let generated_columns =
-            MetadataManager::generated_columns(connection, &table_name, &df_schema)?;
+            MetadataManager::generated_columns(connection, &table_name, &df_query_schema)?;
 
         // Create model table metadata.
-        let schema = Arc::new(schema);
-        let model_table_metadata = Arc::new(ModelTableMetadata {
-            name: table_name.clone(),
-            schema: schema.clone(),
-            ingestion_schema: schema,
-            timestamp_column_index: row.get(2)?,
-            tag_column_indices,
+        let model_table_metadata = Arc::new(ModelTableMetadata::try_new(
+            table_name.clone(),
+            Arc::new(query_schema),
             error_bounds,
             generated_columns,
-        });
+        )?);
 
         // Register model table.
         context.session.register_table(
@@ -856,8 +837,7 @@ mod tests {
 
         connection
             .execute(
-                "SELECT table_name, schema, timestamp_column_index, tag_column_indices
-                FROM model_table_metadata",
+                "SELECT table_name, query_schema FROM model_table_metadata",
                 params![],
             )
             .unwrap();
@@ -1173,8 +1153,7 @@ mod tests {
         // Retrieve the rows in model_table_metadata from the metadata database.
         let mut select_statement = connection
             .prepare(
-                "SELECT table_name, schema, timestamp_column_index, tag_column_indices
-                 FROM model_table_metadata",
+                "SELECT table_name, query_schema FROM model_table_metadata",
             )
             .unwrap();
         let mut rows = select_statement.query(()).unwrap();
@@ -1184,11 +1163,6 @@ mod tests {
         assert_eq!(
             MetadataManager::convert_schema_to_blob(&model_table_metadata.schema).unwrap(),
             row.get::<usize, Vec<u8>>(1).unwrap()
-        );
-        assert_eq!(1, row.get::<usize, i32>(2).unwrap());
-        assert_eq!(
-            vec![0, 0, 0, 0, 0, 0, 0, 0],
-            row.get::<usize, Vec<u8>>(3).unwrap()
         );
 
         assert!(rows.next().unwrap().is_none());
@@ -1373,12 +1347,12 @@ pub mod test_util {
     /// with a schema containing a tag column, a timestamp column, and two field columns, and the
     /// second element being the original generation expressions.
     pub fn model_table_metadata() -> ModelTableMetadata {
-        let schema = Schema::new(vec![
+        let query_schema = Arc::new(Schema::new(vec![
             Field::new("tag", DataType::Utf8, false),
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
             Field::new("field_1", ArrowValue::DATA_TYPE, false),
             Field::new("field_2", ArrowValue::DATA_TYPE, false),
-        ]);
+        ]));
 
         let error_bounds = vec![
             ErrorBound::try_new(0.0).unwrap(),
@@ -1391,9 +1365,7 @@ pub mod test_util {
 
         ModelTableMetadata::try_new(
             "model_table".to_owned(),
-            schema,
-            1,
-            vec![0],
+            query_schema,
             error_bounds,
             generated_columns,
         )
