@@ -18,24 +18,22 @@
 //!
 //! [sqlparser]: https://crates.io/crates/sqlparser
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
-use datafusion::arrow::datatypes::{
-    ArrowPrimitiveType, DataType, Field, Schema, TimeUnit, DECIMAL128_MAX_PRECISION,
-    DECIMAL_DEFAULT_SCALE,
-};
-use datafusion::common::{DFSchema, DataFusionError, Result as DataFusionResult, ToDFSchema};
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
+use datafusion::common::{DFSchema, DataFusionError, ToDFSchema};
 use datafusion::config::ConfigOptions;
 use datafusion::execution::context::ExecutionProps;
 use datafusion::logical_expr::{AggregateUDF, Expr as DFExpr, ScalarUDF, TableSource};
 use datafusion::physical_expr::planner;
 use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
 use datafusion::sql::TableReference;
-use modelardb_common::types::ArrowTimestamp;
+use modelardb_common::types::{ArrowTimestamp, ArrowValue};
 use modelardb_compression::models::ErrorBound;
 use sqlparser::ast::{
-    ColumnDef, ColumnOption, ColumnOptionDef, DataType as SQLDataType, ExactNumberInfo,
-    GeneratedAs, HiveDistributionStyle, HiveFormat, Ident, ObjectName, Statement, TimezoneInfo,
+    ColumnDef, ColumnOption, ColumnOptionDef, DataType as SQLDataType, GeneratedAs,
+    HiveDistributionStyle, HiveFormat, Ident, ObjectName, Statement, TimezoneInfo,
 };
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::keywords::{Keyword, ALL_KEYWORDS};
@@ -123,7 +121,11 @@ impl ModelarDbDialect {
                         parser.expect_token(&Token::LParen)?;
                         let error_bound = self.parse_positive_literal_f32(parser)?;
                         parser.expect_token(&Token::RParen)?;
-                        options.push(Self::new_error_bound_column_option_def(error_bound));
+
+                        // The error bound is zero by default so need to store it.
+                        if error_bound > 0.0 {
+                            options.push(Self::new_error_bound_column_option_def(error_bound));
+                        }
                     } else if let Token::Word(_) = parser.peek_nth_token(0).token {
                         // An expression to generate the field is given.
                         self.expect_word_value(parser, "AS")?;
@@ -134,11 +136,7 @@ impl ModelarDbDialect {
                             generation_expr: Some(parser.parse_expr()?),
                         };
 
-                        options.push(Self::new_error_bound_column_option_def(0.0));
                         options.push(ColumnOptionDef { name: None, option });
-                    } else {
-                        // Neither an error bound nor an expression is given.
-                        options.push(Self::new_error_bound_column_option_def(0.0));
                     }
 
                     SQLDataType::Real
@@ -327,10 +325,10 @@ pub enum ValidStatement {
 /// `statement` is not a [`Statement::CreateTable`] or a semantic check fails.
 /// If all semantics checks are successful a [`ValidStatement`] is returned.
 pub fn semantic_checks_for_create_table(
-    statement: &Statement,
+    statement: Statement,
 ) -> Result<ValidStatement, ParserError> {
     // Ensure it is a create table and only supported features are enabled.
-    check_unsupported_features_are_disabled(statement)?;
+    check_unsupported_features_are_disabled(&statement)?;
 
     // An else-clause is not required as statement's type was checked above.
     if let Statement::CreateTable {
@@ -368,17 +366,24 @@ pub fn semantic_checks_for_create_table(
         object_store::path::Path::parse(&normalized_name)
             .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
-        // Check if the columns can be converted to a schema.
-        let schema = column_defs_to_schema(columns)
-            .map_err(|error| ParserError::ParserError(error.to_string()))?;
-
-        // Create a ValidStatement with the information for creating the table.
+        // Create a ValidStatement with the information for creating the table of the specified type.
         let _expected_engine = CREATE_MODEL_TABLE_ENGINE.to_owned();
         if let Some(_expected_engine) = engine {
+            // Create a model table for time series that only supports TIMESTAMP, FIELD, and TAG.
             let model_table_metadata =
                 semantic_checks_for_create_model_table(normalized_name, columns)?;
+
             Ok(ValidStatement::CreateModelTable(model_table_metadata))
         } else {
+            // Create a table that supports all columns types supported by Apache Arrow DataFusion.
+            let context_provider = EmptyContextProvider {
+                options: ConfigOptions::default(),
+            };
+            let sql_to_rel = SqlToRel::new(&context_provider);
+            let schema = sql_to_rel
+                .build_schema(columns)
+                .map_err(|error| ParserError::ParserError(error.to_string()))?;
+
             Ok(ValidStatement::CreateTable {
                 name: normalized_name,
                 schema,
@@ -395,23 +400,23 @@ pub fn semantic_checks_for_create_table(
 /// [`ParserError`] is returned if any of the additional semantic checks fails.
 fn semantic_checks_for_create_model_table(
     name: String,
-    column_defs: &Vec<ColumnDef>,
+    column_defs: Vec<ColumnDef>,
 ) -> Result<ModelTableMetadata, ParserError> {
-    // Convert column definitions to a schema.
-    let schema = column_defs_to_schema(column_defs)
-        .map_err(|error| ParserError::ParserError(error.to_string()))?;
-
     // Extract the error bounds for all columns. It is here to keep the parser types in the parser.
-    let error_bounds = extract_error_bounds_for_all_columns(column_defs)?;
+    let error_bounds = extract_error_bounds_for_all_columns(&column_defs)?;
 
     // Extract the expressions for all columns. It is here to keep the parser types in the parser.
-    let generated_columns = extract_generation_exprs_for_all_columns(column_defs)
+    let generated_columns = extract_generation_exprs_for_all_columns(&column_defs)
+        .map_err(|error| ParserError::ParserError(error.to_string()))?;
+
+    // Convert column definitions to a schema.
+    let query_schema = column_defs_to_model_table_query_schema(column_defs)
         .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
     // Return the metadata required to create a model table.
     let model_table_metadata = ModelTableMetadata::try_new(
         name,
-        Arc::new(schema),
+        Arc::new(query_schema),
         error_bounds,
         generated_columns,
     )
@@ -502,173 +507,61 @@ fn check_unsupported_feature_is_disabled(enabled: bool, feature: &str) -> Result
     }
 }
 
-/// Return [`Schema`] if the types of the `column_defs` are supported, otherwise
-/// a [`DataFusionError`] is returned.
-fn column_defs_to_schema(column_defs: &Vec<ColumnDef>) -> Result<Schema, DataFusionError> {
+/// Return [`Schema`] if the types of the `column_defs` are supported by model tables, otherwise a
+/// [`DataFusionError`] is returned.
+fn column_defs_to_model_table_query_schema(
+    column_defs: Vec<ColumnDef>,
+) -> Result<Schema, DataFusionError> {
     let mut fields = Vec::with_capacity(column_defs.len());
 
+    // Manually convert TIMESTAMP, FIELD, and TAG columns to Apache Arrow DataFusion types.
     for column_def in column_defs {
-        let data_type = if column_def.data_type == SQLDataType::Timestamp(None, TimezoneInfo::None)
-        {
-            // TIMESTAMP is manually converted as planner uses TimeUnit::Nanosecond.
-            ArrowTimestamp::DATA_TYPE
-        } else {
-            convert_simple_data_type(&column_def.data_type)?
+        let normalized_name = MetadataManager::normalize_name(&column_def.name.value);
+
+        let field = match column_def.data_type {
+            SQLDataType::Timestamp(None, TimezoneInfo::None) => {
+                Field::new(normalized_name, ArrowTimestamp::DATA_TYPE, false)
+            }
+            SQLDataType::Real => {
+                let mut metadata: HashMap<String, String> = HashMap::with_capacity(2);
+                for column_option_def in column_def.options {
+                    match column_option_def.option {
+                        ColumnOption::Comment(error_bound_string) => {
+                            metadata.insert("Error Bound".to_owned(), error_bound_string + "%");
+                        }
+                        ColumnOption::Generated {
+                            generated_as: _,
+                            sequence_options: _,
+                            generation_expr,
+                        } => {
+                            metadata.insert(
+                                "Generated As".to_owned(),
+                                generation_expr.unwrap().to_string(),
+                            );
+                        }
+                        option => {
+                            return Err(DataFusionError::Internal(format!(
+                                "{option} is not supported in model tables."
+                            )))
+                        }
+                    }
+                }
+
+                Field::new(normalized_name, ArrowValue::DATA_TYPE, false).with_metadata(metadata)
+            }
+            SQLDataType::Text => Field::new(normalized_name, DataType::Utf8, false),
+            data_type => {
+                return Err(DataFusionError::Internal(format!(
+                    "{data_type} is not supported in model tables."
+                )))
+            }
         };
 
-        fields.push(Field::new(
-            MetadataManager::normalize_name(&column_def.name.value),
-            data_type,
-            false,
-        ));
+        fields.push(field);
     }
 
     Ok(Schema::new(fields))
 }
-
-/* Start of code copied from datafusion-sql v14.0.0/v15.0.0/v20.0.0/23.0.0. */
-// The following two functions have been copied from datafusion-sql v14.0.0/v15.0.0/v20.0.0/23.0.0
-// as parser.rs used the version of convert_simple_data_type() implemented as a free function in
-// datafusion-sql v14.0.0 to convert from sqlparser::ast::DataType (SQLDataType) to
-// datafusion::arrow::datatypes::DataType and it was changed to a private instance method in
-// datafusion-sql v15.0.0. As Apache Arrow DataFusion no longer seems to provide an API for
-// converting from SQLDataType to DataType, the version of convert_simple_data_type() in
-// datafusion-sql v14.0.0 has been copied to parser.rs and has been updated according to the
-// changes made in datafusion-sql v15.0.0, datafusion-sql v20.0.0, and datafusion-sql v23.0.0 to
-// the greatest degree possible. As the private function make_decimal_type() is used by
-// convert_simple_data_type() it has also been copied from datafusion-sql v15.0.0. As these
-// functions have been copied from datafusion-sql they should be updated whenever a new version of
-// datafusion-sql is released. Also significant effort should be made to try and replace these two
-// functions with calls to Apache Arrow DataFusion's public API whenever a new version of Apache
-// Arrow DataFusion is released.
-
-/// Convert a simple [`SQLDataType`] to the relational representation of the [`DataType`]. This
-/// function is copied from [datafusion-sql v14.0.0] and updated with the changes in
-/// [datafusion-sql v15.0.0], [datafusion-sql v20.0.0], and [datafusion-sql v23.0.0] as it was
-/// changed from a public function to a private method in [datafusion-sql v15.0.0] and extended in
-/// [datafusion-sql v20.0.0] and [datafusion-sql v23.0.0]. All versions of datafusion-sql were
-/// released under version 2.0 of the Apache License.
-///
-/// [datafusion-sql v14.0.0]: https://github.com/apache/arrow-datafusion/blob/14.0.0/datafusion/sql/src/planner.rs#L2812
-/// [datafusion-sql v15.0.0]: https://github.com/apache/arrow-datafusion/blob/15.0.0/datafusion/sql/src/planner.rs#L2790
-/// [datafusion-sql v20.0.0]: https://github.com/apache/arrow-datafusion/blob/20.0.0/datafusion/sql/src/planner.rs#L235
-/// [datafusion-sql v23.0.0]: https://github.com/apache/arrow-datafusion/blob/23.0.0/datafusion/sql/src/planner.rs#L304
-pub fn convert_simple_data_type(sql_type: &SQLDataType) -> DataFusionResult<DataType> {
-    match sql_type {
-        SQLDataType::Boolean => Ok(DataType::Boolean),
-        SQLDataType::TinyInt(_) => Ok(DataType::Int8),
-        SQLDataType::SmallInt(_) => Ok(DataType::Int16),
-        SQLDataType::Int(_) | SQLDataType::Integer(_) => Ok(DataType::Int32),
-        SQLDataType::BigInt(_) => Ok(DataType::Int64),
-        SQLDataType::UnsignedTinyInt(_) => Ok(DataType::UInt8),
-        SQLDataType::UnsignedSmallInt(_) => Ok(DataType::UInt16),
-        SQLDataType::UnsignedInt(_) | SQLDataType::UnsignedInteger(_) => Ok(DataType::UInt32),
-        SQLDataType::UnsignedBigInt(_) => Ok(DataType::UInt64),
-        SQLDataType::Float(_) => Ok(DataType::Float32),
-        SQLDataType::Real => Ok(DataType::Float32),
-        SQLDataType::Double | SQLDataType::DoublePrecision => Ok(DataType::Float64),
-        SQLDataType::Char(_)
-        | SQLDataType::Varchar(_)
-        | SQLDataType::Text
-        | SQLDataType::String => Ok(DataType::Utf8),
-        SQLDataType::Timestamp(None, tz_info) => {
-            let tz = if matches!(tz_info, TimezoneInfo::Tz)
-                || matches!(tz_info, TimezoneInfo::WithTimeZone)
-            {
-                Some("+00:00".to_owned())
-            } else {
-                None
-            };
-            Ok(DataType::Timestamp(TimeUnit::Nanosecond, tz.map(Into::into)))
-        }
-        SQLDataType::Date => Ok(DataType::Date32),
-        SQLDataType::Time(None, tz_info) => {
-            if matches!(tz_info, TimezoneInfo::None)
-                || matches!(tz_info, TimezoneInfo::WithoutTimeZone)
-            {
-                Ok(DataType::Time64(TimeUnit::Nanosecond))
-            } else {
-                // We don't support TIMETZ and TIME WITH TIME ZONE for now.
-                Err(DataFusionError::NotImplemented(format!(
-                    "Unsupported SQL type {sql_type:?}"
-                )))
-            }
-        }
-        SQLDataType::Numeric(exact_number_info)
-        | SQLDataType::Decimal(exact_number_info) => {
-            let (precision, scale) = match *exact_number_info {
-                ExactNumberInfo::None => (None, None),
-                ExactNumberInfo::Precision(precision) => (Some(precision), None),
-                ExactNumberInfo::PrecisionAndScale(precision, scale) => {
-                    (Some(precision), Some(scale))
-                }
-            };
-            make_decimal_type(precision, scale)
-        }
-        SQLDataType::Bytea => Ok(DataType::Binary),
-        // Explicitly list all other types so that if sqlparser
-        // adds/changes the `SQLDataType` the compiler will tell us on upgrade
-        // and avoid bugs like https://github.com/apache/arrow-datafusion/issues/3059.
-        SQLDataType::Nvarchar(_)
-        | SQLDataType::JSON
-        | SQLDataType::Uuid
-        | SQLDataType::Binary(_)
-        | SQLDataType::Varbinary(_)
-        | SQLDataType::Blob(_)
-        | SQLDataType::Datetime(_)
-        | SQLDataType::Interval
-        | SQLDataType::Regclass
-        | SQLDataType::Custom(_, _)
-        | SQLDataType::Array(_)
-        | SQLDataType::Enum(_)
-        | SQLDataType::Set(_)
-        | SQLDataType::MediumInt(_)
-        | SQLDataType::UnsignedMediumInt(_)
-        | SQLDataType::Character(_)
-        | SQLDataType::CharacterVarying(_)
-        | SQLDataType::CharVarying(_)
-        | SQLDataType::CharacterLargeObject(_)
-        | SQLDataType::CharLargeObject(_)
-        // Precision is not supported.
-        | SQLDataType::Timestamp(Some(_), _)
-        // Precision is not supported.
-        | SQLDataType::Time(Some(_), _)
-        | SQLDataType::Dec(_)
-        | SQLDataType::BigNumeric(_)
-        | SQLDataType::BigDecimal(_)
-        | SQLDataType::Clob(_) => Err(DataFusionError::NotImplemented(format!(
-            "Unsupported SQL type {sql_type:?}"
-        ))),
-    }
-}
-
-/// Return a validated [`DataType`] for the specified `precision` and `scale`. This function is
-/// copied from [datafusion-sql v15.0.0] which was released under version 2.0 of the Apache License.
-///
-/// [datafusion-sql v15.0.0]: https://github.com/apache/arrow-datafusion/blob/15.0.0/datafusion/sql/src/utils.rs#L506
-fn make_decimal_type(precision: Option<u64>, scale: Option<u64>) -> DataFusionResult<DataType> {
-    // PostgreSQL like behavior.
-    let (precision, scale) = match (precision, scale) {
-        (Some(p), Some(s)) => (p as u8, s as i8),
-        (Some(p), None) => (p as u8, 0),
-        (None, Some(_)) => {
-            return Err(DataFusionError::Internal(
-                "Cannot specify only scale for decimal data type.".to_owned(),
-            ))
-        }
-        (None, None) => (DECIMAL128_MAX_PRECISION, DECIMAL_DEFAULT_SCALE),
-    };
-
-    // Apache Arrow decimal is i128 meaning 38 maximum decimal digits.
-    if precision == 0 || precision > DECIMAL128_MAX_PRECISION || scale.unsigned_abs() > precision {
-        Err(DataFusionError::Internal(format!(
-            "Decimal(precision = {precision}, scale = {scale}) should satisfy `0 < precision <= 38`, and `scale <= precision`."
-        )))
-    } else {
-        Ok(DataType::Decimal128(precision, scale))
-    }
-}
-/* End of code copied from datafusion-sql v14.0.0/v15.0.0. */
 
 /// Extract the error bounds from the columns in `column_defs`. The error bound for the timestamp
 /// and tag columns will be zero so the error bound of each column can be accessed using its index.
@@ -678,21 +571,13 @@ fn extract_error_bounds_for_all_columns(
     let mut error_bounds = Vec::with_capacity(column_defs.len());
 
     for column_def in column_defs {
-        let error_bound_value = if column_def.data_type == SQLDataType::Real {
-            match &column_def.options[0].option {
-                ColumnOption::Comment(error_bound_string) => {
-                    error_bound_string.parse::<f32>().unwrap()
-                }
-                _ => {
-                    return Err(ParserError::ParserError(format!(
-                        "No error bound is defined for {}.",
-                        column_def.name.value
-                    )));
-                }
+        let mut error_bound_value = 0.0;
+
+        for column_def_option in &column_def.options {
+            if let ColumnOption::Comment(error_bound_string) = &column_def_option.option {
+                error_bound_value = error_bound_string.parse::<f32>().unwrap();
             }
-        } else {
-            0.0
-        };
+        }
 
         let error_bound = ErrorBound::try_new(error_bound_value)
             .map_err(|error| ParserError::ParserError(error.to_string()))?;
@@ -721,65 +606,47 @@ fn extract_generation_exprs_for_all_columns(
     let mut generated_columns = Vec::with_capacity(column_defs.len());
 
     for column_def in column_defs {
-        if column_def.data_type == SQLDataType::Real {
-            if let Some(generated) = column_def.options.get(1) {
-                match &generated.option {
-                    ColumnOption::Generated {
-                        generated_as: _,
-                        sequence_options: _,
-                        generation_expr,
-                    } => {
-                        // The expression is saved as a string so it can be stored in the metadata
-                        // database, it is not in ModelTableMetadata as it not used for queries.
-                        let sql_expr = generation_expr.as_ref().unwrap();
-                        let original_expr = Some(sql_expr.to_string());
+        let mut generated_column = None;
 
-                        // Ensure the parsed sqlparser expression can be converted to a logical
-                        // Apache Arrow DataFusion expression within the context of schema.
-                        let expr = sql_to_rel.sql_to_expr(
-                            sql_expr.clone(),
-                            &df_schema,
-                            &mut planner_context,
-                        )?;
+        for column_def_option in &column_def.options {
+            if let ColumnOption::Generated {
+                generated_as: _,
+                sequence_options: _,
+                generation_expr,
+            } = &column_def_option.option
+            {
+                // The expression is saved as a string so it can be stored in the metadata
+                // database, it is not in ModelTableMetadata as it not used for queries.
+                let sql_expr = generation_expr.as_ref().unwrap();
+                let original_expr = Some(sql_expr.to_string());
 
-                        // Ensure the logical Apache Arrow DataFusion expression can be converted to
-                        // a physical Apache Arrow DataFusion expression within the context of
-                        // schema. This is done to ensure the user-defined expression is correct.
-                        let _physical_expr = planner::create_physical_expr(
-                            &expr,
-                            &df_schema,
-                            &schema,
-                            &execution_props,
-                        )?;
+                // Ensure the parsed sqlparser expression can be converted to a logical
+                // Apache Arrow DataFusion expression within the context of schema.
+                let expr =
+                    sql_to_rel.sql_to_expr(sql_expr.clone(), &df_schema, &mut planner_context)?;
 
-                        // unwrap() is safe as the loop iterates over the columns in the schema.
-                        let source_columns = expr
-                            .to_columns()?
-                            .iter()
-                            .map(|column| df_schema.index_of_column(column).unwrap())
-                            .collect();
+                // Ensure the logical Apache Arrow DataFusion expression can be converted to
+                // a physical Apache Arrow DataFusion expression within the context of
+                // schema. This is done to ensure the user-defined expression is correct.
+                let _physical_expr =
+                    planner::create_physical_expr(&expr, &df_schema, &schema, &execution_props)?;
 
-                        generated_columns.push(Some(GeneratedColumn {
-                            expr,
-                            source_columns,
-                            original_expr,
-                        }));
-                    }
-                    _ => {
-                        return Err(DataFusionError::Internal(format!(
-                            "The second option is not an generation expression for {}.",
-                            column_def.name.value
-                        )));
-                    }
-                }
-            } else {
-                // A second option is not provided for this column.
-                generated_columns.push(None);
+                // unwrap() is safe as the loop iterates over the columns in the schema.
+                let source_columns = expr
+                    .to_columns()?
+                    .iter()
+                    .map(|column| df_schema.index_of_column(column).unwrap())
+                    .collect();
+
+                generated_column = Some(GeneratedColumn {
+                    expr,
+                    source_columns,
+                    original_expr,
+                });
             }
-        } else {
-            // column_def is a timestamp column or a tag column.
-            generated_columns.push(None);
         }
+
+        generated_columns.push(generated_column);
     }
 
     Ok(generated_columns)
@@ -864,21 +731,17 @@ mod tests {
                     SQLDataType::Timestamp(None, TimezoneInfo::None),
                     vec![],
                 ),
-                ModelarDbDialect::new_column_def(
-                    "field_one",
-                    SQLDataType::Real,
-                    new_column_option_def_error_bound_and_generation_expr(0.0, None),
-                ),
+                ModelarDbDialect::new_column_def("field_one", SQLDataType::Real, vec![]),
                 ModelarDbDialect::new_column_def(
                     "field_two",
                     SQLDataType::Real,
-                    new_column_option_def_error_bound_and_generation_expr(10.5, None),
+                    new_column_option_def_error_bound_and_generation_expr(Some(10.5), None),
                 ),
                 ModelarDbDialect::new_column_def(
                     "field_three",
                     SQLDataType::Real,
                     new_column_option_def_error_bound_and_generation_expr(
-                        0.0,
+                        None,
                         Some("SIN(CAST(field_one AS DOUBLE) * PI() / 180.0)"),
                     ),
                 ),
@@ -887,7 +750,7 @@ mod tests {
             assert_eq!(*columns, expected_columns);
 
             // unwrap() asserts that the semantic check have all passed as it otherwise panics.
-            semantic_checks_for_create_table(&statement).unwrap();
+            semantic_checks_for_create_table(statement).unwrap();
         } else {
             panic!("CREATE TABLE DDL did not parse to a Statement::CreateTable.");
         }
@@ -898,13 +761,19 @@ mod tests {
     }
 
     fn new_column_option_def_error_bound_and_generation_expr(
-        error_bound: f32,
+        maybe_error_bound: Option<f32>,
         maybe_sql_expr: Option<&str>,
     ) -> Vec<ColumnOptionDef> {
-        let mut column_option_defs = vec![ColumnOptionDef {
-            name: None,
-            option: ColumnOption::Comment(error_bound.to_string()),
-        }];
+        let mut column_option_defs = vec![];
+
+        if let Some(error_bound) = maybe_error_bound {
+            let error_bound = ColumnOptionDef {
+                name: None,
+                option: ColumnOption::Comment(error_bound.to_string()),
+            };
+
+            column_option_defs.push(error_bound);
+        }
 
         if let Some(sql_expr) = maybe_sql_expr {
             let dialect = ModelarDbDialect::new();
@@ -1114,7 +983,7 @@ mod tests {
                     .as_str(),
             );
 
-            let result = semantic_checks_for_create_table(&statement.unwrap());
+            let result = semantic_checks_for_create_table(statement.unwrap());
 
             assert!(result.is_err());
 
@@ -1159,6 +1028,6 @@ mod tests {
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS field_1 + 3773.0, tag TAG)",
         ).unwrap();
 
-        assert!(semantic_checks_for_create_table(&statement).is_err());
+        assert!(semantic_checks_for_create_table(statement).is_err());
     }
 }

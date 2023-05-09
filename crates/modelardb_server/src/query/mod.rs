@@ -285,7 +285,7 @@ impl TableProvider for ModelTable {
 
     /// Return the schema of the model table registered with Apache Arrow DataFusion.
     fn schema(&self) -> SchemaRef {
-        self.model_table_metadata.schema.clone()
+        self.model_table_metadata.query_schema.clone()
     }
 
     /// Specify that model tables are base tables and not views or temporary.
@@ -309,17 +309,17 @@ impl TableProvider for ModelTable {
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         let table_name = &self.model_table_metadata.name.as_str();
-        let schema = &self.model_table_metadata.schema;
+        let query_schema = &self.model_table_metadata.query_schema;
 
         // Ensures a projection is present for looking up the columns to return.
         let projection: Vec<usize> = if let Some(projection) = projection {
             projection.to_vec()
         } else {
-            (0..schema.fields().len()).collect()
+            (0..query_schema.fields().len()).collect()
         };
 
         // unwrap() is safe as the projection is based on the schema.
-        let schema_after_projection = Arc::new(schema.project(&projection).unwrap());
+        let schema_after_projection = Arc::new(query_schema.project(&projection).unwrap());
 
         // Since SortedJoinStream and GeneratedAsStream simply needs to append arrays to a vector,
         // the order of the field and tag columns in the projection is extracted and the streams
@@ -328,15 +328,15 @@ impl TableProvider for ModelTable {
 
         let mut sorted_join_order: Vec<SortedJoinColumnType> = Vec::with_capacity(projection.len());
         let mut tag_column_order: Vec<&str> = Vec::with_capacity(tag_column_indices.len());
-        let mut generated_as_order: Vec<ColumnToGenerate> = Vec::with_capacity(schema.fields.len());
+        let mut generated_as_order: Vec<ColumnToGenerate> = Vec::with_capacity(query_schema.fields.len());
         let mut stored_field_indices_in_projection: Vec<u16> =
-            Vec::with_capacity(schema.fields.len() - 1 - tag_column_indices.len());
+            Vec::with_capacity(query_schema.fields.len() - 1 - tag_column_indices.len());
 
         for index in &projection {
             if *index == self.model_table_metadata.timestamp_column_index {
                 sorted_join_order.push(SortedJoinColumnType::Timestamp);
             } else if tag_column_indices.contains(index) {
-                tag_column_order.push(schema.fields[*index].name());
+                tag_column_order.push(query_schema.fields[*index].name());
                 sorted_join_order.push(SortedJoinColumnType::Tag);
             } else if let Some(generated_column) =
                 &self.model_table_metadata.generated_columns[*index]
@@ -355,7 +355,7 @@ impl TableProvider for ModelTable {
 
         // TODO: extract all of the predicates that consist of tag = tag_value from the query so the
         // segments can be pruned by univariate_id in ParquetExec and hash_to_tags can be minimized.
-        let (parquet_predicates, grid_predicates) = rewrite_and_combine_filters(schema, filters);
+        let (parquet_predicates, grid_predicates) = rewrite_and_combine_filters(query_schema, filters);
 
         // Compute a mapping from hashes to tags.
         let hash_to_tags = self

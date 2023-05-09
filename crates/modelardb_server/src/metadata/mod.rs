@@ -210,6 +210,7 @@ impl MetadataManager {
             // Save the tag hash in the cache and in the metadata database model_table_tags table.
             self.tag_value_hashes.insert(cache_key, tag_hash);
 
+            // tag_column_indices are computed with from the schema so they can be used with input.
             let tag_columns: String = model_table_metadata
                 .tag_column_indices
                 .iter()
@@ -576,32 +577,47 @@ impl MetadataManager {
                   VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         )?;
 
-        for (index, field) in model_table_metadata.schema.fields().iter().enumerate() {
+        for (query_schema_index, field) in model_table_metadata
+            .query_schema
+            .fields()
+            .iter()
+            .enumerate()
+        {
             // Only add a row for the field if it is not the timestamp or a tag.
-            let is_timestamp = index == model_table_metadata.timestamp_column_index;
-            let in_tag_indices = model_table_metadata.tag_column_indices.contains(&index);
+            let is_timestamp = query_schema_index == model_table_metadata.timestamp_column_index;
+            let in_tag_indices = model_table_metadata
+                .tag_column_indices
+                .contains(&query_schema_index);
 
             if !is_timestamp && !in_tag_indices {
-                let (generated_column_expr, generated_column_sources) = if let Some(
-                    generated_column,
-                ) =
-                    &model_table_metadata.generated_columns[index]
-                {
-                    (
-                        Some(generated_column.original_expr.clone()),
-                        Some(MetadataManager::convert_slice_usize_to_vec_u8(
-                            &generated_column.source_columns,
-                        )),
-                    )
-                } else {
-                    (None, None)
-                };
+                let (generated_column_expr, generated_column_sources) =
+                    if let Some(generated_column) =
+                        &model_table_metadata.generated_columns[query_schema_index]
+                    {
+                        (
+                            Some(generated_column.original_expr.clone()),
+                            Some(MetadataManager::convert_slice_usize_to_vec_u8(
+                                &generated_column.source_columns,
+                            )),
+                        )
+                    } else {
+                        (None, None)
+                    };
+
+                // error_bounds matches schema and not query_schema to simplify looking up the error
+                // bound during ingestion as it occurs far more often than creation of model tables.
+                let error_bound =
+                    if let Ok(schema_index) = model_table_metadata.schema.index_of(field.name()) {
+                        model_table_metadata.error_bounds[schema_index].into_inner()
+                    } else {
+                        0.0
+                    };
 
                 insert_statement.execute(params![
                     model_table_metadata.name,
                     field.name(),
-                    index,
-                    model_table_metadata.error_bounds[index].into_inner(),
+                    query_schema_index,
+                    error_bound,
                     generated_column_expr,
                     generated_column_sources,
                 ])?;
@@ -1152,16 +1168,14 @@ mod tests {
 
         // Retrieve the rows in model_table_metadata from the metadata database.
         let mut select_statement = connection
-            .prepare(
-                "SELECT table_name, query_schema FROM model_table_metadata",
-            )
+            .prepare("SELECT table_name, query_schema FROM model_table_metadata")
             .unwrap();
         let mut rows = select_statement.query(()).unwrap();
 
         let row = rows.next().unwrap().unwrap();
         assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
         assert_eq!(
-            MetadataManager::convert_schema_to_blob(&model_table_metadata.schema).unwrap(),
+            MetadataManager::convert_schema_to_blob(&model_table_metadata.query_schema).unwrap(),
             row.get::<usize, Vec<u8>>(1).unwrap()
         );
 
@@ -1277,7 +1291,7 @@ mod tests {
 
         let database_path = temp_dir.path().join(METADATA_DATABASE_NAME);
         let connection = Connection::open(database_path).unwrap();
-        let df_schema = model_table_metadata.schema.to_dfschema().unwrap();
+        let df_schema = model_table_metadata.query_schema.to_dfschema().unwrap();
         let generated_columns =
             MetadataManager::generated_columns(&connection, "model_table", &df_schema).unwrap();
 
@@ -1292,7 +1306,8 @@ mod tests {
 pub mod test_util {
     use super::*;
 
-    use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
+    use datafusion::arrow::array::ArrowPrimitiveType;
+    use datafusion::arrow::datatypes::{DataType, Field};
     use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
     use datafusion::execution::runtime_env::RuntimeEnv;
     use modelardb_common::types::{ArrowTimestamp, ArrowValue};

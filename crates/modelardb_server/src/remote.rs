@@ -664,7 +664,7 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             // Perform semantic checks to ensure the parsed SQL is supported.
-            let valid_statement = parser::semantic_checks_for_create_table(&statement)
+            let valid_statement = parser::semantic_checks_for_create_table(statement)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             // Create the table or model table if it does not already exists.
