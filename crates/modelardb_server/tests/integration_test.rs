@@ -26,7 +26,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::utils;
+use arrow_flight::{utils, PutResult};
 use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor};
 use bytes::Bytes;
 use datafusion::arrow::array::{Float32Array, StringArray, TimestampMillisecondArray};
@@ -41,7 +41,7 @@ use sysinfo::{Pid, PidExt, System, SystemExt};
 
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
-use tonic::Request;
+use tonic::{Request, Response, Status, Streaming};
 
 const TABLE_NAME: &str = "table_name";
 const HOST: &str = "127.0.0.1";
@@ -63,12 +63,8 @@ struct ModelarDBD {
 impl ModelarDBD {
     /// Execute the binary with the server and return a handle to the process.
     fn new(path: &Path) -> Self {
-        // Spawn the Apache Arrow Flight Server. stdout is piped to /dev/null so the logged data_points
-        // are not printed when the unit tests and the integration tests are run using "cargo test".
-        // stderr is piped to /dev/null so the server does not print the panic that occurs during
-        // test_cannot_ingest_invalid_data_point. This panic occurs because the
-        // flight_data_to_arrow_batch utility used on the server cannot convert the FlightData to a
-        // RecordBatch using the server-local table schema.
+        // Run modelardbd stdout and stderr is piped to /dev/null so the log messages and expected
+        // errors are not printed when all of the tests are run using the "cargo test" command.
         let process = ModelarDBD::start_binary("modelardbd")
             .arg(path)
             .stdout(Stdio::null())
@@ -319,7 +315,8 @@ fn test_can_ingest_data_point_with_tags() {
         TableType::ModelTable,
     );
 
-    send_data_points_to_apache_arrow_modelardbd(&runtime, &mut flight_service_client, flight_data);
+    send_data_points_to_apache_arrow_modelardbd(&runtime, &mut flight_service_client, flight_data)
+        .unwrap();
 
     flush_data_to_disk(&runtime, &mut flight_service_client);
 
@@ -353,7 +350,8 @@ fn test_can_ingest_data_point_without_tags() {
         TableType::ModelTableNoTag,
     );
 
-    send_data_points_to_apache_arrow_modelardbd(&runtime, &mut flight_service_client, flight_data);
+    send_data_points_to_apache_arrow_modelardbd(&runtime, &mut flight_service_client, flight_data)
+        .unwrap();
 
     flush_data_to_disk(&runtime, &mut flight_service_client);
 
@@ -389,7 +387,8 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
         TableType::ModelTable,
     );
 
-    send_data_points_to_apache_arrow_modelardbd(&runtime, &mut flight_service_client, flight_data);
+    send_data_points_to_apache_arrow_modelardbd(&runtime, &mut flight_service_client, flight_data)
+        .unwrap();
 
     flush_data_to_disk(&runtime, &mut flight_service_client);
 
@@ -424,7 +423,12 @@ fn test_cannot_ingest_invalid_data_point() {
         TableType::ModelTable,
     );
 
-    send_data_points_to_apache_arrow_modelardbd(&runtime, &mut flight_service_client, flight_data);
+    assert!(send_data_points_to_apache_arrow_modelardbd(
+        &runtime,
+        &mut flight_service_client,
+        flight_data
+    )
+    .is_err());
 
     flush_data_to_disk(&runtime, &mut flight_service_client);
 
@@ -462,7 +466,8 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
         TableType::ModelTable,
     );
 
-    send_data_points_to_apache_arrow_modelardbd(&runtime, &mut flight_service_client, flight_data);
+    send_data_points_to_apache_arrow_modelardbd(&runtime, &mut flight_service_client, flight_data)
+        .unwrap();
 
     flush_data_to_disk(&runtime, &mut flight_service_client);
 
@@ -604,12 +609,11 @@ fn send_data_points_to_apache_arrow_modelardbd(
     runtime: &Runtime,
     client: &mut FlightServiceClient<Channel>,
     flight_data: Vec<FlightData>,
-) {
+) -> Result<Response<Streaming<PutResult>>, Status> {
     runtime.block_on(async {
         let flight_data_stream = stream::iter(flight_data);
-
-        let _ = client.do_put(flight_data_stream).await;
-    });
+        client.do_put(flight_data_stream).await
+    })
 }
 
 /// Flush the data in the StorageEngine to disk through the `do_action()` method.

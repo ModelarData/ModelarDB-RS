@@ -1003,9 +1003,9 @@ mod tests {
             "37",
             "field_1 + 73",
             "field_1 + field_2",
-            "cos(field_1 * pi() / 180)",
-            "sin(field_1 * pi() / 180)",
-            "tan(field_1 * pi() / 180)",
+            "COS(field_1 * PI() / 180)",
+            "SIN(field_1 * PI() / 180)",
+            "TAN(field_1 * PI() / 180)",
         ];
 
         let schemaref = test_util::model_table_metadata().schema;
