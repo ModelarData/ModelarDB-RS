@@ -20,7 +20,7 @@ edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
-arrow = "37.0.0"
+arrow = "38.0.0"
 modelardb_common = { path = "../modelardb_common" }
 
 [dev-dependencies]

@@ -862,7 +862,7 @@ pub mod test_util {
     use modelardb_common::schemas::COMPRESSED_SCHEMA;
     use modelardb_common::types::{TimestampArray, ValueArray};
 
-    pub const COMPRESSED_SEGMENTS_SIZE: usize = 2351;
+    pub const COMPRESSED_SEGMENTS_SIZE: usize = 1399;
 
     /// Return a [`RecordBatch`] containing three compressed segments.
     pub fn compressed_segments_record_batch() -> RecordBatch {
