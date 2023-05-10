@@ -52,6 +52,7 @@ enum TableType {
     NormalTable,
     ModelTable,
     ModelTableNoTag,
+    ModelTableAsField,
 }
 
 /// Instance of modelardbd used for testing. [`Child`] is wrapped in a struct to allow `drop()` to
@@ -367,6 +368,45 @@ fn test_can_ingest_data_point_without_tags() {
 
 #[test]
 #[serial]
+fn test_can_ingest_data_point_with_generated_field() {
+    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
+    let _modelardbd = ModelarDBD::new(temp_dir.path());
+
+    let runtime = Runtime::new().expect("Unable to initialize runtime.");
+    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
+        .expect("Could not connect to flight service client.");
+
+    let data_point = generate_random_data_point(None);
+    let flight_data = create_flight_data_from_data_points(&[data_point.clone()]);
+
+    create_table(
+        &runtime,
+        &mut flight_service_client,
+        TABLE_NAME,
+        TableType::ModelTableAsField,
+    );
+
+    send_data_points_to_apache_arrow_modelardbd(&runtime, &mut flight_service_client, flight_data)
+        .unwrap();
+
+    flush_data_to_disk(&runtime, &mut flight_service_client);
+
+    let query = execute_query(
+        &runtime,
+        &mut flight_service_client,
+        format!("SELECT * FROM {TABLE_NAME}"),
+    )
+    .expect("Could not execute query.");
+
+    // Column two in the query is the generated column which does not exist in data point.
+    assert_eq!(data_point.num_columns(), 2);
+    assert_eq!(query[0].num_columns(), 3);
+    assert_eq!(data_point.column(0), query[0].column(0));
+    assert_eq!(data_point.column(1), query[0].column(2));
+}
+
+#[test]
+#[serial]
 fn test_can_ingest_multiple_time_series_with_different_tags() {
     let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
     let _modelardbd = ModelarDBD::new(temp_dir.path());
@@ -523,6 +563,13 @@ fn create_table(
         }
         TableType::ModelTableNoTag => {
             format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD)")
+        }
+        TableType::ModelTableAsField => {
+            format!(
+                "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
+                 generated FIELD AS CAST(COS(CAST(value AS DOUBLE) * PI() / 180.0) AS REAL),
+                 value FIELD(0.0))"
+            )
         }
     };
 

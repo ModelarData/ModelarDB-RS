@@ -56,7 +56,7 @@ impl ColumnToGenerate {
 /// An execution plan that generates one or more new columns from a [`RecordBatch`] using
 /// [`PhysicalExprs`](PhysicalExpr) and creates a new [`RecordBatch`] with the new columns included.
 /// It is public so the additional rules added to Apache Arrow DataFusion's physical optimizer can
-/// pattern match on it.
+/// pattern match on it. Assumes any columns that is only used to generate other columns are last.
 #[derive(Debug)]
 pub struct GeneratedAsExec {
     /// Schema of the execution plan.
@@ -70,7 +70,7 @@ pub struct GeneratedAsExec {
 }
 
 impl GeneratedAsExec {
-    fn new(
+    pub fn new(
         schema: SchemaRef,
         columns_to_generate: Vec<ColumnToGenerate>,
         input: Arc<dyn ExecutionPlan>,
@@ -211,12 +211,14 @@ impl Stream for GeneratedAsStream {
     ) -> Poll<Option<Self::Item>> {
         match self.input.poll_next_unpin(cx) {
             Poll::Ready(Some(Ok(batch))) => {
-                let mut columns = Vec::with_capacity(self.schema.fields().len());
+                let schema_fields_len = self.schema.fields().len();
+                let mut columns = Vec::with_capacity(schema_fields_len);
+                let mut generated_columns = 0;
 
                 for column_to_generate in &self.columns_to_generate {
-                    // Add stored columns until the next generated columns.
-                    for index in columns.len()..=column_to_generate.index {
-                        columns.push(batch.column(index).clone());
+                    // Add the stored columns until the next generated column.
+                    for index in columns.len()..column_to_generate.index {
+                        columns.push(batch.column(index - generated_columns).clone());
                     }
 
                     // Compute the values of the next generated column and add it.
@@ -227,14 +229,19 @@ impl Stream for GeneratedAsStream {
                             .unwrap()
                             .into_array(batch.num_rows()),
                     );
+
+                    generated_columns += 1;
                 }
 
                 // Add the remaining stored columns to the record batch.
-                for index in columns.len()..self.schema.fields().len() {
-                    columns.push(batch.column(index).clone());
+                for index in columns.len()..schema_fields_len {
+                    columns.push(batch.column(index - generated_columns).clone());
                 }
 
-                // unwrap() is safe as GeneratedAsStream has ordered columns to match the schema.
+                // Drop columns that were required to generate values but were not in the query.
+                columns.truncate(schema_fields_len);
+
+                // unwrap() is safe as GeneratedAsStream ordered the columns to match the schema.
                 let batch = RecordBatch::try_new(self.schema.clone(), columns).unwrap();
                 self.baseline_metrics
                     .record_poll(Poll::Ready(Some(Ok(batch))))
