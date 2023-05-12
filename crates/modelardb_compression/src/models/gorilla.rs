@@ -104,11 +104,7 @@ impl Gorilla {
         let last_value_as_integer = self.last_value.to_bits();
         let value_xor_last_value = value_as_integer ^ last_value_as_integer;
 
-        if self.compressed_values.is_empty() {
-            // Store the first value uncompressed using size_of::<Value> bits.
-            self.compressed_values
-                .append_bits(value_as_integer, models::VALUE_SIZE_IN_BITS);
-        } else if value_xor_last_value == 0 {
+        if value_xor_last_value == 0 {
             // Store each repeated value as a single zero bit.
             self.compressed_values.append_a_zero_bit();
         } else {
@@ -171,9 +167,17 @@ impl Gorilla {
     }
 }
 
-/// Compute the sum of the values for a time series segment whose values are
-/// compressed using Gorilla's compression method for floating-point values.
-pub fn sum(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8], values: &[u8]) -> Value {
+/// Compute the sum of the values for a time series segment whose values are compressed using
+/// Gorilla's compression method for floating-point values. If `maybe_model_last_value` is provided,
+/// it is assumed the first value in `values` is compressed against it instead of being stored in
+/// full, i.e., uncompressed.
+pub fn sum(
+    start_time: Timestamp,
+    end_time: Timestamp,
+    timestamps: &[u8],
+    values: &[u8],
+    maybe_model_last_value: Option<Value>,
+) -> Value {
     // This function replicates code from gorilla::grid() as it isn't necessary
     // to store the univariate ids, timestamps, and values in arrays for a sum.
     // So any changes to the decompression must be mirrored in gorilla::grid().
@@ -181,7 +185,6 @@ pub fn sum(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8], values
     let mut bits = BitReader::try_new(values).unwrap();
     let mut leading_zeros = u8::MAX;
     let mut trailing_zeros: u8 = 0;
-    let mut last_value = bits.read_bits(models::VALUE_SIZE_IN_BITS);
 
     let (mut last_value, mut sum) = if let Some(model_last_value) = maybe_model_last_value {
         // The first value is stored compressed against model_last_value.
@@ -215,26 +218,34 @@ pub fn sum(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8], values
     sum
 }
 
-/// Decompress the values in `values` for the `timestamps` without matching
-/// values in `value_builder`. The values in `values` are compressed using
-/// Gorilla's compression method for floating-point values. `univariate_ids`
-/// and `values` are appended to `univariate_id_builder` and `value_builder`.
+/// Decompress all of the values in `values` for the `timestamps` without matching values in
+/// `value_builder`. The values in `values` are compressed using Gorilla's compression method for
+/// floating-point values. `univariate_ids` and `values` are appended to `univariate_id_builder` and
+/// `value_builder`. If `maybe_model_last_value` is provided, it is assumed the first value in
+/// `values` is compressed against it instead of being stored in full, i.e., uncompressed.
 pub fn grid(
     univariate_id: UnivariateId,
     values: &[u8],
     univariate_id_builder: &mut UnivariateIdBuilder,
     timestamps: &[Timestamp],
     value_builder: &mut ValueBuilder,
+    maybe_model_last_value: Option<Value>,
 ) {
     // Changes to the decompression must be mirrored in gorilla::sum().
     let mut bits = BitReader::try_new(values).unwrap();
     let mut leading_zeros = u8::MAX;
     let mut trailing_zeros: u8 = 0;
-    let mut last_value = bits.read_bits(models::VALUE_SIZE_IN_BITS);
 
-    // The first value is stored uncompressed using size_of::<Value> bits.
-    univariate_id_builder.append_value(univariate_id);
-    value_builder.append_value(Value::from_bits(last_value));
+    let mut last_value = if let Some(model_last_value) = maybe_model_last_value {
+        // The first value is stored compressed against model_last_value.
+        model_last_value.to_bits()
+    } else {
+        // The first value is stored uncompressed using size_of::<Value> bits.
+        let first_value = bits.read_bits(models::VALUE_SIZE_IN_BITS);
+        univariate_id_builder.append_value(univariate_id);
+        value_builder.append_value(Value::from_bits(first_value));
+        first_value
+    };
 
     // Then values are stored using XOR and a variable length binary encoding.
     for _ in 0..timestamps.len() - 1 {
@@ -283,7 +294,7 @@ mod tests {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
 
-        model_type.compress_value(value);
+        model_type.compress_values(&[value]);
 
         prop_assert!(models::equal_or_nan(value as f64, model_type.last_value as f64));
         prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
@@ -295,8 +306,7 @@ mod tests {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
 
-        model_type.compress_value(value);
-        model_type.compress_value(value);
+        model_type.compress_values(&[value, value]);
 
         prop_assert!(models::equal_or_nan(value as f64, model_type.last_value as f64));
         prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
@@ -309,8 +319,7 @@ mod tests {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
 
-        model_type.compress_value(37.0);
-        model_type.compress_value(73.0);
+        model_type.compress_values(&[37.0, 73.0]);
 
         assert!(models::equal_or_nan(73.0, model_type.last_value as f64));
         assert_eq!(model_type.last_leading_zero_bits, 8);
@@ -322,9 +331,7 @@ mod tests {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
 
-        model_type.compress_value(37.0);
-        model_type.compress_value(71.0);
-        model_type.compress_value(73.0);
+        model_type.compress_values(&[37.0, 71.0, 73.0]);
 
         assert!(models::equal_or_nan(73.0, model_type.last_value as f64));
         assert_eq!(model_type.last_leading_zero_bits, 8);
@@ -336,12 +343,12 @@ mod tests {
         let error_bound = ErrorBound::try_new(10.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
 
-        model_type.compress_value(10.0);
+        model_type.compress_values(&[10.0]);
         let before_last_value = model_type.last_value;
         let before_last_leading_zero_bits = model_type.last_leading_zero_bits;
         let before_last_trailing_zero_bits = model_type.last_trailing_zero_bits;
 
-        model_type.compress_value(11.0);
+        model_type.compress_values(&[11.0]);
 
         // State should be unchanged when the value is within the error bound.
         assert_eq!(before_last_value, model_type.last_value);
@@ -361,7 +368,7 @@ mod tests {
     fn test_sum(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let compressed_values = compress_values_using_gorilla(&values);
-        let sum = sum(1, values.len() as i64, &values.len().to_be_bytes(), &compressed_values);
+        let sum = sum(1, values.len() as i64, &values.len().to_be_bytes(), &compressed_values, None);
         let expected_sum = aggregate::sum(&ValueArray::from_iter_values(values)).unwrap();
         prop_assert!(models::equal_or_nan(expected_sum as f64, sum as f64));
     }
@@ -382,7 +389,8 @@ mod tests {
             &compressed_values,
             &mut univariate_id_builder,
             &timestamps,
-            &mut value_builder
+            &mut value_builder,
+            None,
         );
 
         let univariate_ids_array = univariate_id_builder.finish();
@@ -405,7 +413,7 @@ mod tests {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
         model_type.compress_values(values);
-        model_type.model().0
+        model_type.compressed_values()
     }
 
     fn slice_of_value_equal(values_one: &[Value], values_two: &[Value]) -> bool {

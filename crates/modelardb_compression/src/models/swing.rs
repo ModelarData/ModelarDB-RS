@@ -225,6 +225,7 @@ pub fn sum(
         let length = models::len(start_time, end_time, timestamps);
         (average * length as f64) as Value
     } else {
+        // TODO: decompress timestamps instead of just casting them when refactoring the optimizer.
         let mut sum: f64 = 0.0;
         for timestamp in timestamps {
             sum += slope * (*timestamp as f64) + intercept;

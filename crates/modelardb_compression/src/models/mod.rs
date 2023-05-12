@@ -26,6 +26,8 @@ pub mod timestamps;
 
 use std::mem;
 
+use arrow::array::ArrayBuilder;
+use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::{
     Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder,
 };
@@ -96,8 +98,7 @@ pub fn len(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8]) -> usi
     }
 }
 
-/// Compute the sum of the values for a time series segment whose values are
-/// represented by a model.
+/// Compute the sum of the values for a time series segment whose values are represented by a model.
 pub fn sum(
     model_type_id: u8,
     start_time: Timestamp,
@@ -109,7 +110,9 @@ pub fn sum(
 ) -> Value {
     match model_type_id {
         PMC_MEAN_ID => pmc_mean::sum(start_time, end_time, timestamps, min_value),
-        SWING_ID => swing::sum(start_time, end_time, timestamps, min_value, max_value),
+        SWING_ID => swing::sum(
+            start_time, end_time, timestamps, min_value, max_value, values,
+        ),
         // TODO: take residuals stored as part of the segment into account when refactoring optimizer.
         GORILLA_ID => gorilla::sum(start_time, end_time, timestamps, values, None),
         _ => panic!("Unknown model type."),
@@ -179,18 +182,23 @@ pub fn grid(
             univariate_id_builder,
             model_timestamps,
             value_builder,
+            None,
         ),
         _ => panic!("Unknown model type."),
     }
 
     // Reconstruct the values from the residuals.
     if residuals_length > 0 {
+        // The first value in residuals are compressed against models last value.
+        let model_last_value = value_builder.values_slice()[value_builder.len() - 1];
+
         gorilla::grid(
             univariate_id,
             &residuals[..residuals.len() - 1],
             univariate_id_builder,
             &timestamp_builder.values_slice()[model_timestamps_end..],
             value_builder,
+            Some(model_last_value),
         );
     }
 }
