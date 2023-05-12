@@ -39,7 +39,8 @@ use crate::models::{pmc_mean::PMCMean, swing::Swing, timestamps, ErrorBound, Sel
 /// [`GridExec`](crate::query::grid_exec::GridExec) can compute which timestamps are associated
 /// with the residuals, so an [`u8`] is used for simplicity. Longer sub-sequences of data points
 /// that are marked as residuals are stored as separate segments to allow for efficient pruning.
-const RESIDUAL_VALUES_MAX_LENGTH: u8 = 255;
+const RESIDUAL_VALUES_MAX_LENGTH: u8 = 0; // TODO: re-enable residuals after fixing the problem with overriding start/end and min/max.
+//const RESIDUAL_VALUES_MAX_LENGTH: u8 = 255;
 
 /// Compress `uncompressed_timestamps` using a start time, end time, and a sampling interval if
 /// regular and delta-of-deltas followed by a variable length binary encoding if irregular.
@@ -137,7 +138,7 @@ pub fn try_compress(
 /// - One compressed segment that stores `maybe_selected_model` and residuals if the number of
 /// residuals are less than or equal to [`RESIDUAL_VALUES_MAX_LENGTH`].
 /// - Two compressed segments with the first storing `maybe_selected_model` and the second storing
-/// residuals if the number of residuals are greater than [`RESIDUAL_VALUES_MAX_LENGTH`]. 
+/// residuals if the number of residuals are greater than [`RESIDUAL_VALUES_MAX_LENGTH`].
 /// - One compressed segment that stores residuals as a single model if `maybe_selected_model` is
 /// [`None`].
 fn store_compressed_segments_with_model_and_or_residuals(
@@ -220,9 +221,8 @@ fn store_selected_model_and_any_residual_in_a_segment(
 
     // Compress residual values using Gorilla if any exists.
     if selected_model.end_index < residuals_end_index {
-        // TODO: Compute the XOR to the last value of the model for the first value.
         let residuals_start_index = selected_model.end_index + 1;
-        let mut selected_model_for_residuals = models::compress_residual_value_range(
+        let selected_model_for_residuals = models::compress_residual_value_range(
             error_bound,
             residuals_start_index,
             residuals_end_index,
@@ -233,8 +233,8 @@ fn store_selected_model_and_any_residual_in_a_segment(
         max_value = Value::max(max_value, selected_model_for_residuals.max_value);
 
         let residuals_length = (residuals_end_index - residuals_start_index) as u8 + 1;
-        selected_model_for_residuals.values.push(residuals_length);
         residuals = selected_model_for_residuals.values;
+        residuals.push(residuals_length);
     };
 
     compress_timestamps_and_store_segment_in_batch_builder(
@@ -963,7 +963,7 @@ mod tests {
             &uncompressed_timestamps,
             &uncompressed_values,
             &compressed_record_batch,
-            &[models::PMC_MEAN_ID, models::SWING_ID],
+            &[models::PMC_MEAN_ID, models::SWING_ID, models::GORILLA_ID],
         )
     }
 
