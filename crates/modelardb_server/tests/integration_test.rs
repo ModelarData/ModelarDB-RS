@@ -326,12 +326,13 @@ impl Drop for TestContext {
 
         while let Some(_process) = system.process(Pid::from_u32(self.server.id())) {
             system.refresh_all();
-            self.server
-                .kill()
-                .unwrap_or_else(|_| panic!("Could not kill process {}.", self.server.id()));
-            self.server
-                .wait()
-                .unwrap_or_else(|_| panic!("Could not wait for process {}.", self.server.id()));
+
+            // Microsoft Windows often fail to kill the process and then succeed afterwards.
+            while self.server.kill().is_err() {
+                thread::sleep(Duration::from_secs(5));
+            }
+            self.server.wait().unwrap();
+
             system.refresh_all();
         }
     }
