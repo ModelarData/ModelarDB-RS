@@ -144,8 +144,8 @@ impl ModelTable {
         query_object_store: &Arc<dyn ObjectStore>,
         table_name: &str,
         column_index: u16,
-        parquet_predicates: Option<Expr>,
-        grid_predicates: Option<Expr>,
+        maybe_parquet_predicates: Option<Expr>,
+        maybe_grid_predicates: Option<Expr>,
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         // unwrap() is safe to use as compressed_files() only fails if a table with the name
@@ -196,15 +196,15 @@ impl ModelTable {
             infinite_source: false,
         };
 
-        let maybe_physical_parquet_predicates = if let Some(parquet_predicates) = parquet_predicates
-        {
-            Some(convert_logical_expr_to_physical_expr(
-                &parquet_predicates,
-                COMPRESSED_SCHEMA.0.clone(),
-            )?)
-        } else {
-            None
-        };
+        let maybe_physical_parquet_predicates =
+            if let Some(parquet_predicates) = maybe_parquet_predicates {
+                Some(convert_logical_expr_to_physical_expr(
+                    &parquet_predicates,
+                    COMPRESSED_SCHEMA.0.clone(),
+                )?)
+            } else {
+                None
+            };
 
         let apache_parquet_exec = Arc::new(
             ParquetExec::new(file_scan_config, maybe_physical_parquet_predicates, None)
@@ -213,7 +213,7 @@ impl ModelTable {
         );
 
         // Create the gridding operator.
-        let maybe_physical_grid_predicates = if let Some(grid_predicates) = grid_predicates {
+        let maybe_physical_grid_predicates = if let Some(grid_predicates) = maybe_grid_predicates {
             Some(convert_logical_expr_to_physical_expr(
                 &grid_predicates,
                 QUERY_SCHEMA.0.clone(),
@@ -253,7 +253,7 @@ fn rewrite_and_combine_filters(
 /// Rewrite the `filter` that is written in terms of the model table's query schema, to a filter
 /// that is written in terms of the schema used for compressed segments by the storage engine and a
 /// filter that is written in terms of the schema used for univariate time series by [`GridExec`].
-/// If the filter cannot be rewritten [`None`], is returned.
+/// If the filter cannot be rewritten, [`None`] is returned.
 fn rewrite_filter(query_schema: &SchemaRef, filter: &Expr) -> Option<(Expr, Expr)> {
     match filter {
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
@@ -429,7 +429,8 @@ impl TableProvider for ModelTable {
 
         // TODO: extract all of the predicates that consist of tag = tag_value from the query so the
         // segments can be pruned by univariate_id in ParquetExec and hash_to_tags can be minimized.
-        let (parquet_predicates, grid_predicates) = rewrite_and_combine_filters(schema, filters);
+        let (maybe_parquet_predicates, maybe_grid_predicates) =
+            rewrite_and_combine_filters(schema, filters);
 
         // Compute a mapping from hashes to the requested tag values in the requested order.
         let hash_to_tags = self
@@ -464,8 +465,8 @@ impl TableProvider for ModelTable {
                     &query_object_store,
                     table_name,
                     field_column_index,
-                    parquet_predicates.clone(),
-                    grid_predicates.clone(),
+                    maybe_parquet_predicates.clone(),
+                    maybe_grid_predicates.clone(),
                     limit,
                 )
                 .await?;
