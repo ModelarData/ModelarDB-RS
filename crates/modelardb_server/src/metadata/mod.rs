@@ -734,8 +734,8 @@ impl MetadataManager {
         }
     }
 
-    /// Return the error bounds for the model table with `table_name` using `connection`. If a
-    /// model table with the that does not exist, [`rusqlite::Error`] is returned.
+    /// Return the error bounds for the model table with `table_name` using `connection`. If a model
+    /// table with `table_name` does not exist, [`rusqlite::Error`] is returned.
     fn error_bounds(connection: &Connection, table_name: &str) -> Result<Vec<ErrorBound>> {
         let mut select_statement = connection.prepare(&format!(
             "SELECT column_index, error_bound FROM model_table_field_columns
@@ -1358,9 +1358,8 @@ pub mod test_util {
         SessionContext::with_state(state)
     }
 
-    /// Return a pair with the first element being the [`ModelTableMetadata`] for a model table
-    /// with a schema containing a tag column, a timestamp column, and two field columns, and the
-    /// second element being the original generation expressions.
+    /// Return [`ModelTableMetadata`] for a model table with a schema containing a tag column, a
+    /// timestamp column, and two field columns.
     pub fn model_table_metadata() -> ModelTableMetadata {
         let query_schema = Arc::new(Schema::new(vec![
             Field::new("tag", DataType::Utf8, false),

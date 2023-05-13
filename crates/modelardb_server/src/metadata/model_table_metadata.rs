@@ -48,8 +48,8 @@ impl ModelTableMetadata {
     /// Create a new model table with the given metadata. If any of the following conditions are
     /// true, [`ConfigurationError`](ModelarDbError::ConfigurationError) is returned:
     /// * The number of error bounds does not match the number of columns.
-    /// * The number of generated columns does not match the number of columns.
-    /// * A generated column include another generated column in its expression.
+    /// * The number of potentially generated columns does not match the number of columns.
+    /// * A generated column includes another generated column in its expression.
     /// * There are more than 1024 columns.
     /// * The `query_schema` does not include a single timestamp column.
     /// * The `query_schema` does not include at least one stored field column.
@@ -66,10 +66,10 @@ impl ModelTableMetadata {
             ));
         }
 
-        // If an generated column or None is not defined for each column, return an error.
+        // If a generated column or None is not defined for each column, return an error.
         if query_schema.fields().len() != generated_columns.len() {
             return Err(ModelarDbError::ConfigurationError(
-                "An generated column or None must be defined for each column.".to_owned(),
+                "A generated column or None must be defined for each column.".to_owned(),
             ));
         }
 
@@ -112,7 +112,7 @@ impl ModelTableMetadata {
             };
 
         // A model table must only contain one stored timestamp column, one or more stored field
-        // columns, zero or mode generated field columns, and zero or more stored tag columns.
+        // columns, zero or more generated field columns, and zero or more stored tag columns.
         let timestamp_column_indices =
             ModelTableMetadata::compute_indices_of_columns_with_data_type(
                 &schema_without_generated,
@@ -169,7 +169,7 @@ impl ModelTableMetadata {
 pub struct GeneratedColumn {
     /// Logical expression that computes the values of the column.
     pub expr: Expr,
-    /// Indices of the columns used by `expr` to compute the column's values.
+    /// Indices of the stored columns used by `expr` to compute the column's values.
     pub source_columns: Vec<usize>,
     /// Original representation of `expr`. It is copied from the SQL statement so it can be stored
     /// in the metadata database as `expr` does not implement serialization and deserialization.

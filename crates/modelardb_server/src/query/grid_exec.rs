@@ -55,7 +55,7 @@ pub struct GridExec {
     /// Ordering of the plans output.
     output_ordering: Vec<PhysicalSortExpr>,
     /// Predicate to filter data points by.
-    predicate: Option<Arc<dyn PhysicalExpr>>,
+    maybe_predicate: Option<Arc<dyn PhysicalExpr>>,
     /// Number of data points requested by the query.
     limit: Option<usize>,
     /// Execution plan to read batches of segments from.
@@ -66,7 +66,7 @@ pub struct GridExec {
 
 impl GridExec {
     pub fn new(
-        predicate: Option<Arc<dyn PhysicalExpr>>,
+        maybe_predicate: Option<Arc<dyn PhysicalExpr>>,
         limit: Option<usize>,
         input: Arc<dyn ExecutionPlan>,
     ) -> Arc<Self> {
@@ -89,7 +89,7 @@ impl GridExec {
         ];
 
         Arc::new(GridExec {
-            predicate,
+            maybe_predicate,
             schema,
             output_ordering,
             limit,
@@ -136,7 +136,7 @@ impl ExecutionPlan for GridExec {
     ) -> Result<Arc<dyn ExecutionPlan>> {
         if children.len() == 1 {
             Ok(GridExec::new(
-                self.predicate.clone(),
+                self.maybe_predicate.clone(),
                 self.limit,
                 children[0].clone(),
             ))
@@ -160,7 +160,7 @@ impl ExecutionPlan for GridExec {
 
         Ok(Box::pin(GridStream::new(
             self.schema.clone(),
-            self.predicate.clone(),
+            self.maybe_predicate.clone(),
             self.limit,
             self.input.execute(partition, task_context)?,
             batch_size,
@@ -196,7 +196,7 @@ struct GridStream {
     /// Schema of the stream.
     schema: SchemaRef,
     /// Predicate to filter data points by.
-    predicate: Option<Arc<dyn PhysicalExpr>>,
+    maybe_predicate: Option<Arc<dyn PhysicalExpr>>,
     /// Stream to read batches of compressed segments from.
     input: SendableRecordBatchStream,
     /// Size of the batches returned when this stream is pooled.
@@ -212,7 +212,7 @@ struct GridStream {
 impl GridStream {
     fn new(
         schema: SchemaRef,
-        predicate: Option<Arc<dyn PhysicalExpr>>,
+        maybe_predicate: Option<Arc<dyn PhysicalExpr>>,
         limit: Option<usize>,
         input: SendableRecordBatchStream,
         batch_size: usize,
@@ -229,7 +229,7 @@ impl GridStream {
 
         GridStream {
             schema: schema.clone(),
-            predicate,
+            maybe_predicate,
             input,
             baseline_metrics,
             batch_size,
@@ -311,7 +311,7 @@ impl GridStream {
         // For simplicity, all data points are reconstructed and then pruned by time.
         let current_batch = RecordBatch::try_new(self.schema.clone(), columns).unwrap();
 
-        self.current_batch = if let Some(predicate) = &self.predicate {
+        self.current_batch = if let Some(predicate) = &self.maybe_predicate {
             // unwrap() is safe as the predicate has been written for the schema.
             let column_value = predicate.evaluate(&current_batch).unwrap();
             let array = column_value.into_array(current_batch.num_rows());

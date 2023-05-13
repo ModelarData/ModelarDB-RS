@@ -125,8 +125,9 @@ impl ModelTable {
         Arc::new(Schema::new(columns))
     }
 
-    /// Return the index of column in query schema to an index of the column in schema if it is
-    /// stored, otherwise a [`DataFusionError::Plan`] is returned.
+    /// Return the index of the column in schema that has the same name as the column in query
+    /// schema with the index `query_schema_index`. If a column with that name does not exist in
+    /// schema a [`DataFusionError::Plan`] is returned.
     fn query_schema_index_to_schema_index(&self, query_schema_index: usize) -> Result<usize> {
         let query_schema = &self.model_table_metadata.query_schema;
         let column_name = query_schema.field(query_schema_index).name();
@@ -195,7 +196,8 @@ impl ModelTable {
             infinite_source: false,
         };
 
-        let physical_parquet_predicates = if let Some(parquet_predicates) = parquet_predicates {
+        let maybe_physical_parquet_predicates = if let Some(parquet_predicates) = parquet_predicates
+        {
             Some(convert_logical_expr_to_physical_expr(
                 &parquet_predicates,
                 COMPRESSED_SCHEMA.0.clone(),
@@ -205,13 +207,13 @@ impl ModelTable {
         };
 
         let apache_parquet_exec = Arc::new(
-            ParquetExec::new(file_scan_config, physical_parquet_predicates, None)
+            ParquetExec::new(file_scan_config, maybe_physical_parquet_predicates, None)
                 .with_pushdown_filters(true)
                 .with_reorder_filters(true),
         );
 
         // Create the gridding operator.
-        let physical_grid_predicates = if let Some(grid_predicates) = grid_predicates {
+        let maybe_physical_grid_predicates = if let Some(grid_predicates) = grid_predicates {
             Some(convert_logical_expr_to_physical_expr(
                 &grid_predicates,
                 QUERY_SCHEMA.0.clone(),
@@ -221,7 +223,7 @@ impl ModelTable {
         };
 
         Ok(GridExec::new(
-            physical_grid_predicates,
+            maybe_physical_grid_predicates,
             limit,
             apache_parquet_exec,
         ))
@@ -251,7 +253,7 @@ fn rewrite_and_combine_filters(
 /// Rewrite the `filter` that is written in terms of the model table's query schema, to a filter
 /// that is written in terms of the schema used for compressed segments by the storage engine and a
 /// filter that is written in terms of the schema used for univariate time series by [`GridExec`].
-/// If the filter cannot be rewritten [`None`].
+/// If the filter cannot be rewritten [`None`], is returned.
 fn rewrite_filter(query_schema: &SchemaRef, filter: &Expr) -> Option<(Expr, Expr)> {
     match filter {
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
@@ -372,7 +374,7 @@ impl TableProvider for ModelTable {
 
         // Ensure that the columns which are required for any generated columns in the projection
         // are present in the record batches returned by SortedJoinStream and compute its schema.
-        // GeneratedAsStream assumes that columns that is only used to generate columns are last.
+        // GeneratedAsStream assumes that columns that are only used to generate columns are last.
         let mut generated_columns_sources: HashSet<usize> =
             HashSet::with_capacity(query_schema.fields().len());
         for query_schema_index in &projection {
@@ -449,7 +451,7 @@ impl TableProvider for ModelTable {
 
         // Request the matching files from the storage engine and construct one or more GridExecs
         // and a SortedJoinExec. The write lock on the storage engine is held until object metas for
-        // all columns have been retrieved to ensure the columns has the same number of data points.
+        // all columns have been retrieved to ensure they have the same number of data points.
         let mut field_column_execution_plans: Vec<Arc<dyn ExecutionPlan>> =
             Vec::with_capacity(stored_field_columns_in_projection.len());
 

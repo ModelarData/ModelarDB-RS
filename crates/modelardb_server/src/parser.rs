@@ -122,7 +122,7 @@ impl ModelarDbDialect {
                         let error_bound = self.parse_positive_literal_f32(parser)?;
                         parser.expect_token(&Token::RParen)?;
 
-                        // The error bound is zero by default so need to store it.
+                        // The error bound is zero by default so there is no need to store zero.
                         if error_bound > 0.0 {
                             options.push(Self::new_error_bound_column_option_def(error_bound));
                         }

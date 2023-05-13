@@ -588,7 +588,7 @@ mod tests {
 
     /// Create a record batch with data that resembles uncompressed data with a single tag and two
     /// field columns. The returned data has `row_count` rows, with a different tag for each row.
-    /// Also create model table metadata and expr for a model table that matches the created data.
+    /// Also create model table metadata for a model table that matches the created data.
     fn uncompressed_data(row_count: usize) -> (ModelTableMetadata, RecordBatch) {
         let tags: Vec<String> = (0..row_count).map(|tag| tag.to_string()).collect();
         let timestamps: Vec<Timestamp> = (0..row_count).map(|ts| ts as Timestamp).collect();

@@ -56,7 +56,7 @@ impl ColumnToGenerate {
 /// An execution plan that generates one or more new columns from a [`RecordBatch`] using
 /// [`PhysicalExprs`](PhysicalExpr) and creates a new [`RecordBatch`] with the new columns included.
 /// It is public so the additional rules added to Apache Arrow DataFusion's physical optimizer can
-/// pattern match on it. Assumes any columns that is only used to generate other columns are last.
+/// pattern match on it. Assumes any columns that are only used to generate other columns are last.
 #[derive(Debug)]
 pub struct GeneratedAsExec {
     /// Schema of the execution plan.
@@ -113,7 +113,7 @@ impl ExecutionPlan for GeneratedAsExec {
     }
 
     /// Return a new [`GeneratedAsExec`] with the execution plan to read rows from replaced.
-    /// [`DataFusionError::Plan`] is returned if `children` does not contain exactly t least one element.
+    /// [`DataFusionError::Plan`] is returned if `children` does not contain exactly one element.
     fn with_new_children(
         self: Arc<Self>,
         mut children: Vec<Arc<(dyn ExecutionPlan)>>,
