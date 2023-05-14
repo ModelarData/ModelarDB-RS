@@ -12,74 +12,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-pub mod model_simple_aggregates;
+
+//! Implementation of physical optimizer rules that rewrites the physical plans produced by Apache
+//! Arrow DataFusion to execute queries more efficiently directly on the segments with metadata and
+//! models stored in model tables.
+
+mod model_simple_aggregates;
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
+use model_simple_aggregates::ModelSimpleAggregatesPhysicalOptimizerRule;
 
-use datafusion::error::Result;
-use datafusion::execution::context::{QueryPlanner, SessionState};
-use datafusion::logical_expr::logical_plan::LogicalPlan;
-use datafusion::optimizer::optimizer::OptimizerRule;
-use datafusion::optimizer::OptimizerConfig;
-use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
-use datafusion::physical_plan::planner::DefaultPhysicalPlanner;
-use datafusion::physical_plan::{ExecutionPlan, PhysicalPlanner};
-use datafusion::config::ConfigOptions;
-use tracing::debug;
-
-pub struct LogOptimizerRule {}
-
-impl OptimizerRule for LogOptimizerRule {
-    fn try_optimize(
-        &self,
-        logical_plan: &LogicalPlan,
-        _execution_props: &dyn OptimizerConfig,
-    ) -> Result<Option<LogicalPlan>> {
-        debug!("Logical plan:\n{:#?}\n", &logical_plan);
-        Ok(Some(logical_plan.clone()))
-    }
-
-    fn name(&self) -> &str {
-        "log_optimizer_rule "
-    }
-}
-
-pub struct LogQueryPlanner {}
-
-#[async_trait]
-impl QueryPlanner for LogQueryPlanner {
-    async fn create_physical_plan(
-        &self,
-        logical_plan: &LogicalPlan,
-        session_state: &SessionState,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        debug!("Logical plan:\n{:#?}\n", &logical_plan);
-        let planner = DefaultPhysicalPlanner::default();
-        planner
-            .create_physical_plan(logical_plan, session_state)
-            .await
-    }
-}
-
-pub struct LogPhysicalOptimizerRule {}
-
-impl PhysicalOptimizerRule for LogPhysicalOptimizerRule {
-    fn optimize(
-        &self,
-        execution_plan: Arc<dyn ExecutionPlan>,
-        _config: &ConfigOptions,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        debug!("Execution plan:\n{:#?}\n", &execution_plan);
-        Ok(execution_plan.clone())
-    }
-
-    fn name(&self) -> &str {
-        "log_physical_optimizer_rule"
-    }
-
-    fn schema_check(&self) -> bool {
-        true
-    }
+/// Return all physical optimizer rule. Currently, only simple aggregates are executed on segments.
+pub fn physical_optimizer_rules() -> Vec<Arc<ModelSimpleAggregatesPhysicalOptimizerRule>> {
+    vec![Arc::new(ModelSimpleAggregatesPhysicalOptimizerRule {})]
 }
