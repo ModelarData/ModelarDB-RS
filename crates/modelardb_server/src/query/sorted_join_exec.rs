@@ -119,7 +119,7 @@ impl ExecutionPlan for SortedJoinExec {
         self: Arc<Self>,
         children: Vec<Arc<(dyn ExecutionPlan)>>,
     ) -> Result<Arc<(dyn ExecutionPlan)>> {
-        if children.len() > 1 {
+        if !children.is_empty() {
             Ok(SortedJoinExec::new(
                 self.schema.clone(),
                 self.return_order.clone(),
