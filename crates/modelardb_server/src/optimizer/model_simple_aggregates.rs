@@ -21,122 +21,209 @@ use std::sync::Arc;
 use datafusion::arrow::array::{
     ArrayRef, BinaryArray, Float32Array, Int64Array, UInt64Array, UInt8Array,
 };
-use datafusion::arrow::datatypes::DataType;
-use datafusion::arrow::datatypes::Field;
-use datafusion::arrow::datatypes::Schema;
+use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::config::ConfigOptions;
-use datafusion::error::Result;
+use datafusion::error::{DataFusionError, Result};
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::aggregates::AggregateExec;
-use datafusion::physical_plan::expressions::{self, Avg, Count, Max, Min, Sum};
-use datafusion::physical_plan::ColumnarValue;
-use datafusion::physical_plan::ExecutionPlan;
-use datafusion::physical_plan::{Accumulator, AggregateExpr, PhysicalExpr};
+use datafusion::physical_plan::expressions::{self, Avg, Column, Count, Max, Min, Sum};
+use datafusion::physical_plan::file_format::ParquetExec;
+use datafusion::physical_plan::{
+    Accumulator, AggregateExpr, ColumnarValue, ExecutionPlan, PhysicalExpr,
+};
 use datafusion::scalar::ScalarValue;
-use modelardb_common::types::{TimestampArray, Value, ValueArray};
+use modelardb_common::types::{ArrowValue, TimestampArray, Value, ValueArray};
 use modelardb_compression::models;
 
-use crate::query::grid_exec::GridExec;
+use crate::query::sorted_join_exec::SortedJoinExec;
 
-// Helper Functions.
-fn new_aggregate(
-    aggregate_exec: &AggregateExec,
-    model_aggregate_expr: Arc<ModelAggregateExpr>,
-    grid_exec: &GridExec,
-) -> Arc<AggregateExec> {
-    // Assumes the GridExec only have a single child.
-    Arc::new(
-        AggregateExec::try_new(
-            *aggregate_exec.mode(),
-            aggregate_exec.group_expr().clone(),
-            vec![model_aggregate_expr],
-            vec![],
-            grid_exec.children()[0].clone(), //Removes the GridExec
-            aggregate_exec.input_schema(),
-        )
-        .unwrap(),
-    )
-}
-
-// Optimizer Rule.
+/// Rewrite aggregates that are computed from reconstructed values from a single column without
+/// filtering so they are computed directly from segments instead of the reconstructed values.
 pub struct ModelSimpleAggregatesPhysicalOptimizerRule {}
 
-impl ModelSimpleAggregatesPhysicalOptimizerRule {
-    fn optimize(plan: &Arc<dyn ExecutionPlan>) -> Option<Arc<dyn ExecutionPlan>> {
-        // Matches a simple aggregate performed without filtering out segments.
-        if let Some(aggregate_exec) = plan.as_any().downcast_ref::<AggregateExec>() {
-            let children = &aggregate_exec.children();
-            if children.len() == 1 {
-                let aggregate_expr = aggregate_exec.aggr_expr();
-                if aggregate_expr.len() == 1 {
-                    // TODO: simplify and factor out shared code using macros or functions.
-                    if aggregate_expr[0].as_any().downcast_ref::<Count>().is_some() {
-                        if let Some(grid_exec) = children[0].as_any().downcast_ref::<GridExec>() {
-                            let model_aggregate =
-                                ModelAggregateExpr::new(ModelAggregateType::Count);
-                            return Some(new_aggregate(aggregate_exec, model_aggregate, grid_exec));
-                        }
-                    } else if aggregate_expr[0].as_any().downcast_ref::<Min>().is_some() {
-                        if let Some(grid_exec) = children[0].as_any().downcast_ref::<GridExec>() {
-                            let model_aggregate = ModelAggregateExpr::new(ModelAggregateType::Min);
-                            return Some(new_aggregate(aggregate_exec, model_aggregate, grid_exec));
-                        }
-                    } else if aggregate_expr[0].as_any().downcast_ref::<Max>().is_some() {
-                        if let Some(grid_exec) = children[0].as_any().downcast_ref::<GridExec>() {
-                            let model_aggregate = ModelAggregateExpr::new(ModelAggregateType::Max);
-                            return Some(new_aggregate(aggregate_exec, model_aggregate, grid_exec));
-                        }
-                    } else if aggregate_expr[0].as_any().downcast_ref::<Sum>().is_some() {
-                        if let Some(grid_exec) = children[0].as_any().downcast_ref::<GridExec>() {
-                            let model_aggregate = ModelAggregateExpr::new(ModelAggregateType::Sum);
-                            return Some(new_aggregate(aggregate_exec, model_aggregate, grid_exec));
-                        }
-                    } else if aggregate_expr[0].as_any().downcast_ref::<Avg>().is_some() {
-                        if let Some(grid_exec) = children[0].as_any().downcast_ref::<GridExec>() {
-                            let model_aggregate = ModelAggregateExpr::new(ModelAggregateType::Avg);
-                            return Some(new_aggregate(aggregate_exec, model_aggregate, grid_exec));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Visit the children.
-        // TODO: handle plans were multiple children must be updated.
-        for child in plan.children() {
-            if let Some(new_child) = Self::optimize(&child) {
-                return Some(plan.clone().with_new_children(vec![new_child]).unwrap());
-            }
-        }
-        None
-    }
-}
-
-// TODO: determine if some structs or traits can be removed or parametrized?
 impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
+    /// Rewrite `execution_plan` so it computes simple aggregates without filtering from segments
+    /// instead of reconstructed values.
     fn optimize(
         &self,
-        plan: Arc<dyn ExecutionPlan>,
+        execution_plan: Arc<dyn ExecutionPlan>,
         _config: &ConfigOptions,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        if let Some(optimized_plan) = Self::optimize(&plan) {
-            Ok(optimized_plan)
-        } else {
-            Ok(plan)
-        }
+        execution_plan.transform_down(&rewrite_aggregates_to_use_segments)
     }
 
+    /// Return the name of the physical optimizer rule.
     fn name(&self) -> &str {
         "ModelSimpleAggregatesPhysicalOptimizerRule"
     }
 
+    /// Specify if the physical planner should valid that the rule does not change the schema.
     fn schema_check(&self) -> bool {
         true
     }
 }
 
-// Aggregate Expressions.
+/// Matches the pattern [`AggregateExpr`] <- [`SortedJoinExec`] <-
+/// [`GridExec`](crate::query::grid_exec::GridExec) <- [`ParquetExec`] and rewrites it to
+/// [`AggregateExpr`] <- [`ParquetExec`] if [`AggregateExpr`] only computes aggregates for a single
+/// FIELD column and no filtering is performed by [`ParquetExec`].
+fn rewrite_aggregates_to_use_segments(
+    execution_plan: Arc<dyn ExecutionPlan>,
+) -> Result<Transformed<Arc<dyn ExecutionPlan>>> {
+    // The rule tries matches to match the sub-tree of execution_plan so execution_plan can be updated.
+    let execution_plan_children = execution_plan.children();
+
+    if execution_plan_children.len() == 1 {
+        if let Some(aggregate_exec) = execution_plan_children[0]
+            .as_any()
+            .downcast_ref::<AggregateExec>()
+        {
+            let aggregate_exec_children = aggregate_exec.children();
+            if aggregate_exec_children.len() == 1
+                && aggregate_exec.group_expr().is_empty()
+                && aggregate_exec.filter_expr().iter().all(Option::is_none)
+            {
+                let aggregate_exec_input = aggregate_exec_children[0].clone();
+                if let Some(sorted_join_exec) = aggregate_exec_input
+                    .as_any()
+                    .downcast_ref::<SortedJoinExec>()
+                {
+                    if let Ok(input) =
+                        try_new_aggregate_exec(aggregate_exec, sorted_join_exec.children())
+                    {
+                        // unwrap() is safe as the inputs are constructed from sorted_join_exec.
+                        return Ok(Transformed::Yes(
+                            execution_plan.with_new_children(vec![input]).unwrap(),
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(Transformed::No(execution_plan))
+}
+
+/// Return an [`AggregateExec`] that computes the same aggregates as `aggregate_exec` if no
+/// predicates have been pushed to `inputs` and the aggregates are all computed for the same FIELD
+/// column, otherwise [`DataFusionError`] is returned.
+fn try_new_aggregate_exec(
+    aggregate_exec: &AggregateExec,
+    grid_execs: Vec<Arc<dyn ExecutionPlan>>,
+) -> Result<Arc<dyn ExecutionPlan>> {
+    if inputs_evaluates_no_predicates(&grid_execs) {
+        let model_based_aggregate_exprs = try_rewrite_aggregate_exprs(aggregate_exec)?;
+
+        // unwrap() is safe as the input is from the existing AggregateExec.
+        Ok(Arc::new(
+            AggregateExec::try_new(
+                *aggregate_exec.mode(),
+                aggregate_exec.group_expr().clone(),
+                model_based_aggregate_exprs,
+                aggregate_exec.filter_expr().to_vec(),
+                grid_execs[0].children().remove(0),
+                aggregate_exec.schema(),
+            )
+            .unwrap(),
+        ))
+    } else {
+        Err(DataFusionError::NotImplemented(
+            "Each input must produce a single aggregate.".to_owned(),
+        ))
+    }
+}
+
+/// Return [`AggregateExprs`](AggregateExpr) that computes the same aggregates as `aggregate_exec`
+/// if the aggregates are all computed for the same FIELD column, otherwise [`DataFusionError`] is
+/// returned.
+fn try_rewrite_aggregate_exprs(
+    aggregate_exec: &AggregateExec,
+) -> Result<Vec<Arc<dyn AggregateExpr>>> {
+    let aggregate_exprs = aggregate_exec.aggr_expr();
+
+    if aggregates_are_for_different_columns(aggregate_exprs) {
+        return Err(DataFusionError::Internal(
+            "SortedJoinExec currently does not support joining aggregates.".to_owned(),
+        ));
+    }
+
+    // input_schema has one column as it is checked by rewrite_aggregates_to_use_segments().
+    if *aggregate_exec.input_schema().field(0).data_type() != ArrowValue::DATA_TYPE {
+        return Err(DataFusionError::Internal(
+            "Model-based aggregates can only be computed for FIELD columns.".to_owned(),
+        ));
+    }
+
+    let mut rewritten_aggregate_exprs: Vec<Arc<dyn AggregateExpr>> =
+        Vec::with_capacity(aggregate_exprs.len());
+
+    for aggregate_expr in aggregate_exprs {
+        if aggregate_expr.as_any().is::<Count>() {
+            rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Count));
+        } else if aggregate_expr.as_any().is::<Min>() {
+            rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Min));
+        } else if aggregate_expr.as_any().is::<Max>() {
+            rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Max));
+        } else if aggregate_expr.as_any().is::<Sum>() {
+            rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Sum));
+        } else if aggregate_expr.as_any().is::<Avg>() {
+            rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Avg));
+        } else {
+            return Err(DataFusionError::Internal(format!(
+                "Aggregate expression {} is currently not supported.",
+                aggregate_expr.name()
+            )));
+        }
+    }
+
+    Ok(rewritten_aggregate_exprs)
+}
+
+fn inputs_evaluates_no_predicates(inputs: &Vec<Arc<dyn ExecutionPlan>>) -> bool {
+    for input in inputs {
+        for child in input.children() {
+            if let Some(parquet_exec) = child.as_any().downcast_ref::<ParquetExec>() {
+                if parquet_exec.predicate().is_some() || parquet_exec.pruning_predicate().is_some()
+                {
+                    return false;
+                }
+            }
+        }
+    }
+    true
+}
+
+fn aggregates_are_for_different_columns(aggregate_exprs: &[Arc<dyn AggregateExpr>]) -> bool {
+    if aggregate_exprs.is_empty() {
+        false
+    } else {
+        if let Some(first_aggregate_expr) = aggregate_exprs.get(0) {
+            let first_expressions = first_aggregate_expr.expressions();
+            if let Some(first_column) = column_if_only_expression(&first_expressions) {
+                for aggregate_expr in aggregate_exprs {
+                    let expressions = aggregate_expr.expressions();
+                    if let Some(column) = column_if_only_expression(&expressions) {
+                        if first_column.index() != column.index() {
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+}
+
+fn column_if_only_expression(expressions: &Vec<Arc<dyn PhysicalExpr>>) -> Option<&Column> {
+    if expressions.len() == 1 {
+        expressions[0].as_any().downcast_ref::<Column>()
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, PartialEq)]
 enum ModelAggregateType {
     Count,
@@ -173,10 +260,10 @@ impl ModelAggregateExpr {
 
 impl PartialEq<dyn Any> for ModelAggregateExpr {
     fn eq(&self, other: &dyn Any) -> bool {
-        if let Some(other_model_aggregate_expr) = other.downcast_ref::<ModelAggregateExpr>() {
-            self.name == other_model_aggregate_expr.name
-                && self.aggregate_type == other_model_aggregate_expr.aggregate_type
-                && self.data_type == other_model_aggregate_expr.data_type
+        if let Some(other_model_based_aggregate_expr) = other.downcast_ref::<ModelAggregateExpr>() {
+            self.name == other_model_based_aggregate_expr.name
+                && self.aggregate_type == other_model_based_aggregate_expr.aggregate_type
+                && self.data_type == other_model_based_aggregate_expr.data_type
         } else {
             false
         }
@@ -238,7 +325,6 @@ impl AggregateExpr for ModelAggregateExpr {
     }
 }
 
-//Count
 #[derive(Debug)]
 pub struct ModelCountPhysicalExpr {}
 
@@ -343,7 +429,6 @@ impl Accumulator for ModelCountAccumulator {
     }
 }
 
-//Min
 #[derive(Debug)]
 pub struct ModelMinPhysicalExpr {}
 
@@ -434,7 +519,6 @@ impl Accumulator for ModelMinAccumulator {
     }
 }
 
-//Max
 #[derive(Debug)]
 pub struct ModelMaxPhysicalExpr {}
 
@@ -525,7 +609,6 @@ impl Accumulator for ModelMaxAccumulator {
     }
 }
 
-//Sum
 #[derive(Debug)]
 pub struct ModelSumPhysicalExpr {}
 
@@ -647,7 +730,6 @@ impl Accumulator for ModelSumAccumulator {
     }
 }
 
-//Avg
 #[derive(Debug)]
 pub struct ModelAvgPhysicalExpr {}
 
