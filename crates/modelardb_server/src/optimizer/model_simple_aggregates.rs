@@ -28,7 +28,7 @@ use datafusion::config::ConfigOptions;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::aggregates::AggregateExec;
-use datafusion::physical_plan::expressions::{self, Avg, Column, Count, Max, Min, Sum};
+use datafusion::physical_plan::expressions::{self, Avg, Count, Max, Min, Sum};
 use datafusion::physical_plan::file_format::ParquetExec;
 use datafusion::physical_plan::{
     Accumulator, AggregateExpr, ColumnarValue, ExecutionPlan, PhysicalExpr,
@@ -80,11 +80,14 @@ fn rewrite_aggregates_to_use_segments(
             .as_any()
             .downcast_ref::<AggregateExec>()
         {
+            // Currently, only aggregates on one FIELD column without predicates are supported.
             let aggregate_exec_children = aggregate_exec.children();
-            if aggregate_exec_children.len() == 1
-                && aggregate_exec.group_expr().is_empty()
+            if aggregate_exec.input_schema().fields.len() == 1
+                && *aggregate_exec.input_schema().field(0).data_type() == ArrowValue::DATA_TYPE
                 && aggregate_exec.filter_expr().iter().all(Option::is_none)
+                && aggregate_exec.group_expr().is_empty()
             {
+                // An AggregateExec can only have one child, so it is not necessary to check it.
                 let aggregate_exec_input = aggregate_exec_children[0].clone();
                 if let Some(sorted_join_exec) = aggregate_exec_input
                     .as_any()
@@ -113,26 +116,42 @@ fn try_new_aggregate_exec(
     aggregate_exec: &AggregateExec,
     grid_execs: Vec<Arc<dyn ExecutionPlan>>,
 ) -> Result<Arc<dyn ExecutionPlan>> {
-    if inputs_evaluates_no_predicates(&grid_execs) {
-        let model_based_aggregate_exprs = try_rewrite_aggregate_exprs(aggregate_exec)?;
-
-        // unwrap() is safe as the input is from the existing AggregateExec.
-        Ok(Arc::new(
-            AggregateExec::try_new(
-                *aggregate_exec.mode(),
-                aggregate_exec.group_expr().clone(),
-                model_based_aggregate_exprs,
-                aggregate_exec.filter_expr().to_vec(),
-                grid_execs[0].children().remove(0),
-                aggregate_exec.schema(),
-            )
-            .unwrap(),
-        ))
-    } else {
-        Err(DataFusionError::NotImplemented(
-            "Each input must produce a single aggregate.".to_owned(),
-        ))
+    // aggregate_exec.input_schema().fields.len() == 1 should prevent this, but SortedJoinExec can
+    // be constructed with multiple inputs so the number of children is checked just to be sure.
+    if grid_execs.len() > 1 {
+        return Err(DataFusionError::NotImplemented(
+            "All aggregates must be for the same FIELD column.".to_owned(),
+        ));
     }
+
+    // A GridExec can only have one child, so it is not necessary to check it.
+    let grid_exec_child = grid_execs[0].children().remove(0);
+    if let Some(parquet_exec) = grid_exec_child.as_any().downcast_ref::<ParquetExec>() {
+        if parquet_exec.predicate().is_some() || parquet_exec.pruning_predicate().is_some() {
+            return Err(DataFusionError::NotImplemented(
+                "Predicates cannot be pushed before the aggregate.".to_owned(),
+            ));
+        }
+    } else {
+        return Err(DataFusionError::Plan(
+            "The input to GridExec must be a ParquetExec.".to_owned(),
+        ));
+    }
+
+    let model_based_aggregate_exprs = try_rewrite_aggregate_exprs(aggregate_exec)?;
+
+    // unwrap() is safe as the input is from the existing AggregateExec.
+    Ok(Arc::new(
+        AggregateExec::try_new(
+            *aggregate_exec.mode(),
+            aggregate_exec.group_expr().clone(),
+            model_based_aggregate_exprs,
+            aggregate_exec.filter_expr().to_vec(),
+            grid_execs[0].children().remove(0),
+            aggregate_exec.schema(),
+        )
+        .unwrap(),
+    ))
 }
 
 /// Return [`AggregateExprs`](AggregateExpr) that computes the same aggregates as `aggregate_exec`
@@ -142,20 +161,6 @@ fn try_rewrite_aggregate_exprs(
     aggregate_exec: &AggregateExec,
 ) -> Result<Vec<Arc<dyn AggregateExpr>>> {
     let aggregate_exprs = aggregate_exec.aggr_expr();
-
-    if aggregates_are_for_different_columns(aggregate_exprs) {
-        return Err(DataFusionError::Internal(
-            "SortedJoinExec currently does not support joining aggregates.".to_owned(),
-        ));
-    }
-
-    // input_schema has one column as it is checked by rewrite_aggregates_to_use_segments().
-    if *aggregate_exec.input_schema().field(0).data_type() != ArrowValue::DATA_TYPE {
-        return Err(DataFusionError::Internal(
-            "Model-based aggregates can only be computed for FIELD columns.".to_owned(),
-        ));
-    }
-
     let mut rewritten_aggregate_exprs: Vec<Arc<dyn AggregateExpr>> =
         Vec::with_capacity(aggregate_exprs.len());
 
@@ -179,49 +184,6 @@ fn try_rewrite_aggregate_exprs(
     }
 
     Ok(rewritten_aggregate_exprs)
-}
-
-fn inputs_evaluates_no_predicates(inputs: &Vec<Arc<dyn ExecutionPlan>>) -> bool {
-    for input in inputs {
-        for child in input.children() {
-            if let Some(parquet_exec) = child.as_any().downcast_ref::<ParquetExec>() {
-                if parquet_exec.predicate().is_some() || parquet_exec.pruning_predicate().is_some()
-                {
-                    return false;
-                }
-            }
-        }
-    }
-    true
-}
-
-fn aggregates_are_for_different_columns(aggregate_exprs: &[Arc<dyn AggregateExpr>]) -> bool {
-    if aggregate_exprs.is_empty() {
-        false
-    } else {
-        if let Some(first_aggregate_expr) = aggregate_exprs.get(0) {
-            let first_expressions = first_aggregate_expr.expressions();
-            if let Some(first_column) = column_if_only_expression(&first_expressions) {
-                for aggregate_expr in aggregate_exprs {
-                    let expressions = aggregate_expr.expressions();
-                    if let Some(column) = column_if_only_expression(&expressions) {
-                        if first_column.index() != column.index() {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-        false
-    }
-}
-
-fn column_if_only_expression(expressions: &Vec<Arc<dyn PhysicalExpr>>) -> Option<&Column> {
-    if expressions.len() == 1 {
-        expressions[0].as_any().downcast_ref::<Column>()
-    } else {
-        None
-    }
 }
 
 #[derive(Debug, PartialEq)]
