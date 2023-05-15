@@ -54,7 +54,7 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
         execution_plan.transform_down(&rewrite_aggregates_to_use_segments)
     }
 
-    /// Return the name of the physical optimizer rule.
+    /// Return the name of the [`PhysicalOptimizerRule`].
     fn name(&self) -> &str {
         "ModelSimpleAggregatesPhysicalOptimizerRule"
     }
@@ -186,6 +186,7 @@ fn try_rewrite_aggregate_exprs(
     Ok(rewritten_aggregate_exprs)
 }
 
+/// Model-based aggregates supported by [`ModelAggregateExpr`].
 #[derive(Debug, PartialEq)]
 enum ModelAggregateType {
     Count,
@@ -195,10 +196,14 @@ enum ModelAggregateType {
     Avg,
 }
 
+/// Generic [`AggregateExpr`] for computing the model-based aggregates in [`ModelAggregateType`].
 #[derive(Debug)]
 pub struct ModelAggregateExpr {
+    /// Name of the model-based aggregate.
     name: String,
+    /// The model-based aggregate to compute.
     aggregate_type: ModelAggregateType,
+    /// Return type of the model-based aggregate.
     data_type: DataType,
 }
 
@@ -220,6 +225,7 @@ impl ModelAggregateExpr {
     }
 }
 
+/// Enable equal and not equal for [`Any`] and [`ModelAggregateExpr`].
 impl PartialEq<dyn Any> for ModelAggregateExpr {
     fn eq(&self, other: &dyn Any) -> bool {
         if let Some(other_model_based_aggregate_expr) = other.downcast_ref::<ModelAggregateExpr>() {
@@ -233,16 +239,20 @@ impl PartialEq<dyn Any> for ModelAggregateExpr {
 }
 
 impl AggregateExpr for ModelAggregateExpr {
+    /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
     }
 
+    /// Return a [`Field`] that specify the name and [`DataType`] of the final aggregate.
     fn field(&self) -> Result<Field> {
         Ok(Field::new(self.name(), self.data_type.clone(), false))
     }
 
+    /// Return [`Fields`](Field) that specify the names and [`DataTypes`](DataType) of the
+    /// [`Accumulator's`](Accumulator) intermediate state.
     fn state_fields(&self) -> Result<Vec<Field>> {
-        let fields = match &self.aggregate_type {
+        Ok(match &self.aggregate_type {
             ModelAggregateType::Sum => vec![
                 Field::new("SUM", DataType::Float32, false),
                 Field::new("COUNT", DataType::UInt64, false),
@@ -256,37 +266,38 @@ impl AggregateExpr for ModelAggregateExpr {
                 self.data_type.clone(),
                 false,
             )],
-        };
-        Ok(fields)
+        })
     }
 
+    /// Return the [`PhysicalExpr`] that is passed to the [`Accumulator`](Accumulator).
     fn expressions(&self) -> Vec<Arc<dyn PhysicalExpr>> {
-        let expr: Arc<dyn PhysicalExpr> = match &self.aggregate_type {
+        vec![match &self.aggregate_type {
             ModelAggregateType::Count => Arc::new(ModelCountPhysicalExpr {}),
             ModelAggregateType::Min => Arc::new(ModelMinPhysicalExpr {}),
             ModelAggregateType::Max => Arc::new(ModelMaxPhysicalExpr {}),
             ModelAggregateType::Sum => Arc::new(ModelSumPhysicalExpr {}),
             ModelAggregateType::Avg => Arc::new(ModelAvgPhysicalExpr {}),
-        };
-        vec![expr]
+        }]
     }
 
+    /// Return the [`Accumulator`].
     fn create_accumulator(&self) -> Result<Box<dyn Accumulator>> {
-        let accum: Box<dyn Accumulator> = match self.aggregate_type {
+        Ok(match self.aggregate_type {
             ModelAggregateType::Count => Box::new(ModelCountAccumulator { count: 0 }),
             ModelAggregateType::Min => Box::new(ModelMinAccumulator { min: f32::MAX }),
             ModelAggregateType::Max => Box::new(ModelMaxAccumulator { max: f32::MIN }),
             ModelAggregateType::Sum => Box::new(ModelSumAccumulator { sum: 0.0, count: 0 }),
             ModelAggregateType::Avg => Box::new(ModelAvgAccumulator { sum: 0.0, count: 0 }),
-        };
-        Ok(accum)
+        })
     }
 
+    /// Return the name of the [`AggregateExpr`].
     fn name(&self) -> &str {
         &self.name
     }
 }
 
+/// [`PhysicalExpr`] that computes `COUNT` directly from segments containing metadata and models.
 #[derive(Debug)]
 pub struct ModelCountPhysicalExpr {}
 
@@ -296,6 +307,7 @@ impl Display for ModelCountPhysicalExpr {
     }
 }
 
+/// Enable equal and not equal for [`Any`] and [`ModelCountPhysicalExpr`].
 impl PartialEq<dyn Any> for ModelCountPhysicalExpr {
     fn eq(&self, other: &dyn Any) -> bool {
         self == other
@@ -303,21 +315,25 @@ impl PartialEq<dyn Any> for ModelCountPhysicalExpr {
 }
 
 impl PhysicalExpr for ModelCountPhysicalExpr {
+    /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
     }
 
+    /// Return the return [`DataType`] of this [`PhysicalExpr`].
     fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
         Ok(DataType::Int64)
     }
 
+    /// Return [`false`] as this expression cannot return `NULL`.
     fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
         Ok(false)
     }
 
-    fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
+    /// Evaluate this [`PhysicalExpr`] against `record_batch`.
+    fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
         modelardb_common::arrays!(
-            batch,
+            record_batch,
             _univariate_ids,
             _model_type_ids,
             start_times,
@@ -331,7 +347,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
         );
 
         let mut count: i64 = 0;
-        for row_index in 0..batch.num_rows() {
+        for row_index in 0..record_batch.num_rows() {
             let start_time = start_times.value(row_index);
             let end_time = end_times.value(row_index);
             let timestamps = timestamps.value(row_index);
@@ -345,24 +361,32 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
 
+    /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provides input to this [`PhysicalExpr`].
     fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
         vec![]
     }
 
+    /// Return [`DataFusionError`] as this [`PhysicalExpr`] never reads any input.
     fn with_new_children(
         self: Arc<Self>,
         _children: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Arc<dyn PhysicalExpr>> {
-        Ok(self)
+        Err(DataFusionError::Plan(
+            "ModelCountPhysicalExpr does not support children.".to_owned(),
+        ))
     }
 }
 
+/// [`Accumulator`] that accumulates `COUNT` computed directly from segments containing metadata and
+/// models.
 #[derive(Debug)]
 struct ModelCountAccumulator {
     count: i64,
 }
 
 impl Accumulator for ModelCountAccumulator {
+
+    /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
             self.count += array
@@ -374,18 +398,22 @@ impl Accumulator for ModelCountAccumulator {
         Ok(())
     }
 
+    /// Panics as this method should never be called.
     fn merge_batch(&mut self, _states: &[ArrayRef]) -> Result<()> {
         unreachable!()
     }
 
+    /// Return the current state of the [`Accumulator`].
     fn state(&self) -> Result<Vec<ScalarValue>> {
         Ok(vec![ScalarValue::Int64(Some(self.count))])
     }
 
+    /// Panics as this method should never be called.
     fn evaluate(&self) -> Result<ScalarValue> {
         unreachable!()
     }
 
+    /// Return the size of the [`Accumulator`] including `Self`.
     fn size(&self) -> usize {
         mem::size_of_val(self)
     }
@@ -400,6 +428,7 @@ impl Display for ModelMinPhysicalExpr {
     }
 }
 
+/// Enable equal and not equal for [`Any`] and [`ModelMinPhysicalExpr`].
 impl PartialEq<dyn Any> for ModelMinPhysicalExpr {
     fn eq(&self, other: &dyn Any) -> bool {
         self == other
@@ -407,22 +436,26 @@ impl PartialEq<dyn Any> for ModelMinPhysicalExpr {
 }
 
 impl PhysicalExpr for ModelMinPhysicalExpr {
+    /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
     }
 
+    /// Return the return [`DataType`] of this [`PhysicalExpr`].
     fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
         Ok(DataType::Float32)
     }
 
+    /// Return [`true`] as this expression returns `NULL` for empty [`RecordBatches`](RecordBatch).
     fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
-        Ok(false)
+        Ok(true)
     }
 
-    fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
+    /// Evaluate this [`PhysicalExpr`] against `record_batch`.
+    fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
         let mut min = Value::MAX;
-        let min_value_array = modelardb_common::array!(batch, 5, ValueArray);
-        for row_index in 0..batch.num_rows() {
+        let min_value_array = modelardb_common::array!(record_batch, 5, ValueArray);
+        for row_index in 0..record_batch.num_rows() {
             min = Value::min(min, min_value_array.value(row_index));
         }
 
@@ -432,24 +465,32 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
 
+    /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provides input to this [`PhysicalExpr`].
     fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
         vec![]
     }
 
+    /// Return [`DataFusionError`] as this [`PhysicalExpr`] never reads any input.
     fn with_new_children(
         self: Arc<Self>,
         _children: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Arc<dyn PhysicalExpr>> {
-        Ok(self)
+        Err(DataFusionError::Plan(
+            "ModelMinPhysicalExpr does not support children.".to_owned(),
+        ))
     }
 }
 
+/// [`Accumulator`] that accumulates `MIN` computed directly from segments containing metadata and
+/// models.
 #[derive(Debug)]
 struct ModelMinAccumulator {
     min: f32,
 }
 
 impl Accumulator for ModelMinAccumulator {
+
+    /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
             self.min = f32::min(
@@ -464,18 +505,22 @@ impl Accumulator for ModelMinAccumulator {
         Ok(())
     }
 
+    /// Panics as this method should never be called.
     fn merge_batch(&mut self, _states: &[ArrayRef]) -> Result<()> {
         unreachable!()
     }
 
+    /// Return the current state of the [`Accumulator`].
     fn state(&self) -> Result<Vec<ScalarValue>> {
         Ok(vec![ScalarValue::Float32(Some(self.min))])
     }
 
+    /// Panics as this method should never be called.
     fn evaluate(&self) -> Result<ScalarValue> {
         unreachable!()
     }
 
+    /// Return the size of the [`Accumulator`] including `Self`.
     fn size(&self) -> usize {
         mem::size_of_val(self)
     }
@@ -490,6 +535,7 @@ impl Display for ModelMaxPhysicalExpr {
     }
 }
 
+/// Enable equal and not equal for [`Any`] and [`ModelMaxPhysicalExpr`].
 impl PartialEq<dyn Any> for ModelMaxPhysicalExpr {
     fn eq(&self, other: &dyn Any) -> bool {
         self == other
@@ -497,22 +543,26 @@ impl PartialEq<dyn Any> for ModelMaxPhysicalExpr {
 }
 
 impl PhysicalExpr for ModelMaxPhysicalExpr {
+    /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
     }
 
+    /// Return the return [`DataType`] of this [`PhysicalExpr`].
     fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
         Ok(DataType::Float32)
     }
 
+    /// Return [`true`] as this expression returns `NULL` for empty [`RecordBatches`](RecordBatch).
     fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
-        Ok(false)
+        Ok(true)
     }
 
-    fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
+    /// Evaluate this [`PhysicalExpr`] against `record_batch`.
+    fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
         let mut max = Value::MIN;
-        let max_value_array = modelardb_common::array!(batch, 6, ValueArray);
-        for row_index in 0..batch.num_rows() {
+        let max_value_array = modelardb_common::array!(record_batch, 6, ValueArray);
+        for row_index in 0..record_batch.num_rows() {
             max = Value::max(max, max_value_array.value(row_index));
         }
 
@@ -522,24 +572,32 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
 
+    /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provides input to this [`PhysicalExpr`].
     fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
         vec![]
     }
 
+    /// Return [`DataFusionError`] as this [`PhysicalExpr`] never reads any input.
     fn with_new_children(
         self: Arc<Self>,
         _children: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Arc<dyn PhysicalExpr>> {
-        Ok(self)
+        Err(DataFusionError::Plan(
+            "ModelMaxPhysicalExpr does not support children.".to_owned(),
+        ))
     }
 }
 
+/// [`Accumulator`] that accumulates `MAX` computed directly from segments containing metadata and
+/// models.
 #[derive(Debug)]
 struct ModelMaxAccumulator {
     max: f32,
 }
 
 impl Accumulator for ModelMaxAccumulator {
+
+    /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
             self.max = f32::max(
@@ -554,18 +612,22 @@ impl Accumulator for ModelMaxAccumulator {
         Ok(())
     }
 
+    /// Panics as this method should never be called.
     fn merge_batch(&mut self, _states: &[ArrayRef]) -> Result<()> {
         unreachable!()
     }
 
+    /// Return the current state of the [`Accumulator`].
     fn state(&self) -> Result<Vec<ScalarValue>> {
         Ok(vec![ScalarValue::Float32(Some(self.max))])
     }
 
+    /// Panics as this method should never be called.
     fn evaluate(&self) -> Result<ScalarValue> {
         unreachable!()
     }
 
+    /// Return the size of the [`Accumulator`] including `Self`.
     fn size(&self) -> usize {
         mem::size_of_val(self)
     }
@@ -580,6 +642,7 @@ impl Display for ModelSumPhysicalExpr {
     }
 }
 
+/// Enable equal and not equal for [`Any`] and [`ModelSumPhysicalExpr`].
 impl PartialEq<dyn Any> for ModelSumPhysicalExpr {
     fn eq(&self, other: &dyn Any) -> bool {
         self == other
@@ -587,21 +650,25 @@ impl PartialEq<dyn Any> for ModelSumPhysicalExpr {
 }
 
 impl PhysicalExpr for ModelSumPhysicalExpr {
+    /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
     }
 
+    /// Return the return [`DataType`] of this [`PhysicalExpr`].
     fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
         Ok(DataType::Float32)
     }
 
+    /// Return [`true`] as this expression returns `NULL` for empty [`RecordBatches`](RecordBatch).
     fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
-        Ok(false)
+        Ok(true)
     }
 
-    fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
+    /// Evaluate this [`PhysicalExpr`] against `record_batch`.
+    fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
         modelardb_common::arrays!(
-            batch,
+            record_batch,
             _univariate_ids,
             model_type_ids,
             start_times,
@@ -615,7 +682,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
         );
 
         let mut sum = 0.0;
-        for row_index in 0..batch.num_rows() {
+        for row_index in 0..record_batch.num_rows() {
             let model_type_id = model_type_ids.value(row_index);
             let start_time = start_times.value(row_index);
             let end_time = end_times.value(row_index);
@@ -641,18 +708,24 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
 
+    /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provides input to this [`PhysicalExpr`].
     fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
         vec![]
     }
 
+    /// Return [`DataFusionError`] as this [`PhysicalExpr`] never reads any input.
     fn with_new_children(
         self: Arc<Self>,
         _children: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Arc<dyn PhysicalExpr>> {
-        Ok(self)
+        Err(DataFusionError::Plan(
+            "ModelSumPhysicalExpr does not support children.".to_owned(),
+        ))
     }
 }
 
+/// [`Accumulator`] that accumulates `SUM` computed directly from segments containing metadata and
+/// models.
 #[derive(Debug)]
 struct ModelSumAccumulator {
     sum: f32,
@@ -660,6 +733,8 @@ struct ModelSumAccumulator {
 }
 
 impl Accumulator for ModelSumAccumulator {
+
+    /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
             self.sum += array
@@ -672,21 +747,26 @@ impl Accumulator for ModelSumAccumulator {
         Ok(())
     }
 
+    /// Panics as this method should never be called.
     fn merge_batch(&mut self, _states: &[ArrayRef]) -> Result<()> {
         unreachable!()
     }
 
+    /// Return the current state of the [`Accumulator`].
     fn state(&self) -> Result<Vec<ScalarValue>> {
+        // Match SumAccumulator in repository/datafusion/physical-expr/src/aggregate/sum.rs.
         Ok(vec![
             ScalarValue::Float32(Some(self.sum)),
             ScalarValue::from(self.count),
         ])
     }
 
+    /// Panics as this method should never be called.
     fn evaluate(&self) -> Result<ScalarValue> {
         unreachable!()
     }
 
+    /// Return the size of the [`Accumulator`] including `Self`.
     fn size(&self) -> usize {
         mem::size_of_val(self)
     }
@@ -701,6 +781,7 @@ impl Display for ModelAvgPhysicalExpr {
     }
 }
 
+/// Enable equal and not equal for [`Any`] and [`ModelAvgPhysicalExpr`].
 impl PartialEq<dyn Any> for ModelAvgPhysicalExpr {
     fn eq(&self, other: &dyn Any) -> bool {
         self == other
@@ -708,21 +789,25 @@ impl PartialEq<dyn Any> for ModelAvgPhysicalExpr {
 }
 
 impl PhysicalExpr for ModelAvgPhysicalExpr {
+    /// Return `self` as [`Any`] so it can be downcast.
     fn as_any(&self) -> &dyn Any {
         self
     }
 
+    /// Return the return [`DataType`] of this [`PhysicalExpr`].
     fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
         Ok(DataType::Float32)
     }
 
+    /// Return [`true`] as this expression returns `NULL` for empty [`RecordBatches`](RecordBatch).
     fn nullable(&self, _input_schema: &Schema) -> Result<bool> {
-        Ok(false)
+        Ok(true)
     }
 
-    fn evaluate(&self, batch: &RecordBatch) -> Result<ColumnarValue> {
+    /// Evaluate this [`PhysicalExpr`] against `record_batch`.
+    fn evaluate(&self, record_batch: &RecordBatch) -> Result<ColumnarValue> {
         modelardb_common::arrays!(
-            batch,
+            record_batch,
             _univariate_ids,
             model_type_ids,
             start_times,
@@ -737,7 +822,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
 
         let mut sum = 0.0;
         let mut count: usize = 0;
-        for row_index in 0..batch.num_rows() {
+        for row_index in 0..record_batch.num_rows() {
             let model_type_id = model_type_ids.value(row_index);
             let start_time = start_times.value(row_index);
             let end_time = end_times.value(row_index);
@@ -766,18 +851,24 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
 
+    /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provides input to this [`PhysicalExpr`].
     fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
         vec![]
     }
 
+    /// Return [`DataFusionError`] as this [`PhysicalExpr`] never reads any input.
     fn with_new_children(
         self: Arc<Self>,
         _children: Vec<Arc<dyn PhysicalExpr>>,
     ) -> Result<Arc<dyn PhysicalExpr>> {
-        Ok(self)
+        Err(DataFusionError::Plan(
+            "ModelAvgPhysicalExpr does not support children.".to_owned(),
+        ))
     }
 }
 
+/// [`Accumulator`] that accumulates `AVG` computed directly from segments containing metadata and
+/// models.
 #[derive(Debug)]
 struct ModelAvgAccumulator {
     sum: f32,
@@ -785,6 +876,8 @@ struct ModelAvgAccumulator {
 }
 
 impl Accumulator for ModelAvgAccumulator {
+
+    /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
             let array = array.as_any().downcast_ref::<Float32Array>().unwrap();
@@ -794,22 +887,26 @@ impl Accumulator for ModelAvgAccumulator {
         Ok(())
     }
 
+    /// Panics as this method should never be called.
     fn merge_batch(&mut self, _states: &[ArrayRef]) -> Result<()> {
         unreachable!()
     }
 
+    /// Return the current state of the [`Accumulator`].
     fn state(&self) -> Result<Vec<ScalarValue>> {
-        //Must match datafusion::physical_plan::expressions::AvgAccumulator
+        // Match AvgAccumulator in repository/datafusion/physical-expr/src/aggregate/average.rs.
         Ok(vec![
             ScalarValue::UInt64(Some(self.count)),
             ScalarValue::Float32(Some(self.sum)),
         ])
     }
 
+    /// Panics as this method should never be called.
     fn evaluate(&self) -> Result<ScalarValue> {
         unreachable!()
     }
 
+    /// Return the size of the [`Accumulator`] including `Self`.
     fn size(&self) -> usize {
         mem::size_of_val(self)
     }
