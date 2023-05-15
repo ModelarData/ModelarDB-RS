@@ -30,6 +30,7 @@ use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::aggregates::AggregateExec;
 use datafusion::physical_plan::expressions::{self, Avg, Count, Max, Min, Sum};
 use datafusion::physical_plan::file_format::ParquetExec;
+use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::{
     Accumulator, AggregateExpr, ColumnarValue, ExecutionPlan, PhysicalExpr,
 };
@@ -93,14 +94,27 @@ fn rewrite_aggregates_to_use_segments(
                     .as_any()
                     .downcast_ref::<SortedJoinExec>()
                 {
-                    if let Ok(input) =
-                        try_new_aggregate_exec(aggregate_exec, sorted_join_exec.children())
+                    // Remove RepartitionExec if added by Apache Arrow DataFusion
+                    let sorted_join_exec_children = sorted_join_exec.children();
+                    let grid_execs = if sorted_join_exec_children[0]
+                        .as_any()
+                        .is::<RepartitionExec>()
                     {
+                        sorted_join_exec_children
+                            .iter()
+                            .flat_map(|repartition_exec| repartition_exec.children())
+                            .collect::<Vec<Arc<dyn ExecutionPlan>>>()
+                    } else {
+                        sorted_join_exec_children
+                    };
+
+                    // Try to create new AggregateExec that compute aggregates directly from segments.
+                    if let Ok(input) = try_new_aggregate_exec(aggregate_exec, grid_execs) {
                         // unwrap() is safe as the inputs are constructed from sorted_join_exec.
                         return Ok(Transformed::Yes(
                             execution_plan.with_new_children(vec![input]).unwrap(),
                         ));
-                    }
+                    };
                 }
             }
         }
@@ -385,7 +399,6 @@ struct ModelCountAccumulator {
 }
 
 impl Accumulator for ModelCountAccumulator {
-
     /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
@@ -489,7 +502,6 @@ struct ModelMinAccumulator {
 }
 
 impl Accumulator for ModelMinAccumulator {
-
     /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
@@ -596,7 +608,6 @@ struct ModelMaxAccumulator {
 }
 
 impl Accumulator for ModelMaxAccumulator {
-
     /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
@@ -733,7 +744,6 @@ struct ModelSumAccumulator {
 }
 
 impl Accumulator for ModelSumAccumulator {
-
     /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
@@ -876,7 +886,6 @@ struct ModelAvgAccumulator {
 }
 
 impl Accumulator for ModelAvgAccumulator {
-
     /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
@@ -909,5 +918,102 @@ impl Accumulator for ModelAvgAccumulator {
     /// Return the size of the [`Accumulator`] including `Self`.
     fn size(&self) -> usize {
         mem::size_of_val(self)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::any::TypeId;
+
+    use datafusion::physical_plan::aggregates::AggregateExec;
+    use datafusion::physical_plan::coalesce_batches::CoalesceBatchesExec;
+    use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
+    use datafusion::physical_plan::file_format::ParquetExec;
+    use datafusion::physical_plan::filter::FilterExec;
+
+    use crate::optimizer::test_util;
+    use crate::query::grid_exec::GridExec;
+
+    use super::*;
+
+    // Tests for ModelSimpleAggregatesPhysicalOptimizerRule.
+    #[tokio::test]
+    async fn test_rewrite_aggregate_on_one_column_without_predicates() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let query = "SELECT COUNT(field_1) FROM model_table";
+        let physical_plan =
+            test_util::query_optimized_physical_query_plan(temp_dir.path(), query).await;
+
+        let expected_plan = vec![
+            vec![TypeId::of::<AggregateExec>()],
+            vec![TypeId::of::<CoalescePartitionsExec>()],
+            vec![TypeId::of::<AggregateExec>()],
+            vec![TypeId::of::<ParquetExec>()],
+        ];
+
+        test_util::assert_eq_physical_plan_expected(physical_plan, expected_plan);
+    }
+
+    #[tokio::test]
+    async fn test_rewrite_aggregates_on_one_column_without_predicates() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let query = "SELECT COUNT(field_1), MIN(field_1), MAX(field_1),
+                                  SUM(field_1), AVG(field_1) FROM model_table";
+        let physical_plan =
+            test_util::query_optimized_physical_query_plan(temp_dir.path(), query).await;
+
+        let expected_plan = vec![
+            vec![TypeId::of::<AggregateExec>()],
+            vec![TypeId::of::<CoalescePartitionsExec>()],
+            vec![TypeId::of::<AggregateExec>()],
+            vec![TypeId::of::<ParquetExec>()],
+        ];
+
+        test_util::assert_eq_physical_plan_expected(physical_plan, expected_plan);
+    }
+
+    #[tokio::test]
+    async fn test_do_not_rewrite_aggregate_on_one_column_with_predicates() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let query = "SELECT COUNT(field_1) FROM model_table WHERE field_1 = 37.0";
+        let physical_plan =
+            test_util::query_optimized_physical_query_plan(temp_dir.path(), query).await;
+
+        let expected_plan = vec![
+            vec![TypeId::of::<AggregateExec>()],
+            vec![TypeId::of::<CoalescePartitionsExec>()],
+            vec![TypeId::of::<AggregateExec>()],
+            vec![TypeId::of::<CoalesceBatchesExec>()],
+            vec![TypeId::of::<FilterExec>()],
+            vec![TypeId::of::<SortedJoinExec>()],
+            vec![TypeId::of::<RepartitionExec>()],
+            vec![TypeId::of::<GridExec>()],
+            vec![TypeId::of::<ParquetExec>()],
+        ];
+
+        test_util::assert_eq_physical_plan_expected(physical_plan, expected_plan);
+    }
+
+    #[tokio::test]
+    async fn test_do_not_rewrite_aggregate_on_multiple_columns_without_predicates() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let query = "SELECT COUNT(field_1), COUNT(field_2) FROM model_table";
+        let physical_plan =
+            test_util::query_optimized_physical_query_plan(temp_dir.path(), query).await;
+
+        let expected_plan = vec![
+            vec![TypeId::of::<AggregateExec>()],
+            vec![TypeId::of::<CoalescePartitionsExec>()],
+            vec![TypeId::of::<AggregateExec>()],
+            vec![TypeId::of::<SortedJoinExec>()],
+            vec![
+                TypeId::of::<RepartitionExec>(),
+                TypeId::of::<RepartitionExec>(),
+            ],
+            vec![TypeId::of::<GridExec>(), TypeId::of::<GridExec>()],
+            vec![TypeId::of::<ParquetExec>(), TypeId::of::<ParquetExec>()],
+        ];
+
+        test_util::assert_eq_physical_plan_expected(physical_plan, expected_plan);
     }
 }
