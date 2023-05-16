@@ -174,7 +174,7 @@ an error bound can optionally be specified in parentheses to enable lossy compre
 bound, e.g., `FIELD(1.0)` creates a column with a one percent error bound. `FIELD` columns default to an error bound of
 zero when none is specified. If the values in a `FIELD` column can be computed from other columns they need not be stored.
 Instead, if a `FIELD` column is defined using the syntax `FIELD AS expression`, e.g., `FIELD AS column_one + column_two`,
-the values of the `FIELD` column will be the result of the expression. As these generated `FIELD` columns does not store any
+the values of the `FIELD` column will be the result of the expression. As these generated `FIELD` columns do not store any
 data, an error bound cannot be defined. `modelardb` also supports normal tables created through `CREATE TABLE` statements.
 
 As both `CREATE MODEL TABLE` and `CREATE TABLE` are just SQL statements, both types of tables can be created using

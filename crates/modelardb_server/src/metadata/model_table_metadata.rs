@@ -121,7 +121,7 @@ impl ModelTableMetadata {
 
         if timestamp_column_indices.len() != 1 {
             return Err(ModelarDbError::ConfigurationError(
-                "There needs to be one timestamp column.".to_owned(),
+                "There needs to be exactly one timestamp column.".to_owned(),
             ));
         }
 

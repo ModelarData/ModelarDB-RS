@@ -671,7 +671,7 @@ pub fn parse_sql_expression(df_schema: &DFSchema, sql_expr: &str) -> Result<DFEx
 
 /// Empty context provider required for converting [`Expr`](sqlparser::ast::Expr) to [`DFExpr`]. It
 /// is implemented based on [rewrite_expr.rs] in the Apache Arrow DataFusion GitHub repository
-/// which were released under version 2.0 of the Apache License.
+/// which was released under version 2.0 of the Apache License.
 ///
 /// [rewrite_expr.rs]: https://github.com/apache/arrow-datafusion/blob/main/datafusion-examples/examples/rewrite_expr.rs
 struct EmptyContextProvider {

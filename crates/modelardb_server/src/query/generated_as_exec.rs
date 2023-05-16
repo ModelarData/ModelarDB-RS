@@ -168,8 +168,8 @@ impl ExecutionPlan for GeneratedAsExec {
     }
 }
 
-/// A stream that read batches of rows from the input stream, generates columns from the input, adds
-/// them to the batch, and then returns the result.
+/// A stream that reads batches of rows from the input stream, generates columns from the input,
+/// adds them to the batch, and then returns the result.
 struct GeneratedAsStream {
     /// Schema of the stream.
     schema: SchemaRef,

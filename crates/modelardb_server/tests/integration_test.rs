@@ -328,8 +328,10 @@ impl Drop for TestContext {
             system.refresh_all();
 
             // Microsoft Windows often fail to kill the process and then succeed afterwards.
-            while self.server.kill().is_err() {
+            let mut attempts = 10;
+            while self.server.kill().is_err() && attempts > 0 {
                 thread::sleep(Duration::from_secs(5));
+                attempts -= 1;
             }
             self.server.wait().unwrap();
 
