@@ -221,16 +221,15 @@ impl Stream for GeneratedAsStream {
                         columns.push(batch.column(index - generated_columns).clone());
                     }
 
-                    // Compute the values of the next generated column and add it.
-                    columns.push(
-                        column_to_generate
-                            .physical_expr
-                            .evaluate(&batch)
-                            .unwrap()
-                            .into_array(batch.num_rows()),
-                    );
-
-                    generated_columns += 1;
+                    // Compute the values of the next generated column and, if successful, add it.
+                    let maybe_generated_column = column_to_generate.physical_expr.evaluate(&batch);
+                    if let Ok(generated_column) = maybe_generated_column {
+                        columns.push(generated_column.into_array(batch.num_rows()));
+                        generated_columns += 1;
+                    } else {
+                        // unwrap() is safe as it is only executed if a column was not generated.
+                        return Poll::Ready(Some(Err(maybe_generated_column.err().unwrap())));
+                    };
                 }
 
                 // Add the remaining stored columns to the record batch.
