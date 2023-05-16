@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use model_simple_aggregates::ModelSimpleAggregatesPhysicalOptimizerRule;
 
-/// Return all physical optimizer rule. Currently, only simple aggregates are executed on segments.
+/// Return all physical optimizer rules. Currently, only simple aggregates are executed on segments.
 pub fn physical_optimizer_rules() -> Vec<Arc<ModelSimpleAggregatesPhysicalOptimizerRule>> {
     vec![Arc::new(ModelSimpleAggregatesPhysicalOptimizerRule {})]
 }

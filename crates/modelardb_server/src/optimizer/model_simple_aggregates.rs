@@ -12,6 +12,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+
+//! Implementation of a physical optimizer rule that rewrites aggregates that are computed from
+//! reconstructed values from a single column without filtering so they are computed directly from
+//! segments instead of the reconstructed values.
+
 use std::any::Any;
 use std::cmp::PartialEq;
 use std::fmt::{Display, Formatter};
@@ -60,7 +65,7 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
         "ModelSimpleAggregatesPhysicalOptimizerRule"
     }
 
-    /// Specify if the physical planner should valid that the rule does not change the schema.
+    /// Specify if the physical planner should validate that the rule does not change the schema.
     fn schema_check(&self) -> bool {
         true
     }
@@ -73,7 +78,7 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
 fn rewrite_aggregates_to_use_segments(
     execution_plan: Arc<dyn ExecutionPlan>,
 ) -> Result<Transformed<Arc<dyn ExecutionPlan>>> {
-    // The rule tries matches to match the sub-tree of execution_plan so execution_plan can be updated.
+    // The rule tries to match the sub-tree of execution_plan so execution_plan can be updated.
     let execution_plan_children = execution_plan.children();
 
     if execution_plan_children.len() == 1 {
@@ -395,6 +400,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
 /// models.
 #[derive(Debug)]
 struct ModelCountAccumulator {
+    /// Current count stored by the [`Accumulator`].
     count: i64,
 }
 
@@ -432,6 +438,7 @@ impl Accumulator for ModelCountAccumulator {
     }
 }
 
+/// [`PhysicalExpr`] that computes `MIN` directly from segments containing metadata and models.
 #[derive(Debug)]
 pub struct ModelMinPhysicalExpr {}
 
@@ -498,6 +505,7 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
 /// models.
 #[derive(Debug)]
 struct ModelMinAccumulator {
+    /// Current minimum value stored by the [`Accumulator`].
     min: f32,
 }
 
@@ -538,6 +546,7 @@ impl Accumulator for ModelMinAccumulator {
     }
 }
 
+/// [`PhysicalExpr`] that computes `MAX` directly from segments containing metadata and models.
 #[derive(Debug)]
 pub struct ModelMaxPhysicalExpr {}
 
@@ -604,6 +613,7 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
 /// models.
 #[derive(Debug)]
 struct ModelMaxAccumulator {
+    /// Current maximum value stored by the [`Accumulator`].
     max: f32,
 }
 
@@ -644,6 +654,7 @@ impl Accumulator for ModelMaxAccumulator {
     }
 }
 
+/// [`PhysicalExpr`] that computes `SUM` directly from segments containing metadata and models.
 #[derive(Debug)]
 pub struct ModelSumPhysicalExpr {}
 
@@ -739,7 +750,10 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
 /// models.
 #[derive(Debug)]
 struct ModelSumAccumulator {
+    /// Current sum stored by the [`Accumulator`].
     sum: f32,
+    /// Current count stored by the [`Accumulator`]. It is stored so it can be passed to
+    /// [SumAccumulator](repository/datafusion/physical-expr/src/aggregate/sum.rs).
     count: u64,
 }
 
@@ -762,9 +776,9 @@ impl Accumulator for ModelSumAccumulator {
         unreachable!()
     }
 
-    /// Return the current state of the [`Accumulator`].
+    /// Return the current state of the [`Accumulator`]. It must match
+    /// [SumAccumulator](repository/datafusion/physical-expr/src/aggregate/sum.rs).
     fn state(&self) -> Result<Vec<ScalarValue>> {
-        // Match SumAccumulator in repository/datafusion/physical-expr/src/aggregate/sum.rs.
         Ok(vec![
             ScalarValue::Float32(Some(self.sum)),
             ScalarValue::from(self.count),
@@ -782,6 +796,7 @@ impl Accumulator for ModelSumAccumulator {
     }
 }
 
+/// [`PhysicalExpr`] that computes `AVG` directly from segments containing metadata and models.
 #[derive(Debug)]
 pub struct ModelAvgPhysicalExpr {}
 
@@ -881,7 +896,9 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
 /// models.
 #[derive(Debug)]
 struct ModelAvgAccumulator {
+    /// The current sum stored in the [`Accumulator`].
     sum: f32,
+    /// The current count stored in the [`Accumulator`].
     count: u64,
 }
 
@@ -901,9 +918,9 @@ impl Accumulator for ModelAvgAccumulator {
         unreachable!()
     }
 
-    /// Return the current state of the [`Accumulator`].
+    /// Return the current state of the [`Accumulator`]. It must match
+    /// [AvgAccumulator](repository/datafusion/physical-expr/src/aggregate/average.rs).
     fn state(&self) -> Result<Vec<ScalarValue>> {
-        // Match AvgAccumulator in repository/datafusion/physical-expr/src/aggregate/average.rs.
         Ok(vec![
             ScalarValue::UInt64(Some(self.count)),
             ScalarValue::Float32(Some(self.sum)),
