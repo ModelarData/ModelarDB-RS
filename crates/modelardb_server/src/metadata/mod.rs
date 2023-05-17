@@ -1130,7 +1130,7 @@ mod tests {
         // Save a table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
         let runtime = Arc::new(Runtime::new().unwrap());
-        let context = test_util::test_context(temp_dir.path());
+        let context = runtime.block_on(test_util::test_context(temp_dir.path()));
 
         context
             .metadata_manager
@@ -1209,13 +1209,13 @@ mod tests {
         assert!(rows.next().unwrap().is_none());
     }
 
-    #[test]
-    fn test_register_model_tables() {
+    #[tokio::test]
+    async fn test_register_model_tables() {
         // The test succeeds if none of the unwrap()s fails.
 
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = test_util::test_context(temp_dir.path());
+        let context = test_util::test_context(temp_dir.path()).await;
 
         let model_table_metadata = test_util::model_table_metadata();
         context
@@ -1259,7 +1259,8 @@ mod tests {
     #[test]
     fn test_error_bound() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = test_util::test_context(temp_dir.path());
+        let runtime = Arc::new(Runtime::new().unwrap());
+        let context = runtime.block_on(test_util::test_context(temp_dir.path()));
 
         let model_table_metadata = test_util::model_table_metadata();
         context
@@ -1281,7 +1282,8 @@ mod tests {
     #[test]
     fn test_generated_columns() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = test_util::test_context(temp_dir.path());
+        let runtime = Arc::new(Runtime::new().unwrap());
+        let context = runtime.block_on(test_util::test_context(temp_dir.path()));
 
         let model_table_metadata = test_util::model_table_metadata();
         context
@@ -1312,22 +1314,29 @@ pub mod test_util {
     use datafusion::execution::runtime_env::RuntimeEnv;
     use modelardb_common::types::{ArrowTimestamp, ArrowValue};
     use modelardb_compression::models::ErrorBound;
+    use object_store::local::LocalFileSystem;
     use tokio::sync::RwLock;
 
-    use crate::storage::StorageEngine;
+    use crate::optimizer;
+    use crate::storage::{self, StorageEngine};
 
     /// Return a [`Context`] with the metadata manager created by `get_test_metadata_manager()` and
     /// the data folder set to `path`.
-    pub fn test_context(path: &Path) -> Arc<Context> {
+    pub async fn test_context(path: &Path) -> Arc<Context> {
         let metadata_manager = test_metadata_manager(path);
+
         let session = test_session_context();
-        let runtime = Runtime::new().unwrap();
+        let object_store_url = storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST
+            .try_into()
+            .unwrap();
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(path).unwrap());
+        session
+            .runtime_env()
+            .register_object_store(&object_store_url, object_store);
+
         let storage_engine = RwLock::new(
-            runtime
-                .block_on(async {
-                    StorageEngine::try_new(path.to_owned(), None, metadata_manager.clone(), true)
-                        .await
-                })
+            StorageEngine::try_new(path.to_owned(), None, metadata_manager.clone(), true)
+                .await
                 .unwrap(),
         );
 
@@ -1354,7 +1363,10 @@ pub mod test_util {
     pub fn test_session_context() -> SessionContext {
         let config = SessionConfig::new();
         let runtime = Arc::new(RuntimeEnv::default());
-        let state = SessionState::with_config_rt(config, runtime);
+        let mut state = SessionState::with_config_rt(config, runtime);
+        for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
+            state = state.add_physical_optimizer_rule(physical_optimizer_rule);
+        }
         SessionContext::with_state(state)
     }
 

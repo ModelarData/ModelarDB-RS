@@ -12,74 +12,81 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-pub mod model_simple_aggregates;
+
+//! Implementation of physical optimizer rules that rewrites the physical plans produced by Apache
+//! Arrow DataFusion to execute queries more efficiently directly on the segments with metadata and
+//! models stored in model tables.
+
+mod model_simple_aggregates;
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
+use model_simple_aggregates::ModelSimpleAggregatesPhysicalOptimizerRule;
 
-use datafusion::error::Result;
-use datafusion::execution::context::{QueryPlanner, SessionState};
-use datafusion::logical_expr::logical_plan::LogicalPlan;
-use datafusion::optimizer::optimizer::OptimizerRule;
-use datafusion::optimizer::OptimizerConfig;
-use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
-use datafusion::physical_plan::planner::DefaultPhysicalPlanner;
-use datafusion::physical_plan::{ExecutionPlan, PhysicalPlanner};
-use datafusion::config::ConfigOptions;
-use tracing::debug;
-
-pub struct LogOptimizerRule {}
-
-impl OptimizerRule for LogOptimizerRule {
-    fn try_optimize(
-        &self,
-        logical_plan: &LogicalPlan,
-        _execution_props: &dyn OptimizerConfig,
-    ) -> Result<Option<LogicalPlan>> {
-        debug!("Logical plan:\n{:#?}\n", &logical_plan);
-        Ok(Some(logical_plan.clone()))
-    }
-
-    fn name(&self) -> &str {
-        "log_optimizer_rule "
-    }
+/// Return all physical optimizer rules. Currently, only simple aggregates are executed on segments.
+pub fn physical_optimizer_rules() -> Vec<Arc<ModelSimpleAggregatesPhysicalOptimizerRule>> {
+    vec![Arc::new(ModelSimpleAggregatesPhysicalOptimizerRule {})]
 }
 
-pub struct LogQueryPlanner {}
+#[cfg(test)]
+mod test_util {
+    use std::any::TypeId;
+    use std::path::Path;
+    use std::sync::Arc;
 
-#[async_trait]
-impl QueryPlanner for LogQueryPlanner {
-    async fn create_physical_plan(
-        &self,
-        logical_plan: &LogicalPlan,
-        session_state: &SessionState,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        debug!("Logical plan:\n{:#?}\n", &logical_plan);
-        let planner = DefaultPhysicalPlanner::default();
-        planner
-            .create_physical_plan(logical_plan, session_state)
+    use datafusion::physical_plan::ExecutionPlan;
+
+    use crate::metadata::test_util;
+    use crate::query::ModelTable;
+
+    /// Parse, plan, and optimize the `query` for execution on data in `path`.
+    pub async fn query_optimized_physical_query_plan(
+        path: &Path,
+        query: &str,
+    ) -> Arc<dyn ExecutionPlan> {
+        let context = test_util::test_context(path).await;
+        let model_table_metadata = test_util::model_table_metadata();
+
+        context
+            .session
+            .register_table(
+                "model_table",
+                ModelTable::new(context.clone(), Arc::new(model_table_metadata)),
+            )
+            .unwrap();
+
+        context
+            .session
+            .sql(query)
             .await
-    }
-}
-
-pub struct LogPhysicalOptimizerRule {}
-
-impl PhysicalOptimizerRule for LogPhysicalOptimizerRule {
-    fn optimize(
-        &self,
-        execution_plan: Arc<dyn ExecutionPlan>,
-        _config: &ConfigOptions,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        debug!("Execution plan:\n{:#?}\n", &execution_plan);
-        Ok(execution_plan.clone())
+            .unwrap()
+            .create_physical_plan()
+            .await
+            .unwrap()
     }
 
-    fn name(&self) -> &str {
-        "log_physical_optimizer_rule"
-    }
+    /// Assert that `physical_plan` and `expected_plan` contain the same operators. `expected_plan`
+    /// only contains the type ids so the tests do not have to construct the actual operators.
+    pub fn assert_eq_physical_plan_expected(
+        physical_plan: Arc<dyn ExecutionPlan>,
+        expected_plan: Vec<Vec<TypeId>>,
+    ) {
+        let mut level = 0;
+        let mut current_execs = vec![physical_plan];
+        let mut next_execs = vec![];
 
-    fn schema_check(&self) -> bool {
-        true
+        while !current_execs.is_empty() {
+            let expected_execs = &expected_plan[level];
+            assert_eq!(current_execs.len(), expected_execs.len());
+
+            for (current, expected) in current_execs.iter().zip(expected_execs) {
+                assert_eq!(current.as_any().type_id(), *expected);
+                next_execs.extend(current.children());
+            }
+
+            level += 1;
+            current_execs = next_execs;
+            next_execs = vec![];
+        }
     }
 }

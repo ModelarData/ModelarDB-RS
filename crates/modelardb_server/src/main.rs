@@ -40,7 +40,6 @@ use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::metadata::MetadataManager;
-use crate::optimizer::model_simple_aggregates;
 use crate::storage::StorageEngine;
 
 #[global_allocator]
@@ -328,10 +327,12 @@ fn create_session_context(query_data_folder: Arc<dyn ObjectStore>) -> SessionCon
         .unwrap();
     session_runtime.register_object_store(&object_store_url, query_data_folder);
 
-    let session_state = SessionState::with_config_rt(session_config, session_runtime)
-        .with_physical_optimizer_rules(vec![Arc::new(
-            model_simple_aggregates::ModelSimpleAggregatesPhysicalOptimizerRule {},
-        )]);
+    // Use the add* methods instead of the with* methods as the with* methods replace the built-ins.
+    // See: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionState.html
+    let mut session_state = SessionState::with_config_rt(session_config, session_runtime);
+    for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
+        session_state = session_state.add_physical_optimizer_rule(physical_optimizer_rule);
+    }
 
     SessionContext::with_state(session_state)
 }
