@@ -22,8 +22,7 @@
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::fmt;
-use std::fmt::Formatter;
+use std::fmt::{self, Formatter};
 use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
@@ -42,10 +41,10 @@ use futures::stream::{Stream, StreamExt};
 
 use crate::metadata::MetadataManager;
 
-/// The different types of columns supported by [`SortedJoinExec`] for specifying the order in which
-/// the timestamp, field, and tag columns should be returned by [`SortedJoinElement`].
+/// The different types of columns supported by [`SortedJoinExec`], used for specifying the order in
+/// which the timestamp, field, and tag columns should be returned by [`SortedJoinStream`].
 #[derive(Debug, Clone)]
-pub enum SortedJoinElement {
+pub enum SortedJoinColumnType {
     Timestamp,
     Field,
     Tag,
@@ -59,7 +58,7 @@ pub struct SortedJoinExec {
     /// Schema of the execution plan.
     schema: SchemaRef,
     /// Order of columns to return.
-    return_order: Vec<SortedJoinElement>,
+    return_order: Vec<SortedJoinColumnType>,
     /// Mapping from tag hash to tags.
     hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
     /// Execution plans to read batches of data points from.
@@ -71,7 +70,7 @@ pub struct SortedJoinExec {
 impl SortedJoinExec {
     pub fn new(
         schema: SchemaRef,
-        return_order: Vec<SortedJoinElement>,
+        return_order: Vec<SortedJoinColumnType>,
         hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
         inputs: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Arc<Self> {
@@ -120,7 +119,7 @@ impl ExecutionPlan for SortedJoinExec {
         self: Arc<Self>,
         children: Vec<Arc<(dyn ExecutionPlan)>>,
     ) -> Result<Arc<(dyn ExecutionPlan)>> {
-        if children.len() == 1 {
+        if !children.is_empty() {
             Ok(SortedJoinExec::new(
                 self.schema.clone(),
                 self.return_order.clone(),
@@ -182,7 +181,7 @@ struct SortedJoinStream {
     /// Schema of the stream.
     schema: SchemaRef,
     /// Order of columns to return.
-    return_order: Vec<SortedJoinElement>,
+    return_order: Vec<SortedJoinColumnType>,
     /// Mapping from tag hash to tags.
     hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
     /// Streams to read batches of data points from.
@@ -196,7 +195,7 @@ struct SortedJoinStream {
 impl SortedJoinStream {
     fn new(
         schema: SchemaRef,
-        return_order: Vec<SortedJoinElement>,
+        return_order: Vec<SortedJoinColumnType>,
         hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
         inputs: Vec<SendableRecordBatchStream>,
         baseline_metrics: BaselineMetrics,
@@ -266,8 +265,8 @@ impl SortedJoinStream {
 
         // Compute the requested tag columns so they can be assigned to the batch by index.
         // unwrap() is safe as a record batch is read from each input before this method is called.
-        let record_batch = self.batches[0].as_ref().unwrap();
-        let univariate_ids = modelardb_common::array!(record_batch, 0, UInt64Array);
+        let batch = self.batches[0].as_ref().unwrap();
+        let univariate_ids = modelardb_common::array!(batch, 0, UInt64Array);
 
         let mut tag_columns = if !self.hash_to_tags.is_empty() {
             // unwrap() is safe as hash_to_tags is guaranteed not to be empty.
@@ -297,14 +296,14 @@ impl SortedJoinStream {
 
         for element in &self.return_order {
             match element {
-                SortedJoinElement::Timestamp => columns.push(record_batch.column(1).clone()),
-                SortedJoinElement::Field => {
+                SortedJoinColumnType::Timestamp => columns.push(batch.column(1).clone()),
+                SortedJoinColumnType::Field => {
                     // unwrap() is safe as a record batch has already been read from each input.
-                    let record_batch = self.batches[field_index].as_ref().unwrap();
-                    columns.push(record_batch.column(2).clone());
+                    let batch = self.batches[field_index].as_ref().unwrap();
+                    columns.push(batch.column(2).clone());
                     field_index += 1;
                 }
-                SortedJoinElement::Tag => {
+                SortedJoinColumnType::Tag => {
                     let tags = Arc::new(tag_columns[tag_index].finish());
                     columns.push(tags);
                     tag_index += 1;
@@ -312,9 +311,9 @@ impl SortedJoinStream {
             }
         }
 
-        // unwrap() is safe as SortedJoinStream has constructed columns to match the schema.
-        let record_batch = RecordBatch::try_new(self.schema.clone(), columns).unwrap();
-        Poll::Ready(Some(Ok(record_batch)))
+        // unwrap() is safe as SortedJoinStream has ordered columns to match the schema.
+        let batch = RecordBatch::try_new(self.schema.clone(), columns).unwrap();
+        Poll::Ready(Some(Ok(batch)))
     }
 }
 

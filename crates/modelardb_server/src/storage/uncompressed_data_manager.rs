@@ -138,13 +138,13 @@ impl UncompressedDataManager {
     pub(super) async fn insert_data_points(
         &mut self,
         metadata_manager: &mut MetadataManager,
-        model_table: &ModelTableMetadata,
+        model_table_metadata: &ModelTableMetadata,
         data_points: &RecordBatch,
     ) -> Result<Vec<(u64, RecordBatch)>, String> {
         debug!(
             "Received record batch with {} data points for the table '{}'.",
             data_points.num_rows(),
-            model_table.name
+            model_table_metadata.name
         );
 
         // Record the amount of ingested data points.
@@ -152,7 +152,7 @@ impl UncompressedDataManager {
             .append(data_points.num_rows() as isize, false);
 
         // Prepare the timestamp column for iteration.
-        let timestamp_index = model_table.timestamp_column_index;
+        let timestamp_index = model_table_metadata.timestamp_column_index;
         let timestamps: &TimestampArray = data_points
             .column(timestamp_index)
             .as_any()
@@ -160,7 +160,7 @@ impl UncompressedDataManager {
             .unwrap();
 
         // Prepare the tag columns for iteration.
-        let tag_column_arrays: Vec<&StringArray> = model_table
+        let tag_column_arrays: Vec<&StringArray> = model_table_metadata
             .tag_column_indices
             .iter()
             .map(|index| data_points.column(*index).as_any().downcast_ref().unwrap())
@@ -168,17 +168,20 @@ impl UncompressedDataManager {
 
         // Prepare the field columns for iteration. The column index is saved with the corresponding
         // array.
-        let field_column_arrays: Vec<(usize, &ValueArray)> = model_table
+        let field_column_arrays: Vec<(usize, &ValueArray)> = model_table_metadata
             .schema
             .fields()
             .iter()
             .filter_map(|field| {
-                let index = model_table.schema.index_of(field.name().as_str()).unwrap();
+                let index = model_table_metadata
+                    .schema
+                    .index_of(field.name().as_str())
+                    .unwrap();
 
                 // Field columns are the columns that are not the timestamp column or one of the tag
                 // columns.
-                let not_timestamp_column = index != model_table.timestamp_column_index;
-                let not_tag_column = !model_table.tag_column_indices.contains(&index);
+                let not_timestamp_column = index != model_table_metadata.timestamp_column_index;
+                let not_tag_column = !model_table_metadata.tag_column_indices.contains(&index);
 
                 if not_timestamp_column && not_tag_column {
                     Some((
@@ -202,7 +205,7 @@ impl UncompressedDataManager {
                 .collect();
 
             let tag_hash = metadata_manager
-                .lookup_or_compute_tag_hash(model_table, &tag_values)
+                .lookup_or_compute_tag_hash(model_table_metadata, &tag_values)
                 .map_err(|error| format!("Tag hash could not be saved: {error}"))?;
 
             // For each field column, generate the 64-bit univariate id, and append the current
@@ -210,7 +213,7 @@ impl UncompressedDataManager {
             for (field_index, field_column_array) in &field_column_arrays {
                 let univariate_id = tag_hash | *field_index as u64;
                 let value = field_column_array.value(index);
-                let error_bound = model_table.error_bounds[*field_index];
+                let error_bound = model_table_metadata.error_bounds[*field_index];
 
                 // TODO: When the compression component is changed, just insert the data points.
                 // unwrap() is safe to use since the timestamps array cannot contain null values.
@@ -591,15 +594,15 @@ mod tests {
         let timestamps: Vec<Timestamp> = (0..row_count).map(|ts| ts as Timestamp).collect();
         let values: Vec<Value> = (0..row_count).map(|value| value as Value).collect();
 
-        let schema = Schema::new(vec![
+        let query_schema = Arc::new(Schema::new(vec![
             Field::new("tag", DataType::Utf8, false),
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
             Field::new("value_1", ArrowValue::DATA_TYPE, false),
             Field::new("value_2", ArrowValue::DATA_TYPE, false),
-        ]);
+        ]));
 
         let data = RecordBatch::try_new(
-            Arc::new(schema.clone()),
+            query_schema.clone(),
             vec![
                 Arc::new(StringArray::from(tags)),
                 Arc::new(TimestampArray::from(timestamps)),
@@ -616,9 +619,15 @@ mod tests {
             ErrorBound::try_new(0.0).unwrap(),
         ];
 
-        let model_table_metadata =
-            ModelTableMetadata::try_new("model_table".to_owned(), schema, 1, vec![0], error_bounds)
-                .unwrap();
+        let generated_columns = vec![None, None, None, None];
+
+        let model_table_metadata = ModelTableMetadata::try_new(
+            "model_table".to_owned(),
+            query_schema,
+            error_bounds,
+            generated_columns,
+        )
+        .unwrap();
 
         (model_table_metadata, data)
     }
@@ -964,11 +973,11 @@ mod tests {
         let mut metadata_manager = test_util::test_metadata_manager(path);
 
         // Ensure the expected metadata is available through the metadata manager.
-        let schema = Schema::new(vec![
+        let query_schema = Arc::new(Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
             Field::new("field", ArrowValue::DATA_TYPE, false),
             Field::new("tag", DataType::Utf8, false),
-        ]);
+        ]));
 
         let error_bounds = vec![
             ErrorBound::try_new(0.0).unwrap(),
@@ -976,9 +985,15 @@ mod tests {
             ErrorBound::try_new(0.0).unwrap(),
         ];
 
-        let model_table =
-            ModelTableMetadata::try_new("Table".to_owned(), schema, 0, vec![2], error_bounds)
-                .unwrap();
+        let generated_columns = vec![None, None, None];
+
+        let model_table = ModelTableMetadata::try_new(
+            "Table".to_owned(),
+            query_schema,
+            error_bounds,
+            generated_columns,
+        )
+        .unwrap();
 
         metadata_manager
             .save_model_table_metadata(&model_table)

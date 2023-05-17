@@ -62,7 +62,7 @@ use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::{validate_remote_data_folder, Context, ServerMode, RemoteDataFolderType};
+use crate::{validate_remote_data_folder, Context, RemoteDataFolderType, ServerMode};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.
@@ -664,7 +664,7 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             // Perform semantic checks to ensure the parsed SQL is supported.
-            let valid_statement = parser::semantic_checks_for_create_table(&statement)
+            let valid_statement = parser::semantic_checks_for_create_table(statement)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
             // Create the table or model table if it does not already exists.

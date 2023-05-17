@@ -289,7 +289,11 @@ fn execute_command(
                     .into_inner();
                 let schema = convert::try_schema_from_ipc_buffer(&schema_result.schema)?;
                 for field in schema.fields() {
-                    println!("{}: {}", field.name(), field.data_type());
+                    print!("{}: {}", field.name(), field.data_type());
+                    for (metadata_name, metadata_value) in field.metadata() {
+                        print!(", {} {}", metadata_name, metadata_value);
+                    }
+                    println!();
                 }
                 Ok(())
             })

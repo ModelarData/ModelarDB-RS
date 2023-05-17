@@ -26,8 +26,7 @@ use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::utils;
-use arrow_flight::{Action, Criteria, FlightData, FlightDescriptor};
+use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket};
 use bytes::Bytes;
 use datafusion::arrow::array::{Float32Array, StringArray, TimestampMillisecondArray};
 use datafusion::arrow::compute;
@@ -41,120 +40,362 @@ use sysinfo::{Pid, PidExt, System, SystemExt};
 
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
-use tonic::Request;
+use tonic::{Request, Response, Status, Streaming};
+
+const TABLE_NAME: &str = "table_name";
+const HOST: &str = "127.0.0.1";
+const PORT: u16 = 9999;
 
 /// The different types of tables used in the integration tests.
 enum TableType {
     NormalTable,
     ModelTable,
     ModelTableNoTag,
+    ModelTableAsField,
 }
 
-const TABLE_NAME: &str = "table_name";
-const HOST: &str = "127.0.0.1";
-const PORT: u16 = 9999;
+/// Async runtime, handler to the server process, and client for use by the tests. It implements
+/// `drop()` so the resources it manages is released no matter if a test succeeds, fails, or panics.
+struct TestContext {
+    runtime: Runtime,
+    server: Child,
+    client: FlightServiceClient<Channel>,
+}
+
+impl TestContext {
+    /// Create a [`Runtime`] and execute the binary with the server.
+    fn new(path: &Path) -> Self {
+        let runtime = Runtime::new().unwrap();
+
+        // The server's stdout and stderr is piped to /dev/null so the log messages and expected
+        // errors are not printed when all of the tests are run using the "cargo test" command.
+        let server = TestContext::create_command("modelardbd")
+            .arg(path)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+
+        // The thread needs to sleep to ensure that the server has properly started before sending
+        // streams to it.
+        thread::sleep(Duration::from_secs(5));
+
+        let client =
+            TestContext::create_apache_arrow_flight_service_client(&runtime, HOST, PORT).unwrap();
+
+        TestContext {
+            runtime,
+            server,
+            client,
+        }
+    }
+
+    /// Return a [`Command`] that can run the executable `binary`.
+    fn create_command(binary: &str) -> Command {
+        // Create path to binary.
+        let mut path = TestContext::binary_directory();
+        path.push(binary);
+        path.set_extension(consts::EXE_EXTENSION);
+
+        assert!(path.exists());
+
+        // Create command process.
+        Command::new(path.into_os_string())
+    }
+
+    /// Return the path to the directory containing the binary with the integration tests.
+    fn binary_directory() -> PathBuf {
+        let current_executable = env::current_exe().unwrap();
+
+        let parent_directory = current_executable.parent().unwrap();
+
+        let binary_directory = parent_directory.parent().unwrap();
+
+        binary_directory.to_owned()
+    }
+
+    /// Return a Apache Arrow Flight client to access the remote methods provided by the server.
+    fn create_apache_arrow_flight_service_client(
+        runtime: &Runtime,
+        host: &str,
+        port: u16,
+    ) -> Result<FlightServiceClient<Channel>, Box<dyn Error>> {
+        let address = format!("grpc://{host}:{port}");
+
+        runtime.block_on(async {
+            let client = FlightServiceClient::connect(address).await?;
+            Ok(client)
+        })
+    }
+
+    /// Create a normal table or model table with or without tags in the server through the
+    /// `do_action()` method and the `CommandStatementUpdate` action.
+    fn create_table(&mut self, table_name: &str, table_type: TableType) {
+        let cmd = match table_type {
+            TableType::NormalTable => {
+                format!("CREATE TABLE {table_name}(timestamp TIMESTAMP, value REAL, metadata REAL)")
+            }
+            TableType::ModelTable => {
+                format!(
+                "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD(0.0), tag TAG)"
+            )
+            }
+            TableType::ModelTableNoTag => {
+                format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD)")
+            }
+            TableType::ModelTableAsField => {
+                format!(
+                    "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
+                 generated FIELD AS CAST(COS(CAST(value AS DOUBLE) * PI() / 180.0) AS REAL),
+                 value FIELD(0.0))"
+                )
+            }
+        };
+
+        let action = Action {
+            r#type: "CommandStatementUpdate".to_owned(),
+            body: cmd.into(),
+        };
+
+        self.runtime.block_on(async {
+            self.client.do_action(Request::new(action)).await.unwrap();
+        })
+    }
+
+    /// Return a [`RecordBatch`] containing a data point with the current time, a random value and an
+    /// optional tag.
+    fn generate_random_data_point(tag: Option<&str>) -> RecordBatch {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_micros() as i64;
+
+        let value = (timestamp % 100) as f32;
+
+        let mut fields = vec![
+            Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
+            Field::new("value", DataType::Float32, false),
+        ];
+
+        if let Some(tag) = tag {
+            fields.push(Field::new("tag", DataType::Utf8, false));
+            let data_point_schema = Schema::new(fields);
+            RecordBatch::try_new(
+                Arc::new(data_point_schema),
+                vec![
+                    Arc::new(TimestampMillisecondArray::from(vec![timestamp])),
+                    Arc::new(Float32Array::from(vec![value])),
+                    Arc::new(StringArray::from(vec![tag])),
+                ],
+            )
+            .unwrap()
+        } else {
+            let data_point_schema = Schema::new(fields);
+            RecordBatch::try_new(
+                Arc::new(data_point_schema),
+                vec![
+                    Arc::new(TimestampMillisecondArray::from(vec![timestamp])),
+                    Arc::new(Float32Array::from(vec![value])),
+                ],
+            )
+            .unwrap()
+        }
+    }
+
+    /// Create and return [`FlightData`] based on the `data_points` to be inserted into `table_name`.
+    fn create_flight_data_from_data_points(
+        table_name: String,
+        data_points: &[RecordBatch],
+    ) -> Vec<FlightData> {
+        let flight_descriptor = FlightDescriptor::new_path(vec![table_name]);
+
+        let mut flight_data = vec![FlightData {
+            flight_descriptor: Some(flight_descriptor),
+            data_header: Bytes::new(),
+            app_metadata: Bytes::new(),
+            data_body: Bytes::new(),
+        }];
+
+        let data_generator = IpcDataGenerator::default();
+        let writer_options = IpcWriteOptions::default();
+        let mut dictionary_tracker = DictionaryTracker::new(false);
+
+        for data_point in data_points {
+            let (_encoded_dictionaries, encoded_batch) = data_generator
+                .encoded_batch(data_point, &mut dictionary_tracker, &writer_options)
+                .unwrap();
+            flight_data.push(encoded_batch.into());
+        }
+
+        flight_data
+    }
+
+    /// Send data points to the server through the `do_put()` method.
+    fn send_data_points_to_server(
+        &mut self,
+        flight_data: Vec<FlightData>,
+    ) -> Result<Response<Streaming<PutResult>>, Status> {
+        self.runtime.block_on(async {
+            let flight_data_stream = stream::iter(flight_data);
+            self.client.do_put(flight_data_stream).await
+        })
+    }
+
+    /// Flush the data in the StorageEngine to disk through the `do_action()` method.
+    fn flush_data_to_disk(&mut self) {
+        let action = Action {
+            r#type: "FlushMemory".to_owned(),
+            body: Bytes::new(),
+        };
+
+        self.runtime.block_on(async {
+            self.client.do_action(Request::new(action)).await.unwrap();
+        })
+    }
+
+    /// Execute a query against the server through the `do_get()` method and return it.
+    fn execute_query(&mut self, query: String) -> Result<Vec<RecordBatch>, Box<dyn Error>> {
+        self.runtime.block_on(async {
+            // Execute query.
+            let ticket = Ticket {
+                ticket: query.into(),
+            };
+            let mut stream = self.client.do_get(ticket).await?.into_inner();
+
+            // Get schema of result set.
+            let flight_data = stream.message().await?.ok_or("No data_points received.")?;
+            let schema = Arc::new(Schema::try_from(&flight_data)?);
+
+            // Get data in result set.
+            let mut results = vec![];
+            while let Some(flight_data) = stream.message().await? {
+                let dictionaries_by_id = HashMap::new();
+                let record_batch = utils::flight_data_to_arrow_batch(
+                    &flight_data,
+                    schema.clone(),
+                    &dictionaries_by_id,
+                )?;
+                results.push(record_batch);
+            }
+            Ok(results)
+        })
+    }
+
+    /// Retrieve the table names currently in the server and return them.
+    fn retrieve_all_table_names(&mut self) -> Result<Vec<String>, Box<dyn Error>> {
+        let criteria = Criteria {
+            expression: Bytes::new(),
+        };
+        let request = Request::new(criteria);
+
+        self.runtime.block_on(async {
+            let mut stream = self.client.list_flights(request).await?.into_inner();
+            let flights = stream.message().await?.ok_or("No data_points received.")?;
+
+            let mut table_names = vec![];
+            if let Some(fd) = flights.flight_descriptor {
+                for table in fd.path {
+                    table_names.push(table);
+                }
+            }
+            Ok(table_names)
+        })
+    }
+
+    /// Retrieve the schema of a table in the server and return it.
+    fn retrieve_schema(&mut self, table_name: &str) -> Schema {
+        self.runtime.block_on(async {
+            let schema_result = self
+                .client
+                .get_schema(Request::new(FlightDescriptor::new_path(vec![
+                    table_name.to_owned()
+                ])))
+                .await
+                .unwrap()
+                .into_inner();
+
+            convert::try_schema_from_ipc_buffer(&schema_result.schema).unwrap()
+        })
+    }
+}
+
+impl Drop for TestContext {
+    /// Kill the server process when [`TestContext`] is dropped.
+    fn drop(&mut self) {
+        let mut system = System::new_all();
+
+        while let Some(_process) = system.process(Pid::from_u32(self.server.id())) {
+            system.refresh_all();
+
+            // Microsoft Windows often fail to kill the process and then succeed afterwards.
+            let mut attempts = 10;
+            while self.server.kill().is_err() && attempts > 0 {
+                thread::sleep(Duration::from_secs(5));
+                attempts -= 1;
+            }
+            self.server.wait().unwrap();
+
+            system.refresh_all();
+        }
+    }
+}
 
 #[test]
 #[serial]
 fn test_can_create_table() {
-    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut test_context = TestContext::new(temp_dir.path());
 
-    let runtime = Runtime::new().expect("Unable to initialize runtime.");
-    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Could not connect to flight service client.");
+    test_context.create_table(TABLE_NAME, TableType::NormalTable);
 
-    create_table(
-        &runtime,
-        &mut flight_service_client,
-        TABLE_NAME,
-        TableType::NormalTable,
-    );
-
-    let retrieved_table_names = retrieve_all_table_names(&runtime, &mut flight_service_client)
-        .expect("Could not retrieve table names.");
+    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
 
     assert_eq!(retrieved_table_names.len(), 1);
     assert_eq!(retrieved_table_names[0], TABLE_NAME);
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_create_model_table() {
-    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut test_context = TestContext::new(temp_dir.path());
 
-    let runtime = Runtime::new().expect("Unable to initialize runtime.");
-    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Could not connect to flight service client.");
+    test_context.create_table(TABLE_NAME, TableType::ModelTable);
 
-    create_table(
-        &runtime,
-        &mut flight_service_client,
-        TABLE_NAME,
-        TableType::ModelTable,
-    );
-
-    let retrieved_table_names = retrieve_all_table_names(&runtime, &mut flight_service_client)
-        .expect("Could not retrieve tables.");
+    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
 
     assert_eq!(retrieved_table_names.len(), 1);
     assert_eq!(retrieved_table_names[0], TABLE_NAME);
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_create_and_list_multiple_model_tables() {
-    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
-
-    let runtime = Runtime::new().expect("Unable to initialize runtime.");
-    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Could not connect to flight service client.");
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut test_context = TestContext::new(temp_dir.path());
 
     let table_names = vec!["data1", "data2", "data3", "data4", "data5"];
     for table_name in &table_names {
-        create_table(
-            &runtime,
-            &mut flight_service_client,
-            table_name,
-            TableType::ModelTable,
-        );
+        test_context.create_table(table_name, TableType::ModelTable);
     }
 
-    let retrieved_table_names = retrieve_all_table_names(&runtime, &mut flight_service_client)
-        .expect("Could not retrieve tables.");
+    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
 
     assert_eq!(retrieved_table_names.len(), table_names.len());
     for table_name in table_names {
         assert!(retrieved_table_names.contains(&table_name.to_owned()))
     }
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_get_schema() {
-    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut test_context = TestContext::new(temp_dir.path());
 
-    let runtime = Runtime::new().expect("Unable to initialize runtime.");
-    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Could not connect to flight service client.");
+    test_context.create_table(TABLE_NAME, TableType::ModelTable);
 
-    create_table(
-        &runtime,
-        &mut flight_service_client,
-        TABLE_NAME,
-        TableType::ModelTable,
-    );
-
-    let schema = retrieve_schema(&runtime, &mut flight_service_client, TABLE_NAME);
+    let schema = test_context.retrieve_schema(TABLE_NAME);
 
     assert_eq!(
         schema,
@@ -164,27 +405,22 @@ fn test_can_get_schema() {
             Field::new("tag", DataType::Utf8, false)
         ])
     );
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_list_actions() {
-    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut test_context = TestContext::new(temp_dir.path());
 
-    let runtime = Runtime::new().expect("Unable to initialize runtime.");
-    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Could not connect to flight service client.");
-
-    let mut actions = runtime.block_on(async {
-        flight_service_client
+    let mut actions = test_context.runtime.block_on(async {
+        test_context
+            .client
             .list_actions(Request::new(arrow_flight::Empty {}))
             .await
-            .expect("Could not retrieve actions.")
+            .unwrap()
             .into_inner()
-            .map(|action| action.expect("Could not retrieve action.").r#type)
+            .map(|action| action.unwrap().r#type)
             .collect::<Vec<String>>()
             .await
     });
@@ -203,536 +439,200 @@ fn test_can_list_actions() {
             "UpdateRemoteObjectStore",
         ]
     );
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_collect_metrics() {
-    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut test_context = TestContext::new(temp_dir.path());
 
-    let runtime = Runtime::new().expect("Unable to initialize runtime.");
-    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Could not connect to flight service client.");
-
-    let metrics = runtime.block_on(async {
-        flight_service_client
+    let metrics = test_context.runtime.block_on(async {
+        test_context
+            .client
             .do_action(Request::new(Action {
                 r#type: "CollectMetrics".to_owned(),
                 body: Bytes::new(),
             }))
             .await
-            .expect("Could not collect metrics.")
+            .unwrap()
             .into_inner()
-            .map(|metric| metric.expect("Could not collect metric.").body)
+            .map(|metric| metric.unwrap().body)
             .collect::<Vec<Bytes>>()
             .await
     });
 
     assert!(!metrics.is_empty());
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_ingest_data_point_with_tags() {
-    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut test_context = TestContext::new(temp_dir.path());
 
-    let runtime = Runtime::new().expect("Unable to initialize runtime.");
-    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Could not connect to flight service client.");
-
-    let data_point = generate_random_data_point(Some("location"));
-    let flight_data = create_flight_data_from_data_points(&[data_point.clone()]);
-
-    create_table(
-        &runtime,
-        &mut flight_service_client,
-        TABLE_NAME,
-        TableType::ModelTable,
+    let data_point = TestContext::generate_random_data_point(Some("location"));
+    let flight_data = TestContext::create_flight_data_from_data_points(
+        TABLE_NAME.to_owned(),
+        &[data_point.clone()],
     );
 
-    send_data_points_to_apache_arrow_flight_server(
-        &runtime,
-        &mut flight_service_client,
-        flight_data,
-    );
+    test_context.create_table(TABLE_NAME, TableType::ModelTable);
 
-    flush_data_to_disk(&runtime, &mut flight_service_client);
+    test_context
+        .send_data_points_to_server(flight_data)
+        .unwrap();
 
-    let query = execute_query(
-        &runtime,
-        &mut flight_service_client,
-        format!("SELECT * FROM {TABLE_NAME}"),
-    )
-    .expect("Could not execute query.");
+    test_context.flush_data_to_disk();
+
+    let query = test_context
+        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .unwrap();
 
     assert_eq!(data_point, query[0]);
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_can_ingest_data_point_without_tags() {
-    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut test_context = TestContext::new(temp_dir.path());
 
-    let runtime = Runtime::new().expect("Unable to initialize runtime.");
-    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Could not connect to flight service client.");
-
-    let data_point = generate_random_data_point(None);
-    let flight_data = create_flight_data_from_data_points(&[data_point.clone()]);
-
-    create_table(
-        &runtime,
-        &mut flight_service_client,
-        TABLE_NAME,
-        TableType::ModelTableNoTag,
+    let data_point = TestContext::generate_random_data_point(None);
+    let flight_data = TestContext::create_flight_data_from_data_points(
+        TABLE_NAME.to_owned(),
+        &[data_point.clone()],
     );
 
-    send_data_points_to_apache_arrow_flight_server(
-        &runtime,
-        &mut flight_service_client,
-        flight_data,
-    );
+    test_context.create_table(TABLE_NAME, TableType::ModelTableNoTag);
 
-    flush_data_to_disk(&runtime, &mut flight_service_client);
+    test_context
+        .send_data_points_to_server(flight_data)
+        .unwrap();
 
-    let query = execute_query(
-        &runtime,
-        &mut flight_service_client,
-        format!("SELECT * FROM {TABLE_NAME}"),
-    )
-    .expect("Could not execute query.");
+    test_context.flush_data_to_disk();
+
+    let query = test_context
+        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .unwrap();
 
     assert_eq!(data_point, query[0]);
+}
 
-    stop_modelardbd(flight_server);
+#[test]
+#[serial]
+fn test_can_ingest_data_point_with_generated_field() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut test_context = TestContext::new(temp_dir.path());
+
+    let data_point = TestContext::generate_random_data_point(None);
+    let flight_data = TestContext::create_flight_data_from_data_points(
+        TABLE_NAME.to_owned(),
+        &[data_point.clone()],
+    );
+
+    test_context.create_table(TABLE_NAME, TableType::ModelTableAsField);
+
+    test_context
+        .send_data_points_to_server(flight_data)
+        .unwrap();
+
+    test_context.flush_data_to_disk();
+
+    let query = test_context
+        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .unwrap();
+
+    // Column two in the query is the generated column which does not exist in data point.
+    assert_eq!(data_point.num_columns(), 2);
+    assert_eq!(query[0].num_columns(), 3);
+    assert_eq!(data_point.column(0), query[0].column(0));
+    assert_eq!(data_point.column(1), query[0].column(2));
 }
 
 #[test]
 #[serial]
 fn test_can_ingest_multiple_time_series_with_different_tags() {
-    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
-
-    let runtime = Runtime::new().expect("Unable to initialize runtime.");
-    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Could not connect to flight service client.");
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut test_context = TestContext::new(temp_dir.path());
 
     let data_points: Vec<RecordBatch> = (1..5)
-        .map(|i| generate_random_data_point(Some(&format!("location{i}"))))
+        .map(|i| TestContext::generate_random_data_point(Some(&format!("location{i}"))))
         .collect();
-    let flight_data = create_flight_data_from_data_points(&data_points);
+    let flight_data =
+        TestContext::create_flight_data_from_data_points(TABLE_NAME.to_owned(), &data_points);
 
-    create_table(
-        &runtime,
-        &mut flight_service_client,
-        TABLE_NAME,
-        TableType::ModelTable,
-    );
+    test_context.create_table(TABLE_NAME, TableType::ModelTable);
 
-    send_data_points_to_apache_arrow_flight_server(
-        &runtime,
-        &mut flight_service_client,
-        flight_data,
-    );
+    test_context
+        .send_data_points_to_server(flight_data)
+        .unwrap();
 
-    flush_data_to_disk(&runtime, &mut flight_service_client);
+    test_context.flush_data_to_disk();
 
-    let query = execute_query(
-        &runtime,
-        &mut flight_service_client,
-        format!("SELECT * FROM {TABLE_NAME} ORDER BY timestamp"),
-    )
-    .expect("Could not execute query.");
+    let query = test_context
+        .execute_query(format!("SELECT * FROM {TABLE_NAME} ORDER BY timestamp"))
+        .unwrap();
 
     let combined = compute::concat_batches(&data_points[0].schema(), &data_points).unwrap();
     assert_eq!(combined, query[0]);
-
-    stop_modelardbd(flight_server);
 }
 
 #[test]
 #[serial]
 fn test_cannot_ingest_invalid_data_point() {
-    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut test_context = TestContext::new(temp_dir.path());
 
-    let runtime = Runtime::new().expect("Unable to initialize runtime.");
-    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Could not connect to flight service client.");
+    let data_point = TestContext::generate_random_data_point(None);
+    let flight_data =
+        TestContext::create_flight_data_from_data_points(TABLE_NAME.to_owned(), &[data_point]);
 
-    let data_point = generate_random_data_point(None);
-    let flight_data = create_flight_data_from_data_points(&[data_point]);
+    test_context.create_table(TABLE_NAME, TableType::ModelTable);
 
-    create_table(
-        &runtime,
-        &mut flight_service_client,
-        TABLE_NAME,
-        TableType::ModelTable,
-    );
+    assert!(test_context
+        .send_data_points_to_server(flight_data)
+        .is_err());
 
-    send_data_points_to_apache_arrow_flight_server(
-        &runtime,
-        &mut flight_service_client,
-        flight_data,
-    );
+    test_context.flush_data_to_disk();
 
-    flush_data_to_disk(&runtime, &mut flight_service_client);
-
-    let query = execute_query(
-        &runtime,
-        &mut flight_service_client,
-        format!("SELECT * FROM {TABLE_NAME}"),
-    )
-    .expect("Could not execute query.");
+    let query = test_context
+        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .unwrap();
     assert!(query.is_empty());
-
-    stop_modelardbd(flight_server)
 }
 
 #[test]
 #[serial]
 fn test_optimized_query_results_equals_non_optimized_query_results() {
-    let temp_dir = tempfile::tempdir().expect("Could not create a directory.");
-    let flight_server = start_modelardbd(temp_dir.path());
-
-    let runtime = Runtime::new().expect("Unable to initialize runtime.");
-    let mut flight_service_client = create_apache_arrow_flight_service_client(&runtime, HOST, PORT)
-        .expect("Could not connect to flight service client.");
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut test_context = TestContext::new(temp_dir.path());
 
     let mut data_points = vec![];
     for i in 1..5 {
-        let batch = generate_random_data_point(Some(&format!("location{i}")));
+        let batch = TestContext::generate_random_data_point(Some(&format!("location{i}")));
 
         data_points.push(batch);
     }
-    let flight_data = create_flight_data_from_data_points(&data_points);
+    let flight_data =
+        TestContext::create_flight_data_from_data_points(TABLE_NAME.to_owned(), &data_points);
 
-    create_table(
-        &runtime,
-        &mut flight_service_client,
-        TABLE_NAME,
-        TableType::ModelTable,
-    );
+    test_context.create_table(TABLE_NAME, TableType::ModelTable);
 
-    send_data_points_to_apache_arrow_flight_server(
-        &runtime,
-        &mut flight_service_client,
-        flight_data,
-    );
+    test_context
+        .send_data_points_to_server(flight_data)
+        .unwrap();
 
-    flush_data_to_disk(&runtime, &mut flight_service_client);
+    test_context.flush_data_to_disk();
 
-    let optimized_query = execute_query(
-        &runtime,
-        &mut flight_service_client,
-        format!("SELECT MIN(value) FROM {TABLE_NAME}"),
-    )
-    .expect("Could not execute query.");
+    let optimized_query = test_context
+        .execute_query(format!("SELECT MIN(value) FROM {TABLE_NAME}"))
+        .unwrap();
 
     // The trivial filter ensures the query is rewritten by the optimizer.
-    let non_optimized_query = execute_query(
-        &runtime,
-        &mut flight_service_client,
-        format!("SELECT MIN(value) FROM {TABLE_NAME} WHERE 1=1"),
-    )
-    .expect("Could not execute query.");
+    let non_optimized_query = test_context
+        .execute_query(format!("SELECT MIN(value) FROM {TABLE_NAME} WHERE 1=1"))
+        .unwrap();
 
     assert_eq!(optimized_query, non_optimized_query);
-
-    stop_modelardbd(flight_server);
-}
-
-/// Return the path to the directory containing the binary with the integration tests.
-fn binary_directory() -> PathBuf {
-    let current_executable = env::current_exe().expect("Failed to get the path of the binary.");
-
-    let parent_directory = current_executable
-        .parent()
-        .expect("Failed to get the parent directory.");
-
-    let binary_directory = parent_directory
-        .parent()
-        .expect("Failed to get the directory of the binary.");
-
-    binary_directory.to_owned()
-}
-
-/// Execute the binary with the integration tests and return a handle to the process.
-fn start_binary(binary: &str) -> Command {
-    // Create path to binary.
-    let mut path = binary_directory();
-    path.push(binary);
-    path.set_extension(consts::EXE_EXTENSION);
-
-    assert!(path.exists());
-
-    // Create command process.
-    Command::new(path.into_os_string())
-}
-
-/// Execute the binary with the server and return a handle to the process.
-fn start_modelardbd(path: &Path) -> Child {
-    // Spawn the Apache Arrow Flight Server. stdout is piped to /dev/null so the logged data_points
-    // are not printed when the unit tests and the integration tests are run using "cargo test".
-    // stderr is piped to /dev/null so the server does not print the panic that occurs during
-    // test_cannot_ingest_invalid_data_point. This panic occurs because the
-    // flight_data_to_arrow_batch utility used on the server cannot convert the FlightData to a
-    // RecordBatch using the server-local table schema.
-    let process = start_binary("modelardbd")
-        .arg(path)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("Failed to start Apache Arrow Flight Server");
-
-    // The thread needs to sleep to ensure that the server has properly started before sending
-    // streams to it.
-    thread::sleep(Duration::from_secs(5));
-
-    process
-}
-
-/// Return a new Apache Arrow Flight client to access the remote methods provided by the server over
-/// gRPC.
-fn create_apache_arrow_flight_service_client(
-    runtime: &Runtime,
-    host: &str,
-    port: u16,
-) -> Result<FlightServiceClient<Channel>, Box<dyn Error>> {
-    let address = format!("grpc://{host}:{port}");
-
-    runtime.block_on(async {
-        let flight_service_client = FlightServiceClient::connect(address).await?;
-        Ok(flight_service_client)
-    })
-}
-
-/// Create a normal table or model table with or without tags in the server through the
-/// `do_action()` method and the `CommandStatementUpdate` action.
-fn create_table(
-    runtime: &Runtime,
-    client: &mut FlightServiceClient<Channel>,
-    table_name: &str,
-    table_type: TableType,
-) {
-    let cmd = match table_type {
-        TableType::NormalTable => {
-            format!("CREATE TABLE {table_name}(timestamp TIMESTAMP, value REAL, metadata REAL)")
-        }
-        TableType::ModelTable => {
-            format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD, tag TAG)")
-        }
-        TableType::ModelTableNoTag => {
-            format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD)")
-        }
-    };
-
-    let action = Action {
-        r#type: "CommandStatementUpdate".to_owned(),
-        body: cmd.into(),
-    };
-
-    runtime.block_on(async {
-        client
-            .do_action(Request::new(action))
-            .await
-            .expect("Could not create table.");
-    })
-}
-
-/// Return a [`RecordBatch`] containing a data point with the current time, a random value and an
-/// optional tag.
-fn generate_random_data_point(tag: Option<&str>) -> RecordBatch {
-    let timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("Could not generate the time.")
-        .as_micros() as i64;
-
-    let value = (timestamp % 100) as f32;
-
-    let mut fields = vec![
-        Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
-        Field::new("value", DataType::Float32, false),
-    ];
-
-    if let Some(tag) = tag {
-        fields.push(Field::new("tag", DataType::Utf8, false));
-        let data_point_schema = Schema::new(fields);
-        RecordBatch::try_new(
-            Arc::new(data_point_schema),
-            vec![
-                Arc::new(TimestampMillisecondArray::from(vec![timestamp])),
-                Arc::new(Float32Array::from(vec![value])),
-                Arc::new(StringArray::from(vec![tag])),
-            ],
-        )
-        .expect("Could not generate RecordBatch.")
-    } else {
-        let data_point_schema = Schema::new(fields);
-        RecordBatch::try_new(
-            Arc::new(data_point_schema),
-            vec![
-                Arc::new(TimestampMillisecondArray::from(vec![timestamp])),
-                Arc::new(Float32Array::from(vec![value])),
-            ],
-        )
-        .expect("Could not generate RecordBatch.")
-    }
-}
-
-/// Create and return [`FlightData`] based on the data_points inserted.
-fn create_flight_data_from_data_points(data_points: &[RecordBatch]) -> Vec<FlightData> {
-    let flight_descriptor = FlightDescriptor::new_path(vec![TABLE_NAME.to_owned()]);
-
-    let mut flight_data = vec![FlightData {
-        flight_descriptor: Some(flight_descriptor),
-        data_header: Bytes::new(),
-        app_metadata: Bytes::new(),
-        data_body: Bytes::new(),
-    }];
-
-    let data_generator = IpcDataGenerator::default();
-    let writer_options = IpcWriteOptions::default();
-    let mut dictionary_tracker = DictionaryTracker::new(false);
-
-    for data_point in data_points {
-        let (_encoded_dictionaries, encoded_batch) = data_generator
-            .encoded_batch(data_point, &mut dictionary_tracker, &writer_options)
-            .unwrap();
-        flight_data.push(encoded_batch.into());
-    }
-
-    flight_data
-}
-
-/// Send data points to the server through the `do_put()` method.
-fn send_data_points_to_apache_arrow_flight_server(
-    runtime: &Runtime,
-    client: &mut FlightServiceClient<Channel>,
-    flight_data: Vec<FlightData>,
-) {
-    runtime.block_on(async {
-        let flight_data_stream = stream::iter(flight_data);
-
-        let _ = client.do_put(flight_data_stream).await;
-    });
-}
-
-/// Flush the data in the StorageEngine to disk through the `do_action()` method.
-fn flush_data_to_disk(runtime: &Runtime, flight_service_client: &mut FlightServiceClient<Channel>) {
-    let action = Action {
-        r#type: "FlushMemory".to_owned(),
-        body: Bytes::new(),
-    };
-
-    runtime.block_on(async {
-        flight_service_client
-            .do_action(Request::new(action))
-            .await
-            .expect("Could not flush data.");
-    })
-}
-
-/// Execute a query against the server through the `do_get()` method and return it.
-fn execute_query(
-    runtime: &Runtime,
-    flight_service_client: &mut FlightServiceClient<Channel>,
-    query: String,
-) -> Result<Vec<RecordBatch>, Box<dyn Error>> {
-    runtime.block_on(async {
-        // Execute query.
-        let ticket = arrow_flight::Ticket {
-            ticket: query.into(),
-        };
-        let mut stream = flight_service_client.do_get(ticket).await?.into_inner();
-
-        // Get schema of result set.
-        let flight_data = stream.message().await?.ok_or("No data_points received.")?;
-        let schema = Arc::new(Schema::try_from(&flight_data)?);
-
-        // Get data in result set.
-        let mut results = vec![];
-        while let Some(flight_data) = stream.message().await? {
-            let dictionaries_by_id = HashMap::new();
-            let record_batch = utils::flight_data_to_arrow_batch(
-                &flight_data,
-                schema.clone(),
-                &dictionaries_by_id,
-            )?;
-            results.push(record_batch);
-        }
-        Ok(results)
-    })
-}
-
-/// Retrieve the table names currently in the server and return them.
-fn retrieve_all_table_names(
-    runtime: &Runtime,
-    flight_service_client: &mut FlightServiceClient<Channel>,
-) -> Result<Vec<String>, Box<dyn Error>> {
-    let criteria = Criteria {
-        expression: Bytes::new(),
-    };
-    let request = Request::new(criteria);
-
-    runtime.block_on(async {
-        let mut stream = flight_service_client
-            .list_flights(request)
-            .await?
-            .into_inner();
-        let flights = stream.message().await?.ok_or("No data_points received.")?;
-
-        let mut table_names = vec![];
-        if let Some(fd) = flights.flight_descriptor {
-            for table in fd.path {
-                table_names.push(table);
-            }
-        }
-        Ok(table_names)
-    })
-}
-
-/// Retrieve the schema of a table in the server and return it.
-fn retrieve_schema(
-    runtime: &Runtime,
-    client: &mut FlightServiceClient<Channel>,
-    table_name: &str,
-) -> Schema {
-    runtime.block_on(async {
-        let schema_result = client
-            .get_schema(Request::new(FlightDescriptor::new_path(vec![
-                table_name.to_owned()
-            ])))
-            .await
-            .expect("Could not retrieve schema.")
-            .into_inner();
-
-        convert::try_schema_from_ipc_buffer(&schema_result.schema)
-            .expect("Could not convert SchemaResult to schema.")
-    })
-}
-
-/// Terminate the server and return when the process has been terminated.
-fn stop_modelardbd(mut flight_server: Child) {
-    let mut system = System::new_all();
-
-    while let Some(_process) = system.process(Pid::from_u32(flight_server.id())) {
-        system.refresh_all();
-        flight_server
-            .kill()
-            .unwrap_or_else(|_| panic!("Could not kill process {}.", flight_server.id()));
-        flight_server
-            .wait()
-            .unwrap_or_else(|_| panic!("Could not wait for process {}.", flight_server.id()));
-        system.refresh_all();
-    }
 }

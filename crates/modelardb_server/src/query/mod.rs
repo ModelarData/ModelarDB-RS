@@ -18,14 +18,18 @@
 //! and returns a physical query plan that produces all of the data points required for the query.
 
 // Public so the rules added to Apache Arrow DataFusion's physical optimizer can access GridExec.
+pub mod generated_as_exec;
 pub mod grid_exec;
 pub mod sorted_join_exec;
 
 use std::any::Any;
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, SchemaRef, TimeUnit};
+use datafusion::arrow::datatypes::{
+    ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit,
+};
 use datafusion::common::ToDFSchema;
 use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::datasource::{
@@ -36,17 +40,17 @@ use datafusion::execution::context::{ExecutionProps, SessionState};
 use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator};
 use datafusion::optimizer::utils;
 use datafusion::physical_expr::planner;
-use datafusion::physical_plan::{
-    file_format::FileScanConfig, file_format::ParquetExec, ExecutionPlan, PhysicalExpr, Statistics,
-};
+use datafusion::physical_plan::file_format::{FileScanConfig, ParquetExec};
+use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr, Statistics};
 use modelardb_common::schemas::{COMPRESSED_SCHEMA, QUERY_SCHEMA};
-use modelardb_common::types::ArrowValue;
+use modelardb_common::types::{ArrowTimestamp, ArrowValue};
 use object_store::ObjectStore;
 use tokio::sync::RwLockWriteGuard;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
-use crate::query::sorted_join_exec::{SortedJoinElement, SortedJoinExec};
+use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
 use crate::storage;
 use crate::storage::StorageEngine;
 use crate::Context;
@@ -68,14 +72,18 @@ pub struct ModelTable {
 
 impl ModelTable {
     pub fn new(context: Arc<Context>, model_table_metadata: Arc<ModelTableMetadata>) -> Arc<Self> {
-        // Compute the index of the first field column in the model table's
-        // schema. This is used for queries that does not contain any fields.
+        // Compute the index of the first stored field column in the model table's query schema. It
+        // is for queries without fields as the uids, timestamps, and values are stored together.
         let fallback_field_column = {
             model_table_metadata
-                .schema
+                .query_schema
                 .fields()
                 .iter()
-                .position(|field| field.data_type() == &ArrowValue::DATA_TYPE)
+                .enumerate()
+                .position(|(index, field)| {
+                    model_table_metadata.generated_columns[index].is_none()
+                        && field.data_type() == &ArrowValue::DATA_TYPE
+                })
                 .unwrap() as u16 // unwrap() is safe as all model tables contain at least one field.
         };
 
@@ -96,6 +104,36 @@ impl ModelTable {
         self.model_table_metadata.clone()
     }
 
+    /// Compute the schema that contains the stored columns in `projection`.
+    fn apply_query_schema_projection_to_schema(&self, projection: &[usize]) -> Arc<Schema> {
+        let columns = projection
+            .iter()
+            .filter_map(|query_schema_index| {
+                if self.model_table_metadata.generated_columns[*query_schema_index].is_none() {
+                    Some(
+                        self.model_table_metadata
+                            .query_schema
+                            .field(*query_schema_index)
+                            .clone(),
+                    )
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<Field>>();
+
+        Arc::new(Schema::new(columns))
+    }
+
+    /// Return the index of the column in schema that has the same name as the column in query
+    /// schema with the index `query_schema_index`. If a column with that name does not exist in
+    /// schema a [`DataFusionError::Plan`] is returned.
+    fn query_schema_index_to_schema_index(&self, query_schema_index: usize) -> Result<usize> {
+        let query_schema = &self.model_table_metadata.query_schema;
+        let column_name = query_schema.field(query_schema_index).name();
+        Ok(self.model_table_metadata.schema.index_of(column_name)?)
+    }
+
     /// Create an [`ExecutionPlan`] that will scan the column at `column_index` in the table with
     /// `table_name`. Returns a [`DataFusionError::Plan`] if the necessary metadata cannot be
     /// retrieved from the metadata database.
@@ -106,8 +144,8 @@ impl ModelTable {
         query_object_store: &Arc<dyn ObjectStore>,
         table_name: &str,
         column_index: u16,
-        parquet_predicates: Option<Expr>,
-        grid_predicates: Option<Expr>,
+        maybe_parquet_predicates: Option<Expr>,
+        maybe_grid_predicates: Option<Expr>,
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         // unwrap() is safe to use as compressed_files() only fails if a table with the name
@@ -158,31 +196,44 @@ impl ModelTable {
             infinite_source: false,
         };
 
-        let physical_parquet_predicates =
-            convert_expr_to_physical_expr(parquet_predicates, COMPRESSED_SCHEMA.0.clone())?;
+        let maybe_physical_parquet_predicates =
+            if let Some(parquet_predicates) = maybe_parquet_predicates {
+                Some(convert_logical_expr_to_physical_expr(
+                    &parquet_predicates,
+                    COMPRESSED_SCHEMA.0.clone(),
+                )?)
+            } else {
+                None
+            };
 
         let apache_parquet_exec = Arc::new(
-            ParquetExec::new(file_scan_config, physical_parquet_predicates, None)
+            ParquetExec::new(file_scan_config, maybe_physical_parquet_predicates, None)
                 .with_pushdown_filters(true)
                 .with_reorder_filters(true),
         );
 
         // Create the gridding operator.
-        let physical_grid_predicates =
-            convert_expr_to_physical_expr(grid_predicates, QUERY_SCHEMA.0.clone())?;
+        let maybe_physical_grid_predicates = if let Some(grid_predicates) = maybe_grid_predicates {
+            Some(convert_logical_expr_to_physical_expr(
+                &grid_predicates,
+                QUERY_SCHEMA.0.clone(),
+            )?)
+        } else {
+            None
+        };
 
         Ok(GridExec::new(
-            physical_grid_predicates,
+            maybe_physical_grid_predicates,
             limit,
             apache_parquet_exec,
         ))
     }
 }
 
-/// Rewrite and combine the `filters` that is written in terms of the model table's schema, to a
-/// filter that is written in terms of the schema used for compressed segments by the storage engine
-/// and a filter that is written in terms of the schema used by [`GridExec`] for its output. If the
-/// filters cannot be rewritten [`None`] is returned.
+/// Rewrite and combine the `filters` that is written in terms of the model table's query schema, to
+/// a filter that is written in terms of the schema used for compressed segments by the storage
+/// engine and a filter that is written in terms of the schema used for univariate time series by
+/// [`GridExec`] for its output. If the filters cannot be rewritten [`None`] is returned for both.
 fn rewrite_and_combine_filters(
     schema: &SchemaRef,
     filters: &[Expr],
@@ -190,6 +241,7 @@ fn rewrite_and_combine_filters(
     let rewritten_filters = filters
         .iter()
         .filter_map(|filter| rewrite_filter(schema, filter));
+
     let (parquet_rewritten_filters, grid_rewritten_filters): (Vec<Expr>, Vec<Expr>) =
         rewritten_filters.unzip();
     (
@@ -198,35 +250,16 @@ fn rewrite_and_combine_filters(
     )
 }
 
-/// Convert `predicates` to a [`PhysicalExpr`] with the types in `schema`.
-fn convert_expr_to_physical_expr(
-    predicates: Option<Expr>,
-    schema: SchemaRef,
-) -> Result<Option<Arc<dyn PhysicalExpr>>> {
-    if let Some(predicate) = predicates {
-        let df_schema = schema.clone().to_dfschema()?;
-
-        Ok(Some(planner::create_physical_expr(
-            &predicate,
-            &df_schema,
-            &schema,
-            &ExecutionProps::new(),
-        )?))
-    } else {
-        Ok(None)
-    }
-}
-
-/// Rewrite the `filter` that is written in terms of the model table's schema, to a filter that is
-/// written in terms of the schema used for compressed segments by the storage engine and a filter
-/// that is written in terms of the schema used by [`GridExec`] for its output. If the filter cannot
-/// be rewritten [`None`] is returned.
-fn rewrite_filter(schema: &SchemaRef, filter: &Expr) -> Option<(Expr, Expr)> {
+/// Rewrite the `filter` that is written in terms of the model table's query schema, to a filter
+/// that is written in terms of the schema used for compressed segments by the storage engine and a
+/// filter that is written in terms of the schema used for univariate time series by [`GridExec`].
+/// If the filter cannot be rewritten, [`None`] is returned.
+fn rewrite_filter(query_schema: &SchemaRef, filter: &Expr) -> Option<(Expr, Expr)> {
     match filter {
         Expr::BinaryExpr(BinaryExpr { left, op, right }) => {
             if let Expr::Column(column) = &**left {
                 // unwrap() is safe as it has already been checked that the fields exists.
-                let field = schema.field_with_name(&column.name).unwrap();
+                let field = query_schema.field_with_name(&column.name).unwrap();
                 // Type aliases cannot be used as a constructor and thus cannot be used here.
                 if *field.data_type() == DataType::Timestamp(TimeUnit::Millisecond, None) {
                     match op {
@@ -276,6 +309,20 @@ fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
     })
 }
 
+/// Convert `expr` to a [`PhysicalExpr`] with the types in `query_schema`.
+fn convert_logical_expr_to_physical_expr(
+    expr: &Expr,
+    query_schema: SchemaRef,
+) -> Result<Arc<dyn PhysicalExpr>> {
+    let df_query_schema = query_schema.clone().to_dfschema()?;
+    planner::create_physical_expr(
+        expr,
+        &df_query_schema,
+        &query_schema,
+        &ExecutionProps::new(),
+    )
+}
+
 #[async_trait]
 impl TableProvider for ModelTable {
     /// Return `self` as [`Any`] so it can be downcast.
@@ -283,12 +330,12 @@ impl TableProvider for ModelTable {
         self
     }
 
-    /// Return the schema of the model table registered with Apache Arrow DataFusion.
+    /// Return the query schema of the model table registered with Apache Arrow DataFusion.
     fn schema(&self) -> SchemaRef {
-        self.model_table_metadata.schema.clone()
+        self.model_table_metadata.query_schema.clone()
     }
 
-    /// Specify that model tables are base tables and not views or temporary.
+    /// Specify that model tables are base tables and not views or temporary tables.
     fn table_type(&self) -> TableType {
         TableType::Base
     }
@@ -298,9 +345,8 @@ impl TableProvider for ModelTable {
         Ok(TableProviderFilterPushDown::Inexact)
     }
 
-    /// Create an [`ExecutionPlan`] that will scan the table. Returns a
-    /// [`DataFusionError::Plan`] if the necessary metadata cannot be retrieved
-    /// from the metadata database.
+    /// Create an [`ExecutionPlan`] that will scan the table. Returns a [`DataFusionError::Plan`] if
+    /// the necessary metadata cannot be retrieved from the metadata database.
     async fn scan(
         &self,
         ctx: &SessionState,
@@ -308,45 +354,89 @@ impl TableProvider for ModelTable {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        let table_name = &self.model_table_metadata.name.as_str();
-        let schema = &self.model_table_metadata.schema;
+        // Create shorthands for the metadata used during planning to improve readability.
+        let table_name = self.model_table_metadata.name.as_str();
+        let schema = &self.model_table_metadata.query_schema;
+        let tag_column_indices = &self.model_table_metadata.tag_column_indices;
+        let query_schema = &self.model_table_metadata.query_schema;
+        let generated_columns = &self.model_table_metadata.generated_columns;
 
-        // Ensures a projection is present for looking up the columns to return.
-        let projection: Vec<usize> = if let Some(projection) = projection {
+        // Ensures a projection is always present for looking up the columns to return.
+        let mut projection: Vec<usize> = if let Some(projection) = projection {
             projection.to_vec()
         } else {
-            (0..schema.fields().len()).collect()
+            (0..query_schema.fields().len()).collect()
         };
 
-        // Since SortedJoinStream simply needs to append arrays to a vector, the order of the field
-        // and tag columns in the projection is extracted and the streams SortedJoinStream read
-        // columns from are arranged in the same order as the field columns.
-        let tag_column_indices = &self.model_table_metadata.tag_column_indices;
-        let mut sorted_join_order: Vec<SortedJoinElement> = Vec::with_capacity(projection.len());
-        let mut tag_names_in_projection: Vec<&str> = Vec::with_capacity(tag_column_indices.len());
-        let mut field_indices_in_projection: Vec<u16> =
-            Vec::with_capacity(schema.fields.len() - 1 - tag_column_indices.len());
-        for index in &projection {
-            if *index == self.model_table_metadata.timestamp_column_index {
-                sorted_join_order.push(SortedJoinElement::Timestamp);
-            } else if tag_column_indices.contains(index) {
-                tag_names_in_projection.push(schema.fields[*index].name());
-                sorted_join_order.push(SortedJoinElement::Tag);
+        // Compute the query schema for the record batches that Apache Arrow DataFusion needs to
+        // execute the query. unwrap() is safe as the projection is based on the query schema.
+        let query_schema_after_projection = Arc::new(query_schema.project(&projection).unwrap());
+
+        // Ensure that the columns which are required for any generated columns in the projection
+        // are present in the record batches returned by SortedJoinStream and compute its schema.
+        // GeneratedAsStream assumes that columns that are only used to generate columns are last.
+        let mut generated_columns_sources: HashSet<usize> =
+            HashSet::with_capacity(query_schema.fields().len());
+        for query_schema_index in &projection {
+            if let Some(generated_column) = &generated_columns[*query_schema_index] {
+                generated_columns_sources.extend(&generated_column.source_columns);
+            }
+        }
+
+        for generated_column_source in generated_columns_sources {
+            if !projection.contains(&generated_column_source) {
+                projection.push(generated_column_source);
+            }
+        }
+
+        let schema_after_projection = self.apply_query_schema_projection_to_schema(&projection);
+
+        // Compute the metadata needed to create the columns in the query in the correct order.
+        let mut stored_columns_in_projection: Vec<SortedJoinColumnType> =
+            Vec::with_capacity(projection.len());
+        let mut stored_field_columns_in_projection: Vec<u16> =
+            Vec::with_capacity(query_schema.fields.len() - 1 - tag_column_indices.len());
+        let mut stored_tag_columns_in_projection: Vec<&str> =
+            Vec::with_capacity(tag_column_indices.len());
+        let mut generated_columns_in_projection: Vec<ColumnToGenerate> =
+            Vec::with_capacity(query_schema.fields.len() - schema.fields().len());
+
+        for (result_index, query_schema_index) in projection.iter().enumerate() {
+            if *query_schema.field(*query_schema_index).data_type() == ArrowTimestamp::DATA_TYPE {
+                // Timestamp.
+                stored_columns_in_projection.push(SortedJoinColumnType::Timestamp);
+            } else if tag_column_indices.contains(query_schema_index) {
+                // Tag.
+                stored_tag_columns_in_projection
+                    .push(query_schema.fields[*query_schema_index].name());
+                stored_columns_in_projection.push(SortedJoinColumnType::Tag);
+            } else if let Some(generated_column) = &generated_columns[*query_schema_index] {
+                // Generated field.
+                let physical_expr = convert_logical_expr_to_physical_expr(
+                    &generated_column.expr,
+                    schema_after_projection.clone(),
+                )?;
+
+                generated_columns_in_projection
+                    .push(ColumnToGenerate::new(result_index, physical_expr));
             } else {
-                field_indices_in_projection.push(*index as u16);
-                sorted_join_order.push(SortedJoinElement::Field);
+                // Stored field. unwrap() is safe as all stored columns are in both of the schemas.
+                let schema_index = self.query_schema_index_to_schema_index(*query_schema_index);
+                stored_field_columns_in_projection.push(schema_index.unwrap() as u16);
+                stored_columns_in_projection.push(SortedJoinColumnType::Field);
             }
         }
 
         // TODO: extract all of the predicates that consist of tag = tag_value from the query so the
         // segments can be pruned by univariate_id in ParquetExec and hash_to_tags can be minimized.
-        let (parquet_predicates, grid_predicates) = rewrite_and_combine_filters(schema, filters);
+        let (maybe_parquet_predicates, maybe_grid_predicates) =
+            rewrite_and_combine_filters(schema, filters);
 
-        // Compute a mapping from hashes to tags.
+        // Compute a mapping from hashes to the requested tag values in the requested order.
         let hash_to_tags = self
             .context
             .metadata_manager
-            .mapping_from_hash_to_tags(table_name, &tag_names_in_projection)
+            .mapping_from_hash_to_tags(table_name, &stored_tag_columns_in_projection)
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         // unwrap() is safe as the store is set by create_session_context().
@@ -356,25 +446,27 @@ impl TableProvider for ModelTable {
             .unwrap();
 
         // At least one field column must be read for the univariate_ids and timestamps.
-        if field_indices_in_projection.is_empty() {
-            field_indices_in_projection.push(self.fallback_field_column);
+        if stored_field_columns_in_projection.is_empty() {
+            stored_field_columns_in_projection.push(self.fallback_field_column);
         }
 
-        // Request the matching files from the storage engine. The exclusive lock on the storage
-        // engine is held until object metas for all columns have been retrieved to ensure they
-        // contain the same number of data points.
+        // Request the matching files from the storage engine and construct one or more GridExecs
+        // and a SortedJoinExec. The write lock on the storage engine is held until object metas for
+        // all columns have been retrieved to ensure they have the same number of data points.
         let mut field_column_execution_plans: Vec<Arc<dyn ExecutionPlan>> =
-            Vec::with_capacity(field_indices_in_projection.len());
+            Vec::with_capacity(stored_field_columns_in_projection.len());
+
         let mut storage_engine = self.context.storage_engine.write().await;
-        for field_column_index in field_indices_in_projection {
+
+        for field_column_index in stored_field_columns_in_projection {
             let execution_plan = self
                 .scan_column(
                     &mut storage_engine,
                     &query_object_store,
                     table_name,
                     field_column_index,
-                    parquet_predicates.clone(),
-                    grid_predicates.clone(),
+                    maybe_parquet_predicates.clone(),
+                    maybe_grid_predicates.clone(),
                     limit,
                 )
                 .await?;
@@ -382,13 +474,23 @@ impl TableProvider for ModelTable {
             field_column_execution_plans.push(execution_plan);
         }
 
-        // unwrap() is safe as the projection is based on the schema.
-        Ok(SortedJoinExec::new(
-            Arc::new(schema.project(&projection).unwrap()),
-            sorted_join_order,
+        let sorted_join_exec = SortedJoinExec::new(
+            schema_after_projection,
+            stored_columns_in_projection,
             Arc::new(hash_to_tags),
             field_column_execution_plans,
-        ))
+        );
+
+        // Only include GeneratedAsExec in the query plan if there are columns to generate.
+        if generated_columns_in_projection.is_empty() {
+            Ok(sorted_join_exec)
+        } else {
+            Ok(GeneratedAsExec::new(
+                query_schema_after_projection,
+                generated_columns_in_projection,
+                sorted_join_exec,
+            ))
+        }
     }
 }
 
