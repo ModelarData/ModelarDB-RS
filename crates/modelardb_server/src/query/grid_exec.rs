@@ -177,11 +177,6 @@ impl ExecutionPlan for GridExec {
         vec![Some(physical_sort_requirements)]
     }
 
-    /// Specify that [`GridExec`] never reorders the data it receives from its input.
-    fn maintains_input_order(&self) -> Vec<bool> {
-        vec![true]
-    }
-
     /// Return a snapshot of the set of metrics being collected by the execution plain.
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())

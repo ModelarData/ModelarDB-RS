@@ -77,7 +77,7 @@ pub static QUERY_ORDER_SEGMENT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
             options: sort_options,
         },
         PhysicalSortExpr {
-            expr: Arc::new(Column::new("start_time", 1)),
+            expr: Arc::new(Column::new("start_time", 2)),
             options: sort_options,
         },
     ]

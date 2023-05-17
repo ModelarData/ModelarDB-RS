@@ -185,11 +185,6 @@ impl ExecutionPlan for SortedJoinExec {
         vec![Some(physical_sort_requirements); self.inputs.len()]
     }
 
-    /// Specify that [`SortedJoinStream`] never reorders the data it receives from its input.
-     fn maintains_input_order(&self) -> Vec<bool> {
-        vec![true; self.inputs.len()]
-    }
-
     /// Return a snapshot of the set of metrics being collected by the execution plain.
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())

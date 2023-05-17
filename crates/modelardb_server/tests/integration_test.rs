@@ -570,9 +570,8 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
 
     test_context.flush_data_to_disk();
 
-    // The result set is implicitly ordered by the value of the tags when hashed and then time.
     let query = test_context
-        .execute_query(format!("SELECT * FROM {TABLE_NAME} ORDER BY tag, timestamp"))
+        .execute_query(format!("SELECT * FROM {TABLE_NAME} ORDER BY timestamp"))
         .unwrap();
 
     let expected = compute::concat_batches(&data_points[0].schema(), &data_points).unwrap();
