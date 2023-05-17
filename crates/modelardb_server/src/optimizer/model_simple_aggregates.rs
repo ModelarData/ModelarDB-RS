@@ -263,7 +263,7 @@ impl AggregateExpr for ModelAggregateExpr {
         self
     }
 
-    /// Return a [`Field`] that specify the name and [`DataType`] of the final aggregate.
+    /// Return a [`Field`] that specifies the name and [`DataType`] of the final aggregate.
     fn field(&self) -> Result<Field> {
         Ok(Field::new(self.name(), self.data_type.clone(), false))
     }
@@ -380,7 +380,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
 
-    /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provides input to this [`PhysicalExpr`].
+    /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provide input to this [`PhysicalExpr`].
     fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
         vec![]
     }
@@ -485,7 +485,7 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
 
-    /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provides input to this [`PhysicalExpr`].
+    /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provide input to this [`PhysicalExpr`].
     fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
         vec![]
     }
@@ -593,7 +593,7 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
 
-    /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provides input to this [`PhysicalExpr`].
+    /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provide input to this [`PhysicalExpr`].
     fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
         vec![]
     }
@@ -730,7 +730,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
 
-    /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provides input to this [`PhysicalExpr`].
+    /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provide input to this [`PhysicalExpr`].
     fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
         vec![]
     }
@@ -876,7 +876,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
 
-    /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provides input to this [`PhysicalExpr`].
+    /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provide input to this [`PhysicalExpr`].
     fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
         vec![]
     }

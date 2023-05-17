@@ -66,7 +66,7 @@ mod test_util {
     }
 
     /// Assert that `physical_plan` and `expected_plan` contain the same operators. `expected_plan`
-    /// only contains the type ids so the tests does not have to construct the actual operators.
+    /// only contains the type ids so the tests do not have to construct the actual operators.
     pub fn assert_eq_physical_plan_expected(
         physical_plan: Arc<dyn ExecutionPlan>,
         expected_plan: Vec<Vec<TypeId>>,

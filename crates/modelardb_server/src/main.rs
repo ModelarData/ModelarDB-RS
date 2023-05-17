@@ -328,6 +328,7 @@ fn create_session_context(query_data_folder: Arc<dyn ObjectStore>) -> SessionCon
     session_runtime.register_object_store(&object_store_url, query_data_folder);
 
     // Use the add* methods instead of the with* methods as the with* methods replace the built-ins.
+    // See: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionState.html
     let mut session_state = SessionState::with_config_rt(session_config, session_runtime);
     for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
         session_state = session_state.add_physical_optimizer_rule(physical_optimizer_rule);
