@@ -106,7 +106,8 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Specify that the record batches produced by the execution plan will have an unknown order as
-    /// the output from [`SortedJoinExec`] does not include the `univariate_id` but instead tags.
+    /// the output from [`crate::query::sorted_join_exec::SortedJoinExec`] does not include the
+    /// `univariate_id` but instead tags.
     fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
         None
     }

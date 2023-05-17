@@ -100,7 +100,7 @@ impl ExecutionPlan for GridExec {
     }
 
     /// Specify that the global order for the data points produced by all [`GridExec`] will be the
-    /// same. This is needed because [`SortedJoinExec`](crate::query::SortedJoinExec) assumes the
+    /// same. This is needed because [`crate::query::sorted_join_exec::SortedJoinExec`] assumes the
     /// data it receives from all of its inputs uses the same global sort order.
     fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
         Some(&QUERY_ORDER_DATA_POINT)

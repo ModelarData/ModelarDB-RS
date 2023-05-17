@@ -62,9 +62,9 @@ use crate::Context;
 /// [`GridExec`] requires for the segments its receives as its input. It is guaranteed by
 /// [`ParquetExec`] because the storage engine uses this sort order for each Apache Parquet file and
 /// these files are read sequentially by [`ParquetExec`]. Another sort order could also be used, the
-/// current query pipeline simply requires that the [`RecordBatches`](RecordBatch)
-/// [`SortedJoinExec`] receive from its inputs all contain data points for the same time interval
-/// and that they are sorted the same.
+/// current query pipeline simply requires that the
+/// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) [`SortedJoinExec`] receive from
+/// its inputs all contain data points for the same time interval and that they are sorted the same.
 pub static QUERY_ORDER_SEGMENT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
     let sort_options = SortOptions {
         descending: false,
@@ -88,8 +88,8 @@ pub static QUERY_ORDER_SEGMENT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
 /// [`GridExec`] because it receives segments sorted by [`QUERY_ORDER_SEGMENT`] from [`ParquetExec`]
 /// and because these segments cannot contain data points for overlapping time intervals. Another
 /// sort order could also be used, the current query pipeline simply requires that the
-/// [`RecordBatches`](RecordBatch) [`SortedJoinExec`] receive from its inputs all contain data
-/// points for the same time interval and that they are sorted the same.
+/// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) [`SortedJoinExec`] receive from
+/// its inputs all contain data points for the same time interval and that they are sorted the same.
 pub static QUERY_ORDER_DATA_POINT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
     let sort_options = SortOptions {
         descending: false,
