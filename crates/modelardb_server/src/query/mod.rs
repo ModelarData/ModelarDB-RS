@@ -27,6 +27,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use datafusion::arrow::compute::SortOptions;
 use datafusion::arrow::datatypes::{
     ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit,
 };
@@ -40,11 +41,13 @@ use datafusion::execution::context::{ExecutionProps, SessionState};
 use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator};
 use datafusion::optimizer::utils;
 use datafusion::physical_expr::planner;
+use datafusion::physical_plan::expressions::{Column, PhysicalSortExpr};
 use datafusion::physical_plan::file_format::{FileScanConfig, ParquetExec};
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr, Statistics};
 use modelardb_common::schemas::{COMPRESSED_SCHEMA, QUERY_SCHEMA};
 use modelardb_common::types::{ArrowTimestamp, ArrowValue};
 use object_store::ObjectStore;
+use once_cell::sync::Lazy;
 use tokio::sync::RwLockWriteGuard;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
@@ -54,6 +57,56 @@ use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
 use crate::storage;
 use crate::storage::StorageEngine;
 use crate::Context;
+
+/// The global sort order [`ParquetExec`] guarantees for the segments it produces and that
+/// [`GridExec`] requires for the segments its receives as its input. It is guaranteed by
+/// [`ParquetExec`] because the storage engine uses this sort order for each Apache Parquet file and
+/// these files are read sequentially by [`ParquetExec`]. Another sort order could also be used, the
+/// current query pipeline simply requires that the [`RecordBatches`](RecordBatch)
+/// [`SortedJoinExec`] receive from its inputs all contain data points for the same time interval
+/// and that they are sorted the same.
+pub static QUERY_ORDER_SEGMENT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
+    let sort_options = SortOptions {
+        descending: false,
+        nulls_first: false,
+    };
+
+    vec![
+        PhysicalSortExpr {
+            expr: Arc::new(Column::new("univariate_id", 0)),
+            options: sort_options,
+        },
+        PhysicalSortExpr {
+            expr: Arc::new(Column::new("start_time", 1)),
+            options: sort_options,
+        },
+    ]
+});
+
+/// The global sort order [`GridExec`] guarantees for the data points it produces and that
+/// [`SortedJoinExec`] requires for the data points its receives as its input. It is guaranteed by
+/// [`GridExec`] because it receives segments sorted by [`QUERY_ORDER_SEGMENT`] from [`ParquetExec`]
+/// and because these segments cannot contain data points for overlapping time intervals. Another
+/// sort order could also be used, the current query pipeline simply requires that the
+/// [`RecordBatches`](RecordBatch) [`SortedJoinExec`] receive from its inputs all contain data
+/// points for the same time interval and that they are sorted the same.
+pub static QUERY_ORDER_DATA_POINT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
+    let sort_options = SortOptions {
+        descending: false,
+        nulls_first: false,
+    };
+
+    vec![
+        PhysicalSortExpr {
+            expr: Arc::new(Column::new("univariate_id", 0)),
+            options: sort_options,
+        },
+        PhysicalSortExpr {
+            expr: Arc::new(Column::new("timestamp", 1)),
+            options: sort_options,
+        },
+    ]
+});
 
 /// A queryable representation of a model table which stores multivariate time
 /// series as segments containing metadata and models. [`ModelTable`] implements
@@ -192,7 +245,7 @@ impl ModelTable {
             projection: None,
             limit,
             table_partition_cols: vec![],
-            output_ordering: None,
+            output_ordering: Some(QUERY_ORDER_SEGMENT.clone()),
             infinite_source: false,
         };
 

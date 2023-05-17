@@ -33,17 +33,19 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::cast::as_boolean_array;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_plan::expressions::{Column, PhysicalSortExpr};
+use datafusion::physical_expr::PhysicalSortRequirement;
+use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
-use datafusion::physical_plan::sorts::sort::SortOptions;
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, PhysicalExpr, RecordBatchStream,
+    DisplayFormatType, Distribution, ExecutionPlan, Partitioning, PhysicalExpr, RecordBatchStream,
     SendableRecordBatchStream, Statistics,
 };
 use futures::stream::{Stream, StreamExt};
 use modelardb_common::schemas::QUERY_SCHEMA;
 use modelardb_common::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
 use modelardb_compression::models;
+
+use super::{QUERY_ORDER_DATA_POINT, QUERY_ORDER_SEGMENT};
 
 /// An execution plan that reconstructs the data points stored as compressed segments containing
 /// metadata and models. It is public so the additional rules added to Apache Arrow DataFusion's
@@ -52,8 +54,6 @@ use modelardb_compression::models;
 pub struct GridExec {
     /// Schema of the execution plan.
     schema: SchemaRef,
-    /// Ordering of the plans output.
-    output_ordering: Vec<PhysicalSortExpr>,
     /// Predicate to filter data points by.
     maybe_predicate: Option<Arc<dyn PhysicalExpr>>,
     /// Number of data points requested by the query.
@@ -72,26 +72,9 @@ impl GridExec {
     ) -> Arc<Self> {
         let schema = QUERY_SCHEMA.0.clone();
 
-        let sort_options = SortOptions {
-            descending: false,
-            nulls_first: false,
-        };
-
-        let output_ordering = vec![
-            PhysicalSortExpr {
-                expr: Arc::new(Column::new("univariate_id", 0)),
-                options: sort_options,
-            },
-            PhysicalSortExpr {
-                expr: Arc::new(Column::new("timestamp", 1)),
-                options: sort_options,
-            },
-        ];
-
         Arc::new(GridExec {
             maybe_predicate,
             schema,
-            output_ordering,
             limit,
             input,
             metrics: ExecutionPlanMetricsSet::new(),
@@ -116,10 +99,11 @@ impl ExecutionPlan for GridExec {
         self.input.output_partitioning()
     }
 
-    /// Specify that the record batches produced by the execution plan will be ordered descendingly
-    /// by univariate_id and then descendingly by timestamp.
+    /// Specify that the global order for the data points produced by all [`GridExec`] will be the
+    /// same. This is needed because [`SortedJoinExec`](crate::query::SortedJoinExec) assumes the
+    /// data it receives from all of its inputs uses the same global sort order.
     fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        Some(&self.output_ordering)
+        Some(&QUERY_ORDER_DATA_POINT)
     }
 
     /// Return the single execution plan batches of rows are read from.
@@ -176,6 +160,26 @@ impl ExecutionPlan for GridExec {
             column_statistics: None,
             is_exact: false,
         }
+    }
+
+    /// Specify that [`GridExec`] requires one partition for each input as it assumes that the
+    /// global sort order are the same for its input and Apache Arrow DataFusion only guarantees the
+    /// sort order within each partition rather than the input's global sort order.
+    fn required_input_distribution(&self) -> Vec<Distribution> {
+        vec![Distribution::SinglePartition]
+    }
+
+    /// Specify that [`GridExec`] requires that its input provides data that is sorted by
+    /// [`QUERY_ORDER_SEGMENT`].
+    fn required_input_ordering(&self) -> Vec<Option<Vec<PhysicalSortRequirement>>> {
+        let physical_sort_requirements =
+            PhysicalSortRequirement::from_sort_exprs(QUERY_ORDER_SEGMENT.iter());
+        vec![Some(physical_sort_requirements)]
+    }
+
+    /// Specify that [`GridExec`] never reorders the data it receives from its input.
+    fn maintains_input_order(&self) -> Vec<bool> {
+        vec![true]
     }
 
     /// Return a snapshot of the set of metrics being collected by the execution plain.

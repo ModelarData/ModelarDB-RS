@@ -32,7 +32,9 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
+use datafusion::physical_expr::PhysicalSortRequirement;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
+use datafusion::physical_plan::Distribution;
 use datafusion::physical_plan::{
     expressions::PhysicalSortExpr, DisplayFormatType, ExecutionPlan, Partitioning,
     RecordBatchStream, SendableRecordBatchStream, Statistics,
@@ -40,6 +42,8 @@ use datafusion::physical_plan::{
 use futures::stream::{Stream, StreamExt};
 
 use crate::metadata::MetadataManager;
+
+use super::QUERY_ORDER_DATA_POINT;
 
 /// The different types of columns supported by [`SortedJoinExec`], used for specifying the order in
 /// which the timestamp, field, and tag columns should be returned by [`SortedJoinStream`].
@@ -163,6 +167,26 @@ impl ExecutionPlan for SortedJoinExec {
             column_statistics: None,
             is_exact: false,
         }
+    }
+
+    /// Specify that [`SortedJoinStream`] requires one partition for each input as it assumes that
+    /// the global sort order are the same for all inputs and Apache Arrow DataFusion only
+    /// guarantees the sort order within each partition rather than the inputs' global sort order.
+    fn required_input_distribution(&self) -> Vec<Distribution> {
+        vec![Distribution::SinglePartition; self.inputs.len()]
+    }
+
+    /// Specify that [`SortedJoinStream`] requires that its inputs' provide data that is sorted by
+    /// [`QUERY_ORDER_DATA_POINT`].
+    fn required_input_ordering(&self) -> Vec<Option<Vec<PhysicalSortRequirement>>> {
+        let physical_sort_requirements =
+            PhysicalSortRequirement::from_sort_exprs(QUERY_ORDER_DATA_POINT.iter());
+        vec![Some(physical_sort_requirements); self.inputs.len()]
+    }
+
+    /// Specify that [`SortedJoinStream`] never reorders the data it receives from its input.
+     fn maintains_input_order(&self) -> Vec<bool> {
+        vec![true; self.inputs.len()]
     }
 
     /// Return a snapshot of the set of metrics being collected by the execution plain.
