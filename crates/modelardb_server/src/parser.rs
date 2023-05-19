@@ -30,7 +30,7 @@ use datafusion::physical_expr::planner;
 use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
 use datafusion::sql::TableReference;
 use modelardb_common::types::{ArrowTimestamp, ArrowValue};
-use modelardb_compression::models::ErrorBound;
+use modelardb_compression::ErrorBound;
 use sqlparser::ast::{
     ColumnDef, ColumnOption, ColumnOptionDef, DataType as SQLDataType, GeneratedAs,
     HiveDistributionStyle, HiveFormat, Ident, ObjectName, Statement, TimezoneInfo,

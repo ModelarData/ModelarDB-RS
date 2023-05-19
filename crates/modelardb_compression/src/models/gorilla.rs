@@ -123,13 +123,6 @@ impl Gorilla {
         self.length += 1;
     }
 
-    /// Return the number of values currently compressed using XOR and a
-    /// variable length binary encoding.
-    #[allow(clippy::len_without_is_empty)]
-    pub fn len(&self) -> usize {
-        self.length
-    }
-
     /// Return the number of bytes currently used per data point on average.
     pub fn bytes_per_value(&self) -> f32 {
         // Gorilla does not use metadata for encoding values, only the data in compressed_values.

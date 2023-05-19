@@ -40,7 +40,7 @@ use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::execution::options::ParquetReadOptions;
 use modelardb_common::types::UnivariateId;
-use modelardb_compression::models::ErrorBound;
+use modelardb_compression::ErrorBound;
 use rusqlite::types::Type::Blob;
 use rusqlite::{params, Connection, Result, Row};
 use tokio::runtime::Runtime;
@@ -1318,7 +1318,7 @@ pub mod test_util {
     use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
     use datafusion::execution::runtime_env::RuntimeEnv;
     use modelardb_common::types::{ArrowTimestamp, ArrowValue};
-    use modelardb_compression::models::ErrorBound;
+    use modelardb_compression::ErrorBound;
     use object_store::local::LocalFileSystem;
     use tokio::sync::RwLock;
 

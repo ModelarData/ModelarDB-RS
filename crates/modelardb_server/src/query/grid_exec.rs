@@ -43,7 +43,7 @@ use datafusion::physical_plan::{
 use futures::stream::{Stream, StreamExt};
 use modelardb_common::schemas::QUERY_SCHEMA;
 use modelardb_common::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
-use modelardb_compression::models;
+use modelardb_compression;
 
 use super::{QUERY_ORDER_DATA_POINT, QUERY_ORDER_SEGMENT};
 
@@ -284,7 +284,7 @@ impl GridStream {
 
         // Reconstruct the data points from the compressed segments.
         for row_index in 0..new_rows {
-            models::grid(
+            modelardb_compression::grid(
                 univariate_ids.value(row_index),
                 model_type_ids.value(row_index),
                 start_times.value(row_index),

@@ -457,7 +457,8 @@ impl StorageEngine {
         // Merge the record batches into a single concatenated and merged record batch.
         let schema = record_batches[0].schema();
         let concatenated = compute::concat_batches(&schema, &record_batches)?;
-        let merged = modelardb_compression::merge_segments(concatenated);
+        let merged = modelardb_compression::try_merge_segments(concatenated)
+            .map_err(|error| ParquetError::General(error.to_string()))?;
 
         // Compute the name of the output file based on data in merged.
         let file_name = create_time_and_value_range_file_name(&merged);

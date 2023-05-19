@@ -41,7 +41,6 @@ use datafusion::physical_plan::{
 };
 use datafusion::scalar::ScalarValue;
 use modelardb_common::types::{ArrowValue, TimestampArray, Value, ValueArray};
-use modelardb_compression::models;
 
 use crate::query::sorted_join_exec::SortedJoinExec;
 
@@ -369,7 +368,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
             let end_time = end_times.value(row_index);
             let timestamps = timestamps.value(row_index);
 
-            count += models::len(start_time, end_time, timestamps) as i64;
+            count += modelardb_compression::len(start_time, end_time, timestamps) as i64;
         }
 
         // Returning a Scalar fills an array with the value.
@@ -711,7 +710,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
             let max_value = max_values.value(row_index);
             let values = values.value(row_index);
 
-            sum += models::sum(
+            sum += modelardb_compression::sum(
                 model_type_id,
                 start_time,
                 end_time,
@@ -854,7 +853,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
             let max_value = max_values.value(row_index);
             let values = values.value(row_index);
 
-            sum += models::sum(
+            sum += modelardb_compression::sum(
                 model_type_id,
                 start_time,
                 end_time,
@@ -864,7 +863,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
                 values,
             );
 
-            count += models::len(start_time, end_time, timestamps);
+            count += modelardb_compression::len(start_time, end_time, timestamps);
         }
 
         // Returning a Scalar fills an array with the value.
