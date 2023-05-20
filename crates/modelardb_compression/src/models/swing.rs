@@ -565,7 +565,7 @@ mod tests {
             (START_TIME..end_time).step_by(SAMPLING_INTERVAL as usize),
         );
         let values = ValueArray::from_iter_values(values);
-        let segments = crate::try_compress(1, &timestamps, &values, error_bound).unwrap();
+        let segments = crate::try_compress(1, error_bound, &timestamps, &values).unwrap();
 
         // Extract the individual columns from the record batch.
         modelardb_common::arrays!(

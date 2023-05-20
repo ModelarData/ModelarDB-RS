@@ -450,9 +450,9 @@ impl UncompressedDataManager {
         // unwrap() is safe to use since uncompressed_timestamps and uncompressed_values have the same length.
         let compressed_segments = modelardb_compression::try_compress(
             univariate_id,
+            error_bound,
             uncompressed_timestamps,
             uncompressed_values,
-            error_bound,
         )
         .unwrap();
 

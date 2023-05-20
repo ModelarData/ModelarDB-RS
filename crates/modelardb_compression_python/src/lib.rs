@@ -70,7 +70,7 @@ fn compress<'a>(
 
     // unwrap() is safe as the timestamps and values are guaranteed to be the same length.
     let compressed =
-        modelardb_compression::try_compress(univariate_id, timestamps, values, error_bound)
+        modelardb_compression::try_compress(univariate_id, error_bound, timestamps, values)
             .unwrap();
 
     // Convert and return the finished compressed PyArrow record batch.

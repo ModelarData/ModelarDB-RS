@@ -17,15 +17,11 @@
 
 use std::{cmp::Ordering, sync::Arc};
 
-use arrow::{
-    array::{BinaryBuilder, Float32Builder, UInt64Builder, UInt8Builder},
-    record_batch::RecordBatch,
-};
-use modelardb_common::{
-    errors::ModelarDbError,
-    schemas::COMPRESSED_SCHEMA,
-    types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder},
-};
+use arrow::array::{BinaryBuilder, Float32Builder, UInt64Builder, UInt8Builder};
+use arrow::record_batch::RecordBatch;
+use modelardb_common::errors::ModelarDbError;
+use modelardb_common::schemas::COMPRESSED_SCHEMA;
+use modelardb_common::types::{Timestamp, TimestampBuilder, Value, ValueBuilder};
 
 use crate::models::{pmc_mean::PMCMean, swing::Swing, PMC_MEAN_ID, SWING_ID};
 
@@ -160,10 +156,10 @@ impl CompressedSegmentBatchBuilder {
     }
 }
 
-/// A compressed model being built from an uncompressed segment using the potentially lossy model
-/// types in [`models`]. Each of the potentially lossy model types is used to fit models to the data
-/// points, and then the model that uses the fewest number of bytes per value is selected.
-pub(crate) struct CompressedModelBuilder {
+/// A model being built from an uncompressed segment using the potentially lossy model types in
+/// [`models`]. Each of the potentially lossy model types is used to fit models to the data points,
+/// and then the model that uses the fewest number of bytes per value is selected.
+pub(crate) struct ModelBuilder {
     /// Index of the first data point in `uncompressed_timestamps` and `uncompressed_values` the
     /// compressed model represents values for.
     start_index: usize,
@@ -181,37 +177,22 @@ pub(crate) struct CompressedModelBuilder {
     swing_could_fit_all: bool,
 }
 
-impl CompressedModelBuilder {
-    /// Create a compressed model that represents the values in `uncompressed_values` from
-    /// `start_index` to index within `error_bound` where index <= `end_index`.
-    pub(crate) fn new(
-        start_index: usize,
-        end_index: usize,
-        uncompressed_timestamps: &TimestampArray,
-        uncompressed_values: &ValueArray,
-        error_bound: ErrorBound,
-    ) -> Self {
-        let mut compressed_segment_builder = Self {
+impl ModelBuilder {
+    /// Create a model that represents a sub-sequence of uncompressed values that starts at
+    /// `start_index`, is within `error_bound`, and uses the fewest number of bytes per value.
+    pub(crate) fn new(start_index: usize, error_bound: ErrorBound) -> Self {
+        Self {
             start_index,
             pmc_mean: PMCMean::new(error_bound),
             pmc_mean_could_fit_all: true,
             swing: Swing::new(error_bound),
             swing_could_fit_all: true,
-        };
-
-        let mut current_index = start_index;
-        while compressed_segment_builder.can_fit_more() && current_index < end_index {
-            let timestamp = uncompressed_timestamps.value(current_index);
-            let value = uncompressed_values.value(current_index);
-            compressed_segment_builder.try_to_update_models(timestamp, value);
-            current_index += 1;
         }
-        compressed_segment_builder
     }
 
     /// Attempt to update the current models to also represent the `value` of
     /// the data point collected at `timestamp`.
-    fn try_to_update_models(&mut self, timestamp: Timestamp, value: Value) {
+    pub(crate) fn try_to_update_models(&mut self, timestamp: Timestamp, value: Value) {
         debug_assert!(
             self.can_fit_more(),
             "The current models cannot be fitted to additional data points."
@@ -225,65 +206,37 @@ impl CompressedModelBuilder {
 
     /// Return [`true`] if any of the current models can represent additional
     /// values, otherwise [`false`].
-    fn can_fit_more(&self) -> bool {
+    pub(crate) fn can_fit_more(&self) -> bool {
         self.pmc_mean_could_fit_all || self.swing_could_fit_all
     }
 
     /// Return the model that requires the fewest number of bytes per value.
-    pub(crate) fn finish(self) -> SelectedModel {
-        SelectedModel::new(self.start_index, self.pmc_mean, self.swing)
-    }
-}
-
-/// Model that uses the fewest number of bytes per value.
-pub struct SelectedModel {
-    /// Id of the model type that created this model.
-    pub model_type_id: u8,
-    /// Index of the first data point in the `UncompressedDataBuffer` that the
-    /// selected model represents.
-    pub start_index: usize,
-    /// Index of the last data point in the `UncompressedDataBuffer` that the
-    /// selected model represents.
-    pub end_index: usize,
-    /// The selected model's minimum value.
-    pub min_value: Value,
-    /// The selected model's maximum value.
-    pub max_value: Value,
-    /// Data required in addition to `min` and `max` for the model to
-    /// reconstruct the values it represents when given a specific timestamp.
-    pub values: Vec<u8>,
-    /// The number of bytes per value used by the model.
-    pub bytes_per_value: f32,
-}
-
-impl SelectedModel {
-    /// Select the model that uses the fewest number of bytes per value.
-    pub fn new(start_index: usize, pmc_mean: PMCMean, swing: Swing) -> Self {
+    pub(crate) fn finish(self) -> Model {
         let bytes_per_value = [
-            (PMC_MEAN_ID, pmc_mean.bytes_per_value()),
-            (SWING_ID, swing.bytes_per_value()),
+            (PMC_MEAN_ID, self.pmc_mean.bytes_per_value()),
+            (SWING_ID, self.swing.bytes_per_value()),
         ];
 
         // unwrap() cannot fail as the array is not empty and there are no NaN values.
-        let selected_model_type_id = bytes_per_value
+        let model_type_id = bytes_per_value
             .iter()
             .min_by(|x, y| f32::partial_cmp(&x.1, &y.1).unwrap())
             .unwrap()
             .0;
 
-        match selected_model_type_id {
-            PMC_MEAN_ID => Self::select_pmc_mean(start_index, pmc_mean),
-            SWING_ID => Self::select_swing(start_index, swing),
+        match model_type_id {
+            PMC_MEAN_ID => Self::select_pmc_mean(self.start_index, self.pmc_mean),
+            SWING_ID => Self::select_swing(self.start_index, self.swing),
             _ => panic!("Unknown model type."),
         }
     }
 
-    /// Create a [`SelectedModel`] from `pmc_mean`.
-    fn select_pmc_mean(start_index: usize, pmc_mean: PMCMean) -> Self {
+    /// Create a [`Model`] from `pmc_mean`.
+    fn select_pmc_mean(start_index: usize, pmc_mean: PMCMean) -> Model {
         let value = pmc_mean.model();
         let end_index = start_index + pmc_mean.len() - 1;
 
-        Self {
+        Model {
             model_type_id: PMC_MEAN_ID,
             start_index,
             end_index,
@@ -294,15 +247,15 @@ impl SelectedModel {
         }
     }
 
-    /// Create a [`SelectedModel`] from `swing`.
-    fn select_swing(start_index: usize, swing: Swing) -> Self {
+    /// Create a [`Model`] from `swing`.
+    fn select_swing(start_index: usize, swing: Swing) -> Model {
         let (start_value, end_value) = swing.model();
         let end_index = start_index + swing.len() - 1;
         let min_value = Value::min(start_value, end_value);
         let max_value = Value::max(start_value, end_value);
         let values = vec![(start_value < end_value) as u8];
 
-        Self {
+        Model {
             model_type_id: SWING_ID,
             start_index,
             end_index,
@@ -314,13 +267,34 @@ impl SelectedModel {
     }
 }
 
+/// Model that represents the values of a sub-sequence of a univariate time series.
+pub(crate) struct Model {
+    /// Id of the model type that created this model.
+    pub model_type_id: u8,
+    /// Index of the first data point in the `UncompressedDataBuffer` that the model represents.
+    pub start_index: usize,
+    /// Index of the last data point in the `UncompressedDataBuffer` that the model represents.
+    pub end_index: usize,
+    /// The model's minimum value.
+    pub min_value: Value,
+    /// The model's maximum value.
+    pub max_value: Value,
+    /// Data required in addition to `min` and `max` for the model to
+    /// reconstruct the values it represents when given a specific timestamp.
+    pub values: Vec<u8>,
+    /// The number of bytes per value used by the model.
+    pub bytes_per_value: f32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use modelardb_common::types::{TimestampArray, ValueArray};
     use proptest::num;
     use proptest::proptest;
 
+    use crate::compression;
     use crate::test_util::{self, StructureOfValues};
 
     const UNCOMPRESSED_TIMESTAMPS: &[Timestamp] = &[100, 200, 300, 400, 500];
@@ -357,48 +331,60 @@ mod tests {
         assert!(ErrorBound::try_new(f32::NAN).is_err())
     }
 
-    // Tests for SelectedModel.
+    // Tests for Model.
     #[test]
-    fn test_model_selected_model_attributes_for_pmc_mean() {
+    fn test_model_model_attributes_for_pmc_mean() {
         let uncompressed_timestamps = TimestampArray::from(UNCOMPRESSED_TIMESTAMPS.to_vec());
         let uncompressed_values = ValueArray::from(vec![10.0, 10.0, 10.0, 10.0, 10.0]);
 
-        let selected_model =
-            create_selected_model(&uncompressed_timestamps, &uncompressed_values, 0.0);
+        let model = compression::fit_next_model(
+            0,
+            ErrorBound::try_new(0.0).unwrap(),
+            &uncompressed_timestamps,
+            &uncompressed_values,
+        );
 
-        assert_eq!(PMC_MEAN_ID, selected_model.model_type_id);
-        assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
-        assert_eq!(10.0, selected_model.min_value);
-        assert_eq!(10.0, selected_model.max_value);
-        assert_eq!(0, selected_model.values.len());
+        assert_eq!(PMC_MEAN_ID, model.model_type_id);
+        assert_eq!(uncompressed_timestamps.len() - 1, model.end_index);
+        assert_eq!(10.0, model.min_value);
+        assert_eq!(10.0, model.max_value);
+        assert_eq!(0, model.values.len());
     }
 
     #[test]
-    fn test_model_selected_model_attributes_for_increasing_swing() {
+    fn test_model_model_attributes_for_increasing_swing() {
         let uncompressed_timestamps = TimestampArray::from(UNCOMPRESSED_TIMESTAMPS.to_vec());
         let uncompressed_values = ValueArray::from(vec![10.0, 20.0, 30.0, 40.0, 50.0]);
-        let selected_model =
-            create_selected_model(&uncompressed_timestamps, &uncompressed_values, 0.0);
+        let model = compression::fit_next_model(
+            0,
+            ErrorBound::try_new(0.0).unwrap(),
+            &uncompressed_timestamps,
+            &uncompressed_values,
+        );
 
-        assert_eq!(SWING_ID, selected_model.model_type_id);
-        assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
-        assert_eq!(10.0, selected_model.min_value);
-        assert_eq!(50.0, selected_model.max_value);
-        assert_eq!(1, selected_model.values.len());
+        assert_eq!(SWING_ID, model.model_type_id);
+        assert_eq!(uncompressed_timestamps.len() - 1, model.end_index);
+        assert_eq!(10.0, model.min_value);
+        assert_eq!(50.0, model.max_value);
+        assert_eq!(1, model.values.len());
     }
 
     #[test]
-    fn test_model_selected_model_attributes_for_decreasing_swing() {
+    fn test_model_model_attributes_for_decreasing_swing() {
         let uncompressed_timestamps = TimestampArray::from(UNCOMPRESSED_TIMESTAMPS.to_vec());
         let uncompressed_values = ValueArray::from(vec![50.0, 40.0, 30.0, 20.0, 10.0]);
-        let selected_model =
-            create_selected_model(&uncompressed_timestamps, &uncompressed_values, 0.0);
+        let model = compression::fit_next_model(
+            0,
+            ErrorBound::try_new(0.0).unwrap(),
+            &uncompressed_timestamps,
+            &uncompressed_values,
+        );
 
-        assert_eq!(SWING_ID, selected_model.model_type_id);
-        assert_eq!(uncompressed_timestamps.len() - 1, selected_model.end_index);
-        assert_eq!(10.0, selected_model.min_value);
-        assert_eq!(50.0, selected_model.max_value);
-        assert_eq!(1, selected_model.values.len());
+        assert_eq!(SWING_ID, model.model_type_id);
+        assert_eq!(uncompressed_timestamps.len() - 1, model.end_index);
+        assert_eq!(10.0, model.min_value);
+        assert_eq!(50.0, model.max_value);
+        assert_eq!(1, model.values.len());
     }
 
     /// This test ensures that the model with the fewest amount of bytes is selected.
@@ -419,29 +405,13 @@ mod tests {
             TimestampArray::from_iter_values(test_util::generate_timestamps(values.len(), false));
         let value_array = ValueArray::from(values);
 
-        let selected_model = create_selected_model(&timestamps, &value_array, 10.0);
+        let model = compression::fit_next_model(
+            0,
+            ErrorBound::try_new(10.0).unwrap(),
+            &timestamps,
+            &value_array,
+        );
 
-        assert_eq!(selected_model.model_type_id, PMC_MEAN_ID);
-    }
-
-    fn create_selected_model(
-        uncompressed_timestamps: &TimestampArray,
-        uncompressed_values: &ValueArray,
-        error_bound: f32,
-    ) -> SelectedModel {
-        let error_bound = ErrorBound::try_new(error_bound).unwrap();
-        let mut pmc_mean = PMCMean::new(error_bound);
-        let mut swing = Swing::new(error_bound);
-
-        let mut pmc_mean_could_fit_all = true;
-        let mut swing_could_fit_all = true;
-        for index in 0..uncompressed_timestamps.len() {
-            let timestamp = uncompressed_timestamps.value(index);
-            let value = uncompressed_values.value(index);
-
-            pmc_mean_could_fit_all = pmc_mean_could_fit_all && pmc_mean.fit_value(value);
-            swing_could_fit_all = swing_could_fit_all && swing.fit_data_point(timestamp, value);
-        }
-        SelectedModel::new(0, pmc_mean, swing)
+        assert_eq!(model.model_type_id, PMC_MEAN_ID);
     }
 }
