@@ -20,19 +20,20 @@
 use arrow::record_batch::RecordBatch;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
-use modelardb_common::types::{TimestampArray, Value, ValueArray};
+use modelardb_common::types::{TimestampArray, ValueArray};
 
 use crate::models::gorilla::Gorilla;
 use crate::models::{self, timestamps, GORILLA_ID};
-use crate::types::{CompressedSegmentBatchBuilder, ErrorBound, Model, ModelBuilder};
+use crate::types::{
+    CompressedSegmentBatchBuilder, CompressedSegmentBuilder, ErrorBound, ModelBuilder,
+};
 
 /// Maximum number of residuals that can be stored as part of a compressed segment. The number of
 /// residuals in a segment is stored as the last value in the `residuals` [`BinaryArray`] so
 /// [`GridExec`](crate::query::grid_exec::GridExec) can compute which timestamps are associated
 /// with the residuals, so an [`u8`] is used for simplicity. Longer sub-sequences of data points
 /// that are marked as residuals are stored as separate segments to allow for efficient pruning.
-const RESIDUAL_VALUES_MAX_LENGTH: u8 = 0; // TODO: re-enable residuals after fixing the problem with overriding start/end and min/max.
-                                          //const RESIDUAL_VALUES_MAX_LENGTH: u8 = 255;
+const RESIDUAL_VALUES_MAX_LENGTH: u8 = 255;
 
 /// Compress `uncompressed_timestamps` using a start time, end time, and a sampling interval if
 /// regular and delta-of-deltas followed by a variable length binary encoding if irregular.
@@ -65,11 +66,11 @@ pub fn try_compress(
     // Enough memory for end_index compressed segments are allocated to never require reallocation
     // as one compressed segment is created per data point in the absolute worst case.
     let end_index = uncompressed_timestamps.len();
-    let mut compressed_record_batch_builder = CompressedSegmentBatchBuilder::new(end_index);
+    let mut compressed_segment_batch_builder = CompressedSegmentBatchBuilder::new(end_index);
 
     // Compress the uncompressed timestamps and uncompressed values.
     let mut current_start_index = 0;
-    let mut previous_model: Option<Model> = None;
+    let mut previous_model: Option<CompressedSegmentBuilder> = None;
     while current_start_index < end_index {
         // Select a model to represent the values from current_start_index to index within
         // error_bound where index < end_index.
@@ -88,11 +89,11 @@ pub fn try_compress(
                 store_compressed_segments_with_model_and_or_residuals(
                     univariate_id,
                     error_bound,
-                    &previous_model,
+                    previous_model,
                     current_start_index - 1,
                     uncompressed_timestamps,
                     uncompressed_values,
-                    &mut compressed_record_batch_builder,
+                    &mut compressed_segment_batch_builder,
                 );
             }
 
@@ -113,14 +114,14 @@ pub fn try_compress(
     store_compressed_segments_with_model_and_or_residuals(
         univariate_id,
         error_bound,
-        &previous_model,
+        previous_model,
         end_index - 1,
         uncompressed_timestamps,
         uncompressed_values,
-        &mut compressed_record_batch_builder,
+        &mut compressed_segment_batch_builder,
     );
 
-    Ok(compressed_record_batch_builder.finish())
+    Ok(compressed_segment_batch_builder.finish())
 }
 
 // This method is defined as pub(crate) so it can be used in the tests in types.rs.
@@ -131,7 +132,7 @@ pub(crate) fn fit_next_model(
     error_bound: ErrorBound,
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
-) -> Model {
+) -> CompressedSegmentBuilder {
     let mut model_builder = ModelBuilder::new(current_start_index, error_bound);
 
     let mut current_index = current_start_index;
@@ -156,229 +157,101 @@ pub(crate) fn fit_next_model(
 fn store_compressed_segments_with_model_and_or_residuals(
     univariate_id: u64,
     error_bound: ErrorBound,
-    maybe_model: &Option<Model>,
+    maybe_model: Option<CompressedSegmentBuilder>,
     residuals_end_index: usize,
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
-    compressed_record_batch_builder: &mut CompressedSegmentBatchBuilder,
+    compressed_segment_batch_builder: &mut CompressedSegmentBatchBuilder,
 ) {
     // If the first values in `uncompressed_values` are residuals they cannot be part of a segment.
     if let Some(model) = maybe_model {
         if (residuals_end_index - model.end_index) <= RESIDUAL_VALUES_MAX_LENGTH.into() {
             // Few or no residuals exists so the model and any residuals are put into one segment.
-            store_model_and_any_residual_in_a_segment(
+            model.finish(
                 univariate_id,
                 error_bound,
-                model,
                 residuals_end_index,
                 uncompressed_timestamps,
                 uncompressed_values,
-                compressed_record_batch_builder,
+                compressed_segment_batch_builder,
             );
         } else {
             // Many residuals exists so the model and residuals are put into two segments.
-            store_model_and_any_residual_in_a_segment(
+            let model_end_index = model.end_index;
+
+            model.finish(
                 univariate_id,
                 error_bound,
-                model,
-                model.end_index, // No residuals are stored.
+                model_end_index, // No residuals are stored.
                 uncompressed_timestamps,
                 uncompressed_values,
-                compressed_record_batch_builder,
+                compressed_segment_batch_builder,
             );
 
-            store_residuals_as_a_model_in_a_separate_segment(
+            compress_and_store_residuals_in_a_separate_segment(
                 univariate_id,
                 error_bound,
-                model.end_index + 1,
+                model_end_index + 1,
                 residuals_end_index,
                 uncompressed_timestamps,
                 uncompressed_values,
-                compressed_record_batch_builder,
+                compressed_segment_batch_builder,
             );
         }
     } else {
         // The residuals are stored as a separate segment as the first sub-sequence of values in
         // `uncompressed_values` are residuals, thus the residuals must be stored in a segment.
-        store_residuals_as_a_model_in_a_separate_segment(
+        compress_and_store_residuals_in_a_separate_segment(
             univariate_id,
             error_bound,
             0,
             residuals_end_index,
             uncompressed_timestamps,
             uncompressed_values,
-            compressed_record_batch_builder,
+            compressed_segment_batch_builder,
         );
     }
-}
-
-/// Create a compressed segment that represents the values from `model.start_index` to and
-/// including `model.end_index` as `model.values` and, if
-/// `model.end_index < residuals_end_index`, the residuals from `model.end_index
-/// + 1` to and including `residuals_end_index`. Assumes the number of residuals are less than or
-/// equal to [`RESIDUAL_VALUES_MAX_LENGTH`].
-fn store_model_and_any_residual_in_a_segment(
-    univariate_id: u64,
-    error_bound: ErrorBound,
-    model: &Model,
-    residuals_end_index: usize,
-    uncompressed_timestamps: &TimestampArray,
-    uncompressed_values: &ValueArray,
-    compressed_record_batch_builder: &mut CompressedSegmentBatchBuilder,
-) {
-    // Metadata that may be updated by residuals.
-    let mut min_value = model.min_value;
-    let mut max_value = model.max_value;
-    let mut residuals = vec![];
-
-    // Compress residual values using Gorilla if any exists.
-    if model.end_index < residuals_end_index {
-        let model_last_value = uncompressed_values.value(model.end_index);
-        let residuals_start_index = model.end_index + 1;
-        let model_for_residuals = compress_residual_value_range(
-            error_bound,
-            Some(model_last_value),
-            residuals_start_index,
-            residuals_end_index,
-            uncompressed_values,
-        );
-
-        min_value = Value::min(min_value, model_for_residuals.min_value);
-        max_value = Value::max(max_value, model_for_residuals.max_value);
-
-        let residuals_length = (residuals_end_index - residuals_start_index) as u8 + 1;
-        residuals = model_for_residuals.values;
-        residuals.push(residuals_length);
-    };
-
-    compress_timestamps_and_store_segment_in_batch_builder(
-        univariate_id,
-        model.model_type_id,
-        model.start_index,
-        residuals_end_index,
-        min_value,
-        max_value,
-        &model.values,
-        &residuals,
-        uncompressed_timestamps,
-        compressed_record_batch_builder,
-    );
 }
 
 /// For the time series with `univariate_id`, compress the values from `start_index` to and
 /// including `end_index` in `uncompressed_values` using [`Gorilla`] and store the resulting model
 /// with the corresponding timestamps from `uncompressed_timestamps` as a segment in
-/// `compressed_record_batch_builder`.
-fn store_residuals_as_a_model_in_a_separate_segment(
+/// `compressed_segment_batch_builder`.
+fn compress_and_store_residuals_in_a_separate_segment(
     univariate_id: u64,
     error_bound: ErrorBound,
     start_index: usize,
     end_index: usize,
     uncompressed_timestamps: &TimestampArray,
     uncompressed_values: &ValueArray,
-    compressed_record_batch_builder: &mut CompressedSegmentBatchBuilder,
+    compressed_segment_batch_builder: &mut CompressedSegmentBatchBuilder,
 ) {
-    let model = compress_residual_value_range(
-        error_bound,
-        None,
-        start_index,
-        end_index,
-        uncompressed_values,
-    );
-
-    compress_timestamps_and_store_segment_in_batch_builder(
-        univariate_id,
-        model.model_type_id,
-        model.start_index,
-        model.end_index,
-        model.min_value,
-        model.max_value,
-        &model.values,
-        &[],
-        uncompressed_timestamps,
-        compressed_record_batch_builder,
-    );
-}
-
-/// Compress the values from `start_index` to `end_index` in `uncompressed_values` using
-/// [`Gorilla`]. If `maybe_model_last_value` is [`Some`] the first value is XOR'ed with it.
-fn compress_residual_value_range(
-    error_bound: ErrorBound,
-    maybe_model_last_value: Option<f32>,
-    start_index: usize,
-    end_index: usize,
-    uncompressed_values: &ValueArray,
-) -> Model {
-    let uncompressed_values = &uncompressed_values.values()[start_index..=end_index];
-
-    let min_value = uncompressed_values
-        .iter()
-        .fold(Value::NAN, |current_min, value| {
-            Value::min(current_min, *value)
-        });
-
-    let max_value = uncompressed_values
-        .iter()
-        .fold(Value::NAN, |current_max, value| {
-            Value::max(current_max, *value)
-        });
-
-    let mut gorilla = Gorilla::new(error_bound);
-    if let Some(last_value) = maybe_model_last_value {
-        gorilla.compress_values_without_first(uncompressed_values, last_value);
-    } else {
-        gorilla.compress_values(uncompressed_values);
-    }
-
-    let bytes_per_value = gorilla.bytes_per_value();
-    let values = gorilla.compressed_values();
-
-    Model {
-        model_type_id: GORILLA_ID,
-        start_index,
-        end_index,
-        min_value,
-        max_value,
-        values,
-        bytes_per_value,
-    }
-}
-
-/// Compress the timestamps from `start_index` to `end_index` and store them with the model
-/// (`min_value`, `max_value`, and `values`) and possible `residuals` in a compressed segment.
-#[allow(clippy::too_many_arguments)]
-fn compress_timestamps_and_store_segment_in_batch_builder(
-    univariate_id: u64,
-    model_type_id: u8,
-    start_index: usize,
-    end_index: usize,
-    min_value: Value,
-    max_value: Value,
-    values: &[u8],
-    residuals: &[u8],
-    uncompressed_timestamps: &TimestampArray,
-    compressed_record_batch_builder: &mut CompressedSegmentBatchBuilder,
-) {
+    // Compress the timestamps for the values stored in this segment without residuals.
     let start_time = uncompressed_timestamps.value(start_index);
     let end_time = uncompressed_timestamps.value(end_index);
     let timestamps = timestamps::compress_residual_timestamps(
         &uncompressed_timestamps.values()[start_index..=end_index],
     );
 
-    let error = f32::NAN; // TODO: compute and store the actual error.
+    // Compute metadata and compress the values stored in this segment without residuals.
+    let uncompressed_values = &uncompressed_values.values()[start_index..=end_index];
+    let mut gorilla = Gorilla::new(error_bound);
+    gorilla.compress_values(uncompressed_values);
 
-    compressed_record_batch_builder.append_compressed_segment(
+    let (values, min_value, max_value) = gorilla.model();
+
+    compressed_segment_batch_builder.append_compressed_segment(
         univariate_id,
-        model_type_id,
+        GORILLA_ID,
         start_time,
         end_time,
         &timestamps,
         min_value,
         max_value,
-        values,
-        residuals,
-        error,
-    );
+        &values,
+        &[],
+        f32::NAN, // TODO: compute and store the actual error.
+    )
 }
 
 #[cfg(test)]
@@ -386,7 +259,7 @@ mod tests {
     use super::*;
 
     use arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt64Builder, UInt8Array};
-    use modelardb_common::types::{Timestamp, TimestampBuilder, ValueBuilder};
+    use modelardb_common::types::{Timestamp, TimestampBuilder, Value, ValueBuilder};
 
     use crate::models;
     use crate::test_util::{self, StructureOfValues};
@@ -702,7 +575,7 @@ mod tests {
             &uncompressed_timestamps,
             &uncompressed_values,
             &compressed_record_batch,
-            &[models::PMC_MEAN_ID, models::SWING_ID, models::GORILLA_ID],
+            &[models::PMC_MEAN_ID, models::SWING_ID],
         )
     }
 
@@ -783,44 +656,58 @@ mod tests {
             assert_eq!(model_type_ids.value(row_index), *expected_model_type_id);
         }
 
-        assert_eq!(
-            uncompressed_timestamps.len(),
-            timestamp_builder.finish().len()
-        );
-        assert_eq!(uncompressed_values.len(), value_builder.finish().len());
+        let decompressed_timestamps = timestamp_builder.finish();
+        let decompressed_values = value_builder.finish();
+
+        assert_eq!(uncompressed_timestamps, &decompressed_timestamps);
+        assert_eq!(decompressed_timestamps.len(), decompressed_values.len());
+        assert_eq!(uncompressed_values.len(), decompressed_values.len());
     }
 
-    // Tests for compress_residual_value_range().
+    // Tests for compress_and_store_residuals_in_a_separate_segment().
     #[test]
-    fn test_compress_all_residual_value_range() {
+    fn test_compress_and_store_residuals_in_a_separate_segment() {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let uncompressed_timestamps = TimestampArray::from_iter_values((100..=500).step_by(100));
         let uncompressed_values = ValueArray::from(vec![73.0, 37.0, 37.0, 37.0, 73.0]);
-        let model = compress_residual_value_range(
-            error_bound,
-            None,
+        let mut compressed_segment_batch_builder = CompressedSegmentBatchBuilder::new(1);
+
+        compress_and_store_residuals_in_a_separate_segment(
             0,
-            uncompressed_values.len() - 1,
+            error_bound,
+            0,
+            uncompressed_timestamps.len() - 1,
+            &uncompressed_timestamps,
             &uncompressed_values,
+            &mut compressed_segment_batch_builder,
         );
 
-        assert_eq!(GORILLA_ID, model.model_type_id);
-        assert_eq!(uncompressed_values.len() - 1, model.end_index);
-        assert_eq!(37.0, model.min_value);
-        assert_eq!(73.0, model.max_value);
-        assert_eq!(8, model.values.len());
-    }
+        let compressed_segments = compressed_segment_batch_builder.finish();
+        modelardb_common::arrays!(
+            compressed_segments,
+            univariate_ids,
+            model_type_ids,
+            start_times,
+            end_times,
+            timestamps,
+            min_values,
+            max_values,
+            values,
+            residuals,
+            errors
+        );
 
-    #[test]
-    fn test_compress_some_residual_value_range() {
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
-        let uncompressed_values = ValueArray::from(vec![73.0, 37.0, 37.0, 37.0, 73.0]);
-        let model =
-            compress_residual_value_range(error_bound, None, 1, 3, &uncompressed_values);
-
-        assert_eq!(GORILLA_ID, model.model_type_id);
-        assert_eq!(3, model.end_index);
-        assert_eq!(37.0, model.min_value);
-        assert_eq!(37.0, model.max_value);
-        assert_eq!(5, model.values.len());
+        assert_eq!(1, compressed_segments.num_rows());
+        assert_eq!(0, univariate_ids.value(0));
+        assert_eq!(GORILLA_ID, model_type_ids.value(0));
+        assert_eq!(100, start_times.value(0));
+        assert_eq!(500, end_times.value(0));
+        assert_eq!(1, timestamps.value(0).len());
+        assert_eq!(5, timestamps.value(0)[0]);
+        assert_eq!(37.0, min_values.value(0));
+        assert_eq!(73.0, max_values.value(0));
+        assert_eq!(8, values.value(0).len());
+        assert!(residuals.value(0).is_empty());
+        assert!(errors.value(0).is_nan());
     }
 }

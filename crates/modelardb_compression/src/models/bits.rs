@@ -143,7 +143,8 @@ impl BitVecBuilder {
     }
 
     /// Return the number of bytes required to store the appended bits.
-    pub fn len(&self) -> usize {
+    #[cfg(test)]
+    fn len(&self) -> usize {
         self.bytes.len() + (self.remaining_bits != 8) as usize
     }
 

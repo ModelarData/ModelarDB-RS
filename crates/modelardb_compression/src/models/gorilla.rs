@@ -22,7 +22,6 @@
 //!
 //! [Gorilla paper]: https://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 
-use modelardb_common::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
 use modelardb_common::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
 
 use crate::models;
@@ -34,6 +33,10 @@ use crate::models::ErrorBound;
 pub struct Gorilla {
     /// Maximum relative error for the value of each data point.
     error_bound: ErrorBound,
+    /// Min value compressed and added to `compressed_values`.
+    min_value: Value,
+    /// Max value compressed and added to `compressed_values`.
+    max_value: Value,
     /// Last value compressed and added to `compressed_values`.
     last_value: Value,
     /// Number of leading zero bits for the last value that was compressed by
@@ -52,6 +55,8 @@ impl Gorilla {
     pub fn new(error_bound: ErrorBound) -> Self {
         Self {
             error_bound,
+            min_value: Value::NAN,
+            max_value: Value::NAN,
             last_value: 0.0,
             last_leading_zero_bits: u8::MAX,
             last_trailing_zero_bits: 0,
@@ -60,9 +65,33 @@ impl Gorilla {
         }
     }
 
-    /// Compress `value` using XOR and a variable length binary encoding and
-    /// append the compressed value to an internal buffer in [`Gorilla`].
-    pub fn compress_value(&mut self, value: Value) {
+    /// Store the first value in full if this instance of [`Gorilla`] is empty and then compress the
+    /// remaining `values` using XOR and a variable length binary encoding before storing them.
+    pub fn compress_values(&mut self, values: &[Value]) {
+        for value in values {
+            if self.compressed_values.is_empty() {
+                // Store the first value uncompressed using size_of::<Value> bits.
+                self.compressed_values
+                    .append_bits(value.to_bits(), models::VALUE_SIZE_IN_BITS);
+
+                self.update_min_max_and_last_value(*value);
+            } else {
+                self.compress_value_xor_last_value(*value);
+            };
+        }
+    }
+
+    /// Assume `last_value` is stored fully elsewhere, set it as the current last value, and then
+    /// compress each of the values in `values` using XOR and a variable length binary encoding.
+    pub fn compress_values_without_first(&mut self, values: &[Value], model_last_value: Value) {
+        self.last_value = model_last_value;
+        for value in values {
+            self.compress_value_xor_last_value(*value);
+        }
+    }
+
+    /// Compress `value` using XOR and a variable length binary encoding and then store it.
+    fn compress_value_xor_last_value(&mut self, value: Value) {
         // The best case for Gorilla is storing duplicate values.
         let value = if models::is_value_within_error_bound(self.error_bound, value, self.last_value)
         {
@@ -119,21 +148,26 @@ impl Gorilla {
                 self.last_trailing_zero_bits = trailing_zero_bits;
             }
         }
+
+        self.update_min_max_and_last_value(value);
+    }
+
+    /// Update the current minimum, maximum, and last value based on `value`.
+    fn update_min_max_and_last_value(&mut self, value: Value) {
+        self.min_value = Value::min(self.min_value, value);
+        self.max_value = Value::max(self.max_value, value);
         self.last_value = value;
         self.length += 1;
     }
 
-    /// Return the number of bytes currently used per data point on average.
-    pub fn bytes_per_value(&self) -> f32 {
-        // Gorilla does not use metadata for encoding values, only the data in compressed_values.
-        (COMPRESSED_METADATA_SIZE_IN_BYTES.to_owned() + self.compressed_values.len()) as f32
-            / self.length as f32
-    }
-
     /// Return the values compressed using XOR and a variable length binary
-    /// encoding.
-    pub fn compressed_values(self) -> Vec<u8> {
-        self.compressed_values.finish()
+    /// encoding, the compressed minimum value, and the compressed maximum value.
+    pub fn model(self) -> (Vec<u8>, Value, Value) {
+        (
+            self.compressed_values.finish(),
+            self.min_value,
+            self.max_value,
+        )
     }
 }
 
@@ -149,8 +183,14 @@ pub fn sum(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8], values
     let mut trailing_zeros: u8 = 0;
     let mut last_value = bits.read_bits(models::VALUE_SIZE_IN_BITS);
 
-    // The first value is stored uncompressed using size_of::<Value> bits.
-    let mut sum = Value::from_bits(last_value);
+    let (mut last_value, mut sum) = if let Some(model_last_value) = maybe_model_last_value {
+        // The first value is stored compressed against model_last_value.
+        (model_last_value.to_bits(), 0.0)
+    } else {
+        // The first value is stored uncompressed using size_of::<Value> bits.
+        let first_value = bits.read_bits(models::VALUE_SIZE_IN_BITS);
+        (first_value, Value::from_bits(first_value))
+    };
 
     // Then values are stored using XOR and a variable length binary encoding.
     for _ in 0..length - 1 {
@@ -234,7 +274,7 @@ mod tests {
     #[test]
     fn test_empty_sequence() {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
-        assert!(Gorilla::new(error_bound).compressed_values().is_empty());
+        assert!(Gorilla::new(error_bound).model().0.is_empty());
     }
 
     proptest! {
@@ -364,10 +404,8 @@ mod tests {
     fn compress_values_using_gorilla(values: &[Value]) -> Vec<u8> {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
-        for value in values {
-            model_type.compress_value(*value);
-        }
-        model_type.compressed_values()
+        model_type.compress_values(values);
+        model_type.model().0
     }
 
     fn slice_of_value_equal(values_one: &[Value], values_two: &[Value]) -> bool {

@@ -30,7 +30,7 @@ use modelardb_common::types::{
     Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder,
 };
 
-use crate::types::ErrorBound;
+use crate::types::{CompressedSegmentBuilder, ErrorBound};
 
 /// Unique ids for each model type. Constant values are used instead of an enum
 /// so the stored model type ids can be used in match expressions without being
@@ -109,10 +109,9 @@ pub fn sum(
 ) -> Value {
     match model_type_id {
         PMC_MEAN_ID => pmc_mean::sum(start_time, end_time, timestamps, min_value),
-        SWING_ID => swing::sum(
-            start_time, end_time, timestamps, min_value, max_value, values,
-        ),
-        GORILLA_ID => gorilla::sum(start_time, end_time, timestamps, values),
+        SWING_ID => swing::sum(start_time, end_time, timestamps, min_value, max_value),
+        // TODO: take residuals stored as part of the segment into account when refactoring optimizer.
+        GORILLA_ID => gorilla::sum(start_time, end_time, timestamps, values, None),
         _ => panic!("Unknown model type."),
     }
 }
@@ -154,22 +153,26 @@ pub fn grid(
     match model_type_id {
         PMC_MEAN_ID => pmc_mean::grid(
             univariate_id,
-            min_value, // For PMC-Mean, min and max is the same value.
+            CompressedSegmentBuilder::decode_values_for_pmc_mean(min_value, max_value, values),
             univariate_id_builder,
             model_timestamps,
             value_builder,
         ),
-        SWING_ID => swing::grid(
-            univariate_id,
-            start_time,
-            end_time,
-            min_value,
-            max_value,
-            values,
-            univariate_id_builder,
-            model_timestamps,
-            value_builder,
-        ),
+        SWING_ID => {
+            let (first_value, last_value) =
+                CompressedSegmentBuilder::decode_values_for_swing(min_value, max_value, values);
+
+            swing::grid(
+                univariate_id,
+                start_time,
+                end_time,
+                first_value,
+                last_value,
+                univariate_id_builder,
+                model_timestamps,
+                value_builder,
+            )
+        }
         GORILLA_ID => gorilla::grid(
             univariate_id,
             values,

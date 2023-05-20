@@ -89,7 +89,7 @@ impl PMCMean {
 
     /// Return the current model. For a model of type PMC-Mean, its coefficient
     /// is the average value of the time series segment the model represents.
-    pub fn model(&self) -> Value {
+    pub fn model(self) -> Value {
         (self.sum_of_values / self.length as f64) as Value
     }
 }

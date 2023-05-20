@@ -15,15 +15,22 @@
 
 //! The types used throughout the crate.
 
+use std::debug_assert;
 use std::{cmp::Ordering, sync::Arc};
 
 use arrow::array::{BinaryBuilder, Float32Builder, UInt64Builder, UInt8Builder};
 use arrow::record_batch::RecordBatch;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
-use modelardb_common::types::{Timestamp, TimestampBuilder, Value, ValueBuilder};
+use modelardb_common::types::{
+    Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
+};
 
-use crate::models::{pmc_mean::PMCMean, swing::Swing, PMC_MEAN_ID, SWING_ID};
+use crate::models::gorilla::Gorilla;
+use crate::models::pmc_mean::PMCMean;
+use crate::models::swing::Swing;
+use crate::models::{timestamps, VALUE_SIZE_IN_BYTES};
+use crate::models::{PMC_MEAN_ID, SWING_ID};
 
 /// Error bound in percentage that is guaranteed to be from 0.0% to 100.0%. For both `PMCMean`,
 /// `Swing`, and `Gorilla` the error bound is interpreted as a relative per value error bound.
@@ -60,6 +67,331 @@ impl PartialEq<ErrorBound> for f32 {
 impl PartialOrd<ErrorBound> for f32 {
     fn partial_cmp(&self, other: &ErrorBound) -> Option<Ordering> {
         self.partial_cmp(&other.0)
+    }
+}
+
+/// A model being built from an uncompressed segment using the potentially lossy model types in
+/// [`models`]. Each of the potentially lossy model types is used to fit models to the data points,
+/// and then the model that uses the fewest number of bytes per value is selected.
+pub(crate) struct ModelBuilder {
+    /// Index of the first data point in `uncompressed_timestamps` and `uncompressed_values` the
+    /// compressed model represents values for.
+    start_index: usize,
+    /// Constant function that currently represents the values in `uncompressed_values` from
+    /// `start_index` to `start_index` + `pmc_mean.length`.
+    pmc_mean: PMCMean,
+    /// Indicates if `pmc_mean` could represent all values in `uncompressed_values` from
+    /// `start_index` to `current_index` in `new()`.
+    pmc_mean_could_fit_all: bool,
+    /// Linear function that represents the values in `uncompressed_values` from `start_index` to
+    /// `start_index` + `swing.length`.
+    swing: Swing,
+    /// Indicates if `swing` could represent all values in `uncompressed_values` from `start_index`
+    /// to `current_index` in `new()`.
+    swing_could_fit_all: bool,
+}
+
+impl ModelBuilder {
+    /// Create a model that represents a sub-sequence of uncompressed values that starts at
+    /// `start_index`, is within `error_bound`, and uses the fewest number of bytes per value.
+    pub(crate) fn new(start_index: usize, error_bound: ErrorBound) -> Self {
+        Self {
+            start_index,
+            pmc_mean: PMCMean::new(error_bound),
+            pmc_mean_could_fit_all: true,
+            swing: Swing::new(error_bound),
+            swing_could_fit_all: true,
+        }
+    }
+
+    /// Attempt to update the current models to also represent the `value` of
+    /// the data point collected at `timestamp`.
+    pub(crate) fn try_to_update_models(&mut self, timestamp: Timestamp, value: Value) {
+        debug_assert!(
+            self.can_fit_more(),
+            "The current models cannot be fitted to additional data points."
+        );
+
+        self.pmc_mean_could_fit_all = self.pmc_mean_could_fit_all && self.pmc_mean.fit_value(value);
+
+        self.swing_could_fit_all =
+            self.swing_could_fit_all && self.swing.fit_data_point(timestamp, value);
+    }
+
+    /// Return [`true`] if any of the current models can represent additional
+    /// values, otherwise [`false`].
+    pub(crate) fn can_fit_more(&self) -> bool {
+        self.pmc_mean_could_fit_all || self.swing_could_fit_all
+    }
+
+    /// Return the model that requires the fewest number of bytes per value.
+    pub(crate) fn finish(self) -> CompressedSegmentBuilder {
+        let bytes_per_value = [
+            (PMC_MEAN_ID, self.pmc_mean.bytes_per_value()),
+            (SWING_ID, self.swing.bytes_per_value()),
+        ];
+
+        // unwrap() cannot fail as the array is not empty and there are no NaN values.
+        let model_type_id = bytes_per_value
+            .iter()
+            .min_by(|x, y| f32::partial_cmp(&x.1, &y.1).unwrap())
+            .unwrap()
+            .0;
+
+        match model_type_id {
+            PMC_MEAN_ID => Self::select_pmc_mean(self.start_index, self.pmc_mean),
+            SWING_ID => Self::select_swing(self.start_index, self.swing),
+            _ => panic!("Unknown model type."),
+        }
+    }
+
+    /// Create a [`Model`] from `pmc_mean`.
+    fn select_pmc_mean(start_index: usize, pmc_mean: PMCMean) -> CompressedSegmentBuilder {
+        let end_index = start_index + pmc_mean.len() - 1;
+        let bytes_per_value = pmc_mean.bytes_per_value();
+        let value = pmc_mean.model();
+
+        CompressedSegmentBuilder {
+            model_type_id: PMC_MEAN_ID,
+            start_index,
+            end_index,
+            min_value: value,
+            max_value: value,
+            values: vec![],
+            model_last_value: value,
+            bytes_per_value,
+        }
+    }
+
+    /// Create a [`Model`] from `swing`.
+    fn select_swing(start_index: usize, swing: Swing) -> CompressedSegmentBuilder {
+        let end_index = start_index + swing.len() - 1;
+        let bytes_per_value = swing.bytes_per_value();
+        let (first_value, last_value) = swing.model();
+        let min_value = Value::min(first_value, last_value);
+        let max_value = Value::max(first_value, last_value);
+        let values = if first_value < last_value {
+            vec![]
+        } else {
+            vec![0]
+        };
+
+        CompressedSegmentBuilder {
+            model_type_id: SWING_ID,
+            start_index,
+            end_index,
+            min_value,
+            max_value,
+            values,
+            model_last_value: last_value,
+            bytes_per_value,
+        }
+    }
+}
+
+/// A compressed segment being built from metadata and a model.
+pub(crate) struct CompressedSegmentBuilder {
+    /// Id of the model type that created the model in this segment.
+    pub model_type_id: u8,
+    /// Index of the first data point in the `UncompressedDataBuffer` that this segment represents.
+    pub start_index: usize,
+    /// Index of the last data point in the `UncompressedDataBuffer` that this segment represents.
+    pub end_index: usize,
+    /// The segment's minimum value.
+    pub min_value: Value,
+    /// The segment's maximum value.
+    pub max_value: Value,
+    /// Data required in addition to `min` and `max` for the model to
+    /// reconstruct the values it represents when given a specific timestamp.
+    pub values: Vec<u8>,
+    /// The last value the model represents.
+    pub model_last_value: Value,
+    /// The number of bytes per value used by the model.
+    pub bytes_per_value: f32,
+}
+
+impl CompressedSegmentBuilder {
+    // TODO: Document
+    /// Assumes the residuals are the values between the model in this segment and the next model.
+    pub(crate) fn finish(
+        mut self,
+        univariate_id: u64,
+        error_bound: ErrorBound,
+        residuals_end_index: usize,
+        uncompressed_timestamps: &TimestampArray,
+        uncompressed_values: &ValueArray,
+        compressed_segment_batch_builder: &mut CompressedSegmentBatchBuilder,
+    ) {
+        // Assert the methods assumptions to simplify development.
+        debug_assert_eq!(uncompressed_timestamps.len(), uncompressed_values.len());
+        debug_assert!(self.end_index <= residuals_end_index);
+        debug_assert!(residuals_end_index <= uncompressed_timestamps.len());
+
+        let model_type_id = self.model_type_id;
+
+        // Compress the timestamps for the values stored as the model and if any exist, residuals.
+        let start_time = uncompressed_timestamps.value(self.start_index);
+        let end_time = uncompressed_timestamps.value(residuals_end_index);
+        let timestamps = timestamps::compress_residual_timestamps(
+            &uncompressed_timestamps.values()[self.start_index..=residuals_end_index],
+        );
+
+        // Compress residual values using Gorilla if any exists.
+        let residuals = if self.end_index < residuals_end_index {
+            let residuals_start_index = self.end_index + 1;
+
+            let uncompressed_residuals =
+                &uncompressed_values.values()[residuals_start_index..=residuals_end_index];
+
+            let (mut residuals, residuals_min_value, residuals_max_value) =
+                self.compress_residuals(error_bound, uncompressed_residuals);
+
+            match model_type_id {
+                PMC_MEAN_ID => {
+                    self.update_values_for_pmc_mean(residuals_min_value, residuals_max_value)
+                }
+                SWING_ID => self.update_values_for_swing(residuals_min_value, residuals_max_value),
+                _ => panic!("Unknown model type."),
+            }
+
+            self.min_value = Value::min(self.min_value, residuals_min_value);
+            self.max_value = Value::max(self.max_value, residuals_max_value);
+
+            // The length is known to be at most RESIDUAL_VALUES_MAX_LENGTH: u8.
+            residuals.push((residuals_end_index - residuals_start_index) as u8 + 1);
+            residuals
+        } else {
+            vec![]
+        };
+
+        compressed_segment_batch_builder.append_compressed_segment(
+            univariate_id,
+            self.model_type_id,
+            start_time,
+            end_time,
+            &timestamps,
+            self.min_value,
+            self.max_value,
+            &self.values,
+            &residuals,
+            f32::NAN, // TODO: compute and store the actual error.
+        )
+    }
+
+    /// Compress `uncompressed_residuals` within `error_bound` using [`Gorilla`].
+    fn compress_residuals(
+        &self,
+        error_bound: ErrorBound,
+        uncompressed_residuals: &[Value],
+    ) -> (Vec<u8>, Value, Value) {
+        let mut gorilla = Gorilla::new(error_bound);
+        gorilla.compress_values_without_first(uncompressed_residuals, self.model_last_value);
+        gorilla.model()
+    }
+
+    /// Add information if required for the model of type [`PMCMean`] due to `residuals_min_value`
+    /// and `residuals_max_value` overwriting the model's minimum and maximum values in the segment.
+    fn update_values_for_pmc_mean(
+        &mut self,
+        residuals_min_value: Value,
+        residuals_max_value: Value,
+    ) {
+        if self.min_value > residuals_min_value {
+            // The models minimum is overwritten so another value must be used.
+            if self.max_value >= residuals_max_value {
+                // Minimum and maximum is the same for PMC-Mean, so maximum can be used with a flag.
+                self.values.push(1);
+            } else {
+                // Minimum and maximum have been overwritten, so the model's value has to be stored.
+                self.values.extend_from_slice(&self.min_value.to_le_bytes());
+            }
+        }
+    }
+
+    /// Decode the mean value stored for a model of type [`PMCMean`].
+    pub(crate) fn decode_values_for_pmc_mean(
+        min_value: Value,
+        max_value: Value,
+        values: &[u8],
+    ) -> Value {
+        // unwrap() is safe as values are encoded by update_values_for_pmc_mean().
+        match values.len() {
+            0 => min_value,
+            1 => max_value,
+            _ => Value::from_le_bytes(values.try_into().unwrap()),
+        }
+    }
+
+    /// Add information if required for the model of type [`Swing`] due to `residuals_min_value` and
+    /// `residuals_max_value` overwriting the model's minimum and maximum values in the segment.
+    fn update_values_for_swing(&mut self, residuals_min_value: Value, residuals_max_value: Value) {
+        if residuals_min_value < self.min_value && self.max_value < residuals_min_value {
+            // Minimum and maximum is overwritten so first and last value are stored.
+            let mut updated_values = Vec::with_capacity(2 * VALUE_SIZE_IN_BYTES as usize);
+            if self.values.is_empty() {
+                updated_values.extend_from_slice(&self.min_value.to_le_bytes());
+                updated_values.extend_from_slice(&self.max_value.to_le_bytes());
+            } else {
+                updated_values.extend_from_slice(&self.max_value.to_le_bytes());
+                updated_values.extend_from_slice(&self.min_value.to_le_bytes());
+            }
+            self.values = updated_values;
+        } else if residuals_min_value < self.min_value {
+            // Minimum is overwritten so a flag is stored for the order and then the models minimum.
+            let mut updated_values = Vec::with_capacity(1 + VALUE_SIZE_IN_BYTES as usize);
+            if self.values.is_empty() {
+                updated_values.push(0);
+                updated_values.extend(self.min_value.to_le_bytes());
+            } else {
+                updated_values.push(1);
+                updated_values.extend(self.min_value.to_le_bytes());
+            }
+            self.values = updated_values;
+        } else if self.max_value < residuals_max_value {
+            // Maximum is overwritten so a flag is stored for the order and then the models maximum.
+            let mut updated_values = Vec::with_capacity(1 + VALUE_SIZE_IN_BYTES as usize);
+            if self.values.is_empty() {
+                updated_values.push(2);
+                updated_values.extend(self.max_value.to_le_bytes());
+            } else {
+                updated_values.push(3);
+                updated_values.extend(self.max_value.to_le_bytes());
+            }
+            self.values = updated_values;
+        }
+
+        if self.min_value > residuals_min_value {}
+    }
+
+    /// Decode the mean value stored for a model of type [`Swing`].
+    pub(crate) fn decode_values_for_swing(
+        min_value: Value,
+        max_value: Value,
+        values: &[u8],
+    ) -> (Value, Value) {
+        // unwrap() is safe as values are encoded by select_swing() and update_values_for_swing().
+        match values.len() {
+            0 => (min_value, max_value),
+            1 => (max_value, min_value),
+            5 => {
+                let value = Value::from_le_bytes(values[1..].try_into().unwrap());
+                match values[0] {
+                    0 => (value, max_value),
+                    1 => (max_value, value),
+                    2 => (min_value, value),
+                    3 => (value, min_value),
+                    _ => panic!("Unknown encoding of swing."),
+                }
+            }
+            8 => {
+                let value_size = VALUE_SIZE_IN_BYTES as usize;
+                (
+                    Value::from_le_bytes(values[0..value_size].try_into().unwrap()),
+                    Value::from_le_bytes(values[value_size..2 * value_size].try_into().unwrap()),
+                )
+            }
+            _ => panic!("Unknown encoding of swing."),
+        }
     }
 }
 
@@ -156,136 +488,6 @@ impl CompressedSegmentBatchBuilder {
     }
 }
 
-/// A model being built from an uncompressed segment using the potentially lossy model types in
-/// [`models`]. Each of the potentially lossy model types is used to fit models to the data points,
-/// and then the model that uses the fewest number of bytes per value is selected.
-pub(crate) struct ModelBuilder {
-    /// Index of the first data point in `uncompressed_timestamps` and `uncompressed_values` the
-    /// compressed model represents values for.
-    start_index: usize,
-    /// Constant function that currently represents the values in `uncompressed_values` from
-    /// `start_index` to `start_index` + `pmc_mean.length`.
-    pmc_mean: PMCMean,
-    /// Indicates if `pmc_mean` could represent all values in `uncompressed_values` from
-    /// `start_index` to `current_index` in `new()`.
-    pmc_mean_could_fit_all: bool,
-    /// Linear function that represents the values in `uncompressed_values` from `start_index` to
-    /// `start_index` + `swing.length`.
-    swing: Swing,
-    /// Indicates if `swing` could represent all values in `uncompressed_values` from `start_index`
-    /// to `current_index` in `new()`.
-    swing_could_fit_all: bool,
-}
-
-impl ModelBuilder {
-    /// Create a model that represents a sub-sequence of uncompressed values that starts at
-    /// `start_index`, is within `error_bound`, and uses the fewest number of bytes per value.
-    pub(crate) fn new(start_index: usize, error_bound: ErrorBound) -> Self {
-        Self {
-            start_index,
-            pmc_mean: PMCMean::new(error_bound),
-            pmc_mean_could_fit_all: true,
-            swing: Swing::new(error_bound),
-            swing_could_fit_all: true,
-        }
-    }
-
-    /// Attempt to update the current models to also represent the `value` of
-    /// the data point collected at `timestamp`.
-    pub(crate) fn try_to_update_models(&mut self, timestamp: Timestamp, value: Value) {
-        debug_assert!(
-            self.can_fit_more(),
-            "The current models cannot be fitted to additional data points."
-        );
-
-        self.pmc_mean_could_fit_all = self.pmc_mean_could_fit_all && self.pmc_mean.fit_value(value);
-
-        self.swing_could_fit_all =
-            self.swing_could_fit_all && self.swing.fit_data_point(timestamp, value);
-    }
-
-    /// Return [`true`] if any of the current models can represent additional
-    /// values, otherwise [`false`].
-    pub(crate) fn can_fit_more(&self) -> bool {
-        self.pmc_mean_could_fit_all || self.swing_could_fit_all
-    }
-
-    /// Return the model that requires the fewest number of bytes per value.
-    pub(crate) fn finish(self) -> Model {
-        let bytes_per_value = [
-            (PMC_MEAN_ID, self.pmc_mean.bytes_per_value()),
-            (SWING_ID, self.swing.bytes_per_value()),
-        ];
-
-        // unwrap() cannot fail as the array is not empty and there are no NaN values.
-        let model_type_id = bytes_per_value
-            .iter()
-            .min_by(|x, y| f32::partial_cmp(&x.1, &y.1).unwrap())
-            .unwrap()
-            .0;
-
-        match model_type_id {
-            PMC_MEAN_ID => Self::select_pmc_mean(self.start_index, self.pmc_mean),
-            SWING_ID => Self::select_swing(self.start_index, self.swing),
-            _ => panic!("Unknown model type."),
-        }
-    }
-
-    /// Create a [`Model`] from `pmc_mean`.
-    fn select_pmc_mean(start_index: usize, pmc_mean: PMCMean) -> Model {
-        let value = pmc_mean.model();
-        let end_index = start_index + pmc_mean.len() - 1;
-
-        Model {
-            model_type_id: PMC_MEAN_ID,
-            start_index,
-            end_index,
-            min_value: value,
-            max_value: value,
-            values: vec![],
-            bytes_per_value: pmc_mean.bytes_per_value(),
-        }
-    }
-
-    /// Create a [`Model`] from `swing`.
-    fn select_swing(start_index: usize, swing: Swing) -> Model {
-        let (start_value, end_value) = swing.model();
-        let end_index = start_index + swing.len() - 1;
-        let min_value = Value::min(start_value, end_value);
-        let max_value = Value::max(start_value, end_value);
-        let values = vec![(start_value < end_value) as u8];
-
-        Model {
-            model_type_id: SWING_ID,
-            start_index,
-            end_index,
-            min_value,
-            max_value,
-            values,
-            bytes_per_value: swing.bytes_per_value(),
-        }
-    }
-}
-
-/// Model that represents the values of a sub-sequence of a univariate time series.
-pub(crate) struct Model {
-    /// Id of the model type that created this model.
-    pub model_type_id: u8,
-    /// Index of the first data point in the `UncompressedDataBuffer` that the model represents.
-    pub start_index: usize,
-    /// Index of the last data point in the `UncompressedDataBuffer` that the model represents.
-    pub end_index: usize,
-    /// The model's minimum value.
-    pub min_value: Value,
-    /// The model's maximum value.
-    pub max_value: Value,
-    /// Data required in addition to `min` and `max` for the model to
-    /// reconstruct the values it represents when given a specific timestamp.
-    pub values: Vec<u8>,
-    /// The number of bytes per value used by the model.
-    pub bytes_per_value: f32,
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -333,7 +535,7 @@ mod tests {
 
     // Tests for Model.
     #[test]
-    fn test_model_model_attributes_for_pmc_mean() {
+    fn test_model_attributes_for_pmc_mean() {
         let uncompressed_timestamps = TimestampArray::from(UNCOMPRESSED_TIMESTAMPS.to_vec());
         let uncompressed_values = ValueArray::from(vec![10.0, 10.0, 10.0, 10.0, 10.0]);
 
@@ -352,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn test_model_model_attributes_for_increasing_swing() {
+    fn test_model_attributes_for_increasing_swing() {
         let uncompressed_timestamps = TimestampArray::from(UNCOMPRESSED_TIMESTAMPS.to_vec());
         let uncompressed_values = ValueArray::from(vec![10.0, 20.0, 30.0, 40.0, 50.0]);
         let model = compression::fit_next_model(
@@ -366,11 +568,11 @@ mod tests {
         assert_eq!(uncompressed_timestamps.len() - 1, model.end_index);
         assert_eq!(10.0, model.min_value);
         assert_eq!(50.0, model.max_value);
-        assert_eq!(1, model.values.len());
+        assert_eq!(0, model.values.len());
     }
 
     #[test]
-    fn test_model_model_attributes_for_decreasing_swing() {
+    fn test_model_attributes_for_decreasing_swing() {
         let uncompressed_timestamps = TimestampArray::from(UNCOMPRESSED_TIMESTAMPS.to_vec());
         let uncompressed_values = ValueArray::from(vec![50.0, 40.0, 30.0, 20.0, 10.0]);
         let model = compression::fit_next_model(
