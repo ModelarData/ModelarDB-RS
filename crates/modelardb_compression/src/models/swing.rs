@@ -24,10 +24,12 @@
 //! [ModelarDB paper]: https://www.vldb.org/pvldb/vol11/p1688-jensen.pdf
 
 use modelardb_common::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
-use modelardb_common::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
+use modelardb_common::types::{
+    Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder,
+};
 
-use crate::models::ErrorBound;
-use crate::models::{self, timestamps};
+use super::timestamps;
+use crate::models::{self, ErrorBound};
 
 /// The state the Swing model type needs while fitting a model to a time series
 /// segment.
@@ -214,6 +216,7 @@ pub fn sum(
     timestamps: &[u8],
     first_value: Value,
     last_value: Value,
+    residuals_length: usize,
 ) -> Value {
     let (slope, intercept) =
         compute_slope_and_intercept(start_time, first_value as f64, end_time, last_value as f64);
@@ -225,9 +228,20 @@ pub fn sum(
         let length = models::len(start_time, end_time, timestamps);
         (average * length as f64) as Value
     } else {
-        // TODO: decompress timestamps instead of just casting them when refactoring the optimizer.
+        let mut timestamp_builder = TimestampBuilder::new();
+
+        timestamps::decompress_all_timestamps(
+            start_time,
+            end_time,
+            timestamps,
+            &mut timestamp_builder,
+        );
+
+        let timestamps = timestamp_builder.finish();
+        let model_timestamps_end_index = timestamps.len() - residuals_length;
+
         let mut sum: f64 = 0.0;
-        for timestamp in timestamps {
+        for timestamp in &timestamps.values()[0..model_timestamps_end_index] {
             sum += slope * (*timestamp as f64) + intercept;
         }
         sum as Value
@@ -461,7 +475,7 @@ mod tests {
         first_value in num::i32::ANY.prop_map(i32_to_value),
         last_value in num::i32::ANY.prop_map(i32_to_value),
     ) {
-        let sum = sum(START_TIME, END_TIME, &[], first_value, last_value);
+        let sum = sum(START_TIME, END_TIME, &[], first_value, last_value, 0);
         prop_assert_eq!(sum, first_value + last_value);
     }
     }

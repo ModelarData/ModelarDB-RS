@@ -696,7 +696,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
             min_values,
             max_values,
             values,
-            _residuals,
+            residuals,
             _error_array
         );
 
@@ -718,6 +718,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
                 min_value,
                 max_value,
                 values,
+                residuals.values(),
             );
         }
 
@@ -838,7 +839,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
             min_values,
             max_values,
             values,
-            _residuals,
+            residuals,
             _error_array
         );
 
@@ -861,6 +862,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
                 min_value,
                 max_value,
                 values,
+                residuals.values(),
             );
 
             count += modelardb_compression::len(start_time, end_time, timestamps);

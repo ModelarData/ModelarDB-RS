@@ -27,7 +27,6 @@ pub mod timestamps;
 use std::mem;
 
 use arrow::array::ArrayBuilder;
-use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::{
     Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder,
 };
@@ -99,6 +98,7 @@ pub fn len(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8]) -> usi
 }
 
 /// Compute the sum of the values for a time series segment whose values are represented by a model.
+#[allow(clippy::too_many_arguments)]
 pub fn sum(
     model_type_id: u8,
     start_time: Timestamp,
@@ -107,15 +107,52 @@ pub fn sum(
     min_value: Value,
     max_value: Value,
     values: &[u8],
+    residuals: &[u8],
 ) -> Value {
-    match model_type_id {
-        PMC_MEAN_ID => pmc_mean::sum(start_time, end_time, timestamps, min_value),
-        SWING_ID => swing::sum(
-            start_time, end_time, timestamps, min_value, max_value, values,
+    // Extract the number of residuals stored.
+    let residuals_length = if residuals.is_empty() {
+        0
+    } else {
+        // The number of residuals are stored as the last byte.
+        residuals[residuals.len() - 1] as usize
+    };
+
+    let model_length = len(start_time, end_time, timestamps) - residuals_length;
+
+    // Computes the sum from the model.
+    let (model_last_value, model_sum) = match model_type_id {
+        PMC_MEAN_ID => {
+            let value =
+                CompressedSegmentBuilder::decode_values_for_pmc_mean(min_value, max_value, values);
+            (value, pmc_mean::sum(model_length, value))
+        }
+        SWING_ID => {
+            let (first_value, last_value) =
+                CompressedSegmentBuilder::decode_values_for_swing(min_value, max_value, values);
+            (
+                last_value,
+                swing::sum(
+                    start_time,
+                    end_time,
+                    timestamps,
+                    first_value,
+                    last_value,
+                    residuals_length,
+                ),
+            )
+        }
+        GORILLA_ID => (
+            f32::NAN, // A segment with values compressed by Gorilla never has residuals.
+            gorilla::sum(model_length, values, None),
         ),
-        // TODO: take residuals stored as part of the segment into account when refactoring optimizer.
-        GORILLA_ID => gorilla::sum(start_time, end_time, timestamps, values, None),
         _ => panic!("Unknown model type."),
+    };
+
+    // Compute the sum from the residuals.
+    if residuals.is_empty() {
+        model_sum
+    } else {
+        model_sum + gorilla::sum(residuals_length, residuals, Some(model_last_value))
     }
 }
 
@@ -137,21 +174,15 @@ pub fn grid(
     timestamp_builder: &mut TimestampBuilder,
     value_builder: &mut ValueBuilder,
 ) {
-    // Extract the number of residuals stored.
-    let residuals_length = if residuals.is_empty() {
-        0
-    } else {
-        // The number of residuals are stored as the last byte.
-        residuals[residuals.len() - 1]
-    };
-
-    // Decompress all of the timestamps and create a slice for the model's timestamps.
-    let model_timestamps_start_index = timestamp_builder.values_slice().len();
-    timestamps::decompress_all_timestamps(start_time, end_time, timestamps, timestamp_builder);
-    let model_timestamps_end_index =
-        timestamp_builder.values_slice().len() - residuals_length as usize;
-    let model_timestamps =
-        &timestamp_builder.values_slice()[model_timestamps_start_index..model_timestamps_end_index];
+    // Decompress the timestamps.
+    let (model_timestamps, residuals_timestamps) =
+        decompress_all_timestamps_and_split_into_models_and_residuals(
+            start_time,
+            end_time,
+            timestamps,
+            residuals,
+            timestamp_builder,
+        );
 
     // Reconstruct the values from the model.
     match model_type_id {
@@ -192,19 +223,47 @@ pub fn grid(
     }
 
     // Reconstruct the values from the residuals.
-    if residuals_length > 0 {
-        // The first value in residuals are compressed against models last value.
+    if !residuals.is_empty() {
         let model_last_value = value_builder.values_slice()[value_builder.len() - 1];
 
         gorilla::grid(
             univariate_id,
             &residuals[..residuals.len() - 1],
             univariate_id_builder,
-            &timestamp_builder.values_slice()[model_timestamps_end_index..],
+            residuals_timestamps,
             value_builder,
             Some(model_last_value),
         );
     }
+}
+
+/// Decompress the timestamps stored as `start_time`, `end_time`, and `timestamps`, add them to
+/// `timestamp_builder`, and return slices to the model's timestamps and the residual's timestamps.
+fn decompress_all_timestamps_and_split_into_models_and_residuals<'a>(
+    start_time: Timestamp,
+    end_time: Timestamp,
+    timestamps: &'a [u8],
+    residuals: &'a [u8],
+    timestamp_builder: &'a mut TimestampBuilder,
+) -> (&'a [Timestamp], &'a [Timestamp]) {
+    // Extract the number of residuals stored.
+    let residuals_length = if residuals.is_empty() {
+        0
+    } else {
+        // The number of residuals are stored as the last byte.
+        residuals[residuals.len() - 1]
+    };
+
+    let model_timestamps_start_index = timestamp_builder.values_slice().len();
+    timestamps::decompress_all_timestamps(start_time, end_time, timestamps, timestamp_builder);
+    let model_timestamps_end_index =
+        timestamp_builder.values_slice().len() - residuals_length as usize;
+
+    let model_timestamps =
+        &timestamp_builder.values_slice()[model_timestamps_start_index..model_timestamps_end_index];
+    let residuals_timestamps = &timestamp_builder.values_slice()[model_timestamps_end_index..];
+
+    (model_timestamps, residuals_timestamps)
 }
 
 #[cfg(test)]
@@ -297,5 +356,42 @@ mod tests {
         prop_assume!(v1 != v2 && !v1.is_nan() && !v2.is_nan());
         prop_assert!(!equal_or_nan(v1, v2));
     }
+    }
+
+    // Test for decompress_all_timestamps_and_split_into_models_and_residuals().
+    #[test]
+    fn test_decompress_all_timestamps_and_split_into_models_and_residuals_no_residuals() {
+        let mut timestamp_builder = TimestampBuilder::new();
+
+        let (model_timestamps, residuals_timestamps) =
+            decompress_all_timestamps_and_split_into_models_and_residuals(
+                100,
+                500,
+                &[5],
+                &[],
+                &mut timestamp_builder,
+            );
+
+        // Type aliases cannot be used when constructor, so &[Timestamp] is not possible.
+        let expected_residuals_timestamps: &[Timestamp] = &[];
+        assert_eq!(model_timestamps, &[100, 200, 300, 400, 500]);
+        assert_eq!(residuals_timestamps, expected_residuals_timestamps);
+    }
+
+    #[test]
+    fn test_decompress_all_timestamps_and_split_into_models_and_residuals_with_residuals() {
+        let mut timestamp_builder = TimestampBuilder::new();
+
+        let (model_timestamps, residuals_timestamps) =
+            decompress_all_timestamps_and_split_into_models_and_residuals(
+                100,
+                500,
+                &[5],
+                &[2],
+                &mut timestamp_builder,
+            );
+
+        assert_eq!(model_timestamps, &[100, 200, 300]);
+        assert_eq!(residuals_timestamps, &[400, 500]);
     }
 }

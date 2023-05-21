@@ -171,17 +171,10 @@ impl Gorilla {
 /// Gorilla's compression method for floating-point values. If `maybe_model_last_value` is provided,
 /// it is assumed the first value in `values` is compressed against it instead of being stored in
 /// full, i.e., uncompressed.
-pub fn sum(
-    start_time: Timestamp,
-    end_time: Timestamp,
-    timestamps: &[u8],
-    values: &[u8],
-    maybe_model_last_value: Option<Value>,
-) -> Value {
+pub fn sum(length: usize, values: &[u8], maybe_model_last_value: Option<Value>) -> Value {
     // This function replicates code from gorilla::grid() as it isn't necessary
     // to store the univariate ids, timestamps, and values in arrays for a sum.
     // So any changes to the decompression must be mirrored in gorilla::grid().
-    let length = models::len(start_time, end_time, timestamps);
     let mut bits = BitReader::try_new(values).unwrap();
     let mut leading_zeros = u8::MAX;
     let mut trailing_zeros: u8 = 0;
@@ -369,7 +362,7 @@ mod tests {
     fn test_sum(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let compressed_values = compress_values_using_gorilla(&values);
-        let sum = sum(1, values.len() as i64, &values.len().to_be_bytes(), &compressed_values, None);
+        let sum = sum(values.len(), &compressed_values, None);
         let expected_sum = aggregate::sum(&ValueArray::from_iter_values(values)).unwrap();
         prop_assert!(models::equal_or_nan(expected_sum as f64, sum as f64));
     }
@@ -414,7 +407,7 @@ mod tests {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
         model_type.compress_values(values);
-        model_type.compressed_values()
+        model_type.compressed_values.finish()
     }
 
     fn slice_of_value_equal(values_one: &[Value], values_two: &[Value]) -> bool {
