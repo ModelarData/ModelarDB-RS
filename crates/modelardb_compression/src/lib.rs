@@ -81,16 +81,16 @@ pub mod test_util {
             // Generates almost linear data.
             StructureOfValues::AlmostLinear => {
                 // The variable a is regenerated if it is 0, to avoid generating constant data.
-                let mut a: i64 = 0;
-                while a == 0 {
-                    a = thread_rng().gen_range(-10..10);
+                let mut slope: i64 = 0;
+                while slope == 0 {
+                    slope = thread_rng().gen_range(-10..10);
                 }
-                let b: i64 = thread_rng().gen_range(1..50);
+                let intercept: i64 = thread_rng().gen_range(1..50);
 
                 timestamps
                     .iter()
                     .map(|timestamp| {
-                        (a * timestamp + b) as f32
+                        (slope * timestamp + intercept) as f32
                             + randomizer.sample(Uniform::from(min.unwrap()..max.unwrap()))
                     })
                     .collect()
@@ -98,15 +98,15 @@ pub mod test_util {
             // Generates linear data.
             StructureOfValues::Linear => {
                 // The variable a is regenerated if it is 0, to avoid generating constant data.
-                let mut a: i64 = 0;
-                while a == 0 {
-                    a = thread_rng().gen_range(-10..10);
+                let mut slope: i64 = 0;
+                while slope == 0 {
+                    slope = thread_rng().gen_range(-10..10);
                 }
-                let b: i64 = thread_rng().gen_range(1..50);
+                let intercept: i64 = thread_rng().gen_range(1..50);
 
                 timestamps
                     .iter()
-                    .map(|timestamp| (a * timestamp + b) as f32)
+                    .map(|timestamp| (slope * timestamp + intercept) as f32)
                     .collect()
             }
             // Generates randomized data.
