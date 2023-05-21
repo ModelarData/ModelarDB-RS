@@ -48,7 +48,7 @@ pub(super) const VALUE_SIZE_IN_BYTES: u8 = mem::size_of::<Value>() as u8;
 pub(super) const VALUE_SIZE_IN_BITS: u8 = 8 * VALUE_SIZE_IN_BYTES;
 
 /// Determine if `approximate_value` is within `error_bound` of `real_value`.
-pub fn is_value_within_error_bound(
+pub(super) fn is_value_within_error_bound(
     error_bound: ErrorBound,
     real_value: Value,
     approximate_value: Value,
@@ -145,12 +145,13 @@ pub fn grid(
         residuals[residuals.len() - 1]
     };
 
-    // Decompress all of timestamps.
-    let model_timestamps_start = timestamp_builder.values_slice().len();
+    // Decompress all of the timestamps and create a slice for the model's timestamps.
+    let model_timestamps_start_index = timestamp_builder.values_slice().len();
     timestamps::decompress_all_timestamps(start_time, end_time, timestamps, timestamp_builder);
-    let model_timestamps_end = timestamp_builder.values_slice().len() - residuals_length as usize;
+    let model_timestamps_end_index =
+        timestamp_builder.values_slice().len() - residuals_length as usize;
     let model_timestamps =
-        &timestamp_builder.values_slice()[model_timestamps_start..model_timestamps_end];
+        &timestamp_builder.values_slice()[model_timestamps_start_index..model_timestamps_end_index];
 
     // Reconstruct the values from the model.
     match model_type_id {
@@ -165,10 +166,13 @@ pub fn grid(
             let (first_value, last_value) =
                 CompressedSegmentBuilder::decode_values_for_swing(min_value, max_value, values);
 
+            // unwrap() is safe as the model is guaranteed to represent at least one value.
+            let model_end_time = *model_timestamps.last().unwrap();
+
             swing::grid(
                 univariate_id,
                 start_time,
-                end_time,
+                model_end_time,
                 first_value,
                 last_value,
                 univariate_id_builder,
@@ -196,7 +200,7 @@ pub fn grid(
             univariate_id,
             &residuals[..residuals.len() - 1],
             univariate_id_builder,
-            &timestamp_builder.values_slice()[model_timestamps_end..],
+            &timestamp_builder.values_slice()[model_timestamps_end_index..],
             value_builder,
             Some(model_last_value),
         );

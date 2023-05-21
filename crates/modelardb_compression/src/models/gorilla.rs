@@ -247,8 +247,9 @@ pub fn grid(
         first_value
     };
 
-    // Then values are stored using XOR and a variable length binary encoding.
-    for _ in 0..timestamps.len() - 1 {
+    // Then values are stored using XOR and a variable length binary encoding. If last_value was
+    // provided by the model, the first value has no been read from values so all must be read now.
+    for _ in 0..timestamps.len() - maybe_model_last_value.is_none() as usize {
         if bits.read_bit() {
             if bits.read_bit() {
                 // New leading and trailing zeros.

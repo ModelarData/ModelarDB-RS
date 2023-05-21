@@ -290,6 +290,7 @@ mod tests {
         let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
         assert_compressed_record_batch_with_segments_from_time_series(
+            ERROR_BOUND_ZERO,
             &uncompressed_timestamps,
             &uncompressed_values,
             &compressed_record_batch,
@@ -308,6 +309,7 @@ mod tests {
         let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
         assert_compressed_record_batch_with_segments_from_time_series(
+            ERROR_BOUND_ZERO,
             &uncompressed_timestamps,
             &uncompressed_values,
             &compressed_record_batch,
@@ -330,6 +332,7 @@ mod tests {
         let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
         assert_compressed_record_batch_with_segments_from_time_series(
+            ERROR_BOUND_FIVE,
             &uncompressed_timestamps,
             &uncompressed_values,
             &compressed_record_batch,
@@ -352,6 +355,7 @@ mod tests {
         let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
         assert_compressed_record_batch_with_segments_from_time_series(
+            ERROR_BOUND_FIVE,
             &uncompressed_timestamps,
             &uncompressed_values,
             &compressed_record_batch,
@@ -370,6 +374,7 @@ mod tests {
         let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
         assert_compressed_record_batch_with_segments_from_time_series(
+            ERROR_BOUND_ZERO,
             &uncompressed_timestamps,
             &uncompressed_values,
             &compressed_record_batch,
@@ -388,6 +393,7 @@ mod tests {
         let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
         assert_compressed_record_batch_with_segments_from_time_series(
+            ERROR_BOUND_FIVE,
             &uncompressed_timestamps,
             &uncompressed_values,
             &compressed_record_batch,
@@ -410,6 +416,7 @@ mod tests {
         let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
         assert_compressed_record_batch_with_segments_from_time_series(
+            ERROR_BOUND_FIVE,
             &uncompressed_timestamps,
             &uncompressed_values,
             &compressed_record_batch,
@@ -432,6 +439,7 @@ mod tests {
         let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
         assert_compressed_record_batch_with_segments_from_time_series(
+            ERROR_BOUND_FIVE,
             &uncompressed_timestamps,
             &uncompressed_values,
             &compressed_record_batch,
@@ -454,6 +462,7 @@ mod tests {
         let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
         assert_compressed_record_batch_with_segments_from_time_series(
+            ERROR_BOUND_ZERO,
             &uncompressed_timestamps,
             &uncompressed_values,
             &compressed_record_batch,
@@ -476,6 +485,7 @@ mod tests {
         let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
         assert_compressed_record_batch_with_segments_from_time_series(
+            ERROR_BOUND_ZERO,
             &uncompressed_timestamps,
             &uncompressed_values,
             &compressed_record_batch,
@@ -524,6 +534,7 @@ mod tests {
         let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
         assert_compressed_record_batch_with_segments_from_time_series(
+            ERROR_BOUND_ZERO,
             &uncompressed_timestamps,
             &uncompressed_values,
             &compressed_record_batch,
@@ -572,6 +583,7 @@ mod tests {
         let uncompressed_values = ValueArray::from_iter_values(values.drain(..));
 
         assert_compressed_record_batch_with_segments_from_time_series(
+            ERROR_BOUND_ZERO,
             &uncompressed_timestamps,
             &uncompressed_values,
             &compressed_record_batch,
@@ -609,6 +621,7 @@ mod tests {
     }
 
     fn assert_compressed_record_batch_with_segments_from_time_series(
+        error_bound: f32,
         uncompressed_timestamps: &TimestampArray,
         uncompressed_values: &ValueArray,
         compressed_record_batch: &RecordBatch,
@@ -659,9 +672,23 @@ mod tests {
         let decompressed_timestamps = timestamp_builder.finish();
         let decompressed_values = value_builder.finish();
 
-        assert_eq!(uncompressed_timestamps, &decompressed_timestamps);
         assert_eq!(decompressed_timestamps.len(), decompressed_values.len());
+        assert_eq!(uncompressed_timestamps, &decompressed_timestamps);
         assert_eq!(uncompressed_values.len(), decompressed_values.len());
+        if error_bound == 0.0 {
+            assert_eq!(uncompressed_values, &decompressed_values);
+        } else {
+            let error_bound = ErrorBound::try_new(error_bound).unwrap();
+            for index in 0..uncompressed_values.len() {
+                let real_value = uncompressed_values.value(index);
+                let approximate_value = decompressed_values.value(index);
+                assert!(
+                    models::is_value_within_error_bound(error_bound, real_value, approximate_value),
+                    "{approximate_value} is not within an error bound of {}% of {real_value}",
+                    error_bound.into_inner()
+                );
+            }
+        }
     }
 
     // Tests for compress_and_store_residuals_in_a_separate_segment().
