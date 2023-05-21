@@ -145,7 +145,7 @@ impl ModelBuilder {
         }
     }
 
-    /// Create a [`Model`] from `pmc_mean`.
+    /// Return a [`CompressedSegmentBuilder`] containing the model fitted by [`PMCMean`].
     fn select_pmc_mean(start_index: usize, pmc_mean: PMCMean) -> CompressedSegmentBuilder {
         let end_index = start_index + pmc_mean.len() - 1;
         let bytes_per_value = pmc_mean.bytes_per_value();
@@ -163,7 +163,7 @@ impl ModelBuilder {
         }
     }
 
-    /// Create a [`Model`] from `swing`.
+    /// Return a [`CompressedSegmentBuilder`] containing the model fitted by [`Swing`].
     fn select_swing(start_index: usize, swing: Swing) -> CompressedSegmentBuilder {
         let end_index = start_index + swing.len() - 1;
         let bytes_per_value = swing.bytes_per_value();
@@ -211,8 +211,11 @@ pub(crate) struct CompressedSegmentBuilder {
 }
 
 impl CompressedSegmentBuilder {
-    // TODO: Document
-    /// Assumes the residuals are the values between the model in this segment and the next model.
+    /// Create a compressed segment and add it to `compressed_segment_batch_builder`. The encoding
+    /// used for the model's parameters may change if residuals are added to the segment as it
+    /// changes the metadata stored in the segment. Assumes `uncompressed_timestamps` and
+    /// `uncompressed_values` are of equal length and that `residuals_end_index` is the index of a
+    /// value in `uncompressed_value` after the last value represented by the model in this segment.
     pub(crate) fn finish(
         mut self,
         univariate_id: u64,
@@ -222,7 +225,7 @@ impl CompressedSegmentBuilder {
         uncompressed_values: &ValueArray,
         compressed_segment_batch_builder: &mut CompressedSegmentBatchBuilder,
     ) {
-        // Assert the methods assumptions to simplify development.
+        // Assert that the methods assumptions are correct to simplify development.
         debug_assert_eq!(uncompressed_timestamps.len(), uncompressed_values.len());
         debug_assert!(self.end_index <= residuals_end_index);
         debug_assert!(residuals_end_index <= uncompressed_timestamps.len());
@@ -289,8 +292,8 @@ impl CompressedSegmentBuilder {
         gorilla.model()
     }
 
-    /// Add information if required for the model of type [`PMCMean`] due to `residuals_min_value`
-    /// and `residuals_max_value` overwriting the model's minimum and maximum values in the segment.
+    /// Add information if required for a model of type [`PMCMean`] due to `residuals_min_value` and
+    /// `residuals_max_value` overwriting the model's minimum and maximum values in the segment.
     fn update_values_for_pmc_mean(
         &mut self,
         residuals_min_value: Value,
@@ -322,7 +325,7 @@ impl CompressedSegmentBuilder {
         }
     }
 
-    /// Add information if required for the model of type [`Swing`] due to `residuals_min_value` and
+    /// Add information if required for a model of type [`Swing`] due to `residuals_min_value` and
     /// `residuals_max_value` overwriting the model's minimum and maximum values in the segment.
     fn update_values_for_swing(&mut self, residuals_min_value: Value, residuals_max_value: Value) {
         if residuals_min_value < self.min_value && self.max_value < residuals_min_value {
@@ -363,7 +366,7 @@ impl CompressedSegmentBuilder {
         if self.min_value > residuals_min_value {}
     }
 
-    /// Decode the mean value stored for a model of type [`Swing`].
+    /// Decode the slope and intercept stored for a model of type [`Swing`].
     pub(crate) fn decode_values_for_swing(
         min_value: Value,
         max_value: Value,
@@ -533,7 +536,7 @@ mod tests {
         assert!(ErrorBound::try_new(f32::NAN).is_err())
     }
 
-    // Tests for Model.
+    // Tests for CompressedSegmentBuilder.
     #[test]
     fn test_model_attributes_for_pmc_mean() {
         let uncompressed_timestamps = TimestampArray::from(UNCOMPRESSED_TIMESTAMPS.to_vec());
