@@ -574,8 +574,8 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
         .execute_query(format!("SELECT * FROM {TABLE_NAME} ORDER BY timestamp"))
         .unwrap();
 
-    let combined = compute::concat_batches(&data_points[0].schema(), &data_points).unwrap();
-    assert_eq!(combined, query[0]);
+    let expected = compute::concat_batches(&data_points[0].schema(), &data_points).unwrap();
+    assert_eq!(expected, query[0]);
 }
 
 #[test]

@@ -71,8 +71,8 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
     }
 }
 
-/// Matches the pattern [`AggregateExpr`] <- [`SortedJoinExec`] <-
-/// [`GridExec`](crate::query::grid_exec::GridExec) <- [`ParquetExec`] and rewrites it to
+/// Matches the pattern [`AggregateExpr`] <- [RepartitionExec] (if it exists) <- [`SortedJoinExec`]
+/// <- [`GridExec`](crate::query::grid_exec::GridExec) <- [`ParquetExec`] and rewrites it to
 /// [`AggregateExpr`] <- [`ParquetExec`] if [`AggregateExpr`] only computes aggregates for a single
 /// FIELD column and no filtering is performed by [`ParquetExec`].
 fn rewrite_aggregates_to_use_segments(
@@ -93,28 +93,26 @@ fn rewrite_aggregates_to_use_segments(
                 && aggregate_exec.filter_expr().iter().all(Option::is_none)
                 && aggregate_exec.group_expr().is_empty()
             {
-                // An AggregateExec can only have one child, so it is not necessary to check it.
-                let aggregate_exec_input = aggregate_exec_children[0].clone();
+                // Remove RepartitionExec if added by Apache Arrow DataFusion. Both AggregateExec
+                // and RepartitionExec can only have one child, so it is not necessary to check it.
+                let maybe_repartition_exec = &aggregate_exec_children[0];
+                let aggregate_exec_input = if let Some(repartition_exec) = maybe_repartition_exec
+                    .as_any()
+                    .downcast_ref::<RepartitionExec>()
+                {
+                    repartition_exec.children()[0].clone()
+                } else {
+                    maybe_repartition_exec.clone()
+                };
+
                 if let Some(sorted_join_exec) = aggregate_exec_input
                     .as_any()
                     .downcast_ref::<SortedJoinExec>()
                 {
-                    // Remove RepartitionExec if added by Apache Arrow DataFusion
-                    let sorted_join_exec_children = sorted_join_exec.children();
-                    let grid_execs = if sorted_join_exec_children[0]
-                        .as_any()
-                        .is::<RepartitionExec>()
-                    {
-                        sorted_join_exec_children
-                            .iter()
-                            .flat_map(|repartition_exec| repartition_exec.children())
-                            .collect::<Vec<Arc<dyn ExecutionPlan>>>()
-                    } else {
-                        sorted_join_exec_children
-                    };
-
                     // Try to create new AggregateExec that compute aggregates directly from segments.
-                    if let Ok(input) = try_new_aggregate_exec(aggregate_exec, grid_execs) {
+                    if let Ok(input) =
+                        try_new_aggregate_exec(aggregate_exec, sorted_join_exec.children())
+                    {
                         // unwrap() is safe as the inputs are constructed from sorted_join_exec.
                         return Ok(Transformed::Yes(
                             execution_plan.with_new_children(vec![input]).unwrap(),
@@ -1002,8 +1000,8 @@ mod tests {
             vec![TypeId::of::<AggregateExec>()],
             vec![TypeId::of::<CoalesceBatchesExec>()],
             vec![TypeId::of::<FilterExec>()],
-            vec![TypeId::of::<SortedJoinExec>()],
             vec![TypeId::of::<RepartitionExec>()],
+            vec![TypeId::of::<SortedJoinExec>()],
             vec![TypeId::of::<GridExec>()],
             vec![TypeId::of::<ParquetExec>()],
         ];
@@ -1022,11 +1020,8 @@ mod tests {
             vec![TypeId::of::<AggregateExec>()],
             vec![TypeId::of::<CoalescePartitionsExec>()],
             vec![TypeId::of::<AggregateExec>()],
+            vec![TypeId::of::<RepartitionExec>()],
             vec![TypeId::of::<SortedJoinExec>()],
-            vec![
-                TypeId::of::<RepartitionExec>(),
-                TypeId::of::<RepartitionExec>(),
-            ],
             vec![TypeId::of::<GridExec>(), TypeId::of::<GridExec>()],
             vec![TypeId::of::<ParquetExec>(), TypeId::of::<ParquetExec>()],
         ];
