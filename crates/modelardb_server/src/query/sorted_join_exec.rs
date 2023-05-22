@@ -171,7 +171,7 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Specify that [`SortedJoinStream`] requires one partition for each input as it assumes that
-    /// the global sort order are the same for all inputs and Apache Arrow DataFusion only
+    /// the global sort order is the same for all inputs and Apache Arrow DataFusion only
     /// guarantees the sort order within each partition rather than the inputs' global sort order.
     fn required_input_distribution(&self) -> Vec<Distribution> {
         vec![Distribution::SinglePartition; self.inputs.len()]

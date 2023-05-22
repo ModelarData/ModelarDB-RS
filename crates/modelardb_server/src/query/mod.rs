@@ -84,7 +84,7 @@ pub static QUERY_ORDER_SEGMENT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
 });
 
 /// The global sort order [`GridExec`] guarantees for the data points it produces and that
-/// [`SortedJoinExec`] requires for the data points its receives as its input. It is guaranteed by
+/// [`SortedJoinExec`] requires for the data points it receives as its input. It is guaranteed by
 /// [`GridExec`] because it receives segments sorted by [`QUERY_ORDER_SEGMENT`] from [`ParquetExec`]
 /// and because these segments cannot contain data points for overlapping time intervals. Another
 /// sort order could also be used, the current query pipeline simply requires that the
