@@ -199,9 +199,10 @@ impl GeneratedAsStream {
         }
     }
 
-    /// Format and return the first row in `batch` that causes `physical_expr` to fail, if
-    /// `physical_expr` never fails or if `batch` is from a normal table, [`None`] is returned.
-    fn failing_row(batch: &RecordBatch, physical_expr: &Arc<dyn PhysicalExpr>) -> Option<String> {
+    /// Format and return the first row in `batch` that causes `physical_expr` to fail when
+    /// generating values. If `physical_expr` never fails the string Unknown Row is returned, and a
+    /// [`DataFusionError`] is returned if `batch` is from a normal table.
+    fn failing_row(batch: &RecordBatch, physical_expr: &Arc<dyn PhysicalExpr>) -> Result<String> {
         for row_index in 0..batch.num_rows() {
             if physical_expr.evaluate(&batch.slice(row_index, 1)).is_err() {
                 let schema = batch.schema();
@@ -229,16 +230,16 @@ impl GeneratedAsStream {
                         formatted_values.push(format!("{name}: {}", tags.value(row_index)));
                     } else {
                         // The method has been called for a table with unsupported column types.
-                        return None;
+                        return Err(DataFusionError::Internal("Not a model table.".to_owned()));
                     }
                 }
 
-                return Some(formatted_values.join(", "));
+                return Ok(formatted_values.join(", "));
             }
         }
 
-        // physical_expr never failed for any of the rows in batch.
-        None
+        // physical_expr never failed for any of the rows in batch, e.g., if random values are used.
+        Ok("Unknown Row".to_owned())
     }
 }
 
@@ -276,11 +277,11 @@ impl Stream for GeneratedAsStream {
 
                         // unwrap() is safe as it is only executed if a column was not generated.
                         let physical_expr = &column_to_generate.physical_expr;
-                        let failing_row = Self::failing_row(&batch, physical_expr).unwrap();
+                        let failing_row = Self::failing_row(&batch, physical_expr)?;
                         let cause = maybe_generated_column.err().unwrap();
 
                         let error = format!(
-                            "Failed to create '{column_name}' for {{{failing_row}}} due to: {cause}"
+                            "Failed to compute '{column_name}' for {{{failing_row}}} due to: {cause}"
                         );
                         return Poll::Ready(Some(Err(DataFusionError::Execution(error))));
                     };
