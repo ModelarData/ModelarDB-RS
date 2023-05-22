@@ -664,7 +664,8 @@ impl MetadataManager {
         let query_schema_bytes = row.get::<usize, Vec<u8>>(1)?;
         let query_schema = MetadataManager::convert_blob_to_schema(query_schema_bytes)?;
 
-        let error_bounds = MetadataManager::error_bounds(connection, &table_name)?;
+        let error_bounds =
+            MetadataManager::error_bounds(connection, &table_name, query_schema.fields().len())?;
 
         // unwrap() is safe as the schema is checked before it is written to the metadata database.
         let df_query_schema = query_schema.clone().to_dfschema().unwrap();
@@ -734,9 +735,14 @@ impl MetadataManager {
         }
     }
 
-    /// Return the error bounds for the model table with `table_name` using `connection`. If a model
-    /// table with `table_name` does not exist, [`rusqlite::Error`] is returned.
-    fn error_bounds(connection: &Connection, table_name: &str) -> Result<Vec<ErrorBound>> {
+    /// Return the error bounds for the model table with `table_name` and `query_schema_columns`
+    /// using `connection`. If a model table with `table_name` does not exist, [`rusqlite::Error`]
+    /// is returned.
+    fn error_bounds(
+        connection: &Connection,
+        table_name: &str,
+        query_schema_columns: usize,
+    ) -> Result<Vec<ErrorBound>> {
         let mut select_statement = connection.prepare(&format!(
             "SELECT column_index, error_bound FROM model_table_field_columns
              WHERE table_name = '{table_name}' ORDER BY column_index"
@@ -744,14 +750,13 @@ impl MetadataManager {
 
         let mut rows = select_statement.query(())?;
 
-        let mut column_to_error_bound = vec![];
-        while let Some(row) = rows.next()? {
-            for _ in column_to_error_bound.len()..row.get::<usize, usize>(0)? {
-                column_to_error_bound.push(ErrorBound::try_new(0.0).unwrap());
-            }
+        let mut column_to_error_bound =
+            vec![ErrorBound::try_new(0.0).unwrap(); query_schema_columns];
 
-            // unwrap() is safe as the error bound is checked before it is stored.
-            column_to_error_bound.push(ErrorBound::try_new(row.get::<usize, f32>(1)?).unwrap());
+        while let Some(row) = rows.next()? {
+            // unwrap() is safe as the error bounds are checked before they are stored.
+            column_to_error_bound[row.get::<usize, usize>(0)?] =
+                ErrorBound::try_new(row.get::<usize, f32>(1)?).unwrap();
         }
 
         Ok(column_to_error_bound)
@@ -1193,7 +1198,7 @@ mod tests {
         let row = rows.next().unwrap().unwrap();
         assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
         assert_eq!("field_1", row.get::<usize, String>(1).unwrap());
-        assert_eq!(2, row.get::<usize, i32>(2).unwrap());
+        assert_eq!(1, row.get::<usize, i32>(2).unwrap());
         assert_eq!(1.0, row.get::<usize, f32>(3).unwrap());
         assert_eq!(None, row.get::<usize, Option<String>>(4).unwrap());
         assert_eq!(None, row.get::<usize, Option<Vec<u8>>>(5).unwrap());
@@ -1201,7 +1206,7 @@ mod tests {
         let row = rows.next().unwrap().unwrap();
         assert_eq!("model_table", row.get::<usize, String>(0).unwrap());
         assert_eq!("field_2", row.get::<usize, String>(1).unwrap());
-        assert_eq!(3, row.get::<usize, i32>(2).unwrap());
+        assert_eq!(2, row.get::<usize, i32>(2).unwrap());
         assert_eq!(5.0, row.get::<usize, f32>(3).unwrap());
         assert_eq!(None, row.get::<usize, Option<String>>(4).unwrap());
         assert_eq!(None, row.get::<usize, Option<Vec<u8>>>(5).unwrap());
@@ -1270,13 +1275,13 @@ mod tests {
 
         let database_path = temp_dir.path().join(METADATA_DATABASE_NAME);
         let connection = Connection::open(database_path).unwrap();
-        let error_bounds = MetadataManager::error_bounds(&connection, "model_table").unwrap();
+        let error_bounds = MetadataManager::error_bounds(&connection, "model_table", 4).unwrap();
         let percentages: Vec<f32> = error_bounds
             .iter()
             .map(|error_bound| error_bound.into_inner())
             .collect();
 
-        assert_eq!(percentages, &[0.0, 0.0, 1.0, 5.0]);
+        assert_eq!(percentages, &[0.0, 1.0, 5.0, 0.0]);
     }
 
     #[test]
@@ -1374,17 +1379,17 @@ pub mod test_util {
     /// timestamp column, and two field columns.
     pub fn model_table_metadata() -> ModelTableMetadata {
         let query_schema = Arc::new(Schema::new(vec![
-            Field::new("tag", DataType::Utf8, false),
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
             Field::new("field_1", ArrowValue::DATA_TYPE, false),
             Field::new("field_2", ArrowValue::DATA_TYPE, false),
+            Field::new("tag", DataType::Utf8, false),
         ]));
 
         let error_bounds = vec![
             ErrorBound::try_new(0.0).unwrap(),
-            ErrorBound::try_new(0.0).unwrap(),
             ErrorBound::try_new(1.0).unwrap(),
             ErrorBound::try_new(5.0).unwrap(),
+            ErrorBound::try_new(0.0).unwrap(),
         ];
 
         let generated_columns = vec![None, None, None, None];
