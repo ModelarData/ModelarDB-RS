@@ -23,8 +23,10 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context as StdTaskContext, Poll};
 
+use datafusion::arrow::array::StringArray;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
+use datafusion::arrow::temporal_conversions;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
@@ -35,6 +37,7 @@ use datafusion::physical_plan::{
 };
 use futures::stream::Stream;
 use futures::StreamExt;
+use modelardb_common::types::{TimestampArray, ValueArray};
 
 ///  A column the [`GeneratedAsExec`] must add to each of the [`RecordBatches`](RecordBatch) using
 /// [`GeneratedAsStream`] with the location it must be at and the [`PhysicalExpr`] that compute it.
@@ -195,6 +198,49 @@ impl GeneratedAsStream {
             baseline_metrics,
         }
     }
+
+    /// Format and return the first row in `batch` that causes `physical_expr` to fail when
+    /// generating values. If `physical_expr` never fails the string Unknown Row is returned, and a
+    /// [`DataFusionError`] is returned if `batch` is from a normal table.
+    fn failing_row(batch: &RecordBatch, physical_expr: &Arc<dyn PhysicalExpr>) -> Result<String> {
+        for row_index in 0..batch.num_rows() {
+            if physical_expr.evaluate(&batch.slice(row_index, 1)).is_err() {
+                let schema = batch.schema();
+                let mut formatted_values = Vec::with_capacity(batch.num_columns());
+
+                for column_index in 0..batch.num_columns() {
+                    let name = schema.field(column_index).name();
+                    let column = batch.column(column_index);
+
+                    if let Some(timestamps) = column.as_any().downcast_ref::<TimestampArray>() {
+                        // Store a readable version of timestamp if it is in the time interval that
+                        // can be represented by a NaiveDateTime, otherwise the integer is stored.
+                        let timestamp = timestamps.value(row_index);
+                        let formated_value = if let Some(naive_date_time) =
+                            temporal_conversions::timestamp_ms_to_datetime(timestamp)
+                        {
+                            format!("{name}: {}", naive_date_time)
+                        } else {
+                            format!("{name}: {}", timestamp)
+                        };
+                        formatted_values.push(formated_value);
+                    } else if let Some(fields) = column.as_any().downcast_ref::<ValueArray>() {
+                        formatted_values.push(format!("{name}: {}", fields.value(row_index)));
+                    } else if let Some(tags) = column.as_any().downcast_ref::<StringArray>() {
+                        formatted_values.push(format!("{name}: {}", tags.value(row_index)));
+                    } else {
+                        // The method has been called for a table with unsupported column types.
+                        return Err(DataFusionError::Internal("Not a model table.".to_owned()));
+                    }
+                }
+
+                return Ok(formatted_values.join(", "));
+            }
+        }
+
+        // physical_expr never failed for any of the rows in batch, e.g., if random values are used.
+        Ok("Unknown Row".to_owned())
+    }
 }
 
 impl Stream for GeneratedAsStream {
@@ -227,8 +273,17 @@ impl Stream for GeneratedAsStream {
                         columns.push(generated_column.into_array(batch.num_rows()));
                         generated_columns += 1;
                     } else {
+                        let column_name = self.schema.field(column_to_generate.index).name();
+
                         // unwrap() is safe as it is only executed if a column was not generated.
-                        return Poll::Ready(Some(Err(maybe_generated_column.err().unwrap())));
+                        let physical_expr = &column_to_generate.physical_expr;
+                        let failing_row = Self::failing_row(&batch, physical_expr)?;
+                        let cause = maybe_generated_column.err().unwrap();
+
+                        let error = format!(
+                            "Failed to compute '{column_name}' for {{{failing_row}}} due to: {cause}"
+                        );
+                        return Poll::Ready(Some(Err(DataFusionError::Execution(error))));
                     };
                 }
 
