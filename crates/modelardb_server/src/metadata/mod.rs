@@ -778,12 +778,9 @@ impl MetadataManager {
 
         let mut rows = select_statement.query(())?;
 
-        let mut generated_columns = vec![];
-        while let Some(row) = rows.next()? {
-            for _ in generated_columns.len()..row.get::<usize, usize>(0)? {
-                generated_columns.push(None)
-            }
+        let mut generated_columns = vec![None; df_schema.fields().len()];
 
+        while let Some(row) = rows.next()? {
             if let Some(original_expr) = row.get::<usize, Option<String>>(1)? {
                 // unwrap() is safe as the expression is checked before it is written to the database.
                 let expr = parser::parse_sql_expression(df_schema, &original_expr).unwrap();
@@ -796,9 +793,7 @@ impl MetadataManager {
                     original_expr: None,
                 };
 
-                generated_columns.push(Some(generated_column));
-            } else {
-                generated_columns.push(None);
+                generated_columns[row.get::<usize, usize>(0)?] = Some(generated_column);
             }
         }
 
