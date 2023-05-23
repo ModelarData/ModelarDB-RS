@@ -383,7 +383,7 @@ impl CompressedSegmentBuilder {
     }
 
     /// Decode the slope and intercept stored for a model of type [`Swing`]. For information about
-    /// how the parameters for Swing is encoded, see [ModelBuilder::select_swing`] and
+    /// how the parameters for Swing are encoded, see [ModelBuilder::select_swing`] and
     /// [`CompressedSegmentBuilder ::update_values_for_swing`].
     pub(crate) fn decode_values_for_swing(
         min_value: Value,
