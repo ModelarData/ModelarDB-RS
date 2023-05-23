@@ -104,23 +104,15 @@ impl ModelBuilder {
         }
     }
 
-    /// Attempt to update the current models to also represent the `value` of
-    /// the data point collected at `timestamp`.
-    pub(crate) fn try_to_update_models(&mut self, timestamp: Timestamp, value: Value) {
-        debug_assert!(
-            self.can_fit_more(),
-            "The current models cannot be fitted to additional data points."
-        );
-
+    /// Attempt to update the current models to also represent the `value` of the data point
+    /// collected at `timestamp`. Returns [`true`] if any of the current models could represent
+    /// `value`, otherwise [`false`].
+    pub(crate) fn try_to_update_models(&mut self, timestamp: Timestamp, value: Value) -> bool {
         self.pmc_mean_could_fit_all = self.pmc_mean_could_fit_all && self.pmc_mean.fit_value(value);
 
         self.swing_could_fit_all =
             self.swing_could_fit_all && self.swing.fit_data_point(timestamp, value);
-    }
 
-    /// Return [`true`] if any of the current models can represent additional
-    /// values, otherwise [`false`].
-    pub(crate) fn can_fit_more(&self) -> bool {
         self.pmc_mean_could_fit_all || self.swing_could_fit_all
     }
 
@@ -151,16 +143,16 @@ impl ModelBuilder {
         let bytes_per_value = pmc_mean.bytes_per_value();
         let value = pmc_mean.model();
 
-        CompressedSegmentBuilder {
-            model_type_id: PMC_MEAN_ID,
+        CompressedSegmentBuilder::new(
+            PMC_MEAN_ID,
             start_index,
             end_index,
-            min_value: value,
-            max_value: value,
-            values: vec![],
-            model_last_value: value,
+            value,
+            value,
+            vec![],
+            value,
             bytes_per_value,
-        }
+        )
     }
 
     /// Return a [`CompressedSegmentBuilder`] containing the model fitted by [`Swing`].
@@ -176,16 +168,16 @@ impl ModelBuilder {
             vec![0]
         };
 
-        CompressedSegmentBuilder {
-            model_type_id: SWING_ID,
+        CompressedSegmentBuilder::new(
+            SWING_ID,
             start_index,
             end_index,
             min_value,
             max_value,
             values,
-            model_last_value: last_value,
+            last_value,
             bytes_per_value,
-        }
+        )
     }
 }
 
@@ -211,6 +203,28 @@ pub(crate) struct CompressedSegmentBuilder {
 }
 
 impl CompressedSegmentBuilder {
+    fn new(
+        model_type_id: u8,
+        start_index: usize,
+        end_index: usize,
+        min_value: Value,
+        max_value: Value,
+        values: Vec<u8>,
+        model_last_value: Value,
+        bytes_per_value: f32,
+    ) -> Self {
+        Self {
+            model_type_id,
+            start_index,
+            end_index,
+            min_value,
+            max_value,
+            values,
+            model_last_value,
+            bytes_per_value,
+        }
+    }
+
     /// Create a compressed segment and add it to `compressed_segment_batch_builder`. The encoding
     /// used for the model's parameters may change if residuals are added to the segment as it
     /// changes the metadata stored in the segment. Assumes `uncompressed_timestamps` and
@@ -311,7 +325,9 @@ impl CompressedSegmentBuilder {
         }
     }
 
-    /// Decode the mean value stored for a model of type [`PMCMean`].
+    /// Decode the mean value stored for a model of type [`PMCMean`]. For information about how the
+    /// parameter for [`PMCMean`] is encoded, see
+    /// [`CompressedSegmentBuilder::update_values_for_pmc_mean`].
     pub(crate) fn decode_values_for_pmc_mean(
         min_value: Value,
         max_value: Value,
@@ -366,7 +382,9 @@ impl CompressedSegmentBuilder {
         if self.min_value > residuals_min_value {}
     }
 
-    /// Decode the slope and intercept stored for a model of type [`Swing`].
+    /// Decode the slope and intercept stored for a model of type [`Swing`]. For information about
+    /// how the parameters for Swing is encoded, see [ModelBuilder::select_swing`] and
+    /// [`CompressedSegmentBuilder ::update_values_for_swing`].
     pub(crate) fn decode_values_for_swing(
         min_value: Value,
         max_value: Value,
@@ -444,7 +462,6 @@ impl CompressedSegmentBatchBuilder {
     }
 
     /// Append a compressed segment to the builder.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn append_compressed_segment(
         &mut self,
         univariate_id: u64,
@@ -592,7 +609,6 @@ mod tests {
         assert_eq!(1, model.values.len());
     }
 
-    /// This test ensures that the model with the fewest amount of bytes is selected.
     #[test]
     fn test_model_with_fewest_bytes_is_selected() {
         let timestamps = (0..25).collect::<Vec<i64>>();

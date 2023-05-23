@@ -13,7 +13,10 @@
  * limitations under the License.
  */
 
-//! Merge compressed segment in a [`RecordBatch`] if possible within the error bound.
+//! Implementation of [`try_merge_segments`] and its helper functions which merges compressed
+//! segment in a [`RecordBatch`] if possible within the error bound. Segments with similar models
+//! may be produced if a time series does not change significantly between each batch of data points
+//! that are compressed together or even within a batch if the time series oscillates.
 
 use std::collections::HashMap;
 
@@ -151,7 +154,6 @@ pub fn try_merge_segments(compressed_segments: RecordBatch) -> Result<RecordBatc
 /// at `previous_index` and `current_index` represent values from the same time series, are of the
 /// same type, and are equivalent, otherwise [`false`]. Assumes the arrays are the same length and
 /// that `previous_index` and `current_index` only access values in the arrays.
-#[allow(clippy::too_many_arguments)]
 fn can_models_be_merged(
     previous_index: usize,
     current_index: usize,
@@ -168,8 +170,8 @@ fn can_models_be_merged(
         return false;
     }
 
-    // f32 are converted to u32 with the same bitwise representation as f32
-    // and f64 does not implement std::hash::Hash and thus cannot be hashed.
+    // The f32s are converted to u32s with the same bitwise representation as f32
+    // and f64 does not implement std::hash::Hash and thus they cannot be hashed.
     (
         univariate_ids.value(previous_index),
         model_type_ids.value(previous_index),

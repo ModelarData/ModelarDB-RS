@@ -16,6 +16,8 @@
 //! Implementation of ModelarDB's main function and a [`Context`] type that
 //! provides access to all of the system's components.
 
+#![allow(clippy::too_many_arguments)]
+
 mod metadata;
 mod optimizer;
 mod parser;

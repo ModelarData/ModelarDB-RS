@@ -275,7 +275,6 @@ impl StorageEngine {
     /// * The compressed files could not be listed.
     /// * The end time is before the start time.
     /// * The max value is smaller than the min value.
-    #[allow(clippy::too_many_arguments)]
     pub async fn compressed_files(
         &mut self,
         table_name: &str,

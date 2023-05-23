@@ -98,7 +98,6 @@ pub fn len(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8]) -> usi
 }
 
 /// Compute the sum of the values for a time series segment whose values are represented by a model.
-#[allow(clippy::too_many_arguments)]
 pub fn sum(
     model_type_id: u8,
     start_time: Timestamp,
@@ -110,12 +109,7 @@ pub fn sum(
     residuals: &[u8],
 ) -> Value {
     // Extract the number of residuals stored.
-    let residuals_length = if residuals.is_empty() {
-        0
-    } else {
-        // The number of residuals are stored as the last byte.
-        residuals[residuals.len() - 1] as usize
-    };
+    let residuals_length = residuals_length(residuals);
 
     let model_length = len(start_time, end_time, timestamps) - residuals_length;
 
@@ -159,7 +153,6 @@ pub fn sum(
 /// Reconstruct the data points for a time series segment whose values are represented by a model
 /// and residuals. Each data point is split into its three components and appended to
 /// `univariate_ids`, `timestamps`, and `values`.
-#[allow(clippy::too_many_arguments)]
 pub fn grid(
     univariate_id: UnivariateId,
     model_type_id: u8,
@@ -247,23 +240,27 @@ fn decompress_all_timestamps_and_split_into_models_and_residuals<'a>(
     timestamp_builder: &'a mut TimestampBuilder,
 ) -> (&'a [Timestamp], &'a [Timestamp]) {
     // Extract the number of residuals stored.
-    let residuals_length = if residuals.is_empty() {
-        0
-    } else {
-        // The number of residuals are stored as the last byte.
-        residuals[residuals.len() - 1]
-    };
+    let residuals_length = residuals_length(residuals);
 
     let model_timestamps_start_index = timestamp_builder.values_slice().len();
     timestamps::decompress_all_timestamps(start_time, end_time, timestamps, timestamp_builder);
-    let model_timestamps_end_index =
-        timestamp_builder.values_slice().len() - residuals_length as usize;
+    let model_timestamps_end_index = timestamp_builder.values_slice().len() - residuals_length;
 
     let model_timestamps =
         &timestamp_builder.values_slice()[model_timestamps_start_index..model_timestamps_end_index];
     let residuals_timestamps = &timestamp_builder.values_slice()[model_timestamps_end_index..];
 
     (model_timestamps, residuals_timestamps)
+}
+
+/// Return the number of residual values stored in the segment.
+fn residuals_length(residuals: &[u8]) -> usize {
+    if residuals.is_empty() {
+        0
+    } else {
+        // The number of residuals are stored as the last byte.
+        residuals[residuals.len() - 1] as usize
+    }
 }
 
 #[cfg(test)]
@@ -358,7 +355,7 @@ mod tests {
     }
     }
 
-    // Test for decompress_all_timestamps_and_split_into_models_and_residuals().
+    // Tests for decompress_all_timestamps_and_split_into_models_and_residuals().
     #[test]
     fn test_decompress_all_timestamps_and_split_into_models_and_residuals_no_residuals() {
         let mut timestamp_builder = TimestampBuilder::new();
@@ -372,10 +369,8 @@ mod tests {
                 &mut timestamp_builder,
             );
 
-        // Type aliases cannot be used when constructor, so &[Timestamp] is not possible.
-        let expected_residuals_timestamps: &[Timestamp] = &[];
         assert_eq!(model_timestamps, &[100, 200, 300, 400, 500]);
-        assert_eq!(residuals_timestamps, expected_residuals_timestamps);
+        assert_eq!(residuals_timestamps, &[] as &[Timestamp]);
     }
 
     #[test]
@@ -393,5 +388,16 @@ mod tests {
 
         assert_eq!(model_timestamps, &[100, 200, 300]);
         assert_eq!(residuals_timestamps, &[400, 500]);
+    }
+
+    // Tests for residuals_length().
+    #[test]
+    fn test_empty_residuals_length() {
+        assert_eq!(residuals_length(&[]), 0)
+    }
+
+    #[test]
+    fn test_residuals_length() {
+        assert_eq!(residuals_length(&[37, 73, 2]), 2)
     }
 }

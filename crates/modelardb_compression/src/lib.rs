@@ -17,6 +17,8 @@
 //! models, merge compressed segments if possible within the error bound, compute aggregates
 //! directly from the segments, and reconstruct the data points for each compressed segment.
 
+#![allow(clippy::too_many_arguments)]
+
 mod compression;
 mod merge;
 mod models;
@@ -80,7 +82,7 @@ pub mod test_util {
         match data_type {
             // Generates almost linear data.
             StructureOfValues::AlmostLinear => {
-                // The variable a is regenerated if it is 0, to avoid generating constant data.
+                // The variable slope is regenerated if it is 0, to avoid generating constant data.
                 let mut slope: i64 = 0;
                 while slope == 0 {
                     slope = thread_rng().gen_range(-10..10);
@@ -97,7 +99,7 @@ pub mod test_util {
             }
             // Generates linear data.
             StructureOfValues::Linear => {
-                // The variable a is regenerated if it is 0, to avoid generating constant data.
+                // The variable slope is regenerated if it is 0, to avoid generating constant data.
                 let mut slope: i64 = 0;
                 while slope == 0 {
                     slope = thread_rng().gen_range(-10..10);

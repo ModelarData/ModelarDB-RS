@@ -185,7 +185,6 @@ impl CompressedDataManager {
     /// * A column with `column_index` does not exist.
     /// * The end time is before the start time.
     /// * The max value is smaller than the min value.
-    #[allow(clippy::too_many_arguments)]
     pub(super) async fn save_and_get_saved_compressed_files(
         &mut self,
         table_name: &str,

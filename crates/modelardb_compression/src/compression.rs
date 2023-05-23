@@ -124,9 +124,9 @@ pub fn try_compress(
     Ok(compressed_segment_batch_builder.finish())
 }
 
-// This method is defined as pub(crate) so it can be used in the tests in types.rs.
-/// Create a model that represents the values in `uncompressed_values` from `start_index` to
-/// index within `error_bound` where index <= `end_index`.
+/// Create a model that represents the values in `uncompressed_values` from `start_index` to index
+/// within `error_bound` where index <= `end_index`. This method is defined as `pub(crate)` so it
+/// can be used in the tests in types.rs.
 pub(crate) fn fit_next_model(
     current_start_index: usize,
     error_bound: ErrorBound,
@@ -137,10 +137,13 @@ pub(crate) fn fit_next_model(
 
     let mut current_index = current_start_index;
     let end_index = uncompressed_timestamps.len();
-    while model_builder.can_fit_more() && current_index < end_index {
+
+    // A do-while loop is emulated using can_fit_more to not duplicate let timestamp and let value.
+    let mut can_fit_more = true;
+    while can_fit_more && current_index < end_index {
         let timestamp = uncompressed_timestamps.value(current_index);
         let value = uncompressed_values.value(current_index);
-        model_builder.try_to_update_models(timestamp, value);
+        can_fit_more = model_builder.try_to_update_models(timestamp, value);
         current_index += 1;
     }
 
