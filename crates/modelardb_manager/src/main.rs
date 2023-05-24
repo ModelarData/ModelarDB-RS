@@ -16,12 +16,14 @@
 //! Implementation of the ModelarDB manager main function.
 
 use object_store::ObjectStore;
+use std::env;
 use std::sync::Arc;
 
 use modelardb_common::arguments::{
     argument_to_remote_object_store, collect_command_line_arguments,
 };
-use sqlx::{Connection, PgConnection};
+use sqlx::postgres::PgConnectOptions;
+use sqlx::{ConnectOptions, PgConnection};
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -64,12 +66,23 @@ async fn parse_command_line_arguments(
 ) -> Result<(PgConnection, Arc<dyn ObjectStore>), String> {
     // Match the provided command line arguments to the supported inputs.
     match arguments {
-        &[metadata_database, remote_data_folder] => Ok((
-            PgConnection::connect("postgres://postgres:password@localhost/metadata")
-                .await
-                .map_err(|error| format!("Unable to connect to Postgres database: {error}"))?,
-            argument_to_remote_object_store(remote_data_folder)?,
-        )),
+        &[metadata_database, remote_data_folder] => {
+            let username = env::var("METADATA_DB_USER").map_err(|error| error.to_string())?;
+            let password = env::var("METADATA_DB_PASSWORD").map_err(|error| error.to_string())?;
+            let host = env::var("METADATA_DB_HOST").map_err(|error| error.to_string())?;
+
+            Ok((
+                PgConnectOptions::new()
+                    .host(host.as_str())
+                    .username(username.as_str())
+                    .password(password.as_str())
+                    .database(metadata_database)
+                    .connect()
+                    .await
+                    .map_err(|error| format!("Unable to connect to Postgres database: {error}"))?,
+                argument_to_remote_object_store(remote_data_folder)?,
+            ))
+        }
         _ => {
             // The errors are consciously ignored as the program is terminating.
             let binary_path = std::env::current_exe().unwrap();
