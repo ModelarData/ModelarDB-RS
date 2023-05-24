@@ -28,6 +28,7 @@ arrow-flight.workspace = true
 futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
 object_store = { workspace = true, features = ["aws", "azure"] }
+sqlx = { workspace = true, features = [ "runtime-tokio-native-tls" , "postgres" ] }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tonic.workspace = true
 tracing-subscriber.workspace = true
