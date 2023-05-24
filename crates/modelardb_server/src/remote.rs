@@ -63,7 +63,7 @@ use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::{validate_remote_data_folder, Context, RemoteDataFolderType, ServerMode};
+use crate::{Context, ServerMode};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through `FlightServiceHandler`.

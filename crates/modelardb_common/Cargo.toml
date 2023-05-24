@@ -21,4 +21,5 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
 arrow.workspace = true
+object_store = { workspace = true, features = ["aws", "azure"] }
 once_cell.workspace = true
