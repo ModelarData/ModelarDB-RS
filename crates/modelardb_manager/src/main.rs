@@ -15,11 +15,15 @@
 
 //! Implementation of the ModelarDB manager main function.
 
+use object_store::ObjectStore;
 use std::sync::Arc;
 
+use modelardb_common::arguments::{
+    argument_to_remote_object_store, collect_command_line_arguments,
+};
+use sqlx::{Connection, PgConnection};
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use modelardb_common::arguments::collect_command_line_arguments;
 
 use crate::remote::start_apache_arrow_flight_server;
 
@@ -43,7 +47,6 @@ fn main() -> Result<(), String> {
     //       The top one would use the bottom one and only contain what is currently in server main.
 
     // TODO: Consider moving the other parsing of arguments into here for consistency.
-    // TODO: Use common functionality in the server main and here.
     // TODO: Add a function like parse_command_line_arguments with a pattern for the single manager pattern and a handler for too many arguments.
     // TODO: Add function here to connect to database.
 
@@ -51,4 +54,29 @@ fn main() -> Result<(), String> {
     start_apache_arrow_flight_server().map_err(|error| error.to_string())?;
 
     Ok(())
+}
+
+/// Parse the command lines arguments into a [`PgConnection`] to the metadata database and a
+/// remote data folder. If the necessary command line arguments are not provided, too many
+/// arguments are provided, or if the arguments are malformed, [`String`] is returned.
+async fn parse_command_line_arguments(
+    arguments: &[&str],
+) -> Result<(PgConnection, Arc<dyn ObjectStore>), String> {
+    // Match the provided command line arguments to the supported inputs.
+    match arguments {
+        &[metadata_database, remote_data_folder] => Ok((
+            PgConnection::connect("postgres://postgres:password@localhost/metadata")
+                .await
+                .map_err(|error| format!("Unable to connect to Postgres database: {error}"))?,
+            argument_to_remote_object_store(remote_data_folder)?,
+        )),
+        _ => {
+            // The errors are consciously ignored as the program is terminating.
+            let binary_path = std::env::current_exe().unwrap();
+            let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
+            Err(format!(
+                "Usage: {binary_name} [metadata_database] [remote_data_folder]."
+            ))
+        }
+    }
 }
