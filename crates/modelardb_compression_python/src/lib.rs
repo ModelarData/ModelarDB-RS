@@ -25,7 +25,7 @@ use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use modelardb_common::schemas::{COMPRESSED_SCHEMA, QUERY_SCHEMA, UNCOMPRESSED_SCHEMA};
 use modelardb_common::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
-use modelardb_compression::{self, models};
+use modelardb_compression::{self, ErrorBound};
 use pyo3::import_exception;
 use pyo3::prelude::{pyfunction, pymodule, wrap_pyfunction, PyAny, PyModule, PyResult, Python};
 
@@ -61,7 +61,7 @@ fn compress<'a>(
         ));
     }
 
-    let error_bound = models::ErrorBound::try_new(error_bound.extract::<f32>()?)
+    let error_bound = ErrorBound::try_new(error_bound.extract::<f32>()?)
         .map_err(|error| convert::to_py_err(ArrowError::InvalidArgumentError(error.to_string())))?;
 
     // Compress the timestamps and values to segments containing metadata and models.
@@ -70,7 +70,7 @@ fn compress<'a>(
 
     // unwrap() is safe as the timestamps and values are guaranteed to be the same length.
     let compressed =
-        modelardb_compression::try_compress(univariate_id, timestamps, values, error_bound)
+        modelardb_compression::try_compress(univariate_id, error_bound, timestamps, values)
             .unwrap();
 
     // Convert and return the finished compressed PyArrow record batch.
@@ -112,7 +112,7 @@ fn decompress<'a>(compressed: &'a PyAny, python: Python<'a>) -> PyResult<&'a PyA
     let mut value_builder = ValueBuilder::with_capacity(compressed.num_rows());
 
     for row_index in 0..compressed.num_rows() {
-        models::grid(
+        modelardb_compression::grid(
             univariate_ids.value(row_index),
             model_type_ids.value(row_index),
             start_times.value(row_index),

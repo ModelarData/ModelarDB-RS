@@ -89,15 +89,15 @@ impl PMCMean {
 
     /// Return the current model. For a model of type PMC-Mean, its coefficient
     /// is the average value of the time series segment the model represents.
-    pub fn model(&self) -> Value {
+    pub fn model(self) -> Value {
         (self.sum_of_values / self.length as f64) as Value
     }
 }
 
 /// Compute the sum of the values for a time series segment whose values are
 /// represented by a model of type PMC-Mean.
-pub fn sum(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8], value: Value) -> Value {
-    models::len(start_time, end_time, timestamps) as Value * value
+pub fn sum(model_length: usize, value: Value) -> Value {
+    model_length as Value * value
 }
 
 /// Reconstruct the values for the `timestamps` without matching values in
@@ -251,8 +251,7 @@ mod tests {
     proptest! {
     #[test]
     fn test_sum(value in ProptestValue::ANY) {
-        let sum = sum(1657734000, 1657734540, &[10], value);
-        prop_assert!(models::equal_or_nan(sum as f64, (10.0 * value) as f64));
+        prop_assert!(models::equal_or_nan(sum(10, value) as f64, (10.0 * value) as f64));
     }
     }
 

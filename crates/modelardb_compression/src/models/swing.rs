@@ -24,10 +24,12 @@
 //! [ModelarDB paper]: https://www.vldb.org/pvldb/vol11/p1688-jensen.pdf
 
 use modelardb_common::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
-use modelardb_common::types::{Timestamp, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder};
+use modelardb_common::types::{
+    Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder,
+};
 
-use crate::models::ErrorBound;
-use crate::models::{self, timestamps};
+use super::timestamps;
+use crate::models::{self, ErrorBound};
 
 /// The state the Swing model type needs while fitting a model to a time series
 /// segment.
@@ -196,7 +198,7 @@ impl Swing {
     /// two values are returned instead of the slope and intercept as the values
     /// only require `size_of::<Value>` while the slope and intercept generally
     /// must be [`f64`] to be precise enough.
-    pub fn model(&self) -> (Value, Value) {
+    pub fn model(self) -> (Value, Value) {
         // TODO: Use the method in the Slide and Swing paper to select the
         // linear function within the lower and upper that minimizes error
         let first_value =
@@ -212,12 +214,12 @@ pub fn sum(
     start_time: Timestamp,
     end_time: Timestamp,
     timestamps: &[u8],
-    min_value: Value,
-    max_value: Value,
-    values: &[u8],
+    first_value: Value,
+    last_value: Value,
+    residuals_length: usize,
 ) -> Value {
     let (slope, intercept) =
-        decode_and_compute_slope_and_intercept(start_time, end_time, min_value, max_value, values);
+        compute_slope_and_intercept(start_time, first_value as f64, end_time, last_value as f64);
 
     if timestamps::are_compressed_timestamps_regular(timestamps) {
         let first = slope * start_time as f64 + intercept;
@@ -226,8 +228,20 @@ pub fn sum(
         let length = models::len(start_time, end_time, timestamps);
         (average * length as f64) as Value
     } else {
+        let mut timestamp_builder = TimestampBuilder::new();
+
+        timestamps::decompress_all_timestamps(
+            start_time,
+            end_time,
+            timestamps,
+            &mut timestamp_builder,
+        );
+
+        let timestamps = timestamp_builder.finish();
+        let model_timestamps_end_index = timestamps.len() - residuals_length;
+
         let mut sum: f64 = 0.0;
-        for timestamp in timestamps {
+        for timestamp in &timestamps.values()[0..model_timestamps_end_index] {
             sum += slope * (*timestamp as f64) + intercept;
         }
         sum as Value
@@ -237,20 +251,18 @@ pub fn sum(
 /// Reconstruct the values for the `timestamps` without matching values in
 /// `value_builder` using a model of type Swing. The `univariate_ids` and
 /// `values` are appended to `univariate_id_builder` and `value_builder`.
-#[allow(clippy::too_many_arguments)]
 pub fn grid(
     univariate_id: UnivariateId,
     start_time: Timestamp,
     end_time: Timestamp,
-    min_value: Value,
-    max_value: Value,
-    values: &[u8],
+    first_value: Value,
+    last_value: Value,
     univariate_id_builder: &mut UnivariateIdBuilder,
     timestamps: &[Timestamp],
     value_builder: &mut ValueBuilder,
 ) {
     let (slope, intercept) =
-        decode_and_compute_slope_and_intercept(start_time, end_time, min_value, max_value, values);
+        compute_slope_and_intercept(start_time, first_value as f64, end_time, last_value as f64);
 
     for timestamp in timestamps {
         univariate_id_builder.append_value(univariate_id);
@@ -259,44 +271,22 @@ pub fn grid(
     }
 }
 
-/// Decode `values` to determine how `min_value` and `max_value` maps to the
-/// segments first value and final value. Then compute the slope and intercept
-/// of a linear function that intersects with the data points
-/// (`start_time`, first value) and (`end_time`, final value).
-fn decode_and_compute_slope_and_intercept(
-    start_time: Timestamp,
-    end_time: Timestamp,
-    min_value: Value,
-    max_value: Value,
-    values: &[u8],
-) -> (f64, f64) {
-    let min_value = min_value as f64;
-    let max_value = max_value as f64;
-
-    // Check if min value is the first value and max value is the final value.
-    if values[0] == 1 {
-        compute_slope_and_intercept(start_time, min_value, end_time, max_value)
-    } else {
-        compute_slope_and_intercept(start_time, max_value, end_time, min_value)
-    }
-}
-
 /// Compute the slope and intercept of a linear function that intersects with
-/// the data points (`start_time`, `first_value`) and (`end_time`, `final_value`).
+/// the data points (`start_time`, `first_value`) and (`end_time`, `last_value`).
 fn compute_slope_and_intercept(
     start_time: Timestamp,
     first_value: f64,
     end_time: Timestamp,
-    final_value: f64,
+    last_value: f64,
 ) -> (f64, f64) {
     // An if expression is used as it seems impossible to calculate the slope
     // and intercept without creating INFINITY, NEG_INFINITY, or NaN values.
-    if models::equal_or_nan(first_value, final_value) {
+    if models::equal_or_nan(first_value, last_value) {
         (0.0, first_value)
     } else {
         debug_assert!(first_value.is_finite(), "First value is not finite.");
-        debug_assert!(final_value.is_finite(), "Second value is not finite.");
-        let slope = (final_value - first_value) / (end_time - start_time) as f64;
+        debug_assert!(last_value.is_finite(), "Last value is not finite.");
+        let slope = (last_value - first_value) / (end_time - start_time) as f64;
         let intercept = first_value - slope * start_time as f64;
         (slope, intercept)
     }
@@ -351,12 +341,12 @@ mod tests {
             assert!(model_type.fit_data_point(timestamp, value));
         }
 
-        let (first_value, final_value) = model_type.model();
+        let (first_value, last_value) = model_type.model();
         let (slope, intercept) = compute_slope_and_intercept(
             START_TIME,
             first_value as f64,
             end_time,
-            final_value as f64,
+            last_value as f64,
         );
         if value.is_nan() {
             assert!(slope == 0.0 && intercept.is_nan());
@@ -482,14 +472,10 @@ mod tests {
     #[test]
     fn test_sum(
         first_value in num::i32::ANY.prop_map(i32_to_value),
-        final_value in num::i32::ANY.prop_map(i32_to_value),
+        last_value in num::i32::ANY.prop_map(i32_to_value),
     ) {
-        let min_value = f32::min(first_value, final_value);
-        let max_value = f32::max(first_value, final_value);
-        let value = (min_value < max_value) as u8;
-
-        let sum = sum(START_TIME, END_TIME, &[], min_value, max_value, &[value]);
-        prop_assert_eq!(sum, first_value + final_value);
+        let sum = sum(START_TIME, END_TIME, &[], first_value, last_value, 0);
+        prop_assert_eq!(sum, first_value + last_value);
     }
     }
 
@@ -509,7 +495,6 @@ mod tests {
             END_TIME,
             value,
             value,
-            &[0],
             &mut univariate_id_builder,
             &timestamps,
             &mut value_builder,
@@ -565,7 +550,7 @@ mod tests {
             (START_TIME..end_time).step_by(SAMPLING_INTERVAL as usize),
         );
         let values = ValueArray::from_iter_values(values);
-        let segments = crate::try_compress(1, &timestamps, &values, error_bound).unwrap();
+        let segments = crate::try_compress(1, error_bound, &timestamps, &values).unwrap();
 
         // Extract the individual columns from the record batch.
         modelardb_common::arrays!(

@@ -25,7 +25,7 @@ use std::sync::Arc;
 use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
-use modelardb_compression::models::ErrorBound;
+use modelardb_compression::ErrorBound;
 use tokio::sync::RwLock;
 use tracing::debug;
 
@@ -450,13 +450,14 @@ impl UncompressedDataManager {
         // unwrap() is safe to use since uncompressed_timestamps and uncompressed_values have the same length.
         let compressed_segments = modelardb_compression::try_compress(
             univariate_id,
+            error_bound,
             uncompressed_timestamps,
             uncompressed_values,
-            error_bound,
         )
         .unwrap();
 
-        Ok(modelardb_compression::merge_segments(compressed_segments))
+        modelardb_compression::try_merge_segments(compressed_segments)
+            .map_err(|error| IOError::new(IOErrorKind::InvalidData, error.to_string()))
     }
 
     /// Spill the first [`UncompressedInMemoryDataBuffer`] in the queue of
@@ -509,7 +510,7 @@ mod tests {
     use datafusion::arrow::array::{ArrowPrimitiveType, StringBuilder};
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use modelardb_common::types::{ArrowTimestamp, ArrowValue, TimestampBuilder, ValueBuilder};
-    use modelardb_compression::models::ErrorBound;
+    use modelardb_compression::ErrorBound;
     use ringbuf::Rb;
 
     use crate::metadata::{test_util, MetadataManager};

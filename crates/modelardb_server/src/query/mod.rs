@@ -190,7 +190,6 @@ impl ModelTable {
     /// Create an [`ExecutionPlan`] that will scan the column at `column_index` in the table with
     /// `table_name`. Returns a [`DataFusionError::Plan`] if the necessary metadata cannot be
     /// retrieved from the metadata database.
-    #[allow(clippy::too_many_arguments)]
     async fn scan_column(
         &self,
         storage_engine: &mut RwLockWriteGuard<'_, StorageEngine>,
