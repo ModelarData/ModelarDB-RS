@@ -44,12 +44,12 @@ impl FromStr for RemoteDataFolderType {
 
 /// Extract the remote data folder type from the arguments and validate that the remote data folder can be
 /// accessed. If the remote data folder cannot be accessed, return the error that occurred as a [`String`].
-pub async fn validate_remote_data_folder_from_arguments(
-    arguments: Vec<&str>,
+pub async fn validate_remote_data_folder_from_argument(
+    argument: &str,
     remote_data_folder: &Arc<dyn ObjectStore>,
 ) -> Result<(), String> {
     // unwrap() is safe since if there is a remote data folder, there is always a valid third argument.
-    let object_store_type = arguments.get(2).unwrap().split_once("://").unwrap().0;
+    let object_store_type = argument.split_once("://").unwrap().0;
     let remote_data_folder_type = RemoteDataFolderType::from_str(object_store_type).unwrap();
 
     validate_remote_data_folder(remote_data_folder_type, remote_data_folder).await

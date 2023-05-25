@@ -34,7 +34,7 @@ use datafusion::execution::runtime_env::RuntimeEnv;
 use modelardb_common::arguments::{
     argument_to_remote_object_store, collect_command_line_arguments,
 };
-use modelardb_common::remote_data_folder::validate_remote_data_folder_from_arguments;
+use modelardb_common::remote_data_folder::validate_remote_data_folder_from_argument;
 use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
@@ -112,7 +112,8 @@ fn main() -> Result<(), String> {
     // after parse_command_line_arguments() as the Tokio Runtime is required.
     if let Some(remote_data_folder) = &data_folders.remote_data_folder {
         runtime.block_on(async {
-            validate_remote_data_folder_from_arguments(arguments, remote_data_folder).await
+            validate_remote_data_folder_from_argument(arguments.get(2).unwrap(), remote_data_folder)
+                .await
         })?;
     }
 

@@ -22,7 +22,7 @@ use std::sync::Arc;
 use modelardb_common::arguments::{
     argument_to_remote_object_store, collect_command_line_arguments,
 };
-use modelardb_common::remote_data_folder::validate_remote_data_folder_from_arguments;
+use modelardb_common::remote_data_folder::validate_remote_data_folder_from_argument;
 use sqlx::postgres::PgConnectOptions;
 use sqlx::{ConnectOptions, PgConnection};
 use tokio::runtime::Runtime;
@@ -51,7 +51,8 @@ fn main() -> Result<(), String> {
 
     let (_connection, _remote_data_folder) = runtime.block_on(async {
         let (connection, remote_data_folder) = parse_command_line_arguments(&arguments).await?;
-        validate_remote_data_folder_from_arguments(arguments, &remote_data_folder).await?;
+        validate_remote_data_folder_from_argument(arguments.get(1).unwrap(), &remote_data_folder)
+            .await?;
 
         Ok::<(PgConnection, Arc<dyn ObjectStore>), String>((connection, remote_data_folder))
     })?;
