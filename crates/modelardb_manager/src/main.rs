@@ -17,17 +17,16 @@
 
 use object_store::ObjectStore;
 use std::env;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use modelardb_common::arguments::{
     argument_to_remote_object_store, collect_command_line_arguments,
 };
+use modelardb_common::remote_data_folder::validate_remote_data_folder_from_arguments;
 use sqlx::postgres::PgConnectOptions;
 use sqlx::{ConnectOptions, PgConnection};
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use modelardb_common::remote_data_folder::{RemoteDataFolderType, validate_remote_data_folder};
 
 use crate::remote::start_apache_arrow_flight_server;
 
@@ -50,17 +49,11 @@ fn main() -> Result<(), String> {
     let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
 
-    let (_connection, remote_data_folder) = runtime.block_on(async {
-        parse_command_line_arguments(&arguments).await
-    })?;
+    let (_connection, _remote_data_folder) = runtime.block_on(async {
+        let (connection, remote_data_folder) = parse_command_line_arguments(&arguments).await?;
+        validate_remote_data_folder_from_arguments(arguments, &remote_data_folder).await?;
 
-    // TODO: Remove duplicated code between here and server main.
-    // unwrap() is safe since if there is a remote data folder, there is always a valid third argument.
-    let object_store_type = arguments.get(2).unwrap().split_once("://").unwrap().0;
-    let remote_data_folder_type = RemoteDataFolderType::from_str(object_store_type).unwrap();
-
-    runtime.block_on(async {
-        validate_remote_data_folder(remote_data_folder_type, &remote_data_folder).await
+        Ok::<(PgConnection, Arc<dyn ObjectStore>), String>((connection, remote_data_folder))
     })?;
 
     start_apache_arrow_flight_server().map_err(|error| error.to_string())?;

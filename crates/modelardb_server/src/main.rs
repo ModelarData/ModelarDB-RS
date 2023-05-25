@@ -26,14 +26,15 @@ mod remote;
 mod storage;
 
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::{env, fs};
 
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
-use modelardb_common::arguments::{argument_to_remote_object_store, collect_command_line_arguments};
-use modelardb_common::remote_data_folder::{RemoteDataFolderType, validate_remote_data_folder};
+use modelardb_common::arguments::{
+    argument_to_remote_object_store, collect_command_line_arguments,
+};
+use modelardb_common::remote_data_folder::validate_remote_data_folder_from_arguments;
 use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
@@ -110,12 +111,8 @@ fn main() -> Result<(), String> {
     // If a remote data folder was provided, check that it can be accessed. This check is performed
     // after parse_command_line_arguments() as the Tokio Runtime is required.
     if let Some(remote_data_folder) = &data_folders.remote_data_folder {
-        // unwrap() is safe since if there is a remote data folder, there is always a valid third argument.
-        let object_store_type = arguments.get(2).unwrap().split_once("://").unwrap().0;
-        let remote_data_folder_type = RemoteDataFolderType::from_str(object_store_type).unwrap();
-
         runtime.block_on(async {
-            validate_remote_data_folder(remote_data_folder_type, remote_data_folder).await
+            validate_remote_data_folder_from_arguments(arguments, remote_data_folder).await
         })?;
     }
 
