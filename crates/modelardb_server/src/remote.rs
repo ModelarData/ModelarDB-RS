@@ -15,8 +15,7 @@
 
 //! Implementation of a request handler for Apache Arrow Flight in the form of
 //! `FlightServiceHandler`. An Apache Arrow Flight server that process requests
-//! using `FlightServiceHandler` can be started with
-//! `start_arrow_flight_server()`.
+//! using `FlightServiceHandler` can be started with `start_apache_arrow_flight_server()`.
 
 use std::collections::HashMap;
 use std::error::Error;

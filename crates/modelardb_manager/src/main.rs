@@ -32,6 +32,8 @@ use crate::remote::start_apache_arrow_flight_server;
 
 mod remote;
 
+pub const PORT: u16 = 8888;
+
 /// Parse the command line arguments to extract the metadata database and the remote object store
 /// and start an Apache Arrow Flight server. Returns [`String`] if the command line arguments
 /// cannot be parsed, if the metadata cannot be read from the database, or if the Apache Arrow
@@ -57,7 +59,7 @@ fn main() -> Result<(), String> {
         Ok::<(PgConnection, Arc<dyn ObjectStore>), String>((connection, remote_data_folder))
     })?;
 
-    start_apache_arrow_flight_server().map_err(|error| error.to_string())?;
+    start_apache_arrow_flight_server(&runtime, PORT).map_err(|error| error.to_string())?;
 
     Ok(())
 }

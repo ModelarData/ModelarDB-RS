@@ -15,22 +15,44 @@
 
 //! Implementation of a request handler for Apache Arrow Flight in the form of `FlightServiceHandler`.
 //! An Apache Arrow Flight server that process requests using `FlightServiceHandler` can be started
-//! with `start_arrow_flight_server()`.
+//! with `start_apache_arrow_flight_server()`.
 
 use std::error::Error;
+use std::net::SocketAddr;
 use std::pin::Pin;
+use std::sync::Arc;
 
-use arrow_flight::flight_service_server::FlightService;
+use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PutResult, SchemaResult, Ticket,
 };
 use futures::Stream;
+use tokio::runtime::Runtime;
+use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
+use tracing::info;
 
-/// TODO: Start an Apache Arrow Flight server on 0.0.0.0:`port`.
-pub fn start_apache_arrow_flight_server() -> Result<(), Box<dyn Error>> {
-    Ok(())
+/// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
+pub fn start_apache_arrow_flight_server(
+    runtime: &Arc<Runtime>,
+    port: u16,
+) -> Result<(), Box<dyn Error>> {
+    let localhost_with_port = "0.0.0.0:".to_owned() + &port.to_string();
+    let localhost_with_port: SocketAddr = localhost_with_port.parse()?;
+    let handler = FlightServiceHandler {};
+    let flight_service_server = FlightServiceServer::new(handler);
+
+    info!("Starting Apache Arrow Flight on {}.", localhost_with_port);
+
+    runtime
+        .block_on(async {
+            Server::builder()
+                .add_service(flight_service_server)
+                .serve(localhost_with_port)
+                .await
+        })
+        .map_err(|e| e.into())
 }
 
 /// Handler for processing Apache Arrow Flight requests.
