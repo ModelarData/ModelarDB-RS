@@ -1991,7 +1991,6 @@ version = "0.1.0"
 dependencies = [
  "arrow-flight",
  "futures",
- "log",
  "modelardb_common",
  "object_store",
  "sqlx",
