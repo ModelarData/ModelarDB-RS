@@ -48,11 +48,16 @@ pub async fn validate_remote_data_folder_from_argument(
     argument: &str,
     remote_data_folder: &Arc<dyn ObjectStore>,
 ) -> Result<(), String> {
-    // unwrap() is safe since if there is a remote data folder, there is always a valid third argument.
-    let object_store_type = argument.split_once("://").unwrap().0;
-    let remote_data_folder_type = RemoteDataFolderType::from_str(object_store_type).unwrap();
+    if let Some(split_argument) = argument.split_once("://") {
+        let object_store_type = split_argument.0;
+        let remote_data_folder_type = RemoteDataFolderType::from_str(object_store_type)?;
 
-    validate_remote_data_folder(remote_data_folder_type, remote_data_folder).await
+        validate_remote_data_folder(remote_data_folder_type, remote_data_folder).await
+    } else {
+        Err(format!(
+            "Remote data folder argument '{argument}' is invalid."
+        ))
+    }
 }
 
 /// Validate that the remote data folder can be accessed. If the remote data folder cannot be

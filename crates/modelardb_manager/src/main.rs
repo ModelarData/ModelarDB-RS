@@ -70,7 +70,6 @@ fn main() -> Result<(), String> {
 async fn parse_command_line_arguments(
     arguments: &[&str],
 ) -> Result<(PgConnection, Arc<dyn ObjectStore>), String> {
-    // Match the provided command line arguments to the supported inputs.
     match arguments {
         &[metadata_database, remote_data_folder] => {
             let username = env::var("METADATA_DB_USER").map_err(|error| error.to_string())?;
@@ -85,7 +84,7 @@ async fn parse_command_line_arguments(
                     .database(metadata_database)
                     .connect()
                     .await
-                    .map_err(|error| format!("Unable to connect to Postgres database: {error}"))?,
+                    .map_err(|error| format!("Unable to connect to metadata database: {error}"))?,
                 argument_to_remote_object_store(remote_data_folder)?,
             ))
         }
