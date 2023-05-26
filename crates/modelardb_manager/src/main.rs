@@ -59,6 +59,7 @@ fn main() -> Result<(), String> {
     let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
 
+    // TODO: Pass the connection and remote data folder to the Apache Arrow Flight server when it is implemented.
     let (_connection, _remote_data_folder) = runtime.block_on(async {
         let (connection, remote_data_folder) = parse_command_line_arguments(&arguments).await?;
         validate_remote_data_folder_from_argument(arguments.get(1).unwrap(), &remote_data_folder)
@@ -101,7 +102,7 @@ async fn parse_command_line_arguments(
             let binary_path = std::env::current_exe().unwrap();
             let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
             Err(format!(
-                "Usage: {binary_name} [metadata_database] [remote_data_folder]."
+                "Usage: {binary_name} metadata_database remote_data_folder."
             ))
         }
     }

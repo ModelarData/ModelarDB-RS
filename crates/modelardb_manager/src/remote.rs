@@ -13,9 +13,9 @@
  * limitations under the License.
  */
 
-//! Implementation of a request handler for Apache Arrow Flight in the form of `FlightServiceHandler`.
-//! An Apache Arrow Flight server that process requests using `FlightServiceHandler` can be started
-//! with `start_apache_arrow_flight_server()`.
+//! Implementation of a request handler for Apache Arrow Flight in the form of [`FlightServiceHandler`].
+//! An Apache Arrow Flight server that process requests using [`FlightServiceHandler`] can be started
+//! with [`start_apache_arrow_flight_server()`].
 
 use std::error::Error;
 use std::net::SocketAddr;

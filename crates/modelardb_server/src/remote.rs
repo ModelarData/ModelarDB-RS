@@ -14,8 +14,8 @@
  */
 
 //! Implementation of a request handler for Apache Arrow Flight in the form of
-//! `FlightServiceHandler`. An Apache Arrow Flight server that process requests
-//! using `FlightServiceHandler` can be started with `start_apache_arrow_flight_server()`.
+//! [`FlightServiceHandler`]. An Apache Arrow Flight server that process requests
+//! using [`FlightServiceHandler`] can be started with [`start_apache_arrow_flight_server()`].
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -65,7 +65,7 @@ use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 use crate::{Context, ServerMode};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
-/// the methods that process the requests through `FlightServiceHandler`.
+/// the methods that process the requests through [`FlightServiceHandler`].
 pub fn start_apache_arrow_flight_server(
     context: Arc<Context>,
     runtime: &Arc<Runtime>,
