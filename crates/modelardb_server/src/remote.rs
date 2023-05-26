@@ -43,7 +43,7 @@ use datafusion::common::DFSchema;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
-use modelardb_common::remote_data_folder::{RemoteDataFolderType, validate_remote_data_folder};
+use modelardb_common::arguments::{validate_remote_data_folder, RemoteDataFolderType};
 use modelardb_common::schemas::METRIC_SCHEMA;
 use modelardb_common::types::TimestampBuilder;
 use object_store::aws::AmazonS3Builder;

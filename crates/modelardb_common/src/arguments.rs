@@ -14,10 +14,12 @@
  */
 
 //! Functions for collecting and using command line arguments in both the server and manager.
+//! Functionality for validating remote data folders extracted from arguments is also provided.
 
+use std::str::FromStr;
 use std::sync::Arc;
 
-use object_store::{aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, ObjectStore};
+use object_store::{aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, path::Path, ObjectStore};
 
 /// Collect the command line arguments that this program was started with.
 pub fn collect_command_line_arguments(maximum_arguments: usize) -> Vec<String> {
@@ -53,5 +55,69 @@ pub fn argument_to_remote_object_store(argument: &str) -> Result<Arc<dyn ObjectS
             "Remote data folder must be s3://bucket-name or azureblobstorage://container-name."
                 .to_owned(),
         ),
+    }
+}
+
+/// The object stores that are currently supported as remote data folders.
+#[derive(PartialEq, Eq)]
+pub enum RemoteDataFolderType {
+    S3,
+    AzureBlobStorage,
+}
+
+impl FromStr for RemoteDataFolderType {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "s3" => Ok(RemoteDataFolderType::S3),
+            "azureblobstorage" => Ok(RemoteDataFolderType::AzureBlobStorage),
+            _ => Err(format!(
+                "'{}' is not a valid value for RemoteDataFolderType.",
+                value
+            )),
+        }
+    }
+}
+
+/// Extract the remote data folder type from the arguments and validate that the remote data folder can be
+/// accessed. If the remote data folder cannot be accessed, return the error that occurred as a [`String`].
+pub async fn validate_remote_data_folder_from_argument(
+    argument: &str,
+    remote_data_folder: &Arc<dyn ObjectStore>,
+) -> Result<(), String> {
+    if let Some(split_argument) = argument.split_once("://") {
+        let object_store_type = split_argument.0;
+        let remote_data_folder_type = RemoteDataFolderType::from_str(object_store_type)?;
+
+        validate_remote_data_folder(remote_data_folder_type, remote_data_folder).await
+    } else {
+        Err(format!(
+            "Remote data folder argument '{argument}' is invalid."
+        ))
+    }
+}
+
+/// Validate that the remote data folder can be accessed. If the remote data folder cannot be
+/// accessed, return the error that occurred as a [`String`].
+pub async fn validate_remote_data_folder(
+    remote_data_folder_type: RemoteDataFolderType,
+    remote_data_folder: &Arc<dyn ObjectStore>,
+) -> Result<(), String> {
+    // Check that the connection is valid by attempting to retrieve a file that does not exist.
+    match remote_data_folder.get(&Path::from("")).await {
+        Ok(_) => Ok(()),
+        Err(error) => match error {
+            object_store::Error::NotFound { .. } => {
+                // Note that for Azure Blob Storage the same error is returned if the object was not
+                // found due to the object not existing and due to the container not existing.
+                if remote_data_folder_type == RemoteDataFolderType::AzureBlobStorage {
+                    Ok(())
+                } else {
+                    Err(error.to_string())
+                }
+            }
+            _ => Err(error.to_string()),
+        },
     }
 }
