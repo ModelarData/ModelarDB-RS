@@ -13,9 +13,10 @@
  * limitations under the License.
  */
 
-//! Implementation of the ModelarDB manager main function.
+//! Implementation of ModelarDB manager's main function.
 
-use object_store::ObjectStore;
+mod remote;
+
 use std::env;
 use std::sync::Arc;
 
@@ -23,6 +24,8 @@ use modelardb_common::arguments::{
     argument_to_remote_object_store, collect_command_line_arguments,
     validate_remote_data_folder_from_argument,
 };
+use object_store::ObjectStore;
+use once_cell::sync::Lazy;
 use sqlx::postgres::PgConnectOptions;
 use sqlx::{ConnectOptions, PgConnection};
 use tokio::runtime::Runtime;
@@ -30,9 +33,14 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::remote::start_apache_arrow_flight_server;
 
-mod remote;
-
-pub const PORT: u16 = 8888;
+/// The port of the Apache Arrow Flight Server. If the environment variable is not set, 8888 is used.
+pub static PORT: Lazy<u16> = Lazy::new(|| match env::var("MODELARDBM_PORT") {
+    Ok(port) => port
+        .parse()
+        .map_err(|_| "MODELARDBM_PORT must be between 1 and 65535.")
+        .unwrap(),
+    Err(_) => 8888,
+});
 
 /// Parse the command line arguments to extract the metadata database and the remote object store
 /// and start an Apache Arrow Flight server. Returns [`String`] if the command line arguments
@@ -59,7 +67,7 @@ fn main() -> Result<(), String> {
         Ok::<(PgConnection, Arc<dyn ObjectStore>), String>((connection, remote_data_folder))
     })?;
 
-    start_apache_arrow_flight_server(&runtime, PORT).map_err(|error| error.to_string())?;
+    start_apache_arrow_flight_server(&runtime, *PORT).map_err(|error| error.to_string())?;
 
     Ok(())
 }
