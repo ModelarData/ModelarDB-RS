@@ -809,7 +809,7 @@ mod tests {
 
     use proptest::{collection, num, prop_assert_eq, proptest};
 
-    use crate::metadata::test_util;
+    use crate::common_test;
 
     // Tests for MetadataManager.
     #[test]
@@ -842,7 +842,7 @@ mod tests {
     #[test]
     fn test_create_metadata_database_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
+        let metadata_manager = common_test::test_metadata_manager(temp_dir.path());
         let metadata_database_path = metadata_manager.metadata_database_path;
 
         // Verify that the tables were created and has the expected columns.
@@ -878,16 +878,16 @@ mod tests {
     fn test_get_data_folder_path() {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_path = temp_dir.path();
-        let metadata_manager = test_util::test_metadata_manager(temp_dir_path);
+        let metadata_manager = common_test::test_metadata_manager(temp_dir_path);
         assert_eq!(temp_dir_path, metadata_manager.local_data_folder());
     }
 
     #[test]
     fn test_get_new_tag_hash() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
+        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path());
 
-        let model_table_metadata = test_util::model_table_metadata();
+        let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
             .unwrap();
@@ -923,9 +923,9 @@ mod tests {
     #[test]
     fn test_get_existing_tag_hash() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
+        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path());
 
-        let model_table_metadata = test_util::model_table_metadata();
+        let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
             .unwrap();
@@ -967,7 +967,7 @@ mod tests {
     #[test]
     fn test_compute_univariate_ids_using_fields_and_tags_for_missing_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
+        let metadata_manager = common_test::test_metadata_manager(temp_dir.path());
 
         assert!(metadata_manager
             .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
@@ -978,9 +978,9 @@ mod tests {
     fn test_compute_univariate_ids_using_fields_and_tags_for_empty_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
+        let metadata_manager = common_test::test_metadata_manager(temp_dir.path());
 
-        let model_table_metadata = test_util::model_table_metadata();
+        let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
             .unwrap();
@@ -996,7 +996,7 @@ mod tests {
     fn test_compute_univariate_ids_using_no_fields_and_tags_for_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
+        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path());
         initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]);
 
         // Lookup all univariate ids for the table by not passing any fields or tags.
@@ -1011,7 +1011,7 @@ mod tests {
     {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
+        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path());
         initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]);
 
         // Lookup the univariate ids for the fallback column by only requesting tag columns.
@@ -1025,7 +1025,7 @@ mod tests {
     fn test_compute_the_univariate_ids_for_a_specific_field_column_for_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
+        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path());
         initialize_model_table_with_tag_values(
             &mut metadata_manager,
             &["tag_value1", "tag_value2"],
@@ -1048,7 +1048,7 @@ mod tests {
     fn test_compute_the_univariate_ids_for_a_specific_tag_value_for_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = test_util::test_metadata_manager(temp_dir.path());
+        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path());
         initialize_model_table_with_tag_values(
             &mut metadata_manager,
             &["tag_value1", "tag_value2"],
@@ -1076,7 +1076,7 @@ mod tests {
         metadata_manager: &mut MetadataManager,
         tag_values: &[&str],
     ) {
-        let model_table_metadata = test_util::model_table_metadata();
+        let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
             .unwrap();
@@ -1103,7 +1103,7 @@ mod tests {
     fn test_save_table_metadata() {
         // Save a table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
+        let metadata_manager = common_test::test_metadata_manager(temp_dir.path());
 
         let table_name = "table_name";
         metadata_manager.save_table_metadata(table_name).unwrap();
@@ -1130,7 +1130,7 @@ mod tests {
         // Save a table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
         let runtime = Arc::new(Runtime::new().unwrap());
-        let context = runtime.block_on(test_util::test_context(temp_dir.path()));
+        let context = runtime.block_on(common_test::test_context(temp_dir.path()));
 
         context
             .metadata_manager
@@ -1148,9 +1148,9 @@ mod tests {
     fn test_save_model_table_metadata() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = test_util::test_metadata_manager(temp_dir.path());
+        let metadata_manager = common_test::test_metadata_manager(temp_dir.path());
 
-        let model_table_metadata = test_util::model_table_metadata();
+        let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
             .unwrap();
@@ -1215,9 +1215,9 @@ mod tests {
 
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = test_util::test_context(temp_dir.path()).await;
+        let context = common_test::test_context(temp_dir.path()).await;
 
-        let model_table_metadata = test_util::model_table_metadata();
+        let model_table_metadata = common_test::model_table_metadata();
         context
             .metadata_manager
             .save_model_table_metadata(&model_table_metadata)
@@ -1237,7 +1237,7 @@ mod tests {
 
     #[test]
     fn test_blob_to_schema_and_schema_to_blob() {
-        let schema = test_util::model_table_metadata().schema;
+        let schema = common_test::model_table_metadata().schema;
 
         // Serialize a schema to bytes.
         let bytes = MetadataManager::convert_schema_to_blob(&schema).unwrap();
@@ -1260,9 +1260,9 @@ mod tests {
     fn test_error_bound() {
         let temp_dir = tempfile::tempdir().unwrap();
         let runtime = Arc::new(Runtime::new().unwrap());
-        let context = runtime.block_on(test_util::test_context(temp_dir.path()));
+        let context = runtime.block_on(common_test::test_context(temp_dir.path()));
 
-        let model_table_metadata = test_util::model_table_metadata();
+        let model_table_metadata = common_test::model_table_metadata();
         context
             .metadata_manager
             .save_model_table_metadata(&model_table_metadata)
@@ -1283,9 +1283,9 @@ mod tests {
     fn test_generated_columns() {
         let temp_dir = tempfile::tempdir().unwrap();
         let runtime = Arc::new(Runtime::new().unwrap());
-        let context = runtime.block_on(test_util::test_context(temp_dir.path()));
+        let context = runtime.block_on(common_test::test_context(temp_dir.path()));
 
-        let model_table_metadata = test_util::model_table_metadata();
+        let model_table_metadata = common_test::model_table_metadata();
         context
             .metadata_manager
             .save_model_table_metadata(&model_table_metadata)
@@ -1300,101 +1300,5 @@ mod tests {
         for generated_column in generated_columns {
             assert!(generated_column.is_none());
         }
-    }
-}
-
-#[cfg(test)]
-/// Module with utility functions that return the metadata needed by unit tests.
-pub mod test_util {
-    use super::*;
-
-    use datafusion::arrow::array::ArrowPrimitiveType;
-    use datafusion::arrow::datatypes::{DataType, Field};
-    use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
-    use datafusion::execution::runtime_env::RuntimeEnv;
-    use modelardb_common::types::{ArrowTimestamp, ArrowValue};
-    use modelardb_compression::ErrorBound;
-    use object_store::local::LocalFileSystem;
-    use tokio::sync::RwLock;
-
-    use crate::optimizer;
-    use crate::storage::{self, StorageEngine};
-
-    /// Return a [`Context`] with the metadata manager created by `get_test_metadata_manager()` and
-    /// the data folder set to `path`.
-    pub async fn test_context(path: &Path) -> Arc<Context> {
-        let metadata_manager = test_metadata_manager(path);
-
-        let session = test_session_context();
-        let object_store_url = storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST
-            .try_into()
-            .unwrap();
-        let object_store = Arc::new(LocalFileSystem::new_with_prefix(path).unwrap());
-        session
-            .runtime_env()
-            .register_object_store(&object_store_url, object_store);
-
-        let storage_engine = RwLock::new(
-            StorageEngine::try_new(path.to_owned(), None, metadata_manager.clone(), true)
-                .await
-                .unwrap(),
-        );
-
-        Arc::new(Context {
-            metadata_manager,
-            session,
-            storage_engine,
-        })
-    }
-
-    /// Return a [`MetadataManager`] with 5 MiBs reserved for uncompressed data, 5 MiBs reserved for
-    /// compressed data, and the data folder set to `path`. Reducing the amount of reserved memory
-    /// makes it faster to run unit tests.
-    pub fn test_metadata_manager(path: &Path) -> MetadataManager {
-        let mut metadata_manager = MetadataManager::try_new(path, ServerMode::Edge).unwrap();
-
-        metadata_manager.uncompressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB
-        metadata_manager.compressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB
-
-        metadata_manager
-    }
-
-    /// Return a [`SessionContext`] without any additional optimizer rules.
-    pub fn test_session_context() -> SessionContext {
-        let config = SessionConfig::new();
-        let runtime = Arc::new(RuntimeEnv::default());
-        let mut state = SessionState::with_config_rt(config, runtime);
-        for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
-            state = state.add_physical_optimizer_rule(physical_optimizer_rule);
-        }
-        SessionContext::with_state(state)
-    }
-
-    /// Return [`ModelTableMetadata`] for a model table with a schema containing a tag column, a
-    /// timestamp column, and two field columns.
-    pub fn model_table_metadata() -> ModelTableMetadata {
-        let query_schema = Arc::new(Schema::new(vec![
-            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("field_1", ArrowValue::DATA_TYPE, false),
-            Field::new("field_2", ArrowValue::DATA_TYPE, false),
-            Field::new("tag", DataType::Utf8, false),
-        ]));
-
-        let error_bounds = vec![
-            ErrorBound::try_new(0.0).unwrap(),
-            ErrorBound::try_new(1.0).unwrap(),
-            ErrorBound::try_new(5.0).unwrap(),
-            ErrorBound::try_new(0.0).unwrap(),
-        ];
-
-        let generated_columns = vec![None, None, None, None];
-
-        ModelTableMetadata::try_new(
-            "model_table".to_owned(),
-            query_schema,
-            error_bounds,
-            generated_columns,
-        )
-        .unwrap()
     }
 }

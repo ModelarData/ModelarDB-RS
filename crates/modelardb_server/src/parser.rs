@@ -711,7 +711,7 @@ impl ContextProvider for EmptyContextProvider {
 mod tests {
     use super::*;
 
-    use crate::metadata::test_util;
+    use crate::common_test;
 
     // Tests for tokenize_and_parse_sql().
     #[test]
@@ -1036,7 +1036,7 @@ mod tests {
             "TAN(field_1 * PI() / 180)",
         ];
 
-        let schemaref = test_util::model_table_metadata().schema;
+        let schemaref = common_test::model_table_metadata().schema;
         let df_schema = Arc::try_unwrap(schemaref).unwrap().to_dfschema().unwrap();
 
         let dialect = ModelarDbDialect::new();

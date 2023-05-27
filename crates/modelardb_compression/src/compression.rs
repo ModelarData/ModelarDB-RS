@@ -263,9 +263,9 @@ mod tests {
 
     use arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt64Builder, UInt8Array};
     use modelardb_common::types::{Timestamp, TimestampBuilder, Value, ValueBuilder};
+    use modelardb_common_test::data_generation::{self, StructureOfValues};
 
     use crate::models;
-    use crate::test_util::{self, StructureOfValues};
 
     const ERROR_BOUND_ZERO: f32 = 0.0;
     const ERROR_BOUND_FIVE: f32 = 5.0;
@@ -284,9 +284,9 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_constant_time_series() {
-        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
+        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
         let mut values =
-            test_util::generate_values(&timestamps, StructureOfValues::Constant, None, None);
+            data_generation::generate_values(&timestamps, StructureOfValues::Constant, None, None);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
@@ -303,9 +303,9 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_constant_time_series() {
-        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
+        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
         let mut values =
-            test_util::generate_values(&timestamps, StructureOfValues::Constant, None, None);
+            data_generation::generate_values(&timestamps, StructureOfValues::Constant, None, None);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
@@ -322,8 +322,8 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_almost_constant_time_series() {
-        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
-        let mut values = test_util::generate_values(
+        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
+        let mut values = data_generation::generate_values(
             &timestamps,
             StructureOfValues::Random,
             Some(9.8),
@@ -345,8 +345,8 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_almost_constant_time_series() {
-        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
-        let mut values = test_util::generate_values(
+        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
+        let mut values = data_generation::generate_values(
             &timestamps,
             StructureOfValues::Random,
             Some(9.8),
@@ -368,9 +368,9 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_linear_time_series() {
-        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
+        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
         let mut values =
-            test_util::generate_values(&timestamps, StructureOfValues::Linear, None, None);
+            data_generation::generate_values(&timestamps, StructureOfValues::Linear, None, None);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_ZERO);
@@ -387,9 +387,9 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_linear_time_series() {
-        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
+        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
         let mut values =
-            test_util::generate_values(&timestamps, StructureOfValues::Linear, None, None);
+            data_generation::generate_values(&timestamps, StructureOfValues::Linear, None, None);
 
         let (uncompressed_timestamps, compressed_record_batch) =
             create_and_compress_time_series(&values, &timestamps, ERROR_BOUND_FIVE);
@@ -406,8 +406,8 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_almost_linear_time_series() {
-        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
-        let mut values = test_util::generate_values(
+        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
+        let mut values = data_generation::generate_values(
             &timestamps,
             StructureOfValues::AlmostLinear,
             Some(9.8),
@@ -429,8 +429,8 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_almost_linear_time_series() {
-        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
-        let mut values = test_util::generate_values(
+        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
+        let mut values = data_generation::generate_values(
             &timestamps,
             StructureOfValues::AlmostLinear,
             Some(9.8),
@@ -452,8 +452,8 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_random_time_series() {
-        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
-        let mut values = test_util::generate_values(
+        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
+        let mut values = data_generation::generate_values(
             &timestamps,
             StructureOfValues::Random,
             Some(0.0),
@@ -475,8 +475,8 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_random_time_series() {
-        let timestamps = test_util::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
-        let mut values = test_util::generate_values(
+        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
+        let mut values = data_generation::generate_values(
             &timestamps,
             StructureOfValues::Random,
             Some(0.0),
@@ -498,30 +498,30 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_random_linear_constant_time_series() {
-        let timestamps = test_util::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, false);
+        let timestamps = data_generation::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, false);
         try_compress_random_linear_constant_time_series(timestamps);
     }
 
     #[test]
     fn test_try_compress_irregular_random_linear_constant_time_series() {
-        let timestamps = test_util::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, true);
+        let timestamps = data_generation::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, true);
         try_compress_random_linear_constant_time_series(timestamps);
     }
 
     fn try_compress_random_linear_constant_time_series(timestamps: Vec<i64>) {
-        let mut random = test_util::generate_values(
+        let mut random = data_generation::generate_values(
             &timestamps[0..TRY_COMPRESS_TEST_LENGTH],
             StructureOfValues::Random,
             Some(0.0),
             Some(f32::MAX),
         );
-        let mut linear = test_util::generate_values(
+        let mut linear = data_generation::generate_values(
             &timestamps[TRY_COMPRESS_TEST_LENGTH..2 * TRY_COMPRESS_TEST_LENGTH],
             StructureOfValues::Linear,
             None,
             None,
         );
-        let mut constant = test_util::generate_values(
+        let mut constant = data_generation::generate_values(
             &timestamps[2 * TRY_COMPRESS_TEST_LENGTH..],
             StructureOfValues::Constant,
             None,
@@ -547,30 +547,30 @@ mod tests {
 
     #[test]
     fn test_try_compress_constant_linear_random_regular_time_series() {
-        let timestamps = test_util::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, false);
+        let timestamps = data_generation::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, false);
         try_compress_constant_linear_random_time_series(timestamps);
     }
 
     #[test]
     fn test_try_compress_constant_linear_random_irregular_time_series() {
-        let timestamps = test_util::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, true);
+        let timestamps = data_generation::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, true);
         try_compress_constant_linear_random_time_series(timestamps);
     }
 
     fn try_compress_constant_linear_random_time_series(timestamps: Vec<i64>) {
-        let mut constant = test_util::generate_values(
+        let mut constant = data_generation::generate_values(
             &timestamps[0..TRY_COMPRESS_TEST_LENGTH],
             StructureOfValues::Constant,
             None,
             None,
         );
-        let mut linear = test_util::generate_values(
+        let mut linear = data_generation::generate_values(
             &timestamps[TRY_COMPRESS_TEST_LENGTH..2 * TRY_COMPRESS_TEST_LENGTH],
             StructureOfValues::Linear,
             None,
             None,
         );
-        let mut random = test_util::generate_values(
+        let mut random = data_generation::generate_values(
             &timestamps[2 * TRY_COMPRESS_TEST_LENGTH..],
             StructureOfValues::Random,
             Some(0.0),

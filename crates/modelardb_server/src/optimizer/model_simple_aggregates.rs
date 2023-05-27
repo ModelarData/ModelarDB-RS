@@ -948,7 +948,7 @@ mod tests {
     use datafusion::physical_plan::file_format::ParquetExec;
     use datafusion::physical_plan::filter::FilterExec;
 
-    use crate::optimizer::test_util;
+    use crate::common_test;
     use crate::query::grid_exec::GridExec;
 
     use super::*;
@@ -959,7 +959,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let query = "SELECT COUNT(field_1) FROM model_table";
         let physical_plan =
-            test_util::query_optimized_physical_query_plan(temp_dir.path(), query).await;
+            common_test::query_optimized_physical_query_plan(temp_dir.path(), query).await;
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -968,7 +968,7 @@ mod tests {
             vec![TypeId::of::<ParquetExec>()],
         ];
 
-        test_util::assert_eq_physical_plan_expected(physical_plan, expected_plan);
+        common_test::assert_eq_physical_plan_expected(physical_plan, expected_plan);
     }
 
     #[tokio::test]
@@ -977,7 +977,7 @@ mod tests {
         let query = "SELECT COUNT(field_1), MIN(field_1), MAX(field_1),
                                   SUM(field_1), AVG(field_1) FROM model_table";
         let physical_plan =
-            test_util::query_optimized_physical_query_plan(temp_dir.path(), query).await;
+            common_test::query_optimized_physical_query_plan(temp_dir.path(), query).await;
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -986,7 +986,7 @@ mod tests {
             vec![TypeId::of::<ParquetExec>()],
         ];
 
-        test_util::assert_eq_physical_plan_expected(physical_plan, expected_plan);
+        common_test::assert_eq_physical_plan_expected(physical_plan, expected_plan);
     }
 
     #[tokio::test]
@@ -994,7 +994,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let query = "SELECT COUNT(field_1) FROM model_table WHERE field_1 = 37.0";
         let physical_plan =
-            test_util::query_optimized_physical_query_plan(temp_dir.path(), query).await;
+            common_test::query_optimized_physical_query_plan(temp_dir.path(), query).await;
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -1008,7 +1008,7 @@ mod tests {
             vec![TypeId::of::<ParquetExec>()],
         ];
 
-        test_util::assert_eq_physical_plan_expected(physical_plan, expected_plan);
+        common_test::assert_eq_physical_plan_expected(physical_plan, expected_plan);
     }
 
     #[tokio::test]
@@ -1016,7 +1016,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let query = "SELECT COUNT(field_1), COUNT(field_2) FROM model_table";
         let physical_plan =
-            test_util::query_optimized_physical_query_plan(temp_dir.path(), query).await;
+            common_test::query_optimized_physical_query_plan(temp_dir.path(), query).await;
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -1028,6 +1028,6 @@ mod tests {
             vec![TypeId::of::<ParquetExec>(), TypeId::of::<ParquetExec>()],
         ];
 
-        test_util::assert_eq_physical_plan_expected(physical_plan, expected_plan);
+        common_test::assert_eq_physical_plan_expected(physical_plan, expected_plan);
     }
 }

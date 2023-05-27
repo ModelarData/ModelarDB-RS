@@ -243,9 +243,9 @@ mod tests {
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
 
-    use crate::PORT;
+    use crate::common_test;
     use crate::storage::TEST_UUID;
-    use crate::storage::test_util;
+    use crate::PORT;
 
     const TABLE_NAME: &str = "table";
     const COLUMN_INDEX: u16 = 5;
@@ -517,7 +517,7 @@ mod tests {
         ));
         fs::create_dir_all(path.clone()).unwrap();
 
-        let batch = test_util::compressed_segments_record_batch();
+        let batch = common_test::compressed_segments_record_batch();
         let apache_parquet_path = path.join(format!("{file_name}.parquet"));
         StorageEngine::write_batch_to_apache_parquet_file(
             batch,

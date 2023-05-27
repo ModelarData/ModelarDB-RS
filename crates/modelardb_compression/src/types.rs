@@ -514,11 +514,11 @@ mod tests {
 
     use arrow::array::BinaryArray;
     use modelardb_common::types::{TimestampArray, ValueArray};
+    use modelardb_common_test::data_generation::{self, StructureOfValues};
     use proptest::num;
     use proptest::proptest;
 
     use crate::compression;
-    use crate::test_util::{self, StructureOfValues};
 
     const ERROR_BOUND_ZERO: f32 = 0.0;
     const UNCOMPRESSED_TIMESTAMPS: &[Timestamp] = &[100, 200, 300, 400, 500];
@@ -880,17 +880,19 @@ mod tests {
     fn test_model_with_fewest_bytes_is_selected() {
         let timestamps = (0..25).collect::<Vec<i64>>();
         let values: Vec<f32> =
-            test_util::generate_values(&timestamps, StructureOfValues::Constant, None, None)
+            data_generation::generate_values(&timestamps, StructureOfValues::Constant, None, None)
                 .into_iter()
-                .chain(test_util::generate_values(
+                .chain(data_generation::generate_values(
                     &timestamps,
                     StructureOfValues::Random,
                     Some(0.0),
                     Some(100.0),
                 ))
                 .collect();
-        let timestamps =
-            TimestampArray::from_iter_values(test_util::generate_timestamps(values.len(), false));
+        let timestamps = TimestampArray::from_iter_values(data_generation::generate_timestamps(
+            values.len(),
+            false,
+        ));
         let value_array = ValueArray::from(values);
 
         let model = compression::fit_next_model(
