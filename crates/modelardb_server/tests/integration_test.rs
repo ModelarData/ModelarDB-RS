@@ -18,8 +18,10 @@
 use std::collections::HashMap;
 use std::env::{self, consts};
 use std::error::Error;
-use std::path::{Path, PathBuf};
+use std::io::Read;
+use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::str;
 use std::string::String;
 use std::sync::Arc;
 use std::thread;
@@ -46,6 +48,13 @@ const TABLE_NAME: &str = "table_name";
 const HOST: &str = "127.0.0.1";
 const PORT: u16 = 9999;
 
+/// Number of times to try executing something that may sometimes temporarily fail.
+const ATTEMPTS: u8 = 10;
+
+/// Amount of time to sleep between each attempt when trying to execute something that may sometimes
+/// temporarily fail.
+const ATTEMPT_SLEEP_IN_SECONDS: Duration = Duration::from_secs(1);
+
 /// The different types of tables used in the integration tests.
 enum TableType {
     NormalTable,
@@ -56,62 +65,125 @@ enum TableType {
 
 /// Async runtime, handler to the server process, and client for use by the tests. It implements
 /// `drop()` so the resources it manages is released no matter if a test succeeds, fails, or panics.
-struct TestContext {
+struct TestContext<'a> {
+    local_data_folder: &'a Path,
     runtime: Runtime,
     server: Child,
     client: FlightServiceClient<Channel>,
 }
 
-impl TestContext {
-    /// Create a [`Runtime`] and execute the binary with the server.
-    fn new(path: &Path) -> Self {
+impl<'a> TestContext<'a> {
+    /// Create a [`Runtime`], a server that stores data in `local_data_folder, and a client and
+    /// ensure they are all ready to be used in the tests.
+    fn new(local_data_folder: &'a Path) -> Self {
         let runtime = Runtime::new().unwrap();
+        let mut server = Self::create_server(local_data_folder);
+        let client = Self::create_client(&runtime, &mut server);
 
-        // The server's stdout and stderr is piped to /dev/null so the log messages and expected
-        // errors are not printed when all of the tests are run using the "cargo test" command.
-        let server = TestContext::create_command("modelardbd")
-            .arg(path)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .unwrap();
-
-        // The thread needs to sleep to ensure that the server has properly started before sending
-        // streams to it.
-        thread::sleep(Duration::from_secs(5));
-
-        let client =
-            TestContext::create_apache_arrow_flight_service_client(&runtime, HOST, PORT).unwrap();
-
-        TestContext {
+        Self {
+            local_data_folder,
             runtime,
             server,
             client,
         }
     }
 
-    /// Return a [`Command`] that can run the executable `binary`.
-    fn create_command(binary: &str) -> Command {
-        // Create path to binary.
-        let mut path = TestContext::binary_directory();
-        path.push(binary);
-        path.set_extension(consts::EXE_EXTENSION);
-
-        assert!(path.exists());
-
-        // Create command process.
-        Command::new(path.into_os_string())
+    /// Restart the server and reconnect the client.
+    fn restart_server(&mut self) {
+        Self::kill_child(&mut self.server);
+        self.server = Self::create_server(self.local_data_folder);
+        self.client = Self::create_client(&self.runtime, &mut self.server);
     }
 
-    /// Return the path to the directory containing the binary with the integration tests.
-    fn binary_directory() -> PathBuf {
+    /// Create a server that stores data in `local_data_folder` and ensure it is ready to receive
+    /// requests.
+    fn create_server(local_data_folder: &Path) -> Child {
+        // The server's stdout and stderr is piped so the log messages (stdout) and expected errors
+        // (stderr) are not printed when all of the tests are run using the "cargo test" command.
+        let mut server = Self::create_command("modelardbd")
+            .unwrap()
+            .arg(local_data_folder)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+
+        // Ensure that the server has started before executing the test. stdout will not include EOF
+        // until the process ends, so the bytes are read one at a time until the output stating that
+        // the server is ready is printed. If this ever becomes a bottleneck tokio::process::Command
+        // looks like an alternative if it can be used without adding features to the server itself.
+        let stdout = server.stdout.as_mut().unwrap();
+        let mut stdout_bytes = stdout.bytes().flatten();
+        let mut stdout_output: Vec<u8> = Vec::with_capacity(512);
+        let stdout_expected = "Starting Apache Arrow Flight on".as_bytes();
+        while stdout_output.len() < stdout_expected.len()
+            || &stdout_output[stdout_output.len() - stdout_expected.len()..] != stdout_expected
+        {
+            stdout_output.push(stdout_bytes.next().unwrap());
+        }
+
+        server
+    }
+
+    /// Return a [`Command`] that can run the executable `binary` located in the same folder as the
+    /// binary containing the execution test. If the `binary` does not exists, [`None`] is returned.
+    fn create_command(binary: &str) -> Option<Command> {
+        // Compute the folder containing the binary.
         let current_executable = env::current_exe().unwrap();
-
         let parent_directory = current_executable.parent().unwrap();
-
         let binary_directory = parent_directory.parent().unwrap();
 
-        binary_directory.to_owned()
+        // Compute the path to the binary with suffix.
+        let mut binary_path = binary_directory.to_owned();
+        binary_path.push(binary);
+        binary_path.set_extension(consts::EXE_EXTENSION);
+
+        // Create the command if the binary exists.
+        if binary_path.exists() {
+            Some(Command::new(binary_path))
+        } else {
+            None
+        }
+    }
+
+    /// Create the client and ensure it can connect to the server.
+    fn create_client(runtime: &Runtime, server: &mut Child) -> FlightServiceClient<Channel> {
+        // Despite waiting for the expected output, the client may not able to connect the first
+        // time. This rarely happens on a local machine but happens more often in GitHub Actions.
+        let mut attempts = ATTEMPTS;
+        let client = loop {
+            if let Ok(client) = Self::create_apache_arrow_flight_service_client(runtime, HOST, PORT)
+            {
+                break client;
+            } else if attempts == 0 {
+                Self::kill_child(server);
+                panic!("The Apache Arrow Flight client could not connect to modelardbd.");
+            } else {
+                thread::sleep(ATTEMPT_SLEEP_IN_SECONDS);
+                attempts -= 1;
+            }
+        };
+
+        client
+    }
+
+    /// Kill a `child` process.
+    fn kill_child(child: &mut Child) {
+        let mut system = System::new_all();
+
+        while let Some(_process) = system.process(Pid::from_u32(child.id())) {
+            system.refresh_all();
+
+            // Microsoft Windows often fail to kill the process and then succeed afterwards.
+            let mut attempts = ATTEMPTS;
+            while child.kill().is_err() && attempts > 0 {
+                thread::sleep(ATTEMPT_SLEEP_IN_SECONDS);
+                attempts -= 1;
+            }
+            child.wait().unwrap();
+
+            system.refresh_all();
+        }
     }
 
     /// Return a Apache Arrow Flight client to access the remote methods provided by the server.
@@ -318,24 +390,10 @@ impl TestContext {
     }
 }
 
-impl Drop for TestContext {
+impl<'a> Drop for TestContext<'a> {
     /// Kill the server process when [`TestContext`] is dropped.
     fn drop(&mut self) {
-        let mut system = System::new_all();
-
-        while let Some(_process) = system.process(Pid::from_u32(self.server.id())) {
-            system.refresh_all();
-
-            // Microsoft Windows often fail to kill the process and then succeed afterwards.
-            let mut attempts = 10;
-            while self.server.kill().is_err() && attempts > 0 {
-                thread::sleep(Duration::from_secs(5));
-                attempts -= 1;
-            }
-            self.server.wait().unwrap();
-
-            system.refresh_all();
-        }
+        Self::kill_child(&mut self.server);
     }
 }
 
@@ -346,6 +404,21 @@ fn test_can_create_table() {
     let mut test_context = TestContext::new(temp_dir.path());
 
     test_context.create_table(TABLE_NAME, TableType::NormalTable);
+
+    let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+
+    assert_eq!(retrieved_table_names.len(), 1);
+    assert_eq!(retrieved_table_names[0], TABLE_NAME);
+}
+
+#[test]
+#[serial]
+fn test_can_register_table() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut test_context = TestContext::new(temp_dir.path());
+
+    test_context.create_table(TABLE_NAME, TableType::NormalTable);
+    test_context.restart_server();
 
     let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
 
@@ -369,21 +442,64 @@ fn test_can_create_model_table() {
 
 #[test]
 #[serial]
-fn test_can_create_and_list_multiple_model_tables() {
+fn test_can_register_model_table() {
     let temp_dir = tempfile::tempdir().unwrap();
     let mut test_context = TestContext::new(temp_dir.path());
 
-    let table_names = vec!["data1", "data2", "data3", "data4", "data5"];
-    for table_name in &table_names {
-        test_context.create_table(table_name, TableType::ModelTable);
-    }
+    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+    test_context.restart_server();
 
     let retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
 
-    assert_eq!(retrieved_table_names.len(), table_names.len());
-    for table_name in table_names {
-        assert!(retrieved_table_names.contains(&table_name.to_owned()))
+    assert_eq!(retrieved_table_names.len(), 1);
+    assert_eq!(retrieved_table_names[0], TABLE_NAME);
+}
+
+#[test]
+#[serial]
+fn test_can_create_register_and_list_multiple_tables_and_model_tables() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let mut test_context = TestContext::new(temp_dir.path());
+    let table_types = &[
+        TableType::NormalTable,
+        TableType::ModelTable,
+        TableType::ModelTableNoTag,
+        TableType::ModelTableAsField,
+    ];
+
+    // Create number_of_each_to_create of each table type.
+    let number_of_each_to_create = 5;
+    let mut table_names = Vec::with_capacity(number_of_each_to_create * table_types.len());
+    for table_type in table_types {
+        // The table type name is included to simplify determining which type of table caused this
+        // test to fail and to also make compilation fail if no table types are added to TableType.
+        let table_type_name = match table_type {
+            TableType::NormalTable => "normal_table",
+            TableType::ModelTable => "model_table",
+            TableType::ModelTableNoTag => "model_table_no_tag",
+            TableType::ModelTableAsField => "model_table_as_field",
+        };
+
+        for table_number in 0..number_of_each_to_create {
+            let table_name = table_type_name.to_owned() + &table_number.to_string();
+            test_context.create_table(&table_name, TableType::NormalTable);
+            table_names.push(table_name);
+        }
     }
+
+    // Sort the table names to simplify the comparisons.
+    table_names.sort();
+
+    // Ensure the table were created without a restart.
+    let mut retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    retrieved_table_names.sort();
+    assert_eq!(retrieved_table_names, table_names);
+
+    // Ensure the table were registered after a restart.
+    test_context.restart_server();
+    let mut retrieved_table_names = test_context.retrieve_all_table_names().unwrap();
+    retrieved_table_names.sort();
+    assert_eq!(retrieved_table_names, table_names);
 }
 
 #[test]
