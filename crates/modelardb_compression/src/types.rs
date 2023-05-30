@@ -514,7 +514,7 @@ mod tests {
 
     use arrow::array::BinaryArray;
     use modelardb_common::types::{TimestampArray, ValueArray};
-    use modelardb_common_test::data_generation::{self, StructureOfValues};
+    use modelardb_common_test::data_generation::{self, ValuesStructure};
     use proptest::num;
     use proptest::proptest;
 
@@ -880,13 +880,11 @@ mod tests {
     fn test_model_with_fewest_bytes_is_selected() {
         let timestamps = (0..25).collect::<Vec<i64>>();
         let values: Vec<f32> =
-            data_generation::generate_values(&timestamps, StructureOfValues::Constant, None, None)
+            data_generation::generate_values(&timestamps, ValuesStructure::Constant(None))
                 .into_iter()
                 .chain(data_generation::generate_values(
                     &timestamps,
-                    StructureOfValues::Random,
-                    Some(0.0),
-                    Some(100.0),
+                    ValuesStructure::Random(0.0..100.0),
                 ))
                 .collect();
         let timestamps = TimestampArray::from_iter_values(data_generation::generate_timestamps(
