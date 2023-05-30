@@ -26,8 +26,7 @@ use modelardb_common::arguments::{
 };
 use object_store::ObjectStore;
 use once_cell::sync::Lazy;
-use sqlx::postgres::PgConnectOptions;
-use sqlx::{ConnectOptions, PgConnection};
+use sqlx::postgres::{PgPool, PgConnectOptions, PgPoolOptions};
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -65,7 +64,7 @@ fn main() -> Result<(), String> {
         validate_remote_data_folder_from_argument(arguments.get(1).unwrap(), &remote_data_folder)
             .await?;
 
-        Ok::<(PgConnection, Arc<dyn ObjectStore>), String>((connection, remote_data_folder))
+        Ok::<(PgPool, Arc<dyn ObjectStore>), String>((connection, remote_data_folder))
     })?;
 
     start_apache_arrow_flight_server(&runtime, *PORT).map_err(|error| error.to_string())?;
@@ -73,25 +72,29 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-/// Parse the command lines arguments into a [`PgConnection`] to the metadata database and a
+/// Parse the command lines arguments into a [`PgPool`] to the metadata database and a
 /// remote data folder. If the necessary command line arguments are not provided, too many
 /// arguments are provided, or if the arguments are malformed, [`String`] is returned.
 async fn parse_command_line_arguments(
     arguments: &[&str],
-) -> Result<(PgConnection, Arc<dyn ObjectStore>), String> {
+) -> Result<(PgPool, Arc<dyn ObjectStore>), String> {
     match arguments {
         &[metadata_database, remote_data_folder] => {
             let username = env::var("METADATA_DB_USER").map_err(|error| error.to_string())?;
             let password = env::var("METADATA_DB_PASSWORD").map_err(|error| error.to_string())?;
             let host = env::var("METADATA_DB_HOST").map_err(|error| error.to_string())?;
 
+            let connection_options = PgConnectOptions::new()
+                .host(host.as_str())
+                .username(username.as_str())
+                .password(password.as_str())
+                .database(metadata_database);
+
+            // TODO: Look into what an ideal number of max connections would be.
             Ok((
-                PgConnectOptions::new()
-                    .host(host.as_str())
-                    .username(username.as_str())
-                    .password(password.as_str())
-                    .database(metadata_database)
-                    .connect()
+                PgPoolOptions::new()
+                    .max_connections(10)
+                    .connect_with(connection_options)
                     .await
                     .map_err(|error| format!("Unable to connect to metadata database: {error}"))?,
                 argument_to_remote_object_store(remote_data_folder)?,
