@@ -878,26 +878,29 @@ mod tests {
 
     #[test]
     fn test_model_with_fewest_bytes_is_selected() {
-        let timestamps = (0..25).collect::<Vec<i64>>();
-        let values: Vec<f32> =
-            data_generation::generate_values(&timestamps, ValuesStructure::Constant(None))
-                .into_iter()
-                .chain(data_generation::generate_values(
-                    &timestamps,
-                    ValuesStructure::Random(0.0..100.0),
-                ))
-                .collect();
-        let timestamps = TimestampArray::from_iter_values(data_generation::generate_timestamps(
-            values.len(),
-            false,
-        ));
-        let value_array = ValueArray::from(values);
+        let uncompressed_timestamps = data_generation::generate_timestamps(25, false);
+        let mut uncompressed_values = ValueBuilder::with_capacity(uncompressed_timestamps.len());
+
+        uncompressed_values.append_slice(
+            data_generation::generate_values(
+                uncompressed_timestamps.values(),
+                ValuesStructure::Constant(None),
+            )
+            .values(),
+        );
+        uncompressed_values.append_slice(
+            data_generation::generate_values(
+                uncompressed_timestamps.values(),
+                ValuesStructure::Random(0.0..100.0),
+            )
+            .values(),
+        );
 
         let model = compression::fit_next_model(
             0,
             ErrorBound::try_new(10.0).unwrap(),
-            &timestamps,
-            &value_array,
+            &uncompressed_timestamps,
+            &uncompressed_values.finish(),
         );
 
         assert_eq!(model.model_type_id, PMC_MEAN_ID);

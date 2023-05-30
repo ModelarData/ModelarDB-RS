@@ -19,7 +19,9 @@ use std::iter;
 use std::ops::Range;
 
 use arrow::array::ArrayBuilder;
-use modelardb_common::types::{TimestampBuilder, TimestampArray, ValueBuilder, ValueArray};
+use modelardb_common::types::{
+    Timestamp, TimestampArray, TimestampBuilder, ValueArray, ValueBuilder,
+};
 
 use rand::distributions::Uniform;
 use rand::{thread_rng, Rng};
@@ -59,11 +61,14 @@ pub fn generate_time_series(
         let values_structure_index = thread_rng.gen_range(0..values_structures.len());
         let values_structure = &values_structures[values_structure_index];
 
-        let timestamps = generate_timestamps(segment_length, irregular_timestamps);
-        let values = generate_values(&timestamps, (*values_structure).clone());
+        let uncompressed_timestamps = generate_timestamps(segment_length, irregular_timestamps);
+        let uncompressed_values = generate_values(
+            uncompressed_timestamps.values(),
+            (*values_structure).clone(),
+        );
 
-        timestamp_builder.append_slice(&timestamps);
-        value_builder.append_slice(&values);
+        timestamp_builder.extend(&uncompressed_timestamps);
+        value_builder.extend(&uncompressed_values);
     }
 
     debug_assert_eq!(timestamp_builder.len(), value_builder.len());
@@ -72,22 +77,21 @@ pub fn generate_time_series(
 
 /// Generate regular/irregular timestamps with [ThreadRng](rand::rngs::ThreadRng). Selects the
 /// length and type of timestamps to be generated using the parameters `length` and `irregular`.
-/// Returns the generated timestamps as a [`Vec`].
-pub fn generate_timestamps(length: usize, irregular: bool) -> Vec<i64> {
-    let mut timestamps = vec![];
+/// Returns the generated timestamps as a [`TimestampArray`].
+pub fn generate_timestamps(length: usize, irregular: bool) -> TimestampArray {
     if irregular {
+        let mut timestamps = TimestampBuilder::with_capacity(length);
         let mut thread_rng = thread_rng();
         let mut previous_timestamp: i64 = 0;
         for _ in 0..length {
             let next_timestamp = (thread_rng.sample(Uniform::from(10..20))) + previous_timestamp;
-            timestamps.push(next_timestamp);
+            timestamps.append_value(next_timestamp);
             previous_timestamp = next_timestamp;
         }
+        timestamps.finish()
     } else {
-        timestamps = Vec::from_iter((100..(length + 1) as i64 * 100).step_by(100));
+        TimestampArray::from_iter_values((100..(length + 1) as i64 * 100).step_by(100))
     }
-
-    timestamps
 }
 
 /// Generate multiple test values with different structure using [ThreadRng](rand::rngs::ThreadRng).
@@ -99,11 +103,14 @@ pub fn generate_timestamps(length: usize, irregular: bool) -> Vec<i64> {
 /// generated with a random value in the associated range added to each value if it is not [`None`].
 /// - If `structure_of_values` is `Random`, a sequence of random values in the associated range is
 /// generated.
-pub fn generate_values(timestamps: &[i64], values_structure: ValuesStructure) -> Vec<f32> {
+pub fn generate_values(
+    uncompressed_timestamps: &[Timestamp],
+    values_structure: ValuesStructure,
+) -> ValueArray {
     match values_structure {
         // Generates constant values.
         ValuesStructure::Constant(maybe_added_noise_range) => {
-            let mut values = iter::repeat(thread_rng().gen()).take(timestamps.len());
+            let mut values = iter::repeat(thread_rng().gen()).take(uncompressed_timestamps.len());
             randomize_and_collect_iterator(maybe_added_noise_range, &mut values)
         }
         // Generates linear values.
@@ -115,7 +122,7 @@ pub fn generate_values(timestamps: &[i64], values_structure: ValuesStructure) ->
             }
             let intercept: i64 = thread_rng().gen_range(1..50);
 
-            let mut values = timestamps
+            let mut values = uncompressed_timestamps
                 .iter()
                 .map(|timestamp| (slope * timestamp + intercept) as f32);
 
@@ -125,7 +132,7 @@ pub fn generate_values(timestamps: &[i64], values_structure: ValuesStructure) ->
         ValuesStructure::Random(min_max) => {
             let mut thread_rng = thread_rng();
             let distr = Uniform::from(min_max);
-            timestamps
+            uncompressed_timestamps
                 .iter()
                 .map(|_| thread_rng.sample(distr))
                 .collect()
@@ -138,7 +145,7 @@ pub fn generate_values(timestamps: &[i64], values_structure: ValuesStructure) ->
 fn randomize_and_collect_iterator(
     maybe_noise_range: Option<Range<f32>>,
     values: &mut dyn Iterator<Item = f32>,
-) -> Vec<f32> {
+) -> ValueArray {
     if let Some(noise_range) = maybe_noise_range {
         let mut thread_rng = thread_rng();
         let distr = Uniform::from(noise_range);

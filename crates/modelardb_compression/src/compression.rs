@@ -262,7 +262,7 @@ mod tests {
     use super::*;
 
     use arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt64Builder, UInt8Array};
-    use modelardb_common::types::{Timestamp, TimestampBuilder, Value, ValueBuilder};
+    use modelardb_common::types::{TimestampBuilder, ValueBuilder};
     use modelardb_common_test::data_generation::{self, ValuesStructure};
 
     use crate::models;
@@ -274,21 +274,29 @@ mod tests {
     // Tests for try_compress().
     #[test]
     fn test_try_compress_empty_time_series() {
-        let values = vec![];
-        let timestamps = vec![];
-        let (_, _, compressed_record_batch) =
-            create_and_compress_time_series(timestamps, values, ERROR_BOUND_ZERO);
+        let compressed_record_batch = compress_time_series(
+            &TimestampBuilder::new().finish(),
+            &ValueBuilder::new().finish(),
+            ERROR_BOUND_ZERO,
+        );
 
         assert_eq!(0, compressed_record_batch.num_rows())
     }
 
     #[test]
     fn test_try_compress_regular_constant_time_series() {
-        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
-        let values = data_generation::generate_values(&timestamps, ValuesStructure::Constant(None));
+        let uncompressed_timestamps =
+            data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
+        let uncompressed_values = data_generation::generate_values(
+            uncompressed_timestamps.values(),
+            ValuesStructure::Constant(None),
+        );
 
-        let (uncompressed_timestamps, uncompressed_values, compressed_record_batch) =
-            create_and_compress_time_series(timestamps, values, ERROR_BOUND_ZERO);
+        let compressed_record_batch = compress_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            ERROR_BOUND_ZERO,
+        );
 
         assert_compressed_record_batch_with_segments_from_time_series(
             ERROR_BOUND_ZERO,
@@ -301,11 +309,18 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_constant_time_series() {
-        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
-        let values = data_generation::generate_values(&timestamps, ValuesStructure::Constant(None));
+        let uncompressed_timestamps =
+            data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
+        let uncompressed_values = data_generation::generate_values(
+            uncompressed_timestamps.values(),
+            ValuesStructure::Constant(None),
+        );
 
-        let (uncompressed_timestamps, uncompressed_values, compressed_record_batch) =
-            create_and_compress_time_series(timestamps, values, ERROR_BOUND_ZERO);
+        let compressed_record_batch = compress_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            ERROR_BOUND_ZERO,
+        );
 
         assert_compressed_record_batch_with_segments_from_time_series(
             ERROR_BOUND_ZERO,
@@ -318,12 +333,18 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_almost_constant_time_series() {
-        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
-        let values =
-            data_generation::generate_values(&timestamps, ValuesStructure::Random(9.8..10.2));
+        let uncompressed_timestamps =
+            data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
+        let uncompressed_values = data_generation::generate_values(
+            uncompressed_timestamps.values(),
+            ValuesStructure::Random(9.8..10.2),
+        );
 
-        let (uncompressed_timestamps, uncompressed_values, compressed_record_batch) =
-            create_and_compress_time_series(timestamps, values, ERROR_BOUND_FIVE);
+        let compressed_record_batch = compress_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            ERROR_BOUND_FIVE,
+        );
 
         assert_compressed_record_batch_with_segments_from_time_series(
             ERROR_BOUND_FIVE,
@@ -336,12 +357,18 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_almost_constant_time_series() {
-        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
-        let values =
-            data_generation::generate_values(&timestamps, ValuesStructure::Random(9.8..10.2));
+        let uncompressed_timestamps =
+            data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
+        let uncompressed_values = data_generation::generate_values(
+            uncompressed_timestamps.values(),
+            ValuesStructure::Random(9.8..10.2),
+        );
 
-        let (uncompressed_timestamps, uncompressed_values, compressed_record_batch) =
-            create_and_compress_time_series(timestamps, values, ERROR_BOUND_FIVE);
+        let compressed_record_batch = compress_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            ERROR_BOUND_FIVE,
+        );
 
         assert_compressed_record_batch_with_segments_from_time_series(
             ERROR_BOUND_FIVE,
@@ -354,11 +381,18 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_linear_time_series() {
-        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
-        let values = data_generation::generate_values(&timestamps, ValuesStructure::Linear(None));
+        let uncompressed_timestamps =
+            data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
+        let uncompressed_values = data_generation::generate_values(
+            uncompressed_timestamps.values(),
+            ValuesStructure::Linear(None),
+        );
 
-        let (uncompressed_timestamps, uncompressed_values, compressed_record_batch) =
-            create_and_compress_time_series(timestamps, values, ERROR_BOUND_ZERO);
+        let compressed_record_batch = compress_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            ERROR_BOUND_ZERO,
+        );
 
         assert_compressed_record_batch_with_segments_from_time_series(
             ERROR_BOUND_ZERO,
@@ -371,11 +405,18 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_linear_time_series() {
-        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
-        let values = data_generation::generate_values(&timestamps, ValuesStructure::Linear(None));
+        let uncompressed_timestamps =
+            data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
+        let uncompressed_values = data_generation::generate_values(
+            uncompressed_timestamps.values(),
+            ValuesStructure::Linear(None),
+        );
 
-        let (uncompressed_timestamps, uncompressed_values, compressed_record_batch) =
-            create_and_compress_time_series(timestamps, values, ERROR_BOUND_FIVE);
+        let compressed_record_batch = compress_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            ERROR_BOUND_FIVE,
+        );
 
         assert_compressed_record_batch_with_segments_from_time_series(
             ERROR_BOUND_FIVE,
@@ -388,12 +429,18 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_almost_linear_time_series() {
-        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
-        let values =
-            data_generation::generate_values(&timestamps, ValuesStructure::Linear(Some(9.8..10.2)));
+        let uncompressed_timestamps =
+            data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
+        let uncompressed_values = data_generation::generate_values(
+            uncompressed_timestamps.values(),
+            ValuesStructure::Linear(Some(9.8..10.2)),
+        );
 
-        let (uncompressed_timestamps, uncompressed_values, compressed_record_batch) =
-            create_and_compress_time_series(timestamps, values, ERROR_BOUND_FIVE);
+        let compressed_record_batch = compress_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            ERROR_BOUND_FIVE,
+        );
 
         assert_compressed_record_batch_with_segments_from_time_series(
             ERROR_BOUND_FIVE,
@@ -406,12 +453,18 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_almost_linear_time_series() {
-        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
-        let values =
-            data_generation::generate_values(&timestamps, ValuesStructure::Linear(Some(9.8..10.2)));
+        let uncompressed_timestamps =
+            data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
+        let uncompressed_values = data_generation::generate_values(
+            uncompressed_timestamps.values(),
+            ValuesStructure::Linear(Some(9.8..10.2)),
+        );
 
-        let (uncompressed_timestamps, uncompressed_values, compressed_record_batch) =
-            create_and_compress_time_series(timestamps, values, ERROR_BOUND_FIVE);
+        let compressed_record_batch = compress_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            ERROR_BOUND_FIVE,
+        );
 
         assert_compressed_record_batch_with_segments_from_time_series(
             ERROR_BOUND_FIVE,
@@ -424,12 +477,18 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_random_time_series() {
-        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
-        let values =
-            data_generation::generate_values(&timestamps, ValuesStructure::Random(0.0..f32::MAX));
+        let uncompressed_timestamps =
+            data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
+        let uncompressed_values = data_generation::generate_values(
+            uncompressed_timestamps.values(),
+            ValuesStructure::Random(0.0..f32::MAX),
+        );
 
-        let (uncompressed_timestamps, uncompressed_values, compressed_record_batch) =
-            create_and_compress_time_series(timestamps, values, ERROR_BOUND_ZERO);
+        let compressed_record_batch = compress_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            ERROR_BOUND_ZERO,
+        );
 
         assert_compressed_record_batch_with_segments_from_time_series(
             ERROR_BOUND_ZERO,
@@ -442,12 +501,18 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_random_time_series() {
-        let timestamps = data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
-        let values =
-            data_generation::generate_values(&timestamps, ValuesStructure::Random(0.0..f32::MAX));
+        let uncompressed_timestamps =
+            data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
+        let uncompressed_values = data_generation::generate_values(
+            uncompressed_timestamps.values(),
+            ValuesStructure::Random(0.0..f32::MAX),
+        );
 
-        let (uncompressed_timestamps, uncompressed_values, compressed_record_batch) =
-            create_and_compress_time_series(timestamps, values, ERROR_BOUND_ZERO);
+        let compressed_record_batch = compress_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            ERROR_BOUND_ZERO,
+        );
 
         assert_compressed_record_batch_with_segments_from_time_series(
             ERROR_BOUND_ZERO,
@@ -470,26 +535,32 @@ mod tests {
         try_compress_random_linear_constant_time_series(timestamps);
     }
 
-    fn try_compress_random_linear_constant_time_series(timestamps: Vec<i64>) {
-        let mut random = data_generation::generate_values(
-            &timestamps[0..TRY_COMPRESS_TEST_LENGTH],
+    fn try_compress_random_linear_constant_time_series(uncompressed_timestamps: TimestampArray) {
+        let random = data_generation::generate_values(
+            &uncompressed_timestamps.values()[0..TRY_COMPRESS_TEST_LENGTH],
             ValuesStructure::Random(0.0..f32::MAX),
         );
-        let mut linear = data_generation::generate_values(
-            &timestamps[TRY_COMPRESS_TEST_LENGTH..2 * TRY_COMPRESS_TEST_LENGTH],
+        let linear = data_generation::generate_values(
+            &uncompressed_timestamps.values()
+                [TRY_COMPRESS_TEST_LENGTH..2 * TRY_COMPRESS_TEST_LENGTH],
             ValuesStructure::Linear(None),
         );
-        let mut constant = data_generation::generate_values(
-            &timestamps[2 * TRY_COMPRESS_TEST_LENGTH..],
+        let constant = data_generation::generate_values(
+            &uncompressed_timestamps.values()[2 * TRY_COMPRESS_TEST_LENGTH..],
             ValuesStructure::Constant(None),
         );
-        let mut values = vec![];
-        values.append(&mut random);
-        values.append(&mut linear);
-        values.append(&mut constant);
+        let mut uncompressed_values =
+            ValueBuilder::with_capacity(random.len() + linear.len() + constant.len());
+        uncompressed_values.append_slice(random.values());
+        uncompressed_values.append_slice(linear.values());
+        uncompressed_values.append_slice(constant.values());
+        let uncompressed_values = uncompressed_values.finish();
 
-        let (uncompressed_timestamps, uncompressed_values, compressed_record_batch) =
-            create_and_compress_time_series(timestamps, values, ERROR_BOUND_ZERO);
+        let compressed_record_batch = compress_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            ERROR_BOUND_ZERO,
+        );
 
         assert_compressed_record_batch_with_segments_from_time_series(
             ERROR_BOUND_ZERO,
@@ -502,8 +573,9 @@ mod tests {
 
     #[test]
     fn test_try_compress_constant_linear_random_regular_time_series() {
-        let timestamps = data_generation::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, false);
-        try_compress_constant_linear_random_time_series(timestamps);
+        let uncompressed_timestamps =
+            data_generation::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, false);
+        try_compress_constant_linear_random_time_series(uncompressed_timestamps);
     }
 
     #[test]
@@ -512,26 +584,32 @@ mod tests {
         try_compress_constant_linear_random_time_series(timestamps);
     }
 
-    fn try_compress_constant_linear_random_time_series(timestamps: Vec<i64>) {
-        let mut constant = data_generation::generate_values(
-            &timestamps[0..TRY_COMPRESS_TEST_LENGTH],
+    fn try_compress_constant_linear_random_time_series(uncompressed_timestamps: TimestampArray) {
+        let constant = data_generation::generate_values(
+            &uncompressed_timestamps.values()[0..TRY_COMPRESS_TEST_LENGTH],
             ValuesStructure::Constant(None),
         );
-        let mut linear = data_generation::generate_values(
-            &timestamps[TRY_COMPRESS_TEST_LENGTH..2 * TRY_COMPRESS_TEST_LENGTH],
+        let linear = data_generation::generate_values(
+            &uncompressed_timestamps.values()
+                [TRY_COMPRESS_TEST_LENGTH..2 * TRY_COMPRESS_TEST_LENGTH],
             ValuesStructure::Linear(None),
         );
-        let mut random = data_generation::generate_values(
-            &timestamps[2 * TRY_COMPRESS_TEST_LENGTH..],
+        let random = data_generation::generate_values(
+            &uncompressed_timestamps.values()[2 * TRY_COMPRESS_TEST_LENGTH..],
             ValuesStructure::Random(0.0..f32::MAX),
         );
-        let mut values = vec![];
-        values.append(&mut constant);
-        values.append(&mut linear);
-        values.append(&mut random);
+        let mut uncompressed_values =
+            ValueBuilder::with_capacity(random.len() + linear.len() + constant.len());
+        uncompressed_values.append_slice(constant.values());
+        uncompressed_values.append_slice(linear.values());
+        uncompressed_values.append_slice(random.values());
+        let uncompressed_values = uncompressed_values.finish();
 
-        let (uncompressed_timestamps, uncompressed_values, compressed_record_batch) =
-            create_and_compress_time_series(timestamps, values, ERROR_BOUND_ZERO);
+        let compressed_record_batch = compress_time_series(
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            ERROR_BOUND_ZERO,
+        );
 
         assert_compressed_record_batch_with_segments_from_time_series(
             ERROR_BOUND_ZERO,
@@ -542,28 +620,13 @@ mod tests {
         )
     }
 
-    fn create_and_compress_time_series(
-        timestamps: Vec<Timestamp>,
-        values: Vec<Value>,
+    fn compress_time_series(
+        uncompressed_timestamps: &TimestampArray,
+        uncompressed_values: &ValueArray,
         error_bound: f32,
-    ) -> (TimestampArray, ValueArray, RecordBatch) {
+    ) -> RecordBatch {
         let error_bound = ErrorBound::try_new(error_bound).unwrap();
-        let uncompressed_timestamps = TimestampArray::from_iter_values(timestamps);
-        let uncompressed_values = ValueArray::from_iter_values(values);
-
-        let compressed_record_batch = try_compress(
-            1,
-            error_bound,
-            &uncompressed_timestamps,
-            &uncompressed_values,
-        )
-        .unwrap();
-
-        (
-            uncompressed_timestamps,
-            uncompressed_values,
-            compressed_record_batch,
-        )
+        try_compress(1, error_bound, uncompressed_timestamps, uncompressed_values).unwrap()
     }
 
     fn assert_compressed_record_batch_with_segments_from_time_series(
@@ -655,9 +718,9 @@ mod tests {
             &mut compressed_segment_batch_builder,
         );
 
-        let compressed_segments = compressed_segment_batch_builder.finish();
+        let compressed_record_batch = compressed_segment_batch_builder.finish();
         modelardb_common::arrays!(
-            compressed_segments,
+            compressed_record_batch,
             univariate_ids,
             model_type_ids,
             start_times,
@@ -670,7 +733,7 @@ mod tests {
             errors
         );
 
-        assert_eq!(1, compressed_segments.num_rows());
+        assert_eq!(1, compressed_record_batch.num_rows());
         assert_eq!(0, univariate_ids.value(0));
         assert_eq!(GORILLA_ID, model_type_ids.value(0));
         assert_eq!(100, start_times.value(0));
