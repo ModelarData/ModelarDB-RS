@@ -23,6 +23,7 @@ use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::str;
 use std::string::String;
+use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -37,16 +38,19 @@ use datafusion::arrow::ipc::convert;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, StreamExt};
-use serial_test::serial;
 use sysinfo::{Pid, PidExt, System, SystemExt};
 
+use tempfile::TempDir;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
 use tonic::{Request, Response, Status, Streaming};
 
 const TABLE_NAME: &str = "table_name";
 const HOST: &str = "127.0.0.1";
-const PORT: u16 = 9999;
+
+/// The next port to be used for the server in an integration test. Each test uses a unique port and
+/// local data folder so they can run in parallel and so that any failing tests does not cascade.
+static PORT: AtomicU16 = AtomicU16::new(9999);
 
 /// Number of times to try executing something that may sometimes temporarily fail.
 const ATTEMPTS: u8 = 10;
@@ -65,23 +69,27 @@ enum TableType {
 
 /// Async runtime, handler to the server process, and client for use by the tests. It implements
 /// `drop()` so the resources it manages is released no matter if a test succeeds, fails, or panics.
-struct TestContext<'a> {
-    local_data_folder: &'a Path,
+struct TestContext {
+    temp_dir: TempDir,
+    port: u16,
     runtime: Runtime,
     server: Child,
     client: FlightServiceClient<Channel>,
 }
 
-impl<'a> TestContext<'a> {
-    /// Create a [`Runtime`], a server that stores data in `local_data_folder, and a client and
-    /// ensure they are all ready to be used in the tests.
-    fn new(local_data_folder: &'a Path) -> Self {
+impl TestContext {
+    /// Create a [`Runtime`], a server that stores data in a randomly generated local data folder
+    /// and listens on `PORT`, and a client and ensure they are all ready to be used in the tests.
+    fn new() -> Self {
         let runtime = Runtime::new().unwrap();
-        let mut server = Self::create_server(local_data_folder);
-        let client = Self::create_client(&runtime, &mut server);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let port = PORT.fetch_add(1, Ordering::Relaxed);
+        let mut server = Self::create_server(temp_dir.path(), port);
+        let client = Self::create_client(&runtime, &mut server, port);
 
         Self {
-            local_data_folder,
+            temp_dir,
+            port,
             runtime,
             server,
             client,
@@ -91,17 +99,18 @@ impl<'a> TestContext<'a> {
     /// Restart the server and reconnect the client.
     fn restart_server(&mut self) {
         Self::kill_child(&mut self.server);
-        self.server = Self::create_server(self.local_data_folder);
-        self.client = Self::create_client(&self.runtime, &mut self.server);
+        self.server = Self::create_server(self.temp_dir.path(), self.port);
+        self.client = Self::create_client(&self.runtime, &mut self.server, self.port);
     }
 
-    /// Create a server that stores data in `local_data_folder` and ensure it is ready to receive
-    /// requests.
-    fn create_server(local_data_folder: &Path) -> Child {
+    /// Create a server that stores data in `local_data_folder` and listens on `port` and ensure it
+    /// is ready to receive requests.
+    fn create_server(local_data_folder: &Path, port: u16) -> Child {
         // The server's stdout and stderr is piped so the log messages (stdout) and expected errors
         // (stderr) are not printed when all of the tests are run using the "cargo test" command.
         let mut server = Self::create_command("modelardbd")
             .unwrap()
+            .env("MODELARDBD_PORT", port.to_string())
             .arg(local_data_folder)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -147,12 +156,16 @@ impl<'a> TestContext<'a> {
     }
 
     /// Create the client and ensure it can connect to the server.
-    fn create_client(runtime: &Runtime, server: &mut Child) -> FlightServiceClient<Channel> {
+    fn create_client(
+        runtime: &Runtime,
+        server: &mut Child,
+        port: u16,
+    ) -> FlightServiceClient<Channel> {
         // Despite waiting for the expected output, the client may not able to connect the first
         // time. This rarely happens on a local machine but happens more often in GitHub Actions.
         let mut attempts = ATTEMPTS;
         let client = loop {
-            if let Ok(client) = Self::create_apache_arrow_flight_service_client(runtime, HOST, PORT)
+            if let Ok(client) = Self::create_apache_arrow_flight_service_client(runtime, HOST, port)
             {
                 break client;
             } else if attempts == 0 {
@@ -390,7 +403,7 @@ impl<'a> TestContext<'a> {
     }
 }
 
-impl<'a> Drop for TestContext<'a> {
+impl Drop for TestContext {
     /// Kill the server process when [`TestContext`] is dropped.
     fn drop(&mut self) {
         Self::kill_child(&mut self.server);
@@ -398,10 +411,8 @@ impl<'a> Drop for TestContext<'a> {
 }
 
 #[test]
-#[serial]
 fn test_can_create_table() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let mut test_context = TestContext::new(temp_dir.path());
+    let mut test_context = TestContext::new();
 
     test_context.create_table(TABLE_NAME, TableType::NormalTable);
 
@@ -412,10 +423,8 @@ fn test_can_create_table() {
 }
 
 #[test]
-#[serial]
 fn test_can_register_table() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let mut test_context = TestContext::new(temp_dir.path());
+    let mut test_context = TestContext::new();
 
     test_context.create_table(TABLE_NAME, TableType::NormalTable);
     test_context.restart_server();
@@ -427,10 +436,8 @@ fn test_can_register_table() {
 }
 
 #[test]
-#[serial]
 fn test_can_create_model_table() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let mut test_context = TestContext::new(temp_dir.path());
+    let mut test_context = TestContext::new();
 
     test_context.create_table(TABLE_NAME, TableType::ModelTable);
 
@@ -441,10 +448,8 @@ fn test_can_create_model_table() {
 }
 
 #[test]
-#[serial]
 fn test_can_register_model_table() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let mut test_context = TestContext::new(temp_dir.path());
+    let mut test_context = TestContext::new();
 
     test_context.create_table(TABLE_NAME, TableType::ModelTable);
     test_context.restart_server();
@@ -456,10 +461,8 @@ fn test_can_register_model_table() {
 }
 
 #[test]
-#[serial]
 fn test_can_create_register_and_list_multiple_tables_and_model_tables() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let mut test_context = TestContext::new(temp_dir.path());
+    let mut test_context = TestContext::new();
     let table_types = &[
         TableType::NormalTable,
         TableType::ModelTable,
@@ -503,10 +506,8 @@ fn test_can_create_register_and_list_multiple_tables_and_model_tables() {
 }
 
 #[test]
-#[serial]
 fn test_can_get_schema() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let mut test_context = TestContext::new(temp_dir.path());
+    let mut test_context = TestContext::new();
 
     test_context.create_table(TABLE_NAME, TableType::ModelTable);
 
@@ -523,10 +524,8 @@ fn test_can_get_schema() {
 }
 
 #[test]
-#[serial]
 fn test_can_list_actions() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let mut test_context = TestContext::new(temp_dir.path());
+    let mut test_context = TestContext::new();
 
     let mut actions = test_context.runtime.block_on(async {
         test_context
@@ -557,10 +556,8 @@ fn test_can_list_actions() {
 }
 
 #[test]
-#[serial]
 fn test_can_collect_metrics() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let mut test_context = TestContext::new(temp_dir.path());
+    let mut test_context = TestContext::new();
 
     let metrics = test_context.runtime.block_on(async {
         test_context
@@ -581,10 +578,8 @@ fn test_can_collect_metrics() {
 }
 
 #[test]
-#[serial]
 fn test_can_ingest_data_point_with_tags() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let mut test_context = TestContext::new(temp_dir.path());
+    let mut test_context = TestContext::new();
 
     let data_point = TestContext::generate_random_data_point(Some("location"));
     let flight_data = TestContext::create_flight_data_from_data_points(
@@ -608,10 +603,8 @@ fn test_can_ingest_data_point_with_tags() {
 }
 
 #[test]
-#[serial]
 fn test_can_ingest_data_point_without_tags() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let mut test_context = TestContext::new(temp_dir.path());
+    let mut test_context = TestContext::new();
 
     let data_point = TestContext::generate_random_data_point(None);
     let flight_data = TestContext::create_flight_data_from_data_points(
@@ -635,10 +628,8 @@ fn test_can_ingest_data_point_without_tags() {
 }
 
 #[test]
-#[serial]
 fn test_can_ingest_data_point_with_generated_field() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let mut test_context = TestContext::new(temp_dir.path());
+    let mut test_context = TestContext::new();
 
     let data_point = TestContext::generate_random_data_point(None);
     let flight_data = TestContext::create_flight_data_from_data_points(
@@ -666,10 +657,8 @@ fn test_can_ingest_data_point_with_generated_field() {
 }
 
 #[test]
-#[serial]
 fn test_can_ingest_multiple_time_series_with_different_tags() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let mut test_context = TestContext::new(temp_dir.path());
+    let mut test_context = TestContext::new();
 
     let data_points: Vec<RecordBatch> = (1..5)
         .map(|i| TestContext::generate_random_data_point(Some(&format!("location{i}"))))
@@ -694,10 +683,8 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
 }
 
 #[test]
-#[serial]
 fn test_cannot_ingest_invalid_data_point() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let mut test_context = TestContext::new(temp_dir.path());
+    let mut test_context = TestContext::new();
 
     let data_point = TestContext::generate_random_data_point(None);
     let flight_data =
@@ -718,10 +705,8 @@ fn test_cannot_ingest_invalid_data_point() {
 }
 
 #[test]
-#[serial]
 fn test_optimized_query_results_equals_non_optimized_query_results() {
-    let temp_dir = tempfile::tempdir().unwrap();
-    let mut test_context = TestContext::new(temp_dir.path());
+    let mut test_context = TestContext::new();
 
     let mut data_points = vec![];
     for i in 1..5 {
