@@ -18,7 +18,6 @@
 use std::iter;
 use std::ops::Range;
 
-use arrow::array::ArrayBuilder;
 use modelardb_common::types::{
     Timestamp, TimestampArray, TimestampBuilder, ValueArray, ValueBuilder,
 };
@@ -35,13 +34,14 @@ pub enum ValuesStructure {
 }
 
 /// Generate a time series with sub-sequences of values with different [`ValuesStructure`]. The time
-/// series will have at least `minimum_length` data points in sequences of `segment_length_range`
-/// and the timestamp will be regular or irregular depending on the value of `irregular_timestamps`.
-/// If `added_noise_range` is [`Some`], random values will be generated in the [`Range<f32>`] and
-/// added to the sequences with constant and linear values. Sequences with random values are
-/// generated in the range specified as `random_value_range`.
+/// series will have `length` data points in sequences of `segment_length_range` (except possibly
+/// for the last as it may be truncated to match `lenght`) and the timestamp will be regular or
+/// irregular depending on the value of `irregular_timestamps`. If `added_noise_range` is [`Some`],
+/// random values will be generated in the [`Range<f32>`] and added to the sequences with constant
+/// and linear values. Sequences with random values are generated in the range specified as
+/// `random_value_range`.
 pub fn generate_time_series(
-    minimum_length: usize,
+    length: usize,
     segment_length_range: Range<usize>,
     irregular_timestamps: bool,
     added_noise_range: Option<Range<f32>>,
@@ -54,25 +54,31 @@ pub fn generate_time_series(
     ];
 
     let mut thread_rng = thread_rng();
-    let mut timestamp_builder = TimestampBuilder::with_capacity(minimum_length);
-    let mut value_builder = ValueBuilder::with_capacity(minimum_length);
-    while timestamp_builder.len() < minimum_length {
+    let mut uncompressed_values_builder = ValueBuilder::with_capacity(length);
+    let uncompressed_timestamps = generate_timestamps(length, irregular_timestamps);
+    while uncompressed_values_builder.values_slice().len() < length {
         let segment_length = thread_rng.gen_range(segment_length_range.clone());
         let values_structure_index = thread_rng.gen_range(0..values_structures.len());
         let values_structure = &values_structures[values_structure_index];
 
-        let uncompressed_timestamps = generate_timestamps(segment_length, irregular_timestamps);
+        let uncompressed_values_builder_len = uncompressed_values_builder.values_slice().len();
+        let uncompressed_timestamps_for_segment_end = usize::min(
+            uncompressed_timestamps.len(),
+            uncompressed_values_builder_len + segment_length,
+        );
+        let uncompressed_timestamps_for_segment = &uncompressed_timestamps.values()
+            [uncompressed_values_builder_len..uncompressed_timestamps_for_segment_end];
+
         let uncompressed_values = generate_values(
-            uncompressed_timestamps.values(),
+            uncompressed_timestamps_for_segment,
             (*values_structure).clone(),
         );
 
-        timestamp_builder.extend(&uncompressed_timestamps);
-        value_builder.extend(&uncompressed_values);
+        uncompressed_values_builder.extend(&uncompressed_values);
     }
+    let uncompressed_values = uncompressed_values_builder.finish().slice(0, length);
 
-    debug_assert_eq!(timestamp_builder.len(), value_builder.len());
-    (timestamp_builder.finish(), value_builder.finish())
+    (uncompressed_timestamps, uncompressed_values)
 }
 
 /// Generate regular/irregular timestamps with [ThreadRng](rand::rngs::ThreadRng). Selects the

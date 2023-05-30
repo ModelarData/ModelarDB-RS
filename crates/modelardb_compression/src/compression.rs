@@ -259,9 +259,12 @@ fn compress_and_store_residuals_in_a_separate_segment(
 
 #[cfg(test)]
 mod tests {
+    use std::ops::Range;
+
     use super::*;
 
     use arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt64Builder, UInt8Array};
+    use modelardb_common::array;
     use modelardb_common::types::{TimestampBuilder, ValueBuilder};
     use modelardb_common_test::data_generation::{self, ValuesStructure};
 
@@ -298,7 +301,7 @@ mod tests {
             ERROR_BOUND_ZERO,
         );
 
-        assert_compressed_record_batch_with_segments_from_time_series(
+        assert_compressed_record_batch_with_known_segments_from_time_series(
             ERROR_BOUND_ZERO,
             &uncompressed_timestamps,
             &uncompressed_values,
@@ -322,7 +325,7 @@ mod tests {
             ERROR_BOUND_ZERO,
         );
 
-        assert_compressed_record_batch_with_segments_from_time_series(
+        assert_compressed_record_batch_with_known_segments_from_time_series(
             ERROR_BOUND_ZERO,
             &uncompressed_timestamps,
             &uncompressed_values,
@@ -346,7 +349,7 @@ mod tests {
             ERROR_BOUND_FIVE,
         );
 
-        assert_compressed_record_batch_with_segments_from_time_series(
+        assert_compressed_record_batch_with_known_segments_from_time_series(
             ERROR_BOUND_FIVE,
             &uncompressed_timestamps,
             &uncompressed_values,
@@ -370,7 +373,7 @@ mod tests {
             ERROR_BOUND_FIVE,
         );
 
-        assert_compressed_record_batch_with_segments_from_time_series(
+        assert_compressed_record_batch_with_known_segments_from_time_series(
             ERROR_BOUND_FIVE,
             &uncompressed_timestamps,
             &uncompressed_values,
@@ -394,7 +397,7 @@ mod tests {
             ERROR_BOUND_ZERO,
         );
 
-        assert_compressed_record_batch_with_segments_from_time_series(
+        assert_compressed_record_batch_with_known_segments_from_time_series(
             ERROR_BOUND_ZERO,
             &uncompressed_timestamps,
             &uncompressed_values,
@@ -418,7 +421,7 @@ mod tests {
             ERROR_BOUND_FIVE,
         );
 
-        assert_compressed_record_batch_with_segments_from_time_series(
+        assert_compressed_record_batch_with_known_segments_from_time_series(
             ERROR_BOUND_FIVE,
             &uncompressed_timestamps,
             &uncompressed_values,
@@ -442,7 +445,7 @@ mod tests {
             ERROR_BOUND_FIVE,
         );
 
-        assert_compressed_record_batch_with_segments_from_time_series(
+        assert_compressed_record_batch_with_known_segments_from_time_series(
             ERROR_BOUND_FIVE,
             &uncompressed_timestamps,
             &uncompressed_values,
@@ -466,7 +469,7 @@ mod tests {
             ERROR_BOUND_FIVE,
         );
 
-        assert_compressed_record_batch_with_segments_from_time_series(
+        assert_compressed_record_batch_with_known_segments_from_time_series(
             ERROR_BOUND_FIVE,
             &uncompressed_timestamps,
             &uncompressed_values,
@@ -490,7 +493,7 @@ mod tests {
             ERROR_BOUND_ZERO,
         );
 
-        assert_compressed_record_batch_with_segments_from_time_series(
+        assert_compressed_record_batch_with_known_segments_from_time_series(
             ERROR_BOUND_ZERO,
             &uncompressed_timestamps,
             &uncompressed_values,
@@ -514,7 +517,7 @@ mod tests {
             ERROR_BOUND_ZERO,
         );
 
-        assert_compressed_record_batch_with_segments_from_time_series(
+        assert_compressed_record_batch_with_known_segments_from_time_series(
             ERROR_BOUND_ZERO,
             &uncompressed_timestamps,
             &uncompressed_values,
@@ -562,7 +565,7 @@ mod tests {
             ERROR_BOUND_ZERO,
         );
 
-        assert_compressed_record_batch_with_segments_from_time_series(
+        assert_compressed_record_batch_with_known_segments_from_time_series(
             ERROR_BOUND_ZERO,
             &uncompressed_timestamps,
             &uncompressed_values,
@@ -611,7 +614,7 @@ mod tests {
             ERROR_BOUND_ZERO,
         );
 
-        assert_compressed_record_batch_with_segments_from_time_series(
+        assert_compressed_record_batch_with_known_segments_from_time_series(
             ERROR_BOUND_ZERO,
             &uncompressed_timestamps,
             &uncompressed_values,
@@ -620,16 +623,7 @@ mod tests {
         )
     }
 
-    fn compress_time_series(
-        uncompressed_timestamps: &TimestampArray,
-        uncompressed_values: &ValueArray,
-        error_bound: f32,
-    ) -> RecordBatch {
-        let error_bound = ErrorBound::try_new(error_bound).unwrap();
-        try_compress(1, error_bound, uncompressed_timestamps, uncompressed_values).unwrap()
-    }
-
-    fn assert_compressed_record_batch_with_segments_from_time_series(
+    fn assert_compressed_record_batch_with_known_segments_from_time_series(
         error_bound: f32,
         uncompressed_timestamps: &TimestampArray,
         uncompressed_values: &ValueArray,
@@ -641,6 +635,97 @@ mod tests {
             compressed_record_batch.num_rows()
         );
 
+        assert_compressed_record_batch_with_unknown_segments_from_time_series(
+            error_bound,
+            uncompressed_timestamps,
+            uncompressed_values,
+            compressed_record_batch,
+        );
+
+        let model_type_ids = array!(compressed_record_batch, 1, UInt8Array);
+        assert_eq!(model_type_ids.values(), expected_model_type_ids);
+    }
+
+    #[test]
+    fn test_try_compress_regular_synthetic_time_series_without_noise_lossless() {
+        generate_compress_and_assert_time_series(ERROR_BOUND_ZERO, false, None)
+    }
+
+    #[test]
+    fn test_try_compress_regular_synthetic_time_series_without_noise_lossy() {
+        generate_compress_and_assert_time_series(ERROR_BOUND_FIVE, false, None)
+    }
+
+    #[test]
+    fn test_try_compress_regular_synthetic_time_series_with_noise_lossless() {
+        generate_compress_and_assert_time_series(ERROR_BOUND_ZERO, false, Some(-5.0..5.0))
+    }
+
+    #[test]
+    fn test_try_compress_regular_synthetic_time_series_with_noise_lossy() {
+        generate_compress_and_assert_time_series(ERROR_BOUND_FIVE, false, Some(-5.0..5.0))
+    }
+
+    #[test]
+    fn test_try_compress_irregular_synthetic_time_series_without_noise_lossless() {
+        generate_compress_and_assert_time_series(ERROR_BOUND_ZERO, true, None)
+    }
+
+    #[test]
+    fn test_try_compress_irregular_synthetic_time_series_without_noise_lossy() {
+        generate_compress_and_assert_time_series(ERROR_BOUND_FIVE, true, None)
+    }
+
+    #[test]
+    fn test_try_compress_irregular_synthetic_time_series_with_noise_lossless() {
+        generate_compress_and_assert_time_series(ERROR_BOUND_ZERO, true, Some(-5.0..5.0))
+    }
+
+    #[test]
+    fn test_try_compress_irregular_synthetic_time_series_with_noise_lossy() {
+        generate_compress_and_assert_time_series(ERROR_BOUND_FIVE, true, Some(-5.0..5.0))
+    }
+
+    fn generate_compress_and_assert_time_series(
+        error_bound: f32,
+        irregular_timestamps: bool,
+        added_noise_range: Option<Range<f32>>,
+    ) {
+        // The parameters for generate_time_series is chosen so
+        let (uncompressed_timestamps, uncompressed_values) = data_generation::generate_time_series(
+            1000 * TRY_COMPRESS_TEST_LENGTH,
+            TRY_COMPRESS_TEST_LENGTH..10 * TRY_COMPRESS_TEST_LENGTH + 1,
+            irregular_timestamps,
+            added_noise_range,
+            100.0..200.0,
+        );
+
+        let compressed_record_batch =
+            compress_time_series(&uncompressed_timestamps, &uncompressed_values, error_bound);
+
+        assert_compressed_record_batch_with_unknown_segments_from_time_series(
+            error_bound,
+            &uncompressed_timestamps,
+            &uncompressed_values,
+            &compressed_record_batch,
+        );
+    }
+
+    fn compress_time_series(
+        uncompressed_timestamps: &TimestampArray,
+        uncompressed_values: &ValueArray,
+        error_bound: f32,
+    ) -> RecordBatch {
+        let error_bound = ErrorBound::try_new(error_bound).unwrap();
+        try_compress(1, error_bound, uncompressed_timestamps, uncompressed_values).unwrap()
+    }
+
+    fn assert_compressed_record_batch_with_unknown_segments_from_time_series(
+        error_bound: f32,
+        uncompressed_timestamps: &TimestampArray,
+        uncompressed_values: &ValueArray,
+        compressed_record_batch: &RecordBatch,
+    ) {
         let mut univariate_id_builder = UInt64Builder::new();
         let mut timestamp_builder = TimestampBuilder::new();
         let mut value_builder = ValueBuilder::new();
@@ -659,7 +744,7 @@ mod tests {
             _error_array
         );
 
-        for (row_index, expected_model_type_id) in expected_model_type_ids.iter().enumerate() {
+        for row_index in 0..compressed_record_batch.num_rows() {
             models::grid(
                 univariate_ids.value(row_index),
                 model_type_ids.value(row_index),
@@ -674,8 +759,6 @@ mod tests {
                 &mut timestamp_builder,
                 &mut value_builder,
             );
-
-            assert_eq!(model_type_ids.value(row_index), *expected_model_type_id);
         }
 
         let decompressed_timestamps = timestamp_builder.finish();

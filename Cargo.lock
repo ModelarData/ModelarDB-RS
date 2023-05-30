@@ -1975,7 +1975,6 @@ dependencies = [
 name = "modelardb_common_test"
 version = "0.1.0"
 dependencies = [
- "arrow",
  "modelardb_common",
  "rand",
 ]
