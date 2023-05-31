@@ -36,20 +36,20 @@ pub enum ValuesStructure {
 /// Generate a time series with sub-sequences of values with different [`ValuesStructure`]. The time
 /// series will have `length` data points in sequences of `segment_length_range` (except possibly
 /// for the last as it may be truncated to match `lenght`) and the timestamp will be regular or
-/// irregular depending on the value of `irregular_timestamps`. If `added_noise_range` is [`Some`],
-/// random values will be generated in the [`Range<f32>`] and added to the sequences with constant
-/// and linear values. Sequences with random values are generated in the range specified as
-/// `random_value_range`.
+/// irregular depending on the value of `irregular_timestamps`. If `multiply_noise_range` is
+/// [`Some`], random values will be generated in the [`Range<f32>`] and multiplied with each value
+/// in the sequences with constant and linear values. Sequences with random values are generated in
+/// the range specified as `random_value_range`.
 pub fn generate_time_series(
     length: usize,
     segment_length_range: Range<usize>,
     irregular_timestamps: bool,
-    added_noise_range: Option<Range<f32>>,
+    multiply_noise_range: Option<Range<f32>>,
     random_value_range: Range<f32>,
 ) -> (TimestampArray, ValueArray) {
     let values_structures = &[
-        ValuesStructure::Constant(added_noise_range.clone()),
-        ValuesStructure::Linear(added_noise_range),
+        ValuesStructure::Constant(multiply_noise_range.clone()),
+        ValuesStructure::Linear(multiply_noise_range),
         ValuesStructure::Random(random_value_range),
     ];
 
@@ -103,10 +103,11 @@ pub fn generate_timestamps(length: usize, irregular: bool) -> TimestampArray {
 /// Generate multiple test values with different structure using [ThreadRng](rand::rngs::ThreadRng).
 /// The amount of values to be generated will match `timestamps` and their structure will match
 /// `structure_of_values`:
-/// - If `structure_of_values` is `Constant`, a single value is generated and repeated with
-/// a random value in the associated range added to each value if it is not [`None`].
+/// - If `structure_of_values` is `Constant`, a single value is generated and repeated with a random
+/// value in the associated range multiplied with each value if it is not [`None`].
 /// - If `structure_of_values` is `Linear`, a sequence of increasing or decreasing values are
-/// generated with a random value in the associated range added to each value if it is not [`None`].
+/// generated with a random value in the associated range multiplied with each value if it is not
+/// [`None`].
 /// - If `structure_of_values` is `Random`, a sequence of random values in the associated range is
 /// generated.
 pub fn generate_values(
@@ -115,12 +116,12 @@ pub fn generate_values(
 ) -> ValueArray {
     match values_structure {
         // Generates constant values.
-        ValuesStructure::Constant(maybe_added_noise_range) => {
+        ValuesStructure::Constant(maybe_multiply_noise_range) => {
             let mut values = iter::repeat(thread_rng().gen()).take(uncompressed_timestamps.len());
-            randomize_and_collect_iterator(maybe_added_noise_range, &mut values)
+            randomize_and_collect_iterator(maybe_multiply_noise_range, &mut values)
         }
         // Generates linear values.
-        ValuesStructure::Linear(maybe_added_noise_range) => {
+        ValuesStructure::Linear(maybe_multiply_noise_range) => {
             // The variable slope is regenerated if it is 0, to avoid generating constant data.
             let mut slope: i64 = 0;
             while slope == 0 {
@@ -132,7 +133,7 @@ pub fn generate_values(
                 .iter()
                 .map(|timestamp| (slope * timestamp + intercept) as f32);
 
-            randomize_and_collect_iterator(maybe_added_noise_range, &mut values)
+            randomize_and_collect_iterator(maybe_multiply_noise_range, &mut values)
         }
         // Generates random values.
         ValuesStructure::Random(min_max) => {
@@ -146,8 +147,8 @@ pub fn generate_values(
     }
 }
 
-/// Add a value in the `maybe_noise_range` to each value in `values` if `maybe_noise_range` is not
-/// [`None`] and collect it to a [`Vec<f32>`] which is returned.
+/// Multiple the value in `maybe_noise_range` with each value in `values` if `maybe_noise_range` is
+/// not [`None`] and collect it to a [`Vec<f32>`] which is returned.
 fn randomize_and_collect_iterator(
     maybe_noise_range: Option<Range<f32>>,
     values: &mut dyn Iterator<Item = f32>,
@@ -156,7 +157,7 @@ fn randomize_and_collect_iterator(
         let mut thread_rng = thread_rng();
         let distr = Uniform::from(noise_range);
         values
-            .map(|value| value + thread_rng.sample(distr))
+            .map(|value| value * thread_rng.sample(distr))
             .collect()
     } else {
         values.collect()

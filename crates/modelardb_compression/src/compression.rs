@@ -272,6 +272,7 @@ mod tests {
 
     const ERROR_BOUND_ZERO: f32 = 0.0;
     const ERROR_BOUND_FIVE: f32 = 5.0;
+    const MULTIPLY_NOISE_RANGE: Option<Range<f32>> = Some(1.0..1.05);
     const TRY_COMPRESS_TEST_LENGTH: usize = 50;
 
     // Tests for try_compress().
@@ -436,7 +437,7 @@ mod tests {
             data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, false);
         let uncompressed_values = data_generation::generate_values(
             uncompressed_timestamps.values(),
-            ValuesStructure::Linear(Some(9.8..10.2)),
+            ValuesStructure::Linear(MULTIPLY_NOISE_RANGE),
         );
 
         let compressed_record_batch = compress_time_series(
@@ -460,7 +461,7 @@ mod tests {
             data_generation::generate_timestamps(TRY_COMPRESS_TEST_LENGTH, true);
         let uncompressed_values = data_generation::generate_values(
             uncompressed_timestamps.values(),
-            ValuesStructure::Linear(Some(9.8..10.2)),
+            ValuesStructure::Linear(MULTIPLY_NOISE_RANGE),
         );
 
         let compressed_record_batch = compress_time_series(
@@ -658,12 +659,12 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_synthetic_time_series_with_noise_lossless() {
-        generate_compress_and_assert_time_series(ERROR_BOUND_ZERO, false, Some(-5.0..5.0))
+        generate_compress_and_assert_time_series(ERROR_BOUND_ZERO, false, MULTIPLY_NOISE_RANGE)
     }
 
     #[test]
     fn test_try_compress_regular_synthetic_time_series_with_noise_lossy() {
-        generate_compress_and_assert_time_series(ERROR_BOUND_FIVE, false, Some(-5.0..5.0))
+        generate_compress_and_assert_time_series(ERROR_BOUND_FIVE, false, MULTIPLY_NOISE_RANGE)
     }
 
     #[test]
@@ -678,25 +679,25 @@ mod tests {
 
     #[test]
     fn test_try_compress_irregular_synthetic_time_series_with_noise_lossless() {
-        generate_compress_and_assert_time_series(ERROR_BOUND_ZERO, true, Some(-5.0..5.0))
+        generate_compress_and_assert_time_series(ERROR_BOUND_ZERO, true, MULTIPLY_NOISE_RANGE)
     }
 
     #[test]
     fn test_try_compress_irregular_synthetic_time_series_with_noise_lossy() {
-        generate_compress_and_assert_time_series(ERROR_BOUND_FIVE, true, Some(-5.0..5.0))
+        generate_compress_and_assert_time_series(ERROR_BOUND_FIVE, true, MULTIPLY_NOISE_RANGE)
     }
 
     fn generate_compress_and_assert_time_series(
         error_bound: f32,
         irregular_timestamps: bool,
-        added_noise_range: Option<Range<f32>>,
+        multiply_noise_range: Option<Range<f32>>,
     ) {
         // The parameters for generate_time_series is chosen so
         let (uncompressed_timestamps, uncompressed_values) = data_generation::generate_time_series(
             1000 * TRY_COMPRESS_TEST_LENGTH,
             TRY_COMPRESS_TEST_LENGTH..10 * TRY_COMPRESS_TEST_LENGTH + 1,
             irregular_timestamps,
-            added_noise_range,
+            multiply_noise_range,
             100.0..200.0,
         );
 
