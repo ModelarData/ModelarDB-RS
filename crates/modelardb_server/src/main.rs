@@ -26,16 +26,16 @@ mod remote;
 mod storage;
 
 use std::path::PathBuf;
-use std::str::FromStr;
 use std::sync::Arc;
 use std::{env, fs};
 
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
-use object_store::{
-    aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, local::LocalFileSystem, path::Path,
-    ObjectStore,
+use modelardb_common::arguments::{
+    argument_to_remote_object_store, collect_command_line_arguments,
+    validate_remote_data_folder_from_argument,
 };
+use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -61,28 +61,6 @@ pub static PORT: Lazy<u16> = Lazy::new(|| match env::var("MODELARDBD_PORT") {
 pub enum ServerMode {
     Cloud,
     Edge,
-}
-
-/// The object stores that are currently supported as remote data folders.
-#[derive(PartialEq, Eq)]
-enum RemoteDataFolderType {
-    S3,
-    AzureBlobStorage,
-}
-
-impl FromStr for RemoteDataFolderType {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "s3" => Ok(RemoteDataFolderType::S3),
-            "azureblobstorage" => Ok(RemoteDataFolderType::AzureBlobStorage),
-            _ => Err(format!(
-                "'{}' is not a valid value for RemoteDataFolderType.",
-                value
-            )),
-        }
-    }
 }
 
 /// Folders for storing metadata and Apache Parquet files.
@@ -120,14 +98,7 @@ fn main() -> Result<(), String> {
     let stdout_log = tracing_subscriber::fmt::layer();
     tracing_subscriber::registry().with(stdout_log).init();
 
-    let mut args = std::env::args();
-    args.next(); // Skip the executable.
-
-    // Collect at most the maximum number of command line arguments plus one.
-    // The plus one argument is collected to trigger the default pattern in
-    // parse_command_line_arguments() if too many arguments are passed without
-    // collecting more command line arguments than required for that pattern.
-    let arguments: Vec<String> = args.by_ref().take(4).collect();
+    let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
     let (server_mode, data_folders) = parse_command_line_arguments(&arguments)?;
 
@@ -140,12 +111,9 @@ fn main() -> Result<(), String> {
     // If a remote data folder was provided, check that it can be accessed. This check is performed
     // after parse_command_line_arguments() as the Tokio Runtime is required.
     if let Some(remote_data_folder) = &data_folders.remote_data_folder {
-        // unwrap() is safe since if there is a remote data folder, there is always a valid third argument.
-        let object_store_type = arguments.get(2).unwrap().split_once("://").unwrap().0;
-        let remote_data_folder_type = RemoteDataFolderType::from_str(object_store_type).unwrap();
-
         runtime.block_on(async {
-            validate_remote_data_folder(remote_data_folder_type, remote_data_folder).await
+            validate_remote_data_folder_from_argument(arguments.get(2).unwrap(), remote_data_folder)
+                .await
         })?;
     }
 
@@ -260,56 +228,6 @@ fn argument_to_local_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>
     let object_store =
         LocalFileSystem::new_with_prefix(argument).map_err(|error| error.to_string())?;
     Ok(Arc::new(object_store))
-}
-
-/// Create an [`ObjectStore`] that represents the remote path in `argument`.
-fn argument_to_remote_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>, String> {
-    match argument.split_once("://") {
-        Some(("s3", bucket_name)) => {
-            let object_store = AmazonS3Builder::from_env()
-                .with_bucket_name(bucket_name)
-                .build()
-                .map_err(|error| error.to_string())?;
-
-            Ok(Arc::new(object_store))
-        }
-        Some(("azureblobstorage", container_name)) => {
-            let object_store = MicrosoftAzureBuilder::from_env()
-                .with_container_name(container_name)
-                .build()
-                .map_err(|error| error.to_string())?;
-
-            Ok(Arc::new(object_store))
-        }
-        _ => Err(
-            "Remote data folder must be s3://bucket-name or azureblobstorage://container-name."
-                .to_owned(),
-        ),
-    }
-}
-
-/// Validate that the remote data folder can be accessed. If the remote data folder cannot be
-/// accessed, return the error that occurred as a [`String`].
-async fn validate_remote_data_folder(
-    remote_data_folder_type: RemoteDataFolderType,
-    remote_data_folder: &Arc<dyn ObjectStore>,
-) -> Result<(), String> {
-    // Check that the connection is valid by attempting to retrieve a file that does not exist.
-    match remote_data_folder.get(&Path::from("")).await {
-        Ok(_) => Ok(()),
-        Err(error) => match error {
-            object_store::Error::NotFound { .. } => {
-                // Note that for Azure Blob Storage the same error is returned if the object was not
-                // found due to the object not existing and due to the container not existing.
-                if remote_data_folder_type == RemoteDataFolderType::AzureBlobStorage {
-                    Ok(())
-                } else {
-                    Err(error.to_string())
-                }
-            }
-            _ => Err(error.to_string()),
-        },
-    }
 }
 
 /// Create a new [`SessionContext`] for interacting with Apache Arrow

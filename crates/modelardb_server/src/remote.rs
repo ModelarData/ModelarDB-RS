@@ -14,9 +14,8 @@
  */
 
 //! Implementation of a request handler for Apache Arrow Flight in the form of
-//! `FlightServiceHandler`. An Apache Arrow Flight server that process requests
-//! using `FlightServiceHandler` can be started with
-//! `start_arrow_flight_server()`.
+//! [`FlightServiceHandler`]. An Apache Arrow Flight server that process requests
+//! using [`FlightServiceHandler`] can be started with [`start_apache_arrow_flight_server()`].
 
 use std::collections::HashMap;
 use std::error::Error;
@@ -44,6 +43,7 @@ use datafusion::common::DFSchema;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
+use modelardb_common::arguments::{validate_remote_data_folder, RemoteDataFolderType};
 use modelardb_common::schemas::METRIC_SCHEMA;
 use modelardb_common::types::TimestampBuilder;
 use object_store::aws::AmazonS3Builder;
@@ -62,10 +62,10 @@ use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::{validate_remote_data_folder, Context, RemoteDataFolderType, ServerMode};
+use crate::{Context, ServerMode};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
-/// the methods that process the requests through `FlightServiceHandler`.
+/// the methods that process the requests through [`FlightServiceHandler`].
 pub fn start_apache_arrow_flight_server(
     context: Arc<Context>,
     runtime: &Arc<Runtime>,

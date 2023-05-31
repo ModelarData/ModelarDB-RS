@@ -13,13 +13,30 @@
 # limitations under the License.
 
 [package]
-name = "modelardb_common"
+name = "modelardb_manager"
 version = "0.1.0"
 license = "Apache-2.0"
 edition = "2021"
 authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
+[[bin]]
+name = "modelardbm"
+path = "src/main.rs"
+
 [dependencies]
-arrow.workspace = true
+arrow-flight.workspace = true
+futures.workspace = true
+modelardb_common = { path = "../modelardb_common" }
 object_store = { workspace = true, features = ["aws", "azure"] }
 once_cell.workspace = true
+sqlx = { workspace = true, features = [ "runtime-tokio-native-tls" , "postgres" ] }
+tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
+tonic.workspace = true
+
+# Log is a dependency so the compile time filters for log and tracing can be set to the same values.
+log = { workspace = true, features = ["max_level_debug", "release_max_level_info"] }
+tracing = { workspace = true, features = ["max_level_debug", "release_max_level_info"] }
+tracing-subscriber.workspace = true
+
+[package.metadata.cargo-machete]
+ignored = ["log"]
