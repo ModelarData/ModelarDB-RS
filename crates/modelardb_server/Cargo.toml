@@ -49,6 +49,7 @@ tracing = { workspace = true, features = ["max_level_debug", "release_max_level_
 tracing-subscriber.workspace = true
 
 [dev-dependencies]
+modelardb_common_test = { path = "../modelardb_common_test" }
 proptest.workspace = true
 sysinfo.workspace = true
 tempfile.workspace = true

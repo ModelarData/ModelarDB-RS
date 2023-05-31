@@ -16,9 +16,10 @@
 //! Integration tests for modelardb_server's Apache Arrow Flight endpoints.
 
 use std::collections::HashMap;
-use std::env::{self, consts};
 use std::error::Error;
 use std::io::Read;
+use std::iter::repeat;
+use std::ops::Range;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::str;
@@ -26,18 +27,19 @@ use std::string::String;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket};
 use bytes::Bytes;
-use datafusion::arrow::array::{Float32Array, StringArray, TimestampMillisecondArray};
+use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Millisecond};
 use datafusion::arrow::ipc::convert;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, StreamExt};
+use modelardb_common_test::data_generation;
 use sysinfo::{Pid, PidExt, System, SystemExt};
 
 use tempfile::TempDir;
@@ -58,6 +60,13 @@ const ATTEMPTS: u8 = 10;
 /// Amount of time to sleep between each attempt when trying to execute something that may sometimes
 /// temporarily fail.
 const ATTEMPT_SLEEP_IN_SECONDS: Duration = Duration::from_secs(1);
+
+/// Length of time series generated for integration tests.
+const TIME_SERIES_TEST_LENGTH: usize = 5000;
+
+/// Minimum length of each segments in a time series generated for integration tests. The maximum
+/// length is `2 * SEGMENT_TEST_MINIMUM_LENGTH`.
+const SEGMENT_TEST_MINIMUM_LENGTH: usize = 50;
 
 /// The different types of tables used in the integration tests.
 enum TableType {
@@ -108,10 +117,18 @@ impl TestContext {
     fn create_server(local_data_folder: &Path, port: u16) -> Child {
         // The server's stdout and stderr is piped so the log messages (stdout) and expected errors
         // (stderr) are not printed when all of the tests are run using the "cargo test" command.
-        let mut server = Self::create_command("modelardbd")
-            .unwrap()
+        // modelardbd is run using dev-release so the tests can use larger more realistic data sets.
+        let local_data_folder = local_data_folder.to_str().unwrap();
+        let mut server = Command::new("cargo")
             .env("MODELARDBD_PORT", port.to_string())
-            .arg(local_data_folder)
+            .args([
+                "run",
+                "--profile",
+                "dev-release",
+                "--bin",
+                "modelardbd",
+                local_data_folder,
+            ])
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
@@ -132,27 +149,6 @@ impl TestContext {
         }
 
         server
-    }
-
-    /// Return a [`Command`] that can run the executable `binary` located in the same folder as the
-    /// binary containing the execution test. If the `binary` does not exists, [`None`] is returned.
-    fn create_command(binary: &str) -> Option<Command> {
-        // Compute the folder containing the binary.
-        let current_executable = env::current_exe().unwrap();
-        let parent_directory = current_executable.parent().unwrap();
-        let binary_directory = parent_directory.parent().unwrap();
-
-        // Compute the path to the binary with suffix.
-        let mut binary_path = binary_directory.to_owned();
-        binary_path.push(binary);
-        binary_path.set_extension(consts::EXE_EXTENSION);
-
-        // Create the command if the binary exists.
-        if binary_path.exists() {
-            Some(Command::new(binary_path))
-        } else {
-            None
-        }
     }
 
     /// Create the client and ensure it can connect to the server.
@@ -246,44 +242,44 @@ impl TestContext {
         })
     }
 
-    /// Return a [`RecordBatch`] containing a data point with the current time, a random value and an
-    /// optional tag.
-    fn generate_random_data_point(tag: Option<&str>) -> RecordBatch {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_micros() as i64;
+    /// Return a [`RecordBatch`] containing a time series with regular or irregular time stamps
+    /// depending on `irregular_timestamps`, generated values with noise depending on
+    /// `multiply_noise_range`, and an optional tag.
+    fn generate_time_series_with_tag(
+        irregular_timestamps: bool,
+        multiply_noise_range: Option<Range<f32>>,
+        maybe_tag: Option<&str>,
+    ) -> RecordBatch {
+        let (uncompressed_timestamps, uncompressed_values) = data_generation::generate_time_series(
+            TIME_SERIES_TEST_LENGTH,
+            SEGMENT_TEST_MINIMUM_LENGTH..2 * SEGMENT_TEST_MINIMUM_LENGTH + 1,
+            irregular_timestamps,
+            multiply_noise_range,
+            100.0..200.0,
+        );
 
-        let value = (timestamp % 100) as f32;
+        let data_points_generated = uncompressed_timestamps.len();
 
         let mut fields = vec![
             Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
             Field::new("value", DataType::Float32, false),
         ];
 
-        if let Some(tag) = tag {
+        let mut columns: Vec<Arc<dyn Array>> = vec![
+            Arc::new(uncompressed_timestamps),
+            Arc::new(uncompressed_values),
+        ];
+
+        if let Some(tag) = maybe_tag {
             fields.push(Field::new("tag", DataType::Utf8, false));
-            let data_point_schema = Schema::new(fields);
-            RecordBatch::try_new(
-                Arc::new(data_point_schema),
-                vec![
-                    Arc::new(TimestampMillisecondArray::from(vec![timestamp])),
-                    Arc::new(Float32Array::from(vec![value])),
-                    Arc::new(StringArray::from(vec![tag])),
-                ],
-            )
-            .unwrap()
-        } else {
-            let data_point_schema = Schema::new(fields);
-            RecordBatch::try_new(
-                Arc::new(data_point_schema),
-                vec![
-                    Arc::new(TimestampMillisecondArray::from(vec![timestamp])),
-                    Arc::new(Float32Array::from(vec![value])),
-                ],
-            )
-            .unwrap()
+            columns.push(Arc::new(StringArray::from_iter_values(
+                repeat(tag).take(data_points_generated),
+            )));
         }
+
+        let schema = Arc::new(Schema::new(fields));
+
+        RecordBatch::try_new(schema, columns).unwrap()
     }
 
     /// Create and return [`FlightData`] based on the `data_points` to be inserted into `table_name`.
@@ -578,10 +574,10 @@ fn test_can_collect_metrics() {
 }
 
 #[test]
-fn test_can_ingest_data_point_with_tags() {
+fn test_can_ingest_data_points_with_tags() {
     let mut test_context = TestContext::new();
 
-    let data_point = TestContext::generate_random_data_point(Some("location"));
+    let data_point = TestContext::generate_time_series_with_tag(false, None, Some("location"));
     let flight_data = TestContext::create_flight_data_from_data_points(
         TABLE_NAME.to_owned(),
         &[data_point.clone()],
@@ -603,10 +599,10 @@ fn test_can_ingest_data_point_with_tags() {
 }
 
 #[test]
-fn test_can_ingest_data_point_without_tags() {
+fn test_can_ingest_data_points_without_tags() {
     let mut test_context = TestContext::new();
 
-    let data_point = TestContext::generate_random_data_point(None);
+    let data_point = TestContext::generate_time_series_with_tag(false, None, None);
     let flight_data = TestContext::create_flight_data_from_data_points(
         TABLE_NAME.to_owned(),
         &[data_point.clone()],
@@ -628,10 +624,9 @@ fn test_can_ingest_data_point_without_tags() {
 }
 
 #[test]
-fn test_can_ingest_data_point_with_generated_field() {
+fn test_can_ingest_data_points_with_generated_field() {
     let mut test_context = TestContext::new();
-
-    let data_point = TestContext::generate_random_data_point(None);
+    let data_point = TestContext::generate_time_series_with_tag(false, None, None);
     let flight_data = TestContext::create_flight_data_from_data_points(
         TABLE_NAME.to_owned(),
         &[data_point.clone()],
@@ -660,11 +655,14 @@ fn test_can_ingest_data_point_with_generated_field() {
 fn test_can_ingest_multiple_time_series_with_different_tags() {
     let mut test_context = TestContext::new();
 
-    let data_points: Vec<RecordBatch> = (1..5)
-        .map(|i| TestContext::generate_random_data_point(Some(&format!("location{i}"))))
-        .collect();
+    let data_points_with_tag_one: RecordBatch =
+        TestContext::generate_time_series_with_tag(false, None, Some("tag_one"));
+    let data_points_with_tag_two: RecordBatch =
+        TestContext::generate_time_series_with_tag(false, None, Some("tag_two"));
+    let data_points = &[data_points_with_tag_one, data_points_with_tag_two];
+
     let flight_data =
-        TestContext::create_flight_data_from_data_points(TABLE_NAME.to_owned(), &data_points);
+        TestContext::create_flight_data_from_data_points(TABLE_NAME.to_owned(), data_points);
 
     test_context.create_table(TABLE_NAME, TableType::ModelTable);
 
@@ -675,18 +673,20 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
     test_context.flush_data_to_disk();
 
     let query = test_context
-        .execute_query(format!("SELECT * FROM {TABLE_NAME} ORDER BY timestamp"))
+        .execute_query(format!(
+            "SELECT * FROM {TABLE_NAME} ORDER BY tag, timestamp"
+        ))
         .unwrap();
 
-    let expected = compute::concat_batches(&data_points[0].schema(), &data_points).unwrap();
-    assert_eq!(expected, query[0]);
+    let expected = compute::concat_batches(&data_points[0].schema(), data_points).unwrap();
+    let query_result = compute::concat_batches(&query[0].schema(), &query).unwrap();
+    assert_eq!(expected, query_result);
 }
 
 #[test]
-fn test_cannot_ingest_invalid_data_point() {
+fn test_cannot_ingest_invalid_data_points() {
     let mut test_context = TestContext::new();
-
-    let data_point = TestContext::generate_random_data_point(None);
+    let data_point = TestContext::generate_time_series_with_tag(false, None, None);
     let flight_data =
         TestContext::create_flight_data_from_data_points(TABLE_NAME.to_owned(), &[data_point]);
 
@@ -708,14 +708,9 @@ fn test_cannot_ingest_invalid_data_point() {
 fn test_optimized_query_results_equals_non_optimized_query_results() {
     let mut test_context = TestContext::new();
 
-    let mut data_points = vec![];
-    for i in 1..5 {
-        let batch = TestContext::generate_random_data_point(Some(&format!("location{i}")));
-
-        data_points.push(batch);
-    }
+    let data_points = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
     let flight_data =
-        TestContext::create_flight_data_from_data_points(TABLE_NAME.to_owned(), &data_points);
+        TestContext::create_flight_data_from_data_points(TABLE_NAME.to_owned(), &[data_points]);
 
     test_context.create_table(TABLE_NAME, TableType::ModelTable);
 

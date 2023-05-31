@@ -1930,6 +1930,7 @@ dependencies = [
  "futures",
  "log",
  "modelardb_common",
+ "modelardb_common_test",
  "modelardb_compression",
  "object_store",
  "once_cell",
