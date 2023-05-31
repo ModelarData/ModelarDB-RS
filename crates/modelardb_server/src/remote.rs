@@ -77,7 +77,11 @@ pub fn start_apache_arrow_flight_server(
         context,
         dictionaries_by_id: HashMap::new(),
     };
-    let flight_service_server = FlightServiceServer::new(handler);
+
+    // Increase the maximum message size from 4 MiB to 16 MiB to allow bulk-loading larger batches.
+    let flight_service_server =
+        FlightServiceServer::new(handler).max_decoding_message_size(16777216);
+
     info!("Starting Apache Arrow Flight on {}.", localhost_with_port);
     runtime
         .block_on(async {
