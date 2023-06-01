@@ -1878,6 +1878,7 @@ name = "modelardb_common_test"
 version = "0.1.0"
 dependencies = [
  "modelardb_common",
+ "once_cell",
  "rand",
 ]
 

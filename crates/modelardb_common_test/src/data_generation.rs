@@ -15,6 +15,7 @@
 
 //! Implementation of functions that can generate timestamps and values with specific structure.
 
+use std::env;
 use std::iter;
 use std::ops::Range;
 
@@ -22,8 +23,29 @@ use modelardb_common::types::{
     Timestamp, TimestampArray, TimestampBuilder, ValueArray, ValueBuilder,
 };
 
+use once_cell::sync::Lazy;
 use rand::distributions::Uniform;
-use rand::{thread_rng, Rng};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
+
+/// Randomly generated static seed for the random number generators used for all data generation.
+/// One randomly generated seed is used to ensure new data is generated each time the tests are
+/// executed while allowing the tests to be repeated by assigning a seed to `RANDOM_NUMBER_SEED`.
+static RANDOM_NUMBER_SEED: Lazy<[u8; 32]> = Lazy::new(|| {
+    let random_number_seed = rand::random::<[u8; 32]>();
+    let mut seed_as_string = String::new();
+    for value in random_number_seed {
+        seed_as_string.push_str(&value.to_string());
+        seed_as_string.push(',');
+    }
+
+    // unwrap() is not safe, but this function is designed to be used by tests.
+    let binary_path = env::current_exe().unwrap();
+    let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
+    println!("Seed for {binary_name} is: const RANDOM_NUMBER_SEED: [u8; 32] = [{seed_as_string}];");
+
+    random_number_seed
+});
 
 /// The different structure of values which can be generated.
 #[derive(Clone)]
@@ -31,6 +53,15 @@ pub enum ValuesStructure {
     Constant(Option<Range<f32>>),
     Linear(Option<Range<f32>>),
     Random(Range<f32>),
+}
+
+/// Return a [`StdRng`] with [`RANDOM_NUMBER_SEED`] as the seed. [`StdRng`] is used instead of
+/// [`ThreadRng`](rand::rngs::ThreadRng) as [`ThreadRng`](rand::rngs::ThreadRng) automatically
+/// reseeds. A new [`StdRng`] with `RANDOM_NUMBER_SEED` as the seed is created each time the
+/// function is run to ensure the order in which the tests are executed does not change the data
+/// each test receives so the exact same tests are executed each time when a static seed is used.
+fn create_random_number_generator() -> StdRng {
+    StdRng::from_seed(*RANDOM_NUMBER_SEED)
 }
 
 /// Generate a time series with sub-sequences of values with different [`ValuesStructure`]. The time
@@ -53,12 +84,12 @@ pub fn generate_time_series(
         ValuesStructure::Random(random_value_range),
     ];
 
-    let mut thread_rng = thread_rng();
+    let mut std_rng = create_random_number_generator();
     let mut uncompressed_values_builder = ValueBuilder::with_capacity(length);
     let uncompressed_timestamps = generate_timestamps(length, irregular_timestamps);
     while uncompressed_values_builder.values_slice().len() < length {
-        let segment_length = thread_rng.gen_range(segment_length_range.clone());
-        let values_structure_index = thread_rng.gen_range(0..values_structures.len());
+        let segment_length = std_rng.gen_range(segment_length_range.clone());
+        let values_structure_index = std_rng.gen_range(0..values_structures.len());
         let values_structure = &values_structures[values_structure_index];
 
         let uncompressed_values_builder_len = uncompressed_values_builder.values_slice().len();
@@ -86,11 +117,11 @@ pub fn generate_time_series(
 /// Returns the generated timestamps as a [`TimestampArray`].
 pub fn generate_timestamps(length: usize, irregular: bool) -> TimestampArray {
     if irregular {
+        let mut std_rng = create_random_number_generator();
         let mut timestamps = TimestampBuilder::with_capacity(length);
-        let mut thread_rng = thread_rng();
         let mut previous_timestamp: i64 = 0;
         for _ in 0..length {
-            let next_timestamp = (thread_rng.sample(Uniform::from(10..20))) + previous_timestamp;
+            let next_timestamp = (std_rng.sample(Uniform::from(10..20))) + previous_timestamp;
             timestamps.append_value(next_timestamp);
             previous_timestamp = next_timestamp;
         }
@@ -114,10 +145,11 @@ pub fn generate_values(
     uncompressed_timestamps: &[Timestamp],
     values_structure: ValuesStructure,
 ) -> ValueArray {
+    let mut std_rng = create_random_number_generator();
     match values_structure {
         // Generates constant values.
         ValuesStructure::Constant(maybe_multiply_noise_range) => {
-            let mut values = iter::repeat(thread_rng().gen()).take(uncompressed_timestamps.len());
+            let mut values = iter::repeat(std_rng.gen()).take(uncompressed_timestamps.len());
             randomize_and_collect_iterator(maybe_multiply_noise_range, &mut values)
         }
         // Generates linear values.
@@ -125,9 +157,9 @@ pub fn generate_values(
             // The variable slope is regenerated if it is 0, to avoid generating constant data.
             let mut slope: i64 = 0;
             while slope == 0 {
-                slope = thread_rng().gen_range(-10..10);
+                slope = std_rng.gen_range(-10..10);
             }
-            let intercept: i64 = thread_rng().gen_range(1..50);
+            let intercept: i64 = std_rng.gen_range(1..50);
 
             let mut values = uncompressed_timestamps
                 .iter()
@@ -137,11 +169,10 @@ pub fn generate_values(
         }
         // Generates random values.
         ValuesStructure::Random(min_max) => {
-            let mut thread_rng = thread_rng();
             let distr = Uniform::from(min_max);
             uncompressed_timestamps
                 .iter()
-                .map(|_| thread_rng.sample(distr))
+                .map(|_| std_rng.sample(distr))
                 .collect()
         }
     }
@@ -153,12 +184,10 @@ fn randomize_and_collect_iterator(
     maybe_noise_range: Option<Range<f32>>,
     values: &mut dyn Iterator<Item = f32>,
 ) -> ValueArray {
+    let mut std_rng = create_random_number_generator();
     if let Some(noise_range) = maybe_noise_range {
-        let mut thread_rng = thread_rng();
         let distr = Uniform::from(noise_range);
-        values
-            .map(|value| value * thread_rng.sample(distr))
-            .collect()
+        values.map(|value| value * std_rng.sample(distr)).collect()
     } else {
         values.collect()
     }

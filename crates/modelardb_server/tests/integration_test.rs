@@ -334,7 +334,7 @@ impl TestContext {
     }
 
     /// Execute a query against the server through the `do_get()` method and return it.
-    fn execute_query(&mut self, query: String) -> Result<Vec<RecordBatch>, Box<dyn Error>> {
+    fn execute_query(&mut self, query: String) -> Result<RecordBatch, Box<dyn Error>> {
         self.runtime.block_on(async {
             // Execute query.
             let ticket = Ticket {
@@ -347,7 +347,7 @@ impl TestContext {
             let schema = Arc::new(Schema::try_from(&flight_data)?);
 
             // Get data in result set.
-            let mut results = vec![];
+            let mut query_result = vec![];
             while let Some(flight_data) = stream.message().await? {
                 let dictionaries_by_id = HashMap::new();
                 let record_batch = utils::flight_data_to_arrow_batch(
@@ -355,9 +355,15 @@ impl TestContext {
                     schema.clone(),
                     &dictionaries_by_id,
                 )?;
-                results.push(record_batch);
+                query_result.push(record_batch);
             }
-            Ok(results)
+
+            if query_result.is_empty() {
+                Ok(RecordBatch::new_empty(schema))
+            } else {
+                // unwrap() is used as ? makes the return type Result<RecordBatch, ArrowError>>.
+                Ok(compute::concat_batches(&query_result[0].schema(), &query_result).unwrap())
+            }
         })
     }
 
@@ -591,11 +597,11 @@ fn test_can_ingest_data_points_with_tags() {
 
     test_context.flush_data_to_disk();
 
-    let query = test_context
+    let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
         .unwrap();
 
-    assert_eq!(data_point, query[0]);
+    assert_eq!(data_point, query_result);
 }
 
 #[test]
@@ -616,11 +622,11 @@ fn test_can_ingest_data_points_without_tags() {
 
     test_context.flush_data_to_disk();
 
-    let query = test_context
+    let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
         .unwrap();
 
-    assert_eq!(data_point, query[0]);
+    assert_eq!(data_point, query_result);
 }
 
 #[test]
@@ -640,15 +646,15 @@ fn test_can_ingest_data_points_with_generated_field() {
 
     test_context.flush_data_to_disk();
 
-    let query = test_context
+    let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
         .unwrap();
 
     // Column two in the query is the generated column which does not exist in data point.
     assert_eq!(data_point.num_columns(), 2);
-    assert_eq!(query[0].num_columns(), 3);
-    assert_eq!(data_point.column(0), query[0].column(0));
-    assert_eq!(data_point.column(1), query[0].column(2));
+    assert_eq!(query_result.num_columns(), 3);
+    assert_eq!(data_point.column(0), query_result.column(0));
+    assert_eq!(data_point.column(1), query_result.column(2));
 }
 
 #[test]
@@ -672,14 +678,13 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
 
     test_context.flush_data_to_disk();
 
-    let query = test_context
+    let query_result = test_context
         .execute_query(format!(
             "SELECT * FROM {TABLE_NAME} ORDER BY tag, timestamp"
         ))
         .unwrap();
 
     let expected = compute::concat_batches(&data_points[0].schema(), data_points).unwrap();
-    let query_result = compute::concat_batches(&query[0].schema(), &query).unwrap();
     assert_eq!(expected, query_result);
 }
 
@@ -698,10 +703,10 @@ fn test_cannot_ingest_invalid_data_points() {
 
     test_context.flush_data_to_disk();
 
-    let query = test_context
+    let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
         .unwrap();
-    assert!(query.is_empty());
+    assert!(query_result.num_rows() == 0);
 }
 
 #[test]

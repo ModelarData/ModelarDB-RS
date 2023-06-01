@@ -21,4 +21,5 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 
 [dependencies]
 modelardb_common = { path = "../modelardb_common" }
+once_cell.workspace = true
 rand.workspace = true
