@@ -146,8 +146,7 @@ impl TestContext {
             TableType::ModelTableAsField => {
                 format!(
                     "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
-                 generated FIELD AS CAST(COS(CAST(value AS DOUBLE) * PI() / 180.0) AS REAL),
-                 value FIELD(0.0))"
+                 generated FIELD AS (value + CAST(37.0 AS REAL)), value FIELD(0.0))"
                 )
             }
         };

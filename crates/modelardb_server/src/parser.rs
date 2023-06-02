@@ -130,11 +130,13 @@ impl ModelarDbDialect {
                         // An expression to generate the field is given.
                         self.expect_word_value(parser, "AS")?;
 
+                        parser.expect_token(&Token::LParen)?;
                         let option = ColumnOption::Generated {
                             generated_as: GeneratedAs::Always,
                             sequence_options: None,
                             generation_expr: Some(parser.parse_expr()?),
                         };
+                        parser.expect_token(&Token::RParen)?;
 
                         options.push(ColumnOptionDef { name: None, option });
                     }
@@ -720,7 +722,8 @@ mod tests {
     #[test]
     fn test_tokenize_parse_semantic_check_create_model_table() {
         let sql = "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_one FIELD, field_two FIELD(10.5),
-                         field_three FIELD AS SIN(CAST(field_one AS DOUBLE) * PI() / 180.0), tag TAG)";
+                         field_three FIELD AS (CAST(SIN(CAST(field_one AS DOUBLE) * PI() / 180.0) AS REAL)),
+                         tag TAG)";
 
         let statement = tokenize_and_parse_sql(sql).unwrap();
         if let Statement::CreateTable { name, columns, .. } = &statement {
@@ -742,7 +745,7 @@ mod tests {
                     SQLDataType::Real,
                     new_column_option_def_error_bound_and_generation_expr(
                         None,
-                        Some("SIN(CAST(field_one AS DOUBLE) * PI() / 180.0)"),
+                        Some("CAST(SIN(CAST(field_one AS DOUBLE) * PI() / 180.0) AS REAL)"),
                     ),
                 ),
                 ModelarDbDialect::new_column_def("tag", SQLDataType::Text, vec![]),
@@ -877,7 +880,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_timestamps() {
         assert!(tokenize_and_parse_sql(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP AS 37, field FIELD, tag TAG)",
+            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP AS (37), field FIELD, tag TAG)",
         )
         .is_err());
     }
@@ -885,7 +888,32 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_tags() {
         assert!(tokenize_and_parse_sql(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG AS 37)",
+            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD, tag TAG AS (37))",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_model_table_with_generated_fields_without_parentheses() {
+        assert!(tokenize_and_parse_sql(
+            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37, tag TAG)",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_model_table_with_generated_fields_without_start_parentheses()
+    {
+        assert!(tokenize_and_parse_sql(
+            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS 37), tag TAG)",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_model_table_with_generated_fields_without_end_parentheses() {
+        assert!(tokenize_and_parse_sql(
+            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD AS (37, tag TAG)",
         )
         .is_err());
     }
@@ -893,7 +921,7 @@ mod tests {
     #[test]
     fn test_tokenize_and_parse_create_model_table_with_generated_fields_with_error_bound() {
         assert!(tokenize_and_parse_sql(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD(1.0) AS 37, tag TAG)",
+            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD(1.0) AS (37), tag TAG)",
         )
         .is_err());
     }
@@ -1025,7 +1053,7 @@ mod tests {
     #[test]
     fn test_semantic_checks_for_create_model_table_ensure_generated_as_expression_are_correct() {
         let statement = tokenize_and_parse_sql(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS field_1 + 3773.0, tag TAG)",
+            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (field_1 + 3773.0), tag TAG)",
         ).unwrap();
 
         assert!(semantic_checks_for_create_table(statement).is_err());
