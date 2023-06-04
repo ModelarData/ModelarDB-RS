@@ -62,7 +62,7 @@ const ATTEMPTS: u8 = 10;
 const ATTEMPT_SLEEP_IN_SECONDS: Duration = Duration::from_secs(1);
 
 /// Length of time series generated for integration tests.
-const TIME_SERIES_TEST_LENGTH: usize = 5000;
+const TIME_SERIES_TEST_LENGTH: usize = 50_00;
 
 /// Minimum length of each segments in a time series generated for integration tests. The maximum
 /// length is `2 * SEGMENT_TEST_MINIMUM_LENGTH`.
@@ -646,8 +646,9 @@ fn test_can_ingest_data_points_with_generated_field() {
 
     test_context.flush_data_to_disk();
 
+    // The optimizer is allowed to add SortedJoinExec between SortedJoinExec and GeneratedAsExec.
     let query_result = test_context
-        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .execute_query(format!("SELECT * FROM {TABLE_NAME} ORDER BY timestamp"))
         .unwrap();
 
     // Column two in the query is the generated column which does not exist in data point.
