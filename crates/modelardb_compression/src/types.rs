@@ -344,7 +344,7 @@ impl CompressedSegmentBuilder {
     /// Add information if required for a model of type [`Swing`] due to `residuals_min_value` and
     /// `residuals_max_value` overwriting the model's minimum and maximum values in the segment.
     fn update_values_for_swing(&mut self, residuals_min_value: Value, residuals_max_value: Value) {
-        if residuals_min_value < self.min_value && self.max_value < residuals_min_value {
+        if residuals_min_value < self.min_value && self.max_value < residuals_max_value {
             // Minimum and maximum is overwritten so first and last value are stored.
             let mut updated_values = Vec::with_capacity(2 * VALUE_SIZE_IN_BYTES as usize);
             if self.values.is_empty() {
