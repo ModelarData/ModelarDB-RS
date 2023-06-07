@@ -244,7 +244,7 @@ impl ModelTable {
             projection: None,
             limit,
             table_partition_cols: vec![],
-            output_ordering: Some(QUERY_ORDER_SEGMENT.clone()),
+            output_ordering: vec![QUERY_ORDER_SEGMENT.clone()],
             infinite_source: false,
         };
 
