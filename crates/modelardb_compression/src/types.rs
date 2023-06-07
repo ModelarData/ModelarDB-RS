@@ -559,25 +559,49 @@ mod tests {
     #[test]
     fn test_encoding_decoding_for_pmc_mean_without_residuals() {
         let uncompressed_values = ValueArray::from(vec![10.0, 10.0, 10.0, 10.0, 10.0]);
-        assert_encoding_decoding_for_pmc_mean(uncompressed_values, 4, 10.0, 0, 10.0, 10.0, 0);
+        assert_encoding_and_decoding_are_valid_for_pmc_mean(
+            uncompressed_values,
+            4,
+            10.0,
+            0,
+            10.0,
+            10.0,
+            0,
+        );
     }
 
     #[test]
     fn test_encoding_decoding_for_pmc_mean_with_residuals_with_new_mininum() {
         let uncompressed_values = ValueArray::from(vec![10.0, 10.0, 10.0, 10.0, Value::MIN]);
-        assert_encoding_decoding_for_pmc_mean(uncompressed_values, 3, 10.0, 0, Value::MIN, 10.0, 1);
+        assert_encoding_and_decoding_are_valid_for_pmc_mean(
+            uncompressed_values,
+            3,
+            10.0,
+            0,
+            Value::MIN,
+            10.0,
+            1,
+        );
     }
 
     #[test]
     fn test_encoding_decoding_for_pmc_mean_with_residuals_with_new_maximum() {
         let uncompressed_values = ValueArray::from(vec![10.0, 10.0, 10.0, 10.0, Value::MAX]);
-        assert_encoding_decoding_for_pmc_mean(uncompressed_values, 3, 10.0, 0, 10.0, Value::MAX, 0);
+        assert_encoding_and_decoding_are_valid_for_pmc_mean(
+            uncompressed_values,
+            3,
+            10.0,
+            0,
+            10.0,
+            Value::MAX,
+            0,
+        );
     }
 
     #[test]
     fn test_encoding_decoding_for_pmc_mean_with_residuals_with_new_minimum_and_maximum() {
         let uncompressed_values = ValueArray::from(vec![10.0, 10.0, 10.0, Value::MIN, Value::MAX]);
-        assert_encoding_decoding_for_pmc_mean(
+        assert_encoding_and_decoding_are_valid_for_pmc_mean(
             uncompressed_values,
             2,
             10.0,
@@ -588,7 +612,7 @@ mod tests {
         );
     }
 
-    fn assert_encoding_decoding_for_pmc_mean(
+    fn assert_encoding_and_decoding_are_valid_for_pmc_mean(
         uncompressed_values: ValueArray,
         expected_model_end_index: usize,
         expected_model_min_max_value: Value,
@@ -603,7 +627,7 @@ mod tests {
             segment_min_value,
             segment_max_value,
             segment_values,
-        ) = create_segment_assert_segment_and_return_model_values(
+        ) = create_and_assert_expected_segment(
             &uncompressed_values,
             PMC_MEAN_ID,
             expected_model_end_index,
@@ -627,13 +651,22 @@ mod tests {
     #[test]
     fn test_encoding_decoding_for_increasing_swing_without_residuals() {
         let uncompressed_values = ValueArray::from(vec![10.0, 20.0, 30.0, 40.0, 50.0]);
-        assert_encoding_decoding_for_swing(uncompressed_values, 4, 10.0, 50.0, 0, 10.0, 50.0, 0);
+        assert_encoding_and_decoding_are_valid_for_swing(
+            uncompressed_values,
+            4,
+            10.0,
+            50.0,
+            0,
+            10.0,
+            50.0,
+            0,
+        );
     }
 
     #[test]
     fn test_encoding_decoding_for_increasing_swing_with_residuals_with_new_mininum() {
         let uncompressed_values = ValueArray::from(vec![10.0, 20.0, 30.0, 40.0, Value::MIN]);
-        assert_encoding_decoding_for_swing(
+        assert_encoding_and_decoding_are_valid_for_swing(
             uncompressed_values,
             3,
             10.0,
@@ -648,7 +681,7 @@ mod tests {
     #[test]
     fn test_encoding_decoding_for_increasing_swing_with_residuals_with_new_maximum() {
         let uncompressed_values = ValueArray::from(vec![10.0, 20.0, 30.0, 40.0, Value::MAX]);
-        assert_encoding_decoding_for_swing(
+        assert_encoding_and_decoding_are_valid_for_swing(
             uncompressed_values,
             3,
             10.0,
@@ -663,7 +696,7 @@ mod tests {
     #[test]
     fn test_encoding_decoding_for_increasing_swing_with_residuals_with_new_minimum_and_maximum() {
         let uncompressed_values = ValueArray::from(vec![10.0, 20.0, 30.0, Value::MIN, Value::MAX]);
-        assert_encoding_decoding_for_swing(
+        assert_encoding_and_decoding_are_valid_for_swing(
             uncompressed_values,
             2,
             10.0,
@@ -678,13 +711,22 @@ mod tests {
     #[test]
     fn test_encoding_decoding_for_decreasing_swing_without_residuals() {
         let uncompressed_values = ValueArray::from(vec![50.0, 40.0, 30.0, 20.0, 10.0]);
-        assert_encoding_decoding_for_swing(uncompressed_values, 4, 10.0, 50.0, 1, 10.0, 50.0, 1);
+        assert_encoding_and_decoding_are_valid_for_swing(
+            uncompressed_values,
+            4,
+            10.0,
+            50.0,
+            1,
+            10.0,
+            50.0,
+            1,
+        );
     }
 
     #[test]
     fn test_encoding_decoding_for_decreasing_swing_with_residuals_with_new_mininum() {
         let uncompressed_values = ValueArray::from(vec![50.0, 40.0, 30.0, 20.0, Value::MIN]);
-        assert_encoding_decoding_for_swing(
+        assert_encoding_and_decoding_are_valid_for_swing(
             uncompressed_values,
             3,
             20.0,
@@ -699,7 +741,7 @@ mod tests {
     #[test]
     fn test_encoding_decoding_for_decreasing_swing_with_residuals_with_new_maximum() {
         let uncompressed_values = ValueArray::from(vec![50.0, 40.0, 30.0, 20.0, Value::MAX]);
-        assert_encoding_decoding_for_swing(
+        assert_encoding_and_decoding_are_valid_for_swing(
             uncompressed_values,
             3,
             20.0,
@@ -714,7 +756,7 @@ mod tests {
     #[test]
     fn test_encoding_decoding_for_decreasing_swing_with_residuals_with_new_minimum_and_maximum() {
         let uncompressed_values = ValueArray::from(vec![50.0, 40.0, 30.0, Value::MIN, Value::MAX]);
-        assert_encoding_decoding_for_swing(
+        assert_encoding_and_decoding_are_valid_for_swing(
             uncompressed_values,
             2,
             30.0,
@@ -726,7 +768,7 @@ mod tests {
         );
     }
 
-    fn assert_encoding_decoding_for_swing(
+    fn assert_encoding_and_decoding_are_valid_for_swing(
         uncompressed_values: ValueArray,
         expected_model_end_index: usize,
         expected_model_min_value: Value,
@@ -742,7 +784,7 @@ mod tests {
             segment_min_value,
             segment_max_value,
             segment_values,
-        ) = create_segment_assert_segment_and_return_model_values(
+        ) = create_and_assert_expected_segment(
             &uncompressed_values,
             SWING_ID,
             expected_model_end_index,
@@ -768,7 +810,7 @@ mod tests {
         assert_eq!(model_last_value, segment_last_value);
     }
 
-    fn create_segment_assert_segment_and_return_model_values(
+    fn create_and_assert_expected_segment(
         uncompressed_values: &ValueArray,
         expected_model_type_id: u8,
         expected_model_end_index: usize,
