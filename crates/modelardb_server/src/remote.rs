@@ -420,6 +420,7 @@ impl FlightServiceHandler {
         self.context
             .metadata_manager
             .save_table_metadata(&table_name)
+            .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
         info!("Created table '{}'.", table_name);
@@ -431,7 +432,7 @@ impl FlightServiceHandler {
     /// catalog, and save it to the [`MetadataManager`]. If the table exists or
     /// if the table cannot be saved to the [`MetadataManager`], return
     /// [`Status`] error.
-    fn register_and_save_model_table(
+    async fn register_and_save_model_table(
         &self,
         model_table_metadata: ModelTableMetadata,
     ) -> Result<(), Status> {
@@ -450,6 +451,7 @@ impl FlightServiceHandler {
         self.context
             .metadata_manager
             .save_model_table_metadata(&model_table_metadata)
+            .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
         info!("Created model table '{}'.", model_table_metadata.name);
@@ -680,7 +682,8 @@ impl FlightService for FlightServiceHandler {
                 ValidStatement::CreateModelTable(model_table_metadata) => {
                     self.check_if_table_exists(&model_table_metadata.name)
                         .await?;
-                    self.register_and_save_model_table(model_table_metadata)?;
+                    self.register_and_save_model_table(model_table_metadata)
+                        .await?;
                 }
             };
 

@@ -489,6 +489,7 @@ impl TableProvider for ModelTable {
             .context
             .metadata_manager
             .mapping_from_hash_to_tags(table_name, &stored_tag_columns_in_projection)
+            .await
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         // unwrap() is safe as the store is set by create_session_context().

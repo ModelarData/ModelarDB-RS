@@ -119,9 +119,12 @@ fn main() -> Result<(), String> {
     }
 
     // Create the components for the Context.
-    let metadata_manager =
-        MetadataManager::try_new(&data_folders.local_data_folder, server_mode)
-            .map_err(|error| format!("Unable to create a MetadataManager: {error}"))?;
+    let metadata_manager = runtime
+        .block_on(MetadataManager::try_new(
+            &data_folders.local_data_folder,
+            server_mode,
+        ))
+        .map_err(|error| format!("Unable to create a MetadataManager: {error}"))?;
     let session = create_session_context(data_folders.query_data_folder);
     let storage_engine = RwLock::new(
         runtime
@@ -145,14 +148,12 @@ fn main() -> Result<(), String> {
     });
 
     // Register tables and model tables.
-    context
-        .metadata_manager
-        .register_tables(&context, &runtime)
+    runtime
+        .block_on(context.metadata_manager.register_tables(&context))
         .map_err(|error| format!("Unable to register tables: {error}"))?;
 
-    context
-        .metadata_manager
-        .register_model_tables(&context)
+    runtime
+        .block_on(context.metadata_manager.register_model_tables(&context))
         .map_err(|error| format!("Unable to register model tables: {error}"))?;
 
     // Setup CTRL+C handler.

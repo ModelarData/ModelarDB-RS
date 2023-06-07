@@ -228,6 +228,7 @@ impl StorageEngine {
         let hash_to_table_name = self
             .metadata_manager
             .mapping_from_hash_to_table_name()
+            .await
             .map_err(|error| error.to_string())?;
 
         for (univariate_id, compressed_segments) in compressed_segments {

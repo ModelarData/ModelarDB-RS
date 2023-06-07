@@ -93,7 +93,7 @@ impl UncompressedDataManager {
                 .map_err(|error| IOError::new(IOErrorKind::InvalidData, error))?;
 
             // unwrap() is safe as univariate_id can only exist if it is in the metadata database.
-            let error_bound = metadata_manager.error_bound(univariate_id).unwrap();
+            let error_bound = metadata_manager.error_bound(univariate_id).await.unwrap();
 
             for maybe_file_dir_entry in folder_dir_entry.path().read_dir()? {
                 finished_data_buffers.push_back(Box::new(UncompressedOnDiskDataBuffer::try_new(
@@ -206,6 +206,7 @@ impl UncompressedDataManager {
 
             let tag_hash = metadata_manager
                 .lookup_or_compute_tag_hash(model_table_metadata, &tag_values)
+                .await
                 .map_err(|error| format!("Tag hash could not be saved: {error}"))?;
 
             // For each field column, generate the 64-bit univariate id, and append the current
@@ -549,6 +550,7 @@ mod tests {
         let (model_table_metadata, data) = uncompressed_data(1);
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
+            .await
             .unwrap();
         data_manager
             .insert_data_points(&mut metadata_manager, &model_table_metadata, &data)
@@ -573,6 +575,7 @@ mod tests {
         let (model_table_metadata, data) = uncompressed_data(2);
         metadata_manager
             .save_model_table_metadata(&model_table_metadata)
+            .await
             .unwrap();
         data_manager
             .insert_data_points(&mut metadata_manager, &model_table_metadata, &data)
@@ -972,7 +975,7 @@ mod tests {
     async fn create_managers(
         path: &Path,
     ) -> (MetadataManager, UncompressedDataManager, ModelTableMetadata) {
-        let mut metadata_manager = common_test::test_metadata_manager(path);
+        let mut metadata_manager = common_test::test_metadata_manager(path).await;
 
         // Ensure the expected metadata is available through the metadata manager.
         let query_schema = Arc::new(Schema::new(vec![
@@ -999,10 +1002,12 @@ mod tests {
 
         metadata_manager
             .save_model_table_metadata(&model_table)
+            .await
             .unwrap();
 
         metadata_manager
             .lookup_or_compute_tag_hash(&model_table, &["tag".to_owned()])
+            .await
             .unwrap();
 
         // UncompressedDataManager::try_new() lookup the error bounds for each univariate_id.
