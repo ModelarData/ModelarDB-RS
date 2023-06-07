@@ -17,6 +17,7 @@
 
 use std::env;
 use std::iter;
+use std::num::ParseIntError;
 use std::ops::Range;
 
 use modelardb_common::types::{
@@ -30,28 +31,47 @@ use rand::{Rng, SeedableRng};
 
 /// Randomly generated static seed for the random number generators used for all data generation.
 /// One randomly generated seed is used to ensure new data is generated each time the tests are
-/// executed while allowing the tests to be repeated by assigning a seed to `RANDOM_NUMBER_SEED`.
+/// executed while also allowing the tests to be repeated by assigning a previously generated seed
+/// to the `MODELARDB_TEST_SEED` environment variable as 32 bytes, each separated by a space.
 static RANDOM_NUMBER_SEED: Lazy<[u8; 32]> = Lazy::new(|| {
-    let random_number_seed = rand::random::<[u8; 32]>();
-    let mut seed_as_string = String::new();
-    for value in random_number_seed {
-        seed_as_string.push_str(&value.to_string());
-        seed_as_string.push(',');
+    match env::var("MODELARDB_TEST_SEED") {
+        Ok(seed) => seed
+            .split(' ')
+            .map(|maybe_byte| maybe_byte.parse::<u8>())
+            .collect::<Result<Vec<u8>, ParseIntError>>()
+            .map_err(|_| "MODELARDB_TEST_SEED must be 32 bytes, each separated by a space.")
+            .unwrap()
+            .try_into()
+            .unwrap(),
+        Err(_) => {
+            let random_number_seed = rand::random::<[u8; 32]>();
+
+            let mut seed_as_string = String::new();
+            for value in random_number_seed {
+                seed_as_string.push_str(&value.to_string());
+                seed_as_string.push(' ');
+            }
+
+            // unwrap() is not safe, but this function is designed to be used by tests.
+            let binary_path = env::current_exe().unwrap();
+            let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
+            println!("Seed for {binary_name} is: {seed_as_string}");
+
+            random_number_seed
+        }
     }
-
-    // unwrap() is not safe, but this function is designed to be used by tests.
-    let binary_path = env::current_exe().unwrap();
-    let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
-    println!("Seed for {binary_name} is: const RANDOM_NUMBER_SEED: [u8; 32] = [{seed_as_string}];");
-
-    random_number_seed
 });
 
-/// The different structure of values which can be generated.
+/// The different structures of values which can be generated.
 #[derive(Clone)]
 pub enum ValuesStructure {
+    /// A sequence of constant values, optionally with noise in the provided range multiplied by the
+    /// generated values if it is not [`None`].
     Constant(Option<Range<f32>>),
+    /// A sequence of increasing or decreasing values, optionally with noise in the provided range
+    /// multiplied by the generated values if it is not [`None`].
     Linear(Option<Range<f32>>),
+    /// A sequence of random values in the provided range.
     Random(Range<f32>),
 }
 
@@ -66,15 +86,15 @@ fn create_random_number_generator() -> StdRng {
 
 /// Generate a time series with sub-sequences of values with different [`ValuesStructure`]. The time
 /// series will have `length` data points in sequences of `segment_length_range` (except possibly
-/// for the last as it may be truncated to match `lenght`) and the timestamp will be regular or
-/// irregular depending on the value of `irregular_timestamps`. If `multiply_noise_range` is
-/// [`Some`], random values will be generated in the [`Range<f32>`] and multiplied with each value
-/// in the sequences with constant and linear values. Sequences with random values are generated in
-/// the range specified as `random_value_range`.
+/// for the last as it may be truncated to match `length`) and the timestamps will be regular or
+/// irregular depending on the value of `generate_irregular_timestamps`. If `multiply_noise_range`
+/// is [`Some`], random values will be generated in the [`Range<f32>`] and multiplied with each
+/// value in the sequences with constant and linear values. Sequences with random values are
+/// generated in the range specified as `random_value_range`.
 pub fn generate_time_series(
     length: usize,
     segment_length_range: Range<usize>,
-    irregular_timestamps: bool,
+    generate_irregular_timestamps: bool,
     multiply_noise_range: Option<Range<f32>>,
     random_value_range: Range<f32>,
 ) -> (TimestampArray, ValueArray) {
@@ -86,7 +106,7 @@ pub fn generate_time_series(
 
     let mut std_rng = create_random_number_generator();
     let mut uncompressed_values_builder = ValueBuilder::with_capacity(length);
-    let uncompressed_timestamps = generate_timestamps(length, irregular_timestamps);
+    let uncompressed_timestamps = generate_timestamps(length, generate_irregular_timestamps);
     while uncompressed_values_builder.values_slice().len() < length {
         let segment_length = std_rng.gen_range(segment_length_range.clone());
         let values_structure_index = std_rng.gen_range(0..values_structures.len());
@@ -131,15 +151,14 @@ pub fn generate_timestamps(length: usize, irregular: bool) -> TimestampArray {
     }
 }
 
-/// Generate multiple test values with different structure using [ThreadRng](rand::rngs::ThreadRng).
-/// The amount of values to be generated will match `timestamps` and their structure will match
-/// `structure_of_values`:
-/// - If `structure_of_values` is `Constant`, a single value is generated and repeated with a random
+/// Generate multiple test values with a specific structure using
+/// [ThreadRng](rand::rngs::ThreadRng). The amount of values to be generated will match `timestamps`
+/// and their structure will match `values_structure`:
+/// - If `values_structure` is `Constant`, a single value is generated and repeated with a random
 /// value in the associated range multiplied with each value if it is not [`None`].
-/// - If `structure_of_values` is `Linear`, a sequence of increasing or decreasing values are
-/// generated with a random value in the associated range multiplied with each value if it is not
-/// [`None`].
-/// - If `structure_of_values` is `Random`, a sequence of random values in the associated range is
+/// - If `values_structure` is `Linear`, a sequence of increasing or decreasing values are generated
+/// with a random value in the associated range multiplied with each value if it is not [`None`].
+/// - If `values_structure` is `Random`, a sequence of random values in the associated range are
 /// generated.
 pub fn generate_values(
     uncompressed_timestamps: &[Timestamp],

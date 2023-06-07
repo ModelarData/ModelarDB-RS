@@ -44,8 +44,8 @@ use crate::{optimizer, Context, ServerMode};
 /// Expected size of the compressed segments produced in the tests.
 pub const COMPRESSED_SEGMENTS_SIZE: usize = 1399;
 
-/// Return a [`Context`] with the metadata manager created by `get_test_metadata_manager()` and
-/// the data folder set to `path`.
+/// Return a [`Context`] with the metadata manager created by `test_metadata_manager()` and the data
+/// folder set to `path`.
 pub async fn test_context(path: &Path) -> Arc<Context> {
     let metadata_manager = test_metadata_manager(path);
 

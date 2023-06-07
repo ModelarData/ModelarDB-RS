@@ -54,17 +54,16 @@ const HOST: &str = "127.0.0.1";
 /// local data folder so they can run in parallel and so that any failing tests does not cascade.
 static PORT: AtomicU16 = AtomicU16::new(9999);
 
-/// Number of times to try executing something that may sometimes temporarily fail.
+/// Number of times to try to create the client and kill child processes.
 const ATTEMPTS: u8 = 10;
 
-/// Amount of time to sleep between each attempt when trying to execute something that may sometimes
-/// temporarily fail.
+/// Amount of time to sleep between each attempt to create the client and kill child processes.
 const ATTEMPT_SLEEP_IN_SECONDS: Duration = Duration::from_secs(1);
 
 /// Length of time series generated for integration tests.
-const TIME_SERIES_TEST_LENGTH: usize = 50_00;
+const TIME_SERIES_TEST_LENGTH: usize = 5000;
 
-/// Minimum length of each segments in a time series generated for integration tests. The maximum
+/// Minimum length of each segment in a time series generated for integration tests. The maximum
 /// length is `2 * SEGMENT_TEST_MINIMUM_LENGTH`.
 const SEGMENT_TEST_MINIMUM_LENGTH: usize = 50;
 
@@ -243,22 +242,22 @@ impl TestContext {
     }
 
     /// Return a [`RecordBatch`] containing a time series with regular or irregular time stamps
-    /// depending on `irregular_timestamps`, generated values with noise depending on
+    /// depending on `generate_irregular_timestamps`, generated values with noise depending on
     /// `multiply_noise_range`, and an optional tag.
     fn generate_time_series_with_tag(
-        irregular_timestamps: bool,
+        generate_irregular_timestamps: bool,
         multiply_noise_range: Option<Range<f32>>,
         maybe_tag: Option<&str>,
     ) -> RecordBatch {
         let (uncompressed_timestamps, uncompressed_values) = data_generation::generate_time_series(
             TIME_SERIES_TEST_LENGTH,
             SEGMENT_TEST_MINIMUM_LENGTH..2 * SEGMENT_TEST_MINIMUM_LENGTH + 1,
-            irregular_timestamps,
+            generate_irregular_timestamps,
             multiply_noise_range,
             100.0..200.0,
         );
 
-        let data_points_generated = uncompressed_timestamps.len();
+        let time_series_len = uncompressed_timestamps.len();
 
         let mut fields = vec![
             Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
@@ -273,7 +272,7 @@ impl TestContext {
         if let Some(tag) = maybe_tag {
             fields.push(Field::new("tag", DataType::Utf8, false));
             columns.push(Arc::new(StringArray::from_iter_values(
-                repeat(tag).take(data_points_generated),
+                repeat(tag).take(time_series_len),
             )));
         }
 
@@ -282,10 +281,10 @@ impl TestContext {
         RecordBatch::try_new(schema, columns).unwrap()
     }
 
-    /// Create and return [`FlightData`] based on the `data_points` to be inserted into `table_name`.
-    fn create_flight_data_from_data_points(
+    /// Create and return [`FlightData`] based on the `time_series` to be inserted into `table_name`.
+    fn create_flight_data_from_time_series(
         table_name: String,
-        data_points: &[RecordBatch],
+        time_series: &[RecordBatch],
     ) -> Vec<FlightData> {
         let flight_descriptor = FlightDescriptor::new_path(vec![table_name]);
 
@@ -300,7 +299,7 @@ impl TestContext {
         let writer_options = IpcWriteOptions::default();
         let mut dictionary_tracker = DictionaryTracker::new(false);
 
-        for data_point in data_points {
+        for data_point in time_series {
             let (_encoded_dictionaries, encoded_batch) = data_generator
                 .encoded_batch(data_point, &mut dictionary_tracker, &writer_options)
                 .unwrap();
@@ -311,7 +310,7 @@ impl TestContext {
     }
 
     /// Send data points to the server through the `do_put()` method.
-    fn send_data_points_to_server(
+    fn send_time_series_to_server(
         &mut self,
         flight_data: Vec<FlightData>,
     ) -> Result<Response<Streaming<PutResult>>, Status> {
@@ -343,7 +342,7 @@ impl TestContext {
             let mut stream = self.client.do_get(ticket).await?.into_inner();
 
             // Get schema of result set.
-            let flight_data = stream.message().await?.ok_or("No data_points received.")?;
+            let flight_data = stream.message().await?.ok_or("No time series received.")?;
             let schema = Arc::new(Schema::try_from(&flight_data)?);
 
             // Get data in result set.
@@ -376,7 +375,7 @@ impl TestContext {
 
         self.runtime.block_on(async {
             let mut stream = self.client.list_flights(request).await?.into_inner();
-            let flights = stream.message().await?.ok_or("No data_points received.")?;
+            let flights = stream.message().await?.ok_or("No time series received.")?;
 
             let mut table_names = vec![];
             if let Some(fd) = flights.flight_descriptor {
@@ -425,7 +424,7 @@ fn test_can_create_table() {
 }
 
 #[test]
-fn test_can_register_table() {
+fn test_can_register_table_after_restart() {
     let mut test_context = TestContext::new();
 
     test_context.create_table(TABLE_NAME, TableType::NormalTable);
@@ -450,7 +449,7 @@ fn test_can_create_model_table() {
 }
 
 #[test]
-fn test_can_register_model_table() {
+fn test_can_register_model_table_after_restart() {
     let mut test_context = TestContext::new();
 
     test_context.create_table(TABLE_NAME, TableType::ModelTable);
@@ -580,19 +579,19 @@ fn test_can_collect_metrics() {
 }
 
 #[test]
-fn test_can_ingest_data_points_with_tags() {
+fn test_can_ingest_time_series_with_tags() {
     let mut test_context = TestContext::new();
 
-    let data_point = TestContext::generate_time_series_with_tag(false, None, Some("location"));
-    let flight_data = TestContext::create_flight_data_from_data_points(
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
+    let flight_data = TestContext::create_flight_data_from_time_series(
         TABLE_NAME.to_owned(),
-        &[data_point.clone()],
+        &[time_series.clone()],
     );
 
     test_context.create_table(TABLE_NAME, TableType::ModelTable);
 
     test_context
-        .send_data_points_to_server(flight_data)
+        .send_time_series_to_server(flight_data)
         .unwrap();
 
     test_context.flush_data_to_disk();
@@ -601,23 +600,23 @@ fn test_can_ingest_data_points_with_tags() {
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
         .unwrap();
 
-    assert_eq!(data_point, query_result);
+    assert_eq!(time_series, query_result);
 }
 
 #[test]
-fn test_can_ingest_data_points_without_tags() {
+fn test_can_ingest_time_series_without_tags() {
     let mut test_context = TestContext::new();
 
-    let data_point = TestContext::generate_time_series_with_tag(false, None, None);
-    let flight_data = TestContext::create_flight_data_from_data_points(
+    let time_series = TestContext::generate_time_series_with_tag(false, None, None);
+    let flight_data = TestContext::create_flight_data_from_time_series(
         TABLE_NAME.to_owned(),
-        &[data_point.clone()],
+        &[time_series.clone()],
     );
 
     test_context.create_table(TABLE_NAME, TableType::ModelTableNoTag);
 
     test_context
-        .send_data_points_to_server(flight_data)
+        .send_time_series_to_server(flight_data)
         .unwrap();
 
     test_context.flush_data_to_disk();
@@ -626,22 +625,22 @@ fn test_can_ingest_data_points_without_tags() {
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
         .unwrap();
 
-    assert_eq!(data_point, query_result);
+    assert_eq!(time_series, query_result);
 }
 
 #[test]
-fn test_can_ingest_data_points_with_generated_field() {
+fn test_can_ingest_time_series_with_generated_field() {
     let mut test_context = TestContext::new();
-    let data_point = TestContext::generate_time_series_with_tag(false, None, None);
-    let flight_data = TestContext::create_flight_data_from_data_points(
+    let time_series = TestContext::generate_time_series_with_tag(false, None, None);
+    let flight_data = TestContext::create_flight_data_from_time_series(
         TABLE_NAME.to_owned(),
-        &[data_point.clone()],
+        &[time_series.clone()],
     );
 
     test_context.create_table(TABLE_NAME, TableType::ModelTableAsField);
 
     test_context
-        .send_data_points_to_server(flight_data)
+        .send_time_series_to_server(flight_data)
         .unwrap();
 
     test_context.flush_data_to_disk();
@@ -652,29 +651,29 @@ fn test_can_ingest_data_points_with_generated_field() {
         .unwrap();
 
     // Column two in the query is the generated column which does not exist in data point.
-    assert_eq!(data_point.num_columns(), 2);
+    assert_eq!(time_series.num_columns(), 2);
     assert_eq!(query_result.num_columns(), 3);
-    assert_eq!(data_point.column(0), query_result.column(0));
-    assert_eq!(data_point.column(1), query_result.column(2));
+    assert_eq!(time_series.column(0), query_result.column(0));
+    assert_eq!(time_series.column(1), query_result.column(2));
 }
 
 #[test]
 fn test_can_ingest_multiple_time_series_with_different_tags() {
     let mut test_context = TestContext::new();
 
-    let data_points_with_tag_one: RecordBatch =
+    let time_series_with_tag_one: RecordBatch =
         TestContext::generate_time_series_with_tag(false, None, Some("tag_one"));
-    let data_points_with_tag_two: RecordBatch =
+    let time_series_with_tag_two: RecordBatch =
         TestContext::generate_time_series_with_tag(false, None, Some("tag_two"));
-    let data_points = &[data_points_with_tag_one, data_points_with_tag_two];
+    let time_series = &[time_series_with_tag_one, time_series_with_tag_two];
 
     let flight_data =
-        TestContext::create_flight_data_from_data_points(TABLE_NAME.to_owned(), data_points);
+        TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), time_series);
 
     test_context.create_table(TABLE_NAME, TableType::ModelTable);
 
     test_context
-        .send_data_points_to_server(flight_data)
+        .send_time_series_to_server(flight_data)
         .unwrap();
 
     test_context.flush_data_to_disk();
@@ -685,21 +684,21 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
         ))
         .unwrap();
 
-    let expected = compute::concat_batches(&data_points[0].schema(), data_points).unwrap();
+    let expected = compute::concat_batches(&time_series[0].schema(), time_series).unwrap();
     assert_eq!(expected, query_result);
 }
 
 #[test]
-fn test_cannot_ingest_invalid_data_points() {
+fn test_cannot_ingest_invalid_time_series() {
     let mut test_context = TestContext::new();
-    let data_point = TestContext::generate_time_series_with_tag(false, None, None);
+    let time_series = TestContext::generate_time_series_with_tag(false, None, None);
     let flight_data =
-        TestContext::create_flight_data_from_data_points(TABLE_NAME.to_owned(), &[data_point]);
+        TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), &[time_series]);
 
     test_context.create_table(TABLE_NAME, TableType::ModelTable);
 
     assert!(test_context
-        .send_data_points_to_server(flight_data)
+        .send_time_series_to_server(flight_data)
         .is_err());
 
     test_context.flush_data_to_disk();
@@ -714,14 +713,14 @@ fn test_cannot_ingest_invalid_data_points() {
 fn test_optimized_query_results_equals_non_optimized_query_results() {
     let mut test_context = TestContext::new();
 
-    let data_points = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
     let flight_data =
-        TestContext::create_flight_data_from_data_points(TABLE_NAME.to_owned(), &[data_points]);
+        TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), &[time_series]);
 
     test_context.create_table(TABLE_NAME, TableType::ModelTable);
 
     test_context
-        .send_data_points_to_server(flight_data)
+        .send_time_series_to_server(flight_data)
         .unwrap();
 
     test_context.flush_data_to_disk();

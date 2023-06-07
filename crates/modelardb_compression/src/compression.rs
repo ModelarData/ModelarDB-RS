@@ -529,85 +529,81 @@ mod tests {
 
     #[test]
     fn test_try_compress_regular_random_linear_constant_time_series() {
-        let timestamps = data_generation::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, false);
-        try_compress_random_linear_constant_time_series(timestamps);
+        try_to_generate_and_compress_time_series(
+            false,
+            &[models::GORILLA_ID, models::SWING_ID, models::PMC_MEAN_ID],
+            &[models::GORILLA_ID, models::SWING_ID, models::PMC_MEAN_ID],
+        );
     }
 
     #[test]
     fn test_try_compress_irregular_random_linear_constant_time_series() {
-        let timestamps = data_generation::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, true);
-        try_compress_random_linear_constant_time_series(timestamps);
-    }
-
-    fn try_compress_random_linear_constant_time_series(uncompressed_timestamps: TimestampArray) {
-        let random = data_generation::generate_values(
-            &uncompressed_timestamps.values()[0..TRY_COMPRESS_TEST_LENGTH],
-            ValuesStructure::Random(0.0..f32::MAX),
-        );
-        let linear = data_generation::generate_values(
-            &uncompressed_timestamps.values()
-                [TRY_COMPRESS_TEST_LENGTH..2 * TRY_COMPRESS_TEST_LENGTH],
-            ValuesStructure::Linear(None),
-        );
-        let constant = data_generation::generate_values(
-            &uncompressed_timestamps.values()[2 * TRY_COMPRESS_TEST_LENGTH..],
-            ValuesStructure::Constant(None),
-        );
-        let mut uncompressed_values =
-            ValueBuilder::with_capacity(random.len() + linear.len() + constant.len());
-        uncompressed_values.append_slice(random.values());
-        uncompressed_values.append_slice(linear.values());
-        uncompressed_values.append_slice(constant.values());
-        let uncompressed_values = uncompressed_values.finish();
-
-        let compressed_record_batch = compress_time_series(
-            &uncompressed_timestamps,
-            &uncompressed_values,
-            ERROR_BOUND_ZERO,
-        );
-
-        assert_compressed_record_batch_with_known_segments_from_time_series(
-            ERROR_BOUND_ZERO,
-            &uncompressed_timestamps,
-            &uncompressed_values,
-            &compressed_record_batch,
+        try_to_generate_and_compress_time_series(
+            true,
             &[models::GORILLA_ID, models::SWING_ID, models::PMC_MEAN_ID],
-        )
+            &[models::GORILLA_ID, models::SWING_ID, models::PMC_MEAN_ID],
+        );
     }
 
     #[test]
-    fn test_try_compress_constant_linear_random_regular_time_series() {
-        let uncompressed_timestamps =
-            data_generation::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, false);
-        try_compress_constant_linear_random_time_series(uncompressed_timestamps);
+    fn test_try_compress_regular_constant_linear_random_time_series() {
+        try_to_generate_and_compress_time_series(
+            false,
+            &[models::PMC_MEAN_ID, models::SWING_ID, models::GORILLA_ID],
+            &[models::PMC_MEAN_ID, models::SWING_ID],
+        );
     }
 
     #[test]
-    fn test_try_compress_constant_linear_random_irregular_time_series() {
-        let timestamps = data_generation::generate_timestamps(3 * TRY_COMPRESS_TEST_LENGTH, true);
-        try_compress_constant_linear_random_time_series(timestamps);
+    fn test_try_compress_irregular_constant_linear_random_time_series() {
+        try_to_generate_and_compress_time_series(
+            true,
+            &[models::PMC_MEAN_ID, models::SWING_ID, models::GORILLA_ID],
+            &[models::PMC_MEAN_ID, models::SWING_ID],
+        );
     }
 
-    fn try_compress_constant_linear_random_time_series(uncompressed_timestamps: TimestampArray) {
-        let constant = data_generation::generate_values(
-            &uncompressed_timestamps.values()[0..TRY_COMPRESS_TEST_LENGTH],
-            ValuesStructure::Constant(None),
+    fn try_to_generate_and_compress_time_series(
+        generate_irregular_timestamps: bool,
+        generate_model_type_ids: &[u8],
+        expected_model_type_ids: &[u8],
+    ) {
+        let uncompressed_timestamps = data_generation::generate_timestamps(
+            3 * TRY_COMPRESS_TEST_LENGTH,
+            generate_irregular_timestamps,
         );
-        let linear = data_generation::generate_values(
-            &uncompressed_timestamps.values()
-                [TRY_COMPRESS_TEST_LENGTH..2 * TRY_COMPRESS_TEST_LENGTH],
-            ValuesStructure::Linear(None),
-        );
-        let random = data_generation::generate_values(
-            &uncompressed_timestamps.values()[2 * TRY_COMPRESS_TEST_LENGTH..],
-            ValuesStructure::Random(0.0..f32::MAX),
-        );
-        let mut uncompressed_values =
-            ValueBuilder::with_capacity(random.len() + linear.len() + constant.len());
-        uncompressed_values.append_slice(constant.values());
-        uncompressed_values.append_slice(linear.values());
-        uncompressed_values.append_slice(random.values());
+
+        let mut uncompressed_timestamps_start_index = 0;
+        let mut uncompressed_values = ValueBuilder::with_capacity(3 * TRY_COMPRESS_TEST_LENGTH);
+        for model_type_id in generate_model_type_ids {
+            let uncompressed_timestamps_end_index =
+                uncompressed_timestamps_start_index + TRY_COMPRESS_TEST_LENGTH;
+
+            let values = match *model_type_id {
+                models::PMC_MEAN_ID => data_generation::generate_values(
+                    &uncompressed_timestamps.values()
+                        [uncompressed_timestamps_start_index..uncompressed_timestamps_end_index],
+                    ValuesStructure::Constant(None),
+                ),
+                models::SWING_ID => data_generation::generate_values(
+                    &uncompressed_timestamps.values()
+                        [uncompressed_timestamps_start_index..uncompressed_timestamps_end_index],
+                    ValuesStructure::Linear(None),
+                ),
+                models::GORILLA_ID => data_generation::generate_values(
+                    &uncompressed_timestamps.values()
+                        [uncompressed_timestamps_start_index..uncompressed_timestamps_end_index],
+                    ValuesStructure::Random(0.0..f32::MAX),
+                ),
+                _ => panic!("Unknown model type."),
+            };
+
+            uncompressed_values.append_slice(values.values());
+            uncompressed_timestamps_start_index = uncompressed_timestamps_end_index;
+        }
+
         let uncompressed_values = uncompressed_values.finish();
+        assert_eq!(uncompressed_timestamps.len(), uncompressed_values.len());
 
         let compressed_record_batch = compress_time_series(
             &uncompressed_timestamps,
@@ -620,7 +616,7 @@ mod tests {
             &uncompressed_timestamps,
             &uncompressed_values,
             &compressed_record_batch,
-            &[models::PMC_MEAN_ID, models::SWING_ID],
+            expected_model_type_ids,
         )
     }
 
@@ -689,14 +685,13 @@ mod tests {
 
     fn generate_compress_and_assert_time_series(
         error_bound: f32,
-        irregular_timestamps: bool,
+        generate_irregular_timestamps: bool,
         multiply_noise_range: Option<Range<f32>>,
     ) {
-        // The parameters for generate_time_series is chosen so
         let (uncompressed_timestamps, uncompressed_values) = data_generation::generate_time_series(
             1000 * TRY_COMPRESS_TEST_LENGTH,
             TRY_COMPRESS_TEST_LENGTH..10 * TRY_COMPRESS_TEST_LENGTH + 1,
-            irregular_timestamps,
+            generate_irregular_timestamps,
             multiply_noise_range,
             100.0..200.0,
         );
