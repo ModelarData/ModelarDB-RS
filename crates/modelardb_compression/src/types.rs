@@ -344,7 +344,7 @@ impl CompressedSegmentBuilder {
     /// Add information if required for a model of type [`Swing`] due to `residuals_min_value` and
     /// `residuals_max_value` overwriting the model's minimum and maximum values in the segment.
     fn update_values_for_swing(&mut self, residuals_min_value: Value, residuals_max_value: Value) {
-        if residuals_min_value < self.min_value && self.max_value < residuals_min_value {
+        if residuals_min_value < self.min_value && self.max_value < residuals_max_value {
             // Minimum and maximum is overwritten so first and last value are stored.
             let mut updated_values = Vec::with_capacity(2 * VALUE_SIZE_IN_BYTES as usize);
             if self.values.is_empty() {
@@ -512,6 +512,7 @@ impl CompressedSegmentBatchBuilder {
 mod tests {
     use super::*;
 
+    use arrow::array::BinaryArray;
     use modelardb_common::types::{TimestampArray, ValueArray};
     use proptest::num;
     use proptest::proptest;
@@ -519,6 +520,7 @@ mod tests {
     use crate::compression;
     use crate::test_util::{self, StructureOfValues};
 
+    const ERROR_BOUND_ZERO: f32 = 0.0;
     const UNCOMPRESSED_TIMESTAMPS: &[Timestamp] = &[100, 200, 300, 400, 500];
 
     // Tests for ErrorBound.
@@ -555,58 +557,323 @@ mod tests {
 
     // Tests for CompressedSegmentBuilder.
     #[test]
-    fn test_model_attributes_for_pmc_mean() {
-        let uncompressed_timestamps = TimestampArray::from(UNCOMPRESSED_TIMESTAMPS.to_vec());
+    fn test_encoding_decoding_for_pmc_mean_without_residuals() {
         let uncompressed_values = ValueArray::from(vec![10.0, 10.0, 10.0, 10.0, 10.0]);
-
-        let model = compression::fit_next_model(
+        assert_encoding_and_decoding_are_valid_for_pmc_mean(
+            uncompressed_values,
+            4,
+            10.0,
             0,
-            ErrorBound::try_new(0.0).unwrap(),
-            &uncompressed_timestamps,
-            &uncompressed_values,
+            10.0,
+            10.0,
+            0,
         );
-
-        assert_eq!(PMC_MEAN_ID, model.model_type_id);
-        assert_eq!(uncompressed_timestamps.len() - 1, model.end_index);
-        assert_eq!(10.0, model.min_value);
-        assert_eq!(10.0, model.max_value);
-        assert_eq!(0, model.values.len());
     }
 
     #[test]
-    fn test_model_attributes_for_increasing_swing() {
-        let uncompressed_timestamps = TimestampArray::from(UNCOMPRESSED_TIMESTAMPS.to_vec());
+    fn test_encoding_decoding_for_pmc_mean_with_residuals_with_new_mininum() {
+        let uncompressed_values = ValueArray::from(vec![10.0, 10.0, 10.0, 10.0, Value::MIN]);
+        assert_encoding_and_decoding_are_valid_for_pmc_mean(
+            uncompressed_values,
+            3,
+            10.0,
+            0,
+            Value::MIN,
+            10.0,
+            1,
+        );
+    }
+
+    #[test]
+    fn test_encoding_decoding_for_pmc_mean_with_residuals_with_new_maximum() {
+        let uncompressed_values = ValueArray::from(vec![10.0, 10.0, 10.0, 10.0, Value::MAX]);
+        assert_encoding_and_decoding_are_valid_for_pmc_mean(
+            uncompressed_values,
+            3,
+            10.0,
+            0,
+            10.0,
+            Value::MAX,
+            0,
+        );
+    }
+
+    #[test]
+    fn test_encoding_decoding_for_pmc_mean_with_residuals_with_new_minimum_and_maximum() {
+        let uncompressed_values = ValueArray::from(vec![10.0, 10.0, 10.0, Value::MIN, Value::MAX]);
+        assert_encoding_and_decoding_are_valid_for_pmc_mean(
+            uncompressed_values,
+            2,
+            10.0,
+            0,
+            Value::MIN,
+            Value::MAX,
+            4,
+        );
+    }
+
+    fn assert_encoding_and_decoding_are_valid_for_pmc_mean(
+        uncompressed_values: ValueArray,
+        expected_model_end_index: usize,
+        expected_model_min_max_value: Value,
+        expected_model_values_length: usize,
+        expected_segment_min_value: Value,
+        expected_segment_max_value: Value,
+        expected_segment_values_length: usize,
+    ) {
+        let (
+            _model_start_index,
+            _model_end_index,
+            segment_min_value,
+            segment_max_value,
+            segment_values,
+        ) = create_and_assert_expected_segment(
+            &uncompressed_values,
+            PMC_MEAN_ID,
+            expected_model_end_index,
+            expected_model_min_max_value,
+            expected_model_min_max_value,
+            expected_model_values_length,
+            expected_segment_min_value,
+            expected_segment_max_value,
+            expected_segment_values_length,
+        );
+
+        let segment_value = CompressedSegmentBuilder::decode_values_for_pmc_mean(
+            segment_min_value,
+            segment_max_value,
+            &segment_values,
+        );
+
+        assert_eq!(expected_model_min_max_value, segment_value);
+    }
+
+    #[test]
+    fn test_encoding_decoding_for_increasing_swing_without_residuals() {
         let uncompressed_values = ValueArray::from(vec![10.0, 20.0, 30.0, 40.0, 50.0]);
-        let model = compression::fit_next_model(
+        assert_encoding_and_decoding_are_valid_for_swing(
+            uncompressed_values,
+            4,
+            10.0,
+            50.0,
             0,
-            ErrorBound::try_new(0.0).unwrap(),
-            &uncompressed_timestamps,
-            &uncompressed_values,
+            10.0,
+            50.0,
+            0,
         );
-
-        assert_eq!(SWING_ID, model.model_type_id);
-        assert_eq!(uncompressed_timestamps.len() - 1, model.end_index);
-        assert_eq!(10.0, model.min_value);
-        assert_eq!(50.0, model.max_value);
-        assert_eq!(0, model.values.len());
     }
 
     #[test]
-    fn test_model_attributes_for_decreasing_swing() {
-        let uncompressed_timestamps = TimestampArray::from(UNCOMPRESSED_TIMESTAMPS.to_vec());
-        let uncompressed_values = ValueArray::from(vec![50.0, 40.0, 30.0, 20.0, 10.0]);
-        let model = compression::fit_next_model(
+    fn test_encoding_decoding_for_increasing_swing_with_residuals_with_new_mininum() {
+        let uncompressed_values = ValueArray::from(vec![10.0, 20.0, 30.0, 40.0, Value::MIN]);
+        assert_encoding_and_decoding_are_valid_for_swing(
+            uncompressed_values,
+            3,
+            10.0,
+            40.0,
             0,
-            ErrorBound::try_new(0.0).unwrap(),
-            &uncompressed_timestamps,
+            Value::MIN,
+            40.0,
+            5,
+        );
+    }
+
+    #[test]
+    fn test_encoding_decoding_for_increasing_swing_with_residuals_with_new_maximum() {
+        let uncompressed_values = ValueArray::from(vec![10.0, 20.0, 30.0, 40.0, Value::MAX]);
+        assert_encoding_and_decoding_are_valid_for_swing(
+            uncompressed_values,
+            3,
+            10.0,
+            40.0,
+            0,
+            10.0,
+            Value::MAX,
+            5,
+        );
+    }
+
+    #[test]
+    fn test_encoding_decoding_for_increasing_swing_with_residuals_with_new_minimum_and_maximum() {
+        let uncompressed_values = ValueArray::from(vec![10.0, 20.0, 30.0, Value::MIN, Value::MAX]);
+        assert_encoding_and_decoding_are_valid_for_swing(
+            uncompressed_values,
+            2,
+            10.0,
+            30.0,
+            0,
+            Value::MIN,
+            Value::MAX,
+            8,
+        );
+    }
+
+    #[test]
+    fn test_encoding_decoding_for_decreasing_swing_without_residuals() {
+        let uncompressed_values = ValueArray::from(vec![50.0, 40.0, 30.0, 20.0, 10.0]);
+        assert_encoding_and_decoding_are_valid_for_swing(
+            uncompressed_values,
+            4,
+            10.0,
+            50.0,
+            1,
+            10.0,
+            50.0,
+            1,
+        );
+    }
+
+    #[test]
+    fn test_encoding_decoding_for_decreasing_swing_with_residuals_with_new_mininum() {
+        let uncompressed_values = ValueArray::from(vec![50.0, 40.0, 30.0, 20.0, Value::MIN]);
+        assert_encoding_and_decoding_are_valid_for_swing(
+            uncompressed_values,
+            3,
+            20.0,
+            50.0,
+            1,
+            Value::MIN,
+            50.0,
+            5,
+        );
+    }
+
+    #[test]
+    fn test_encoding_decoding_for_decreasing_swing_with_residuals_with_new_maximum() {
+        let uncompressed_values = ValueArray::from(vec![50.0, 40.0, 30.0, 20.0, Value::MAX]);
+        assert_encoding_and_decoding_are_valid_for_swing(
+            uncompressed_values,
+            3,
+            20.0,
+            50.0,
+            1,
+            20.0,
+            Value::MAX,
+            5,
+        );
+    }
+
+    #[test]
+    fn test_encoding_decoding_for_decreasing_swing_with_residuals_with_new_minimum_and_maximum() {
+        let uncompressed_values = ValueArray::from(vec![50.0, 40.0, 30.0, Value::MIN, Value::MAX]);
+        assert_encoding_and_decoding_are_valid_for_swing(
+            uncompressed_values,
+            2,
+            30.0,
+            50.0,
+            1,
+            Value::MIN,
+            Value::MAX,
+            8,
+        );
+    }
+
+    fn assert_encoding_and_decoding_are_valid_for_swing(
+        uncompressed_values: ValueArray,
+        expected_model_end_index: usize,
+        expected_model_min_value: Value,
+        expected_model_max_value: Value,
+        expected_model_values_length: usize,
+        expected_segment_min_value: Value,
+        expected_segment_max_value: Value,
+        expected_segment_values_length: usize,
+    ) {
+        let (
+            model_start_index,
+            model_end_index,
+            segment_min_value,
+            segment_max_value,
+            segment_values,
+        ) = create_and_assert_expected_segment(
             &uncompressed_values,
+            SWING_ID,
+            expected_model_end_index,
+            expected_model_min_value,
+            expected_model_max_value,
+            expected_model_values_length,
+            expected_segment_min_value,
+            expected_segment_max_value,
+            expected_segment_values_length,
         );
 
-        assert_eq!(SWING_ID, model.model_type_id);
-        assert_eq!(uncompressed_timestamps.len() - 1, model.end_index);
-        assert_eq!(10.0, model.min_value);
-        assert_eq!(50.0, model.max_value);
-        assert_eq!(1, model.values.len());
+        let model_first_value = uncompressed_values.value(model_start_index);
+        let model_last_value = uncompressed_values.value(model_end_index);
+
+        let (segment_first_value, segment_last_value) =
+            CompressedSegmentBuilder::decode_values_for_swing(
+                segment_min_value,
+                segment_max_value,
+                &segment_values,
+            );
+
+        assert_eq!(model_first_value, segment_first_value);
+        assert_eq!(model_last_value, segment_last_value);
+    }
+
+    fn create_and_assert_expected_segment(
+        uncompressed_values: &ValueArray,
+        expected_model_type_id: u8,
+        expected_model_end_index: usize,
+        expected_model_min_value: Value,
+        expected_model_max_value: Value,
+        expected_model_values_length: usize,
+        expected_segment_min_value: Value,
+        expected_segment_max_value: Value,
+        expected_segment_values_length: usize,
+    ) -> (usize, usize, Value, Value, Vec<u8>) {
+        // Fit a model to the uncompressed timestamps and the uncompressed values, ensure a model of
+        // the expected type is used, and assert that the expected encoding is used for the model.
+        let uncompressed_timestamps = TimestampArray::from(UNCOMPRESSED_TIMESTAMPS.to_vec());
+
+        let model = compression::fit_next_model(
+            0,
+            ErrorBound::try_new(ERROR_BOUND_ZERO).unwrap(),
+            &uncompressed_timestamps,
+            uncompressed_values,
+        );
+
+        assert_eq!(expected_model_type_id, model.model_type_id);
+        assert_eq!(0, model.start_index);
+        assert_eq!(expected_model_end_index, model.end_index);
+        assert_eq!(expected_model_min_value, model.min_value);
+        assert_eq!(expected_model_max_value, model.max_value);
+        assert_eq!(expected_model_values_length, model.values.len());
+
+        let model_start_index = model.start_index;
+        let model_end_index = model.end_index;
+
+        // Create a segment that represents its values using a model of the expected type and its
+        // residuals using Gorilla, and then assert that the expected encoding is used for it.
+        let residuals_end_index = uncompressed_timestamps.len() - 1;
+        let mut compressed_segment_batch_builder = CompressedSegmentBatchBuilder::new(1);
+
+        model.finish(
+            0,
+            ErrorBound::try_new(ERROR_BOUND_ZERO).unwrap(),
+            residuals_end_index,
+            &uncompressed_timestamps,
+            uncompressed_values,
+            &mut compressed_segment_batch_builder,
+        );
+
+        let batch = compressed_segment_batch_builder.finish();
+        assert_eq!(1, batch.num_rows());
+
+        let segment_min_value = modelardb_common::array!(batch, 5, ValueArray).value(0);
+        let segment_max_value = modelardb_common::array!(batch, 6, ValueArray).value(0);
+        let segment_values = modelardb_common::array!(batch, 7, BinaryArray).value(0);
+
+        assert_eq!(expected_segment_min_value, segment_min_value);
+        assert_eq!(expected_segment_max_value, segment_max_value);
+        assert_eq!(expected_segment_values_length, segment_values.len());
+
+        (
+            model_start_index,
+            model_end_index,
+            segment_min_value,
+            segment_max_value,
+            segment_values.to_vec(),
+        )
     }
 
     #[test]
