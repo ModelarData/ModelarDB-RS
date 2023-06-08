@@ -753,7 +753,8 @@ impl MetadataManager {
             vec![ErrorBound::try_new(0.0).unwrap(); query_schema_columns];
 
         while let Some(row) = rows.try_next().await? {
-            // column_index is stored as a i64 as a model table contains at most 1024 columns.
+            // SQLite use signed integers https://www.sqlite.org/datatype3.html and column_index is
+            // stored as an i64 instead of an u64 as a model table has at most 1024 columns.
             let error_bound_index: i64 = row.try_get(0)?;
 
             // unwrap() is safe as the error bounds are checked before they are stored.
@@ -793,7 +794,8 @@ impl MetadataManager {
                     original_expr: None,
                 };
 
-                // column_index is stored as a i64 as a model table contains at most 1024 columns.
+                // SQLite use signed integers https://www.sqlite.org/datatype3.html and column_index
+                // is stored as an i64 instead of an u64 as a model table has at most 1024 columns.
                 let generated_columns_index: i64 = row.try_get(0)?;
                 generated_columns[generated_columns_index as usize] = Some(generated_column);
             }
