@@ -8,33 +8,27 @@ setting up a Docker environment are also provided. Once installed, using Modelar
 The following commands are for Ubuntu Server. However, equivalent commands should work for other Linux distributions.
 
 1. Install [build-essential](https://packages.ubuntu.com/jammy/build-essential): `sudo apt install build-essential`
-2. Install [CMake](https://cmake.org/): `sudo apt install cmake`
 
 ### macOS
 1. Install the Xcode Command Line Developer Tools: `xcode-select --install`
-2. Install [CMake](https://cmake.org/) and follow the _"How to Install For Command Line Use"_ menu item.
 
 ### FreeBSD
-1. Install [CMake](https://cmake.org/) as the *root* user: `pkg install cmake`
-2. Install [cURL](https://curl.se/) as the *root* user: `pkg install curl`
+1. Install [cURL](https://curl.se/) as the *root* user: `pkg install curl`
 
 ### Windows
 1. Install a supported version of [Visual Studio](https://visualstudio.microsoft.com/vs/older-downloads/) with Visual C++:
    - [Visual Studio 2019](https://visualstudio.microsoft.com/vs/older-downloads/#visual-studio-2019-and-other-products) ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
    - [Visual Studio 2022](https://visualstudio.microsoft.com/vs/) ([Supported](https://github.com/microsoft/snmalloc/blob/main/docs/BUILDING.md#building-on-windows))
-2. Install [CMake](https://cmake.org/) and select one of the following options during installation:
-   - _Add CMake to the system PATH for all users_
-   - _Add CMake to the system PATH for current user_
 
 ### All
-3. Install the latest stable [Rust Toolchain](https://rustup.rs/).
-4. Build, test, and run the system using Cargo:
+2. Install the latest stable [Rust Toolchain](https://rustup.rs/).
+3. Build, test, and run the system using Cargo:
    - Debug Build: `cargo build`
    - Release Build: `cargo build --release`
    - Run Tests: `cargo test`
    - Run Server: `cargo run --bin modelardbd path_to_local_data_folder`
    - Run Client: `cargo run --bin modelardb [server_address] [query_file]`
-5. Move `modelardbd` and `modelardb` from the `target` directory to any directory.
+4. Move `modelardbd`, `modelardbm`, and `modelardb` from the `target` directory to any directory.
 
 ## Usage
 `modelardbd` supports two execution modes, *edge* and *cloud*. For storage, `modelardbd` uses local storage and an
