@@ -80,14 +80,14 @@ pub struct MetadataManager {
 }
 
 impl MetadataManager {
-    /// Return [`MetadataManager`] if a connection can be made to the metadata database in
-    /// `local_data_folder`, otherwise [`Error`](sqlx::Error) is returned.
+    /// Return [`MetadataManager`] if a pool of connections to the metadata database in
+    /// `local_data_folder` can be made, otherwise [`Error`] is returned.
     pub async fn try_new(local_data_folder: &Path, server_mode: ServerMode) -> Result<Self> {
         if !Self::is_path_a_data_folder(local_data_folder) {
             warn!("The data folder is not empty and does not contain data from ModelarDB");
         }
 
-        // Compute the path to the metadata database.
+        // Specify the metadata database's path and that it should be created if it does not exist.
         let options = SqliteConnectOptions::new()
             .filename(local_data_folder.join(METADATA_DATABASE_NAME))
             .create_if_missing(true);
@@ -126,7 +126,7 @@ impl MetadataManager {
     /// model table that contains the time series with that tag hash.
     /// * The model_table_field_columns table contains the name, index, error bound, and generation
     /// expression of the field columns in each model table.
-    /// If the tables exist or were created, return [`Ok`], otherwise return [`sqlx::Error`].
+    /// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
     async fn create_metadata_database_tables(&self) -> Result<()> {
         // Create the table_metadata SQLite table if it does not exist.
         self.metadata_database_pool
@@ -187,7 +187,7 @@ impl MetadataManager {
     /// hash is not in the cache, it is both saved to the cache, persisted to the model_table_tags
     /// table if it does not already contain it, and persisted to the model_table_hash_table_name if
     /// it does not already contain it. If the model_table_tags or the model_table_hash_table_name
-    /// table cannot be accessed, [`sqlx::Error`] is returned.
+    /// table cannot be accessed, [`Error`] is returned.
     pub async fn lookup_or_compute_tag_hash(
         &mut self,
         model_table_metadata: &ModelTableMetadata,
@@ -271,8 +271,8 @@ impl MetadataManager {
         }
     }
 
-    /// Return the error bound for `univariate_id`. Returns an [`Error`](sqlx::Error) if the
-    /// necessary data cannot be retrieved from the metadata database.
+    /// Return the error bound for `univariate_id`. Returns an [`Error`] if the necessary data
+    /// cannot be retrieved from the metadata database.
     pub async fn error_bound(&self, univariate_id: u64) -> Result<ErrorBound> {
         let mut connection = self.metadata_database_pool.acquire().await?;
 
@@ -302,13 +302,13 @@ impl MetadataManager {
         (univariate_id & 1023) as u16
     }
 
-    /// Return a mapping from tag hash to table names. Returns an [`Error`](sqlx::Error) if the
-    /// necessary data cannot be retrieved from the metadata database.
+    /// Return a mapping from tag hash to table names. Returns an [`Error`] if the necessary data
+    /// cannot be retrieved from the metadata database.
     pub async fn mapping_from_hash_to_table_name(&self) -> Result<HashMap<u64, String>> {
         let mut connection = self.metadata_database_pool.acquire().await?;
 
-        let select_statement = "SELECT hash, table_name FROM model_table_hash_table_name";
-        let mut rows = sqlx::query(select_statement).fetch(&mut connection);
+        let mut rows = sqlx::query("SELECT hash, table_name FROM model_table_hash_table_name")
+            .fetch(&mut connection);
 
         let mut hash_to_table_name = HashMap::new();
         while let Some(row) = rows.try_next().await? {
@@ -323,8 +323,7 @@ impl MetadataManager {
 
     /// Return a mapping from tag hashes to the tags in the columns with the names in
     /// `tag_column_names` for the time series in the model table with the name `model_table_name`.
-    /// Returns an [`Error`](sqlx::Error) if the necessary data cannot be retrieved from the
-    /// metadata database.
+    /// Returns an [`Error`] if the necessary data cannot be retrieved from the metadata database.
     pub async fn mapping_from_hash_to_tags(
         &self,
         model_table_name: &str,
@@ -361,8 +360,8 @@ impl MetadataManager {
     }
 
     /// Compute the 64-bit univariate ids of the univariate time series to retrieve from the storage
-    /// engine using the field columns, tag names, and tag values in the query. Returns a
-    /// [`Error`](sqlx::Error) if the necessary data cannot be retrieved from the metadata database.
+    /// engine using the field columns, tag names, and tag values in the query. Returns a [`Error`]
+    /// if the necessary data cannot be retrieved from the metadata database.
     pub async fn compute_univariate_ids_using_fields_and_tags(
         &self,
         table_name: &str,
@@ -419,8 +418,8 @@ impl MetadataManager {
 
     /// Compute the 64-bit univariate ids of the univariate time series to retrieve from the storage
     /// engine using the two queries constructed from the fields, tag names, and tag values in the
-    /// user's query. Returns a [`Result`] with an [`Error`](sqlx::Error) if the data cannot be
-    /// retrieved from the metadata database, otherwise the univariate ids are returned.
+    /// user's query. Returns a [`Result`] with an [`Error`] if the data cannot be retrieved from
+    /// the metadata database, otherwise the univariate ids are returned.
     async fn compute_univariate_ids_using_metadata_database(
         &self,
         query_field_columns: &str,
@@ -480,7 +479,7 @@ impl MetadataManager {
 
     /// Read the rows in the table_metadata table and use these to register tables in Apache Arrow
     /// DataFusion. If the metadata database could not be opened or the table could not be queried,
-    /// return [`sqlx::Error`].
+    /// return [`Error`].
     pub async fn register_tables(&self, context: &Arc<Context>) -> Result<()> {
         let mut rows = sqlx::query("SELECT table_name FROM table_metadata")
             .fetch(&self.metadata_database_pool);
@@ -614,10 +613,11 @@ impl MetadataManager {
                         0.0
                     };
 
+                // query_schema_index is simply cast as a model table contains at most 1024 columns.
                 sqlx::query(insert_statement)
                     .bind(&model_table_metadata.name)
                     .bind(field.name())
-                    .bind(query_schema_index as i64) // TODO: fix usize to size
+                    .bind(query_schema_index as i64)
                     .bind(error_bound)
                     .bind(generated_column_expr)
                     .bind(generated_column_sources)
@@ -630,7 +630,7 @@ impl MetadataManager {
 
     /// Convert the rows in the model_table_metadata table to [`ModelTableMetadata`] and use these
     /// to register model tables in Apache Arrow DataFusion. If the metadata database could not be
-    /// opened or the table could not be queried, return [`sqlx::Error`].
+    /// opened or the table could not be queried, return [`Error`].
     pub async fn register_model_tables(&self, context: &Arc<Context>) -> Result<()> {
         let mut rows = sqlx::query("SELECT table_name, query_schema FROM model_table_metadata")
             .fetch(&self.metadata_database_pool);
@@ -701,7 +701,7 @@ impl MetadataManager {
     }
 
     /// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
-    /// [`Error`](sqlx::Error).
+    /// [`Error`].
     fn convert_blob_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
         let ipc_message = IpcMessage(schema_bytes.into());
         Schema::try_from(ipc_message).map_err(|error| Error::ColumnDecode {
@@ -716,12 +716,12 @@ impl MetadataManager {
     }
 
     /// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides evenly by
-    /// [`mem::size_of::<usize>()`], otherwise [`Error`](sqlx::Error) is returned.
+    /// [`mem::size_of::<usize>()`], otherwise [`Error`] is returned.
     fn convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>> {
         if bytes.len() % mem::size_of::<usize>() != 0 {
             Err(Error::ColumnDecode {
                 index: "generated_column_sources".to_owned(),
-                source: Box::new(ModelarDbError::ConfigurationError(
+                source: Box::new(ModelarDbError::ImplementationError(
                     "Blob is not a vector of usizes".to_owned(),
                 )),
             })
@@ -735,7 +735,7 @@ impl MetadataManager {
     }
 
     /// Return the error bounds for the model table with `table_name` and `query_schema_columns`
-    /// using `connection`. If a model table with `table_name` does not exist, [`sqlx::Error`] is
+    /// using `connection`. If a model table with `table_name` does not exist, [`Error`] is
     /// returned.
     async fn error_bounds(
         &self,
@@ -753,9 +753,10 @@ impl MetadataManager {
             vec![ErrorBound::try_new(0.0).unwrap(); query_schema_columns];
 
         while let Some(row) = rows.try_next().await? {
-            // unwrap() is safe as the error bounds are checked before they are stored.
-            // TODO: fix conversion between i64 and usize
+            // column_index is stored as a i64 as a model table contains at most 1024 columns.
             let error_bound_index: i64 = row.try_get(0)?;
+
+            // unwrap() is safe as the error bounds are checked before they are stored.
             column_to_error_bound[error_bound_index as usize] =
                 ErrorBound::try_new(row.try_get(1)?).unwrap();
         }
@@ -764,8 +765,7 @@ impl MetadataManager {
     }
 
     /// Return the generated columns for the model table with `table_name` and `df_schema` using
-    /// `connection`. If a model table with `table_name` does not exist, [`sqlx::Error`] is
-    /// returned.
+    /// `connection`. If a model table with `table_name` does not exist, [`Error`] is returned.
     async fn generated_columns(
         &self,
         table_name: &str,
@@ -781,10 +781,10 @@ impl MetadataManager {
         let mut generated_columns = vec![None; df_schema.fields().len()];
 
         while let Some(row) = rows.try_next().await? {
-            if let Some(original_expr) = row.try_get::<Option<String>, usize>(1)? {
+            if let Some(original_expr) = row.try_get::<Option<&str>, _>(1)? {
                 // unwrap() is safe as the expression is checked before it is written to the database.
-                let expr = parser::parse_sql_expression(df_schema, &original_expr).unwrap();
-                let source_columns = row.try_get::<Option<&[u8]>, usize>(2)?.unwrap();
+                let expr = parser::parse_sql_expression(df_schema, original_expr).unwrap();
+                let source_columns = row.try_get::<Option<&[u8]>, _>(2)?.unwrap();
 
                 let generated_column = GeneratedColumn {
                     expr,
@@ -793,7 +793,7 @@ impl MetadataManager {
                     original_expr: None,
                 };
 
-                // TODO: fix conversion between i64 and usize
+                // column_index is stored as a i64 as a model table contains at most 1024 columns.
                 let generated_columns_index: i64 = row.try_get(0)?;
                 generated_columns[generated_columns_index as usize] = Some(generated_column);
             }
@@ -912,7 +912,8 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap()
-                .get::<String, usize>(1),
+                .try_get::<&str, _>(1)
+                .unwrap(),
             "tag1"
         );
     }
@@ -1130,7 +1131,7 @@ mod tests {
             .fetch("SELECT table_name FROM table_metadata");
 
         let row = rows.try_next().await.unwrap().unwrap();
-        let retrieved_table_name = row.try_get::<String, usize>(0).unwrap();
+        let retrieved_table_name = row.try_get::<&str, _>(0).unwrap();
         assert_eq!(table_name, retrieved_table_name);
 
         assert!(rows.try_next().await.unwrap().is_none());
@@ -1182,10 +1183,10 @@ mod tests {
             .fetch("SELECT table_name, query_schema FROM model_table_metadata");
 
         let row = rows.try_next().await.unwrap().unwrap();
-        assert_eq!("model_table", row.try_get::<String, usize>(0).unwrap());
+        assert_eq!("model_table", row.try_get::<&str, _>(0).unwrap());
         assert_eq!(
             MetadataManager::convert_schema_to_blob(&model_table_metadata.query_schema).unwrap(),
-            row.try_get::<Vec<u8>, usize>(1).unwrap()
+            row.try_get::<Vec<u8>, _>(1).unwrap()
         );
 
         assert!(rows.try_next().await.unwrap().is_none());
@@ -1197,20 +1198,20 @@ mod tests {
         );
 
         let row = rows.try_next().await.unwrap().unwrap();
-        assert_eq!("model_table", row.get::<String, usize>(0));
-        assert_eq!("field_1", row.get::<String, usize>(1));
-        assert_eq!(1, row.get::<i32, usize>(2));
-        assert_eq!(1.0, row.get::<f32, usize>(3));
-        assert_eq!(None, row.get::<Option<String>, usize>(4));
-        assert_eq!(None, row.get::<Option<Vec<u8>>, usize>(5));
+        assert_eq!("model_table", row.try_get::<&str, _>(0).unwrap());
+        assert_eq!("field_1", row.try_get::<&str, _>(1).unwrap());
+        assert_eq!(1, row.try_get::<i32, _>(2).unwrap());
+        assert_eq!(1.0, row.try_get::<f32, _>(3).unwrap());
+        assert_eq!(None, row.try_get::<Option<&str>, _>(4).unwrap());
+        assert_eq!(None, row.try_get::<Option<Vec<u8>>, _>(5).unwrap());
 
         let row = rows.try_next().await.unwrap().unwrap();
-        assert_eq!("model_table", row.get::<String, usize>(0));
-        assert_eq!("field_2", row.get::<String, usize>(1));
-        assert_eq!(2, row.get::<i32, usize>(2));
-        assert_eq!(5.0, row.get::<f32, usize>(3));
-        assert_eq!(None, row.get::<Option<String>, usize>(4));
-        assert_eq!(None, row.get::<Option<Vec<u8>>, usize>(5));
+        assert_eq!("model_table", row.try_get::<&str, _>(0).unwrap());
+        assert_eq!("field_2", row.try_get::<&str, _>(1).unwrap());
+        assert_eq!(2, row.try_get::<i32, _>(2).unwrap());
+        assert_eq!(5.0, row.try_get::<f32, _>(3).unwrap());
+        assert_eq!(None, row.try_get::<Option<&str>, _>(4).unwrap());
+        assert_eq!(None, row.try_get::<Option<Vec<u8>>, _>(5).unwrap());
 
         assert!(rows.try_next().await.unwrap().is_none());
     }

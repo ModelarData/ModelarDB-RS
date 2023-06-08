@@ -33,6 +33,8 @@ pub enum ModelarDbError {
     ConfigurationError(String),
     /// Error returned when failing to retrieve data from the storage engine.
     DataRetrievalError(String),
+    /// Error returned when something happens that should be impossible.
+    ImplementationError(String),
 }
 
 impl Error for ModelarDbError {}
@@ -46,6 +48,9 @@ impl Display for ModelarDbError {
             }
             ModelarDbError::DataRetrievalError(reason) => {
                 write!(f, "Data Retrieval Error: {reason}")
+            }
+            ModelarDbError::ImplementationError(reason) => {
+                write!(f, "Implementation Error: {reason}")
             }
         }
     }
