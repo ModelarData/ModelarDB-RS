@@ -513,7 +513,8 @@ mod tests {
     use modelardb_compression::ErrorBound;
     use ringbuf::Rb;
 
-    use crate::metadata::{test_util, MetadataManager};
+    use crate::common_test;
+    use crate::metadata::MetadataManager;
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
 
     const CURRENT_BATCH_INDEX: u64 = 0;
@@ -971,7 +972,7 @@ mod tests {
     async fn create_managers(
         path: &Path,
     ) -> (MetadataManager, UncompressedDataManager, ModelTableMetadata) {
-        let mut metadata_manager = test_util::test_metadata_manager(path);
+        let mut metadata_manager = common_test::test_metadata_manager(path);
 
         // Ensure the expected metadata is available through the metadata manager.
         let query_schema = Arc::new(Schema::new(vec![

@@ -644,6 +644,7 @@ pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::io::Write;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -652,11 +653,13 @@ mod tests {
     use object_store::local::LocalFileSystem;
     use tempfile::{self, TempDir};
 
+    use crate::common_test;
+
     // Tests for writing and reading Apache Parquet files.
     #[test]
     fn test_write_batch_to_apache_parquet_file() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let batch = test_util::compressed_segments_record_batch();
+        let batch = common_test::compressed_segments_record_batch();
 
         let apache_parquet_path = temp_dir.path().join("test.parquet");
         StorageEngine::write_batch_to_apache_parquet_file(
@@ -699,7 +702,7 @@ mod tests {
 
     fn write_to_file_and_assert_failed(file_name: String) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let batch = test_util::compressed_segments_record_batch();
+        let batch = common_test::compressed_segments_record_batch();
 
         let apache_parquet_path = temp_dir.path().join(file_name);
         let result = StorageEngine::write_batch_to_apache_parquet_file(
@@ -761,7 +764,7 @@ mod tests {
         file_name: String,
     ) -> (TempDir, PathBuf, RecordBatch) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let batch = test_util::compressed_segments_record_batch();
+        let batch = common_test::compressed_segments_record_batch();
 
         let apache_parquet_path = temp_dir.path().join(file_name);
         StorageEngine::write_batch_to_apache_parquet_file(
@@ -856,64 +859,5 @@ mod tests {
         // Ensure that the builders in the metric has been reset.
         assert_eq!(metric.timestamps.len(), 0);
         assert_eq!(metric.values.len(), 0);
-    }
-}
-
-#[cfg(test)]
-/// Separate module for compressed segments utility functions since they are needed to test multiple
-/// modules in the storage engine.
-pub mod test_util {
-    use std::sync::Arc;
-
-    use datafusion::arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt8Array};
-    use datafusion::arrow::record_batch::RecordBatch;
-    use modelardb_common::schemas::COMPRESSED_SCHEMA;
-    use modelardb_common::types::{TimestampArray, ValueArray};
-
-    pub const COMPRESSED_SEGMENTS_SIZE: usize = 1399;
-
-    /// Return a [`RecordBatch`] containing three compressed segments.
-    pub fn compressed_segments_record_batch() -> RecordBatch {
-        compressed_segments_record_batch_with_time(0, 0.0)
-    }
-
-    /// Return a [`RecordBatch`] containing three compressed segments. The compressed segments time
-    /// range is from `time_ms` to `time_ms` + 3, while the value range is from `offset` + 5.2 to
-    /// `offset` + 34.2.
-    pub fn compressed_segments_record_batch_with_time(time_ms: i64, offset: f32) -> RecordBatch {
-        let start_times = vec![time_ms, time_ms + 2, time_ms + 4];
-        let end_times = vec![time_ms + 1, time_ms + 3, time_ms + 5];
-        let min_values = vec![offset + 5.2, offset + 10.3, offset + 30.2];
-        let max_values = vec![offset + 20.2, offset + 12.2, offset + 34.2];
-
-        let univariate_id = UInt64Array::from(vec![1, 2, 3]);
-        let model_type_id = UInt8Array::from(vec![2, 3, 3]);
-        let start_time = TimestampArray::from(start_times);
-        let end_time = TimestampArray::from(end_times);
-        let timestamps = BinaryArray::from_vec(vec![b"", b"", b""]);
-        let min_value = ValueArray::from(min_values);
-        let max_value = ValueArray::from(max_values);
-        let values = BinaryArray::from_vec(vec![b"1111", b"1000", b"0000"]);
-        let residuals = BinaryArray::from_vec(vec![b"", b"", b""]);
-        let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
-
-        let schema = COMPRESSED_SCHEMA.clone();
-
-        RecordBatch::try_new(
-            schema.0,
-            vec![
-                Arc::new(univariate_id),
-                Arc::new(model_type_id),
-                Arc::new(start_time),
-                Arc::new(end_time),
-                Arc::new(timestamps),
-                Arc::new(min_value),
-                Arc::new(max_value),
-                Arc::new(values),
-                Arc::new(residuals),
-                Arc::new(error),
-            ],
-        )
-        .unwrap()
     }
 }

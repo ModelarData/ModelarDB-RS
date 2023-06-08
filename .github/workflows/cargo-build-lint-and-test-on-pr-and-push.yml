@@ -56,7 +56,7 @@ jobs:
     - name: Cargo Machete --with-metadata
       run: cargo machete --with-metadata
     - name: Cargo Test
-      run: cargo test --verbose --all-targets
+      run: cargo test --verbose --all-targets -- --nocapture
 
     - name: grcov --output-types html
       run: grcov . --source-dir . --binary-path ./target/debug/ --output-types html --branch --ignore-not-existing -o ./target/debug/coverage/
