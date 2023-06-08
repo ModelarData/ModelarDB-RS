@@ -47,7 +47,7 @@ pub const COMPRESSED_SEGMENTS_SIZE: usize = 1399;
 /// Return a [`Context`] with the metadata manager created by `test_metadata_manager()` and the data
 /// folder set to `path`.
 pub async fn test_context(path: &Path) -> Arc<Context> {
-    let metadata_manager = test_metadata_manager(path);
+    let metadata_manager = test_metadata_manager(path).await;
 
     let session = test_session_context();
     let object_store_url = storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST
@@ -74,8 +74,10 @@ pub async fn test_context(path: &Path) -> Arc<Context> {
 /// Return a [`MetadataManager`] with 5 MiBs reserved for uncompressed data, 5 MiBs reserved for
 /// compressed data, and the data folder set to `path`. Reducing the amount of reserved memory
 /// makes it faster to run unit tests.
-pub fn test_metadata_manager(path: &Path) -> MetadataManager {
-    let mut metadata_manager = MetadataManager::try_new(path, ServerMode::Edge).unwrap();
+pub async fn test_metadata_manager(path: &Path) -> MetadataManager {
+    let mut metadata_manager = MetadataManager::try_new(path, ServerMode::Edge)
+        .await
+        .unwrap();
 
     metadata_manager.uncompressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB
     metadata_manager.compressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB

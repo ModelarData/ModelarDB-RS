@@ -1,6 +1,6 @@
 # ModelarDB Development
-This document describes the structure of the code and general considerations to consider when doing further development. 
-As such, this document should be used as a guideline when contributing to the repository. 
+This document describes the structure of the code and general considerations to consider when doing further development.
+As such, this document should be used as a guideline when contributing to the repository.
 
 Contributions to all aspects of ModelarDB are highly appreciated and do not need to be in the form of code.
 For example, contributions can be:
@@ -26,8 +26,8 @@ The ModelarDB project consists of the following crates:
 - [modelardb_server](https://github.com/ModelarData/ModelarDB-RS/tree/master/crates/modelardb_server) - The ModelarDB server in the form of the binary `modelardbd`.
 
 ## Components
-Each major component in the ModelarDB server is described in detail to support further development of the components 
-and ease integration between components. We also provide a larger overview of the architecture of ModelarDB, focusing 
+Each major component in the ModelarDB server is described in detail to support further development of the components
+and ease integration between components. We also provide a larger overview of the architecture of ModelarDB, focusing
 on the integration between the components to accomplish the goals of the system.
 
 TODO: Add link to architecture documentation when new architecture is implemented and documented.
@@ -41,15 +41,15 @@ The ModelarDB server consists of the following major components:
 
 ## Development
 All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md)
-using [rustfmt](https://github.com/rust-lang/rustfmt). Subjects not covered in the style guide, or requirements specific 
+using [rustfmt](https://github.com/rust-lang/rustfmt). Subjects not covered in the style guide, or requirements specific
 to this repository, are covered here.
 
 ### Documentation
-All public and private functions must have an accompanying doc comment that describes the purpose of the function. For 
-complex functions, the doc comment should also include a description of each parameter, the return value, 
+All public and private functions must have an accompanying doc comment that describes the purpose of the function. For
+complex functions, the doc comment should also include a description of each parameter, the return value,
 and, if beneficial, examples.
 
-All modules must have an accompanying doc comment that describes the general functionality of the module. A brief 
+All modules must have an accompanying doc comment that describes the general functionality of the module. A brief
 description of the public functions, structs, enums, or other central elements of the module can be included.
 
 ### Testing and Linting
@@ -64,14 +64,15 @@ In addition, the following commands must not return any warnings or errors for t
 - [cargo test --all-targets](https://doc.rust-lang.org/cargo/commands/cargo-test.html)
 
 ### Crates
-To avoid confusion and unnecessary dependencies, a list of crates used in the project is included. Note that this only 
+To avoid confusion and unnecessary dependencies, a list of crates used in the project is included. Note that this only
 includes crates used for purposes such as logging, where multiple crates provide similar functionality.
 
 - Logging - [tracing](https://crates.io/crates/tracing)
 - Async Runtime - [tokio](https://crates.io/crates/tokio)
 - gRPC - [tonic](https://crates.io/crates/tonic)
 - UUID - [uuid](https://crates.io/crates/uuid)
-- SQLite - [rusqlite](https://crates.io/crates/rusqlite)
+- Database Access - [sqlx](https://crates.io/crates/sqlx)
+- TLS - [rustls](https://crates.io/crates/rustls)
 - Memory Allocation - [snmalloc-rs](https://crates.io/crates/snmalloc-rs)
 - Hardware Information - [sysinfo](https://crates.io/crates/sysinfo)
 - Property-based Testing - [proptest](https://crates.io/crates/proptest)

@@ -35,9 +35,9 @@ object_store = { workspace = true, features = ["aws", "azure"] }
 once_cell.workspace = true
 parquet = { workspace = true, features = ["object_store"] }
 ringbuf.workspace = true
-rusqlite = { workspace = true, features = ["bundled"] }
 snmalloc-rs.workspace = true
 sqlparser.workspace = true
+sqlx = { workspace = true, features = ["runtime-tokio-rustls", "sqlite"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tokio-stream.workspace = true
 tonic.workspace = true

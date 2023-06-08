@@ -447,7 +447,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_record_batch() {
         let record_batch = common_test::compressed_segments_record_batch();
-        let (temp_dir, data_manager) = create_compressed_data_manager();
+        let (temp_dir, data_manager) = create_compressed_data_manager().await;
 
         let local_data_folder = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
         let table_folder =
@@ -479,7 +479,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_insert_compressed_segment_into_new_compressed_data_buffer() {
         let segments = common_test::compressed_segments_record_batch();
-        let (_temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
         let key = (TABLE_NAME.to_owned(), COLUMN_INDEX);
 
         data_manager
@@ -502,7 +502,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_insert_compressed_segment_into_existing_compressed_data_buffer() {
         let segments = common_test::compressed_segments_record_batch();
-        let (_temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
         let key = (TABLE_NAME.to_owned(), COLUMN_INDEX);
 
         data_manager
@@ -533,7 +533,7 @@ mod tests {
     #[tokio::test]
     async fn test_save_first_compressed_data_buffer_if_out_of_memory() {
         let segments = common_test::compressed_segments_record_batch();
-        let (_temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
         let reserved_memory = data_manager.compressed_remaining_memory_in_bytes as usize;
 
         // Insert compressed data into the storage engine until data is saved to Apache Parquet.
@@ -555,7 +555,7 @@ mod tests {
     #[tokio::test]
     async fn test_remaining_bytes_decremented_when_inserting_compressed_segments() {
         let segments = common_test::compressed_segments_record_batch();
-        let (_temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
         let reserved_memory = data_manager.compressed_remaining_memory_in_bytes;
 
         data_manager
@@ -570,7 +570,7 @@ mod tests {
     #[tokio::test]
     async fn test_remaining_memory_incremented_when_saving_compressed_segments() {
         let segments = common_test::compressed_segments_record_batch();
-        let (_temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
 
         data_manager
             .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments.clone())
@@ -598,9 +598,9 @@ mod tests {
     }
 
     /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
-    fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
+    async fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = common_test::test_metadata_manager(temp_dir.path());
+        let metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
 
         let local_data_folder = temp_dir.path().to_path_buf();
         (
@@ -618,7 +618,7 @@ mod tests {
     // Tests for save_and_get_saved_compressed_files().
     #[tokio::test]
     async fn test_can_get_compressed_file_for_table() {
-        let (temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
 
         // Insert compressed segments into the same table.
         let segment = common_test::compressed_segments_record_batch();
@@ -651,7 +651,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_no_compressed_files_for_non_existent_table() {
-        let (temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
@@ -670,7 +670,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_get_compressed_file_with_start_time() {
-        let (temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
         let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
 
         // If we have a start time after the first segments ends, only the file containing the
@@ -700,7 +700,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_get_compressed_file_with_min_value() {
-        let (temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
         let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
 
         // If we have a min value higher then the max value in the first segment, only the file
@@ -730,7 +730,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_get_compressed_file_with_end_time() {
-        let (temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
         let (_segment_1, segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
 
         // If we have an end time before the second segment starts, only the file containing the
@@ -760,7 +760,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_get_compressed_file_with_max_value() {
-        let (temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
         let (_segment_1, segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
 
         // If we have a max value lower then the min value in the second segment, only the file
@@ -790,7 +790,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_get_compressed_files_with_start_time_and_end_time() {
-        let (temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
 
         // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
         let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
@@ -832,7 +832,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_get_compressed_files_with_min_value_and_max_value() {
-        let (temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
 
         // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
         let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
@@ -913,7 +913,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cannot_get_compressed_files_where_end_time_is_before_start_time() {
-        let (_temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
 
         let segment = common_test::compressed_segments_record_batch();
         data_manager
@@ -941,7 +941,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cannot_get_compressed_files_where_max_value_is_smaller_than_min_value() {
-        let (_temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
 
         let segment = common_test::compressed_segments_record_batch();
         data_manager
@@ -970,7 +970,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_get_saved_compressed_files() {
         let segments = common_test::compressed_segments_record_batch();
-        let (temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
 
         data_manager
             .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments.clone())
@@ -1013,7 +1013,7 @@ mod tests {
     #[tokio::test]
     async fn test_save_in_memory_compressed_data_when_getting_saved_compressed_files() {
         let segments = common_test::compressed_segments_record_batch_with_time(1000, 0.0);
-        let (temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
 
         data_manager
             .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments)
@@ -1052,7 +1052,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_no_saved_compressed_files_from_non_existent_table() {
         let segments = common_test::compressed_segments_record_batch();
-        let (temp_dir, mut data_manager) = create_compressed_data_manager();
+        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
 
         data_manager
             .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments)
