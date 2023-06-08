@@ -35,14 +35,19 @@ use rand::{Rng, SeedableRng};
 /// to the `MODELARDB_TEST_SEED` environment variable as 32 bytes, each separated by a space.
 static RANDOM_NUMBER_SEED: Lazy<[u8; 32]> = Lazy::new(|| {
     match env::var("MODELARDB_TEST_SEED") {
-        Ok(seed) => seed
-            .split(' ')
-            .map(|maybe_byte| maybe_byte.parse::<u8>())
-            .collect::<Result<Vec<u8>, ParseIntError>>()
-            .map_err(|_| "MODELARDB_TEST_SEED must be 32 bytes, each separated by a space.")
-            .unwrap()
-            .try_into()
-            .unwrap(),
+        Ok(seed) => {
+            let message = "MODELARDB_TEST_SEED must be 32 bytes, each separated by a space.";
+
+            seed
+                .split(' ')
+                .map(|maybe_byte| maybe_byte.parse::<u8>())
+                .collect::<Result<Vec<u8>, ParseIntError>>()
+                .map_err(|_| message)
+                .unwrap()
+                .try_into()
+                .map_err(|_| message)
+                .unwrap()
+        },
         Err(_) => {
             let random_number_seed = rand::random::<[u8; 32]>();
 
