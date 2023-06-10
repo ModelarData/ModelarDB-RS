@@ -39,12 +39,13 @@ use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::execution::options::ParquetReadOptions;
 use futures::TryStreamExt;
+use log::LevelFilter;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::UnivariateId;
 use modelardb_compression::ErrorBound;
 use sqlx::error::Error;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
-use sqlx::{Executor, Result, Row, SqlitePool};
+use sqlx::{ConnectOptions, Executor, Result, Row, SqlitePool};
 use tracing::{error, info, warn};
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
@@ -88,9 +89,11 @@ impl MetadataManager {
         }
 
         // Specify the metadata database's path and that it should be created if it does not exist.
-        let options = SqliteConnectOptions::new()
+        let mut options = SqliteConnectOptions::new()
             .filename(local_data_folder.join(METADATA_DATABASE_NAME))
             .create_if_missing(true);
+ 
+        options.log_statements(LevelFilter::Debug);
 
         // Create the metadata manager with the default values.
         let metadata_manager = Self {
