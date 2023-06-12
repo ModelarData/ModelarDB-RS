@@ -16,6 +16,8 @@
 //! Management of the system's configuration, including the server mode, and the amount of
 //! reserved memory for uncompressed and compressed data.
 
+use modelardb_common::errors::ModelarDbError;
+
 use crate::ServerMode;
 
 /// Store's the system's configuration and provides functionality for updating the configuration.
@@ -45,7 +47,23 @@ impl ConfigurationManager {
         &self.uncompressed_reserved_memory_in_bytes
     }
 
+    /// TODO: If the system currently uses less than `new_uncompressed_reserved_memory_in_bytes` bytes
+    ///       for uncompressed memory, set the new value and return [`Ok`], otherwise return
+    ///       [`ConfigurationError`](ModelarDbError::ConfigurationError).
+    fn set_uncompressed_reserved_memory_in_bytes(&mut self, new_uncompressed_reserved_memory_in_bytes: usize) -> Result<(), ModelarDbError> {
+        self.uncompressed_reserved_memory_in_bytes = new_uncompressed_reserved_memory_in_bytes;
+        Ok(())
+    }
+
     fn compressed_reserved_memory_in_bytes(&self) -> &usize {
         &self.compressed_reserved_memory_in_bytes
+    }
+
+    /// TODO: If the system currently uses less than `new_compressed_reserved_memory_in_bytes` bytes
+    ///       for compressed memory, set the new value and return [`Ok`], otherwise return
+    ///       [`ConfigurationError`](ModelarDbError::ConfigurationError).
+    fn set_compressed_reserved_memory_in_bytes(&mut self, new_compressed_reserved_memory_in_bytes: usize) -> Result<(), ModelarDbError> {
+        self.compressed_reserved_memory_in_bytes = new_compressed_reserved_memory_in_bytes;
+        Ok(())
     }
 }

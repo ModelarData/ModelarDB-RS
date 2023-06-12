@@ -29,7 +29,8 @@ use std::fmt::{Display, Formatter};
 pub enum ModelarDbError {
     /// Error returned by the model types.
     CompressionError(String),
-    /// Error returned when failing to create a new instance of a struct.
+    /// Error returned when failing to create a new instance of a struct or when updating a struct
+    /// field with an invalid value.
     ConfigurationError(String),
     /// Error returned when failing to retrieve data from the storage engine.
     DataRetrievalError(String),
