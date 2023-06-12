@@ -21,11 +21,11 @@ use crate::ServerMode;
 /// Store's the system's configuration and provides functionality for updating the configuration.
 pub struct ConfigurationManager {
     /// The mode of the server used to determine the behaviour when modifying the remote object store.
-    pub server_mode: ServerMode,
+    server_mode: ServerMode,
     /// Amount of memory to reserve for storing uncompressed data buffers.
-    pub uncompressed_reserved_memory_in_bytes: usize,
+    uncompressed_reserved_memory_in_bytes: usize,
     /// Amount of memory to reserve for storing compressed data buffers.
-    pub compressed_reserved_memory_in_bytes: usize,
+    compressed_reserved_memory_in_bytes: usize,
 }
 
 impl ConfigurationManager {
@@ -35,5 +35,17 @@ impl ConfigurationManager {
             uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
             compressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
         }
+    }
+
+    fn server_mode(&self) -> &ServerMode {
+        &self.server_mode
+    }
+
+    fn uncompressed_reserved_memory_in_bytes(&self) -> &usize {
+        &self.uncompressed_reserved_memory_in_bytes
+    }
+
+    fn compressed_reserved_memory_in_bytes(&self) -> &usize {
+        &self.compressed_reserved_memory_in_bytes
     }
 }
