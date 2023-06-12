@@ -25,6 +25,7 @@ mod parser;
 mod query;
 mod remote;
 mod storage;
+mod configuration;
 
 use std::path::PathBuf;
 use std::sync::Arc;
