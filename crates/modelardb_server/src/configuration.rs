@@ -35,7 +35,7 @@ impl ConfigurationManager {
         Self {
             server_mode,
             uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
-            compressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
+            compressed_reserved_memory_in_bytes: 512 * 1024 * 1024,   // 512 MiB
         }
     }
 
@@ -47,10 +47,16 @@ impl ConfigurationManager {
         &self.uncompressed_reserved_memory_in_bytes
     }
 
+    // TODO: The remaining memory in the storage engine needs to be updated when updating these.
+    // TODO: Check if other places need to be updated.
+
     /// TODO: If the system currently uses less than `new_uncompressed_reserved_memory_in_bytes` bytes
     ///       for uncompressed memory, set the new value and return [`Ok`], otherwise return
     ///       [`ConfigurationError`](ModelarDbError::ConfigurationError).
-    fn set_uncompressed_reserved_memory_in_bytes(&mut self, new_uncompressed_reserved_memory_in_bytes: usize) -> Result<(), ModelarDbError> {
+    fn set_uncompressed_reserved_memory_in_bytes(
+        &mut self,
+        new_uncompressed_reserved_memory_in_bytes: usize,
+    ) -> Result<(), ModelarDbError> {
         self.uncompressed_reserved_memory_in_bytes = new_uncompressed_reserved_memory_in_bytes;
         Ok(())
     }
@@ -62,7 +68,10 @@ impl ConfigurationManager {
     /// TODO: If the system currently uses less than `new_compressed_reserved_memory_in_bytes` bytes
     ///       for compressed memory, set the new value and return [`Ok`], otherwise return
     ///       [`ConfigurationError`](ModelarDbError::ConfigurationError).
-    fn set_compressed_reserved_memory_in_bytes(&mut self, new_compressed_reserved_memory_in_bytes: usize) -> Result<(), ModelarDbError> {
+    fn set_compressed_reserved_memory_in_bytes(
+        &mut self,
+        new_compressed_reserved_memory_in_bytes: usize,
+    ) -> Result<(), ModelarDbError> {
         self.compressed_reserved_memory_in_bytes = new_compressed_reserved_memory_in_bytes;
         Ok(())
     }
