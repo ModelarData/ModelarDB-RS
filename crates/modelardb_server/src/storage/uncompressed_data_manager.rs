@@ -72,6 +72,7 @@ impl UncompressedDataManager {
     /// [`IOError`] is returned.
     pub(super) async fn try_new(
         local_data_folder: PathBuf,
+        uncompressed_remaining_memory_in_bytes: usize,
         metadata_manager: &MetadataManager,
         compress_directly: bool,
         used_disk_space_metric: Arc<RwLock<Metric>>,
@@ -119,8 +120,7 @@ impl UncompressedDataManager {
             current_batch_index: 0,
             active_uncompressed_data_buffers: HashMap::new(),
             finished_uncompressed_data_buffers: finished_data_buffers,
-            uncompressed_remaining_memory_in_bytes: metadata_manager
-                .uncompressed_reserved_memory_in_bytes,
+            uncompressed_remaining_memory_in_bytes,
             compress_directly,
             used_uncompressed_memory_metric: Metric::new(),
             ingested_data_points_metric: Metric::new(),

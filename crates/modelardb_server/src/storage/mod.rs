@@ -61,6 +61,7 @@ use tonic::codegen::Bytes;
 use tonic::Status;
 use tracing::debug;
 use uuid::{uuid, Uuid};
+use crate::configuration::ConfigurationManager;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
@@ -117,6 +118,7 @@ impl StorageEngine {
     pub async fn try_new(
         local_data_folder: PathBuf,
         remote_data_folder: Option<Arc<dyn ObjectStore>>,
+        configuration_manager: ConfigurationManager,
         metadata_manager: MetadataManager,
         compress_directly: bool,
     ) -> Result<Self, IOError> {
@@ -127,6 +129,7 @@ impl StorageEngine {
         // Create the uncompressed data manager.
         let uncompressed_data_manager = UncompressedDataManager::try_new(
             local_data_folder.clone(),
+            configuration_manager.uncompressed_reserved_memory_in_bytes().clone(),
             &metadata_manager,
             compress_directly,
             used_disk_space_metric.clone(),
@@ -151,7 +154,7 @@ impl StorageEngine {
         let compressed_data_manager = CompressedDataManager::try_new(
             data_transfer,
             local_data_folder,
-            metadata_manager.compressed_reserved_memory_in_bytes,
+            configuration_manager.compressed_reserved_memory_in_bytes().clone(),
             used_disk_space_metric,
         )?;
 

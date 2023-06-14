@@ -21,6 +21,7 @@ use modelardb_common::errors::ModelarDbError;
 use crate::ServerMode;
 
 /// Store's the system's configuration and provides functionality for updating the configuration.
+#[derive(Clone)]
 pub struct ConfigurationManager {
     /// The mode of the server used to determine the behaviour when modifying the remote object store.
     server_mode: ServerMode,

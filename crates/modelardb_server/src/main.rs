@@ -134,6 +134,7 @@ fn main() -> Result<(), String> {
                 StorageEngine::try_new(
                     data_folders.local_data_folder,
                     data_folders.remote_data_folder,
+                    configuration_manager.clone(),
                     metadata_manager.clone(),
                     true,
                 )
