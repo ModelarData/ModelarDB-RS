@@ -39,11 +39,11 @@ impl ConfigurationManager {
         }
     }
 
-    fn server_mode(&self) -> &ServerMode {
+    pub(crate) fn server_mode(&self) -> &ServerMode {
         &self.server_mode
     }
 
-    fn uncompressed_reserved_memory_in_bytes(&self) -> &usize {
+    pub(crate) fn uncompressed_reserved_memory_in_bytes(&self) -> &usize {
         &self.uncompressed_reserved_memory_in_bytes
     }
 
@@ -53,7 +53,7 @@ impl ConfigurationManager {
     /// TODO: If the system currently uses less than `new_uncompressed_reserved_memory_in_bytes` bytes
     ///       for uncompressed memory, set the new value and return [`Ok`], otherwise return
     ///       [`ConfigurationError`](ModelarDbError::ConfigurationError).
-    fn set_uncompressed_reserved_memory_in_bytes(
+    pub(crate) fn set_uncompressed_reserved_memory_in_bytes(
         &mut self,
         new_uncompressed_reserved_memory_in_bytes: usize,
     ) -> Result<(), ModelarDbError> {
@@ -61,14 +61,14 @@ impl ConfigurationManager {
         Ok(())
     }
 
-    fn compressed_reserved_memory_in_bytes(&self) -> &usize {
+    pub(crate) fn compressed_reserved_memory_in_bytes(&self) -> &usize {
         &self.compressed_reserved_memory_in_bytes
     }
 
     /// TODO: If the system currently uses less than `new_compressed_reserved_memory_in_bytes` bytes
     ///       for compressed memory, set the new value and return [`Ok`], otherwise return
     ///       [`ConfigurationError`](ModelarDbError::ConfigurationError).
-    fn set_compressed_reserved_memory_in_bytes(
+    pub(crate) fn set_compressed_reserved_memory_in_bytes(
         &mut self,
         new_compressed_reserved_memory_in_bytes: usize,
     ) -> Result<(), ModelarDbError> {

@@ -760,7 +760,7 @@ impl FlightService for FlightServiceHandler {
             }))))
         } else if action.r#type == "UpdateRemoteObjectStore" {
             // If on a cloud node, both the remote data folder and the query data folder should be updated.
-            if self.context.metadata_manager.server_mode == ServerMode::Cloud {
+            if self.context.configuration_manager.server_mode() == &ServerMode::Cloud {
                 // TODO: The query data folder should be updated in the session context.
                 return Err(Status::unimplemented(
                     "Currently not possible to update remote object store on cloud nodes.",
