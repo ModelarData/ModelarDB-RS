@@ -506,7 +506,7 @@ impl MetadataManager {
     /// * The max value is smaller than the min value in `compressed_file`.
     /// * The metadata database could not be modified.
     /// * A model table with `model_table_name` does not exist.
-    pub async fn save_compressed_file_for_column_in_model_table(
+    pub async fn save_compressed_file(
         &self,
         model_table_name: &str,
         query_schema_index: usize,
@@ -518,7 +518,7 @@ impl MetadataManager {
             "INSERT INTO {model_table_name}_compressed_files VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
         );
 
-        Self::create_query_that_save_compressed_file_for_column_in_model_table(
+        Self::create_insert_compressed_file_query(
             &insert_statement,
             query_schema_index,
             compressed_file,
@@ -538,7 +538,7 @@ impl MetadataManager {
     /// * Less than the number of files in `compressed_files_to_delete` was deleted.
     /// * The metadata database could not be modified.
     /// * A model table with `model_table_name` does not exist.
-    pub async fn replace_compressed_files_for_column_in_model_table(
+    pub async fn replace_compressed_files(
         &self,
         model_table_name: &str,
         query_schema_index: usize,
@@ -573,6 +573,7 @@ impl MetadataManager {
         // Remove the last comma, unwrap() is safe as compressed_files_to_delete cannot be empty.
         compress_files_to_delete_in.pop().unwrap();
 
+        // sqlx does not yet support binding arrays to IN (...) and recommends generating them.
         // https://github.com/launchbadge/sqlx/blob/main/FAQ.md#how-can-i-do-a-select--where-foo-in--query
         let delete_from_result = sqlx::query(
             format!(
@@ -599,7 +600,7 @@ impl MetadataManager {
                 "INSERT INTO {model_table_name}_compressed_files VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
             );
 
-            Self::create_query_that_save_compressed_file_for_column_in_model_table(
+            Self::create_insert_compressed_file_query(
                 &insert_statement,
                 query_schema_index,
                 compressed_file,
@@ -637,7 +638,7 @@ impl MetadataManager {
 
     /// Create a [`Query`] that, when executed, stores `compressed_file` in the metadata database
     /// for the column at `query_schema_index` using `insert_statement`.
-    fn create_query_that_save_compressed_file_for_column_in_model_table<'a>(
+    fn create_insert_compressed_file_query<'a>(
         insert_statement: &'a str,
         query_schema_index: usize,
         compressed_file: &'a CompressedFile,
@@ -655,16 +656,16 @@ impl MetadataManager {
             .bind(max_value)
     }
 
-    /// Retrieve the compressed files that correspond to the column at `column_index` in the model
-    /// table with `model_table_name` within the given range of time and value. The files are
-    /// returned in sorted order by their start time. If no files belong to the column at
+    /// Retrieve the names of the compressed files that correspond to the column at `column_index`
+    /// in the model table with `model_table_name` within the given range of time and value. The
+    /// files are returned in sorted order by their start time. If no files belong to the column at
     /// `query_schema_index` for the table with `model_table_name` an empty [`Vec`] is returned,
     /// while an [`Error`] is returned if:
     /// * The end time is before the start time.
     /// * The max value is smaller than the min value.
     /// * The metadata database could not be accessed.
     /// * A model table with `model_table_name` does not exist.
-    pub async fn compressed_files_for_column_in_model_table(
+    pub async fn compressed_files(
         &self,
         model_table_name: &str,
         query_schema_index: usize,
@@ -673,7 +674,7 @@ impl MetadataManager {
         min_value: Option<Value>,
         max_value: Option<Value>,
     ) -> Result<Vec<Uuid>> {
-        // Set default values for the parts of the time and value range that is not defined.
+        // Set default values for the parts of the time and value range that are not defined.
         let start_time = start_time.unwrap_or(0);
         let end_time = end_time.unwrap_or(Timestamp::MAX);
 
@@ -724,8 +725,8 @@ impl MetadataManager {
         Ok(file_names)
     }
 
-    /// Rewrite the special values [`Value`] (Negative Infinity, Infinity, and NaN) can represent to
-    /// the closets normal values in [`Value`] to simplify storing and querying them through SQLite.
+    /// Rewrite the special values in [`Value`] (Negative Infinity, Infinity, and NaN) to the closet
+    /// normal values in [`Value`] to simplify storing and querying them through the metadata database.
     fn rewrite_special_value_to_normal_value(value: Value) -> Value {
         // Pattern matching on float values is not supported in Rust.
         if value == Value::NEG_INFINITY {
@@ -800,8 +801,9 @@ impl MetadataManager {
     }
 
     /// Save the created model table to the metadata database. This includes creating a tags table
-    /// for the model table, adding a row to the model_table_metadata table, and adding a row to
-    /// the model_table_field_columns table for each field column.
+    /// for the model table, creating a compressed files table for the model table, adding a row to
+    /// the model_table_metadata table, and adding a row to the model_table_field_columns table for
+    /// each field column.
     pub async fn save_model_table_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
@@ -1433,7 +1435,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_compressed_file_with_swaped_timestamps_for_column_in_existing_model_table() {
+    async fn test_save_compressed_file_with_invalid_timestamps_for_column_in_existing_model_table()
+    {
         let compressed_file = CompressedFile::new(Uuid::new_v4(), 200, 100, 37.0, 73.0);
         assert!(
             create_metadata_manager_with_named_model_table_and_save_files(
@@ -1446,7 +1449,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_compressed_file_with_swaped_values_for_column_in_existing_model_table() {
+    async fn test_save_compressed_file_with_invalid_values_for_column_in_existing_model_table() {
         let compressed_file = CompressedFile::new(Uuid::new_v4(), 100, 200, 73.0, 37.0);
         assert!(
             create_metadata_manager_with_named_model_table_and_save_files(
@@ -1458,28 +1461,8 @@ mod tests {
         );
     }
 
-    async fn create_metadata_manager_with_named_model_table_and_save_files(
-        model_table_name: &str,
-        compressed_files: &[CompressedFile],
-    ) -> Result<MetadataManager> {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
-
-        for compressed_file in compressed_files {
-            metadata_manager
-                .save_compressed_file_for_column_in_model_table(
-                    model_table_name,
-                    1,
-                    compressed_file,
-                )
-                .await?;
-        }
-
-        Ok(metadata_manager)
-    }
-
     #[tokio::test]
-    async fn test_replace_compressed_files_for_column_in_model_table_with_files_to_delete() {
+    async fn test_replace_compressed_files_with_nothing() {
         let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
         let uuids_of_files_to_delete = &[
             compressed_files[0].name,
@@ -1502,7 +1485,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_replace_compressed_files_for_column_in_model_table_with_files_to_replace() {
+    async fn test_replace_compressed_files_with_replacement_file() {
         let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
         let uuids_of_files_to_delete = &[
             compressed_files[0].name,
@@ -1545,53 +1528,40 @@ mod tests {
 
         for compressed_file in compressed_files {
             metadata_manager
-                .save_compressed_file_for_column_in_model_table("model_table", 1, compressed_file)
+                .save_compressed_file("model_table", 1, compressed_file)
                 .await
                 .unwrap();
         }
 
         metadata_manager
-            .replace_compressed_files_for_column_in_model_table(
-                "model_table",
-                1,
-                uuids_of_files_to_delete,
-                replacement_file,
-            )
+            .replace_compressed_files("model_table", 1, uuids_of_files_to_delete, replacement_file)
             .await
             .unwrap();
 
         metadata_manager
-            .compressed_files_for_column_in_model_table("model_table", 1, None, None, None, None)
+            .compressed_files("model_table", 1, None, None, None, None)
             .await
             .unwrap()
     }
 
     #[tokio::test]
-    async fn test_replace_compressed_files_for_column_in_model_table_without_files_to_delete() {
-        assert_that_replace_compressed_files_for_column_in_model_table_fails(Some(&[]), None).await;
+    async fn test_replace_compressed_files_without_files_to_delete() {
+        assert_that_replace_compressed_files_fails(Some(&[]), None).await;
     }
 
     #[tokio::test]
-    async fn test_replace_compressed_files_for_column_in_model_table_with_swapped_timestamps() {
+    async fn test_replace_compressed_files_with_invalid_timestamps() {
         let replacement_file = CompressedFile::new(Uuid::new_v4(), 200, 100, 37.0, 73.0);
-        assert_that_replace_compressed_files_for_column_in_model_table_fails(
-            None,
-            Some(&replacement_file),
-        )
-        .await;
+        assert_that_replace_compressed_files_fails(None, Some(&replacement_file)).await;
     }
 
     #[tokio::test]
-    async fn test_replace_compressed_files_for_column_in_model_table_with_swapped_values() {
+    async fn test_replace_compressed_files_with_invalid_values() {
         let replacement_file = CompressedFile::new(Uuid::new_v4(), 100, 200, 73.0, 37.0);
-        assert_that_replace_compressed_files_for_column_in_model_table_fails(
-            None,
-            Some(&replacement_file),
-        )
-        .await;
+        assert_that_replace_compressed_files_fails(None, Some(&replacement_file)).await;
     }
 
-    async fn assert_that_replace_compressed_files_for_column_in_model_table_fails(
+    async fn assert_that_replace_compressed_files_fails(
         compressed_files_to_delete: Option<&[Uuid]>,
         replacement_compressed_file: Option<&CompressedFile>,
     ) {
@@ -1603,7 +1573,7 @@ mod tests {
         let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
         for compressed_file in &compressed_files {
             metadata_manager
-                .save_compressed_file_for_column_in_model_table("model_table", 1, compressed_file)
+                .save_compressed_file("model_table", 1, compressed_file)
                 .await
                 .unwrap();
         }
@@ -1613,7 +1583,7 @@ mod tests {
             compressed_files_to_delete.unwrap_or(compressed_files_first_uuid);
 
         assert!(metadata_manager
-            .replace_compressed_files_for_column_in_model_table(
+            .replace_compressed_files(
                 "model_table",
                 1,
                 compressed_files_to_delete,
@@ -1636,42 +1606,42 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_file_ends_within_time_range() {
+    async fn test_compressed_files_file_ends_within_time_range() {
         assert!(
             is_compressed_file_within_time_and_value_range(Some(150), Some(250), None, None).await
         )
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_file_starts_within_time_range() {
+    async fn test_compressed_files_file_starts_within_time_range() {
         assert!(
             is_compressed_file_within_time_and_value_range(Some(50), Some(150), None, None).await
         )
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_file_is_within_time_range() {
+    async fn test_compressed_files_file_is_within_time_range() {
         assert!(
             is_compressed_file_within_time_and_value_range(Some(50), Some(250), None, None).await
         )
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_file_is_before_time_range() {
+    async fn test_compressed_files_file_is_before_time_range() {
         assert!(
             !is_compressed_file_within_time_and_value_range(Some(225), Some(275), None, None).await
         )
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_file_is_after_time_range() {
+    async fn test_compressed_files_file_is_after_time_range() {
         assert!(
             !is_compressed_file_within_time_and_value_range(Some(25), Some(75), None, None).await
         )
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_without_filtering() {
+    async fn test_compressed_files_without_filtering() {
         let (compressed_files, returned_files) =
             create_metadata_manager_with_model_table_save_seven_files_and_get_files(
                 None, None, None, None,
@@ -1685,7 +1655,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_with_minimum_timestamp() {
+    async fn test_compressed_files_with_minimum_timestamp() {
         let (compressed_files, returned_files) =
             create_metadata_manager_with_model_table_save_seven_files_and_get_files(
                 Some(400),
@@ -1704,7 +1674,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_with_maximum_timestamp() {
+    async fn test_compressed_files_with_maximum_timestamp() {
         let (compressed_files, returned_files) =
             create_metadata_manager_with_model_table_save_seven_files_and_get_files(
                 None,
@@ -1722,7 +1692,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_with_minimum_and_maximum_timestamp() {
+    async fn test_compressed_files_with_minimum_and_maximum_timestamp() {
         let (compressed_files, returned_files) =
             create_metadata_manager_with_model_table_save_seven_files_and_get_files(
                 Some(400),
@@ -1738,7 +1708,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_file_max_is_within_value_range() {
+    async fn test_compressed_files_file_max_is_within_value_range() {
         assert!(
             is_compressed_file_within_time_and_value_range(None, None, Some(50.0), Some(100.0))
                 .await
@@ -1746,14 +1716,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_file_min_is_within_value_range() {
+    async fn test_compressed_files_file_min_is_within_value_range() {
         assert!(
             is_compressed_file_within_time_and_value_range(None, None, Some(0.0), Some(50.0)).await
         )
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_file_is_within_value_range() {
+    async fn test_compressed_files_file_is_within_value_range() {
         assert!(
             is_compressed_file_within_time_and_value_range(None, None, Some(0.0), Some(100.0))
                 .await
@@ -1761,7 +1731,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_file_is_less_than_value_range() {
+    async fn test_compressed_files_file_is_less_than_value_range() {
         assert!(
             !is_compressed_file_within_time_and_value_range(None, None, Some(100.0), Some(150.0))
                 .await
@@ -1769,7 +1739,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_file_is_greater_than_value_range() {
+    async fn test_compressed_files_file_is_greater_than_value_range() {
         assert!(
             !is_compressed_file_within_time_and_value_range(None, None, Some(0.0), Some(25.0))
                 .await
@@ -1797,7 +1767,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_with_minimum_value() {
+    async fn test_compressed_files_with_minimum_value() {
         let (compressed_files, returned_files) =
             create_metadata_manager_with_model_table_save_seven_files_and_get_files(
                 None,
@@ -1813,7 +1783,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_with_maximum_value() {
+    async fn test_compressed_files_with_maximum_value() {
         let (compressed_files, returned_files) =
             create_metadata_manager_with_model_table_save_seven_files_and_get_files(
                 None,
@@ -1833,7 +1803,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_compressed_files_for_column_in_model_table_with_minimum_and_maximum_value() {
+    async fn test_compressed_files_with_minimum_and_maximum_value() {
         let (compressed_files, returned_files) =
             create_metadata_manager_with_model_table_save_seven_files_and_get_files(
                 None,
@@ -1882,16 +1852,25 @@ mod tests {
         .unwrap();
 
         metadata_manager
-            .compressed_files_for_column_in_model_table(
-                "model_table",
-                1,
-                start_time,
-                end_time,
-                min_value,
-                max_value,
-            )
+            .compressed_files("model_table", 1, start_time, end_time, min_value, max_value)
             .await
             .unwrap()
+    }
+
+    async fn create_metadata_manager_with_named_model_table_and_save_files(
+        model_table_name: &str,
+        compressed_files: &[CompressedFile],
+    ) -> Result<MetadataManager> {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
+
+        for compressed_file in compressed_files {
+            metadata_manager
+                .save_compressed_file(model_table_name, 1, compressed_file)
+                .await?;
+        }
+
+        Ok(metadata_manager)
     }
 
     #[test]
