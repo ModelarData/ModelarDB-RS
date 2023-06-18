@@ -652,6 +652,11 @@ impl FlightService for FlightServiceHandler {
     /// of the argument, immediately followed by the argument value. The first argument should be
     /// the object store type, specifically either 's3' or 'azureblobstorage'. The remaining
     /// arguments should be the arguments required to connect to the object store.
+    /// * `UpdateConfiguration`: Update a single setting in the configuration. Each argument in the
+    /// body should start with the size of the argument, immediately followed by the argument value.
+    /// The first argument should be the setting to update, specifically either
+    /// 'uncompressed_reserved_memory_in_bytes' or 'compressed_reserved_memory_in_bytes'. The second
+    /// argument should be the new value of the setting as an unsigned integer.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -759,8 +764,10 @@ impl FlightService for FlightServiceHandler {
                 })
             }))))
         } else if action.r#type == "UpdateRemoteObjectStore" {
+            let configuration_manager = self.context.configuration_manager.read().await;
+
             // If on a cloud node, both the remote data folder and the query data folder should be updated.
-            if self.context.configuration_manager.server_mode() == &ServerMode::Cloud {
+            if configuration_manager.server_mode() == &ServerMode::Cloud {
                 // TODO: The query data folder should be updated in the session context.
                 return Err(Status::unimplemented(
                     "Currently not possible to update remote object store on cloud nodes.",
@@ -788,6 +795,29 @@ impl FlightService for FlightServiceHandler {
                 })?;
 
             // Confirm the remote object store was updated.
+            Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "UpdateConfiguration" {
+            let (setting, offset_data) = extract_argument(&action.body)?;
+            let (new_value, _offset_data) = extract_argument(offset_data)?;
+            let new_value: usize = new_value.parse().map_err(|error| {
+                Status::internal(format!("New value for {setting} is not valid: {error}"))
+            })?;
+
+            let mut configuration_manager = self.context.configuration_manager.write().await;
+
+            match setting {
+                "uncompressed_reserved_memory_in_bytes" => configuration_manager
+                    .set_uncompressed_reserved_memory_in_bytes(new_value)
+                    .map_err(|error| Status::internal(error.to_string())),
+                "compressed_reserved_memory_in_bytes" => configuration_manager
+                    .set_compressed_reserved_memory_in_bytes(new_value)
+                    .map_err(|error| Status::internal(error.to_string())),
+                _ => Err(Status::unimplemented(format!(
+                    "{setting} is not a valid setting in the server configuration."
+                ))),
+            }?;
+
+            // Confirm the configuration was updated.
             Ok(Response::new(Box::pin(stream::empty())))
         } else {
             Err(Status::unimplemented("Action not implemented."))
