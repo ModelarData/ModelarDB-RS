@@ -220,6 +220,29 @@ fn extract_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
     Ok((argument, remaining_bytes))
 }
 
+/// Write the schema and corresponding record batch to a stream within a gRPC response.
+fn send_record_batch(
+    schema: SchemaRef,
+    batch: RecordBatch,
+) -> Result<Response<<FlightServiceHandler as FlightService>::DoActionStream>, Status> {
+    let options = IpcWriteOptions::default();
+    let mut writer = StreamWriter::try_new_with_options(vec![], &schema, options)
+        .map_err(|error| Status::internal(error.to_string()))?;
+
+    writer
+        .write(&batch)
+        .map_err(|error| Status::internal(error.to_string()))?;
+    let batch_bytes = writer
+        .into_inner()
+        .map_err(|error| Status::internal(error.to_string()))?;
+
+    Ok(Response::new(Box::pin(stream::once(async {
+        Ok(arrow_flight::Result {
+            body: batch_bytes.into(),
+        })
+    }))))
+}
+
 /// Handler for processing Apache Arrow Flight requests.
 /// [`FlightServiceHandler`] is based on the [Apache Arrow Flight examples]
 /// published under Apache2.
@@ -750,23 +773,7 @@ impl FlightService for FlightServiceHandler {
             )
             .unwrap();
 
-            // Write the schema and corresponding record batch to a stream.
-            let options = IpcWriteOptions::default();
-            let mut writer = StreamWriter::try_new_with_options(vec![], &schema.0, options)
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            writer
-                .write(&batch)
-                .map_err(|error| Status::internal(error.to_string()))?;
-            let batch_bytes = writer
-                .into_inner()
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            Ok(Response::new(Box::pin(stream::once(async {
-                Ok(arrow_flight::Result {
-                    body: batch_bytes.into(),
-                })
-            }))))
+            send_record_batch(schema.0, batch)
         } else if action.r#type == "UpdateRemoteObjectStore" {
             let configuration_manager = self.context.configuration_manager.read().await;
 
@@ -812,9 +819,11 @@ impl FlightService for FlightServiceHandler {
                 *configuration_manager.compressed_reserved_memory_in_bytes() as u64,
             ];
 
+            let schema = CONFIGURATION_SCHEMA.clone();
+
             // Create the record batch with the current configuration.
             let batch = RecordBatch::try_new(
-                CONFIGURATION_SCHEMA.clone().0.clone(),
+                schema.0.clone(),
                 vec![
                     Arc::new(StringArray::from(settings)),
                     Arc::new(UInt64Array::from(values)),
@@ -822,7 +831,7 @@ impl FlightService for FlightServiceHandler {
             )
             .unwrap();
 
-            Ok(Response::new(Box::pin(stream::empty())))
+            send_record_batch(schema.0, batch)
         } else if action.r#type == "UpdateConfiguration" {
             let (setting, offset_data) = extract_argument(&action.body)?;
             let (new_value, _offset_data) = extract_argument(offset_data)?;
