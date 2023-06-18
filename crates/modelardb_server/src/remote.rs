@@ -864,12 +864,24 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
+        let get_configuration = ActionType {
+            r#type: "GetConfiguration".to_owned(),
+            description: "Get the current server configuration.".to_owned(),
+        };
+
+        let update_configuration = ActionType {
+            r#type: "UpdateConfiguration".to_owned(),
+            description: "Update a specific setting in the server configuration.".to_owned(),
+        };
+
         let output = stream::iter(vec![
             Ok(create_command_statement_update_action),
             Ok(flush_data_to_disk),
             Ok(flush_edge_action),
             Ok(collect_metrics),
             Ok(update_remote_object_store),
+            Ok(get_configuration),
+            Ok(update_configuration),
         ]);
 
         Ok(Response::new(Box::pin(output)))
