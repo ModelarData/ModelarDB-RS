@@ -31,7 +31,9 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
 use bytes::Bytes;
-use datafusion::arrow::array::{ArrayRef, ListBuilder, StringBuilder, UInt32Builder};
+use datafusion::arrow::array::{
+    ArrayRef, ListBuilder, StringArray, StringBuilder, UInt32Builder, UInt64Array,
+};
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::ipc::writer::{
@@ -44,7 +46,7 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
 use modelardb_common::arguments::{validate_remote_data_folder, RemoteDataFolderType};
-use modelardb_common::schemas::METRIC_SCHEMA;
+use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
 use modelardb_common::types::TimestampBuilder;
 use object_store::aws::AmazonS3Builder;
 use object_store::azure::MicrosoftAzureBuilder;
@@ -652,6 +654,8 @@ impl FlightService for FlightServiceHandler {
     /// of the argument, immediately followed by the argument value. The first argument should be
     /// the object store type, specifically either 's3' or 'azureblobstorage'. The remaining
     /// arguments should be the arguments required to connect to the object store.
+    /// * `GetConfiguration`: Get the current server configuration. The value of each setting in the
+    /// configuration is returned in a single [`RecordBatch`](arrow::record_batch::RecordBatch).
     /// * `UpdateConfiguration`: Update a single setting in the configuration. Each argument in the
     /// body should start with the size of the argument, immediately followed by the argument value.
     /// The first argument should be the setting to update, specifically either
@@ -795,6 +799,29 @@ impl FlightService for FlightServiceHandler {
                 })?;
 
             // Confirm the remote object store was updated.
+            Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "GetConfiguration" {
+            // Extract the configuration data from the configuration manager.
+            let configuration_manager = self.context.configuration_manager.read().await;
+            let settings = vec![
+                "uncompressed_reserved_memory_in_bytes",
+                "compressed_reserved_memory_in_bytes",
+            ];
+            let values = vec![
+                *configuration_manager.uncompressed_reserved_memory_in_bytes() as u64,
+                *configuration_manager.compressed_reserved_memory_in_bytes() as u64,
+            ];
+
+            // Create the record batch with the current configuration.
+            let batch = RecordBatch::try_new(
+                CONFIGURATION_SCHEMA.clone().0.clone(),
+                vec![
+                    Arc::new(StringArray::from(settings)),
+                    Arc::new(UInt64Array::from(values)),
+                ],
+            )
+            .unwrap();
+
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "UpdateConfiguration" {
             let (setting, offset_data) = extract_argument(&action.body)?;
