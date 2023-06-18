@@ -31,6 +31,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::{env, fs};
 
+use crate::configuration::ConfigurationManager;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
 use modelardb_common::arguments::{
@@ -42,7 +43,6 @@ use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use crate::configuration::ConfigurationManager;
 
 use crate::metadata::MetadataManager;
 use crate::storage::StorageEngine;
@@ -84,7 +84,7 @@ pub struct Context {
     /// Metadata for the tables and model tables in the data folder.
     pub metadata_manager: MetadataManager,
     /// Updatable configuration of the server.
-    pub configuration_manager: ConfigurationManager,
+    pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
     /// Main interface for Apache Arrow DataFusion.
     pub session: SessionContext,
     /// Manages all uncompressed and compressed data in the system.
@@ -126,8 +126,10 @@ fn main() -> Result<(), String> {
     let metadata_manager = runtime
         .block_on(MetadataManager::try_new(&data_folders.local_data_folder))
         .map_err(|error| format!("Unable to create a MetadataManager: {error}"))?;
-    let configuration_manager = ConfigurationManager::new(server_mode);
+
+    let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(server_mode)));
     let session = create_session_context(data_folders.query_data_folder);
+
     let storage_engine = RwLock::new(
         runtime
             .block_on(async {

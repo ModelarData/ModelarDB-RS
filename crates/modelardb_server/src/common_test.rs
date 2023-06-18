@@ -49,7 +49,7 @@ pub const COMPRESSED_SEGMENTS_SIZE: usize = 1399;
 /// and the data folder set to `path`.
 pub async fn test_context(path: &Path) -> Arc<Context> {
     let metadata_manager = MetadataManager::try_new(path).await.unwrap();
-    let configuration_manager = ConfigurationManager::new(ServerMode::Edge);
+    let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(ServerMode::Edge)));
 
     let session = test_session_context();
     let object_store_url = storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST

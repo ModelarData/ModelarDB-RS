@@ -34,6 +34,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fmt, mem};
 
+use crate::configuration::ConfigurationManager;
 use bytes::buf::BufMut;
 use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::compute;
@@ -61,7 +62,6 @@ use tonic::codegen::Bytes;
 use tonic::Status;
 use tracing::debug;
 use uuid::{uuid, Uuid};
-use crate::configuration::ConfigurationManager;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
@@ -118,13 +118,15 @@ impl StorageEngine {
     pub async fn try_new(
         local_data_folder: PathBuf,
         remote_data_folder: Option<Arc<dyn ObjectStore>>,
-        configuration_manager: ConfigurationManager,
+        configuration_manager: Arc<RwLock<ConfigurationManager>>,
         metadata_manager: MetadataManager,
         compress_directly: bool,
     ) -> Result<Self, IOError> {
         // Create a metric for used disk space. The metric is wrapped in an Arc and a read/write lock
         // since it is appended to by multiple components, potentially at the same time.
         let used_disk_space_metric = Arc::new(RwLock::new(Metric::new()));
+
+        let configuration_manager = configuration_manager.read().await;
 
         // Create the uncompressed data manager.
         let uncompressed_data_manager = UncompressedDataManager::try_new(
@@ -154,7 +156,9 @@ impl StorageEngine {
         let compressed_data_manager = CompressedDataManager::try_new(
             data_transfer,
             local_data_folder,
-            configuration_manager.compressed_reserved_memory_in_bytes().clone(),
+            configuration_manager
+                .compressed_reserved_memory_in_bytes()
+                .clone(),
             used_disk_space_metric,
         )?;
 
