@@ -970,12 +970,12 @@ mod tests {
         }
     }
 
-    /// Create an [`UncompressedDataManager`] with a folder that is deleted once the test is
-    /// finished.
+    /// Create an [`UncompressedDataManager`] with a folder that is deleted once the test is finished.
     async fn create_managers(
         path: &Path,
     ) -> (MetadataManager, UncompressedDataManager, ModelTableMetadata) {
-        let mut metadata_manager = common_test::test_metadata_manager(path).await;
+        let mut metadata_manager = MetadataManager::try_new(path).await.unwrap();
+        let configuration_manager = common_test::test_configuration_manager();
 
         // Ensure the expected metadata is available through the metadata manager.
         let query_schema = Arc::new(Schema::new(vec![
@@ -1013,6 +1013,7 @@ mod tests {
         // UncompressedDataManager::try_new() lookup the error bounds for each univariate_id.
         let uncompressed_data_manager = UncompressedDataManager::try_new(
             metadata_manager.local_data_folder().to_owned(),
+            configuration_manager.uncompressed_reserved_memory_in_bytes().clone(),
             &metadata_manager,
             false,
             Arc::new(RwLock::new(Metric::new())),

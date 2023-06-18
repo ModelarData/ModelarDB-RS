@@ -834,7 +834,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_metadata_database_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         // Verify that the tables were created and has the expected columns.
         metadata_manager
@@ -869,14 +869,14 @@ mod tests {
     async fn test_get_data_folder_path() {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_path = temp_dir.path();
-        let metadata_manager = common_test::test_metadata_manager(temp_dir_path).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
         assert_eq!(temp_dir_path, metadata_manager.local_data_folder());
     }
 
     #[tokio::test]
     async fn test_get_new_tag_hash() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
@@ -911,7 +911,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_existing_tag_hash() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
@@ -958,7 +958,7 @@ mod tests {
     #[tokio::test]
     async fn test_compute_univariate_ids_using_fields_and_tags_for_missing_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         assert!(metadata_manager
             .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
@@ -970,7 +970,7 @@ mod tests {
     async fn test_compute_univariate_ids_using_fields_and_tags_for_empty_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
@@ -990,7 +990,7 @@ mod tests {
     async fn test_compute_univariate_ids_using_no_fields_and_tags_for_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
         initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]).await;
 
         // Lookup all univariate ids for the table by not passing any fields or tags.
@@ -1006,7 +1006,7 @@ mod tests {
     ) {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
         initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]).await;
 
         // Lookup the univariate ids for the fallback column by only requesting tag columns.
@@ -1021,7 +1021,7 @@ mod tests {
     async fn test_compute_the_univariate_ids_for_a_specific_field_column_for_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
         initialize_model_table_with_tag_values(
             &mut metadata_manager,
             &["tag_value1", "tag_value2"],
@@ -1047,7 +1047,7 @@ mod tests {
     async fn test_compute_the_univariate_ids_for_a_specific_tag_value_for_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
         initialize_model_table_with_tag_values(
             &mut metadata_manager,
             &["tag_value1", "tag_value2"],
@@ -1107,7 +1107,7 @@ mod tests {
     async fn test_save_table_metadata() {
         // Save a table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         let table_name = "table_name";
         metadata_manager
@@ -1153,7 +1153,7 @@ mod tests {
     async fn test_save_model_table_metadata() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager

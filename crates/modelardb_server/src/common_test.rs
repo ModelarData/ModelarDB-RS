@@ -35,6 +35,7 @@ use modelardb_compression::ErrorBound;
 use object_store::local::LocalFileSystem;
 use tokio::sync::RwLock;
 
+use crate::configuration::ConfigurationManager;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::query::ModelTable;
@@ -44,10 +45,11 @@ use crate::{optimizer, Context, ServerMode};
 /// Expected size of the compressed segments produced in the tests.
 pub const COMPRESSED_SEGMENTS_SIZE: usize = 1399;
 
-/// Return a [`Context`] with the metadata manager created by `test_metadata_manager()` and the data
-/// folder set to `path`.
+/// Return a [`Context`] with the configuration manager created by `test_configuration_manager()`
+/// and the data folder set to `path`.
 pub async fn test_context(path: &Path) -> Arc<Context> {
-    let metadata_manager = test_metadata_manager(path).await;
+    let metadata_manager = MetadataManager::try_new(path).await.unwrap();
+    let configuration_manager = ConfigurationManager::new(ServerMode::Edge);
 
     let session = test_session_context();
     let object_store_url = storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST
@@ -59,30 +61,38 @@ pub async fn test_context(path: &Path) -> Arc<Context> {
         .register_object_store(&object_store_url, object_store);
 
     let storage_engine = RwLock::new(
-        StorageEngine::try_new(path.to_owned(), None, metadata_manager.clone(), true)
-            .await
-            .unwrap(),
+        StorageEngine::try_new(
+            path.to_owned(),
+            None,
+            configuration_manager.clone(),
+            metadata_manager.clone(),
+            true,
+        )
+        .await
+        .unwrap(),
     );
 
     Arc::new(Context {
         metadata_manager,
+        configuration_manager,
         session,
         storage_engine,
     })
 }
 
-/// Return a [`MetadataManager`] with 5 MiBs reserved for uncompressed data, 5 MiBs reserved for
-/// compressed data, and the data folder set to `path`. Reducing the amount of reserved memory
-/// makes it faster to run unit tests.
-pub async fn test_metadata_manager(path: &Path) -> MetadataManager {
-    let mut metadata_manager = MetadataManager::try_new(path, ServerMode::Edge)
-        .await
-        .unwrap();
+/// Return a [`ConfigurationManager`] with 5 MiBs reserved for uncompressed data and 5 MiBs reserved
+/// for compressed data. Reducing the amount of reserved memory makes it faster to run unit tests.
+pub fn test_configuration_manager() -> ConfigurationManager {
+    let mut configuration_manager = ConfigurationManager::new(ServerMode::Edge);
 
-    metadata_manager.uncompressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB
-    metadata_manager.compressed_reserved_memory_in_bytes = 5 * 1024 * 1024; // 5 MiB
+    configuration_manager
+        .set_uncompressed_reserved_memory_in_bytes(5 * 1024 * 1024)
+        .unwrap(); // 5 MiB
+    configuration_manager
+        .set_compressed_reserved_memory_in_bytes(5 * 1024 * 1024)
+        .unwrap(); // 5 MiB
 
-    metadata_manager
+    configuration_manager
 }
 
 /// Return a [`SessionContext`] without any additional optimizer rules.

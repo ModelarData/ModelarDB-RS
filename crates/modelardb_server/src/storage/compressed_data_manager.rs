@@ -600,7 +600,7 @@ mod tests {
     /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
     async fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let configuration_manager = common_test::test_configuration_manager();
 
         let local_data_folder = temp_dir.path().to_path_buf();
         (
@@ -608,7 +608,7 @@ mod tests {
             CompressedDataManager::try_new(
                 None,
                 local_data_folder,
-                metadata_manager.compressed_reserved_memory_in_bytes,
+                configuration_manager.compressed_reserved_memory_in_bytes().clone(),
                 Arc::new(RwLock::new(Metric::new())),
             )
             .unwrap(),
