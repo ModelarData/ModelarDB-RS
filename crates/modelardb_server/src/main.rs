@@ -88,7 +88,7 @@ pub struct Context {
     /// Main interface for Apache Arrow DataFusion.
     pub session: SessionContext,
     /// Manages all uncompressed and compressed data in the system.
-    pub storage_engine: RwLock<StorageEngine>,
+    pub storage_engine: Arc<RwLock<StorageEngine>>,
 }
 
 /// Setup tracing that prints to stdout, parse the command line arguments to
@@ -130,7 +130,7 @@ fn main() -> Result<(), String> {
     let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(server_mode)));
     let session = create_session_context(data_folders.query_data_folder);
 
-    let storage_engine = RwLock::new(
+    let storage_engine = Arc::new(RwLock::new(
         runtime
             .block_on(async {
                 StorageEngine::try_new(
@@ -143,7 +143,7 @@ fn main() -> Result<(), String> {
                 .await
             })
             .map_err(|error| error.to_string())?,
-    );
+    ));
 
     // Create the Context.
     let context = Arc::new(Context {

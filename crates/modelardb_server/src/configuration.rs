@@ -16,8 +16,11 @@
 //! Management of the system's configuration, including the server mode, and the amount of
 //! reserved memory for uncompressed and compressed data.
 
+use std::sync::Arc;
 use modelardb_common::errors::ModelarDbError;
+use tokio::sync::RwLock;
 
+use crate::storage::StorageEngine;
 use crate::ServerMode;
 
 /// Store's the system's configuration and provides functionality for updating the configuration.
@@ -48,31 +51,46 @@ impl ConfigurationManager {
         &self.uncompressed_reserved_memory_in_bytes
     }
 
-    // TODO: The remaining memory in the storage engine needs to be updated when updating these.
-    // TODO: Check if other places need to be updated.
-
-    /// TODO: Set the new value and update the uncompressed remaining reserved memory in the storage
-    ///       engine. If the value was updated, return [`Ok`], otherwise return
-    ///       [`ConfigurationError`](ModelarDbError::ConfigurationError).
-    pub(crate) fn set_uncompressed_reserved_memory_in_bytes(
+    /// Set the new value and update the uncompressed remaining reserved memory in the storage engine.
+    pub(crate) async fn set_uncompressed_reserved_memory_in_bytes(
         &mut self,
         new_uncompressed_reserved_memory_in_bytes: usize,
-    ) -> Result<(), ModelarDbError> {
+        storage_engine: Arc<RwLock<StorageEngine>>,
+    ) {
+        let value_change = new_uncompressed_reserved_memory_in_bytes as isize
+            - self.uncompressed_reserved_memory_in_bytes as isize;
+
+        storage_engine
+            .write()
+            .await
+            .set_uncompressed_remaining_memory_in_bytes(value_change)
+            .await;
+
         self.uncompressed_reserved_memory_in_bytes = new_uncompressed_reserved_memory_in_bytes;
-        Ok(())
     }
 
     pub(crate) fn compressed_reserved_memory_in_bytes(&self) -> &usize {
         &self.compressed_reserved_memory_in_bytes
     }
 
-    /// TODO: Set the new value and update the compressed remaining reserved memory in the storage engine.
-    ///       If the value was updated, return [`Ok`], otherwise return
-    ///       [`ConfigurationError`](ModelarDbError::ConfigurationError).
-    pub(crate) fn set_compressed_reserved_memory_in_bytes(
+    /// Set the new value and update the compressed remaining reserved memory in the storage engine.
+    /// If the value was updated, return [`Ok`], otherwise return
+    /// [`ConfigurationError`](ModelarDbError::ConfigurationError).
+    pub(crate) async fn set_compressed_reserved_memory_in_bytes(
         &mut self,
         new_compressed_reserved_memory_in_bytes: usize,
+        storage_engine: Arc<RwLock<StorageEngine>>,
     ) -> Result<(), ModelarDbError> {
+        let value_change = new_compressed_reserved_memory_in_bytes as isize
+            - self.compressed_reserved_memory_in_bytes as isize;
+
+        storage_engine
+            .write()
+            .await
+            .set_compressed_remaining_memory_in_bytes(value_change)
+            .await
+            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
+
         self.compressed_reserved_memory_in_bytes = new_compressed_reserved_memory_in_bytes;
         Ok(())
     }
@@ -87,18 +105,34 @@ mod tests {
     #[test]
     fn test_set_uncompressed_reserved_memory_in_bytes() {
         let mut configuration_manager = ConfigurationManager::new(ServerMode::Edge);
-        assert_eq!(*configuration_manager.uncompressed_reserved_memory_in_bytes(), 512 * 1024 * 1024);
+        assert_eq!(
+            *configuration_manager.uncompressed_reserved_memory_in_bytes(),
+            512 * 1024 * 1024
+        );
 
-        configuration_manager.set_uncompressed_reserved_memory_in_bytes(1024).unwrap();
-        assert_eq!(*configuration_manager.uncompressed_reserved_memory_in_bytes(), 1024);
+        configuration_manager
+            .set_uncompressed_reserved_memory_in_bytes(1024)
+            .unwrap();
+        assert_eq!(
+            *configuration_manager.uncompressed_reserved_memory_in_bytes(),
+            1024
+        );
     }
 
     #[test]
     fn test_set_compressed_reserved_memory_in_bytes() {
         let mut configuration_manager = ConfigurationManager::new(ServerMode::Edge);
-        assert_eq!(*configuration_manager.compressed_reserved_memory_in_bytes(), 512 * 1024 * 1024);
+        assert_eq!(
+            *configuration_manager.compressed_reserved_memory_in_bytes(),
+            512 * 1024 * 1024
+        );
 
-        configuration_manager.set_compressed_reserved_memory_in_bytes(1024).unwrap();
-        assert_eq!(*configuration_manager.compressed_reserved_memory_in_bytes(), 1024);
+        configuration_manager
+            .set_compressed_reserved_memory_in_bytes(1024)
+            .unwrap();
+        assert_eq!(
+            *configuration_manager.compressed_reserved_memory_in_bytes(),
+            1024
+        );
     }
 }

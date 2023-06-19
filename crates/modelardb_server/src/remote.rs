@@ -840,13 +840,19 @@ impl FlightService for FlightServiceHandler {
             })?;
 
             let mut configuration_manager = self.context.configuration_manager.write().await;
+            let storage_engine = self.context.storage_engine.clone();
 
             match setting {
-                "uncompressed_reserved_memory_in_bytes" => configuration_manager
-                    .set_uncompressed_reserved_memory_in_bytes(new_value)
-                    .map_err(|error| Status::internal(error.to_string())),
+                "uncompressed_reserved_memory_in_bytes" => {
+                    configuration_manager
+                        .set_uncompressed_reserved_memory_in_bytes(new_value, storage_engine)
+                        .await;
+
+                    Ok(())
+                }
                 "compressed_reserved_memory_in_bytes" => configuration_manager
-                    .set_compressed_reserved_memory_in_bytes(new_value)
+                    .set_compressed_reserved_memory_in_bytes(new_value, storage_engine)
+                    .await
                     .map_err(|error| Status::internal(error.to_string())),
                 _ => Err(Status::unimplemented(format!(
                     "{setting} is not a valid setting in the server configuration."
