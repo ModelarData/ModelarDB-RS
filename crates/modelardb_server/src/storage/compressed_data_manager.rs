@@ -276,7 +276,10 @@ impl CompressedDataManager {
         debug!("Out of memory for compressed data. Saving compressed data to disk.");
 
         while self.compressed_remaining_memory_in_bytes < 0 {
-            let (table_name, column_index) = self.compressed_queue.pop_front().unwrap();
+            let (table_name, column_index) = self
+                .compressed_queue
+                .pop_front()
+                .expect("Not enough compressed data to free up the required memory.");
             self.save_compressed_data(&table_name, column_index).await?;
         }
         Ok(())
@@ -347,6 +350,19 @@ impl CompressedDataManager {
                 .await
                 .map_err(|error| IOError::new(Other, error.to_string()))?;
         }
+
+        Ok(())
+    }
+
+    /// Change the compressed remaining memory in bytes according to `value_change`. If less than 0
+    /// bytes remain, save compressed data to free memory. If all the data is saved successfully
+    /// return [`Ok`], otherwise return [`IOError`].
+    fn set_compressed_remaining_memory_in_bytes(
+        &mut self,
+        value_change: isize,
+    ) -> Result<(), IOError> {
+        self.compressed_remaining_memory_in_bytes += value_change;
+        self.save_compressed_data_to_free_memory()?;
 
         Ok(())
     }
@@ -608,7 +624,9 @@ mod tests {
             CompressedDataManager::try_new(
                 None,
                 local_data_folder,
-                configuration_manager.compressed_reserved_memory_in_bytes().clone(),
+                configuration_manager
+                    .compressed_reserved_memory_in_bytes()
+                    .clone(),
                 Arc::new(RwLock::new(Metric::new())),
             )
             .unwrap(),
