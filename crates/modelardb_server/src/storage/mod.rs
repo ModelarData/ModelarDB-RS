@@ -385,6 +385,18 @@ impl StorageEngine {
         Ok(())
     }
 
+    /// Change the uncompressed remaining memory in bytes according to `value_change`.
+    pub async fn set_uncompressed_remaining_memory_in_bytes(&mut self, value_change: isize) {
+        self.uncompressed_data_manager.set_uncompressed_remaining_memory_in_bytes(value_change).await;
+    }
+
+    /// Change the compressed remaining memory in bytes according to `value_change`. If the value is
+    /// changed successfully return [`Ok`], otherwise return [`IOError`].
+    pub async fn set_compressed_remaining_memory_in_bytes(&mut self, value_change: isize) -> Result<(), IOError> {
+        self.compressed_data_manager.set_compressed_remaining_memory_in_bytes(value_change).await?;
+        Ok(())
+    }
+
     /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`
     /// must use the extension '.parquet'. Return [`Ok`] if the file was written successfully,
     /// otherwise [`ParquetError`].
