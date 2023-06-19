@@ -500,6 +500,20 @@ impl UncompressedDataManager {
         // If not able to find any in-memory finished segments, panic!() is the only option.
         panic!("Not enough reserved memory for the necessary uncompressed buffers.");
     }
+
+    /// Change the uncompressed remaining memory in bytes according to `value_change`. If less than 0
+    /// bytes remain, spill uncompressed data to disk. If all the data is spilled successfully
+    /// return [`Ok`], otherwise return [`IOError`].
+    pub(super) async fn set_uncompressed_remaining_memory_in_bytes(&mut self, value_change: isize) {
+        let mut current_remaining_memory: isize = self.uncompressed_remaining_memory_in_bytes as isize + value_change;
+
+        while current_remaining_memory < 0 {
+            self.spill_finished_buffer().await;
+            current_remaining_memory = self.uncompressed_remaining_memory_in_bytes as isize + value_change;
+        }
+
+        self.uncompressed_remaining_memory_in_bytes = current_remaining_memory as usize;
+    }
 }
 
 #[cfg(test)]

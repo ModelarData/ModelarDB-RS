@@ -357,12 +357,12 @@ impl CompressedDataManager {
     /// Change the compressed remaining memory in bytes according to `value_change`. If less than 0
     /// bytes remain, save compressed data to free memory. If all the data is saved successfully
     /// return [`Ok`], otherwise return [`IOError`].
-    fn set_compressed_remaining_memory_in_bytes(
+    pub(super) async fn set_compressed_remaining_memory_in_bytes(
         &mut self,
         value_change: isize,
     ) -> Result<(), IOError> {
         self.compressed_remaining_memory_in_bytes += value_change;
-        self.save_compressed_data_to_free_memory()?;
+        self.save_compressed_data_to_free_memory().await?;
 
         Ok(())
     }
