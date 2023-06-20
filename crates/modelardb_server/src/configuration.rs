@@ -98,40 +98,57 @@ impl ConfigurationManager {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::common_test::test_context;
 
     // TODO: Test that the value is updated in the storage engine as well.
     // Tests for ConfigurationManager.
-    #[test]
-    fn test_set_uncompressed_reserved_memory_in_bytes() {
-        let mut configuration_manager = ConfigurationManager::new(ServerMode::Edge);
+    #[tokio::test]
+    async fn test_set_uncompressed_reserved_memory_in_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = test_context(temp_dir.path()).await;
+
+        let configuration_manager = context.configuration_manager.clone();
+        let storage_engine = context.storage_engine.clone();
+
         assert_eq!(
-            *configuration_manager.uncompressed_reserved_memory_in_bytes(),
+            *configuration_manager.read().await.uncompressed_reserved_memory_in_bytes(),
             512 * 1024 * 1024
         );
 
         configuration_manager
-            .set_uncompressed_reserved_memory_in_bytes(1024)
-            .unwrap();
+            .write()
+            .await
+            .set_uncompressed_reserved_memory_in_bytes(1024, storage_engine)
+            .await;
+
         assert_eq!(
-            *configuration_manager.uncompressed_reserved_memory_in_bytes(),
+            *configuration_manager.read().await.uncompressed_reserved_memory_in_bytes(),
             1024
         );
     }
 
-    #[test]
-    fn test_set_compressed_reserved_memory_in_bytes() {
-        let mut configuration_manager = ConfigurationManager::new(ServerMode::Edge);
+    #[tokio::test]
+    async fn test_set_compressed_reserved_memory_in_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = test_context(temp_dir.path()).await;
+
+        let configuration_manager = context.configuration_manager.clone();
+        let storage_engine = context.storage_engine.clone();
+
         assert_eq!(
-            *configuration_manager.compressed_reserved_memory_in_bytes(),
+            *configuration_manager.read().await.compressed_reserved_memory_in_bytes(),
             512 * 1024 * 1024
         );
 
         configuration_manager
-            .set_compressed_reserved_memory_in_bytes(1024)
+            .write()
+            .await
+            .set_compressed_reserved_memory_in_bytes(1024, storage_engine)
+            .await
             .unwrap();
+
         assert_eq!(
-            *configuration_manager.compressed_reserved_memory_in_bytes(),
+            *configuration_manager.read().await.compressed_reserved_memory_in_bytes(),
             1024
         );
     }
