@@ -505,11 +505,13 @@ impl UncompressedDataManager {
     /// bytes remain, spill uncompressed data to disk. If all the data is spilled successfully
     /// return [`Ok`], otherwise return [`IOError`].
     pub(super) async fn set_uncompressed_remaining_memory_in_bytes(&mut self, value_change: isize) {
-        let mut current_remaining_memory: isize = self.uncompressed_remaining_memory_in_bytes as isize + value_change;
+        let mut current_remaining_memory: isize =
+            self.uncompressed_remaining_memory_in_bytes as isize + value_change;
 
         while current_remaining_memory < 0 {
             self.spill_finished_buffer().await;
-            current_remaining_memory = self.uncompressed_remaining_memory_in_bytes as isize + value_change;
+            current_remaining_memory =
+                self.uncompressed_remaining_memory_in_bytes as isize + value_change;
         }
 
         self.uncompressed_remaining_memory_in_bytes = current_remaining_memory as usize;
@@ -989,7 +991,6 @@ mod tests {
         path: &Path,
     ) -> (MetadataManager, UncompressedDataManager, ModelTableMetadata) {
         let mut metadata_manager = MetadataManager::try_new(path).await.unwrap();
-        let configuration_manager = common_test::test_configuration_manager();
 
         // Ensure the expected metadata is available through the metadata manager.
         let query_schema = Arc::new(Schema::new(vec![
@@ -1027,7 +1028,7 @@ mod tests {
         // UncompressedDataManager::try_new() lookup the error bounds for each univariate_id.
         let uncompressed_data_manager = UncompressedDataManager::try_new(
             metadata_manager.local_data_folder().to_owned(),
-            configuration_manager.uncompressed_reserved_memory_in_bytes().clone(),
+            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
             &metadata_manager,
             false,
             Arc::new(RwLock::new(Metric::new())),

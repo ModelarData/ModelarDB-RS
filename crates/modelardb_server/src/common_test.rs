@@ -45,8 +45,15 @@ use crate::{optimizer, Context, ServerMode};
 /// Expected size of the compressed segments produced in the tests.
 pub const COMPRESSED_SEGMENTS_SIZE: usize = 1399;
 
-/// Return a [`Context`] with the configuration manager created by `test_configuration_manager()`
-/// and the data folder set to `path`.
+/// Number of bytes reserved for uncompressed data in tests.
+pub const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
+
+/// Number of bytes reserved for compressed data in tests.
+pub const COMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
+
+/// Return a [`Context`] with a [`ConfigurationManager`] with 5 MiBs reserved for uncompressed
+/// data and 5 MiBs reserved for compressed data. Reducing the amount of reserved memory makes it
+/// faster to run unit tests.
 pub async fn test_context(path: &Path) -> Arc<Context> {
     let metadata_manager = MetadataManager::try_new(path).await.unwrap();
     let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(ServerMode::Edge)));
@@ -60,7 +67,7 @@ pub async fn test_context(path: &Path) -> Arc<Context> {
         .runtime_env()
         .register_object_store(&object_store_url, object_store);
 
-    let storage_engine = RwLock::new(
+    let storage_engine = Arc::new(RwLock::new(
         StorageEngine::try_new(
             path.to_owned(),
             None,
@@ -70,7 +77,26 @@ pub async fn test_context(path: &Path) -> Arc<Context> {
         )
         .await
         .unwrap(),
-    );
+    ));
+
+    configuration_manager
+        .write()
+        .await
+        .set_uncompressed_reserved_memory_in_bytes(
+            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            storage_engine.clone(),
+        )
+        .await;
+
+    configuration_manager
+        .write()
+        .await
+        .set_compressed_reserved_memory_in_bytes(
+            COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            storage_engine.clone(),
+        )
+        .await
+        .unwrap();
 
     Arc::new(Context {
         metadata_manager,
@@ -78,21 +104,6 @@ pub async fn test_context(path: &Path) -> Arc<Context> {
         session,
         storage_engine,
     })
-}
-
-/// Return a [`ConfigurationManager`] with 5 MiBs reserved for uncompressed data and 5 MiBs reserved
-/// for compressed data. Reducing the amount of reserved memory makes it faster to run unit tests.
-pub fn test_configuration_manager() -> ConfigurationManager {
-    let mut configuration_manager = ConfigurationManager::new(ServerMode::Edge);
-
-    configuration_manager
-        .set_uncompressed_reserved_memory_in_bytes(5 * 1024 * 1024)
-        .unwrap(); // 5 MiB
-    configuration_manager
-        .set_compressed_reserved_memory_in_bytes(5 * 1024 * 1024)
-        .unwrap(); // 5 MiB
-
-    configuration_manager
 }
 
 /// Return a [`SessionContext`] without any additional optimizer rules.

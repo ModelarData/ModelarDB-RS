@@ -98,21 +98,21 @@ impl ConfigurationManager {
 
 #[cfg(test)]
 mod tests {
-    use crate::common_test::test_context;
+    use crate::common_test;
 
     // TODO: Test that the value is updated in the storage engine as well.
     // Tests for ConfigurationManager.
     #[tokio::test]
     async fn test_set_uncompressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = test_context(temp_dir.path()).await;
+        let context = common_test::test_context(temp_dir.path()).await;
 
         let configuration_manager = context.configuration_manager.clone();
         let storage_engine = context.storage_engine.clone();
 
         assert_eq!(
             *configuration_manager.read().await.uncompressed_reserved_memory_in_bytes(),
-            512 * 1024 * 1024
+            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
         );
 
         configuration_manager
@@ -130,14 +130,14 @@ mod tests {
     #[tokio::test]
     async fn test_set_compressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = test_context(temp_dir.path()).await;
+        let context = common_test::test_context(temp_dir.path()).await;
 
         let configuration_manager = context.configuration_manager.clone();
         let storage_engine = context.storage_engine.clone();
 
         assert_eq!(
             *configuration_manager.read().await.compressed_reserved_memory_in_bytes(),
-            512 * 1024 * 1024
+            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES
         );
 
         configuration_manager
