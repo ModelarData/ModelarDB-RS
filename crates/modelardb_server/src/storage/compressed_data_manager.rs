@@ -1116,6 +1116,19 @@ mod tests {
         assert_eq!(data_manager.compressed_data_buffers.values().len(), 0);
     }
 
+    #[tokio::test]
+    #[should_panic(expected = "Not enough compressed data to free up the required memory.")]
+    async fn test_panic_if_decreasing_compressed_remaining_memory_in_bytes_below_zero() {
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
+
+        data_manager
+            .set_compressed_remaining_memory_in_bytes(
+                -((common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES + 1) as isize),
+            )
+            .await
+            .unwrap();
+    }
+
     /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
     async fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
