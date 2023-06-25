@@ -969,6 +969,25 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn test_increase_uncompressed_remaining_memory_in_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_metadata_manager, mut data_manager, _model_table_metadata) =
+            create_managers(temp_dir.path()).await;
+
+        assert_eq!(
+            data_manager.uncompressed_remaining_memory_in_bytes,
+            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
+        );
+
+        data_manager.set_uncompressed_remaining_memory_in_bytes(10000).await;
+
+        assert_eq!(
+            data_manager.uncompressed_remaining_memory_in_bytes,
+            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + 10000
+        )
+    }
+
     /// Insert `count` data points into `data_manager`.
     async fn insert_data_points(
         count: usize,

@@ -100,7 +100,6 @@ impl ConfigurationManager {
 mod tests {
     use crate::common_test;
 
-    // TODO: Test that the value is updated in the storage engine as well.
     // Tests for ConfigurationManager.
     #[tokio::test]
     async fn test_set_uncompressed_reserved_memory_in_bytes() {
