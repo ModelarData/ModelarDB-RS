@@ -975,17 +975,47 @@ mod tests {
         let (_metadata_manager, mut data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
-        assert_eq!(
-            data_manager.uncompressed_remaining_memory_in_bytes,
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
-        );
-
-        data_manager.set_uncompressed_remaining_memory_in_bytes(10000).await;
+        data_manager
+            .set_uncompressed_remaining_memory_in_bytes(10000)
+            .await;
 
         assert_eq!(
             data_manager.uncompressed_remaining_memory_in_bytes,
             common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + 10000
         )
+    }
+
+    #[tokio::test]
+    async fn test_decrease_uncompressed_remaining_memory_in_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_metadata_manager, mut data_manager, _model_table_metadata) =
+            create_managers(temp_dir.path()).await;
+
+        // Insert data that should be spilled when the remaining memory is decreased.
+        insert_data_points(
+            UNCOMPRESSED_DATA_BUFFER_CAPACITY,
+            &mut data_manager,
+            UNIVARIATE_ID,
+        )
+        .await;
+
+        data_manager
+            .set_uncompressed_remaining_memory_in_bytes(
+                -(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize),
+            )
+            .await;
+
+        assert_eq!(data_manager.uncompressed_remaining_memory_in_bytes, 0);
+
+        // The first UncompressedDataBuffer should have a memory size of 0 as it is spilled to disk.
+        assert_eq!(
+            data_manager
+                .finished_uncompressed_data_buffers
+                .pop_front()
+                .unwrap()
+                .memory_size(),
+            0
+        );
     }
 
     /// Insert `count` data points into `data_manager`.
