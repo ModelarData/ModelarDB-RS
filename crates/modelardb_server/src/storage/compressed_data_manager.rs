@@ -1092,6 +1092,30 @@ mod tests {
         )
     }
 
+    #[tokio::test]
+    async fn test_decrease_compressed_remaining_memory_in_bytes() {
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
+
+        // Insert data that should be saved when the remaining memory is decreased.
+        let segments = common_test::compressed_segments_record_batch();
+        data_manager
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments)
+            .await
+            .unwrap();
+
+        data_manager
+            .set_compressed_remaining_memory_in_bytes(
+                -(common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(data_manager.compressed_remaining_memory_in_bytes, 0);
+
+        // There should no longer be any compressed data in memory.
+        assert_eq!(data_manager.compressed_data_buffers.values().len(), 0);
+    }
+
     /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
     async fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
