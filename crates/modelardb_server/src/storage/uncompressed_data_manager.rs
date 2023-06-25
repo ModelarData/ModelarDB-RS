@@ -1018,6 +1018,20 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    #[should_panic(expected = "Not enough reserved memory for the necessary uncompressed buffers.")]
+    async fn test_panic_if_decreasing_uncompressed_remaining_memory_in_bytes_below_zero() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_metadata_manager, mut data_manager, _model_table_metadata) =
+            create_managers(temp_dir.path()).await;
+
+        data_manager
+            .set_uncompressed_remaining_memory_in_bytes(
+                -((common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + 1) as isize),
+            )
+            .await;
+    }
+
     /// Insert `count` data points into `data_manager`.
     async fn insert_data_points(
         count: usize,
