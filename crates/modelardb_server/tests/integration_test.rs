@@ -402,6 +402,29 @@ impl TestContext {
             convert::try_schema_from_ipc_buffer(&schema_result.schema).unwrap()
         })
     }
+
+    /// Update `setting` to `setting_value` in the server configuration using the UpdateConfiguration action.
+    fn update_configuration(
+        &mut self,
+        setting: &str,
+        setting_value: &str,
+    ) -> Result<Response<Streaming<arrow_flight::Result>>, Status> {
+        let setting = setting.as_bytes();
+        let setting_size = &[0, setting.len() as u8];
+
+        let setting_value = setting_value.as_bytes();
+        let setting_value_size = &[0, setting_value.len() as u8];
+
+        let action = Action {
+            r#type: "UpdateConfiguration".to_owned(),
+            body: [setting_size, setting, setting_value_size, setting_value]
+                .concat()
+                .into(),
+        };
+
+        self.runtime
+            .block_on(async { self.client.do_action(Request::new(action)).await })
+    }
 }
 
 impl Drop for TestContext {
@@ -742,27 +765,23 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
 #[test]
 fn test_cannot_update_invalid_setting() {
     let mut test_context = TestContext::new();
+    let response = test_context.update_configuration("invalid", "1");
 
-    let setting = "invalid".as_bytes();
-    let setting_size = &[0, setting.len() as u8];
+    assert!(response.is_err());
+    assert_eq!(
+        response.err().unwrap().message(),
+        "invalid is not a valid setting in the server configuration."
+    );
+}
 
-    let setting_value = "1".as_bytes();
-    let setting_value_size = &[0, setting_value.len() as u8];
+#[test]
+fn test_cannot_update_setting_with_invalid_value() {
+    let mut test_context = TestContext::new();
+    let response = test_context.update_configuration("compressed_reserved_memory_in_bytes", "-1");
 
-    let action = Action {
-        r#type: "UpdateConfiguration".to_owned(),
-        body: [setting_size, setting, setting_value_size, setting_value]
-            .concat()
-            .into(),
-    };
-
-    test_context.runtime.block_on(async {
-        let response = test_context.client.do_action(Request::new(action)).await;
-
-        assert!(response.is_err());
-        assert_eq!(
-            response.err().unwrap().message(),
-            "invalid is not a valid setting in the server configuration."
-        );
-    })
+    assert!(response.is_err());
+    assert_eq!(
+        response.err().unwrap().message(),
+        "New value for compressed_reserved_memory_in_bytes is not valid: invalid digit found in string"
+    );
 }
