@@ -1506,7 +1506,7 @@ mod tests {
         // the TempDir which created the folder containing the database leaves it in read-only mode.
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
         let model_table_metadata = common_test::model_table_metadata();
 
         metadata_manager
@@ -1582,7 +1582,7 @@ mod tests {
     }
 
     async fn create_metadata_manager_and_save_model_table(temp_dir: &Path) -> MetadataManager {
-        let metadata_manager = common_test::test_metadata_manager(temp_dir).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir).await.unwrap();
         let model_table_metadata = common_test::model_table_metadata();
 
         metadata_manager
