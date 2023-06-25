@@ -613,23 +613,6 @@ mod tests {
         );
     }
 
-    /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
-    async fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        let local_data_folder = temp_dir.path().to_path_buf();
-        (
-            temp_dir,
-            CompressedDataManager::try_new(
-                None,
-                local_data_folder,
-                common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
-                Arc::new(RwLock::new(Metric::new())),
-            )
-            .unwrap(),
-        )
-    }
-
     // Tests for save_and_get_saved_compressed_files().
     #[tokio::test]
     async fn test_can_get_compressed_file_for_table() {
@@ -1092,6 +1075,38 @@ mod tests {
             )
             .await;
         assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_increase_compressed_remaining_memory_in_bytes() {
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
+
+        data_manager
+            .set_compressed_remaining_memory_in_bytes(10000)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            data_manager.compressed_remaining_memory_in_bytes as usize,
+            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES + 10000
+        )
+    }
+
+    /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
+    async fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let local_data_folder = temp_dir.path().to_path_buf();
+        (
+            temp_dir,
+            CompressedDataManager::try_new(
+                None,
+                local_data_folder,
+                common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+                Arc::new(RwLock::new(Metric::new())),
+            )
+            .unwrap(),
+        )
     }
 
     // Tests for is_compressed_file_within_time_and_value_range().
