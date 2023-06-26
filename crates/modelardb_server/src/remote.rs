@@ -678,7 +678,7 @@ impl FlightService for FlightServiceHandler {
     /// the object store type, specifically either 's3' or 'azureblobstorage'. The remaining
     /// arguments should be the arguments required to connect to the object store.
     /// * `GetConfiguration`: Get the current server configuration. The value of each setting in the
-    /// configuration is returned in a single [`RecordBatch`](arrow::record_batch::RecordBatch).
+    /// configuration is returned in a single [`RecordBatch`].
     /// * `UpdateConfiguration`: Update a single setting in the configuration. Each argument in the
     /// body should start with the size of the argument, immediately followed by the argument value.
     /// The first argument should be the setting to update, specifically either
