@@ -71,7 +71,7 @@ pub async fn test_context(path: &Path) -> Arc<Context> {
         StorageEngine::try_new(
             path.to_owned(),
             None,
-            configuration_manager.clone(),
+            &configuration_manager,
             metadata_manager.clone(),
             true,
         )

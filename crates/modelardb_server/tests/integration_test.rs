@@ -763,7 +763,7 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
 }
 
 #[test]
-fn test_cannot_update_invalid_setting() {
+fn test_cannot_update_non_existing_setting() {
     let mut test_context = TestContext::new();
     let response = test_context.update_configuration("invalid", "1");
 

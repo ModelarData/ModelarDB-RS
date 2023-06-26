@@ -810,11 +810,11 @@ impl FlightService for FlightServiceHandler {
         } else if action.r#type == "GetConfiguration" {
             // Extract the configuration data from the configuration manager.
             let configuration_manager = self.context.configuration_manager.read().await;
-            let settings = vec![
+            let settings = [
                 "uncompressed_reserved_memory_in_bytes",
                 "compressed_reserved_memory_in_bytes",
             ];
-            let values = vec![
+            let values = [
                 *configuration_manager.uncompressed_reserved_memory_in_bytes() as u64,
                 *configuration_manager.compressed_reserved_memory_in_bytes() as u64,
             ];
@@ -825,8 +825,8 @@ impl FlightService for FlightServiceHandler {
             let batch = RecordBatch::try_new(
                 schema.0.clone(),
                 vec![
-                    Arc::new(StringArray::from(settings)),
-                    Arc::new(UInt64Array::from(values)),
+                    Arc::new(StringArray::from_iter_values(settings)),
+                    Arc::new(UInt64Array::from_iter_values(values)),
                 ],
             )
             .unwrap();
@@ -836,7 +836,7 @@ impl FlightService for FlightServiceHandler {
             let (setting, offset_data) = extract_argument(&action.body)?;
             let (new_value, _offset_data) = extract_argument(offset_data)?;
             let new_value: usize = new_value.parse().map_err(|error| {
-                Status::internal(format!("New value for {setting} is not valid: {error}"))
+                Status::invalid_argument(format!("New value for {setting} is not valid: {error}"))
             })?;
 
             let mut configuration_manager = self.context.configuration_manager.write().await;

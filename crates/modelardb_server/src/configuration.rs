@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-//! Management of the system's configuration, including the server mode, and the amount of
-//! reserved memory for uncompressed and compressed data.
+//! Management of the system's configuration. The configuration consists of the server mode and
+//! the amount of reserved memory for uncompressed and compressed data.
 
 use std::sync::Arc;
 use modelardb_common::errors::ModelarDbError;
@@ -23,10 +23,11 @@ use tokio::sync::RwLock;
 use crate::storage::StorageEngine;
 use crate::ServerMode;
 
-/// Store's the system's configuration and provides functionality for updating the configuration.
+/// Manages the system's configuration and provides functionality for updating the configuration.
 #[derive(Clone)]
 pub struct ConfigurationManager {
-    /// The mode of the server used to determine the behaviour when modifying the remote object store.
+    /// The mode of the server used to determine the behaviour when modifying the remote object
+    /// store and querying.
     server_mode: ServerMode,
     /// Amount of memory to reserve for storing uncompressed data buffers.
     uncompressed_reserved_memory_in_bytes: usize,
@@ -51,12 +52,14 @@ impl ConfigurationManager {
         &self.uncompressed_reserved_memory_in_bytes
     }
 
-    /// Set the new value and update the uncompressed remaining reserved memory in the storage engine.
+    /// Set the new value and update the amount of memory for uncompressed data in the storage engine.
     pub(crate) async fn set_uncompressed_reserved_memory_in_bytes(
         &mut self,
         new_uncompressed_reserved_memory_in_bytes: usize,
         storage_engine: Arc<RwLock<StorageEngine>>,
     ) {
+        // Since the storage engine only keeps track of the remaining reserved memory, calculate
+        // how much the value should change.
         let value_change = new_uncompressed_reserved_memory_in_bytes as isize
             - self.uncompressed_reserved_memory_in_bytes as isize;
 
@@ -73,7 +76,7 @@ impl ConfigurationManager {
         &self.compressed_reserved_memory_in_bytes
     }
 
-    /// Set the new value and update the compressed remaining reserved memory in the storage engine.
+    /// Set the new value and update the amount of memory for compressed data in the storage engine.
     /// If the value was updated, return [`Ok`], otherwise return
     /// [`ConfigurationError`](ModelarDbError::ConfigurationError).
     pub(crate) async fn set_compressed_reserved_memory_in_bytes(
@@ -81,6 +84,8 @@ impl ConfigurationManager {
         new_compressed_reserved_memory_in_bytes: usize,
         storage_engine: Arc<RwLock<StorageEngine>>,
     ) -> Result<(), ModelarDbError> {
+        // Since the storage engine only keeps track of the remaining reserved memory, calculate
+        // how much the value should change.
         let value_change = new_compressed_reserved_memory_in_bytes as isize
             - self.compressed_reserved_memory_in_bytes as isize;
 

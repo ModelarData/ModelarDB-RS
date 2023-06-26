@@ -118,7 +118,7 @@ impl StorageEngine {
     pub async fn try_new(
         local_data_folder: PathBuf,
         remote_data_folder: Option<Arc<dyn ObjectStore>>,
-        configuration_manager: Arc<RwLock<ConfigurationManager>>,
+        configuration_manager: &Arc<RwLock<ConfigurationManager>>,
         metadata_manager: MetadataManager,
         compress_directly: bool,
     ) -> Result<Self, IOError> {
@@ -383,15 +383,15 @@ impl StorageEngine {
         Ok(())
     }
 
-    /// Change the uncompressed remaining memory in bytes according to `value_change`.
+    /// Change the amount of memory for uncompressed data in bytes according to `value_change`.
     pub async fn set_uncompressed_remaining_memory_in_bytes(&mut self, value_change: isize) {
         self.uncompressed_data_manager
             .set_uncompressed_remaining_memory_in_bytes(value_change)
             .await;
     }
 
-    /// Change the compressed remaining memory in bytes according to `value_change`. If the value is
-    /// changed successfully return [`Ok`], otherwise return [`IOError`].
+    /// Change the amount of memory for compressed data in bytes according to `value_change`. If
+    /// the value is changed successfully return [`Ok`], otherwise return [`IOError`].
     pub async fn set_compressed_remaining_memory_in_bytes(
         &mut self,
         value_change: isize,

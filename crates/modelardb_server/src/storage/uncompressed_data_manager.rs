@@ -501,9 +501,9 @@ impl UncompressedDataManager {
         panic!("Not enough reserved memory for the necessary uncompressed buffers.");
     }
 
-    /// Change the uncompressed remaining memory in bytes according to `value_change`. If less than 0
-    /// bytes remain, spill uncompressed data to disk. If all the data is spilled successfully
-    /// return [`Ok`], otherwise return [`IOError`].
+    /// Change the amount of memory for uncompressed data in bytes according to `value_change`. If
+    /// less than zero bytes remain, spill uncompressed data to disk. If all the data is spilled
+    /// successfully return [`Ok`], otherwise return [`IOError`].
     pub(super) async fn set_uncompressed_remaining_memory_in_bytes(&mut self, value_change: isize) {
         let mut current_remaining_memory: isize =
             self.uncompressed_remaining_memory_in_bytes as isize + value_change;
