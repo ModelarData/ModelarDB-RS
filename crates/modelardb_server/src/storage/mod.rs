@@ -131,7 +131,7 @@ impl StorageEngine {
         // Create the uncompressed data manager.
         let uncompressed_data_manager = UncompressedDataManager::try_new(
             local_data_folder.clone(),
-            configuration_manager.uncompressed_reserved_memory_in_bytes().clone(),
+            *configuration_manager.uncompressed_reserved_memory_in_bytes(),
             &metadata_manager,
             compress_directly,
             used_disk_space_metric.clone(),
@@ -156,9 +156,7 @@ impl StorageEngine {
         let compressed_data_manager = CompressedDataManager::try_new(
             data_transfer,
             local_data_folder,
-            configuration_manager
-                .compressed_reserved_memory_in_bytes()
-                .clone(),
+            *configuration_manager.compressed_reserved_memory_in_bytes(),
             used_disk_space_metric,
         )?;
 
@@ -387,14 +385,20 @@ impl StorageEngine {
 
     /// Change the uncompressed remaining memory in bytes according to `value_change`.
     pub async fn set_uncompressed_remaining_memory_in_bytes(&mut self, value_change: isize) {
-        self.uncompressed_data_manager.set_uncompressed_remaining_memory_in_bytes(value_change).await;
+        self.uncompressed_data_manager
+            .set_uncompressed_remaining_memory_in_bytes(value_change)
+            .await;
     }
 
     /// Change the compressed remaining memory in bytes according to `value_change`. If the value is
     /// changed successfully return [`Ok`], otherwise return [`IOError`].
-    pub async fn set_compressed_remaining_memory_in_bytes(&mut self, value_change: isize) -> Result<(), IOError> {
-        self.compressed_data_manager.set_compressed_remaining_memory_in_bytes(value_change).await?;
-        Ok(())
+    pub async fn set_compressed_remaining_memory_in_bytes(
+        &mut self,
+        value_change: isize,
+    ) -> Result<(), IOError> {
+        self.compressed_data_manager
+            .set_compressed_remaining_memory_in_bytes(value_change)
+            .await
     }
 
     /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`

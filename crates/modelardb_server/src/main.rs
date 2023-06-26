@@ -31,7 +31,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::{env, fs};
 
-use crate::configuration::ConfigurationManager;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
 use modelardb_common::arguments::{
@@ -44,6 +43,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::configuration::ConfigurationManager;
 use crate::metadata::MetadataManager;
 use crate::storage::StorageEngine;
 
