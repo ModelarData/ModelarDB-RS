@@ -357,7 +357,7 @@ impl CompressedDataManager {
     /// Change the amount of memory for compressed data in bytes according to `value_change`. If
     /// less than zero bytes remain, save compressed data to free memory. If all the data is saved
     /// successfully return [`Ok`], otherwise return [`IOError`].
-    pub(super) async fn set_compressed_remaining_memory_in_bytes(
+    pub(super) async fn adjust_compressed_remaining_memory_in_bytes(
         &mut self,
         value_change: isize,
     ) -> Result<(), IOError> {
@@ -1082,7 +1082,7 @@ mod tests {
         let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
 
         data_manager
-            .set_compressed_remaining_memory_in_bytes(10000)
+            .adjust_compressed_remaining_memory_in_bytes(10000)
             .await
             .unwrap();
 
@@ -1104,7 +1104,7 @@ mod tests {
             .unwrap();
 
         data_manager
-            .set_compressed_remaining_memory_in_bytes(
+            .adjust_compressed_remaining_memory_in_bytes(
                 -(common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize),
             )
             .await
@@ -1122,7 +1122,7 @@ mod tests {
         let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
 
         data_manager
-            .set_compressed_remaining_memory_in_bytes(
+            .adjust_compressed_remaining_memory_in_bytes(
                 -((common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES + 1) as isize),
             )
             .await

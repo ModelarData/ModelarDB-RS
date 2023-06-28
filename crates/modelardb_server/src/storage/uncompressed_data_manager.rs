@@ -504,7 +504,7 @@ impl UncompressedDataManager {
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`. If
     /// less than zero bytes remain, spill uncompressed data to disk. If all the data is spilled
     /// successfully return [`Ok`], otherwise return [`IOError`].
-    pub(super) async fn set_uncompressed_remaining_memory_in_bytes(&mut self, value_change: isize) {
+    pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(&mut self, value_change: isize) {
         let mut current_remaining_memory: isize =
             self.uncompressed_remaining_memory_in_bytes as isize + value_change;
 
@@ -976,7 +976,7 @@ mod tests {
             create_managers(temp_dir.path()).await;
 
         data_manager
-            .set_uncompressed_remaining_memory_in_bytes(10000)
+            .adjust_uncompressed_remaining_memory_in_bytes(10000)
             .await;
 
         assert_eq!(
@@ -1000,7 +1000,7 @@ mod tests {
         .await;
 
         data_manager
-            .set_uncompressed_remaining_memory_in_bytes(
+            .adjust_uncompressed_remaining_memory_in_bytes(
                 -(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize),
             )
             .await;
@@ -1026,7 +1026,7 @@ mod tests {
             create_managers(temp_dir.path()).await;
 
         data_manager
-            .set_uncompressed_remaining_memory_in_bytes(
+            .adjust_uncompressed_remaining_memory_in_bytes(
                 -((common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + 1) as isize),
             )
             .await;

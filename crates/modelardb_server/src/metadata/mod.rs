@@ -95,7 +95,7 @@ impl CompressedFile {
 }
 
 /// Store's the metadata required for reading from and writing to the tables and model tables.
-/// The data that needs to be persisted are stored in the metadata database.
+/// The data that needs to be persisted is stored in the metadata database.
 #[derive(Clone)]
 pub struct MetadataManager {
     /// Folder for storing metadata and Apache Parquet files on the local file

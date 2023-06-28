@@ -384,20 +384,20 @@ impl StorageEngine {
     }
 
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.
-    pub async fn set_uncompressed_remaining_memory_in_bytes(&mut self, value_change: isize) {
+    pub async fn adjust_uncompressed_remaining_memory_in_bytes(&mut self, value_change: isize) {
         self.uncompressed_data_manager
-            .set_uncompressed_remaining_memory_in_bytes(value_change)
+            .adjust_uncompressed_remaining_memory_in_bytes(value_change)
             .await;
     }
 
     /// Change the amount of memory for compressed data in bytes according to `value_change`. If
     /// the value is changed successfully return [`Ok`], otherwise return [`IOError`].
-    pub async fn set_compressed_remaining_memory_in_bytes(
+    pub async fn adjust_compressed_remaining_memory_in_bytes(
         &mut self,
         value_change: isize,
     ) -> Result<(), IOError> {
         self.compressed_data_manager
-            .set_compressed_remaining_memory_in_bytes(value_change)
+            .adjust_compressed_remaining_memory_in_bytes(value_change)
             .await
     }
 

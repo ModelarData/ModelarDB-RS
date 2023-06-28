@@ -66,7 +66,7 @@ impl ConfigurationManager {
         storage_engine
             .write()
             .await
-            .set_uncompressed_remaining_memory_in_bytes(value_change)
+            .adjust_uncompressed_remaining_memory_in_bytes(value_change)
             .await;
 
         self.uncompressed_reserved_memory_in_bytes = new_uncompressed_reserved_memory_in_bytes;
@@ -92,7 +92,7 @@ impl ConfigurationManager {
         storage_engine
             .write()
             .await
-            .set_compressed_remaining_memory_in_bytes(value_change)
+            .adjust_compressed_remaining_memory_in_bytes(value_change)
             .await
             .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
 
