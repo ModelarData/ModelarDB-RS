@@ -13,14 +13,13 @@
  * limitations under the License.
  */
 
-//! Management of the metadata database which stores the system's configuration and the metadata
-//! required for the tables and model tables. Tables can store arbitrary data, while model tables
-//! can only store time series as segments containing metadata and models. At runtime, the location
-//! of the data for the tables and the model table metadata are stored in Apache Arrow DataFusion's
-//! catalog, while this module stores the system's configuration and a mapping from model table name
-//! and tag values to hashes. These hashes can be combined with the corresponding model table's
-//! field column indices to uniquely identify each univariate time series stored in the storage
-//! engine by a univariate id.
+//! Management of the metadata database which stores the metadata required for the tables and
+//! model tables. Tables can store arbitrary data, while model tables can only store time series as
+//! segments containing metadata and models. At runtime, the location of the data for the tables and
+//! the model table metadata are stored in Apache Arrow DataFusion's catalog, while this module stores
+//! a mapping from model table name and tag values to hashes. These hashes can be combined with the
+//! corresponding model table's field column indices to uniquely identify each univariate time series
+//! stored in the storage engine by a univariate id.
 
 pub mod model_table_metadata;
 
@@ -55,7 +54,7 @@ use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::parser;
 use crate::query::ModelTable;
 use crate::storage::COMPRESSED_DATA_FOLDER;
-use crate::{Context, ServerMode};
+use crate::Context;
 
 use self::model_table_metadata::GeneratedColumn;
 
@@ -95,9 +94,8 @@ impl CompressedFile {
     }
 }
 
-/// Store's the system's configuration and the metadata required for reading from and writing to the
-/// tables and model tables. The data that needs to be persisted are stored in the metadata
-/// database.
+/// Store's the metadata required for reading from and writing to the tables and model tables.
+/// The data that needs to be persisted is stored in the metadata database.
 #[derive(Clone)]
 pub struct MetadataManager {
     /// Folder for storing metadata and Apache Parquet files on the local file
@@ -108,18 +106,12 @@ pub struct MetadataManager {
     /// Cache of tag value hashes used to signify when to persist new unsaved
     /// tag combinations.
     tag_value_hashes: HashMap<String, u64>,
-    /// The mode of the server used to determine the behaviour when modifying the remote object store.
-    pub server_mode: ServerMode,
-    /// Amount of memory to reserve for storing uncompressed data buffers.
-    pub uncompressed_reserved_memory_in_bytes: usize,
-    /// Amount of memory to reserve for storing compressed data buffers.
-    pub compressed_reserved_memory_in_bytes: usize,
 }
 
 impl MetadataManager {
     /// Return [`MetadataManager`] if a pool of connections to the metadata database in
     /// `local_data_folder` can be made, otherwise [`Error`] is returned.
-    pub async fn try_new(local_data_folder: &Path, server_mode: ServerMode) -> Result<Self> {
+    pub async fn try_new(local_data_folder: &Path) -> Result<Self> {
         if !Self::is_path_a_data_folder(local_data_folder) {
             warn!("The data folder is not empty and does not contain data from ModelarDB");
         }
@@ -136,10 +128,6 @@ impl MetadataManager {
             local_data_folder: local_data_folder.to_path_buf(),
             metadata_database_pool: SqlitePool::connect_with(options).await?,
             tag_value_hashes: HashMap::new(),
-            server_mode,
-            // Default values for parameters.
-            uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
-            compressed_reserved_memory_in_bytes: 512 * 1024 * 1024,   // 512 MiB
         };
 
         // Create the necessary tables in the metadata database.
@@ -1149,7 +1137,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_metadata_database_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         // Verify that the tables were created and has the expected columns.
         metadata_manager
@@ -1184,14 +1172,14 @@ mod tests {
     async fn test_get_data_folder_path() {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_path = temp_dir.path();
-        let metadata_manager = common_test::test_metadata_manager(temp_dir_path).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
         assert_eq!(temp_dir_path, metadata_manager.local_data_folder());
     }
 
     #[tokio::test]
     async fn test_get_new_tag_hash() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
@@ -1226,7 +1214,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_existing_tag_hash() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
@@ -1273,7 +1261,7 @@ mod tests {
     #[tokio::test]
     async fn test_compute_univariate_ids_using_fields_and_tags_for_missing_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         assert!(metadata_manager
             .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
@@ -1285,7 +1273,7 @@ mod tests {
     async fn test_compute_univariate_ids_using_fields_and_tags_for_empty_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
@@ -1305,7 +1293,7 @@ mod tests {
     async fn test_compute_univariate_ids_using_no_fields_and_tags_for_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
         initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]).await;
 
         // Lookup all univariate ids for the table by not passing any fields or tags.
@@ -1321,7 +1309,7 @@ mod tests {
     ) {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
         initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]).await;
 
         // Lookup the univariate ids for the fallback column by only requesting tag columns.
@@ -1336,7 +1324,7 @@ mod tests {
     async fn test_compute_the_univariate_ids_for_a_specific_field_column_for_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
         initialize_model_table_with_tag_values(
             &mut metadata_manager,
             &["tag_value1", "tag_value2"],
@@ -1362,7 +1350,7 @@ mod tests {
     async fn test_compute_the_univariate_ids_for_a_specific_tag_value_for_model_table() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
         initialize_model_table_with_tag_values(
             &mut metadata_manager,
             &["tag_value1", "tag_value2"],
@@ -1518,7 +1506,7 @@ mod tests {
         // the TempDir which created the folder containing the database leaves it in read-only mode.
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
         let model_table_metadata = common_test::model_table_metadata();
 
         metadata_manager
@@ -1594,7 +1582,7 @@ mod tests {
     }
 
     async fn create_metadata_manager_and_save_model_table(temp_dir: &Path) -> MetadataManager {
-        let metadata_manager = common_test::test_metadata_manager(temp_dir).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir).await.unwrap();
         let model_table_metadata = common_test::model_table_metadata();
 
         metadata_manager
@@ -1887,7 +1875,7 @@ mod tests {
     async fn test_save_table_metadata() {
         // Save a table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         let table_name = "table_name";
         metadata_manager
@@ -1933,7 +1921,7 @@ mod tests {
     async fn test_save_model_table_metadata() {
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager

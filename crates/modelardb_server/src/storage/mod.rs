@@ -34,6 +34,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{fmt, mem};
 
+use crate::configuration::ConfigurationManager;
 use bytes::buf::BufMut;
 use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::compute;
@@ -117,6 +118,7 @@ impl StorageEngine {
     pub async fn try_new(
         local_data_folder: PathBuf,
         remote_data_folder: Option<Arc<dyn ObjectStore>>,
+        configuration_manager: &Arc<RwLock<ConfigurationManager>>,
         metadata_manager: MetadataManager,
         compress_directly: bool,
     ) -> Result<Self, IOError> {
@@ -124,9 +126,12 @@ impl StorageEngine {
         // since it is appended to by multiple components, potentially at the same time.
         let used_disk_space_metric = Arc::new(RwLock::new(Metric::new()));
 
+        let configuration_manager = configuration_manager.read().await;
+
         // Create the uncompressed data manager.
         let uncompressed_data_manager = UncompressedDataManager::try_new(
             local_data_folder.clone(),
+            *configuration_manager.uncompressed_reserved_memory_in_bytes(),
             &metadata_manager,
             compress_directly,
             used_disk_space_metric.clone(),
@@ -151,7 +156,7 @@ impl StorageEngine {
         let compressed_data_manager = CompressedDataManager::try_new(
             data_transfer,
             local_data_folder,
-            metadata_manager.compressed_reserved_memory_in_bytes,
+            *configuration_manager.compressed_reserved_memory_in_bytes(),
             used_disk_space_metric,
         )?;
 
@@ -376,6 +381,24 @@ impl StorageEngine {
         }
 
         Ok(())
+    }
+
+    /// Change the amount of memory for uncompressed data in bytes according to `value_change`.
+    pub async fn adjust_uncompressed_remaining_memory_in_bytes(&mut self, value_change: isize) {
+        self.uncompressed_data_manager
+            .adjust_uncompressed_remaining_memory_in_bytes(value_change)
+            .await;
+    }
+
+    /// Change the amount of memory for compressed data in bytes according to `value_change`. If
+    /// the value is changed successfully return [`Ok`], otherwise return [`IOError`].
+    pub async fn adjust_compressed_remaining_memory_in_bytes(
+        &mut self,
+        value_change: isize,
+    ) -> Result<(), IOError> {
+        self.compressed_data_manager
+            .adjust_compressed_remaining_memory_in_bytes(value_change)
+            .await
     }
 
     /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`

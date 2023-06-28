@@ -276,7 +276,10 @@ impl CompressedDataManager {
         debug!("Out of memory for compressed data. Saving compressed data to disk.");
 
         while self.compressed_remaining_memory_in_bytes < 0 {
-            let (table_name, column_index) = self.compressed_queue.pop_front().unwrap();
+            let (table_name, column_index) = self
+                .compressed_queue
+                .pop_front()
+                .expect("Not enough compressed data to free up the required memory.");
             self.save_compressed_data(&table_name, column_index).await?;
         }
         Ok(())
@@ -347,6 +350,19 @@ impl CompressedDataManager {
                 .await
                 .map_err(|error| IOError::new(Other, error.to_string()))?;
         }
+
+        Ok(())
+    }
+
+    /// Change the amount of memory for compressed data in bytes according to `value_change`. If
+    /// less than zero bytes remain, save compressed data to free memory. If all the data is saved
+    /// successfully return [`Ok`], otherwise return [`IOError`].
+    pub(super) async fn adjust_compressed_remaining_memory_in_bytes(
+        &mut self,
+        value_change: isize,
+    ) -> Result<(), IOError> {
+        self.compressed_remaining_memory_in_bytes += value_change;
+        self.save_compressed_data_to_free_memory().await?;
 
         Ok(())
     }
@@ -595,24 +611,6 @@ mod tests {
                 .len(),
             1
         );
-    }
-
-    /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
-    async fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = common_test::test_metadata_manager(temp_dir.path()).await;
-
-        let local_data_folder = temp_dir.path().to_path_buf();
-        (
-            temp_dir,
-            CompressedDataManager::try_new(
-                None,
-                local_data_folder,
-                metadata_manager.compressed_reserved_memory_in_bytes,
-                Arc::new(RwLock::new(Metric::new())),
-            )
-            .unwrap(),
-        )
     }
 
     // Tests for save_and_get_saved_compressed_files().
@@ -1077,6 +1075,75 @@ mod tests {
             )
             .await;
         assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_increase_compressed_remaining_memory_in_bytes() {
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
+
+        data_manager
+            .adjust_compressed_remaining_memory_in_bytes(10000)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            data_manager.compressed_remaining_memory_in_bytes as usize,
+            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES + 10000
+        )
+    }
+
+    #[tokio::test]
+    async fn test_decrease_compressed_remaining_memory_in_bytes() {
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
+
+        // Insert data that should be saved when the remaining memory is decreased.
+        let segments = common_test::compressed_segments_record_batch();
+        data_manager
+            .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments)
+            .await
+            .unwrap();
+
+        data_manager
+            .adjust_compressed_remaining_memory_in_bytes(
+                -(common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(data_manager.compressed_remaining_memory_in_bytes, 0);
+
+        // There should no longer be any compressed data in memory.
+        assert_eq!(data_manager.compressed_data_buffers.values().len(), 0);
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "Not enough compressed data to free up the required memory.")]
+    async fn test_panic_if_decreasing_compressed_remaining_memory_in_bytes_below_zero() {
+        let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
+
+        data_manager
+            .adjust_compressed_remaining_memory_in_bytes(
+                -((common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES + 1) as isize),
+            )
+            .await
+            .unwrap();
+    }
+
+    /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
+    async fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let local_data_folder = temp_dir.path().to_path_buf();
+        (
+            temp_dir,
+            CompressedDataManager::try_new(
+                None,
+                local_data_folder,
+                common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+                Arc::new(RwLock::new(Metric::new())),
+            )
+            .unwrap(),
+        )
     }
 
     // Tests for is_compressed_file_within_time_and_value_range().

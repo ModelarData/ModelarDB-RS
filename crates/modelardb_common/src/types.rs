@@ -54,3 +54,6 @@ pub struct MetricSchema(pub arrow::datatypes::SchemaRef);
 
 #[derive(Clone)]
 pub struct QuerySchema(pub arrow::datatypes::SchemaRef);
+
+#[derive(Clone)]
+pub struct ConfigurationSchema(pub arrow::datatypes::SchemaRef);

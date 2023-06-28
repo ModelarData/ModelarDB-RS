@@ -19,6 +19,7 @@
 #![allow(clippy::too_many_arguments)]
 
 mod common_test;
+mod configuration;
 mod metadata;
 mod optimizer;
 mod parser;
@@ -42,6 +43,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::configuration::ConfigurationManager;
 use crate::metadata::MetadataManager;
 use crate::storage::StorageEngine;
 
@@ -81,10 +83,12 @@ pub struct DataFolders {
 pub struct Context {
     /// Metadata for the tables and model tables in the data folder.
     pub metadata_manager: MetadataManager,
+    /// Updatable configuration of the server.
+    pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
     /// Main interface for Apache Arrow DataFusion.
     pub session: SessionContext,
     /// Manages all uncompressed and compressed data in the system.
-    pub storage_engine: RwLock<StorageEngine>,
+    pub storage_engine: Arc<RwLock<StorageEngine>>,
 }
 
 /// Setup tracing that prints to stdout, parse the command line arguments to
@@ -120,29 +124,31 @@ fn main() -> Result<(), String> {
 
     // Create the components for the Context.
     let metadata_manager = runtime
-        .block_on(MetadataManager::try_new(
-            &data_folders.local_data_folder,
-            server_mode,
-        ))
+        .block_on(MetadataManager::try_new(&data_folders.local_data_folder))
         .map_err(|error| format!("Unable to create a MetadataManager: {error}"))?;
+
+    let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(server_mode)));
     let session = create_session_context(data_folders.query_data_folder);
-    let storage_engine = RwLock::new(
+
+    let storage_engine = Arc::new(RwLock::new(
         runtime
             .block_on(async {
                 StorageEngine::try_new(
                     data_folders.local_data_folder,
                     data_folders.remote_data_folder,
+                    &configuration_manager,
                     metadata_manager.clone(),
                     true,
                 )
                 .await
             })
             .map_err(|error| error.to_string())?,
-    );
+    ));
 
     // Create the Context.
     let context = Arc::new(Context {
         metadata_manager,
+        configuration_manager,
         session,
         storage_engine,
     });

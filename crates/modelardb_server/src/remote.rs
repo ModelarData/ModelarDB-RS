@@ -31,7 +31,9 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
 use bytes::Bytes;
-use datafusion::arrow::array::{ArrayRef, ListBuilder, StringBuilder, UInt32Builder};
+use datafusion::arrow::array::{
+    ArrayRef, ListBuilder, StringArray, StringBuilder, UInt32Builder, UInt64Array,
+};
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::ipc::writer::{
@@ -44,7 +46,7 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::prelude::ParquetReadOptions;
 use futures::{stream, Stream, StreamExt};
 use modelardb_common::arguments::{validate_remote_data_folder, RemoteDataFolderType};
-use modelardb_common::schemas::METRIC_SCHEMA;
+use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
 use modelardb_common::types::TimestampBuilder;
 use object_store::aws::AmazonS3Builder;
 use object_store::azure::MicrosoftAzureBuilder;
@@ -216,6 +218,29 @@ fn extract_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
     let remaining_bytes = &data[(size + 2)..];
 
     Ok((argument, remaining_bytes))
+}
+
+/// Write the schema and corresponding record batch to a stream within a gRPC response.
+fn send_record_batch(
+    schema: SchemaRef,
+    batch: RecordBatch,
+) -> Result<Response<<FlightServiceHandler as FlightService>::DoActionStream>, Status> {
+    let options = IpcWriteOptions::default();
+    let mut writer = StreamWriter::try_new_with_options(vec![], &schema, options)
+        .map_err(|error| Status::internal(error.to_string()))?;
+
+    writer
+        .write(&batch)
+        .map_err(|error| Status::internal(error.to_string()))?;
+    let batch_bytes = writer
+        .into_inner()
+        .map_err(|error| Status::internal(error.to_string()))?;
+
+    Ok(Response::new(Box::pin(stream::once(async {
+        Ok(arrow_flight::Result {
+            body: batch_bytes.into(),
+        })
+    }))))
 }
 
 /// Handler for processing Apache Arrow Flight requests.
@@ -652,6 +677,13 @@ impl FlightService for FlightServiceHandler {
     /// of the argument, immediately followed by the argument value. The first argument should be
     /// the object store type, specifically either 's3' or 'azureblobstorage'. The remaining
     /// arguments should be the arguments required to connect to the object store.
+    /// * `GetConfiguration`: Get the current server configuration. The value of each setting in the
+    /// configuration is returned in a single [`RecordBatch`].
+    /// * `UpdateConfiguration`: Update a single setting in the configuration. Each argument in the
+    /// body should start with the size of the argument, immediately followed by the argument value.
+    /// The first argument should be the setting to update, specifically either
+    /// 'uncompressed_reserved_memory_in_bytes' or 'compressed_reserved_memory_in_bytes'. The second
+    /// argument should be the new value of the setting as an unsigned integer.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -741,26 +773,12 @@ impl FlightService for FlightServiceHandler {
             )
             .unwrap();
 
-            // Write the schema and corresponding record batch to a stream.
-            let options = IpcWriteOptions::default();
-            let mut writer = StreamWriter::try_new_with_options(vec![], &schema.0, options)
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            writer
-                .write(&batch)
-                .map_err(|error| Status::internal(error.to_string()))?;
-            let batch_bytes = writer
-                .into_inner()
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            Ok(Response::new(Box::pin(stream::once(async {
-                Ok(arrow_flight::Result {
-                    body: batch_bytes.into(),
-                })
-            }))))
+            send_record_batch(schema.0, batch)
         } else if action.r#type == "UpdateRemoteObjectStore" {
+            let configuration_manager = self.context.configuration_manager.read().await;
+
             // If on a cloud node, both the remote data folder and the query data folder should be updated.
-            if self.context.metadata_manager.server_mode == ServerMode::Cloud {
+            if configuration_manager.server_mode() == &ServerMode::Cloud {
                 // TODO: The query data folder should be updated in the session context.
                 return Err(Status::unimplemented(
                     "Currently not possible to update remote object store on cloud nodes.",
@@ -788,6 +806,60 @@ impl FlightService for FlightServiceHandler {
                 })?;
 
             // Confirm the remote object store was updated.
+            Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "GetConfiguration" {
+            // Extract the configuration data from the configuration manager.
+            let configuration_manager = self.context.configuration_manager.read().await;
+            let settings = [
+                "uncompressed_reserved_memory_in_bytes",
+                "compressed_reserved_memory_in_bytes",
+            ];
+            let values = [
+                *configuration_manager.uncompressed_reserved_memory_in_bytes() as u64,
+                *configuration_manager.compressed_reserved_memory_in_bytes() as u64,
+            ];
+
+            let schema = CONFIGURATION_SCHEMA.clone();
+
+            // Create the record batch with the current configuration.
+            let batch = RecordBatch::try_new(
+                schema.0.clone(),
+                vec![
+                    Arc::new(StringArray::from_iter_values(settings)),
+                    Arc::new(UInt64Array::from_iter_values(values)),
+                ],
+            )
+            .unwrap();
+
+            send_record_batch(schema.0, batch)
+        } else if action.r#type == "UpdateConfiguration" {
+            let (setting, offset_data) = extract_argument(&action.body)?;
+            let (new_value, _offset_data) = extract_argument(offset_data)?;
+            let new_value: usize = new_value.parse().map_err(|error| {
+                Status::invalid_argument(format!("New value for {setting} is not valid: {error}"))
+            })?;
+
+            let mut configuration_manager = self.context.configuration_manager.write().await;
+            let storage_engine = self.context.storage_engine.clone();
+
+            match setting {
+                "uncompressed_reserved_memory_in_bytes" => {
+                    configuration_manager
+                        .set_uncompressed_reserved_memory_in_bytes(new_value, storage_engine)
+                        .await;
+
+                    Ok(())
+                }
+                "compressed_reserved_memory_in_bytes" => configuration_manager
+                    .set_compressed_reserved_memory_in_bytes(new_value, storage_engine)
+                    .await
+                    .map_err(|error| Status::internal(error.to_string())),
+                _ => Err(Status::unimplemented(format!(
+                    "{setting} is not a valid setting in the server configuration."
+                ))),
+            }?;
+
+            // Confirm the configuration was updated.
             Ok(Response::new(Box::pin(stream::empty())))
         } else {
             Err(Status::unimplemented("Action not implemented."))
@@ -834,12 +906,24 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
+        let get_configuration = ActionType {
+            r#type: "GetConfiguration".to_owned(),
+            description: "Get the current server configuration.".to_owned(),
+        };
+
+        let update_configuration = ActionType {
+            r#type: "UpdateConfiguration".to_owned(),
+            description: "Update a specific setting in the server configuration.".to_owned(),
+        };
+
         let output = stream::iter(vec![
             Ok(create_command_statement_update_action),
             Ok(flush_data_to_disk),
             Ok(flush_edge_action),
             Ok(collect_metrics),
             Ok(update_remote_object_store),
+            Ok(get_configuration),
+            Ok(update_configuration),
         ]);
 
         Ok(Response::new(Box::pin(output)))

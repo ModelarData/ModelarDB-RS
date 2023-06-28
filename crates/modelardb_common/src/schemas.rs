@@ -22,7 +22,7 @@ use once_cell::sync::Lazy;
 
 use crate::types::{
     ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedSchema, MetricSchema, QuerySchema,
-    UncompressedSchema,
+    UncompressedSchema, ConfigurationSchema
 };
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`](arrow::datatypes::Schema) used for
@@ -92,5 +92,14 @@ pub static QUERY_SCHEMA: Lazy<QuerySchema> = Lazy::new(|| {
         Field::new("univariate_id", ArrowUnivariateId::DATA_TYPE, false),
         Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
         Field::new("value", ArrowValue::DATA_TYPE, false),
+    ])))
+});
+
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`](arrow::datatypes::Schema) used for
+/// the configuration.
+pub static CONFIGURATION_SCHEMA: Lazy<ConfigurationSchema> = Lazy::new(|| {
+    ConfigurationSchema(Arc::new(Schema::new(vec![
+        Field::new("setting", DataType::Utf8, false),
+        Field::new("value", DataType::UInt64, false),
     ])))
 });
