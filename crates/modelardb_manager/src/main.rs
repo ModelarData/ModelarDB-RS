@@ -16,6 +16,7 @@
 //! Implementation of ModelarDB manager's main function.
 
 mod remote;
+mod metadata;
 
 use std::env;
 use std::sync::Arc;
