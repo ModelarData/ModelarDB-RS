@@ -13,10 +13,9 @@
  * limitations under the License.
  */
 
-//! Implementation of the model types used for compressing time series segments
-//! as models and functions for efficiently computing aggregates from models of
-//! each type. The module itself contains general functionality used by the
-//! model types.
+//! Implementation of the model types used for compressing sequences of values models and functions
+//! for efficiently computing aggregates from models of each type. The module itself contains
+//! general functionality used by the model types.
 
 pub mod bits;
 pub mod gorilla;
@@ -68,7 +67,7 @@ fn equal_or_nan(v1: f64, v2: f64) -> bool {
     v1 == v2 || (v1.is_nan() && v2.is_nan())
 }
 
-/// Compute the number of data points in a time series segment.
+/// Compute the number of data points in a compressed segment.
 pub fn len(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8]) -> usize {
     if timestamps.is_empty() && start_time == end_time {
         // Timestamps are assumed to be unique so the segment has one timestamp.
@@ -97,7 +96,126 @@ pub fn len(start_time: Timestamp, end_time: Timestamp, timestamps: &[u8]) -> usi
     }
 }
 
-/// Compute the sum of the values for a time series segment whose values are represented by a model.
+/// Return [`true`] if the models from two segments can be merged, otherwise [`false`].
+pub(crate) fn can_be_merged(
+    segment_one_model_type_id: u8,
+    segment_one_start_time: Timestamp,
+    segment_one_end_time: Timestamp,
+    segment_one_min_value: Value,
+    segment_one_max_value: Value,
+    segment_one_values: &[u8],
+    segment_two_model_type_id: u8,
+    segment_two_start_time: Timestamp,
+    segment_two_end_time: Timestamp,
+    segment_two_min_value: Value,
+    segment_two_max_value: Value,
+    segment_two_values: &[u8],
+) -> bool {
+    if segment_one_model_type_id != segment_two_model_type_id {
+        return false;
+    }
+
+    match segment_one_model_type_id {
+        PMC_MEAN_ID => {
+            let segment_one_value = CompressedSegmentBuilder::decode_values_for_pmc_mean(
+                segment_one_min_value,
+                segment_one_max_value,
+                segment_one_values,
+            );
+
+            let segment_two_value = CompressedSegmentBuilder::decode_values_for_pmc_mean(
+                segment_two_min_value,
+                segment_two_max_value,
+                segment_two_values,
+            );
+
+            segment_one_value == segment_two_value
+        }
+        SWING_ID => {
+            let (segment_one_first_value, segment_one_last_value) =
+                CompressedSegmentBuilder::decode_values_for_swing(
+                    segment_one_min_value,
+                    segment_one_max_value,
+                    segment_one_values,
+                );
+
+            let (segment_two_first_value, segment_two_last_value) =
+                CompressedSegmentBuilder::decode_values_for_swing(
+                    segment_two_min_value,
+                    segment_two_max_value,
+                    segment_two_values,
+                );
+
+            swing::can_be_merged(
+                segment_one_start_time,
+                segment_one_end_time,
+                segment_one_first_value as f64,
+                segment_one_last_value as f64,
+                segment_two_start_time,
+                segment_two_end_time,
+                segment_two_first_value as f64,
+                segment_two_last_value as f64,
+            )
+        }
+        GORILLA_ID => false,
+        _ => {
+            panic!("Unknown model type.");
+        }
+    }
+}
+
+/// Encode the information required for a merged model where the `residuals_min_value` and/or
+/// `residuals_max_value` overwrite the model's `min_value` and/or `max_value` in the segment.
+pub(crate) fn merge(
+    model_type_id: u8,
+    residuals_min_value: Value,
+    residuals_max_value: Value,
+    values: &[u8],
+) -> Vec<u8> {
+    match model_type_id {
+        PMC_MEAN_ID => {
+            let value = CompressedSegmentBuilder::decode_values_for_pmc_mean(
+                residuals_min_value,
+                residuals_max_value,
+                values,
+            );
+
+            CompressedSegmentBuilder::encode_values_for_pmc_mean(
+                value,
+                value,
+                residuals_min_value,
+                residuals_max_value,
+            )
+        }
+        SWING_ID => {
+            let (first_value, last_value) = CompressedSegmentBuilder::decode_values_for_swing(
+                residuals_min_value,
+                residuals_max_value,
+                values,
+            );
+
+            let (min_value, max_value, min_value_is_first) = if first_value <= last_value {
+                (first_value, last_value, true)
+            } else {
+                (last_value, first_value, false)
+            };
+
+            CompressedSegmentBuilder::encode_values_for_swing(
+                min_value,
+                max_value,
+                min_value_is_first,
+                residuals_min_value,
+                residuals_max_value,
+            )
+        }
+        _ => {
+            panic!("Unknown model type.");
+        }
+    }
+}
+
+/// Compute the sum of the values for a compressed segment whose values are represented by a model
+/// and residuals.
 pub fn sum(
     model_type_id: u8,
     start_time: Timestamp,
@@ -150,9 +268,9 @@ pub fn sum(
     }
 }
 
-/// Reconstruct the data points for a time series segment whose values are represented by a model
-/// and residuals. Each data point is split into its three components and appended to
-/// `univariate_ids`, `timestamps`, and `values`.
+/// Reconstruct the data points for a compressed segment whose values are represented by a model and
+/// residuals. Each data point is split into its three components and appended to `univariate_ids`,
+/// `timestamps`, and `values`.
 pub fn grid(
     univariate_id: UnivariateId,
     model_type_id: u8,
