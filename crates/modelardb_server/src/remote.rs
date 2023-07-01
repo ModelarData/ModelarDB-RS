@@ -28,9 +28,8 @@ use std::sync::Arc;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     utils, Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
-    HandshakeRequest, HandshakeResponse, IpcMessage, PutResult, SchemaAsIpc, SchemaResult, Ticket,
+    HandshakeRequest, HandshakeResponse, PutResult, SchemaAsIpc, SchemaResult, Ticket,
 };
-use bytes::Bytes;
 use datafusion::arrow::array::{
     ArrayRef, ListBuilder, StringArray, StringBuilder, UInt32Builder, UInt64Array,
 };
@@ -516,13 +515,7 @@ impl FlightService for FlightServiceHandler {
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
         let table_names = self.default_database_schema()?.table_names();
         let flight_descriptor = FlightDescriptor::new_path(table_names);
-        let flight_info = FlightInfo::new(
-            IpcMessage(Bytes::new()),
-            Some(flight_descriptor),
-            vec![],
-            -1,
-            -1,
-        );
+        let flight_info = FlightInfo::new().with_descriptor(flight_descriptor);
 
         let output = stream::once(async { Ok(flight_info) });
         Ok(Response::new(Box::pin(output)))

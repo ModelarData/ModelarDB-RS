@@ -20,6 +20,7 @@
 use std::any::Any;
 use std::cmp::PartialEq;
 use std::fmt::{Display, Formatter};
+use std::hash::{Hash, Hasher};
 use std::mem;
 use std::sync::Arc;
 
@@ -30,11 +31,11 @@ use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::config::ConfigOptions;
+use datafusion::datasource::physical_plan::parquet::ParquetExec;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::aggregates::AggregateExec;
 use datafusion::physical_plan::expressions::{self, Avg, Count, Max, Min, Sum};
-use datafusion::physical_plan::file_format::ParquetExec;
 use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::{
     Accumulator, AggregateExpr, ColumnarValue, ExecutionPlan, PhysicalExpr,
@@ -315,7 +316,7 @@ impl AggregateExpr for ModelAggregateExpr {
 }
 
 /// [`PhysicalExpr`] that computes `COUNT` directly from segments containing metadata and models.
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub struct ModelCountPhysicalExpr {}
 
 impl Display for ModelCountPhysicalExpr {
@@ -392,6 +393,12 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
             "ModelCountPhysicalExpr does not support children.".to_owned(),
         ))
     }
+
+    /// Feed this [`PhysicalExpr`] into `state`.
+    fn dyn_hash(&self, state: &mut dyn Hasher) {
+        let mut s = state;
+        self.hash(&mut s);
+    }
 }
 
 /// [`Accumulator`] that accumulates `COUNT` computed directly from segments containing metadata and
@@ -437,7 +444,7 @@ impl Accumulator for ModelCountAccumulator {
 }
 
 /// [`PhysicalExpr`] that computes `MIN` directly from segments containing metadata and models.
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub struct ModelMinPhysicalExpr {}
 
 impl Display for ModelMinPhysicalExpr {
@@ -497,6 +504,12 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
             "ModelMinPhysicalExpr does not support children.".to_owned(),
         ))
     }
+
+    /// Feed this [`PhysicalExpr`] into `state`.
+    fn dyn_hash(&self, state: &mut dyn Hasher) {
+        let mut s = state;
+        self.hash(&mut s);
+    }
 }
 
 /// [`Accumulator`] that accumulates `MIN` computed directly from segments containing metadata and
@@ -545,7 +558,7 @@ impl Accumulator for ModelMinAccumulator {
 }
 
 /// [`PhysicalExpr`] that computes `MAX` directly from segments containing metadata and models.
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub struct ModelMaxPhysicalExpr {}
 
 impl Display for ModelMaxPhysicalExpr {
@@ -605,6 +618,12 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
             "ModelMaxPhysicalExpr does not support children.".to_owned(),
         ))
     }
+
+    /// Feed this [`PhysicalExpr`] into `state`.
+    fn dyn_hash(&self, state: &mut dyn Hasher) {
+        let mut s = state;
+        self.hash(&mut s);
+    }
 }
 
 /// [`Accumulator`] that accumulates `MAX` computed directly from segments containing metadata and
@@ -653,7 +672,7 @@ impl Accumulator for ModelMaxAccumulator {
 }
 
 /// [`PhysicalExpr`] that computes `SUM` directly from segments containing metadata and models.
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub struct ModelSumPhysicalExpr {}
 
 impl Display for ModelSumPhysicalExpr {
@@ -743,6 +762,12 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
             "ModelSumPhysicalExpr does not support children.".to_owned(),
         ))
     }
+
+    /// Feed this [`PhysicalExpr`] into `state`.
+    fn dyn_hash(&self, state: &mut dyn Hasher) {
+        let mut s = state;
+        self.hash(&mut s);
+    }
 }
 
 /// [`Accumulator`] that accumulates `SUM` computed directly from segments containing metadata and
@@ -796,7 +821,7 @@ impl Accumulator for ModelSumAccumulator {
 }
 
 /// [`PhysicalExpr`] that computes `AVG` directly from segments containing metadata and models.
-#[derive(Debug)]
+#[derive(Debug, Hash)]
 pub struct ModelAvgPhysicalExpr {}
 
 impl Display for ModelAvgPhysicalExpr {
@@ -890,6 +915,12 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
             "ModelAvgPhysicalExpr does not support children.".to_owned(),
         ))
     }
+
+    /// Feed this [`PhysicalExpr`] into `state`.
+    fn dyn_hash(&self, state: &mut dyn Hasher) {
+        let mut s = state;
+        self.hash(&mut s);
+    }
 }
 
 /// [`Accumulator`] that accumulates `AVG` computed directly from segments containing metadata and
@@ -942,10 +973,10 @@ impl Accumulator for ModelAvgAccumulator {
 mod tests {
     use std::any::TypeId;
 
+    use datafusion::datasource::physical_plan::parquet::ParquetExec;
     use datafusion::physical_plan::aggregates::AggregateExec;
     use datafusion::physical_plan::coalesce_batches::CoalesceBatchesExec;
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
-    use datafusion::physical_plan::file_format::ParquetExec;
     use datafusion::physical_plan::filter::FilterExec;
 
     use crate::common_test;
