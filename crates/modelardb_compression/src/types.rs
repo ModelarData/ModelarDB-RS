@@ -396,6 +396,8 @@ impl CompressedSegmentBuilder {
                 values.extend(max_value.to_le_bytes());
             }
             values
+        } else if !min_value_is_first {
+            vec![0]
         } else {
             vec![]
         }
