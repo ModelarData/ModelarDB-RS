@@ -23,3 +23,4 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 arrow.workspace = true
 object_store = { workspace = true, features = ["aws", "azure"] }
 once_cell.workspace = true
+sqlx = { workspace = true, features = ["runtime-tokio-rustls"] }

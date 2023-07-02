@@ -1895,6 +1895,7 @@ dependencies = [
  "arrow",
  "object_store",
  "once_cell",
+ "sqlx",
 ]
 
 [[package]]

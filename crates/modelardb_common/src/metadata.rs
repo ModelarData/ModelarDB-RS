@@ -13,11 +13,16 @@
  * limitations under the License.
  */
 
-//! Implementation of functions, macros, and types used throughout ModelarDB.
+//! Common metadata functionality shared between the server metadata manager and the manager
+//! metadata manager.
 
-pub mod errors;
-pub mod macros;
-pub mod schemas;
-pub mod types;
-pub mod arguments;
-pub mod metadata;
+use sqlx::Database;
+use sqlx::Pool;
+
+/// Common metadata functionality used to save model table metadata in both the server metadata
+/// manager and the manager metadata manager.
+#[derive(Clone)]
+pub struct MetadataManager<DB: Database> {
+    /// Pool of connections to the metadata database.
+    metadata_database_pool: Pool<DB>,
+}
