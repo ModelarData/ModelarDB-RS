@@ -52,13 +52,13 @@ jobs:
     - name: Cargo Clippy
       run: cargo clippy --verbose --all-targets
     - name: Cargo Doc
-      run: cargo doc --verbose
-    - name: Cargo Machete --with-metadata
+      run: cargo doc --verbose --no-deps
+    - name: Cargo Machete
       run: cargo machete --with-metadata
     - name: Cargo Test
       run: cargo test --verbose --all-targets -- --nocapture
 
-    - name: grcov --output-types html
+    - name: grcov
       run: grcov . --source-dir . --binary-path ./target/debug/ --output-types html --branch --ignore-not-existing -o ./target/debug/coverage/
     - uses: actions/upload-artifact@v3
       with:
