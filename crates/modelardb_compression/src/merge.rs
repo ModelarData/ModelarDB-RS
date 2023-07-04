@@ -281,7 +281,7 @@ fn merge_segments(
 
                 // Merge the models.
                 // unwrap() is safe as the range of index into merge_indices are all Some.
-                let segment_index = merge_indices[start_merge_index].unwrap();
+                let segment_index = merge_indices[end_merge_index].unwrap();
                 let model_type_id = model_type_ids.value(segment_index);
                 let values = values.value(segment_index);
                 let residuals = residuals.value(segment_index);
