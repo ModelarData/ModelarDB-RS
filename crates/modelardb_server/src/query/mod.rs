@@ -32,17 +32,18 @@ use datafusion::arrow::datatypes::{
     ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit,
 };
 use datafusion::common::ToDFSchema;
+use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::object_store::ObjectStoreUrl;
-use datafusion::datasource::{
-    datasource::TableProviderFilterPushDown, listing::PartitionedFile, TableProvider, TableType,
-};
+use datafusion::datasource::physical_plan::parquet::ParquetExec;
+use datafusion::datasource::physical_plan::FileScanConfig;
+use datafusion::datasource::provider::TableProviderFilterPushDown;
+use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::{ExecutionProps, SessionState};
 use datafusion::logical_expr::{self, BinaryExpr, Expr, Operator};
 use datafusion::optimizer::utils;
 use datafusion::physical_expr::planner;
 use datafusion::physical_plan::expressions::{Column, PhysicalSortExpr};
-use datafusion::physical_plan::file_format::{FileScanConfig, ParquetExec};
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr, Statistics};
 use modelardb_common::schemas::{COMPRESSED_SCHEMA, QUERY_SCHEMA};
 use modelardb_common::types::{ArrowTimestamp, ArrowValue};

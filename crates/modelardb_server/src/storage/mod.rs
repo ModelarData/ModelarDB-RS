@@ -614,7 +614,7 @@ impl Metric {
 
 /// Create an Apache ArrowWriter that writes to `writer`. If the writer could not be created return
 /// [`ParquetError`].
-pub(self) fn create_apache_arrow_writer<W: Write>(
+pub(self) fn create_apache_arrow_writer<W: Write + Send>(
     writer: W,
     schema: SchemaRef,
     sorting_columns: Option<Vec<SortingColumn>>,

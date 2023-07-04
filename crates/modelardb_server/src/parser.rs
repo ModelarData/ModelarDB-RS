@@ -25,7 +25,7 @@ use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::common::{DFSchema, DataFusionError, ToDFSchema};
 use datafusion::config::ConfigOptions;
 use datafusion::execution::context::ExecutionProps;
-use datafusion::logical_expr::{AggregateUDF, Expr as DFExpr, ScalarUDF, TableSource};
+use datafusion::logical_expr::{AggregateUDF, Expr as DFExpr, ScalarUDF, TableSource, WindowUDF};
 use datafusion::physical_expr::planner;
 use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
 use datafusion::sql::TableReference;
@@ -261,6 +261,7 @@ impl ModelarDbDialect {
             on_commit: None,
             on_cluster: None,
             order_by: None,
+            strict: false,
         }
     }
 }
@@ -456,6 +457,7 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
         on_commit,
         on_cluster,
         order_by,
+        strict,
     } = statement
     {
         check_unsupported_feature_is_disabled(*or_replace, "OR REPLACE")?;
@@ -491,6 +493,7 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
         check_unsupported_feature_is_disabled(on_commit.is_some(), "ON COMMIT")?;
         check_unsupported_feature_is_disabled(on_cluster.is_some(), "ON CLUSTER")?;
         check_unsupported_feature_is_disabled(order_by.is_some(), "ORDER BY")?;
+        check_unsupported_feature_is_disabled(*strict, "STRICT")?;
         Ok(())
     } else {
         let message = "Expected CREATE TABLE or CREATE MODEL TABLE.";
@@ -695,6 +698,10 @@ impl ContextProvider for EmptyContextProvider {
     }
 
     fn get_aggregate_meta(&self, _name: &str) -> Option<Arc<AggregateUDF>> {
+        None
+    }
+
+    fn get_window_meta(&self, _name: &str) -> Option<Arc<WindowUDF>> {
         None
     }
 
