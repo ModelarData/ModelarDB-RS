@@ -33,8 +33,8 @@ use crate::types::CompressedSegmentBatchBuilder;
 /// * Are from same time series.
 /// * Contain the exact same models.
 /// * Are consecutive in terms of time.
-/// Assumes that the segments for each `univariate_id` is sorted by time and if the consecutive
-/// segments A, B, and C exist for an `univariate_id` and the segments A and C are in
+/// Assumes that the segments for each `univariate_id` are sorted by time and if the consecutive
+/// segments A, B, and C exist for a `univariate_id` and the segments A and C are in
 /// `compressed_segments` then B is also in `compressed_segments`. If only A and C are in
 /// `compressed_segments` a segment that overlaps with B will be created if A and C are merged.
 pub fn try_merge_segments(compressed_segments: RecordBatch) -> Result<RecordBatch, ModelarDbError> {
@@ -253,8 +253,10 @@ fn merge_segments(
                 // Merge timestamps and compute the new segment's minimum and maximum value.
                 let mut timestamp_builder = TimestampBuilder::new();
 
-                let mut min_value = f32::MAX;
-                let mut max_value = f32::MIN;
+                // NaN is used as the initial value as it will be overwritten be any value. Thus, it
+                // is the only initial value that preserves a minimum and maximum value that is NaN.
+                let mut min_value = f32::NAN;
+                let mut max_value = f32::NAN;
 
                 for maybe_segment_index in merge_indices
                     .iter()
