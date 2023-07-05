@@ -314,16 +314,16 @@ fn merge_segments(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
-    use crate::ErrorBound;
-
     use super::*;
+
+    use std::sync::Arc;
 
     use arrow::array::{UInt64Builder, UInt8Array};
     use arrow::compute;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_common::types::ValueBuilder;
+
+    use crate::ErrorBound;
 
     // Tests for try_merge_segments().
     #[test]
@@ -337,30 +337,6 @@ mod tests {
             try_merge_segments(RecordBatch::new_empty(COMPRESSED_SCHEMA.0.clone())).unwrap();
 
         assert_eq!(0, merged_record_batch.num_rows())
-    }
-
-    fn compress(
-        batch_size: usize,
-        uncompressed_timestamps: &TimestampArray,
-        uncompressed_values: &ValueArray,
-    ) -> RecordBatch {
-        let mut index = 0;
-        let mut input_batches = vec![];
-
-        while index < uncompressed_timestamps.len() {
-            let compressed_segments = crate::try_compress(
-                1,
-                ErrorBound::try_new(0.0).unwrap(),
-                &uncompressed_timestamps.slice(index, batch_size),
-                &uncompressed_values.slice(index, batch_size),
-            )
-            .unwrap();
-
-            input_batches.push(compressed_segments);
-            index += batch_size;
-        }
-
-        compute::concat_batches(&input_batches[0].schema(), &input_batches).unwrap()
     }
 
     #[test]
@@ -386,7 +362,7 @@ mod tests {
         let compressed_segments = compress(200, &uncompressed_timestamps, &uncompressed_values);
         let merged_compressed_segments = try_merge_segments(compressed_segments.clone()).unwrap();
 
-        // Decompress merged segments;
+        // Decompress merged segments.
         modelardb_common::arrays!(
             merged_compressed_segments,
             univariate_ids,
@@ -430,6 +406,30 @@ mod tests {
         assert_eq!(2, merged_compressed_segments.num_rows());
         assert_eq!(uncompressed_timestamps, decompressed_timestamps);
         assert_eq!(uncompressed_values, decompressed_values);
+    }
+
+    fn compress(
+        batch_size: usize,
+        uncompressed_timestamps: &TimestampArray,
+        uncompressed_values: &ValueArray,
+    ) -> RecordBatch {
+        let mut index = 0;
+        let mut input_batches = vec![];
+
+        while index < uncompressed_timestamps.len() {
+            let compressed_segments = crate::try_compress(
+                1,
+                ErrorBound::try_new(0.0).unwrap(),
+                &uncompressed_timestamps.slice(index, batch_size),
+                &uncompressed_values.slice(index, batch_size),
+            )
+            .unwrap();
+
+            input_batches.push(compressed_segments);
+            index += batch_size;
+        }
+
+        compute::concat_batches(&input_batches[0].schema(), &input_batches).unwrap()
     }
 
     // Tests for can_models_be_merged().

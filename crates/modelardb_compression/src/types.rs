@@ -315,8 +315,9 @@ impl CompressedSegmentBuilder {
         gorilla.model()
     }
 
-    /// Encode the information required for [`PMCMean`] model where the `residuals_min_value` and/or
-    /// `residuals_max_value` overwrite the model's `min_value` and/or `max_value` in the segment.
+    /// Encode the information required for a [`PMCMean`] model where the `residuals_min_value`
+    /// and/or `residuals_max_value` overwrite the model's `min_value` and/or `max_value` in the
+    /// segment.
     pub(crate) fn encode_values_for_pmc_mean(
         min_value: Value,
         max_value: Value,

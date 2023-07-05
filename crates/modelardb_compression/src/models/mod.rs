@@ -13,9 +13,9 @@
  * limitations under the License.
  */
 
-//! Implementation of the model types used for compressing sequences of values models and functions
-//! for efficiently computing aggregates from models of each type. The module itself contains
-//! general functionality used by the model types.
+//! Implementation of the model types used for compressing sequences of values as models and
+//! functions for efficiently computing aggregates from models of each type. The module itself
+//! contains general functionality used by the model types.
 
 pub mod bits;
 pub mod gorilla;
