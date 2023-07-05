@@ -29,8 +29,7 @@ use datafusion::execution::context::{SessionConfig, SessionContext, SessionState
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::physical_plan::ExecutionPlan;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
-use modelardb_common::types::{ArrowTimestamp, ArrowValue};
-use modelardb_common::types::{TimestampArray, ValueArray};
+use modelardb_common::types::{ArrowTimestamp, ArrowValue, TimestampArray, ValueArray};
 use modelardb_compression::ErrorBound;
 use object_store::local::LocalFileSystem;
 use tokio::sync::RwLock;
@@ -43,7 +42,7 @@ use crate::storage::{self, StorageEngine};
 use crate::{optimizer, Context, ServerMode};
 
 /// Expected size of the compressed segments produced in the tests.
-pub const COMPRESSED_SEGMENTS_SIZE: usize = 1399;
+pub const COMPRESSED_SEGMENTS_SIZE: usize = 1335;
 
 /// Number of bytes reserved for uncompressed data in tests.
 pub const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
@@ -160,13 +159,13 @@ pub fn compressed_segments_record_batch_with_time(time_ms: i64, offset: f32) -> 
     let max_values = vec![offset + 20.2, offset + 12.2, offset + 34.2];
 
     let univariate_id = UInt64Array::from(vec![1, 2, 3]);
-    let model_type_id = UInt8Array::from(vec![2, 3, 3]);
+    let model_type_id = UInt8Array::from(vec![1, 1, 2]);
     let start_time = TimestampArray::from(start_times);
     let end_time = TimestampArray::from(end_times);
     let timestamps = BinaryArray::from_vec(vec![b"", b"", b""]);
     let min_value = ValueArray::from(min_values);
     let max_value = ValueArray::from(max_values);
-    let values = BinaryArray::from_vec(vec![b"1111", b"1000", b"0000"]);
+    let values = BinaryArray::from_vec(vec![b"", b"", b""]);
     let residuals = BinaryArray::from_vec(vec![b"", b"", b""]);
     let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
 

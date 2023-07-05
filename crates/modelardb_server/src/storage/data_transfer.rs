@@ -249,7 +249,7 @@ mod tests {
 
     const TABLE_NAME: &str = "table";
     const COLUMN_INDEX: u16 = 5;
-    const COMPRESSED_FILE_SIZE: usize = 2342;
+    const COMPRESSED_FILE_SIZE: usize = 2311;
 
     // Tests for path_is_compressed_file().
     #[test]
@@ -397,7 +397,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_data_transferred(vec![apache_parquet_path], target_dir, data_transfer).await;
+        assert_data_transferred(vec![apache_parquet_path], target_dir, data_transfer, 3).await;
     }
 
     #[tokio::test]
@@ -420,7 +420,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer).await;
+        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer, 4).await;
     }
 
     #[tokio::test]
@@ -436,7 +436,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_data_transferred(vec![apache_parquet_path], target_dir, data_transfer).await;
+        assert_data_transferred(vec![apache_parquet_path], target_dir, data_transfer, 3).await;
     }
 
     #[tokio::test]
@@ -449,7 +449,7 @@ mod tests {
         // Since the max batch size is 1 byte smaller than 3 compressed files, the data should be transferred immediately.
         let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
 
-        assert_data_transferred(vec![path_1, path_2, path_3], target_dir, data_transfer).await;
+        assert_data_transferred(vec![path_1, path_2, path_3], target_dir, data_transfer, 5).await;
     }
 
     #[tokio::test]
@@ -461,7 +461,7 @@ mod tests {
 
         data_transfer.flush().await.unwrap();
 
-        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer).await;
+        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer, 4).await;
     }
 
     /// Assert that the files in `paths` are all removed, a file has been created in `target_dir`,
@@ -470,6 +470,7 @@ mod tests {
         paths: Vec<PathBuf>,
         target: TempDir,
         data_transfer: DataTransfer,
+        expected_num_rows: usize,
     ) {
         for path in &paths {
             assert!(!path.exists());
@@ -486,7 +487,7 @@ mod tests {
         let batch = StorageEngine::read_batch_from_apache_parquet_file(target_path.as_path())
             .await
             .unwrap();
-        assert_eq!(batch.num_rows(), 3);
+        assert_eq!(batch.num_rows(), expected_num_rows);
 
         assert_eq!(
             *data_transfer
