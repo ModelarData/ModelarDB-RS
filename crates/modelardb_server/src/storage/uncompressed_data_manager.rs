@@ -24,8 +24,7 @@ use std::sync::Arc;
 
 use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
-use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
-use modelardb_compression::ErrorBound;
+use modelardb_common::types::{ErrorBound, Timestamp, TimestampArray, Value, ValueArray};
 use tokio::sync::RwLock;
 use tracing::debug;
 

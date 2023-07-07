@@ -30,4 +30,3 @@ pub use merge::try_merge_segments;
 pub use models::grid;
 pub use models::len;
 pub use models::sum;
-pub use types::ErrorBound;

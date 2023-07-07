@@ -25,11 +25,11 @@
 
 use modelardb_common::schemas::COMPRESSED_METADATA_SIZE_IN_BYTES;
 use modelardb_common::types::{
-    Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder,
+    ErrorBound, Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder,
 };
 
 use super::timestamps;
-use crate::models::{self, ErrorBound};
+use crate::models::{self};
 
 /// The state the Swing model type needs while fitting a model to a time series
 /// segment.
