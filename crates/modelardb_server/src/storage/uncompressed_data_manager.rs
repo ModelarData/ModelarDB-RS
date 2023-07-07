@@ -24,11 +24,11 @@ use std::sync::Arc;
 
 use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
+use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::types::{ErrorBound, Timestamp, TimestampArray, Value, ValueArray};
 use tokio::sync::RwLock;
 use tracing::debug;
 
-use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::storage::uncompressed_data_buffer::{
     UncompressedDataBuffer, UncompressedInMemoryDataBuffer, UncompressedOnDiskDataBuffer,

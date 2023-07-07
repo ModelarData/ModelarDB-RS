@@ -1893,6 +1893,7 @@ name = "modelardb_common"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "datafusion",
  "object_store",
  "once_cell",
  "sqlx",

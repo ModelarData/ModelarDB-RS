@@ -21,8 +21,6 @@
 //! corresponding model table's field column indices to uniquely identify each univariate time series
 //! stored in the storage engine by a univariate id.
 
-pub mod model_table_metadata;
-
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
@@ -40,6 +38,7 @@ use datafusion::execution::options::ParquetReadOptions;
 use futures::TryStreamExt;
 use log::LevelFilter;
 use modelardb_common::errors::ModelarDbError;
+use modelardb_common::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use modelardb_common::types::{ErrorBound, Timestamp, UnivariateId, Value};
 use sqlx::database::HasArguments;
 use sqlx::error::Error;
@@ -49,13 +48,10 @@ use sqlx::{ConnectOptions, Executor, Result, Row, Sqlite, SqlitePool};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::parser;
 use crate::query::ModelTable;
 use crate::storage::COMPRESSED_DATA_FOLDER;
 use crate::Context;
-
-use self::model_table_metadata::GeneratedColumn;
 
 /// Name used for the file containing the SQLite database storing the metadata.
 pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";

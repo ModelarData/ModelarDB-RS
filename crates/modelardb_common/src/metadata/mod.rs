@@ -16,6 +16,8 @@
 //! Common metadata functionality shared between the server metadata manager and the manager
 //! metadata manager.
 
+pub mod model_table_metadata;
+
 use sqlx::Database;
 use sqlx::Pool;
 

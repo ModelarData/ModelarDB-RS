@@ -20,8 +20,9 @@ use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Schema};
 use datafusion::logical_expr::expr::Expr;
-use modelardb_common::errors::ModelarDbError;
-use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
+
+use crate::errors::ModelarDbError;
+use crate::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 
 /// Metadata required to ingest data into a model table and query a model table.
 #[derive(Debug, Clone)]
@@ -177,10 +178,11 @@ pub struct GeneratedColumn {
 
 #[cfg(test)]
 mod test {
+    use arrow::datatypes::Field;
     use super::*;
 
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
-    use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
+    use modelardb_common::types::{ArrowTimestamp, ArrowValue};
 
     // Tests for ModelTableMetadata.
     #[test]
