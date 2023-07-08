@@ -104,16 +104,8 @@ impl PartialOrd<ErrorBound> for f32 {
 mod tests {
     use super::*;
 
-    use arrow::array::BinaryArray;
-    use modelardb_common::types::{TimestampArray, ValueArray};
-    use modelardb_common_test::data_generation::{self, ValuesStructure};
     use proptest::num;
     use proptest::proptest;
-
-    use crate::compression;
-
-    const ERROR_BOUND_ZERO: f32 = 0.0;
-    const UNCOMPRESSED_TIMESTAMPS: &[Timestamp] = &[100, 200, 300, 400, 500];
 
     // Tests for ErrorBound.
     proptest! {

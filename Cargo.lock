@@ -1896,6 +1896,7 @@ dependencies = [
  "datafusion",
  "object_store",
  "once_cell",
+ "proptest",
  "sqlx",
 ]
 

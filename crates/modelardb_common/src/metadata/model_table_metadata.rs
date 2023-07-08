@@ -178,11 +178,9 @@ pub struct GeneratedColumn {
 
 #[cfg(test)]
 mod test {
-    use arrow::datatypes::Field;
     use super::*;
 
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
-    use modelardb_common::types::{ArrowTimestamp, ArrowValue};
 
     // Tests for ModelTableMetadata.
     #[test]

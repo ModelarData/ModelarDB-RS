@@ -526,7 +526,6 @@ mod tests {
     use datafusion::arrow::array::{ArrowPrimitiveType, StringBuilder};
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use modelardb_common::types::{ArrowTimestamp, ArrowValue, TimestampBuilder, ValueBuilder};
-    use modelardb_compression::ErrorBound;
     use ringbuf::Rb;
 
     use crate::common_test;
