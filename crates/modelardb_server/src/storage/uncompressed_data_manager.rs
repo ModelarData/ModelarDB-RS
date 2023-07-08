@@ -448,16 +448,13 @@ impl UncompressedDataManager {
         let error_bound = in_memory_data_buffer.error_bound();
 
         // unwrap() is safe to use since uncompressed_timestamps and uncompressed_values have the same length.
-        let compressed_segments = modelardb_compression::try_compress(
+        Ok(modelardb_compression::try_compress(
             univariate_id,
             error_bound,
             uncompressed_timestamps,
             uncompressed_values,
         )
-        .unwrap();
-
-        modelardb_compression::try_merge_segments(compressed_segments)
-            .map_err(|error| IOError::new(IOErrorKind::InvalidData, error.to_string()))
+        .unwrap())
     }
 
     /// Spill the first [`UncompressedInMemoryDataBuffer`] in the queue of

@@ -224,13 +224,22 @@ impl CompressedSegmentBuilder {
             let (mut residuals, residuals_min_value, residuals_max_value) =
                 self.compress_residuals(error_bound, uncompressed_residuals);
 
-            match model_type_id {
-                PMC_MEAN_ID => {
-                    self.update_values_for_pmc_mean(residuals_min_value, residuals_max_value)
-                }
-                SWING_ID => self.update_values_for_swing(residuals_min_value, residuals_max_value),
+            self.values = match model_type_id {
+                PMC_MEAN_ID => Self::encode_values_for_pmc_mean(
+                    self.min_value,
+                    self.max_value,
+                    residuals_min_value,
+                    residuals_max_value,
+                ),
+                SWING_ID => Self::encode_values_for_swing(
+                    self.min_value,
+                    self.max_value,
+                    self.values.is_empty(),
+                    residuals_min_value,
+                    residuals_max_value,
+                ),
                 _ => panic!("Unknown model type."),
-            }
+            };
 
             self.min_value = Value::min(self.min_value, residuals_min_value);
             self.max_value = Value::max(self.max_value, residuals_max_value);
@@ -267,28 +276,33 @@ impl CompressedSegmentBuilder {
         gorilla.model()
     }
 
-    /// Add information if required for a model of type [`PMCMean`] due to `residuals_min_value` and
-    /// `residuals_max_value` overwriting the model's minimum and maximum values in the segment.
-    fn update_values_for_pmc_mean(
-        &mut self,
+    /// Encode the information required for a [`PMCMean`] model where the `residuals_min_value`
+    /// and/or `residuals_max_value` overwrite the model's `min_value` and/or `max_value` in the
+    /// segment.
+    pub(crate) fn encode_values_for_pmc_mean(
+        min_value: Value,
+        max_value: Value,
         residuals_min_value: Value,
         residuals_max_value: Value,
-    ) {
-        if self.min_value > residuals_min_value {
+    ) -> Vec<u8> {
+        let mut values = vec![];
+
+        if min_value > residuals_min_value {
             // The models minimum is overwritten so another value must be used.
-            if self.max_value >= residuals_max_value {
+            if max_value >= residuals_max_value {
                 // Minimum and maximum is the same for PMC-Mean, so maximum can be used with a flag.
-                self.values.push(1);
+                values.push(1);
             } else {
                 // Minimum and maximum have been overwritten, so the model's value has to be stored.
-                self.values.extend_from_slice(&self.min_value.to_le_bytes());
+                values.extend_from_slice(&min_value.to_le_bytes());
             }
         }
+
+        values
     }
 
     /// Decode the mean value stored for a model of type [`PMCMean`]. For information about how the
-    /// parameter for [`PMCMean`] is encoded, see
-    /// [`CompressedSegmentBuilder::update_values_for_pmc_mean`].
+    /// parameter for [`PMCMean`] is encoded, see [`Self::encode_values_for_pmc_mean`].
     pub(crate) fn decode_values_for_pmc_mean(
         min_value: Value,
         max_value: Value,
@@ -302,50 +316,57 @@ impl CompressedSegmentBuilder {
         }
     }
 
-    /// Add information if required for a model of type [`Swing`] due to `residuals_min_value` and
-    /// `residuals_max_value` overwriting the model's minimum and maximum values in the segment.
-    fn update_values_for_swing(&mut self, residuals_min_value: Value, residuals_max_value: Value) {
-        if residuals_min_value < self.min_value && self.max_value < residuals_max_value {
+    /// Encode the information required for a [`Swing`] model where the `residuals_min_value` and/or
+    /// `residuals_max_value` overwrite the model's `min_value` and/or `max_value` in the segment.
+    pub(crate) fn encode_values_for_swing(
+        min_value: Value,
+        max_value: Value,
+        min_value_is_first: bool,
+        residuals_min_value: Value,
+        residuals_max_value: Value,
+    ) -> Vec<u8> {
+        if residuals_min_value < min_value && max_value < residuals_max_value {
             // Minimum and maximum is overwritten so first and last value are stored.
-            let mut updated_values = Vec::with_capacity(2 * VALUE_SIZE_IN_BYTES as usize);
-            if self.values.is_empty() {
-                updated_values.extend_from_slice(&self.min_value.to_le_bytes());
-                updated_values.extend_from_slice(&self.max_value.to_le_bytes());
+            let mut values = Vec::with_capacity(2 * VALUE_SIZE_IN_BYTES as usize);
+            if min_value_is_first {
+                values.extend_from_slice(&min_value.to_le_bytes());
+                values.extend_from_slice(&max_value.to_le_bytes());
             } else {
-                updated_values.extend_from_slice(&self.max_value.to_le_bytes());
-                updated_values.extend_from_slice(&self.min_value.to_le_bytes());
+                values.extend_from_slice(&max_value.to_le_bytes());
+                values.extend_from_slice(&min_value.to_le_bytes());
             }
-            self.values = updated_values;
-        } else if residuals_min_value < self.min_value {
+            values
+        } else if residuals_min_value < min_value {
             // Minimum is overwritten so a flag is stored for the order and then the models minimum.
-            let mut updated_values = Vec::with_capacity(1 + VALUE_SIZE_IN_BYTES as usize);
-            if self.values.is_empty() {
-                updated_values.push(0);
-                updated_values.extend(self.min_value.to_le_bytes());
+            let mut values = Vec::with_capacity(1 + VALUE_SIZE_IN_BYTES as usize);
+            if min_value_is_first {
+                values.push(0);
+                values.extend(min_value.to_le_bytes());
             } else {
-                updated_values.push(1);
-                updated_values.extend(self.min_value.to_le_bytes());
+                values.push(1);
+                values.extend(min_value.to_le_bytes());
             }
-            self.values = updated_values;
-        } else if self.max_value < residuals_max_value {
+            values
+        } else if max_value < residuals_max_value {
             // Maximum is overwritten so a flag is stored for the order and then the models maximum.
-            let mut updated_values = Vec::with_capacity(1 + VALUE_SIZE_IN_BYTES as usize);
-            if self.values.is_empty() {
-                updated_values.push(2);
-                updated_values.extend(self.max_value.to_le_bytes());
+            let mut values = Vec::with_capacity(1 + VALUE_SIZE_IN_BYTES as usize);
+            if min_value_is_first {
+                values.push(2);
+                values.extend(max_value.to_le_bytes());
             } else {
-                updated_values.push(3);
-                updated_values.extend(self.max_value.to_le_bytes());
+                values.push(3);
+                values.extend(max_value.to_le_bytes());
             }
-            self.values = updated_values;
+            values
+        } else if !min_value_is_first {
+            vec![0]
+        } else {
+            vec![]
         }
-
-        if self.min_value > residuals_min_value {}
     }
 
-    /// Decode the slope and intercept stored for a model of type [`Swing`]. For information about
-    /// how the parameters for Swing are encoded, see [ModelBuilder::select_swing`] and
-    /// [`CompressedSegmentBuilder ::update_values_for_swing`].
+    /// Decode the first and last value stored for a model of type [`Swing`]. For information about
+    /// how the parameters for Swing are encoded, see [`Self::update_values_for_swing`].
     pub(crate) fn decode_values_for_swing(
         min_value: Value,
         max_value: Value,
