@@ -31,7 +31,6 @@ use datafusion::physical_plan::ExecutionPlan;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray};
-use modelardb_compression::ErrorBound;
 use object_store::local::LocalFileSystem;
 use tokio::sync::RwLock;
 

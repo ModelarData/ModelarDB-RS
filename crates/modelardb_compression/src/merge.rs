@@ -321,9 +321,7 @@ mod tests {
     use arrow::array::{UInt64Builder, UInt8Array};
     use arrow::compute;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
-    use modelardb_common::types::ValueBuilder;
-
-    use crate::ErrorBound;
+    use modelardb_common::types::{ErrorBound, ValueBuilder};
 
     // Tests for try_merge_segments().
     #[test]
