@@ -38,7 +38,7 @@
 /// Panics if `column` is not in `batch` or if it cannot be cast to `type`.
 #[macro_export]
 macro_rules! array {
-    ($batch:ident, $column:literal, $type:ident) => {
+    ($batch:ident, $column:expr, $type:ident) => {
         $batch
             .column($column)
             .as_any()
