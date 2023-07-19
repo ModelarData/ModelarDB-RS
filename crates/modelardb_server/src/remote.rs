@@ -74,10 +74,7 @@ pub fn start_apache_arrow_flight_server(
 ) -> Result<(), Box<dyn Error>> {
     let localhost_with_port = "0.0.0.0:".to_owned() + &port.to_string();
     let localhost_with_port: SocketAddr = localhost_with_port.parse()?;
-    let handler = FlightServiceHandler {
-        context,
-        dictionaries_by_id: HashMap::new(),
-    };
+    let handler = FlightServiceHandler::new(context);
 
     // Increase the maximum message size from 4 MiB to 16 MiB to allow bulk-loading larger batches.
     let flight_service_server =
@@ -259,6 +256,13 @@ struct FlightServiceHandler {
 }
 
 impl FlightServiceHandler {
+    pub fn new(context: Arc<Context>) -> FlightServiceHandler {
+        Self {
+            context,
+            dictionaries_by_id: HashMap::new(),
+        }
+    }
+
     /// Return the schema of `table_name` if the table exists in the default
     /// database schema, otherwise a [`Status`] indicating at what level the
     /// lookup failed is returned.
