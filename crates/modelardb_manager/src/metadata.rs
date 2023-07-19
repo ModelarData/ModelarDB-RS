@@ -25,3 +25,11 @@ pub struct MetadataManager {
     /// Pool of connections to the metadata database.
     metadata_database_pool: PgPool,
 }
+
+impl MetadataManager {
+    pub fn new(metadata_database_pool: PgPool) -> Self {
+        Self {
+            metadata_database_pool
+        }
+    }
+}
