@@ -37,8 +37,8 @@ use datafusion::physical_expr::PhysicalSortRequirement;
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::{
-    DisplayFormatType, Distribution, ExecutionPlan, Partitioning, PhysicalExpr, RecordBatchStream,
-    SendableRecordBatchStream, Statistics,
+    DisplayAs, DisplayFormatType, Distribution, ExecutionPlan, Partitioning, PhysicalExpr,
+    RecordBatchStream, SendableRecordBatchStream, Statistics,
 };
 use futures::stream::{Stream, StreamExt};
 use modelardb_common::schemas::QUERY_SCHEMA;
@@ -181,7 +181,9 @@ impl ExecutionPlan for GridExec {
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())
     }
+}
 
+impl DisplayAs for GridExec {
     /// Write a string-based representation of the operator to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> fmt::Result {
