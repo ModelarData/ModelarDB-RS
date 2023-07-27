@@ -18,13 +18,13 @@
 
 pub mod model_table_metadata;
 
-use sqlx::Database;
-use sqlx::Pool;
-
 /// Common metadata functionality used to save model table metadata in both the server metadata
 /// manager and the manager metadata manager.
 #[derive(Clone)]
-pub struct MetadataManager<DB: Database> {
-    /// Pool of connections to the metadata database.
-    metadata_database_pool: Pool<DB>,
+pub struct CommonMetadataManager {}
+
+impl CommonMetadataManager {
+    pub fn new() -> Self {
+        Self {}
+    }
 }

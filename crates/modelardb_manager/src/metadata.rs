@@ -17,11 +17,14 @@
 //! such as metadata about registered edges, is handled here.
 
 use sqlx::PgPool;
+use modelardb_common::metadata::CommonMetadataManager;
 
 /// Store's the metadata required for reading from and writing to the tables and model tables and
 /// persisting edges. The data that needs to be persisted are stored in the metadata database.
 #[derive(Clone)]
 pub struct MetadataManager {
+    /// Common functionality shared between this metadata manager and the server metadata manager.
+    common_metadata_manager: CommonMetadataManager,
     /// Pool of connections to the metadata database.
     metadata_database_pool: PgPool,
 }
@@ -29,6 +32,7 @@ pub struct MetadataManager {
 impl MetadataManager {
     pub fn new(metadata_database_pool: PgPool) -> Self {
         Self {
+            common_metadata_manager: CommonMetadataManager::new(),
             metadata_database_pool
         }
     }

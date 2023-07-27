@@ -39,6 +39,7 @@ use futures::TryStreamExt;
 use log::LevelFilter;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
+use modelardb_common::metadata::CommonMetadataManager;
 use modelardb_common::types::{ErrorBound, Timestamp, UnivariateId, Value};
 use sqlx::database::HasArguments;
 use sqlx::error::Error;
@@ -93,6 +94,8 @@ impl CompressedFile {
 /// The data that needs to be persisted is stored in the metadata database.
 #[derive(Clone)]
 pub struct MetadataManager {
+    /// Common functionality shared between this metadata manager and the manager metadata manager.
+    common_metadata_manager: CommonMetadataManager,
     /// Folder for storing metadata and Apache Parquet files on the local file
     /// system.
     local_data_folder: PathBuf,
@@ -120,6 +123,7 @@ impl MetadataManager {
 
         // Create the metadata manager with the default values.
         let metadata_manager = Self {
+            common_metadata_manager: CommonMetadataManager::new(),
             local_data_folder: local_data_folder.to_path_buf(),
             metadata_database_pool: SqlitePool::connect_with(options).await?,
             tag_value_hashes: HashMap::new(),
