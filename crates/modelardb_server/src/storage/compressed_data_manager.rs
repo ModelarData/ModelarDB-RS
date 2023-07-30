@@ -37,6 +37,8 @@ use crate::storage::compressed_data_buffer::CompressedDataBuffer;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::{Metric, StorageEngine, COMPRESSED_DATA_FOLDER};
 
+use super::types::MemoryPool;
+
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
 pub(super) struct CompressedDataManager {
@@ -51,10 +53,8 @@ pub(super) struct CompressedDataManager {
     /// FIFO queue of table names and column indices referring to [`CompressedDataBuffer`] that can
     /// be saved to persistent storage.
     compressed_queue: VecDeque<(String, u16)>,
-    /// How many bytes of memory that are left for storing compressed segments. A signed integer is
-    /// used since compressed data is inserted and then the remaining bytes are checked. This means
-    /// that the remaining bytes can briefly be negative until compressed data is saved to disk.
-    compressed_remaining_memory_in_bytes: isize,
+    /// Track how much memory are left for storing uncompressed and compressed data.
+    memory_pool: Arc<MemoryPool>,
     /// Metric for the used compressed memory in bytes, updated every time the used memory changes.
     pub(super) used_compressed_memory_metric: Metric,
     /// Metric for the total used disk space in bytes, updated every time a new compressed file is
@@ -68,7 +68,7 @@ impl CompressedDataManager {
     pub(super) fn try_new(
         data_transfer: Option<DataTransfer>,
         local_data_folder: PathBuf,
-        compressed_reserved_memory_in_bytes: usize,
+        memory_pool: Arc<MemoryPool>,
         used_disk_space_metric: Arc<RwLock<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the compressed data manager exists.
@@ -79,7 +79,7 @@ impl CompressedDataManager {
             local_data_folder,
             compressed_data_buffers: HashMap::new(),
             compressed_queue: VecDeque::new(),
-            compressed_remaining_memory_in_bytes: compressed_reserved_memory_in_bytes as isize,
+            memory_pool,
             used_compressed_memory_metric: Metric::new(),
             used_disk_space_metric,
         })
@@ -162,13 +162,16 @@ impl CompressedDataManager {
         };
 
         // Update the remaining memory for compressed data and record the change.
-        self.compressed_remaining_memory_in_bytes -= segments_size as isize;
         self.used_compressed_memory_metric
             .append(segments_size as isize, true);
 
         // If the reserved memory limit is exceeded, save compressed data to disk.
-        if self.compressed_remaining_memory_in_bytes < 0 {
-            self.save_compressed_data_to_free_memory().await?;
+        if self
+            .memory_pool
+            .try_reserve_compressed_memory(segments_size)
+        {
+            self.save_compressed_data_to_free_memory(segments_size)
+                .await?;
         }
 
         Ok(())
@@ -269,13 +272,16 @@ impl CompressedDataManager {
         Ok(table_relevant_apache_parquet_files)
     }
 
-    /// Save [`CompressedDataBuffers`](CompressedDataBuffer) to disk until the reserved memory limit
-    /// is no longer exceeded. If all of the data is saved successfully, return [`Ok`], otherwise
+    /// Save [`CompressedDataBuffers`](CompressedDataBuffer) to disk until at least `size_in_bytes`
+    /// of memory is available . If all of the data is saved successfully, return [`Ok`], otherwise
     /// return [`IOError`].
-    async fn save_compressed_data_to_free_memory(&mut self) -> Result<(), IOError> {
+    async fn save_compressed_data_to_free_memory(
+        &mut self,
+        size_in_bytes: usize,
+    ) -> Result<(), IOError> {
         debug!("Out of memory for compressed data. Saving compressed data to disk.");
 
-        while self.compressed_remaining_memory_in_bytes < 0 {
+        while self.memory_pool.remaining_compressed_memory_in_bytes() < size_in_bytes as isize {
             let (table_name, column_index) = self
                 .compressed_queue
                 .pop_front()
@@ -324,10 +330,10 @@ impl CompressedDataManager {
         let file_path = compressed_data_buffer.save_to_apache_parquet(folder_path.as_path())?;
 
         // Update the remaining memory for compressed data and record the change.
-        let freed_memory = compressed_data_buffer.size_in_bytes as isize;
-        self.compressed_remaining_memory_in_bytes += freed_memory;
+        let freed_memory = compressed_data_buffer.size_in_bytes;
+        self.memory_pool.free_compressed_memory(freed_memory);
         self.used_compressed_memory_metric
-            .append(-freed_memory, true);
+            .append(-(freed_memory as isize), true);
 
         // Record the change to the used disk space.
         let file_size = file_path.metadata()?.len() as isize;
@@ -338,7 +344,8 @@ impl CompressedDataManager {
 
         debug!(
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
-            freed_memory, self.compressed_remaining_memory_in_bytes
+            freed_memory,
+            self.memory_pool.remaining_compressed_memory_in_bytes()
         );
 
         // Pass the saved compressed file to the data transfer component if a remote data folder
@@ -361,8 +368,8 @@ impl CompressedDataManager {
         &mut self,
         value_change: isize,
     ) -> Result<(), IOError> {
-        self.compressed_remaining_memory_in_bytes += value_change;
-        self.save_compressed_data_to_free_memory().await?;
+        self.memory_pool.update_compressed_memory(value_change);
+        self.save_compressed_data_to_free_memory(0).await?;
 
         Ok(())
     }
@@ -550,7 +557,9 @@ mod tests {
     async fn test_save_first_compressed_data_buffer_if_out_of_memory() {
         let segments = common_test::compressed_segments_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
-        let reserved_memory = data_manager.compressed_remaining_memory_in_bytes as usize;
+        let reserved_memory = data_manager
+            .memory_pool
+            .remaining_compressed_memory_in_bytes() as usize;
 
         // Insert compressed data into the storage engine until data is saved to Apache Parquet.
         let max_compressed_segments = reserved_memory / common_test::COMPRESSED_SEGMENTS_SIZE;
@@ -572,14 +581,21 @@ mod tests {
     async fn test_remaining_bytes_decremented_when_inserting_compressed_segments() {
         let segments = common_test::compressed_segments_record_batch();
         let (_temp_dir, mut data_manager) = create_compressed_data_manager().await;
-        let reserved_memory = data_manager.compressed_remaining_memory_in_bytes;
+        let reserved_memory = data_manager
+            .memory_pool
+            .remaining_compressed_memory_in_bytes();
 
         data_manager
             .insert_compressed_segments(TABLE_NAME, COLUMN_INDEX, segments)
             .await
             .unwrap();
 
-        assert!(reserved_memory > data_manager.compressed_remaining_memory_in_bytes);
+        assert!(
+            reserved_memory
+                > data_manager
+                    .memory_pool
+                    .remaining_compressed_memory_in_bytes()
+        );
         assert_eq!(data_manager.used_compressed_memory_metric.values.len(), 1);
     }
 
@@ -594,13 +610,23 @@ mod tests {
             .unwrap();
 
         // Set the remaining memory to a negative value since data is only saved when out of memory.
-        data_manager.compressed_remaining_memory_in_bytes = -1;
+        data_manager.memory_pool.update_compressed_memory(
+            -(data_manager
+                .memory_pool
+                .remaining_compressed_memory_in_bytes()
+                + 1),
+        );
+
         data_manager
-            .save_compressed_data_to_free_memory()
+            .save_compressed_data_to_free_memory(0)
             .await
             .unwrap();
 
-        assert!(-1 < data_manager.compressed_remaining_memory_in_bytes);
+        assert!(
+            -1 < data_manager
+                .memory_pool
+                .remaining_compressed_memory_in_bytes()
+        );
         assert_eq!(data_manager.used_compressed_memory_metric.values.len(), 2);
         assert_eq!(
             data_manager
@@ -1087,8 +1113,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            data_manager.compressed_remaining_memory_in_bytes as usize,
-            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES + 10000
+            data_manager
+                .memory_pool
+                .remaining_compressed_memory_in_bytes(),
+            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize + 10000
         )
     }
 
@@ -1110,7 +1138,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(data_manager.compressed_remaining_memory_in_bytes, 0);
+        assert_eq!(
+            data_manager
+                .memory_pool
+                .remaining_compressed_memory_in_bytes(),
+            0
+        );
 
         // There should no longer be any compressed data in memory.
         assert_eq!(data_manager.compressed_data_buffers.values().len(), 0);
@@ -1134,12 +1167,18 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
 
         let local_data_folder = temp_dir.path().to_path_buf();
+
+        let memory_pool = Arc::new(MemoryPool::new(
+            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+        ));
+
         (
             temp_dir,
             CompressedDataManager::try_new(
                 None,
                 local_data_folder,
-                common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+                memory_pool,
                 Arc::new(RwLock::new(Metric::new())),
             )
             .unwrap(),

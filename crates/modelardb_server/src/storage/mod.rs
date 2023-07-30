@@ -23,6 +23,7 @@
 mod compressed_data_buffer;
 mod compressed_data_manager;
 mod data_transfer;
+mod types;
 mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
 
@@ -67,6 +68,7 @@ use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
+use crate::storage::types::MemoryPool;
 use crate::storage::uncompressed_data_buffer::UncompressedDataBuffer;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::PORT;
@@ -128,10 +130,15 @@ impl StorageEngine {
 
         let configuration_manager = configuration_manager.read().await;
 
+        let memory_pool = Arc::new(MemoryPool::new(
+            configuration_manager.uncompressed_reserved_memory_in_bytes(),
+            configuration_manager.compressed_reserved_memory_in_bytes(),
+        ));
+
         // Create the uncompressed data manager.
         let uncompressed_data_manager = UncompressedDataManager::try_new(
             local_data_folder.clone(),
-            *configuration_manager.uncompressed_reserved_memory_in_bytes(),
+            memory_pool.clone(),
             &metadata_manager,
             compress_directly,
             used_disk_space_metric.clone(),
@@ -156,7 +163,7 @@ impl StorageEngine {
         let compressed_data_manager = CompressedDataManager::try_new(
             data_transfer,
             local_data_folder,
-            *configuration_manager.compressed_reserved_memory_in_bytes(),
+            memory_pool,
             used_disk_space_metric,
         )?;
 
