@@ -596,7 +596,7 @@ mod tests {
                     .memory_pool
                     .remaining_compressed_memory_in_bytes()
         );
-        assert_eq!(data_manager.used_compressed_memory_metric.values.len(), 1);
+        assert_eq!(data_manager.used_compressed_memory_metric.values().len(), 1);
     }
 
     #[tokio::test]
@@ -627,13 +627,13 @@ mod tests {
                 .memory_pool
                 .remaining_compressed_memory_in_bytes()
         );
-        assert_eq!(data_manager.used_compressed_memory_metric.values.len(), 2);
+        assert_eq!(data_manager.used_compressed_memory_metric.values().len(), 2);
         assert_eq!(
             data_manager
                 .used_disk_space_metric
                 .read()
                 .await
-                .values
+                .values()
                 .len(),
             1
         );

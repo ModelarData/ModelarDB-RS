@@ -577,7 +577,7 @@ mod tests {
             2
         );
 
-        assert_eq!(data_manager.ingested_data_points_metric.values.len(), 1);
+        assert_eq!(data_manager.ingested_data_points_metric.values().len(), 1);
     }
 
     #[tokio::test]
@@ -602,7 +602,7 @@ mod tests {
             4
         );
 
-        assert_eq!(data_manager.ingested_data_points_metric.values.len(), 1);
+        assert_eq!(data_manager.ingested_data_points_metric.values().len(), 1);
     }
 
     /// Create a record batch with data that resembles uncompressed data with a single tag and two
@@ -875,7 +875,10 @@ mod tests {
                     .memory_pool
                     .remaining_uncompressed_memory_in_bytes()
         );
-        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 2);
+        assert_eq!(
+            data_manager.used_uncompressed_memory_metric.values().len(),
+            2
+        );
 
         // The used disk space metric should have an entry for when the uncompressed data manager is
         // created and for when the data buffer is spilled to disk.
@@ -884,7 +887,7 @@ mod tests {
                 .used_disk_space_metric
                 .read()
                 .await
-                .values
+                .values()
                 .len(),
             2
         );
@@ -907,7 +910,10 @@ mod tests {
                     .memory_pool
                     .remaining_uncompressed_memory_in_bytes()
         );
-        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 1);
+        assert_eq!(
+            data_manager.used_uncompressed_memory_metric.values().len(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -933,7 +939,10 @@ mod tests {
                     .memory_pool
                     .remaining_uncompressed_memory_in_bytes()
         );
-        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 2);
+        assert_eq!(
+            data_manager.used_uncompressed_memory_metric.values().len(),
+            2
+        );
     }
 
     #[tokio::test]
@@ -964,7 +973,10 @@ mod tests {
                 .remaining_uncompressed_memory_in_bytes(),
         );
 
-        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 3);
+        assert_eq!(
+            data_manager.used_uncompressed_memory_metric.values().len(),
+            3
+        );
 
         // The used disk space metric should have an entry for when the uncompressed data manager is
         // created, an entry for when the data buffer is spilled to disk, and an entry for when the
@@ -974,7 +986,7 @@ mod tests {
                 .used_disk_space_metric
                 .read()
                 .await
-                .values
+                .values()
                 .len(),
             3
         );
