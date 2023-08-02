@@ -32,7 +32,7 @@ use datafusion::execution::context::TaskContext;
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::{
-    DisplayFormatType, ExecutionPlan, Partitioning, PhysicalExpr, RecordBatchStream,
+    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PhysicalExpr, RecordBatchStream,
     SendableRecordBatchStream, Statistics,
 };
 use futures::stream::Stream;
@@ -163,7 +163,9 @@ impl ExecutionPlan for GeneratedAsExec {
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())
     }
+}
 
+impl DisplayAs for GeneratedAsExec {
     /// Write a string-based representation of the operator to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> fmt::Result {

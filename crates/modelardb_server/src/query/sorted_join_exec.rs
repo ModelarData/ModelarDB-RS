@@ -33,11 +33,12 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::PhysicalSortRequirement;
+use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::Distribution;
 use datafusion::physical_plan::{
-    expressions::PhysicalSortExpr, DisplayFormatType, ExecutionPlan, Partitioning,
-    RecordBatchStream, SendableRecordBatchStream, Statistics,
+    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
+    SendableRecordBatchStream, Statistics,
 };
 use futures::stream::{Stream, StreamExt};
 
@@ -189,7 +190,9 @@ impl ExecutionPlan for SortedJoinExec {
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.metrics.clone_inner())
     }
+}
 
+impl DisplayAs for SortedJoinExec {
     /// Write a string-based representation of the operator to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> fmt::Result {
