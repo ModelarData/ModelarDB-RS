@@ -100,10 +100,8 @@ const TRANSFER_BATCH_SIZE_IN_BYTES: usize = 64 * 1024 * 1024; // 64 MiB;
 /// Manages all uncompressed and compressed data, both while being stored in memory during ingestion
 /// and when persisted to disk afterwards.
 pub struct StorageEngine {
-    // TODO: is it better to use MetadataManager from context to share caches with tables.rs and
-    // uncompressed_data_manager.rs or a separate MetadataManager to not require taking a lock?
     /// Manager that contains and controls all metadata for both uncompressed and compressed data.
-    metadata_manager: MetadataManager,
+    metadata_manager: Arc<MetadataManager>,
     /// Manager that contains and controls all uncompressed data.
     uncompressed_data_manager: UncompressedDataManager,
     /// Manager that contains and controls all compressed data.
@@ -118,7 +116,7 @@ impl StorageEngine {
         local_data_folder: PathBuf,
         remote_data_folder: Option<Arc<dyn ObjectStore>>,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
-        metadata_manager: MetadataManager,
+        metadata_manager: Arc<MetadataManager>,
         compress_directly: bool,
     ) -> Result<Self, IOError> {
         // Create a metric for used disk space. The metric is wrapped in an Arc and a read/write lock
@@ -194,7 +192,7 @@ impl StorageEngine {
         let compressed_segments = self
             .uncompressed_data_manager
             .insert_data_points(
-                &mut self.metadata_manager,
+                &self.metadata_manager,
                 model_table_metadata,
                 data_points,
             )

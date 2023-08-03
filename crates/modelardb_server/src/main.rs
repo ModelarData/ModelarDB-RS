@@ -82,7 +82,7 @@ pub struct DataFolders {
 /// Provides access to the system's configuration and components.
 pub struct Context {
     /// Metadata for the tables and model tables in the data folder.
-    pub metadata_manager: MetadataManager,
+    pub metadata_manager: Arc<MetadataManager>,
     /// Updatable configuration of the server.
     pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
     /// Main interface for Apache Arrow DataFusion.
@@ -123,9 +123,11 @@ fn main() -> Result<(), String> {
     }
 
     // Create the components for the Context.
-    let metadata_manager = runtime
-        .block_on(MetadataManager::try_new(&data_folders.local_data_folder))
-        .map_err(|error| format!("Unable to create a MetadataManager: {error}"))?;
+    let metadata_manager = Arc::new(
+        runtime
+            .block_on(MetadataManager::try_new(&data_folders.local_data_folder))
+            .map_err(|error| format!("Unable to create a MetadataManager: {error}"))?,
+    );
 
     let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(server_mode)));
     let session = create_session_context(data_folders.query_data_folder);

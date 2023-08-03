@@ -137,7 +137,7 @@ impl UncompressedDataManager {
     /// [`Err`].
     pub(super) async fn insert_data_points(
         &mut self,
-        metadata_manager: &mut MetadataManager,
+        metadata_manager: &MetadataManager,
         model_table_metadata: &ModelTableMetadata,
         data_points: &RecordBatch,
     ) -> Result<Vec<(u64, RecordBatch)>, String> {
@@ -558,7 +558,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_insert_record_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (mut metadata_manager, mut data_manager, _model_table_metadata) =
+        let (metadata_manager, mut data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
         let (model_table_metadata, data) = uncompressed_data(1);
@@ -567,7 +567,7 @@ mod tests {
             .await
             .unwrap();
         data_manager
-            .insert_data_points(&mut metadata_manager, &model_table_metadata, &data)
+            .insert_data_points(&metadata_manager, &model_table_metadata, &data)
             .await
             .unwrap();
 
@@ -583,7 +583,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_insert_record_batch_with_multiple_data_points() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (mut metadata_manager, mut data_manager, _model_table_metadata) =
+        let (metadata_manager, mut data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
         let (model_table_metadata, data) = uncompressed_data(2);
@@ -592,7 +592,7 @@ mod tests {
             .await
             .unwrap();
         data_manager
-            .insert_data_points(&mut metadata_manager, &model_table_metadata, &data)
+            .insert_data_points(&metadata_manager, &model_table_metadata, &data)
             .await
             .unwrap();
 
@@ -694,7 +694,7 @@ mod tests {
     #[tokio::test]
     async fn test_will_finish_unused_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (mut metadata_manager, mut data_manager, model_table_metadata) =
+        let (metadata_manager, mut data_manager, model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
         // Insert using insert_data_points() to increment the batch counter.
@@ -720,7 +720,7 @@ mod tests {
         .unwrap();
 
         data_manager
-            .insert_data_points(&mut metadata_manager, &model_table_metadata, &record_batch)
+            .insert_data_points(&metadata_manager, &model_table_metadata, &record_batch)
             .await
             .unwrap();
 
@@ -741,7 +741,7 @@ mod tests {
 
         data_manager
             .insert_data_points(
-                &mut metadata_manager,
+                &metadata_manager,
                 &model_table_metadata,
                 &empty_record_batch,
             )
@@ -1099,7 +1099,7 @@ mod tests {
     async fn create_managers(
         path: &Path,
     ) -> (MetadataManager, UncompressedDataManager, ModelTableMetadata) {
-        let mut metadata_manager = MetadataManager::try_new(path).await.unwrap();
+        let metadata_manager = MetadataManager::try_new(path).await.unwrap();
 
         // Ensure the expected metadata is available through the metadata manager.
         let query_schema = Arc::new(Schema::new(vec![
