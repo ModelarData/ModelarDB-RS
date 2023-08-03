@@ -22,10 +22,10 @@
 use std::ptr::{addr_of, addr_of_mut};
 use std::sync::Arc;
 
-use arrow::array::{make_array, Array, ArrayData};
+use arrow::array::{make_array, Array};
 use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
-use arrow::ffi::{ArrowArray, FFI_ArrowArray, FFI_ArrowSchema};
+use arrow::ffi::{self, FFI_ArrowArray, FFI_ArrowSchema};
 use arrow::record_batch::RecordBatch;
 use pyo3::ffi::Py_uintptr_t;
 use pyo3::import_exception;
@@ -86,10 +86,9 @@ fn python_array_to_rust(array: &PyAny) -> PyResult<Arc<dyn Array>> {
     )?;
 
     // Construct and return the final arrow-rs array.
-    let arrow_array = ArrowArray::new(ffi_arrow_array, ffi_arrow_schema);
-    let array = make_array(ArrayData::try_from(arrow_array).map_err(to_py_err)?);
+    let array_data = ffi::from_ffi(ffi_arrow_array, &ffi_arrow_schema).map_err(to_py_err)?;
 
-    Ok(array)
+    Ok(make_array(array_data))
 }
 
 /// Convert an Apache Arrow record batch from Rust to Python.

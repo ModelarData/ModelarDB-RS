@@ -21,14 +21,14 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fs;
 use std::net::SocketAddr;
-use std::pin::Pin;
 use std::str;
 use std::sync::Arc;
 
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     utils, Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
-    HandshakeRequest, HandshakeResponse, PutResult, SchemaAsIpc, SchemaResult, Ticket,
+    HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaAsIpc,
+    SchemaResult, Ticket,
 };
 use datafusion::arrow::array::{
     ArrayRef, ListBuilder, StringArray, StringBuilder, UInt32Builder, UInt64Array,
@@ -43,7 +43,8 @@ use datafusion::catalog::schema::SchemaProvider;
 use datafusion::common::DFSchema;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::prelude::ParquetReadOptions;
-use futures::{stream, Stream, StreamExt};
+use futures::stream::{self, BoxStream};
+use futures::StreamExt;
 use modelardb_common::arguments::{validate_remote_data_folder, RemoteDataFolderType};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
@@ -233,7 +234,7 @@ fn send_record_batch(
         .map_err(|error| Status::internal(error.to_string()))?;
 
     Ok(Response::new(Box::pin(stream::once(async {
-        Ok(arrow_flight::Result {
+        Ok(FlightResult {
             body: batch_bytes.into(),
         })
     }))))
@@ -489,20 +490,13 @@ impl FlightServiceHandler {
 
 #[tonic::async_trait]
 impl FlightService for FlightServiceHandler {
-    type HandshakeStream =
-        Pin<Box<dyn Stream<Item = Result<HandshakeResponse, Status>> + Send + Sync + 'static>>;
-    type ListFlightsStream =
-        Pin<Box<dyn Stream<Item = Result<FlightInfo, Status>> + Send + Sync + 'static>>;
-    type DoGetStream =
-        Pin<Box<dyn Stream<Item = Result<FlightData, Status>> + Send + Sync + 'static>>;
-    type DoPutStream =
-        Pin<Box<dyn Stream<Item = Result<PutResult, Status>> + Send + Sync + 'static>>;
-    type DoExchangeStream =
-        Pin<Box<dyn Stream<Item = Result<FlightData, Status>> + Send + Sync + 'static>>;
-    type DoActionStream =
-        Pin<Box<dyn Stream<Item = Result<arrow_flight::Result, Status>> + Send + Sync + 'static>>;
-    type ListActionsStream =
-        Pin<Box<dyn Stream<Item = Result<ActionType, Status>> + Send + Sync + 'static>>;
+    type HandshakeStream = BoxStream<'static, Result<HandshakeResponse, Status>>;
+    type ListFlightsStream = BoxStream<'static, Result<FlightInfo, Status>>;
+    type DoGetStream = BoxStream<'static, Result<FlightData, Status>>;
+    type DoPutStream = BoxStream<'static, Result<PutResult, Status>>;
+    type DoExchangeStream = BoxStream<'static, Result<FlightData, Status>>;
+    type DoActionStream = BoxStream<'static, Result<FlightResult, Status>>;
+    type ListActionsStream = BoxStream<'static, Result<ActionType, Status>>;
 
     /// Not implemented.
     async fn handshake(
