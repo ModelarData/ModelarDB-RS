@@ -36,7 +36,6 @@ use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::execution::options::ParquetReadOptions;
 use futures::TryStreamExt;
-use log::LevelFilter;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use modelardb_common::metadata::CommonMetadataManager;
@@ -45,7 +44,7 @@ use sqlx::database::HasArguments;
 use sqlx::error::Error;
 use sqlx::query::Query;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
-use sqlx::{ConnectOptions, Executor, Result, Row, Sqlite, SqlitePool};
+use sqlx::{Executor, Result, Row, Sqlite, SqlitePool};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
@@ -115,11 +114,9 @@ impl MetadataManager {
         }
 
         // Specify the metadata database's path and that it should be created if it does not exist.
-        let mut options = SqliteConnectOptions::new()
+        let options = SqliteConnectOptions::new()
             .filename(local_data_folder.join(METADATA_DATABASE_NAME))
             .create_if_missing(true);
-
-        options.log_statements(LevelFilter::Debug);
 
         // Create the metadata manager with the default values.
         let metadata_manager = Self {
@@ -311,7 +308,7 @@ impl MetadataManager {
              WHERE model_table_field_columns.table_name = model_table_hash_table_name.table_name
              AND hash = {signed_tag_hash} AND column_index = {column_index}",
         );
-        let mut rows = sqlx::query(&select_statement).fetch(&mut connection);
+        let mut rows = sqlx::query(&select_statement).fetch(&mut *connection);
 
         // unwrap() is safe as the error bound is checked before it is written to the metadata database.
         let percentage: f32 = rows.try_next().await?.unwrap().try_get(0)?;
@@ -334,7 +331,7 @@ impl MetadataManager {
         let mut connection = self.metadata_database_pool.acquire().await?;
 
         let mut rows = sqlx::query("SELECT hash, table_name FROM model_table_hash_table_name")
-            .fetch(&mut connection);
+            .fetch(&mut *connection);
 
         let mut hash_to_table_name = HashMap::new();
         while let Some(row) = rows.try_next().await? {
@@ -366,7 +363,7 @@ impl MetadataManager {
             "SELECT hash,{} FROM {model_table_name}_tags",
             tag_column_names.join(","),
         );
-        let mut rows = sqlx::query(&select_statement).fetch(&mut connection);
+        let mut rows = sqlx::query(&select_statement).fetch(&mut *connection);
 
         let mut hash_to_tags = HashMap::new();
         while let Some(row) = rows.try_next().await? {
@@ -570,7 +567,7 @@ impl MetadataManager {
             )
                 .as_str(),
         )
-            .execute(&mut transaction)
+            .execute(&mut *transaction)
             .await?;
 
         // The cast to usize is safe as only compressed_files_to_delete.len() can be deleted.
@@ -592,7 +589,7 @@ impl MetadataManager {
                 query_schema_index,
                 compressed_file,
             )
-                .execute(&mut transaction)
+                .execute(&mut *transaction)
                 .await?;
         }
 
@@ -898,7 +895,7 @@ impl MetadataManager {
                     .bind(error_bound)
                     .bind(generated_column_expr)
                     .bind(generated_column_sources)
-                    .execute(&mut transaction)
+                    .execute(&mut *transaction)
                     .await?;
             }
         }
