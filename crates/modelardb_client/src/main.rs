@@ -22,7 +22,7 @@ use std::convert::TryFrom;
 use std::env::{self, Args};
 use std::error::Error;
 use std::fs::{self, File};
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Write};
 use std::process;
 use std::result::Result;
 use std::sync::Arc;
@@ -30,7 +30,6 @@ use std::sync::Arc;
 use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
 use arrow::ipc::convert;
-use arrow::record_batch::RecordBatch;
 use arrow::util::pretty;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::utils;
@@ -225,9 +224,7 @@ fn execute_and_print_action_command_or_query(
     } else if action_command_or_query.starts_with("SELECT")
         || action_command_or_query.starts_with("EXPLAIN")
     {
-        let record_batches =
-            execute_query(runtime, flight_service_client, action_command_or_query)?;
-        pretty::print_batches(&record_batches)?;
+        execute_query_and_print_result(runtime, flight_service_client, action_command_or_query)?;
     } else {
         execute_action(runtime, flight_service_client, action_command_or_query)?;
     }
@@ -346,13 +343,13 @@ fn retrieve_table_names(
     })
 }
 
-/// Execute a query. Returns [`Error`] if the query could not be executed or the result could not be
-/// retrieved.
-fn execute_query(
+/// Execute a query and print each batch in the result set. Returns [`Error`] if the query could not
+/// be executed or the batches in the result set could not be printed.
+fn execute_query_and_print_result(
     runtime: &Runtime,
     flight_service_client: &mut FlightServiceClient<Channel>,
     query: &str,
-) -> Result<Vec<RecordBatch>, Box<dyn Error>> {
+) -> Result<(), Box<dyn Error>> {
     runtime.block_on(async {
         // Execute the query.
         let ticket = Ticket {
@@ -364,18 +361,38 @@ fn execute_query(
         let flight_data = stream.message().await?.ok_or(TRANSPORT_ERROR)?;
         let schema = Arc::new(Schema::try_from(&flight_data)?);
 
-        // Get the data in the result set.
-        let mut record_batches = vec![];
+        // Get each batch in the result set and print it.
+        let mut user_input = String::new();
+        let mut multiple_batches = false;
         let dictionaries_by_id = HashMap::new();
+
         while let Some(flight_data) = stream.message().await? {
             let record_batch = utils::flight_data_to_arrow_batch(
                 &flight_data,
                 schema.clone(),
                 &dictionaries_by_id,
             )?;
-            record_batches.push(record_batch);
+
+            // Only ask for confirmation to print the next batch if there are multiple batches.
+            if multiple_batches {
+                loop {
+                    user_input.clear();
+                    print!("Press Enter for next batch and q+Enter to quit> ");
+                    io::stdout().flush()?;
+                    io::stdin().read_line(&mut user_input)?;
+
+                    match user_input.as_str() {
+                        "\n" => break,
+                        "q\n" => return Ok(()),
+                        _ => (),
+                    }
+                }
+            }
+
+            pretty::print_batches(&[record_batch])?;
+            multiple_batches = true;
         }
 
-        Ok(record_batches)
+        Ok(())
     })
 }
