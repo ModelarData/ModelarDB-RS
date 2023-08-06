@@ -35,9 +35,8 @@ use tracing::{debug, info};
 
 use crate::storage::compressed_data_buffer::CompressedDataBuffer;
 use crate::storage::data_transfer::DataTransfer;
+use crate::storage::types::MemoryPool;
 use crate::storage::{Metric, StorageEngine, COMPRESSED_DATA_FOLDER};
-
-use super::types::MemoryPool;
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
@@ -53,7 +52,7 @@ pub(super) struct CompressedDataManager {
     /// FIFO queue of table names and column indices referring to [`CompressedDataBuffer`] that can
     /// be saved to persistent storage.
     compressed_queue: VecDeque<(String, u16)>,
-    /// Track how much memory are left for storing uncompressed and compressed data.
+    /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used compressed memory in bytes, updated every time the used memory changes.
     pub(super) used_compressed_memory_metric: Metric,
@@ -166,7 +165,7 @@ impl CompressedDataManager {
             .append(segments_size as isize, true);
 
         // If the reserved memory limit is exceeded, save compressed data to disk.
-        if self
+        while !self
             .memory_pool
             .try_reserve_compressed_memory(segments_size)
         {
@@ -273,8 +272,8 @@ impl CompressedDataManager {
     }
 
     /// Save [`CompressedDataBuffers`](CompressedDataBuffer) to disk until at least `size_in_bytes`
-    /// of memory is available . If all of the data is saved successfully, return [`Ok`], otherwise
-    /// return [`IOError`].
+    /// bytes of memory is available . If all of the data is saved successfully, return [`Ok`],
+    /// otherwise return [`IOError`].
     async fn save_compressed_data_to_free_memory(
         &mut self,
         size_in_bytes: usize,
@@ -368,7 +367,7 @@ impl CompressedDataManager {
         &mut self,
         value_change: isize,
     ) -> Result<(), IOError> {
-        self.memory_pool.update_compressed_memory(value_change);
+        self.memory_pool.adjust_compressed_memory(value_change);
         self.save_compressed_data_to_free_memory(0).await?;
 
         Ok(())
@@ -610,7 +609,7 @@ mod tests {
             .unwrap();
 
         // Set the remaining memory to a negative value since data is only saved when out of memory.
-        data_manager.memory_pool.update_compressed_memory(
+        data_manager.memory_pool.adjust_compressed_memory(
             -(data_manager
                 .memory_pool
                 .remaining_compressed_memory_in_bytes()

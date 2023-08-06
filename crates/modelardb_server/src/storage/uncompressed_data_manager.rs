@@ -52,7 +52,7 @@ pub(super) struct UncompressedDataManager {
     /// FIFO queue of full [`UncompressedDataBuffers`](UncompressedDataBuffer) that are ready for
     /// compression.
     finished_uncompressed_data_buffers: VecDeque<Box<dyn UncompressedDataBuffer>>,
-    /// Track how much memory are left for storing uncompressed and compressed data.
+    /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     // TODO: This is a temporary field used to fix existing tests. Remove when configuration component is changed.
     /// If this is true, compress finished buffers directly instead of queueing them.
@@ -508,7 +508,7 @@ impl UncompressedDataManager {
         &mut self,
         value_change: isize,
     ) {
-        self.memory_pool.update_uncompressed_memory(value_change);
+        self.memory_pool.adjust_uncompressed_memory(value_change);
 
         while self.memory_pool.remaining_uncompressed_memory_in_bytes() < 0 {
             self.spill_finished_buffer().await;

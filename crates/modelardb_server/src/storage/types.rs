@@ -25,7 +25,11 @@ use modelardb_common::types::{Timestamp, TimestampArray};
 use ringbuf::{HeapRb, Rb};
 
 /// Resizeable pool of memory for tracking and limiting the amount of memory used by the
-/// [`StorageEngine`](crate::storage::StorageEngine).
+/// [`StorageEngine`](crate::storage::StorageEngine). Signed integers are used to simplify updating
+/// the amount of available memory at runtime. By using signed integers for the amount of available
+/// memory it can simply be decreased without checking the current value as any attempts to reserve
+/// additional memory will be rejected while the amount of available memory is negative. Thus,
+/// [`StorageEngine`](crate::storage::StorageEngine) will decrease its memory usage.
 pub(super) struct MemoryPool {
     /// How many bytes of memory that are left for storing
     /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) containing multivariate time
@@ -34,10 +38,7 @@ pub(super) struct MemoryPool {
     /// containing univariate time series without metadata.
     remaining_uncompressed_memory_in_bytes: RwLock<isize>,
     /// How many bytes of memory that are left for storing
-    /// [`CompressedDataBuffers`](crate::storage::compressed_data_buffer::CompressedDataBuffer). A
-    /// signed integer is used since compressed data is inserted and then the remaining bytes are
-    /// checked. This means that the remaining bytes can briefly be negative until compressed data
-    /// is saved to disk and if the amount of memory for uncompressed data is reduced.
+    /// [`CompressedDataBuffers`](crate::storage::compressed_data_buffer::CompressedDataBuffer).
     remaining_compressed_memory_in_bytes: RwLock<isize>,
 }
 
@@ -46,7 +47,7 @@ pub(super) struct MemoryPool {
 /// can use for uncompressed data and the
 /// [`CompressedDataManager`](crate::storage::CompressedDataManager) can use for compressed data.
 impl MemoryPool {
-    /// Create a new [`MemoryPool`] with at most [`u64::MAX`] bytes of memory for uncompressed data
+    /// Create a new [`MemoryPool`] with at most [`i64::MAX`] bytes of memory for uncompressed data
     /// and at most [`i64::MAX`] bytes of memory for compressed data.
     pub(super) fn new(
         uncompressed_memory_in_bytes: usize,
@@ -63,32 +64,20 @@ impl MemoryPool {
         }
     }
 
-    /// Change the amount of memory available for storing
-    /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) containing multivariate time
-    /// series with metadata and
-    /// [`UncompressedDataBuffers`](crate::storage::uncompressed_data_buffer::UncompressedDataBuffer)
-    /// containing univariate time series without metadata by `size_in_bytes`.
-    pub(super) fn update_uncompressed_memory(&self, size_in_bytes: isize) {
+    /// Change the amount of memory available for uncompressed data by `size_in_bytes`.
+    pub(super) fn adjust_uncompressed_memory(&self, size_in_bytes: isize) {
         // unwrap() is safe as write() only returns an error if the lock is poisoned.
         *self.remaining_uncompressed_memory_in_bytes.write().unwrap() += size_in_bytes
     }
 
-    /// Return the amount of memory available for storing
-    /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) containing multivariate time
-    /// series with metadata and
-    /// [`UncompressedDataBuffers`](crate::storage::uncompressed_data_buffer::UncompressedDataBuffer)
-    /// containing univariate time series without metadata in bytes.
+    /// Return the amount of memory available for uncompressed data in bytes.
     pub(super) fn remaining_uncompressed_memory_in_bytes(&self) -> isize {
         // unwrap() is safe as write() only returns an error if the lock is poisoned.
         *self.remaining_uncompressed_memory_in_bytes.read().unwrap()
     }
 
-    /// Try to reserve `size_in_bytes` bytes of memory for storing
-    /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) containing multivariate time
-    /// series with metadata and
-    /// [`UncompressedDataBuffers`](crate::storage::uncompressed_data_buffer::UncompressedDataBuffer)
-    /// containing univariate time series without metadata. Returns [`true`] if the reservation
-    /// succeeds and [`false`] otherwise.
+    /// Try to reserve `size_in_bytes` bytes of memory for uncompressed data. Returns [`true`] if
+    /// the reservation succeeds and [`false`] otherwise.
     pub(super) fn try_reserve_uncompressed_memory(&self, size_in_bytes: usize) -> bool {
         // unwrap() is safe as write() only returns an error if the lock is poisoned.
         let mut remaining_uncompressed_memory_in_bytes =
@@ -104,36 +93,26 @@ impl MemoryPool {
         }
     }
 
-    /// Free `size_in_bytes` bytes of memory for storing
-    /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) containing multivariate time
-    /// series with metadata and
-    /// [`UncompressedDataBuffers`](crate::storage::uncompressed_data_buffer::UncompressedDataBuffer)
-    /// containing univariate time series without metadata. Returns [`true`] if the reservation
-    /// succeeds and [`false`] otherwise.
+    /// Free `size_in_bytes` bytes of memory for storing uncompressed data.
     pub(super) fn free_uncompressed_memory(&self, size_in_bytes: usize) {
         // unwrap() is safe as write() only returns an error if the lock is poisoned.
         *self.remaining_uncompressed_memory_in_bytes.write().unwrap() += size_in_bytes as isize;
     }
 
-    /// Change the amount of memory available for storing
-    /// [`CompressedDataBuffers`](crate::storage::compressed_data_buffer::CompressedDataBuffer) by
-    /// `size_in_bytes`.
-    pub(super) fn update_compressed_memory(&self, size_in_bytes: isize) {
+    /// Change the amount of memory available for storing compressed data by `size_in_bytes`.
+    pub(super) fn adjust_compressed_memory(&self, size_in_bytes: isize) {
         // unwrap() is safe as write() only returns an error if the lock is poisoned.
         *self.remaining_compressed_memory_in_bytes.write().unwrap() += size_in_bytes;
     }
 
-    /// Return the amount of memory available for storing
-    /// [`CompressedDataBuffers`](crate::storage::compressed_data_buffer::CompressedDataBuffer) in
-    /// bytes.
+    /// Return the amount of memory available for storing compressed data in bytes.
     pub(super) fn remaining_compressed_memory_in_bytes(&self) -> isize {
         // unwrap() is safe as write() only returns an error if the lock is poisoned.
         *self.remaining_compressed_memory_in_bytes.read().unwrap()
     }
 
-    /// Try to reserve `size_in_bytes` bytes of memory for storing
-    /// [`CompressedDataBuffers`](crate::storage::compressed_data_buffer::CompressedDataBuffer).
-    /// Returns [`true`] if the reservation succeeds and [`false`] otherwise.
+    /// Try to reserve `size_in_bytes` bytes of memory for storing compressed data. Returns [`true`]
+    /// if the reservation succeeds and [`false`] otherwise.
     pub(super) fn try_reserve_compressed_memory(&self, size_in_bytes: usize) -> bool {
         // unwrap() is safe as write() only returns an error if the lock is poisoned.
         let mut remaining_compressed_memory_in_bytes =
@@ -149,8 +128,7 @@ impl MemoryPool {
         }
     }
 
-    /// Free `size_in_bytes` bytes of memory for storing
-    /// [`CompressedDataBuffers`](crate::storage::compressed_data_buffer::CompressedDataBuffer).
+    /// Free `size_in_bytes` bytes of memory for storing compressed data.
     pub(super) fn free_compressed_memory(&self, size_in_bytes: usize) {
         // unwrap() is safe as write() only returns an error if the lock is poisoned.
         *self.remaining_compressed_memory_in_bytes.write().unwrap() += size_in_bytes as isize;
@@ -238,6 +216,215 @@ impl Metric {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::common_test;
+
+    // Tests for MemoryPool.
+    #[test]
+    fn test_adjust_uncompressed_memory_increase() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            memory_pool.remaining_uncompressed_memory_in_bytes(),
+            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool.adjust_uncompressed_memory(common_test::COMPRESSED_SEGMENTS_SIZE as isize);
+
+        assert_eq!(
+            memory_pool.remaining_uncompressed_memory_in_bytes(),
+            (common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
+                + common_test::COMPRESSED_SEGMENTS_SIZE) as isize
+        );
+    }
+
+    #[test]
+    fn test_adjust_uncompressed_memory_decrease_above_zero() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            memory_pool.remaining_uncompressed_memory_in_bytes(),
+            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool.adjust_uncompressed_memory(-(common_test::COMPRESSED_SEGMENTS_SIZE as isize));
+
+        assert_eq!(
+            memory_pool.remaining_uncompressed_memory_in_bytes(),
+            (common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
+                - common_test::COMPRESSED_SEGMENTS_SIZE) as isize
+        );
+    }
+
+    #[test]
+    fn test_adjust_uncompressed_memory_decrease_below_zero() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            memory_pool.remaining_uncompressed_memory_in_bytes(),
+            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool.adjust_uncompressed_memory(
+            -2 * common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize,
+        );
+
+        assert_eq!(
+            memory_pool.remaining_uncompressed_memory_in_bytes(),
+            -(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize)
+        );
+    }
+
+    #[test]
+    fn test_try_reserve_uncompressed_memory_succeed() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            memory_pool.remaining_uncompressed_memory_in_bytes(),
+            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool
+            .try_reserve_uncompressed_memory(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES);
+
+        assert_eq!(memory_pool.remaining_uncompressed_memory_in_bytes(), 0);
+    }
+
+    #[test]
+    fn test_try_reserve_uncompressed_memory_fail() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            memory_pool.remaining_uncompressed_memory_in_bytes(),
+            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool.try_reserve_uncompressed_memory(
+            2 * common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+        );
+
+        assert_eq!(
+            memory_pool.remaining_uncompressed_memory_in_bytes(),
+            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+        );
+    }
+
+    #[test]
+    fn test_free_uncompressed_memory() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            memory_pool.remaining_uncompressed_memory_in_bytes(),
+            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool.free_uncompressed_memory(common_test::COMPRESSED_SEGMENTS_SIZE);
+
+        assert_eq!(
+            memory_pool.remaining_uncompressed_memory_in_bytes(),
+            (common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
+                + common_test::COMPRESSED_SEGMENTS_SIZE) as isize
+        );
+    }
+
+    #[test]
+    fn test_adjust_compressed_memory_increase() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            memory_pool.remaining_compressed_memory_in_bytes(),
+            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool.adjust_compressed_memory(common_test::COMPRESSED_SEGMENTS_SIZE as isize);
+
+        assert_eq!(
+            memory_pool.remaining_compressed_memory_in_bytes(),
+            (common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES
+                + common_test::COMPRESSED_SEGMENTS_SIZE) as isize
+        );
+    }
+
+    #[test]
+    fn test_adjust_compressed_memory_decrease_above_zero() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            memory_pool.remaining_compressed_memory_in_bytes(),
+            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool.adjust_compressed_memory(-(common_test::COMPRESSED_SEGMENTS_SIZE as isize));
+
+        assert_eq!(
+            memory_pool.remaining_compressed_memory_in_bytes(),
+            (common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES
+                - common_test::COMPRESSED_SEGMENTS_SIZE) as isize
+        );
+    }
+
+    #[test]
+    fn test_adjust_compressed_memory_decrease_below_zero() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            memory_pool.remaining_compressed_memory_in_bytes(),
+            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool.adjust_compressed_memory(
+            -2 * common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize,
+        );
+
+        assert_eq!(
+            memory_pool.remaining_compressed_memory_in_bytes(),
+            -(common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize)
+        );
+    }
+
+    #[test]
+    fn test_try_reserve_compressed_memory_succeed() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            memory_pool.remaining_compressed_memory_in_bytes(),
+            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool.try_reserve_compressed_memory(common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES);
+
+        assert_eq!(memory_pool.remaining_compressed_memory_in_bytes(), 0);
+    }
+
+    #[test]
+    fn test_try_reserve_compressed_memory_fail() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            memory_pool.remaining_compressed_memory_in_bytes(),
+            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool
+            .try_reserve_compressed_memory(2 * common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES);
+
+        assert_eq!(
+            memory_pool.remaining_compressed_memory_in_bytes(),
+            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+        );
+    }
+
+    #[test]
+    fn test_free_compressed_memory() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            memory_pool.remaining_compressed_memory_in_bytes(),
+            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool.free_compressed_memory(common_test::COMPRESSED_SEGMENTS_SIZE);
+
+        assert_eq!(
+            memory_pool.remaining_compressed_memory_in_bytes(),
+            (common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES
+                + common_test::COMPRESSED_SEGMENTS_SIZE) as isize
+        );
+    }
+
+    fn create_memory_pool() -> MemoryPool {
+        MemoryPool::new(
+            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+        )
+    }
 
     // Tests for Metric.
     #[test]

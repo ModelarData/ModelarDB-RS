@@ -33,7 +33,6 @@ use std::io::{Error as IOError, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::configuration::ConfigurationManager;
 use bytes::buf::BufMut;
 use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::compute;
@@ -61,6 +60,7 @@ use tonic::Status;
 use tracing::debug;
 use uuid::{uuid, Uuid};
 
+use crate::configuration::ConfigurationManager;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
@@ -191,11 +191,7 @@ impl StorageEngine {
         // TODO: When the compression component is changed, just insert the data points.
         let compressed_segments = self
             .uncompressed_data_manager
-            .insert_data_points(
-                &self.metadata_manager,
-                model_table_metadata,
-                data_points,
-            )
+            .insert_data_points(&self.metadata_manager, model_table_metadata, data_points)
             .await?;
 
         for (univariate_id, compressed_segments) in compressed_segments {
