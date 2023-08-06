@@ -78,6 +78,7 @@ impl MemoryPool {
 
     /// Try to reserve `size_in_bytes` bytes of memory for uncompressed data. Returns [`true`] if
     /// the reservation succeeds and [`false`] otherwise.
+    #[must_use]
     pub(super) fn try_reserve_uncompressed_memory(&self, size_in_bytes: usize) -> bool {
         // unwrap() is safe as write() only returns an error if the lock is poisoned.
         let mut remaining_uncompressed_memory_in_bytes =
@@ -113,6 +114,7 @@ impl MemoryPool {
 
     /// Try to reserve `size_in_bytes` bytes of memory for storing compressed data. Returns [`true`]
     /// if the reservation succeeds and [`false`] otherwise.
+    #[must_use]
     pub(super) fn try_reserve_compressed_memory(&self, size_in_bytes: usize) -> bool {
         // unwrap() is safe as write() only returns an error if the lock is poisoned.
         let mut remaining_compressed_memory_in_bytes =
@@ -272,30 +274,30 @@ mod tests {
     }
 
     #[test]
-    fn test_try_reserve_uncompressed_memory_succeed() {
+    fn test_try_reserve_available_uncompressed_memory() {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
             common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool
-            .try_reserve_uncompressed_memory(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES);
+        assert!(memory_pool
+            .try_reserve_uncompressed_memory(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES));
 
         assert_eq!(memory_pool.remaining_uncompressed_memory_in_bytes(), 0);
     }
 
     #[test]
-    fn test_try_reserve_uncompressed_memory_fail() {
+    fn test_try_reserve_unavailable_uncompressed_memory() {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
             common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool.try_reserve_uncompressed_memory(
+        assert!(!memory_pool.try_reserve_uncompressed_memory(
             2 * common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
-        );
+        ));
 
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
@@ -373,28 +375,29 @@ mod tests {
     }
 
     #[test]
-    fn test_try_reserve_compressed_memory_succeed() {
+    fn test_try_reserve_available_compressed_memory() {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
             common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool.try_reserve_compressed_memory(common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES);
+        assert!(memory_pool
+            .try_reserve_compressed_memory(common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES));
 
         assert_eq!(memory_pool.remaining_compressed_memory_in_bytes(), 0);
     }
 
     #[test]
-    fn test_try_reserve_compressed_memory_fail() {
+    fn test_try_reserve_unavailable_compressed_memory() {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
             common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool
-            .try_reserve_compressed_memory(2 * common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES);
+        assert!(!memory_pool
+            .try_reserve_compressed_memory(2 * common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES));
 
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),

@@ -272,7 +272,7 @@ impl CompressedDataManager {
     }
 
     /// Save [`CompressedDataBuffers`](CompressedDataBuffer) to disk until at least `size_in_bytes`
-    /// bytes of memory is available . If all of the data is saved successfully, return [`Ok`],
+    /// bytes of memory is available. If all of the data is saved successfully, return [`Ok`],
     /// otherwise return [`IOError`].
     async fn save_compressed_data_to_free_memory(
         &mut self,
