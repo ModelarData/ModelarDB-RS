@@ -806,8 +806,8 @@ impl FlightService for FlightServiceHandler {
                 "compressed_reserved_memory_in_bytes",
             ];
             let values = [
-                *configuration_manager.uncompressed_reserved_memory_in_bytes() as u64,
-                *configuration_manager.compressed_reserved_memory_in_bytes() as u64,
+                configuration_manager.uncompressed_reserved_memory_in_bytes() as u64,
+                configuration_manager.compressed_reserved_memory_in_bytes() as u64,
             ];
 
             let schema = CONFIGURATION_SCHEMA.clone();

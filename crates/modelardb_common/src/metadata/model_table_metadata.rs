@@ -33,6 +33,8 @@ pub struct ModelTableMetadata {
     pub schema: Arc<Schema>,
     /// Index of the timestamp column in `schema`.
     pub timestamp_column_index: usize,
+    /// Indices of the field columns in `schema`.
+    pub field_column_indices: Vec<usize>,
     /// Indices of the tag columns in `schema`.
     pub tag_column_indices: Vec<usize>,
     /// Error bounds of the columns in `schema`. It can only be non-zero for field columns.
@@ -125,12 +127,12 @@ impl ModelTableMetadata {
             ));
         }
 
-        let field_columns = ModelTableMetadata::compute_indices_of_columns_with_data_type(
+        let field_column_indices = ModelTableMetadata::compute_indices_of_columns_with_data_type(
             &schema_without_generated,
             ArrowValue::DATA_TYPE,
         );
 
-        if field_columns.is_empty() {
+        if field_column_indices.is_empty() {
             return Err(ModelarDbError::ConfigurationError(
                 "There needs to be at least one field column.".to_owned(),
             ));
@@ -144,8 +146,9 @@ impl ModelTableMetadata {
         Ok(Self {
             name,
             schema: schema_without_generated,
-            tag_column_indices,
             timestamp_column_index: timestamp_column_indices[0],
+            field_column_indices,
+            tag_column_indices,
             error_bounds: error_bounds_without_generated,
             query_schema,
             generated_columns,
