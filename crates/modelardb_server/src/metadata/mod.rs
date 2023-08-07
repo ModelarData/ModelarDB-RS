@@ -33,6 +33,7 @@ use std::str;
 use std::sync::Arc;
 
 use arrow_flight::{IpcMessage, SchemaAsIpc};
+use dashmap::DashMap;
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use datafusion::common::{DFSchema, ToDFSchema};
@@ -105,7 +106,7 @@ pub struct MetadataManager {
     metadata_database_pool: SqlitePool,
     /// Cache of tag value hashes used to signify when to persist new unsaved
     /// tag combinations.
-    tag_value_hashes: HashMap<String, u64>,
+    tag_value_hashes: DashMap<String, u64>,
 }
 
 impl MetadataManager {
@@ -127,7 +128,7 @@ impl MetadataManager {
         let metadata_manager = Self {
             local_data_folder: local_data_folder.to_path_buf(),
             metadata_database_pool: SqlitePool::connect_with(options).await?,
-            tag_value_hashes: HashMap::new(),
+            tag_value_hashes: DashMap::new(),
         };
 
         // Create the necessary tables in the metadata database.
@@ -216,7 +217,7 @@ impl MetadataManager {
     /// it does not already contain it. If the model_table_tags or the model_table_hash_table_name
     /// table cannot be accessed, [`Error`] is returned.
     pub async fn lookup_or_compute_tag_hash(
-        &mut self,
+        &self,
         model_table_metadata: &ModelTableMetadata,
         tag_values: &[String],
     ) -> Result<u64> {
@@ -228,7 +229,10 @@ impl MetadataManager {
         };
 
         // Check if the tag hash is in the cache. If it is, retrieve it. If it is not, create a new
-        // one and save it both in the cache and in the model_table_tags table.
+        // one and save it both in the cache and in the model_table_tags table. There is a minor
+        // race condition because the check if a tag hash is in the cache and the addition of the
+        // hash is done without taking a lock on the tag_value_hashes. However, by allowing a hash
+        // to possible be computed more than once, the cache can be used without an explicit lock.
         if let Some(tag_hash) = self.tag_value_hashes.get(&cache_key) {
             Ok(*tag_hash)
         } else {
@@ -1179,7 +1183,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_new_tag_hash() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
@@ -1193,7 +1197,7 @@ mod tests {
         assert!(result.is_ok());
 
         // When a new tag hash is retrieved, the hash should be saved in the cache.
-        assert_eq!(metadata_manager.tag_value_hashes.keys().len(), 1);
+        assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
 
         // It should also be saved in the metadata database table.
         let mut rows = metadata_manager
@@ -1214,7 +1218,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_existing_tag_hash() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
@@ -1226,7 +1230,7 @@ mod tests {
             .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
             .await
             .unwrap();
-        assert_eq!(metadata_manager.tag_value_hashes.keys().len(), 1);
+        assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
 
         // When getting the same tag hash again, it should just be retrieved from the cache.
         let result = metadata_manager
@@ -1234,7 +1238,7 @@ mod tests {
             .await;
 
         assert!(result.is_ok());
-        assert_eq!(metadata_manager.tag_value_hashes.keys().len(), 1);
+        assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
     }
 
     proptest! {

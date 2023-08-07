@@ -54,7 +54,7 @@ pub const COMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
 /// data and 5 MiBs reserved for compressed data. Reducing the amount of reserved memory makes it
 /// faster to run unit tests.
 pub async fn test_context(path: &Path) -> Arc<Context> {
-    let metadata_manager = MetadataManager::try_new(path).await.unwrap();
+    let metadata_manager = Arc::new(MetadataManager::try_new(path).await.unwrap());
     let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(ServerMode::Edge)));
 
     let session = test_session_context();

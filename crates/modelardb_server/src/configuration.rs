@@ -17,6 +17,7 @@
 //! the amount of reserved memory for uncompressed and compressed data.
 
 use std::sync::Arc;
+
 use modelardb_common::errors::ModelarDbError;
 use tokio::sync::RwLock;
 
@@ -48,8 +49,8 @@ impl ConfigurationManager {
         &self.server_mode
     }
 
-    pub(crate) fn uncompressed_reserved_memory_in_bytes(&self) -> &usize {
-        &self.uncompressed_reserved_memory_in_bytes
+    pub(crate) fn uncompressed_reserved_memory_in_bytes(&self) -> usize {
+        self.uncompressed_reserved_memory_in_bytes
     }
 
     /// Set the new value and update the amount of memory for uncompressed data in the storage engine.
@@ -72,8 +73,8 @@ impl ConfigurationManager {
         self.uncompressed_reserved_memory_in_bytes = new_uncompressed_reserved_memory_in_bytes;
     }
 
-    pub(crate) fn compressed_reserved_memory_in_bytes(&self) -> &usize {
-        &self.compressed_reserved_memory_in_bytes
+    pub(crate) fn compressed_reserved_memory_in_bytes(&self) -> usize {
+        self.compressed_reserved_memory_in_bytes
     }
 
     /// Set the new value and update the amount of memory for compressed data in the storage engine.
@@ -115,7 +116,10 @@ mod tests {
         let storage_engine = context.storage_engine.clone();
 
         assert_eq!(
-            *configuration_manager.read().await.uncompressed_reserved_memory_in_bytes(),
+            configuration_manager
+                .read()
+                .await
+                .uncompressed_reserved_memory_in_bytes(),
             common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
         );
 
@@ -126,7 +130,10 @@ mod tests {
             .await;
 
         assert_eq!(
-            *configuration_manager.read().await.uncompressed_reserved_memory_in_bytes(),
+            configuration_manager
+                .read()
+                .await
+                .uncompressed_reserved_memory_in_bytes(),
             1024
         );
     }
@@ -140,7 +147,10 @@ mod tests {
         let storage_engine = context.storage_engine.clone();
 
         assert_eq!(
-            *configuration_manager.read().await.compressed_reserved_memory_in_bytes(),
+            configuration_manager
+                .read()
+                .await
+                .compressed_reserved_memory_in_bytes(),
             common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES
         );
 
@@ -152,7 +162,10 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            *configuration_manager.read().await.compressed_reserved_memory_in_bytes(),
+            configuration_manager
+                .read()
+                .await
+                .compressed_reserved_memory_in_bytes(),
             1024
         );
     }

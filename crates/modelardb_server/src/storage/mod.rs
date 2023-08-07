@@ -23,6 +23,7 @@
 mod compressed_data_buffer;
 mod compressed_data_manager;
 mod data_transfer;
+mod types;
 mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
 
@@ -31,10 +32,7 @@ use std::fs::File;
 use std::io::{Error as IOError, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
-use std::{fmt, mem};
 
-use crate::configuration::ConfigurationManager;
 use bytes::buf::BufMut;
 use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::compute;
@@ -55,7 +53,6 @@ use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
-use ringbuf::{HeapRb, Rb};
 use tokio::fs::File as TokioFile;
 use tokio::sync::RwLock;
 use tonic::codegen::Bytes;
@@ -63,10 +60,12 @@ use tonic::Status;
 use tracing::debug;
 use uuid::{uuid, Uuid};
 
+use crate::configuration::ConfigurationManager;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
+use crate::storage::types::{MemoryPool, Metric, MetricType};
 use crate::storage::uncompressed_data_buffer::UncompressedDataBuffer;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::PORT;
@@ -101,10 +100,8 @@ const TRANSFER_BATCH_SIZE_IN_BYTES: usize = 64 * 1024 * 1024; // 64 MiB;
 /// Manages all uncompressed and compressed data, both while being stored in memory during ingestion
 /// and when persisted to disk afterwards.
 pub struct StorageEngine {
-    // TODO: is it better to use MetadataManager from context to share caches with tables.rs and
-    // uncompressed_data_manager.rs or a separate MetadataManager to not require taking a lock?
     /// Manager that contains and controls all metadata for both uncompressed and compressed data.
-    metadata_manager: MetadataManager,
+    metadata_manager: Arc<MetadataManager>,
     /// Manager that contains and controls all uncompressed data.
     uncompressed_data_manager: UncompressedDataManager,
     /// Manager that contains and controls all compressed data.
@@ -119,7 +116,7 @@ impl StorageEngine {
         local_data_folder: PathBuf,
         remote_data_folder: Option<Arc<dyn ObjectStore>>,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
-        metadata_manager: MetadataManager,
+        metadata_manager: Arc<MetadataManager>,
         compress_directly: bool,
     ) -> Result<Self, IOError> {
         // Create a metric for used disk space. The metric is wrapped in an Arc and a read/write lock
@@ -128,10 +125,15 @@ impl StorageEngine {
 
         let configuration_manager = configuration_manager.read().await;
 
+        let memory_pool = Arc::new(MemoryPool::new(
+            configuration_manager.uncompressed_reserved_memory_in_bytes(),
+            configuration_manager.compressed_reserved_memory_in_bytes(),
+        ));
+
         // Create the uncompressed data manager.
         let uncompressed_data_manager = UncompressedDataManager::try_new(
             local_data_folder.clone(),
-            *configuration_manager.uncompressed_reserved_memory_in_bytes(),
+            memory_pool.clone(),
             &metadata_manager,
             compress_directly,
             used_disk_space_metric.clone(),
@@ -156,7 +158,7 @@ impl StorageEngine {
         let compressed_data_manager = CompressedDataManager::try_new(
             data_transfer,
             local_data_folder,
-            *configuration_manager.compressed_reserved_memory_in_bytes(),
+            memory_pool,
             used_disk_space_metric,
         )?;
 
@@ -189,11 +191,7 @@ impl StorageEngine {
         // TODO: When the compression component is changed, just insert the data points.
         let compressed_segments = self
             .uncompressed_data_manager
-            .insert_data_points(
-                &mut self.metadata_manager,
-                model_table_metadata,
-                data_points,
-            )
+            .insert_data_points(&self.metadata_manager, model_table_metadata, data_points)
             .await?;
 
         for (univariate_id, compressed_segments) in compressed_segments {
@@ -540,78 +538,6 @@ impl StorageEngine {
     }
 }
 
-/// The different types of metrics that are collected in the storage engine.
-pub enum MetricType {
-    UsedUncompressedMemory,
-    UsedCompressedMemory,
-    IngestedDataPoints,
-    UsedDiskSpace,
-}
-
-impl fmt::Display for MetricType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::UsedUncompressedMemory => write!(f, "used_uncompressed_memory"),
-            Self::UsedCompressedMemory => write!(f, "used_compressed_memory"),
-            Self::IngestedDataPoints => write!(f, "ingested_data_points"),
-            Self::UsedDiskSpace => write!(f, "used_disk_space"),
-        }
-    }
-}
-
-/// Metric used to record changes in specific attributes in the storage engine. The timestamps
-/// and values of the metric is stored in ring buffers to ensure the amount of memory used by the
-/// metric is capped.
-pub struct Metric {
-    /// Ring buffer consisting of a capped amount of millisecond precision timestamps.
-    timestamps: HeapRb<Timestamp>,
-    /// Ring buffer consisting of a capped amount of values.
-    values: HeapRb<u32>,
-    /// Last saved metric value, used to support updating the metric based on a change to the last
-    /// value instead of simply storing the new value. Since the values builder is cleared when the metric
-    /// is finished, the last value is saved separately.
-    last_value: isize,
-}
-
-impl Metric {
-    fn new() -> Self {
-        // The capacity of the timestamps and values ring buffers. This ensures that the total
-        // memory used by the metric is capped to ~1 MiB.
-        let capacity = (1024 * 1024) / (mem::size_of::<Timestamp>() + mem::size_of::<u32>());
-
-        Self {
-            timestamps: HeapRb::<Timestamp>::new(capacity),
-            values: HeapRb::<u32>::new(capacity),
-            last_value: 0,
-        }
-    }
-
-    /// Add a new entry to the metric, where the timestamp is the current milliseconds since the Unix
-    /// epoch and the value is either set directly or based on the last value in the metric.
-    fn append(&mut self, value: isize, based_on_last: bool) {
-        // unwrap() is safe since the Unix epoch is always earlier than now.
-        let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let timestamp = since_the_epoch.as_millis() as Timestamp;
-
-        let mut new_value = value;
-        if based_on_last {
-            new_value = self.last_value + value;
-        }
-
-        self.timestamps.push_overwrite(timestamp);
-        self.values.push_overwrite(new_value as u32);
-        self.last_value = new_value;
-    }
-
-    /// Finish and reset the internal ring buffers and return the timestamps and values as Apache Arrow arrays.
-    fn finish(&mut self) -> (TimestampArray, UInt32Array) {
-        let timestamps = TimestampArray::from_iter_values(self.timestamps.pop_iter());
-        let values = UInt32Array::from_iter_values(self.values.pop_iter());
-
-        (timestamps, values)
-    }
-}
-
 /// Create an Apache ArrowWriter that writes to `writer`. If the writer could not be created return
 /// [`ParquetError`].
 pub(self) fn create_apache_arrow_writer<W: Write + Send>(
@@ -833,55 +759,5 @@ mod tests {
         assert!(
             !StorageEngine::is_path_an_apache_parquet_file(&object_store, &object_store_path).await
         );
-    }
-
-    // Tests for Metric.
-    #[test]
-    fn test_append_to_metric() {
-        let mut metric = Metric::new();
-        let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let timestamp = since_the_epoch.as_millis() as Timestamp;
-
-        metric.append(30, false);
-        metric.append(30, false);
-
-        assert_eq!(metric.timestamps.pop_iter().last(), Some(timestamp));
-        assert_eq!(metric.values.pop_iter().last(), Some(30));
-    }
-
-    #[test]
-    fn test_append_positive_value_to_metric_based_on_last() {
-        let mut metric = Metric::new();
-
-        metric.append(30, true);
-        metric.append(30, true);
-
-        assert_eq!(metric.values.pop_iter().last(), Some(60));
-    }
-
-    #[test]
-    fn test_append_negative_value_to_metric_based_on_last() {
-        let mut metric = Metric::new();
-
-        metric.append(30, true);
-        metric.append(-30, true);
-
-        assert_eq!(metric.values.pop_iter().last(), Some(0));
-    }
-
-    #[test]
-    fn test_finish_metric() {
-        let mut metric = Metric::new();
-
-        metric.append(30, true);
-        metric.append(-30, true);
-
-        let (_timestamps, values) = metric.finish();
-        assert_eq!(values.value(0), 30);
-        assert_eq!(values.value(1), 0);
-
-        // Ensure that the builders in the metric has been reset.
-        assert_eq!(metric.timestamps.len(), 0);
-        assert_eq!(metric.values.len(), 0);
     }
 }

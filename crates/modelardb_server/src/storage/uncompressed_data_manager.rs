@@ -31,6 +31,7 @@ use tracing::debug;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
+use crate::storage::types::MemoryPool;
 use crate::storage::uncompressed_data_buffer::{
     UncompressedDataBuffer, UncompressedInMemoryDataBuffer, UncompressedOnDiskDataBuffer,
 };
@@ -51,9 +52,8 @@ pub(super) struct UncompressedDataManager {
     /// FIFO queue of full [`UncompressedDataBuffers`](UncompressedDataBuffer) that are ready for
     /// compression.
     finished_uncompressed_data_buffers: VecDeque<Box<dyn UncompressedDataBuffer>>,
-    /// How many bytes of memory that are left for storing
-    /// [`UncompressedDataBuffers`](UncompressedDataBuffer).
-    uncompressed_remaining_memory_in_bytes: usize,
+    /// Track how much memory is left for storing uncompressed and compressed data.
+    memory_pool: Arc<MemoryPool>,
     // TODO: This is a temporary field used to fix existing tests. Remove when configuration component is changed.
     /// If this is true, compress finished buffers directly instead of queueing them.
     compress_directly: bool,
@@ -72,7 +72,7 @@ impl UncompressedDataManager {
     /// [`IOError`] is returned.
     pub(super) async fn try_new(
         local_data_folder: PathBuf,
-        uncompressed_remaining_memory_in_bytes: usize,
+        memory_pool: Arc<MemoryPool>,
         metadata_manager: &MetadataManager,
         compress_directly: bool,
         used_disk_space_metric: Arc<RwLock<Metric>>,
@@ -120,7 +120,7 @@ impl UncompressedDataManager {
             current_batch_index: 0,
             active_uncompressed_data_buffers: HashMap::new(),
             finished_uncompressed_data_buffers: finished_data_buffers,
-            uncompressed_remaining_memory_in_bytes,
+            memory_pool,
             compress_directly,
             used_uncompressed_memory_metric: Metric::new(),
             ingested_data_points_metric: Metric::new(),
@@ -137,7 +137,7 @@ impl UncompressedDataManager {
     /// [`Err`].
     pub(super) async fn insert_data_points(
         &mut self,
-        metadata_manager: &mut MetadataManager,
+        metadata_manager: &MetadataManager,
         model_table_metadata: &ModelTableMetadata,
         data_points: &RecordBatch,
     ) -> Result<Vec<(u64, RecordBatch)>, String> {
@@ -313,8 +313,9 @@ impl UncompressedDataManager {
             );
 
             // If there is not enough memory for a new buffer, spill a finished in-memory buffer.
-            if UncompressedInMemoryDataBuffer::memory_size()
-                > self.uncompressed_remaining_memory_in_bytes
+            while !self
+                .memory_pool
+                .try_reserve_uncompressed_memory(UncompressedInMemoryDataBuffer::memory_size())
             {
                 self.spill_finished_buffer().await;
             }
@@ -327,13 +328,13 @@ impl UncompressedDataManager {
             );
 
             let used_memory = UncompressedInMemoryDataBuffer::memory_size();
-            self.uncompressed_remaining_memory_in_bytes -= used_memory;
             self.used_uncompressed_memory_metric
                 .append(used_memory as isize, true);
 
             debug!(
                 "Created buffer for {}. Remaining reserved bytes: {}.",
-                self.uncompressed_remaining_memory_in_bytes, univariate_id
+                self.memory_pool.remaining_uncompressed_memory_in_bytes(),
+                univariate_id
             );
 
             buffer.insert_data(self.current_batch_index, timestamp, value);
@@ -351,7 +352,8 @@ impl UncompressedDataManager {
         if let Some(uncompressed_data_buffer) = self.finished_uncompressed_data_buffers.pop_front()
         {
             // Add the memory size of the removed buffer back to the remaining bytes and record the change.
-            self.uncompressed_remaining_memory_in_bytes += uncompressed_data_buffer.memory_size();
+            self.memory_pool
+                .free_uncompressed_memory(uncompressed_data_buffer.memory_size());
             self.used_uncompressed_memory_metric
                 .append(-(uncompressed_data_buffer.memory_size() as isize), true);
 
@@ -438,7 +440,7 @@ impl UncompressedDataManager {
     ) -> Result<RecordBatch, IOError> {
         // Add the size of the segment back to the remaining reserved bytes and record the change.
         let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
-        self.uncompressed_remaining_memory_in_bytes += freed_memory;
+        self.memory_pool.free_uncompressed_memory(freed_memory);
         self.used_uncompressed_memory_metric
             .append(-(freed_memory as isize), true);
 
@@ -473,7 +475,7 @@ impl UncompressedDataManager {
             {
                 // Add the size of the in-memory data buffer back to the remaining reserved bytes.
                 let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
-                self.uncompressed_remaining_memory_in_bytes += freed_memory;
+                self.memory_pool.free_uncompressed_memory(freed_memory);
                 self.used_uncompressed_memory_metric
                     .append(-(freed_memory as isize), true);
 
@@ -485,7 +487,8 @@ impl UncompressedDataManager {
 
                 debug!(
                     "Spilled '{:?}'. Remaining reserved bytes: {}.",
-                    finished, self.uncompressed_remaining_memory_in_bytes
+                    finished,
+                    self.memory_pool.remaining_uncompressed_memory_in_bytes()
                 );
 
                 *finished = Box::new(uncompressed_on_disk_data_buffer);
@@ -501,17 +504,15 @@ impl UncompressedDataManager {
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`. If
     /// less than zero bytes remain, spill uncompressed data to disk. If all the data is spilled
     /// successfully return [`Ok`], otherwise return [`IOError`].
-    pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(&mut self, value_change: isize) {
-        let mut current_remaining_memory: isize =
-            self.uncompressed_remaining_memory_in_bytes as isize + value_change;
+    pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(
+        &mut self,
+        value_change: isize,
+    ) {
+        self.memory_pool.adjust_uncompressed_memory(value_change);
 
-        while current_remaining_memory < 0 {
+        while self.memory_pool.remaining_uncompressed_memory_in_bytes() < 0 {
             self.spill_finished_buffer().await;
-            current_remaining_memory =
-                self.uncompressed_remaining_memory_in_bytes as isize + value_change;
         }
-
-        self.uncompressed_remaining_memory_in_bytes = current_remaining_memory as usize;
     }
 }
 
@@ -557,7 +558,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_insert_record_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (mut metadata_manager, mut data_manager, _model_table_metadata) =
+        let (metadata_manager, mut data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
         let (model_table_metadata, data) = uncompressed_data(1);
@@ -566,7 +567,7 @@ mod tests {
             .await
             .unwrap();
         data_manager
-            .insert_data_points(&mut metadata_manager, &model_table_metadata, &data)
+            .insert_data_points(&metadata_manager, &model_table_metadata, &data)
             .await
             .unwrap();
 
@@ -576,13 +577,13 @@ mod tests {
             2
         );
 
-        assert_eq!(data_manager.ingested_data_points_metric.values.len(), 1);
+        assert_eq!(data_manager.ingested_data_points_metric.values().len(), 1);
     }
 
     #[tokio::test]
     async fn test_can_insert_record_batch_with_multiple_data_points() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (mut metadata_manager, mut data_manager, _model_table_metadata) =
+        let (metadata_manager, mut data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
         let (model_table_metadata, data) = uncompressed_data(2);
@@ -591,7 +592,7 @@ mod tests {
             .await
             .unwrap();
         data_manager
-            .insert_data_points(&mut metadata_manager, &model_table_metadata, &data)
+            .insert_data_points(&metadata_manager, &model_table_metadata, &data)
             .await
             .unwrap();
 
@@ -601,7 +602,7 @@ mod tests {
             4
         );
 
-        assert_eq!(data_manager.ingested_data_points_metric.values.len(), 1);
+        assert_eq!(data_manager.ingested_data_points_metric.values().len(), 1);
     }
 
     /// Create a record batch with data that resembles uncompressed data with a single tag and two
@@ -693,7 +694,7 @@ mod tests {
     #[tokio::test]
     async fn test_will_finish_unused_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (mut metadata_manager, mut data_manager, model_table_metadata) =
+        let (metadata_manager, mut data_manager, model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
         // Insert using insert_data_points() to increment the batch counter.
@@ -719,7 +720,7 @@ mod tests {
         .unwrap();
 
         data_manager
-            .insert_data_points(&mut metadata_manager, &model_table_metadata, &record_batch)
+            .insert_data_points(&metadata_manager, &model_table_metadata, &record_batch)
             .await
             .unwrap();
 
@@ -740,7 +741,7 @@ mod tests {
 
         data_manager
             .insert_data_points(
-                &mut metadata_manager,
+                &metadata_manager,
                 &model_table_metadata,
                 &empty_record_batch,
             )
@@ -796,7 +797,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
-        let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
+        let reserved_memory = data_manager
+            .memory_pool
+            .remaining_uncompressed_memory_in_bytes() as usize;
 
         // Insert messages into the storage engine until a buffer is spilled to Apache Parquet.
         // If there is enough memory to hold n full buffers, we need n + 1 to spill a buffer.
@@ -861,11 +864,21 @@ mod tests {
             UNIVARIATE_ID,
         )
         .await;
-        let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes;
+        let remaining_memory = data_manager
+            .memory_pool
+            .remaining_uncompressed_memory_in_bytes();
         data_manager.spill_finished_buffer().await;
 
-        assert!(remaining_memory < data_manager.uncompressed_remaining_memory_in_bytes);
-        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 2);
+        assert!(
+            remaining_memory
+                < data_manager
+                    .memory_pool
+                    .remaining_uncompressed_memory_in_bytes()
+        );
+        assert_eq!(
+            data_manager.used_uncompressed_memory_metric.values().len(),
+            2
+        );
 
         // The used disk space metric should have an entry for when the uncompressed data manager is
         // created and for when the data buffer is spilled to disk.
@@ -874,7 +887,7 @@ mod tests {
                 .used_disk_space_metric
                 .read()
                 .await
-                .values
+                .values()
                 .len(),
             2
         );
@@ -885,12 +898,22 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
-        let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
+        let reserved_memory = data_manager
+            .memory_pool
+            .remaining_uncompressed_memory_in_bytes();
 
         insert_data_points(1, &mut data_manager, UNIVARIATE_ID).await;
 
-        assert!(reserved_memory > data_manager.uncompressed_remaining_memory_in_bytes);
-        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 1);
+        assert!(
+            reserved_memory
+                > data_manager
+                    .memory_pool
+                    .remaining_uncompressed_memory_in_bytes()
+        );
+        assert_eq!(
+            data_manager.used_uncompressed_memory_metric.values().len(),
+            1
+        );
     }
 
     #[tokio::test]
@@ -905,11 +928,21 @@ mod tests {
         )
         .await;
 
-        let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes;
+        let remaining_memory = data_manager
+            .memory_pool
+            .remaining_uncompressed_memory_in_bytes();
         data_manager.finished_data_buffer().await;
 
-        assert!(remaining_memory < data_manager.uncompressed_remaining_memory_in_bytes);
-        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 2);
+        assert!(
+            remaining_memory
+                < data_manager
+                    .memory_pool
+                    .remaining_uncompressed_memory_in_bytes()
+        );
+        assert_eq!(
+            data_manager.used_uncompressed_memory_metric.values().len(),
+            2
+        );
     }
 
     #[tokio::test]
@@ -925,7 +958,9 @@ mod tests {
         .await;
 
         data_manager.spill_finished_buffer().await;
-        let remaining_memory = data_manager.uncompressed_remaining_memory_in_bytes;
+        let remaining_memory = data_manager
+            .memory_pool
+            .remaining_uncompressed_memory_in_bytes();
 
         // Since the UncompressedOnDiskDataBuffer is not in memory, the remaining memory should not
         // increase when popped.
@@ -933,10 +968,15 @@ mod tests {
 
         assert_eq!(
             remaining_memory,
-            data_manager.uncompressed_remaining_memory_in_bytes
+            data_manager
+                .memory_pool
+                .remaining_uncompressed_memory_in_bytes(),
         );
 
-        assert_eq!(data_manager.used_uncompressed_memory_metric.values.len(), 3);
+        assert_eq!(
+            data_manager.used_uncompressed_memory_metric.values().len(),
+            3
+        );
 
         // The used disk space metric should have an entry for when the uncompressed data manager is
         // created, an entry for when the data buffer is spilled to disk, and an entry for when the
@@ -946,7 +986,7 @@ mod tests {
                 .used_disk_space_metric
                 .read()
                 .await
-                .values
+                .values()
                 .len(),
             3
         );
@@ -958,7 +998,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
-        let reserved_memory = data_manager.uncompressed_remaining_memory_in_bytes;
+        let reserved_memory = data_manager
+            .memory_pool
+            .remaining_uncompressed_memory_in_bytes() as usize;
 
         // If there is enough reserved memory to hold n builders, we need to create n + 1 to panic.
         for i in 0..(reserved_memory / UncompressedInMemoryDataBuffer::memory_size()) + 1 {
@@ -977,7 +1019,9 @@ mod tests {
             .await;
 
         assert_eq!(
-            data_manager.uncompressed_remaining_memory_in_bytes,
+            data_manager
+                .memory_pool
+                .remaining_uncompressed_memory_in_bytes() as usize,
             common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + 10000
         )
     }
@@ -1002,7 +1046,12 @@ mod tests {
             )
             .await;
 
-        assert_eq!(data_manager.uncompressed_remaining_memory_in_bytes, 0);
+        assert_eq!(
+            data_manager
+                .memory_pool
+                .remaining_uncompressed_memory_in_bytes(),
+            0
+        );
 
         // The first UncompressedDataBuffer should have a memory size of 0 as it is spilled to disk.
         assert_eq!(
@@ -1050,7 +1099,7 @@ mod tests {
     async fn create_managers(
         path: &Path,
     ) -> (MetadataManager, UncompressedDataManager, ModelTableMetadata) {
-        let mut metadata_manager = MetadataManager::try_new(path).await.unwrap();
+        let metadata_manager = MetadataManager::try_new(path).await.unwrap();
 
         // Ensure the expected metadata is available through the metadata manager.
         let query_schema = Arc::new(Schema::new(vec![
@@ -1085,10 +1134,15 @@ mod tests {
             .await
             .unwrap();
 
+        let memory_pool = Arc::new(MemoryPool::new(
+            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+        ));
+
         // UncompressedDataManager::try_new() lookup the error bounds for each univariate_id.
         let uncompressed_data_manager = UncompressedDataManager::try_new(
             metadata_manager.local_data_folder().to_owned(),
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            memory_pool,
             &metadata_manager,
             false,
             Arc::new(RwLock::new(Metric::new())),

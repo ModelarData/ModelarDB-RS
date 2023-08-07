@@ -312,7 +312,7 @@ mod tests {
                 .used_disk_space_metric
                 .read()
                 .await
-                .values
+                .values()
                 .len(),
             1
         );
@@ -504,7 +504,7 @@ mod tests {
                 .used_disk_space_metric
                 .read()
                 .await
-                .values
+                .values()
                 .len(),
             2
         );
