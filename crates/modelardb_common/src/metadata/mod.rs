@@ -16,7 +16,7 @@
 //! Common metadata functionality shared between the server metadata manager and the manager
 //! metadata manager.
 
-use sqlx::{Error, Executor, SqlitePool};
+use sqlx::{Database, Error, Executor};
 
 pub mod model_table_metadata;
 
@@ -28,9 +28,13 @@ pub mod model_table_metadata;
 /// * The model_table_field_columns table contains the name, index, error bound, and generation
 /// expression of the field columns in each model table.
 /// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
-pub async fn create_metadata_database_tables(
-    metadata_database_pool: &SqlitePool,
-) -> Result<(), Error> {
+pub async fn create_metadata_database_tables<'a, DB, E>(
+    metadata_database_pool: E,
+) -> Result<(), Error>
+where
+    DB: Database,
+    E: Executor<'a, Database = DB> + Copy,
+{
     // Create the table_metadata SQLite table if it does not exist.
     metadata_database_pool
         .execute(
