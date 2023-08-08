@@ -128,7 +128,7 @@ impl MetadataManager {
         };
 
         // Create the necessary tables in the metadata database.
-        metadata_manager.create_metadata_database_tables().await?;
+        CommonMetadataManager::create_metadata_database_tables(&metadata_manager.metadata_database_pool).await?;
 
         // Return the metadata manager.
         Ok(metadata_manager)
@@ -141,64 +141,6 @@ impl MetadataManager {
         } else {
             false
         }
-    }
-
-    /// If they do not already exist, create the tables used for table and model table metadata.
-    /// * The table_metadata table contains the metadata for tables.
-    /// * The model_table_metadata table contains the main metadata for model tables.
-    /// * The model_table_hash_table_name contains a mapping from each tag hash to the name of the
-    /// model table that contains the time series with that tag hash.
-    /// * The model_table_field_columns table contains the name, index, error bound, and generation
-    /// expression of the field columns in each model table.
-    /// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
-    async fn create_metadata_database_tables(&self) -> Result<()> {
-        // Create the table_metadata SQLite table if it does not exist.
-        self.metadata_database_pool
-            .execute(
-                "CREATE TABLE IF NOT EXISTS table_metadata (
-                table_name TEXT PRIMARY KEY
-                ) STRICT",
-            )
-            .await?;
-
-        // Create the model_table_metadata SQLite table if it does not exist.
-        self.metadata_database_pool
-            .execute(
-                "CREATE TABLE IF NOT EXISTS model_table_metadata (
-                table_name TEXT PRIMARY KEY,
-                query_schema BLOB NOT NULL
-                ) STRICT",
-            )
-            .await?;
-
-        // Create the model_table_hash_name SQLite table if it does not exist.
-        self.metadata_database_pool
-            .execute(
-                "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
-                hash INTEGER PRIMARY KEY,
-                table_name TEXT
-                ) STRICT",
-            )
-            .await?;
-
-        // Create the model_table_field_columns SQLite table if it does not
-        // exist. Note that column_index will only use a maximum of 10 bits.
-        // generated_column_* is NULL if the fields are stored as segments.
-        self.metadata_database_pool
-            .execute(
-                "CREATE TABLE IF NOT EXISTS model_table_field_columns (
-                table_name TEXT NOT NULL,
-                column_name TEXT NOT NULL,
-                column_index INTEGER NOT NULL,
-                error_bound REAL NOT NULL,
-                generated_column_expr TEXT,
-                generated_column_sources BLOB,
-                PRIMARY KEY (table_name, column_name)
-                ) STRICT",
-            )
-            .await?;
-
-        Ok(())
     }
 
     /// Return the path of the local data folder.
@@ -731,6 +673,7 @@ impl MetadataManager {
         name.to_lowercase()
     }
 
+    // TODO: Should be moved since both the server and manager need to be able to create tables.
     /// Save the created table to the metadata database. This consists of adding a row to the
     /// table_metadata table with the `name` of the created table.
     pub async fn save_table_metadata(&self, name: &str) -> Result<()> {
@@ -788,6 +731,7 @@ impl MetadataManager {
         Ok(())
     }
 
+    // TODO: Should be moved since it should be possible for both the server and manager to create tables.
     /// Save the created model table to the metadata database. This includes creating a tags table
     /// for the model table, creating a compressed files table for the model table, adding a row to
     /// the model_table_metadata table, and adding a row to the model_table_field_columns table for
@@ -964,6 +908,7 @@ impl MetadataManager {
         Ok(())
     }
 
+    // TODO: Might need to be moved since save model table metadata is moved. Check tests after.
     /// Convert a [`Schema`] to [`Vec<u8>`].
     fn convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>> {
         let options = IpcWriteOptions::default();
@@ -988,6 +933,7 @@ impl MetadataManager {
         })
     }
 
+    // TODO: Might need to be moved since save model table metadata is moved. Check tests after.
     /// Convert a [`&[usize]`] to a [`Vec<u8>`].
     fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
         usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
