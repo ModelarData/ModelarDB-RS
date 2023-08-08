@@ -20,70 +20,62 @@ use sqlx::{Error, Executor, SqlitePool};
 
 pub mod model_table_metadata;
 
-/// Common metadata functionality used to save model table metadata in both the server metadata
-/// manager and the manager metadata manager.
-#[derive(Clone)]
-pub struct CommonMetadataManager {}
+/// If they do not already exist, create the tables used for table and model table metadata.
+/// * The table_metadata table contains the metadata for tables.
+/// * The model_table_metadata table contains the main metadata for model tables.
+/// * The model_table_hash_table_name contains a mapping from each tag hash to the name of the
+/// model table that contains the time series with that tag hash.
+/// * The model_table_field_columns table contains the name, index, error bound, and generation
+/// expression of the field columns in each model table.
+/// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
+pub async fn create_metadata_database_tables(
+    metadata_database_pool: &SqlitePool,
+) -> Result<(), Error> {
+    // Create the table_metadata SQLite table if it does not exist.
+    metadata_database_pool
+        .execute(
+            "CREATE TABLE IF NOT EXISTS table_metadata (
+            table_name TEXT PRIMARY KEY
+            ) STRICT",
+        )
+        .await?;
 
-impl CommonMetadataManager {
-    // TODO: Move because both the server and manager need to create these base tables.
-    /// If they do not already exist, create the tables used for table and model table metadata.
-    /// * The table_metadata table contains the metadata for tables.
-    /// * The model_table_metadata table contains the main metadata for model tables.
-    /// * The model_table_hash_table_name contains a mapping from each tag hash to the name of the
-    /// model table that contains the time series with that tag hash.
-    /// * The model_table_field_columns table contains the name, index, error bound, and generation
-    /// expression of the field columns in each model table.
-    /// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
-    pub async fn create_metadata_database_tables(
-        metadata_database_pool: &SqlitePool,
-    ) -> Result<(), Error> {
-        // Create the table_metadata SQLite table if it does not exist.
-        metadata_database_pool
-            .execute(
-                "CREATE TABLE IF NOT EXISTS table_metadata (
-                table_name TEXT PRIMARY KEY
-                ) STRICT",
-            )
-            .await?;
+    // Create the model_table_metadata SQLite table if it does not exist.
+    metadata_database_pool
+        .execute(
+            "CREATE TABLE IF NOT EXISTS model_table_metadata (
+            table_name TEXT PRIMARY KEY,
+            query_schema BLOB NOT NULL
+            ) STRICT",
+        )
+        .await?;
 
-        // Create the model_table_metadata SQLite table if it does not exist.
-        metadata_database_pool
-            .execute(
-                "CREATE TABLE IF NOT EXISTS model_table_metadata (
-                table_name TEXT PRIMARY KEY,
-                query_schema BLOB NOT NULL
-                ) STRICT",
-            )
-            .await?;
+    // Create the model_table_hash_name SQLite table if it does not exist.
+    metadata_database_pool
+        .execute(
+            "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
+            hash INTEGER PRIMARY KEY,
+            table_name TEXT
+            ) STRICT",
+        )
+        .await?;
 
-        // Create the model_table_hash_name SQLite table if it does not exist.
-        metadata_database_pool
-            .execute(
-                "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
-                hash INTEGER PRIMARY KEY,
-                table_name TEXT
-                ) STRICT",
-            )
-            .await?;
+    // Create the model_table_field_columns SQLite table if it does not
+    // exist. Note that column_index will only use a maximum of 10 bits.
+    // generated_column_* is NULL if the fields are stored as segments.
+    metadata_database_pool
+        .execute(
+            "CREATE TABLE IF NOT EXISTS model_table_field_columns (
+            table_name TEXT NOT NULL,
+            column_name TEXT NOT NULL,
+            column_index INTEGER NOT NULL,
+            error_bound REAL NOT NULL,
+            generated_column_expr TEXT,
+            generated_column_sources BLOB,
+            PRIMARY KEY (table_name, column_name)
+            ) STRICT",
+        )
+        .await?;
 
-        // Create the model_table_field_columns SQLite table if it does not
-        // exist. Note that column_index will only use a maximum of 10 bits.
-        // generated_column_* is NULL if the fields are stored as segments.
-        metadata_database_pool
-            .execute(
-                "CREATE TABLE IF NOT EXISTS model_table_field_columns (
-                table_name TEXT NOT NULL,
-                column_name TEXT NOT NULL,
-                column_index INTEGER NOT NULL,
-                error_bound REAL NOT NULL,
-                generated_column_expr TEXT,
-                generated_column_sources BLOB,
-                PRIMARY KEY (table_name, column_name)
-                ) STRICT",
-            )
-            .await?;
-
-        Ok(())
-    }
+    Ok(())
 }

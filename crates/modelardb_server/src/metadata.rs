@@ -39,7 +39,6 @@ use datafusion::execution::options::ParquetReadOptions;
 use futures::TryStreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
-use modelardb_common::metadata::CommonMetadataManager;
 use modelardb_common::types::{ErrorBound, Timestamp, UnivariateId, Value};
 use sqlx::database::HasArguments;
 use sqlx::error::Error;
@@ -48,6 +47,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
 use sqlx::{Executor, Result, Row, Sqlite, SqlitePool};
 use tracing::{error, info, warn};
 use uuid::Uuid;
+use modelardb_common::metadata;
 
 use crate::parser;
 use crate::query::ModelTable;
@@ -125,7 +125,7 @@ impl MetadataManager {
         };
 
         // Create the necessary tables in the metadata database.
-        CommonMetadataManager::create_metadata_database_tables(&metadata_manager.metadata_database_pool).await?;
+        metadata::create_metadata_database_tables(&metadata_manager.metadata_database_pool).await?;
 
         // Return the metadata manager.
         Ok(metadata_manager)
