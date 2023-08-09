@@ -17,7 +17,7 @@
 //! such as metadata about registered edges, is handled here.
 
 use modelardb_common::metadata;
-use sqlx::{PgPool};
+use sqlx::PgPool;
 
 /// Store's the metadata required for reading from and writing to the tables and model tables and
 /// persisting edges. The data that needs to be persisted are stored in the metadata database.
@@ -32,7 +32,11 @@ impl MetadataManager {
     /// otherwise return [`sqlx::Error`].
     pub async fn try_new(metadata_database_pool: PgPool) -> Result<Self, sqlx::Error> {
         // Create the necessary tables in the metadata database.
-        metadata::create_metadata_database_tables(&metadata_database_pool).await?;
+        metadata::create_metadata_database_tables(
+            &metadata_database_pool,
+            metadata::MetadataDatabaseType::PostgreSQL,
+        )
+        .await?;
 
         Ok(Self {
             metadata_database_pool,

@@ -20,6 +20,12 @@ use sqlx::{Database, Error, Executor};
 
 pub mod model_table_metadata;
 
+/// The database providers that are currently supported by the metadata database.
+pub enum MetadataDatabaseType {
+    SQLite,
+    PostgreSQL,
+}
+
 /// If they do not already exist, create the tables used for table and model table metadata.
 /// * The table_metadata table contains the metadata for tables.
 /// * The model_table_metadata table contains the main metadata for model tables.
@@ -30,37 +36,52 @@ pub mod model_table_metadata;
 /// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
 pub async fn create_metadata_database_tables<'a, DB, E>(
     metadata_database_pool: E,
+    database_type: MetadataDatabaseType,
 ) -> Result<(), Error>
 where
     DB: Database,
     E: Executor<'a, Database = DB> + Copy,
 {
+    let strict = match database_type {
+        MetadataDatabaseType::SQLite => "STRICT",
+        _ => "",
+    };
+
     // Create the table_metadata SQLite table if it does not exist.
     metadata_database_pool
         .execute(
-            "CREATE TABLE IF NOT EXISTS table_metadata (
+            format!(
+                "CREATE TABLE IF NOT EXISTS table_metadata (
             table_name TEXT PRIMARY KEY
-            ) STRICT",
+            ) {strict}"
+            )
+            .as_str(),
         )
         .await?;
 
     // Create the model_table_metadata SQLite table if it does not exist.
     metadata_database_pool
         .execute(
-            "CREATE TABLE IF NOT EXISTS model_table_metadata (
+            format!(
+                "CREATE TABLE IF NOT EXISTS model_table_metadata (
             table_name TEXT PRIMARY KEY,
             query_schema BLOB NOT NULL
-            ) STRICT",
+            ) {strict}"
+            )
+            .as_str(),
         )
         .await?;
 
     // Create the model_table_hash_name SQLite table if it does not exist.
     metadata_database_pool
         .execute(
-            "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
+            format!(
+                "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
             hash INTEGER PRIMARY KEY,
             table_name TEXT
-            ) STRICT",
+            ) {strict}"
+            )
+            .as_str(),
         )
         .await?;
 
@@ -69,7 +90,8 @@ where
     // generated_column_* is NULL if the fields are stored as segments.
     metadata_database_pool
         .execute(
-            "CREATE TABLE IF NOT EXISTS model_table_field_columns (
+            format!(
+                "CREATE TABLE IF NOT EXISTS model_table_field_columns (
             table_name TEXT NOT NULL,
             column_name TEXT NOT NULL,
             column_index INTEGER NOT NULL,
@@ -77,7 +99,9 @@ where
             generated_column_expr TEXT,
             generated_column_sources BLOB,
             PRIMARY KEY (table_name, column_name)
-            ) STRICT",
+            ) {strict}"
+            )
+            .as_str(),
         )
         .await?;
 

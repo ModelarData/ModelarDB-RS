@@ -38,6 +38,7 @@ use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::execution::options::ParquetReadOptions;
 use futures::TryStreamExt;
 use modelardb_common::errors::ModelarDbError;
+use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use modelardb_common::types::{ErrorBound, Timestamp, UnivariateId, Value};
 use sqlx::database::HasArguments;
@@ -47,7 +48,6 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
 use sqlx::{Executor, Result, Row, Sqlite, SqlitePool};
 use tracing::{error, info, warn};
 use uuid::Uuid;
-use modelardb_common::metadata;
 
 use crate::parser;
 use crate::query::ModelTable;
@@ -125,7 +125,11 @@ impl MetadataManager {
         };
 
         // Create the necessary tables in the metadata database.
-        metadata::create_metadata_database_tables(&metadata_manager.metadata_database_pool).await?;
+        metadata::create_metadata_database_tables(
+            &metadata_manager.metadata_database_pool,
+            metadata::MetadataDatabaseType::SQLite,
+        )
+        .await?;
 
         // Return the metadata manager.
         Ok(metadata_manager)
@@ -219,7 +223,7 @@ impl MetadataManager {
                         maybe_separator,
                         values
                     )
-                        .as_str(),
+                    .as_str(),
                 )
                 .await?;
 
@@ -379,7 +383,7 @@ impl MetadataManager {
             fallback_field_column,
             &query_hashes,
         )
-            .await
+        .await
     }
 
     /// Compute the 64-bit univariate ids of the univariate time series to retrieve from the storage
@@ -450,8 +454,8 @@ impl MetadataManager {
             query_schema_index,
             compressed_file,
         )
-            .execute(&self.metadata_database_pool)
-            .await?;
+        .execute(&self.metadata_database_pool)
+        .await?;
 
         Ok(())
     }
@@ -508,10 +512,10 @@ impl MetadataManager {
                  WHERE field_column = {query_schema_index}
                  AND file_name IN ({compress_files_to_delete_in})",
             )
-                .as_str(),
+            .as_str(),
         )
-            .execute(&mut *transaction)
-            .await?;
+        .execute(&mut *transaction)
+        .await?;
 
         // The cast to usize is safe as only compressed_files_to_delete.len() can be deleted.
         if compressed_files_to_delete.len() != delete_from_result.rows_affected() as usize {
@@ -532,8 +536,8 @@ impl MetadataManager {
                 query_schema_index,
                 compressed_file,
             )
-                .execute(&mut *transaction)
-                .await?;
+            .execute(&mut *transaction)
+            .await?;
         }
 
         transaction.commit().await
@@ -763,7 +767,7 @@ impl MetadataManager {
                     "CREATE TABLE {}_tags (hash INTEGER PRIMARY KEY{}{}) STRICT",
                     model_table_metadata.name, maybe_separator, tag_columns
                 )
-                    .as_str(),
+                .as_str(),
             )
             .await?;
 
@@ -785,8 +789,8 @@ impl MetadataManager {
                 sqlx::query(
                     "INSERT INTO model_table_metadata (table_name, query_schema) VALUES (?1, ?2)",
                 )
-                    .bind(&model_table_metadata.name)
-                    .bind(query_schema_bytes),
+                .bind(&model_table_metadata.name)
+                .bind(query_schema_bytes),
             )
             .await?;
 
@@ -889,7 +893,7 @@ impl MetadataManager {
                 error_bounds,
                 generated_columns,
             )
-                .map_err(|error| Error::Configuration(Box::new(error)))?,
+            .map_err(|error| Error::Configuration(Box::new(error)))?,
         );
 
         // Register model table.
@@ -1272,7 +1276,7 @@ mod tests {
             &mut metadata_manager,
             &["tag_value1", "tag_value2"],
         )
-            .await;
+        .await;
 
         // Lookup all univariate ids for the table by not requesting ids for columns.
         let univariate_ids = metadata_manager
@@ -1298,7 +1302,7 @@ mod tests {
             &mut metadata_manager,
             &["tag_value1", "tag_value2"],
         )
-            .await;
+        .await;
 
         // Lookup all univariate ids for the table by not requesting ids for a tag value.
         let univariate_ids = metadata_manager
@@ -1348,8 +1352,8 @@ mod tests {
             "model_table",
             &[compressed_file],
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -1360,8 +1364,8 @@ mod tests {
                 "table_model",
                 &[compressed_file]
             )
-                .await
-                .is_err()
+            .await
+            .is_err()
         );
     }
 
@@ -1374,8 +1378,8 @@ mod tests {
                 "model_table",
                 &[compressed_file]
             )
-                .await
-                .is_err()
+            .await
+            .is_err()
         );
     }
 
@@ -1387,8 +1391,8 @@ mod tests {
                 "model_table",
                 &[compressed_file]
             )
-                .await
-                .is_err()
+            .await
+            .is_err()
         );
     }
 
@@ -1406,7 +1410,7 @@ mod tests {
                 uuids_of_files_to_delete,
                 None,
             )
-                .await;
+            .await;
 
         assert_eq!(4, returned_files.len());
         assert_eq!(compressed_files[3].name, returned_files[0]);
@@ -1430,7 +1434,7 @@ mod tests {
                 uuids_of_files_to_delete,
                 Some(&replacement_file),
             )
-                .await;
+            .await;
 
         assert_eq!(5, returned_files.len());
         assert_eq!(replacement_file.name, returned_files[0]);
@@ -1577,7 +1581,7 @@ mod tests {
             create_metadata_manager_with_model_table_save_seven_files_and_get_files(
                 None, None, None, None,
             )
-                .await;
+            .await;
 
         assert_eq!(compressed_files.len(), returned_files.len());
         for (compressed_file, returned_file) in compressed_files.iter().zip(returned_files) {
@@ -1594,7 +1598,7 @@ mod tests {
                 None,
                 None,
             )
-                .await;
+            .await;
 
         assert_eq!(5, returned_files.len());
         assert_eq!(compressed_files[1].name, returned_files[0]);
@@ -1613,7 +1617,7 @@ mod tests {
                 None,
                 None,
             )
-                .await;
+            .await;
 
         assert_eq!(4, returned_files.len());
         assert_eq!(compressed_files[0].name, returned_files[0]);
@@ -1631,7 +1635,7 @@ mod tests {
                 None,
                 None,
             )
-                .await;
+            .await;
 
         assert_eq!(2, returned_files.len());
         assert_eq!(compressed_files[1].name, returned_files[0]);
@@ -1692,7 +1696,7 @@ mod tests {
             min_value,
             max_value,
         )
-            .await;
+        .await;
 
         compressed_files.len() == returned_files.len()
     }
@@ -1706,7 +1710,7 @@ mod tests {
                 Some(80.0),
                 None,
             )
-                .await;
+            .await;
 
         assert_eq!(2, returned_files.len());
         assert_eq!(compressed_files[3].name, returned_files[0]);
@@ -1722,7 +1726,7 @@ mod tests {
                 None,
                 Some(80.0),
             )
-                .await;
+            .await;
 
         assert_eq!(6, returned_files.len());
         assert_eq!(compressed_files[0].name, returned_files[0]);
@@ -1742,7 +1746,7 @@ mod tests {
                 Some(75.0),
                 Some(80.0),
             )
-                .await;
+            .await;
 
         assert_eq!(1, returned_files.len());
         assert_eq!(compressed_files[5].name, returned_files[0]);
@@ -1763,7 +1767,7 @@ mod tests {
             min_value,
             max_value,
         )
-            .await;
+        .await;
 
         (compressed_files, returned_files)
     }
@@ -1779,8 +1783,8 @@ mod tests {
             "model_table",
             compressed_files,
         )
-            .await
-            .unwrap();
+        .await
+        .unwrap();
 
         metadata_manager
             .compressed_files("model_table", 1, start_time, end_time, min_value, max_value)
