@@ -118,6 +118,31 @@ local instance of `modelardbd` through a REPL, simply run `modelardb`:
 modelardb
 ```
 
+Be aware that the REPL currently does not support splitting SQL statements over multiple lines and that the SQL
+statements do not need to end with a `;`. In addition to SQL statements, the REPL also supports listing all tables
+using `\dt` and printing the schema of a table using `\d table_name`:
+
+```sql
+ModelarDB> \dt
+wind_turbine
+ModelarDB> \d wind_turbine
+timestamp: Timestamp(Millisecond, None)
+wind_turbine: Utf8
+wind_direction: Float32
+wind_speed: Float32, Error Bound 1%
+ModelarDB> SELECT * FROM wind_turbine LIMIT 5
++-------------------------+--------------+------------+----------------+
+| timestamp               | wind_turbine | wind_speed | wind_direction |
++-------------------------+--------------+------------+----------------+
+| 2020-01-01T00:00:00.000 | KL3773       | 4.7987617  | 12.195049      |
+| 2020-01-01T00:00:00.100 | KL3773       | 4.7562086  | 10.183235      |
+| 2020-01-01T00:00:00.200 | KL3773       | 4.7384476  | 9.4519857      |
+| 2020-01-01T00:00:00.300 | KL3773       | 4.7108905  | 9.8607325      |
+| 2020-01-01T00:00:00.400 | KL3773       | 4.6879335  | 10.083183      |
++-------------------------+--------------+------------+----------------+
+ModelarDB>
+```
+
 If `modelardbd` is not running on the same host, the host `modelardb` should connect to must be specified.
 `modelardbd`'s Apache Arrow Flight interface accepts requests on port `9999` by default, so it is generally not
 necessary to specify a port:
