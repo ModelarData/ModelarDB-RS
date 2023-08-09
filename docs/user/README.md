@@ -120,7 +120,7 @@ modelardb
 
 Be aware that the REPL currently does not support splitting SQL statements over multiple lines and that the SQL
 statements do not need to end with a `;`. In addition to SQL statements, the REPL also supports listing all tables
-using `\dt` and printing the schema of a table using`\d table_name`:
+using `\dt` and printing the schema of a table using `\d table_name`:
 
 ```sql
 ModelarDB> \dt
