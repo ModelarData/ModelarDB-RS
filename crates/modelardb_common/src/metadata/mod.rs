@@ -47,6 +47,11 @@ where
         _ => "",
     };
 
+    let binary_type = match database_type {
+        MetadataDatabaseType::SQLite => "BLOB",
+        _ => "bytea",
+    };
+
     // Create the table_metadata SQLite table if it does not exist.
     metadata_database_pool
         .execute(
@@ -65,7 +70,7 @@ where
             format!(
                 "CREATE TABLE IF NOT EXISTS model_table_metadata (
             table_name TEXT PRIMARY KEY,
-            query_schema BLOB NOT NULL
+            query_schema {binary_type} NOT NULL
             ) {strict}"
             )
             .as_str(),
@@ -97,7 +102,7 @@ where
             column_index INTEGER NOT NULL,
             error_bound REAL NOT NULL,
             generated_column_expr TEXT,
-            generated_column_sources BLOB,
+            generated_column_sources {binary_type},
             PRIMARY KEY (table_name, column_name)
             ) {strict}"
             )
