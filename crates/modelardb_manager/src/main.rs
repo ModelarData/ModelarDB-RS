@@ -68,15 +68,20 @@ fn main() -> Result<(), String> {
     let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
 
-    let (connection, remote_data_folder) = runtime.block_on(async {
+    let (metadata_manager, remote_data_folder) = runtime.block_on(async {
         let (connection, remote_data_folder) = parse_command_line_arguments(&arguments).await?;
         validate_remote_data_folder_from_argument(arguments.get(1).unwrap(), &remote_data_folder)
             .await?;
 
-        Ok::<(PgPool, Arc<dyn ObjectStore>), String>((connection, remote_data_folder))
-    })?;
+        let metadata_manager = MetadataManager::try_new(connection)
+            .await
+            .map_err(|error| format!("Unable to setup metadata database: {error}"))?;
 
-    let metadata_manager = MetadataManager::new(connection);
+        Ok::<(MetadataManager, Arc<dyn ObjectStore>), String>((
+            metadata_manager,
+            remote_data_folder,
+        ))
+    })?;
 
     // Create the Context.
     let context = Arc::new(Context {

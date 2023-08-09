@@ -16,7 +16,8 @@
 //! Management of the metadata database for the manager. Metadata which is unique to the manager,
 //! such as metadata about registered edges, is handled here.
 
-use sqlx::PgPool;
+use modelardb_common::metadata;
+use sqlx::{PgPool};
 
 /// Store's the metadata required for reading from and writing to the tables and model tables and
 /// persisting edges. The data that needs to be persisted are stored in the metadata database.
@@ -27,9 +28,14 @@ pub struct MetadataManager {
 }
 
 impl MetadataManager {
-    pub fn new(metadata_database_pool: PgPool) -> Self {
-        Self {
-            metadata_database_pool
-        }
+    /// Return [`MetadataManager`] if the necessary tables could be created in the metadata database,
+    /// otherwise return [`sqlx::Error`].
+    pub async fn try_new(metadata_database_pool: PgPool) -> Result<Self, sqlx::Error> {
+        // Create the necessary tables in the metadata database.
+        metadata::create_metadata_database_tables(&metadata_database_pool).await?;
+
+        Ok(Self {
+            metadata_database_pool,
+        })
     }
 }
