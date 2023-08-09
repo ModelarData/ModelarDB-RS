@@ -16,7 +16,8 @@
 //! Common metadata functionality shared between the server metadata manager and the manager
 //! metadata manager.
 
-use sqlx::{Database, Error, Executor};
+use sqlx::database::HasArguments;
+use sqlx::{Database, Error, Executor, IntoArguments};
 
 pub mod model_table_metadata;
 
@@ -108,6 +109,28 @@ where
             )
             .as_str(),
         )
+        .await?;
+
+    Ok(())
+}
+
+/// Save the created table to the metadata database. This consists of adding a row to the
+/// table_metadata table with the `name` of the created table.
+pub async fn save_table_metadata<'a, DB, E>(
+    metadata_database_pool: E,
+    name: String,
+) -> Result<(), Error>
+where
+    DB: Database,
+    E: Executor<'a, Database = DB> + Copy,
+    String: sqlx::Encode<'a, DB>,
+    String: sqlx::Type<DB>,
+    <DB as HasArguments<'a>>::Arguments: IntoArguments<'a, DB>,
+{
+    // Add a new row in the table_metadata table to persist the table.
+    sqlx::query("INSERT INTO table_metadata (table_name) VALUES (?1)")
+        .bind(name)
+        .execute(metadata_database_pool)
         .await?;
 
     Ok(())

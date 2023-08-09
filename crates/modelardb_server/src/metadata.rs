@@ -674,15 +674,10 @@ impl MetadataManager {
         name.to_lowercase()
     }
 
-    // TODO: Should be moved since both the server and manager need to be able to create tables.
     /// Save the created table to the metadata database. This consists of adding a row to the
     /// table_metadata table with the `name` of the created table.
     pub async fn save_table_metadata(&self, name: &str) -> Result<()> {
-        // Add a new row in the table_metadata table to persist the table.
-        sqlx::query("INSERT INTO table_metadata (table_name) VALUES (?1)")
-            .bind(name)
-            .execute(&self.metadata_database_pool)
-            .await?;
+        metadata::save_table_metadata(&self.metadata_database_pool, name.to_string()).await?;
 
         Ok(())
     }
