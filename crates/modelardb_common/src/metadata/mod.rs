@@ -16,6 +16,9 @@
 //! Common metadata functionality shared between the server metadata manager and the manager
 //! metadata manager.
 
+use arrow_flight::{IpcMessage, SchemaAsIpc};
+use datafusion::arrow::datatypes::Schema;
+use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use sqlx::database::HasArguments;
 use sqlx::{Database, Error, Executor, IntoArguments};
 
@@ -134,4 +137,18 @@ where
         .await?;
 
     Ok(())
+}
+
+/// Convert a [`Schema`] to [`Vec<u8>`].
+fn convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
+    let options = IpcWriteOptions::default();
+    let schema_as_ipc = SchemaAsIpc::new(schema, &options);
+    let ipc_message: IpcMessage =
+        schema_as_ipc
+            .try_into()
+            .map_err(|error: ArrowError| Error::ColumnDecode {
+                index: "query_schema".to_owned(),
+                source: Box::new(error),
+            })?;
+    Ok(ipc_message.0.to_vec())
 }

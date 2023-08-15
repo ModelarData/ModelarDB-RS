@@ -1901,6 +1901,7 @@ name = "modelardb_common"
 version = "0.1.0"
 dependencies = [
  "arrow",
+ "arrow-flight",
  "datafusion",
  "object_store",
  "once_cell",
