@@ -139,6 +139,7 @@ where
     Ok(())
 }
 
+// TODO: Move tests.
 /// Convert a [`Schema`] to [`Vec<u8>`].
 fn convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
     let options = IpcWriteOptions::default();
@@ -151,4 +152,9 @@ fn convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
                 source: Box::new(error),
             })?;
     Ok(ipc_message.0.to_vec())
+}
+
+/// Convert a [`&[usize]`] to a [`Vec<u8>`].
+fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
+    usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
