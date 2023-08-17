@@ -30,10 +30,9 @@ use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::Arc;
 
-use arrow_flight::{IpcMessage, SchemaAsIpc};
+use arrow_flight::IpcMessage;
 use dashmap::DashMap;
 use datafusion::arrow::datatypes::Schema;
-use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::execution::options::ParquetReadOptions;
 use futures::TryStreamExt;
@@ -738,7 +737,7 @@ impl MetadataManager {
     ) -> Result<()> {
         // Convert the query schema to bytes so it can be saved as a BLOB in the metadata database.
         let query_schema_bytes =
-            MetadataManager::convert_schema_to_blob(&model_table_metadata.query_schema)?;
+            metadata::convert_schema_to_blob(&model_table_metadata.query_schema)?;
 
         // Create a transaction to ensure the database state is consistent across tables.
         let mut transaction = self.metadata_database_pool.begin().await?;
@@ -814,7 +813,7 @@ impl MetadataManager {
                     {
                         (
                             Some(generated_column.original_expr.clone()),
-                            Some(MetadataManager::convert_slice_usize_to_vec_u8(
+                            Some(metadata::convert_slice_usize_to_vec_u8(
                                 &generated_column.source_columns,
                             )),
                         )
@@ -904,21 +903,6 @@ impl MetadataManager {
         Ok(())
     }
 
-    // TODO: Might need to be moved since save model table metadata is moved. Check tests after.
-    /// Convert a [`Schema`] to [`Vec<u8>`].
-    fn convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>> {
-        let options = IpcWriteOptions::default();
-        let schema_as_ipc = SchemaAsIpc::new(schema, &options);
-        let ipc_message: IpcMessage =
-            schema_as_ipc
-                .try_into()
-                .map_err(|error: ArrowError| Error::ColumnDecode {
-                    index: "query_schema".to_owned(),
-                    source: Box::new(error),
-                })?;
-        Ok(ipc_message.0.to_vec())
-    }
-
     /// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
     /// [`Error`].
     fn convert_blob_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
@@ -927,12 +911,6 @@ impl MetadataManager {
             index: "query_schema".to_owned(),
             source: Box::new(error),
         })
-    }
-
-    // TODO: Might need to be moved since save model table metadata is moved. Check tests after.
-    /// Convert a [`&[usize]`] to a [`Vec<u8>`].
-    fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
-        usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
     }
 
     /// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides evenly by
@@ -1891,7 +1869,7 @@ mod tests {
         let row = rows.try_next().await.unwrap().unwrap();
         assert_eq!("model_table", row.try_get::<&str, _>(0).unwrap());
         assert_eq!(
-            MetadataManager::convert_schema_to_blob(&model_table_metadata.query_schema).unwrap(),
+            metadata::convert_schema_to_blob(&model_table_metadata.query_schema).unwrap(),
             row.try_get::<Vec<u8>, _>(1).unwrap()
         );
 

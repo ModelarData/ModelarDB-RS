@@ -141,7 +141,7 @@ where
 
 // TODO: Move tests.
 /// Convert a [`Schema`] to [`Vec<u8>`].
-fn convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
+pub fn convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
     let options = IpcWriteOptions::default();
     let schema_as_ipc = SchemaAsIpc::new(schema, &options);
     let ipc_message: IpcMessage =
@@ -155,6 +155,6 @@ fn convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
 }
 
 /// Convert a [`&[usize]`] to a [`Vec<u8>`].
-fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
+pub fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
     usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
