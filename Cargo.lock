@@ -1907,6 +1907,8 @@ dependencies = [
  "once_cell",
  "proptest",
  "sqlx",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]

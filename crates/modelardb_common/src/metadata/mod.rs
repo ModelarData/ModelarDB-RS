@@ -200,8 +200,48 @@ mod tests {
     use datafusion::arrow::array::ArrowPrimitiveType;
     use datafusion::arrow::datatypes::{Field, Schema};
     use proptest::{collection, num, prop_assert_eq, proptest};
+    use sqlx::sqlite::SqliteConnectOptions;
+    use sqlx::SqlitePool;
 
-    use crate::types::{ArrowValue};
+    use crate::types::ArrowValue;
+
+    #[tokio::test]
+    async fn test_create_metadata_database_tables() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let options = SqliteConnectOptions::new()
+            .filename(temp_dir.path().join("metadata.sqlite3"))
+            .create_if_missing(true);
+
+        let metadata_database_pool = SqlitePool::connect_with(options).await.unwrap();
+
+        create_metadata_database_tables(&metadata_database_pool, MetadataDatabaseType::SQLite)
+            .await
+            .unwrap();
+
+        // Verify that the tables were created and has the expected columns.
+        metadata_database_pool
+            .execute("SELECT table_name FROM table_metadata")
+            .await
+            .unwrap();
+
+        metadata_database_pool
+            .execute("SELECT table_name, query_schema FROM model_table_metadata")
+            .await
+            .unwrap();
+
+        metadata_database_pool
+            .execute("SELECT hash, table_name FROM model_table_hash_table_name")
+            .await
+            .unwrap();
+
+        metadata_database_pool
+            .execute(
+                "SELECT table_name, column_name, column_index, error_bound, generated_column_expr,
+                 generated_column_sources FROM model_table_field_columns",
+            )
+            .await
+            .unwrap();
+    }
 
     #[test]
     fn test_blob_to_schema_empty() {

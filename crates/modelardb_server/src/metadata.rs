@@ -673,9 +673,7 @@ impl MetadataManager {
     /// Save the created table to the metadata database. This consists of adding a row to the
     /// table_metadata table with the `name` of the created table.
     pub async fn save_table_metadata(&self, name: &str) -> Result<()> {
-        metadata::save_table_metadata(&self.metadata_database_pool, name.to_string()).await?;
-
-        Ok(())
+        metadata::save_table_metadata(&self.metadata_database_pool, name.to_string()).await
     }
 
     /// Read the rows in the table_metadata table and use these to register tables in Apache Arrow
@@ -1020,40 +1018,6 @@ mod tests {
         let path_buf = path.join(name);
         fs::create_dir(&path_buf).unwrap();
         path_buf
-    }
-
-    #[tokio::test]
-    async fn test_create_metadata_database_tables() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
-
-        // Verify that the tables were created and has the expected columns.
-        metadata_manager
-            .metadata_database_pool
-            .execute("SELECT table_name FROM table_metadata")
-            .await
-            .unwrap();
-
-        metadata_manager
-            .metadata_database_pool
-            .execute("SELECT table_name, query_schema FROM model_table_metadata")
-            .await
-            .unwrap();
-
-        metadata_manager
-            .metadata_database_pool
-            .execute("SELECT hash, table_name FROM model_table_hash_table_name")
-            .await
-            .unwrap();
-
-        metadata_manager
-            .metadata_database_pool
-            .execute(
-                "SELECT table_name, column_name, column_index, error_bound, generated_column_expr,
-                 generated_column_sources FROM model_table_field_columns",
-            )
-            .await
-            .unwrap();
     }
 
     #[tokio::test]
