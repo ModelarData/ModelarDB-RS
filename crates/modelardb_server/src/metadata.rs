@@ -978,7 +978,7 @@ mod tests {
     use std::fs;
 
     use once_cell::sync::Lazy;
-    use proptest::{collection, num, prop_assert_eq, proptest};
+    use proptest::{num, prop_assert_eq, proptest};
 
     use crate::common_test;
 
@@ -1889,32 +1889,6 @@ mod tests {
             .register_model_tables(&context)
             .await
             .unwrap();
-    }
-
-    #[test]
-    fn test_blob_to_schema_empty() {
-        assert!(MetadataManager::convert_blob_to_schema(vec!(1, 2, 4, 8)).is_err());
-    }
-
-    #[test]
-    fn test_blob_to_schema_and_schema_to_blob() {
-        let schema = common_test::model_table_metadata().schema;
-
-        // Serialize a schema to bytes.
-        let bytes = metadata::convert_schema_to_blob(&schema).unwrap();
-
-        // Deserialize the bytes to a schema.
-        let retrieved_schema = MetadataManager::convert_blob_to_schema(bytes).unwrap();
-        assert_eq!(*schema, retrieved_schema);
-    }
-
-    proptest! {
-        #[test]
-        fn test_usize_to_u8_and_u8_to_usize(values in collection::vec(num::usize::ANY, 0..50)) {
-            let bytes = metadata::convert_slice_usize_to_vec_u8(&values);
-            let usizes = MetadataManager::convert_slice_u8_to_vec_usize(&bytes).unwrap();
-            prop_assert_eq!(values, usizes);
-        }
     }
 
     #[tokio::test]

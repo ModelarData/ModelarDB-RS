@@ -190,3 +190,45 @@ pub fn convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>, Error> 
             .collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::sync::Arc;
+
+    use datafusion::arrow::array::ArrowPrimitiveType;
+    use datafusion::arrow::datatypes::{Field, Schema};
+    use proptest::{collection, num, prop_assert_eq, proptest};
+
+    use crate::types::{ArrowValue};
+
+    #[test]
+    fn test_blob_to_schema_empty() {
+        assert!(convert_blob_to_schema(vec!(1, 2, 4, 8)).is_err());
+    }
+
+    #[test]
+    fn test_blob_to_schema_and_schema_to_blob() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("field_1", ArrowValue::DATA_TYPE, false),
+            Field::new("field_2", ArrowValue::DATA_TYPE, false),
+        ]));
+
+        // Serialize a schema to bytes.
+        let bytes = convert_schema_to_blob(&schema).unwrap();
+
+        // Deserialize the bytes to a schema.
+        let retrieved_schema = convert_blob_to_schema(bytes).unwrap();
+        assert_eq!(*schema, retrieved_schema);
+    }
+
+    proptest! {
+        #[test]
+        fn test_usize_to_u8_and_u8_to_usize(values in collection::vec(num::usize::ANY, 0..50)) {
+            let bytes = convert_slice_usize_to_vec_u8(&values);
+            let usizes = convert_slice_u8_to_vec_usize(&bytes).unwrap();
+            prop_assert_eq!(values, usizes);
+        }
+    }
+}
