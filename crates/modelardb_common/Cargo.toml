@@ -28,6 +28,7 @@ once_cell.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio-rustls"] }
 
 [dev-dependencies]
+futures.workspace = true
 proptest.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }

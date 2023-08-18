@@ -1724,30 +1724,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_table_metadata() {
-        // Save a table to the metadata database.
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
-
-        let table_name = "table_name";
-        metadata_manager
-            .save_table_metadata(table_name)
-            .await
-            .unwrap();
-
-        // Retrieve the table from the metadata database.
-        let mut rows = metadata_manager
-            .metadata_database_pool
-            .fetch("SELECT table_name FROM table_metadata");
-
-        let row = rows.try_next().await.unwrap().unwrap();
-        let retrieved_table_name = row.try_get::<&str, _>(0).unwrap();
-        assert_eq!(table_name, retrieved_table_name);
-
-        assert!(rows.try_next().await.unwrap().is_none());
-    }
-
-    #[tokio::test]
     async fn test_register_tables() {
         // The test succeeds if none of the unwrap()s fails.
 

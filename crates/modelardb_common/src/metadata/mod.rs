@@ -199,21 +199,16 @@ mod tests {
 
     use datafusion::arrow::array::ArrowPrimitiveType;
     use datafusion::arrow::datatypes::{Field, Schema};
+    use futures::TryStreamExt;
     use proptest::{collection, num, prop_assert_eq, proptest};
     use sqlx::sqlite::SqliteConnectOptions;
-    use sqlx::SqlitePool;
+    use sqlx::{Row, SqlitePool};
 
     use crate::types::ArrowValue;
 
     #[tokio::test]
     async fn test_create_metadata_database_tables() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let options = SqliteConnectOptions::new()
-            .filename(temp_dir.path().join("metadata.sqlite3"))
-            .create_if_missing(true);
-
-        let metadata_database_pool = SqlitePool::connect_with(options).await.unwrap();
-
+        let metadata_database_pool = connect_to_metadata_database().await;
         create_metadata_database_tables(&metadata_database_pool, MetadataDatabaseType::SQLite)
             .await
             .unwrap();
@@ -241,6 +236,38 @@ mod tests {
             )
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_save_table_metadata() {
+        let metadata_database_pool = connect_to_metadata_database().await;
+        create_metadata_database_tables(&metadata_database_pool, MetadataDatabaseType::SQLite)
+            .await
+            .unwrap();
+
+        let table_name = "table_name";
+        save_table_metadata(&metadata_database_pool, table_name.to_string())
+            .await
+            .unwrap();
+
+        // Retrieve the table from the metadata database.
+        let mut rows = metadata_database_pool
+            .fetch("SELECT table_name FROM table_metadata");
+
+        let row = rows.try_next().await.unwrap().unwrap();
+        let retrieved_table_name = row.try_get::<&str, _>(0).unwrap();
+        assert_eq!(table_name, retrieved_table_name);
+
+        assert!(rows.try_next().await.unwrap().is_none());
+    }
+
+    async fn connect_to_metadata_database() -> SqlitePool {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let options = SqliteConnectOptions::new()
+            .filename(temp_dir.path().join("metadata.sqlite3"))
+            .create_if_missing(true);
+
+        SqlitePool::connect_with(options).await.unwrap()
     }
 
     #[test]
