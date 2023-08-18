@@ -16,11 +16,15 @@
 //! Common metadata functionality shared between the server metadata manager and the manager
 //! metadata manager.
 
+use std::mem;
+
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use sqlx::database::HasArguments;
 use sqlx::{Database, Error, Executor, IntoArguments};
+
+use crate::errors::ModelarDbError;
 
 pub mod model_table_metadata;
 
@@ -139,7 +143,6 @@ where
     Ok(())
 }
 
-// TODO: Move tests.
 /// Convert a [`Schema`] to [`Vec<u8>`].
 pub fn convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
     let options = IpcWriteOptions::default();
@@ -154,7 +157,36 @@ pub fn convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
     Ok(ipc_message.0.to_vec())
 }
 
+/// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
+/// [`Error`].
+pub fn convert_blob_to_schema(schema_bytes: Vec<u8>) -> Result<Schema, Error> {
+    let ipc_message = IpcMessage(schema_bytes.into());
+    Schema::try_from(ipc_message).map_err(|error| Error::ColumnDecode {
+        index: "query_schema".to_owned(),
+        source: Box::new(error),
+    })
+}
+
 /// Convert a [`&[usize]`] to a [`Vec<u8>`].
 pub fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
     usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+/// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides evenly by
+/// [`mem::size_of::<usize>()`], otherwise [`Error`] is returned.
+pub fn convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>, Error> {
+    if bytes.len() % mem::size_of::<usize>() != 0 {
+        Err(Error::ColumnDecode {
+            index: "generated_column_sources".to_owned(),
+            source: Box::new(ModelarDbError::ImplementationError(
+                "Blob is not a vector of usizes".to_owned(),
+            )),
+        })
+    } else {
+        // unwrap() is safe as bytes divides evenly by mem::size_of::<usize>().
+        Ok(bytes
+            .chunks(mem::size_of::<usize>())
+            .map(|byte_slice| usize::from_le_bytes(byte_slice.try_into().unwrap()))
+            .collect())
+    }
 }

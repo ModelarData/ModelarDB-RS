@@ -25,14 +25,11 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
 use std::hash::Hasher;
-use std::mem;
 use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::Arc;
 
-use arrow_flight::IpcMessage;
 use dashmap::DashMap;
-use datafusion::arrow::datatypes::Schema;
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::execution::options::ParquetReadOptions;
 use futures::TryStreamExt;
@@ -869,7 +866,7 @@ impl MetadataManager {
 
         // Convert the BLOBs to the concrete types.
         let query_schema_bytes = row.try_get(1)?;
-        let query_schema = MetadataManager::convert_blob_to_schema(query_schema_bytes)?;
+        let query_schema = metadata::convert_blob_to_schema(query_schema_bytes)?;
 
         let error_bounds = self
             .error_bounds(table_name, query_schema.fields().len())
@@ -901,35 +898,6 @@ impl MetadataManager {
 
         info!("Registered model table '{}'.", table_name);
         Ok(())
-    }
-
-    /// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
-    /// [`Error`].
-    fn convert_blob_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
-        let ipc_message = IpcMessage(schema_bytes.into());
-        Schema::try_from(ipc_message).map_err(|error| Error::ColumnDecode {
-            index: "query_schema".to_owned(),
-            source: Box::new(error),
-        })
-    }
-
-    /// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides evenly by
-    /// [`mem::size_of::<usize>()`], otherwise [`Error`] is returned.
-    fn convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>> {
-        if bytes.len() % mem::size_of::<usize>() != 0 {
-            Err(Error::ColumnDecode {
-                index: "generated_column_sources".to_owned(),
-                source: Box::new(ModelarDbError::ImplementationError(
-                    "Blob is not a vector of usizes".to_owned(),
-                )),
-            })
-        } else {
-            // unwrap() is safe as bytes divides evenly by mem::size_of::<usize>().
-            Ok(bytes
-                .chunks(mem::size_of::<usize>())
-                .map(|byte_slice| usize::from_le_bytes(byte_slice.try_into().unwrap()))
-                .collect())
-        }
     }
 
     /// Return the error bounds for the model table with `table_name` and `query_schema_columns`
@@ -987,7 +955,7 @@ impl MetadataManager {
 
                 let generated_column = GeneratedColumn {
                     expr,
-                    source_columns: MetadataManager::convert_slice_u8_to_vec_usize(source_columns)
+                    source_columns: metadata::convert_slice_u8_to_vec_usize(source_columns)
                         .unwrap(),
                     original_expr: None,
                 };
@@ -1933,7 +1901,7 @@ mod tests {
         let schema = common_test::model_table_metadata().schema;
 
         // Serialize a schema to bytes.
-        let bytes = MetadataManager::convert_schema_to_blob(&schema).unwrap();
+        let bytes = metadata::convert_schema_to_blob(&schema).unwrap();
 
         // Deserialize the bytes to a schema.
         let retrieved_schema = MetadataManager::convert_blob_to_schema(bytes).unwrap();
@@ -1943,7 +1911,7 @@ mod tests {
     proptest! {
         #[test]
         fn test_usize_to_u8_and_u8_to_usize(values in collection::vec(num::usize::ANY, 0..50)) {
-            let bytes = MetadataManager::convert_slice_usize_to_vec_u8(&values);
+            let bytes = metadata::convert_slice_usize_to_vec_u8(&values);
             let usizes = MetadataManager::convert_slice_u8_to_vec_usize(&bytes).unwrap();
             prop_assert_eq!(values, usizes);
         }
