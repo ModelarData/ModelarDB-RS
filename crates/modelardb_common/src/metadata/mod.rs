@@ -16,6 +16,8 @@
 //! Common metadata functionality shared between the server metadata manager and the manager
 //! metadata manager.
 
+pub mod model_table_metadata;
+
 use std::mem;
 
 use arrow_flight::{IpcMessage, SchemaAsIpc};
@@ -25,8 +27,6 @@ use sqlx::database::HasArguments;
 use sqlx::{Database, Error, Executor, IntoArguments};
 
 use crate::errors::ModelarDbError;
-
-pub mod model_table_metadata;
 
 /// The database providers that are currently supported by the metadata database.
 pub enum MetadataDatabaseType {
@@ -251,8 +251,7 @@ mod tests {
             .unwrap();
 
         // Retrieve the table from the metadata database.
-        let mut rows = metadata_database_pool
-            .fetch("SELECT table_name FROM table_metadata");
+        let mut rows = metadata_database_pool.fetch("SELECT table_name FROM table_metadata");
 
         let row = rows.try_next().await.unwrap().unwrap();
         let retrieved_table_name = row.try_get::<&str, _>(0).unwrap();

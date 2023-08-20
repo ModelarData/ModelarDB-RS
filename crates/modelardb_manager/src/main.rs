@@ -21,7 +21,6 @@ mod remote;
 use std::env;
 use std::sync::Arc;
 
-use crate::metadata::MetadataManager;
 use modelardb_common::arguments::{
     argument_to_remote_object_store, collect_command_line_arguments,
     validate_remote_data_folder_from_argument,
@@ -32,6 +31,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::metadata::MetadataManager;
 use crate::remote::start_apache_arrow_flight_server;
 
 /// The port of the Apache Arrow Flight Server. If the environment variable is not set, 8888 is used.

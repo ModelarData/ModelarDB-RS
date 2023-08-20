@@ -63,6 +63,7 @@ pub fn start_apache_arrow_flight_server(
 /// published under Apache2.
 ///
 /// [Apache Arrow Flight examples]: https://github.com/apache/arrow-rs/blob/master/arrow-flight/examples
+#[allow(dead_code)]
 struct FlightServiceHandler {
     /// Singleton that provides access to the system's components.
     context: Arc<Context>,
@@ -70,9 +71,7 @@ struct FlightServiceHandler {
 
 impl FlightServiceHandler {
     pub fn new(context: Arc<Context>) -> FlightServiceHandler {
-        Self {
-            context
-        }
+        Self { context }
     }
 }
 

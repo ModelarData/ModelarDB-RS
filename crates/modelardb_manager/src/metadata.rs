@@ -17,8 +17,8 @@
 //! such as metadata about registered edges, is handled here.
 
 use modelardb_common::metadata;
-use sqlx::{Executor, PgPool};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use sqlx::{Executor, PgPool};
 
 /// Store's the metadata required for reading from and writing to the tables and model tables and
 /// persisting edges. The data that needs to be persisted are stored in the metadata database.
@@ -85,7 +85,7 @@ impl MetadataManager {
                     "CREATE TABLE {}_tags (hash INTEGER PRIMARY KEY{}{})",
                     model_table_metadata.name, maybe_separator, tag_columns
                 )
-                    .as_str(),
+                .as_str(),
             )
             .await?;
 
@@ -107,8 +107,8 @@ impl MetadataManager {
                 sqlx::query(
                     "INSERT INTO model_table_metadata (table_name, query_schema) VALUES ($1, $2)",
                 )
-                    .bind(&model_table_metadata.name.as_str())
-                    .bind(query_schema_bytes),
+                .bind(model_table_metadata.name.as_str())
+                .bind(query_schema_bytes),
             )
             .await?;
 
