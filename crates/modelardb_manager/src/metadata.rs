@@ -39,9 +39,31 @@ impl MetadataManager {
         )
         .await?;
 
+        MetadataManager::create_manager_metadata_database_tables(&metadata_database_pool).await?;
+
         Ok(Self {
             metadata_database_pool,
         })
+    }
+
+    /// If they do not already exist, create the tables that are specific to the manage metadata
+    /// database.
+    /// * The cluster_nodes table contains metadata for each node that is controlled by the manager.
+    /// If the tables exist or were created, return [`Ok`], otherwise return [`sqlx::Error`].
+    async fn create_manager_metadata_database_tables(
+        metadata_database_pool: &PgPool,
+    ) -> Result<(), sqlx::Error> {
+        // Create the nodes table if it does not exist.
+        metadata_database_pool
+            .execute(
+                "CREATE TABLE IF NOT EXISTS cluster_nodes (
+            url TEXT PRIMARY KEY,
+            mode TEXT NOT NULL
+            )",
+            )
+            .await?;
+
+        Ok(())
     }
 
     /// Save the created table to the metadata database. This consists of adding a row to the
