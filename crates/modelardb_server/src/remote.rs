@@ -48,7 +48,7 @@ use futures::StreamExt;
 use modelardb_common::arguments::{validate_remote_data_folder, RemoteDataFolderType};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
-use modelardb_common::types::TimestampBuilder;
+use modelardb_common::types::{ServerMode, TimestampBuilder};
 use object_store::aws::AmazonS3Builder;
 use object_store::azure::MicrosoftAzureBuilder;
 use object_store::ObjectStore;
@@ -64,7 +64,7 @@ use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::{Context, ServerMode};
+use crate::{Context};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through [`FlightServiceHandler`].

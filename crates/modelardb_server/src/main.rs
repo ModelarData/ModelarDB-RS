@@ -42,6 +42,7 @@ use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use modelardb_common::types::ServerMode;
 
 use crate::configuration::ConfigurationManager;
 use crate::metadata::MetadataManager;
@@ -58,13 +59,6 @@ pub static PORT: Lazy<u16> = Lazy::new(|| match env::var("MODELARDBD_PORT") {
         .unwrap(),
     Err(_) => 9999,
 });
-
-/// The different possible modes of a ModelarDB server, assigned when the server is started.
-#[derive(Clone, PartialEq, Eq)]
-pub enum ServerMode {
-    Cloud,
-    Edge,
-}
 
 /// Folders for storing metadata and Apache Parquet files.
 pub struct DataFolders {

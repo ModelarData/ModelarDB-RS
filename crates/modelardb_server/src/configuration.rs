@@ -19,10 +19,10 @@
 use std::sync::Arc;
 
 use modelardb_common::errors::ModelarDbError;
+use modelardb_common::types::ServerMode;
 use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;
-use crate::ServerMode;
 
 /// Manages the system's configuration and provides functionality for updating the configuration.
 #[derive(Clone)]
