@@ -17,6 +17,7 @@
 
 mod metadata;
 mod remote;
+mod cluster;
 
 use std::env;
 use std::sync::Arc;
