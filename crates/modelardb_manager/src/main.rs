@@ -15,9 +15,9 @@
 
 //! Implementation of ModelarDB manager's main function.
 
+mod cluster;
 mod metadata;
 mod remote;
-mod cluster;
 
 use std::env;
 use std::sync::Arc;
@@ -31,8 +31,8 @@ use once_cell::sync::Lazy;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use crate::cluster::ClusterManager;
 
+use crate::cluster::{ClusterManager, ClusterNode};
 use crate::metadata::MetadataManager;
 use crate::remote::start_apache_arrow_flight_server;
 
@@ -72,7 +72,7 @@ fn main() -> Result<(), String> {
     let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
 
-    let (metadata_manager, remote_data_folder) = runtime.block_on(async {
+    let (metadata_manager, remote_data_folder, cluster_nodes) = runtime.block_on(async {
         let (connection, remote_data_folder) = parse_command_line_arguments(&arguments).await?;
         validate_remote_data_folder_from_argument(arguments.get(1).unwrap(), &remote_data_folder)
             .await?;
@@ -81,19 +81,23 @@ fn main() -> Result<(), String> {
             .await
             .map_err(|error| format!("Unable to setup metadata database: {error}"))?;
 
-        Ok::<(MetadataManager, Arc<dyn ObjectStore>), String>((
+        let cluster_nodes = metadata_manager
+            .cluster_nodes()
+            .await
+            .map_err(|error| error.to_string())?;
+
+        Ok::<(MetadataManager, Arc<dyn ObjectStore>, Vec<ClusterNode>), String>((
             metadata_manager,
             remote_data_folder,
+            cluster_nodes,
         ))
     })?;
-
-    let cluster_manager = ClusterManager::new();
 
     // Create the Context.
     let context = Arc::new(Context {
         metadata_manager,
         remote_data_folder,
-        cluster_manager,
+        cluster_manager: ClusterManager::new(cluster_nodes),
     });
 
     start_apache_arrow_flight_server(context, &runtime, *PORT)

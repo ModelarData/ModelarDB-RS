@@ -16,9 +16,15 @@
 //! Management of the metadata database for the manager. Metadata which is unique to the manager,
 //! such as metadata about registered edges, is handled here.
 
+use futures::TryStreamExt;
 use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use sqlx::{Executor, PgPool};
+use modelardb_common::types::ServerMode;
+use sqlx::{Executor, PgPool, Row};
+use std::str::FromStr;
+use modelardb_common::errors::ModelarDbError;
+
+use crate::cluster::ClusterNode;
 
 /// Store's the metadata required for reading from and writing to the tables and model tables and
 /// persisting edges. The data that needs to be persisted are stored in the metadata database.
@@ -190,5 +196,27 @@ impl MetadataManager {
         }
 
         transaction.commit().await
+    }
+
+    /// Return the cluster nodes currently controlled by the manager that have been persisted to
+    /// the metadata database. If the nodes could not be retrieved, [`sqlx::Error`] is returned.
+    pub async fn cluster_nodes(&self) -> Result<Vec<ClusterNode>, sqlx::Error> {
+        let mut cluster_nodes: Vec<ClusterNode> = vec![];
+
+        let mut rows =
+            sqlx::query("SELECT url, mode FROM cluster_nodes").fetch(&self.metadata_database_pool);
+
+        while let Some(row) = rows.try_next().await? {
+            let server_mode = ServerMode::from_str(row.get("mode")).map_err(|error| {
+                sqlx::Error::ColumnDecode {
+                    index: "mode".to_string(),
+                    source: Box::new(ModelarDbError::DataRetrievalError(error.to_string())),
+                }
+            })?;
+
+            cluster_nodes.push(ClusterNode::new(row.get("url"), server_mode))
+        }
+
+        Ok(cluster_nodes)
     }
 }

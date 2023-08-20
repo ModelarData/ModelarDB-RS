@@ -43,9 +43,9 @@ pub struct ClusterManager {
 }
 
 impl ClusterManager {
-    pub fn new() -> Self {
+    pub fn new(nodes: Vec<ClusterNode>) -> Self {
         Self {
-            nodes: vec![]
+            nodes
         }
     }
 }
