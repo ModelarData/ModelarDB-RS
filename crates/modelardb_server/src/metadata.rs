@@ -721,7 +721,6 @@ impl MetadataManager {
         Ok(())
     }
 
-    // TODO: Should be moved since it should be possible for both the server and manager to create tables.
     /// Save the created model table to the metadata database. This includes creating a tags table
     /// for the model table, creating a compressed files table for the model table, adding a row to
     /// the model_table_metadata table, and adding a row to the model_table_field_columns table for
