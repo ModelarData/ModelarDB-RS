@@ -264,7 +264,7 @@ mod tests {
     async fn connect_to_metadata_database() -> SqlitePool {
         let temp_dir = tempfile::tempdir().unwrap();
         let options = SqliteConnectOptions::new()
-            .filename(temp_dir.path().join("metadata.sqlite3"))
+            .filename(temp_dir.path().join("common_metadata.sqlite3"))
             .create_if_missing(true);
 
         SqlitePool::connect_with(options).await.unwrap()
