@@ -15,13 +15,24 @@
 
 //! Management of the cluster of nodes that are currently controlled by the manager.
 
+use modelardb_common::types::ServerMode;
+
 /// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
 /// or a cloud node. A node cannot be another manager.
 pub struct ClusterNode {
     /// Arrow Flight URL for the node. This URL uniquely identifies the node.
     url: String,
     /// The mode the node was started in.
-    mode: String,
+    mode: ServerMode,
+}
+
+impl ClusterNode {
+    pub fn new(url: String, mode: ServerMode) -> Self {
+        Self {
+            url,
+            mode
+        }
+    }
 }
 
 /// Stores the currently managed nodes in the cluster and allows for performing operations that need
