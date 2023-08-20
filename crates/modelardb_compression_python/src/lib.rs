@@ -24,7 +24,9 @@ use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
 use arrow::record_batch::RecordBatch;
 use modelardb_common::schemas::{COMPRESSED_SCHEMA, QUERY_SCHEMA, UNCOMPRESSED_SCHEMA};
-use modelardb_common::types::{ErrorBound, TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
+use modelardb_common::types::{
+    ErrorBound, TimestampArray, TimestampBuilder, ValueArray, ValueBuilder,
+};
 use modelardb_compression::{self};
 use pyo3::import_exception;
 use pyo3::prelude::{pyfunction, pymodule, wrap_pyfunction, PyAny, PyModule, PyResult, Python};
