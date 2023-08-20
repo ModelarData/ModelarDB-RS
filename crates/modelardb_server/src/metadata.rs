@@ -731,7 +731,7 @@ impl MetadataManager {
     ) -> Result<()> {
         // Convert the query schema to bytes so it can be saved as a BLOB in the metadata database.
         let query_schema_bytes =
-            metadata::convert_schema_to_blob(&model_table_metadata.query_schema)?;
+            metadata::try_convert_schema_to_blob(&model_table_metadata.query_schema)?;
 
         // Create a transaction to ensure the database state is consistent across tables.
         let mut transaction = self.metadata_database_pool.begin().await?;
@@ -863,7 +863,7 @@ impl MetadataManager {
 
         // Convert the BLOBs to the concrete types.
         let query_schema_bytes = row.try_get(1)?;
-        let query_schema = metadata::convert_blob_to_schema(query_schema_bytes)?;
+        let query_schema = metadata::try_convert_blob_to_schema(query_schema_bytes)?;
 
         let error_bounds = self
             .error_bounds(table_name, query_schema.fields().len())
@@ -952,7 +952,7 @@ impl MetadataManager {
 
                 let generated_column = GeneratedColumn {
                     expr,
-                    source_columns: metadata::convert_slice_u8_to_vec_usize(source_columns)
+                    source_columns: metadata::try_convert_slice_u8_to_vec_usize(source_columns)
                         .unwrap(),
                     original_expr: None,
                 };
@@ -1776,7 +1776,7 @@ mod tests {
         let row = rows.try_next().await.unwrap().unwrap();
         assert_eq!("model_table", row.try_get::<&str, _>(0).unwrap());
         assert_eq!(
-            metadata::convert_schema_to_blob(&model_table_metadata.query_schema).unwrap(),
+            metadata::try_convert_schema_to_blob(&model_table_metadata.query_schema).unwrap(),
             row.try_get::<Vec<u8>, _>(1).unwrap()
         );
 

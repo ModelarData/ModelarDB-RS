@@ -144,7 +144,7 @@ where
 }
 
 /// Convert a [`Schema`] to [`Vec<u8>`].
-pub fn convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
+pub fn try_convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
     let options = IpcWriteOptions::default();
     let schema_as_ipc = SchemaAsIpc::new(schema, &options);
     let ipc_message: IpcMessage =
@@ -154,12 +154,13 @@ pub fn convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
                 index: "query_schema".to_owned(),
                 source: Box::new(error),
             })?;
+
     Ok(ipc_message.0.to_vec())
 }
 
 /// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
 /// [`Error`].
-pub fn convert_blob_to_schema(schema_bytes: Vec<u8>) -> Result<Schema, Error> {
+pub fn try_convert_blob_to_schema(schema_bytes: Vec<u8>) -> Result<Schema, Error> {
     let ipc_message = IpcMessage(schema_bytes.into());
     Schema::try_from(ipc_message).map_err(|error| Error::ColumnDecode {
         index: "query_schema".to_owned(),
@@ -174,7 +175,7 @@ pub fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
 
 /// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides evenly by
 /// [`mem::size_of::<usize>()`], otherwise [`Error`] is returned.
-pub fn convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>, Error> {
+pub fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>, Error> {
     if bytes.len() % mem::size_of::<usize>() != 0 {
         Err(Error::ColumnDecode {
             index: "generated_column_sources".to_owned(),
@@ -271,7 +272,7 @@ mod tests {
 
     #[test]
     fn test_blob_to_schema_empty() {
-        assert!(convert_blob_to_schema(vec!(1, 2, 4, 8)).is_err());
+        assert!(try_convert_blob_to_schema(vec!(1, 2, 4, 8)).is_err());
     }
 
     #[test]
@@ -282,10 +283,10 @@ mod tests {
         ]));
 
         // Serialize a schema to bytes.
-        let bytes = convert_schema_to_blob(&schema).unwrap();
+        let bytes = try_convert_schema_to_blob(&schema).unwrap();
 
         // Deserialize the bytes to a schema.
-        let retrieved_schema = convert_blob_to_schema(bytes).unwrap();
+        let retrieved_schema = try_convert_blob_to_schema(bytes).unwrap();
         assert_eq!(*schema, retrieved_schema);
     }
 
@@ -293,7 +294,7 @@ mod tests {
         #[test]
         fn test_usize_to_u8_and_u8_to_usize(values in collection::vec(num::usize::ANY, 0..50)) {
             let bytes = convert_slice_usize_to_vec_u8(&values);
-            let usizes = convert_slice_u8_to_vec_usize(&bytes).unwrap();
+            let usizes = try_convert_slice_u8_to_vec_usize(&bytes).unwrap();
             prop_assert_eq!(values, usizes);
         }
     }

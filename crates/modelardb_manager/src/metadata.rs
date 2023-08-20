@@ -61,7 +61,7 @@ impl MetadataManager {
     ) -> Result<(), sqlx::Error> {
         // Convert the query schema to bytes so it can be saved as a bytea in the metadata database.
         let query_schema_bytes =
-            metadata::convert_schema_to_blob(&model_table_metadata.query_schema)?;
+            metadata::try_convert_schema_to_blob(&model_table_metadata.query_schema)?;
 
         // Create a transaction to ensure the database state is consistent across tables.
         let mut transaction = self.metadata_database_pool.begin().await?;
