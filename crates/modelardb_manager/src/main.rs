@@ -31,6 +31,7 @@ use once_cell::sync::Lazy;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use crate::cluster::ClusterManager;
 
 use crate::metadata::MetadataManager;
 use crate::remote::start_apache_arrow_flight_server;
@@ -50,6 +51,8 @@ pub struct Context {
     pub metadata_manager: MetadataManager,
     /// Folder for storing Apache Parquet files in a remote object store.
     pub remote_data_folder: Arc<dyn ObjectStore>,
+    /// Manager for the nodes currently controlled by the manager.
+    pub cluster_manager: ClusterManager,
 }
 
 /// Parse the command line arguments to extract the metadata database and the remote object store
@@ -84,10 +87,13 @@ fn main() -> Result<(), String> {
         ))
     })?;
 
+    let cluster_manager = ClusterManager::new();
+
     // Create the Context.
     let context = Arc::new(Context {
         metadata_manager,
         remote_data_folder,
+        cluster_manager,
     });
 
     start_apache_arrow_flight_server(context, &runtime, *PORT)
