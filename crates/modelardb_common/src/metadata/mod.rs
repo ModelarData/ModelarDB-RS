@@ -196,6 +196,7 @@ pub fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>, Err
 mod tests {
     use super::*;
 
+    use std::path::Path;
     use std::sync::Arc;
 
     use datafusion::arrow::array::ArrowPrimitiveType;
@@ -209,7 +210,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_create_metadata_database_tables() {
-        let metadata_database_pool = connect_to_metadata_database().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_database_pool = connect_to_metadata_database(temp_dir.path()).await;
+
         create_metadata_database_tables(&metadata_database_pool, MetadataDatabaseType::SQLite)
             .await
             .unwrap();
@@ -241,7 +244,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_table_metadata() {
-        let metadata_database_pool = connect_to_metadata_database().await;
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_database_pool = connect_to_metadata_database(temp_dir.path()).await;
+
         create_metadata_database_tables(&metadata_database_pool, MetadataDatabaseType::SQLite)
             .await
             .unwrap();
@@ -261,10 +266,9 @@ mod tests {
         assert!(rows.try_next().await.unwrap().is_none());
     }
 
-    async fn connect_to_metadata_database() -> SqlitePool {
-        let temp_dir = tempfile::tempdir().unwrap();
+    async fn connect_to_metadata_database(path: &Path) -> SqlitePool {
         let options = SqliteConnectOptions::new()
-            .filename(temp_dir.path().join("common_metadata.sqlite3"))
+            .filename(path.join("metadata.sqlite3"))
             .create_if_missing(true);
 
         SqlitePool::connect_with(options).await.unwrap()
