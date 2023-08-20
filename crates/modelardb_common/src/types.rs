@@ -20,6 +20,7 @@
 //! of aliases are all for the same underlying type.
 
 use std::cmp::Ordering;
+use std::str::FromStr;
 
 use crate::errors::ModelarDbError;
 
@@ -105,6 +106,18 @@ impl PartialOrd<ErrorBound> for f32 {
 pub enum ServerMode {
     Cloud,
     Edge,
+}
+
+impl FromStr for ServerMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "cloud" => Ok(ServerMode::Cloud),
+            "edge" => Ok(ServerMode::Edge),
+            _ => Err(format!("'{value}' is not a valid value for ServerMode.")),
+        }
+    }
 }
 
 #[cfg(test)]
