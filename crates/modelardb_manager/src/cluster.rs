@@ -15,6 +15,7 @@
 
 //! Management of the cluster of nodes that are currently controlled by the manager.
 
+use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
 
 /// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
@@ -46,6 +47,21 @@ impl ClusterManager {
     pub fn new(nodes: Vec<ClusterNode>) -> Self {
         Self {
             nodes
+        }
+    }
+
+    /// Checks if the cluster node is already registered and adds it to the current nodes if not. If
+    /// it already exists, [`ConfigurationError`](ModelarDbError::ConfigurationError) is returned.
+    pub fn register_node(&mut self, cluster_node: ClusterNode) -> Result<(), ModelarDbError> {
+        let node_urls: Vec<String> = self.nodes.iter().map(|node| node.url.clone()).collect();
+
+        if node_urls.contains(&cluster_node.url) {
+            Err(ModelarDbError::ConfigurationError(
+                format!("A cluster node with the url `{}` is already registered.", cluster_node.url),
+            ))
+        } else {
+            self.nodes.push(cluster_node);
+            Ok(())
         }
     }
 }
