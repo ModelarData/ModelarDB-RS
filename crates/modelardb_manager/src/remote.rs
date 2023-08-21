@@ -20,14 +20,18 @@
 use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 
+use crate::cluster::ClusterNode;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PutResult, SchemaResult, Ticket,
 };
-use futures::{Stream, stream};
+use futures::{stream, Stream};
+use modelardb_common::arguments::extract_argument;
+use modelardb_common::types::ServerMode;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
@@ -63,7 +67,6 @@ pub fn start_apache_arrow_flight_server(
 /// published under Apache2.
 ///
 /// [Apache Arrow Flight examples]: https://github.com/apache/arrow-rs/blob/master/arrow-flight/examples
-#[allow(dead_code)]
 struct FlightServiceHandler {
     /// Singleton that provides access to the system's components.
     context: Arc<Context>,
@@ -163,15 +166,30 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "RegisterNode" {
-            // TODO: Extract the ID and mode of the node.
-            // TODO: Use the metadata manager to persist the node to the metadata database.
-            // TODO: Use the cluster manager to register the node in memory.
+            // Extract the cluster node from the action body.
+            let (url, offset_data) = extract_argument(&action.body)?;
+            let (mode, _offset_data) = extract_argument(offset_data)?;
+
+            let server_mode =
+                ServerMode::from_str(mode).map_err(|error| Status::invalid_argument(error))?;
+            let cluster_node = ClusterNode::new(url.to_string(), server_mode);
+
+            // Use the metadata manager to persist the node to the metadata database.
+            self.context
+                .metadata_manager
+                .save_cluster_node(&cluster_node)
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            // Use the cluster manager to register the node in memory.
+            self.context
+                .cluster_manager
+                .write()
+                .await
+                .register_node(cluster_node)
+                .map_err(|error| Status::internal(error.to_string()))?;
+
             // TODO: Return the object store and the current database schema.
-
-            // TODO: Handle when the url is already registered.
-            // TODO: Handle when the mode is not one of the viable options.
-            // TODO: Add tests for this.
-
             Ok(Response::new(Box::pin(stream::empty())))
         } else {
             Err(Status::unimplemented("Action not implemented."))
@@ -188,9 +206,7 @@ impl FlightService for FlightServiceHandler {
             description: "Register either an edge or cloud node with the manager.".to_owned(),
         };
 
-        let output = stream::iter(vec![
-            Ok(register_node_action),
-        ]);
+        let output = stream::iter(vec![Ok(register_node_action)]);
 
         Ok(Response::new(Box::pin(output)))
     }
