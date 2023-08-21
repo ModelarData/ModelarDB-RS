@@ -27,7 +27,7 @@ use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PutResult, SchemaResult, Ticket,
 };
-use futures::Stream;
+use futures::{Stream, stream};
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
@@ -150,24 +150,48 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// TODO: Perform a specific action based on the type of the action in `request`.
-    ///       The following actions should be supported:
-    ///       * `CommandStatementUpdate`
-    ///       * `UpdateRemoteObjectStore`
-    ///       * `RegisterEdge`
-    ///       * `RemoveEdge`
+    /// Perform a specific action based on the type of the action in `request`. Currently the
+    /// following actions are supported:
+    /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
+    /// to the cluster of nodes controlled by the manager and the object store and current database
+    /// schema used in the cluster is returned.
     async fn do_action(
         &self,
-        _request: Request<Action>,
+        request: Request<Action>,
     ) -> Result<Response<Self::DoActionStream>, Status> {
-        Err(Status::unimplemented("Not implemented."))
+        let action = request.into_inner();
+        info!("Received request to perform action '{}'.", action.r#type);
+
+        if action.r#type == "RegisterNode" {
+            // TODO: Extract the ID and mode of the node.
+            // TODO: Use the metadata manager to persist the node to the metadata database.
+            // TODO: Use the cluster manager to register the node in memory.
+            // TODO: Return the object store and the current database schema.
+
+            // TODO: Handle when the url is already registered.
+            // TODO: Handle when the mode is not one of the viable options.
+            // TODO: Add tests for this.
+
+            Ok(Response::new(Box::pin(stream::empty())))
+        } else {
+            Err(Status::unimplemented("Action not implemented."))
+        }
     }
 
-    /// TODO: Return all available actions, including both a name and a description for each action.
+    /// Return all available actions, including both a name and a description for each action.
     async fn list_actions(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::ListActionsStream>, Status> {
-        Err(Status::unimplemented("Not implemented."))
+        let register_node_action = ActionType {
+            r#type: "RegisterNode".to_owned(),
+            description: "Register either an edge or cloud node with the manager.".to_owned(),
+        };
+
+        let output = stream::iter(vec![
+            Ok(register_node_action),
+        ]);
+
+        Ok(Response::new(Box::pin(output)))
     }
 }
