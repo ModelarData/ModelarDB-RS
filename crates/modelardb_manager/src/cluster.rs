@@ -20,6 +20,7 @@ use modelardb_common::types::ServerMode;
 
 /// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
 /// or a cloud node. A node cannot be another manager.
+#[derive(Clone, PartialEq)]
 pub struct ClusterNode {
     /// Arrow Flight URL for the node. This URL uniquely identifies the node.
     pub url: String,
@@ -63,5 +64,28 @@ impl ClusterManager {
             self.nodes.push(cluster_node);
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    // Tests for ClusterManager.
+    #[test]
+    fn test_register_node() {
+        let cluster_node = ClusterNode::new("localhost".to_string(), ServerMode::Edge);
+        let mut cluster_manager = ClusterManager::new(vec![]);
+
+        assert!(cluster_manager.register_node(cluster_node.clone()).is_ok());
+        assert!(cluster_manager.nodes.contains(&cluster_node));
+    }
+
+    #[test]
+    fn test_register_already_registered_node() {
+        let cluster_node = ClusterNode::new("localhost".to_string(), ServerMode::Edge);
+        let mut cluster_manager = ClusterManager::new(vec![cluster_node.clone()]);
+
+        assert!(cluster_manager.register_node(cluster_node).is_err());
     }
 }
