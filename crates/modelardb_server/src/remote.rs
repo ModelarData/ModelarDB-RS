@@ -45,7 +45,9 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::prelude::ParquetReadOptions;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
-use modelardb_common::arguments::{validate_remote_data_folder, RemoteDataFolderType};
+use modelardb_common::arguments::{
+    extract_argument, validate_remote_data_folder, RemoteDataFolderType,
+};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
 use modelardb_common::types::{ServerMode, TimestampBuilder};
@@ -64,7 +66,7 @@ use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::{Context};
+use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through [`FlightServiceHandler`].
@@ -198,23 +200,6 @@ async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Arc<dyn Objec
         .map_err(Status::invalid_argument)?;
 
     Ok(azure_blob_storage)
-}
-
-/// Assumes `data` is a slice containing one or more arguments with the following format:
-/// size of argument (2 bytes) followed by the argument (size bytes). Returns a tuple containing
-/// the first argument and `data` with the extracted argument's bytes removed.
-fn extract_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
-    let size_bytes: [u8; 2] = data[..2]
-        .try_into()
-        .map_err(|_| Status::internal("Size of argument is not 2 bytes."))?;
-
-    let size = u16::from_be_bytes(size_bytes) as usize;
-
-    let argument = str::from_utf8(&data[2..(size + 2)])
-        .map_err(|error| Status::invalid_argument(error.to_string()))?;
-    let remaining_bytes = &data[(size + 2)..];
-
-    Ok((argument, remaining_bytes))
 }
 
 /// Write the schema and corresponding record batch to a stream within a gRPC response.

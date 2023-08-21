@@ -1910,6 +1910,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "tonic",
 ]
 
 [[package]]

@@ -20,6 +20,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use object_store::{aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, path::Path, ObjectStore};
+use tonic::Status;
 
 /// Collect the command line arguments that this program was started with.
 pub fn collect_command_line_arguments(maximum_arguments: usize) -> Vec<String> {
@@ -120,4 +121,21 @@ pub async fn validate_remote_data_folder(
             _ => Err(error.to_string()),
         },
     }
+}
+
+/// Assumes `data` is a slice containing one or more arguments with the following format:
+/// size of argument (2 bytes) followed by the argument (size bytes). Returns a tuple containing
+/// the first argument and `data` with the extracted argument's bytes removed.
+pub fn extract_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
+    let size_bytes: [u8; 2] = data[..2]
+        .try_into()
+        .map_err(|_| Status::internal("Size of argument is not 2 bytes."))?;
+
+    let size = u16::from_be_bytes(size_bytes) as usize;
+
+    let argument = str::from_utf8(&data[2..(size + 2)])
+        .map_err(|error| Status::invalid_argument(error.to_string()))?;
+    let remaining_bytes = &data[(size + 2)..];
+
+    Ok((argument, remaining_bytes))
 }
