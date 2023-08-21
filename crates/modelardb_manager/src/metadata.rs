@@ -198,6 +198,18 @@ impl MetadataManager {
         transaction.commit().await
     }
 
+    /// Save the cluster node to the metadata database and return [`Ok`]. If the cluster node could
+    /// not be saved, return [`sqlx::Error`].
+    pub async fn save_cluster_node(&self, cluster_node: ClusterNode) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT INTO cluster_nodes (url, mode) VALUES ($1, $2)")
+            .bind(cluster_node.url)
+            .bind(cluster_node.mode.to_string())
+            .execute(&self.metadata_database_pool)
+            .await?;
+
+        Ok(())
+    }
+
     /// Return the cluster nodes currently controlled by the manager that have been persisted to
     /// the metadata database. If the nodes could not be retrieved, [`sqlx::Error`] is returned.
     pub async fn cluster_nodes(&self) -> Result<Vec<ClusterNode>, sqlx::Error> {

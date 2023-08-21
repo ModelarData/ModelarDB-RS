@@ -21,9 +21,9 @@ use modelardb_common::types::ServerMode;
 /// or a cloud node. A node cannot be another manager.
 pub struct ClusterNode {
     /// Arrow Flight URL for the node. This URL uniquely identifies the node.
-    url: String,
+    pub url: String,
     /// The mode the node was started in.
-    mode: ServerMode,
+    pub mode: ServerMode,
 }
 
 impl ClusterNode {

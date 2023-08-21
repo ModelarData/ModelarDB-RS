@@ -20,6 +20,7 @@
 //! of aliases are all for the same underlying type.
 
 use std::cmp::Ordering;
+use std::fmt;
 use std::str::FromStr;
 
 use crate::errors::ModelarDbError;
@@ -116,6 +117,15 @@ impl FromStr for ServerMode {
             "cloud" => Ok(ServerMode::Cloud),
             "edge" => Ok(ServerMode::Edge),
             _ => Err(format!("'{value}' is not a valid value for ServerMode.")),
+        }
+    }
+}
+
+impl fmt::Display for ServerMode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ServerMode::Cloud => write!(f, "cloud"),
+            ServerMode::Edge => write!(f, "edge"),
         }
     }
 }
