@@ -34,7 +34,8 @@ pub enum MetadataDatabaseType {
     PostgreSQL,
 }
 
-/// If they do not already exist, create the tables used for table and model table metadata.
+/// If they do not already exist, create the tables in the metadata database used for table and
+/// model table metadata.
 /// * The table_metadata table contains the metadata for tables.
 /// * The model_table_metadata table contains the main metadata for model tables.
 /// * The model_table_hash_table_name contains a mapping from each tag hash to the name of the
@@ -50,17 +51,12 @@ where
     DB: Database,
     E: Executor<'a, Database = DB> + Copy,
 {
-    let strict = match database_type {
-        MetadataDatabaseType::SQLite => "STRICT",
-        _ => "",
+    let (strict, binary_type) = match database_type {
+        MetadataDatabaseType::SQLite => ("STRICT", "BLOB"),
+        MetadataDatabaseType::PostgreSQL => ("", "BYTEA"),
     };
 
-    let binary_type = match database_type {
-        MetadataDatabaseType::SQLite => "BLOB",
-        _ => "bytea",
-    };
-
-    // Create the table_metadata SQLite table if it does not exist.
+    // Create the table_metadata table if it does not exist.
     metadata_database_pool
         .execute(
             format!(
@@ -72,7 +68,7 @@ where
         )
         .await?;
 
-    // Create the model_table_metadata SQLite table if it does not exist.
+    // Create the model_table_metadata table if it does not exist.
     metadata_database_pool
         .execute(
             format!(
@@ -85,7 +81,7 @@ where
         )
         .await?;
 
-    // Create the model_table_hash_name SQLite table if it does not exist.
+    // Create the model_table_hash_name table if it does not exist.
     metadata_database_pool
         .execute(
             format!(
@@ -98,9 +94,8 @@ where
         )
         .await?;
 
-    // Create the model_table_field_columns SQLite table if it does not
-    // exist. Note that column_index will only use a maximum of 10 bits.
-    // generated_column_* is NULL if the fields are stored as segments.
+    // Create the model_table_field_columns table if it does not exist. Note that column_index will
+    // only use a maximum of 10 bits. generated_column_* is NULL if the fields are stored as segments.
     metadata_database_pool
         .execute(
             format!(
@@ -208,6 +203,7 @@ mod tests {
 
     use crate::types::ArrowValue;
 
+    // Tests for metadata database functions.
     #[tokio::test]
     async fn test_create_metadata_database_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -274,8 +270,9 @@ mod tests {
         SqlitePool::connect_with(options).await.unwrap()
     }
 
+    // Tests for conversion functions.
     #[test]
-    fn test_blob_to_schema_empty() {
+    fn test_invalid_blob_to_schema() {
         assert!(try_convert_blob_to_schema(vec!(1, 2, 4, 8)).is_err());
     }
 

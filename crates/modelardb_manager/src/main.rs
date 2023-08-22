@@ -68,7 +68,7 @@ fn main() -> Result<(), String> {
     let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
 
-    let (metadata_manager, remote_data_folder) = runtime.block_on(async {
+    let context = runtime.block_on(async {
         let (connection, remote_data_folder) = parse_command_line_arguments(&arguments).await?;
         validate_remote_data_folder_from_argument(arguments.get(1).unwrap(), &remote_data_folder)
             .await?;
@@ -77,17 +77,12 @@ fn main() -> Result<(), String> {
             .await
             .map_err(|error| format!("Unable to setup metadata database: {error}"))?;
 
-        Ok::<(MetadataManager, Arc<dyn ObjectStore>), String>((
+        // Create the Context.
+        Ok::<Arc<Context>, String>(Arc::new(Context {
             metadata_manager,
             remote_data_folder,
-        ))
+        }))
     })?;
-
-    // Create the Context.
-    let context = Arc::new(Context {
-        metadata_manager,
-        remote_data_folder,
-    });
 
     start_apache_arrow_flight_server(context, &runtime, *PORT)
         .map_err(|error| error.to_string())?;
