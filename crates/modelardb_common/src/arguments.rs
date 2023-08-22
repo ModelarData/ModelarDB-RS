@@ -169,3 +169,25 @@ mod test {
         assert_eq!(credential_size_bytes, [0, 4]);
     }
 
+    #[test]
+    fn test_extract_arguments() {
+        let (credential_1_bytes, credential_1_size_bytes) =
+            encode_credential("credential_1").unwrap();
+        let (credential_2_bytes, credential_2_size_bytes) =
+            encode_credential("credential_2").unwrap();
+
+        let data = [
+            credential_1_size_bytes.as_slice(),
+            credential_1_bytes.as_slice(),
+            credential_2_size_bytes.as_slice(),
+            credential_2_bytes.as_slice(),
+        ]
+        .concat();
+
+        let (credential_1, offset_data) = extract_argument(data.as_slice()).unwrap();
+        let (credential_2, _offset_data) = extract_argument(offset_data).unwrap();
+
+        assert_eq!(credential_1, "credential_1");
+        assert_eq!(credential_2, "credential_2");
+    }
+}
