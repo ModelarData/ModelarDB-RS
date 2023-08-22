@@ -16,6 +16,7 @@
 //! Functions for collecting and using command line arguments in both the server and manager.
 //! Functionality for validating remote data folders extracted from arguments is also provided.
 
+use std::io::Write;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -123,6 +124,22 @@ pub async fn validate_remote_data_folder(
     }
 }
 
+/// Convert the given `credential` into bytes and separate padded bytes that contain the length of
+/// the first vector of bytes. The padded vector of bytes is exactly two bytes long.
+fn encode_credential(credential: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
+    let credential_bytes: Vec<u8> = credential.as_bytes().into();
+    let mut credential_size_bytes = vec![0; 2];
+
+    credential_size_bytes
+        .write(&credential_bytes.len().to_be_bytes())
+        .map_err(|error| error.to_string())?;
+
+    Ok((
+        credential_bytes,
+        credential_size_bytes[(credential_size_bytes.len() - 2)..].to_owned(),
+    ))
+}
+
 /// Assumes `data` is a slice containing one or more arguments with the following format:
 /// size of argument (2 bytes) followed by the argument (size bytes). Returns a tuple containing
 /// the first argument and `data` with the extracted argument's bytes removed.
@@ -139,3 +156,16 @@ pub fn extract_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
 
     Ok((argument, remaining_bytes))
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_encode_credential() {
+        let (credential_bytes, credential_size_bytes) = encode_credential("test").unwrap();
+
+        assert_eq!(credential_bytes, b"test");
+        assert_eq!(credential_size_bytes, [0, 4]);
+    }
+
