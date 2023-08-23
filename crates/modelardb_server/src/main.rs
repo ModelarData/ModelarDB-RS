@@ -76,7 +76,7 @@ pub struct DataFolders {
 /// Provides access to the system's configuration and components.
 pub struct Context {
     /// The mode of the server used to determine the behaviour when starting the server,
-    /// creating tables, and updating the remote object store.
+    /// creating tables, updating the remote object store, and querying.
     pub cluster_mode: ClusterMode,
     /// Metadata for the tables and model tables in the data folder.
     pub metadata_manager: Arc<MetadataManager>,
@@ -207,6 +207,28 @@ fn parse_command_line_arguments(
                 query_data_folder: argument_to_local_object_store(local_data_folder)?,
             },
         )),
+        &["multi", "cloud", local_data_folder] => {
+            let remote_object_store = retrieve_manager_object_store()?;
+
+            Ok((
+                ServerMode::Cloud,
+                ClusterMode::MultiNode,
+                DataFolders {
+                    local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
+                    remote_data_folder: Some(remote_object_store.clone()),
+                    query_data_folder: remote_object_store,
+                },
+            ))
+        }
+        &["multi", "edge", local_data_folder] | &["multi", local_data_folder] => Ok((
+            ServerMode::Edge,
+            ClusterMode::MultiNode,
+            DataFolders {
+                local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
+                remote_data_folder: Some(retrieve_manager_object_store()?),
+                query_data_folder: argument_to_local_object_store(local_data_folder)?,
+            },
+        )),
         _ => {
             // The errors are consciously ignored as the program is terminating.
             let binary_path = std::env::current_exe().unwrap();
@@ -241,6 +263,13 @@ fn argument_to_local_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>
     let object_store =
         LocalFileSystem::new_with_prefix(argument).map_err(|error| error.to_string())?;
     Ok(Arc::new(object_store))
+}
+
+/// Retrieve the object store connection info from the ModelarDB manager and use it to connect to
+/// the remote object store. If the connection information could not be retrieved or a connection
+/// could not be established, [`String`] is returned.
+fn retrieve_manager_object_store() -> Result<Arc<dyn ObjectStore>, String> {
+    Err("".to_string())
 }
 
 /// Create a new [`SessionContext`] for interacting with Apache Arrow
