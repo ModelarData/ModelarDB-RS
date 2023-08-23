@@ -70,26 +70,17 @@ pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
             let secret_access_key =
                 env::var("AWS_SECRET_ACCESS_KEY").map_err(|error| error.to_string())?;
 
-            let (bucket_name_bytes, bucket_name_size_bytes) = encode_credential(bucket_name)?;
-            let (endpoint_bytes, endpoint_size_bytes) = encode_credential(endpoint.as_str())?;
-            let (access_key_id_bytes, access_key_id_size_bytes) =
-                encode_credential(access_key_id.as_str())?;
-            let (secret_access_key_bytes, secret_access_key_size_bytes) =
-                encode_credential(secret_access_key.as_str())?;
+            let credentials = [
+                endpoint.as_str(),
+                bucket_name,
+                access_key_id.as_str(),
+                secret_access_key.as_str(),
+            ];
 
-            let data = [
-                endpoint_size_bytes.as_slice(),
-                endpoint_bytes.as_slice(),
-                bucket_name_size_bytes.as_slice(),
-                bucket_name_bytes.as_slice(),
-                access_key_id_size_bytes.as_slice(),
-                access_key_id_bytes.as_slice(),
-                secret_access_key_size_bytes.as_slice(),
-                secret_access_key_bytes.as_slice(),
-            ]
-            .concat();
-
-            Ok(data)
+            Ok(credentials
+                .iter()
+                .flat_map(|credential| encode_credential(credential))
+                .collect())
         }
         Some(("azureblobstorage", container_name)) => {
             let account =
@@ -97,22 +88,12 @@ pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
             let access_key =
                 env::var("AZURE_STORAGE_ACCESS_KEY").map_err(|error| error.to_string())?;
 
-            let (account_bytes, account_size_bytes) = encode_credential(account.as_str())?;
-            let (access_key_bytes, access_key_size_bytes) = encode_credential(access_key.as_str())?;
-            let (container_name_bytes, container_name_size_bytes) =
-                encode_credential(container_name)?;
+            let credentials = [account.as_str(), access_key.as_str(), container_name];
 
-            let data = [
-                account_size_bytes.as_slice(),
-                account_bytes.as_slice(),
-                access_key_size_bytes.as_slice(),
-                access_key_bytes.as_slice(),
-                container_name_size_bytes.as_slice(),
-                container_name_bytes.as_slice(),
-            ]
-            .concat();
-
-            Ok(data)
+            Ok(credentials
+                .iter()
+                .flat_map(|credential| encode_credential(credential))
+                .collect())
         }
         _ => Err(REMOTE_DATA_FOLDER_ERROR.to_owned()),
     }
