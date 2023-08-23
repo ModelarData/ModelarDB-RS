@@ -16,18 +16,17 @@
 //! Implementation of ModelarDB manager's main function.
 
 mod cluster;
+mod data_folder;
 mod metadata;
 mod remote;
-mod data_folder;
 
 use std::env;
 use std::sync::Arc;
 
 use modelardb_common::arguments::{
-    argument_to_remote_object_store, collect_command_line_arguments,
+    argument_to_connection_info, argument_to_remote_object_store, collect_command_line_arguments,
     validate_remote_data_folder_from_argument,
 };
-use object_store::ObjectStore;
 use once_cell::sync::Lazy;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use tokio::runtime::Runtime;
@@ -35,6 +34,7 @@ use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::{ClusterManager, ClusterNode};
+use crate::data_folder::RemoteDataFolder;
 use crate::metadata::MetadataManager;
 use crate::remote::start_apache_arrow_flight_server;
 
@@ -52,7 +52,7 @@ pub struct Context {
     /// Manager for the access to the metadata database.
     pub metadata_manager: MetadataManager,
     /// Folder for storing Apache Parquet files in a remote object store.
-    pub remote_data_folder: Arc<dyn ObjectStore>,
+    pub remote_data_folder: RemoteDataFolder,
     /// Manager for the nodes currently controlled by the manager.
     pub cluster_manager: RwLock<ClusterManager>,
 }
@@ -76,8 +76,11 @@ fn main() -> Result<(), String> {
 
     let (metadata_manager, remote_data_folder, cluster_nodes) = runtime.block_on(async {
         let (connection, remote_data_folder) = parse_command_line_arguments(&arguments).await?;
-        validate_remote_data_folder_from_argument(arguments.get(1).unwrap(), &remote_data_folder)
-            .await?;
+        validate_remote_data_folder_from_argument(
+            arguments.get(1).unwrap(),
+            &remote_data_folder.object_store(),
+        )
+        .await?;
 
         let metadata_manager = MetadataManager::try_new(connection)
             .await
@@ -88,7 +91,7 @@ fn main() -> Result<(), String> {
             .await
             .map_err(|error| error.to_string())?;
 
-        Ok::<(MetadataManager, Arc<dyn ObjectStore>, Vec<ClusterNode>), String>((
+        Ok::<(MetadataManager, RemoteDataFolder, Vec<ClusterNode>), String>((
             metadata_manager,
             remote_data_folder,
             cluster_nodes,
@@ -113,7 +116,7 @@ fn main() -> Result<(), String> {
 /// arguments are provided, or if the arguments are malformed, [`String`] is returned.
 async fn parse_command_line_arguments(
     arguments: &[&str],
-) -> Result<(PgPool, Arc<dyn ObjectStore>), String> {
+) -> Result<(PgPool, RemoteDataFolder), String> {
     match arguments {
         &[metadata_database, remote_data_folder] => {
             let username = env::var("METADATA_DB_USER").map_err(|error| error.to_string())?;
@@ -126,6 +129,9 @@ async fn parse_command_line_arguments(
                 .password(password.as_str())
                 .database(metadata_database);
 
+            let object_store = argument_to_remote_object_store(remote_data_folder)?;
+            let connection_info = argument_to_connection_info(remote_data_folder)?;
+
             // TODO: Look into what an ideal number of max connections would be.
             Ok((
                 PgPoolOptions::new()
@@ -133,7 +139,7 @@ async fn parse_command_line_arguments(
                     .connect_with(connection_options)
                     .await
                     .map_err(|error| format!("Unable to connect to metadata database: {error}"))?,
-                argument_to_remote_object_store(remote_data_folder)?,
+                RemoteDataFolder::new(connection_info, object_store),
             ))
         }
         _ => {

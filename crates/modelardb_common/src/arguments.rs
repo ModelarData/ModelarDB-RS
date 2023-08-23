@@ -62,7 +62,7 @@ pub fn argument_to_remote_object_store(argument: &str) -> Result<Arc<dyn ObjectS
 }
 
 /// Create a vector of bytes that represents the connection information to the remote path in `argument`.
-pub fn argument_to_connection_information(argument: &str) -> Result<Vec<u8>, String> {
+pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
     match argument.split_once("://") {
         Some(("s3", bucket_name)) => {
             let endpoint = env::var("AWS_ENDPOINT").map_err(|error| error.to_string())?;
