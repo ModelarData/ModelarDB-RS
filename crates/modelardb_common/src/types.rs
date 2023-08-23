@@ -130,6 +130,14 @@ impl fmt::Display for ServerMode {
     }
 }
 
+/// The different possible modes that a ModelarDB server than be deployed in, assigned when the
+/// server is started.
+#[derive(PartialEq, Eq)]
+pub enum ClusterMode {
+    SingleNode,
+    MultiNode,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

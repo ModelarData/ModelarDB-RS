@@ -37,12 +37,12 @@ use modelardb_common::arguments::{
     argument_to_remote_object_store, collect_command_line_arguments,
     validate_remote_data_folder_from_argument,
 };
+use modelardb_common::types::{ClusterMode, ServerMode};
 use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use modelardb_common::types::ServerMode;
 
 use crate::configuration::ConfigurationManager;
 use crate::metadata::MetadataManager;
@@ -75,6 +75,9 @@ pub struct DataFolders {
 
 /// Provides access to the system's configuration and components.
 pub struct Context {
+    /// The mode of the server used to determine the behaviour when starting the server,
+    /// creating tables, and updating the remote object store.
+    pub cluster_mode: ClusterMode,
     /// Metadata for the tables and model tables in the data folder.
     pub metadata_manager: Arc<MetadataManager>,
     /// Updatable configuration of the server.
@@ -99,7 +102,7 @@ fn main() -> Result<(), String> {
 
     let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
-    let (server_mode, data_folders) = parse_command_line_arguments(&arguments)?;
+    let (server_mode, cluster_mode, data_folders) = parse_command_line_arguments(&arguments)?;
 
     // Create a Tokio runtime for executing asynchronous tasks. The runtime is
     // not in the context so it can be passed to the components in the context.
@@ -143,6 +146,7 @@ fn main() -> Result<(), String> {
 
     // Create the Context.
     let context = Arc::new(Context {
+        cluster_mode,
         metadata_manager,
         configuration_manager,
         session,
@@ -168,14 +172,17 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-/// Parse the command lines arguments into a [`ServerMode`] and an instance of [`DataFolders`]. If
-/// the necessary command line arguments are not provided, too many arguments are provided, or
-/// if the arguments are malformed, [`String`] is returned.
-fn parse_command_line_arguments(arguments: &[&str]) -> Result<(ServerMode, DataFolders), String> {
+/// Parse the command lines arguments into a [`ServerMode`], a [`ClusterMode`] and an instance of
+/// [`DataFolders`]. If the necessary command line arguments are not provided, too many arguments
+/// are provided, or if the arguments are malformed, [`String`] is returned.
+fn parse_command_line_arguments(
+    arguments: &[&str],
+) -> Result<(ServerMode, ClusterMode, DataFolders), String> {
     // Match the provided command line arguments to the supported inputs.
     match arguments {
         &["cloud", local_data_folder, remote_data_folder] => Ok((
             ServerMode::Cloud,
+            ClusterMode::SingleNode,
             DataFolders {
                 local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                 remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
@@ -184,6 +191,7 @@ fn parse_command_line_arguments(arguments: &[&str]) -> Result<(ServerMode, DataF
         )),
         &["edge", local_data_folder, remote_data_folder] => Ok((
             ServerMode::Edge,
+            ClusterMode::SingleNode,
             DataFolders {
                 local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                 remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
@@ -192,6 +200,7 @@ fn parse_command_line_arguments(arguments: &[&str]) -> Result<(ServerMode, DataF
         )),
         &["edge", local_data_folder] | &[local_data_folder] => Ok((
             ServerMode::Edge,
+            ClusterMode::SingleNode,
             DataFolders {
                 local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                 remote_data_folder: None,
