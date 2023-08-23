@@ -182,20 +182,23 @@ pub async fn validate_remote_data_folder(
     }
 }
 
-/// Convert the given `credential` into bytes and separate padded bytes that contain the length of
-/// the first vector of bytes. The padded vector of bytes is exactly two bytes long.
-fn encode_credential(credential: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
+/// Convert the given `credential` into padded bytes that contain the length of the byte
+/// representation of `credential` together with the byte representation. The length is exactly two
+/// bytes long.
+fn encode_credential(credential: &str) -> Vec<u8> {
     let credential_bytes: Vec<u8> = credential.as_bytes().into();
     let mut credential_size_bytes = vec![0; 2];
 
+    // unwrap() is safe since the buffer is in memory and no I/O errors can occur.
     credential_size_bytes
         .write(&credential_bytes.len().to_be_bytes())
-        .map_err(|error| error.to_string())?;
+        .unwrap();
 
-    Ok((
-        credential_bytes,
-        credential_size_bytes[(credential_size_bytes.len() - 2)..].to_owned(),
-    ))
+    [
+        &credential_size_bytes[(credential_size_bytes.len() - 2)..],
+        credential_bytes.as_slice(),
+    ]
+    .concat()
 }
 
 /// Assumes `data` is a slice containing one or more arguments with the following format:
@@ -221,24 +224,21 @@ mod test {
 
     #[test]
     fn test_encode_credential() {
-        let (credential_bytes, credential_size_bytes) = encode_credential("test").unwrap();
+        let encoded_credentials = encode_credential("test");
+        let (credential_size_bytes, credential_bytes) = encoded_credentials.split_at(2);
 
-        assert_eq!(credential_bytes, b"test");
         assert_eq!(credential_size_bytes, [0, 4]);
+        assert_eq!(credential_bytes, b"test");
     }
 
     #[test]
     fn test_extract_arguments() {
-        let (credential_1_bytes, credential_1_size_bytes) =
-            encode_credential("credential_1").unwrap();
-        let (credential_2_bytes, credential_2_size_bytes) =
-            encode_credential("credential_2").unwrap();
+        let encoded_credential_1 = encode_credential("credential_1");
+        let encoded_credential_2 = encode_credential("credential_2");
 
         let data = [
-            credential_1_size_bytes.as_slice(),
-            credential_1_bytes.as_slice(),
-            credential_2_size_bytes.as_slice(),
-            credential_2_bytes.as_slice(),
+            encoded_credential_1.as_slice(),
+            encoded_credential_2.as_slice(),
         ]
         .concat();
 
