@@ -16,12 +16,16 @@
 //! Functions for collecting and using command line arguments in both the server and manager.
 //! Functionality for validating remote data folders extracted from arguments is also provided.
 
+use std::env;
 use std::io::Write;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use object_store::{aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, path::Path, ObjectStore};
 use tonic::Status;
+
+const REMOTE_DATA_FOLDER_ERROR: &str =
+    "Remote data folder must be s3://bucket-name or azureblobstorage://container-name.";
 
 /// Collect the command line arguments that this program was started with.
 pub fn collect_command_line_arguments(maximum_arguments: usize) -> Vec<String> {
@@ -53,10 +57,64 @@ pub fn argument_to_remote_object_store(argument: &str) -> Result<Arc<dyn ObjectS
 
             Ok(Arc::new(object_store))
         }
-        _ => Err(
-            "Remote data folder must be s3://bucket-name or azureblobstorage://container-name."
-                .to_owned(),
-        ),
+        _ => Err(REMOTE_DATA_FOLDER_ERROR.to_owned()),
+    }
+}
+
+/// Create a vector of bytes that represents the connection information to the remote path in `argument`.
+pub fn argument_to_connection_information(argument: &str) -> Result<Vec<u8>, String> {
+    match argument.split_once("://") {
+        Some(("s3", bucket_name)) => {
+            let endpoint = env::var("AWS_ENDPOINT").map_err(|error| error.to_string())?;
+            let access_key_id = env::var("AWS_ACCESS_KEY_ID").map_err(|error| error.to_string())?;
+            let secret_access_key =
+                env::var("AWS_SECRET_ACCESS_KEY").map_err(|error| error.to_string())?;
+
+            let (bucket_name_bytes, bucket_name_size_bytes) = encode_credential(bucket_name)?;
+            let (endpoint_bytes, endpoint_size_bytes) = encode_credential(endpoint.as_str())?;
+            let (access_key_id_bytes, access_key_id_size_bytes) =
+                encode_credential(access_key_id.as_str())?;
+            let (secret_access_key_bytes, secret_access_key_size_bytes) =
+                encode_credential(secret_access_key.as_str())?;
+
+            let data = [
+                endpoint_size_bytes.as_slice(),
+                endpoint_bytes.as_slice(),
+                bucket_name_size_bytes.as_slice(),
+                bucket_name_bytes.as_slice(),
+                access_key_id_size_bytes.as_slice(),
+                access_key_id_bytes.as_slice(),
+                secret_access_key_size_bytes.as_slice(),
+                secret_access_key_bytes.as_slice(),
+            ]
+            .concat();
+
+            Ok(data)
+        }
+        Some(("azureblobstorage", container_name)) => {
+            let account =
+                env::var("AZURE_STORAGE_ACCOUNT_NAME").map_err(|error| error.to_string())?;
+            let access_key =
+                env::var("AZURE_STORAGE_ACCESS_KEY").map_err(|error| error.to_string())?;
+
+            let (account_bytes, account_size_bytes) = encode_credential(account.as_str())?;
+            let (access_key_bytes, access_key_size_bytes) = encode_credential(access_key.as_str())?;
+            let (container_name_bytes, container_name_size_bytes) =
+                encode_credential(container_name)?;
+
+            let data = [
+                account_size_bytes.as_slice(),
+                account_bytes.as_slice(),
+                access_key_size_bytes.as_slice(),
+                access_key_bytes.as_slice(),
+                container_name_size_bytes.as_slice(),
+                container_name_bytes.as_slice(),
+            ]
+            .concat();
+
+            Ok(data)
+        }
+        _ => Err(REMOTE_DATA_FOLDER_ERROR.to_owned()),
     }
 }
 
