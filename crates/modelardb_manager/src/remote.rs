@@ -27,7 +27,7 @@ use crate::cluster::ClusterNode;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
-    HandshakeRequest, HandshakeResponse, PutResult, SchemaResult, Ticket,
+    HandshakeRequest, HandshakeResponse, PutResult, SchemaResult, Ticket, Result as FlightResult
 };
 use futures::{stream, Stream};
 use modelardb_common::arguments::extract_argument;
@@ -189,8 +189,14 @@ impl FlightService for FlightServiceHandler {
                 .register_node(cluster_node)
                 .map_err(|error| Status::internal(error.to_string()))?;
 
-            // TODO: Return the object store and the current database schema.
-            Ok(Response::new(Box::pin(stream::empty())))
+            // TODO: Return the current database schema as well.
+            let connection_info = self.context.remote_data_folder.connection_info().clone();
+
+            Ok(Response::new(Box::pin(stream::once(async {
+                Ok(FlightResult {
+                    body: connection_info.into(),
+                })
+            }))))
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
