@@ -27,7 +27,6 @@ use modelardb_common::schemas::{COMPRESSED_SCHEMA, QUERY_SCHEMA, UNCOMPRESSED_SC
 use modelardb_common::types::{
     ErrorBound, TimestampArray, TimestampBuilder, ValueArray, ValueBuilder,
 };
-use modelardb_compression::{self};
 use pyo3::import_exception;
 use pyo3::prelude::{pyfunction, pymodule, wrap_pyfunction, PyAny, PyModule, PyResult, Python};
 

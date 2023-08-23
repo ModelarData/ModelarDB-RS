@@ -29,7 +29,7 @@ use modelardb_common::types::{
 };
 
 use super::timestamps;
-use crate::models::{self};
+use crate::models;
 
 /// The state the Swing model type needs while fitting a model to a time series
 /// segment.
