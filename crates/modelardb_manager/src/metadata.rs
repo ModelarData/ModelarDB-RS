@@ -20,8 +20,8 @@ use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use sqlx::{Executor, PgPool};
 
-/// Store's the metadata required for reading from and writing to the tables and model tables and
-/// persisting edges. The data that needs to be persisted are stored in the metadata database.
+/// Stores the metadata required for reading from and writing to the tables and model tables and
+/// persisting edges. The data that needs to be persisted is stored in the metadata database.
 #[derive(Clone)]
 pub struct MetadataManager {
     /// Pool of connections to the metadata database.
