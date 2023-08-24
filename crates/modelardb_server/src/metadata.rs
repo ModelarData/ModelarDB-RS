@@ -21,43 +21,34 @@
 //! corresponding model table's field column indices to uniquely identify each univariate time series
 //! stored in the storage engine by a univariate id.
 
-pub mod model_table_metadata;
-
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
 use std::hash::Hasher;
-use std::mem;
 use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::Arc;
 
-use arrow_flight::{IpcMessage, SchemaAsIpc};
 use dashmap::DashMap;
-use datafusion::arrow::datatypes::Schema;
-use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::execution::options::ParquetReadOptions;
 use futures::TryStreamExt;
-use log::LevelFilter;
 use modelardb_common::errors::ModelarDbError;
-use modelardb_common::types::{Timestamp, UnivariateId, Value};
-use modelardb_compression::ErrorBound;
+use modelardb_common::metadata;
+use modelardb_common::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
+use modelardb_common::types::{ErrorBound, Timestamp, UnivariateId, Value};
 use sqlx::database::HasArguments;
 use sqlx::error::Error;
 use sqlx::query::Query;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
-use sqlx::{ConnectOptions, Executor, Result, Row, Sqlite, SqlitePool};
+use sqlx::{Executor, Result, Row, Sqlite, SqlitePool};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::parser;
 use crate::query::ModelTable;
 use crate::storage::COMPRESSED_DATA_FOLDER;
 use crate::Context;
-
-use self::model_table_metadata::GeneratedColumn;
 
 /// Name used for the file containing the SQLite database storing the metadata.
 pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
@@ -95,7 +86,7 @@ impl CompressedFile {
     }
 }
 
-/// Store's the metadata required for reading from and writing to the tables and model tables.
+/// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata database.
 #[derive(Clone)]
 pub struct MetadataManager {
@@ -118,11 +109,9 @@ impl MetadataManager {
         }
 
         // Specify the metadata database's path and that it should be created if it does not exist.
-        let mut options = SqliteConnectOptions::new()
+        let options = SqliteConnectOptions::new()
             .filename(local_data_folder.join(METADATA_DATABASE_NAME))
             .create_if_missing(true);
-
-        options.log_statements(LevelFilter::Debug);
 
         // Create the metadata manager with the default values.
         let metadata_manager = Self {
@@ -132,7 +121,11 @@ impl MetadataManager {
         };
 
         // Create the necessary tables in the metadata database.
-        metadata_manager.create_metadata_database_tables().await?;
+        metadata::create_metadata_database_tables(
+            &metadata_manager.metadata_database_pool,
+            metadata::MetadataDatabaseType::SQLite,
+        )
+        .await?;
 
         // Return the metadata manager.
         Ok(metadata_manager)
@@ -145,64 +138,6 @@ impl MetadataManager {
         } else {
             false
         }
-    }
-
-    /// If they do not already exist, create the tables used for table and model table metadata.
-    /// * The table_metadata table contains the metadata for tables.
-    /// * The model_table_metadata table contains the main metadata for model tables.
-    /// * The model_table_hash_table_name contains a mapping from each tag hash to the name of the
-    /// model table that contains the time series with that tag hash.
-    /// * The model_table_field_columns table contains the name, index, error bound, and generation
-    /// expression of the field columns in each model table.
-    /// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
-    async fn create_metadata_database_tables(&self) -> Result<()> {
-        // Create the table_metadata SQLite table if it does not exist.
-        self.metadata_database_pool
-            .execute(
-                "CREATE TABLE IF NOT EXISTS table_metadata (
-                table_name TEXT PRIMARY KEY
-                ) STRICT",
-            )
-            .await?;
-
-        // Create the model_table_metadata SQLite table if it does not exist.
-        self.metadata_database_pool
-            .execute(
-                "CREATE TABLE IF NOT EXISTS model_table_metadata (
-                table_name TEXT PRIMARY KEY,
-                query_schema BLOB NOT NULL
-                ) STRICT",
-            )
-            .await?;
-
-        // Create the model_table_hash_name SQLite table if it does not exist.
-        self.metadata_database_pool
-            .execute(
-                "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
-                hash INTEGER PRIMARY KEY,
-                table_name TEXT
-                ) STRICT",
-            )
-            .await?;
-
-        // Create the model_table_field_columns SQLite table if it does not
-        // exist. Note that column_index will only use a maximum of 10 bits.
-        // generated_column_* is NULL if the fields are stored as segments.
-        self.metadata_database_pool
-            .execute(
-                "CREATE TABLE IF NOT EXISTS model_table_field_columns (
-                table_name TEXT NOT NULL,
-                column_name TEXT NOT NULL,
-                column_index INTEGER NOT NULL,
-                error_bound REAL NOT NULL,
-                generated_column_expr TEXT,
-                generated_column_sources BLOB,
-                PRIMARY KEY (table_name, column_name)
-                ) STRICT",
-            )
-            .await?;
-
-        Ok(())
     }
 
     /// Return the path of the local data folder.
@@ -316,7 +251,7 @@ impl MetadataManager {
              WHERE model_table_field_columns.table_name = model_table_hash_table_name.table_name
              AND hash = {signed_tag_hash} AND column_index = {column_index}",
         );
-        let mut rows = sqlx::query(&select_statement).fetch(&mut connection);
+        let mut rows = sqlx::query(&select_statement).fetch(&mut *connection);
 
         // unwrap() is safe as the error bound is checked before it is written to the metadata database.
         let percentage: f32 = rows.try_next().await?.unwrap().try_get(0)?;
@@ -339,7 +274,7 @@ impl MetadataManager {
         let mut connection = self.metadata_database_pool.acquire().await?;
 
         let mut rows = sqlx::query("SELECT hash, table_name FROM model_table_hash_table_name")
-            .fetch(&mut connection);
+            .fetch(&mut *connection);
 
         let mut hash_to_table_name = HashMap::new();
         while let Some(row) = rows.try_next().await? {
@@ -371,7 +306,7 @@ impl MetadataManager {
             "SELECT hash,{} FROM {model_table_name}_tags",
             tag_column_names.join(","),
         );
-        let mut rows = sqlx::query(&select_statement).fetch(&mut connection);
+        let mut rows = sqlx::query(&select_statement).fetch(&mut *connection);
 
         let mut hash_to_tags = HashMap::new();
         while let Some(row) = rows.try_next().await? {
@@ -575,7 +510,7 @@ impl MetadataManager {
             )
             .as_str(),
         )
-        .execute(&mut transaction)
+        .execute(&mut *transaction)
         .await?;
 
         // The cast to usize is safe as only compressed_files_to_delete.len() can be deleted.
@@ -597,7 +532,7 @@ impl MetadataManager {
                 query_schema_index,
                 compressed_file,
             )
-            .execute(&mut transaction)
+            .execute(&mut *transaction)
             .await?;
         }
 
@@ -738,13 +673,7 @@ impl MetadataManager {
     /// Save the created table to the metadata database. This consists of adding a row to the
     /// table_metadata table with the `name` of the created table.
     pub async fn save_table_metadata(&self, name: &str) -> Result<()> {
-        // Add a new row in the table_metadata table to persist the table.
-        sqlx::query("INSERT INTO table_metadata (table_name) VALUES (?1)")
-            .bind(name)
-            .execute(&self.metadata_database_pool)
-            .await?;
-
-        Ok(())
+        metadata::save_table_metadata(&self.metadata_database_pool, name.to_string()).await
     }
 
     /// Read the rows in the table_metadata table and use these to register tables in Apache Arrow
@@ -802,7 +731,7 @@ impl MetadataManager {
     ) -> Result<()> {
         // Convert the query schema to bytes so it can be saved as a BLOB in the metadata database.
         let query_schema_bytes =
-            MetadataManager::convert_schema_to_blob(&model_table_metadata.query_schema)?;
+            metadata::try_convert_schema_to_blob(&model_table_metadata.query_schema)?;
 
         // Create a transaction to ensure the database state is consistent across tables.
         let mut transaction = self.metadata_database_pool.begin().await?;
@@ -878,7 +807,7 @@ impl MetadataManager {
                     {
                         (
                             Some(generated_column.original_expr.clone()),
-                            Some(MetadataManager::convert_slice_usize_to_vec_u8(
+                            Some(metadata::convert_slice_usize_to_vec_u8(
                                 &generated_column.source_columns,
                             )),
                         )
@@ -903,7 +832,7 @@ impl MetadataManager {
                     .bind(error_bound)
                     .bind(generated_column_expr)
                     .bind(generated_column_sources)
-                    .execute(&mut transaction)
+                    .execute(&mut *transaction)
                     .await?;
             }
         }
@@ -934,7 +863,7 @@ impl MetadataManager {
 
         // Convert the BLOBs to the concrete types.
         let query_schema_bytes = row.try_get(1)?;
-        let query_schema = MetadataManager::convert_blob_to_schema(query_schema_bytes)?;
+        let query_schema = metadata::try_convert_blob_to_schema(query_schema_bytes)?;
 
         let error_bounds = self
             .error_bounds(table_name, query_schema.fields().len())
@@ -966,54 +895,6 @@ impl MetadataManager {
 
         info!("Registered model table '{}'.", table_name);
         Ok(())
-    }
-
-    /// Convert a [`Schema`] to [`Vec<u8>`].
-    fn convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>> {
-        let options = IpcWriteOptions::default();
-        let schema_as_ipc = SchemaAsIpc::new(schema, &options);
-        let ipc_message: IpcMessage =
-            schema_as_ipc
-                .try_into()
-                .map_err(|error: ArrowError| Error::ColumnDecode {
-                    index: "query_schema".to_owned(),
-                    source: Box::new(error),
-                })?;
-        Ok(ipc_message.0.to_vec())
-    }
-
-    /// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
-    /// [`Error`].
-    fn convert_blob_to_schema(schema_bytes: Vec<u8>) -> Result<Schema> {
-        let ipc_message = IpcMessage(schema_bytes.into());
-        Schema::try_from(ipc_message).map_err(|error| Error::ColumnDecode {
-            index: "query_schema".to_owned(),
-            source: Box::new(error),
-        })
-    }
-
-    /// Convert a [`&[usize]`] to a [`Vec<u8>`].
-    fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
-        usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
-    }
-
-    /// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides evenly by
-    /// [`mem::size_of::<usize>()`], otherwise [`Error`] is returned.
-    fn convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>> {
-        if bytes.len() % mem::size_of::<usize>() != 0 {
-            Err(Error::ColumnDecode {
-                index: "generated_column_sources".to_owned(),
-                source: Box::new(ModelarDbError::ImplementationError(
-                    "Blob is not a vector of usizes".to_owned(),
-                )),
-            })
-        } else {
-            // unwrap() is safe as bytes divides evenly by mem::size_of::<usize>().
-            Ok(bytes
-                .chunks(mem::size_of::<usize>())
-                .map(|byte_slice| usize::from_le_bytes(byte_slice.try_into().unwrap()))
-                .collect())
-        }
     }
 
     /// Return the error bounds for the model table with `table_name` and `query_schema_columns`
@@ -1071,7 +952,7 @@ impl MetadataManager {
 
                 let generated_column = GeneratedColumn {
                     expr,
-                    source_columns: MetadataManager::convert_slice_u8_to_vec_usize(source_columns)
+                    source_columns: metadata::try_convert_slice_u8_to_vec_usize(source_columns)
                         .unwrap(),
                     original_expr: None,
                 };
@@ -1094,7 +975,7 @@ mod tests {
     use std::fs;
 
     use once_cell::sync::Lazy;
-    use proptest::{collection, num, prop_assert_eq, proptest};
+    use proptest::{num, prop_assert_eq, proptest};
 
     use crate::common_test;
 
@@ -1136,40 +1017,6 @@ mod tests {
         let path_buf = path.join(name);
         fs::create_dir(&path_buf).unwrap();
         path_buf
-    }
-
-    #[tokio::test]
-    async fn test_create_metadata_database_tables() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
-
-        // Verify that the tables were created and has the expected columns.
-        metadata_manager
-            .metadata_database_pool
-            .execute("SELECT table_name FROM table_metadata")
-            .await
-            .unwrap();
-
-        metadata_manager
-            .metadata_database_pool
-            .execute("SELECT table_name, query_schema FROM model_table_metadata")
-            .await
-            .unwrap();
-
-        metadata_manager
-            .metadata_database_pool
-            .execute("SELECT hash, table_name FROM model_table_hash_table_name")
-            .await
-            .unwrap();
-
-        metadata_manager
-            .metadata_database_pool
-            .execute(
-                "SELECT table_name, column_name, column_index, error_bound, generated_column_expr,
-                 generated_column_sources FROM model_table_field_columns",
-            )
-            .await
-            .unwrap();
     }
 
     #[tokio::test]
@@ -1876,30 +1723,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_table_metadata() {
-        // Save a table to the metadata database.
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
-
-        let table_name = "table_name";
-        metadata_manager
-            .save_table_metadata(table_name)
-            .await
-            .unwrap();
-
-        // Retrieve the table from the metadata database.
-        let mut rows = metadata_manager
-            .metadata_database_pool
-            .fetch("SELECT table_name FROM table_metadata");
-
-        let row = rows.try_next().await.unwrap().unwrap();
-        let retrieved_table_name = row.try_get::<&str, _>(0).unwrap();
-        assert_eq!(table_name, retrieved_table_name);
-
-        assert!(rows.try_next().await.unwrap().is_none());
-    }
-
-    #[tokio::test]
     async fn test_register_tables() {
         // The test succeeds if none of the unwrap()s fails.
 
@@ -1953,7 +1776,7 @@ mod tests {
         let row = rows.try_next().await.unwrap().unwrap();
         assert_eq!("model_table", row.try_get::<&str, _>(0).unwrap());
         assert_eq!(
-            MetadataManager::convert_schema_to_blob(&model_table_metadata.query_schema).unwrap(),
+            metadata::try_convert_schema_to_blob(&model_table_metadata.query_schema).unwrap(),
             row.try_get::<Vec<u8>, _>(1).unwrap()
         );
 
@@ -2005,32 +1828,6 @@ mod tests {
             .register_model_tables(&context)
             .await
             .unwrap();
-    }
-
-    #[test]
-    fn test_blob_to_schema_empty() {
-        assert!(MetadataManager::convert_blob_to_schema(vec!(1, 2, 4, 8)).is_err());
-    }
-
-    #[test]
-    fn test_blob_to_schema_and_schema_to_blob() {
-        let schema = common_test::model_table_metadata().schema;
-
-        // Serialize a schema to bytes.
-        let bytes = MetadataManager::convert_schema_to_blob(&schema).unwrap();
-
-        // Deserialize the bytes to a schema.
-        let retrieved_schema = MetadataManager::convert_blob_to_schema(bytes).unwrap();
-        assert_eq!(*schema, retrieved_schema);
-    }
-
-    proptest! {
-        #[test]
-        fn test_usize_to_u8_and_u8_to_usize(values in collection::vec(num::usize::ANY, 0..50)) {
-            let bytes = MetadataManager::convert_slice_usize_to_vec_u8(&values);
-            let usizes = MetadataManager::convert_slice_u8_to_vec_usize(&bytes).unwrap();
-            prop_assert_eq!(values, usizes);
-        }
     }
 
     #[tokio::test]

@@ -29,8 +29,8 @@ use datafusion::logical_expr::{AggregateUDF, Expr as DFExpr, ScalarUDF, TableSou
 use datafusion::physical_expr::planner;
 use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
 use datafusion::sql::TableReference;
-use modelardb_common::types::{ArrowTimestamp, ArrowValue};
-use modelardb_compression::ErrorBound;
+use modelardb_common::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
+use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 use sqlparser::ast::{
     ColumnDef, ColumnOption, ColumnOptionDef, DataType as SQLDataType, GeneratedAs,
     HiveDistributionStyle, HiveFormat, Ident, ObjectName, Statement, TimezoneInfo,
@@ -40,7 +40,6 @@ use sqlparser::keywords::{Keyword, ALL_KEYWORDS};
 use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::Token;
 
-use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::metadata::MetadataManager;
 
 /// Constant specifying that a model table should be created.

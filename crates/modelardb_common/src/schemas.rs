@@ -21,8 +21,8 @@ use arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use once_cell::sync::Lazy;
 
 use crate::types::{
-    ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedSchema, MetricSchema, QuerySchema,
-    UncompressedSchema, ConfigurationSchema
+    ArrowTimestamp, ArrowUnivariateId, ArrowValue, CompressedSchema, ConfigurationSchema,
+    MetricSchema, QuerySchema, UncompressedSchema,
 };
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`](arrow::datatypes::Schema) used for

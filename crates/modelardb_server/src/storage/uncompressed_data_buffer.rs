@@ -30,8 +30,9 @@ use datafusion::arrow::array::{Array, ArrayBuilder};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
-use modelardb_common::types::{Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder};
-use modelardb_compression::ErrorBound;
+use modelardb_common::types::{
+    ErrorBound, Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder,
+};
 use tracing::debug;
 
 use crate::storage::{StorageEngine, UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER};

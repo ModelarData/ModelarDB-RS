@@ -45,13 +45,13 @@ use datafusion::optimizer::utils;
 use datafusion::physical_expr::planner;
 use datafusion::physical_plan::expressions::{Column, PhysicalSortExpr};
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr, Statistics};
+use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{COMPRESSED_SCHEMA, QUERY_SCHEMA};
 use modelardb_common::types::{ArrowTimestamp, ArrowValue};
 use object_store::ObjectStore;
 use once_cell::sync::Lazy;
 use tokio::sync::RwLockWriteGuard;
 
-use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
 use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};

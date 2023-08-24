@@ -16,14 +16,13 @@
 //! The types used throughout the crate.
 
 use std::debug_assert;
-use std::{cmp::Ordering, sync::Arc};
+use std::sync::Arc;
 
 use arrow::array::{BinaryBuilder, Float32Builder, UInt64Builder, UInt8Builder};
 use arrow::record_batch::RecordBatch;
-use modelardb_common::errors::ModelarDbError;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use modelardb_common::types::{
-    Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
+    ErrorBound, Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
 
 use crate::models::gorilla::Gorilla;
@@ -31,44 +30,6 @@ use crate::models::pmc_mean::PMCMean;
 use crate::models::swing::Swing;
 use crate::models::{timestamps, VALUE_SIZE_IN_BYTES};
 use crate::models::{PMC_MEAN_ID, SWING_ID};
-
-/// Error bound in percentage that is guaranteed to be from 0.0% to 100.0%. For both `PMCMean`,
-/// `Swing`, and `Gorilla` the error bound is interpreted as a relative per value error bound.
-#[derive(Debug, Copy, Clone)]
-pub struct ErrorBound(pub(crate) f32); // Simpler for the model types to directly work on the f32.
-
-impl ErrorBound {
-    /// Return [`ErrorBound`] if `percentage` is a value from 0.0% to 100.0%, otherwise
-    /// [`CompressionError`](ModelarDbError::CompressionError) is returned.
-    pub fn try_new(percentage: f32) -> Result<Self, ModelarDbError> {
-        if !(0.0..=100.0).contains(&percentage) {
-            Err(ModelarDbError::CompressionError(
-                "Error bound must be a value from 0.0% to 100.0%.".to_owned(),
-            ))
-        } else {
-            Ok(Self(percentage))
-        }
-    }
-
-    /// Consumes `self`, returning the error bound as a [`f32`].
-    pub fn into_inner(self) -> f32 {
-        self.0
-    }
-}
-
-/// Enable equal and not equal for [`ErrorBound`] and [`f32`].
-impl PartialEq<ErrorBound> for f32 {
-    fn eq(&self, other: &ErrorBound) -> bool {
-        self.eq(&other.0)
-    }
-}
-
-/// Enable less than and greater than for [`ErrorBound`] and [`f32`].
-impl PartialOrd<ErrorBound> for f32 {
-    fn partial_cmp(&self, other: &ErrorBound) -> Option<Ordering> {
-        self.partial_cmp(&other.0)
-    }
-}
 
 /// A model being built from an uncompressed segment using the potentially lossy model types in
 /// [`models`]. Each of the potentially lossy model types is used to fit models to the data points,
@@ -536,45 +497,11 @@ mod tests {
     use arrow::array::BinaryArray;
     use modelardb_common::types::{TimestampArray, ValueArray};
     use modelardb_common_test::data_generation::{self, ValuesStructure};
-    use proptest::num;
-    use proptest::proptest;
 
     use crate::compression;
 
     const ERROR_BOUND_ZERO: f32 = 0.0;
     const UNCOMPRESSED_TIMESTAMPS: &[Timestamp] = &[100, 200, 300, 400, 500];
-
-    // Tests for ErrorBound.
-    proptest! {
-    #[test]
-    fn test_error_bound_can_be_positive_if_less_than_one_hundred(percentage in num::f32::POSITIVE) {
-        if percentage <= 100.0 {
-            assert!(ErrorBound::try_new(percentage).is_ok())
-        } else {
-            assert!(ErrorBound::try_new(percentage).is_err())
-        }
-    }
-
-    #[test]
-    fn test_error_bound_cannot_be_negative(percentage in num::f32::NEGATIVE) {
-        assert!(ErrorBound::try_new(percentage).is_err())
-    }
-    }
-
-    #[test]
-    fn test_error_bound_cannot_be_positive_infinity() {
-        assert!(ErrorBound::try_new(f32::INFINITY).is_err())
-    }
-
-    #[test]
-    fn test_error_bound_cannot_be_negative_infinity() {
-        assert!(ErrorBound::try_new(f32::NEG_INFINITY).is_err())
-    }
-
-    #[test]
-    fn test_error_bound_cannot_be_nan() {
-        assert!(ErrorBound::try_new(f32::NAN).is_err())
-    }
 
     // Tests for CompressedSegmentBuilder.
     #[test]

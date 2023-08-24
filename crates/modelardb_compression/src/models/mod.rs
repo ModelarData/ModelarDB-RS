@@ -27,10 +27,10 @@ use std::mem;
 
 use arrow::array::ArrayBuilder;
 use modelardb_common::types::{
-    Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder,
+    ErrorBound, Timestamp, TimestampBuilder, UnivariateId, UnivariateIdBuilder, Value, ValueBuilder,
 };
 
-use crate::types::{CompressedSegmentBuilder, ErrorBound};
+use crate::types::CompressedSegmentBuilder;
 
 /// Unique ids for each model type. Constant values are used instead of an enum
 /// so the stored model type ids can be used in match expressions without being

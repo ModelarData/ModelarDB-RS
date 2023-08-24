@@ -15,6 +15,7 @@
 
 //! Implementation of ModelarDB manager's main function.
 
+mod metadata;
 mod remote;
 
 use std::env;
@@ -26,10 +27,11 @@ use modelardb_common::arguments::{
 };
 use object_store::ObjectStore;
 use once_cell::sync::Lazy;
-use sqlx::postgres::{PgPool, PgConnectOptions, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::metadata::MetadataManager;
 use crate::remote::start_apache_arrow_flight_server;
 
 /// The port of the Apache Arrow Flight Server. If the environment variable is not set, 8888 is used.
@@ -40,6 +42,14 @@ pub static PORT: Lazy<u16> = Lazy::new(|| match env::var("MODELARDBM_PORT") {
         .unwrap(),
     Err(_) => 8888,
 });
+
+/// Provides access to the managers components.
+pub struct Context {
+    /// Manager for the access to the metadata database.
+    pub metadata_manager: MetadataManager,
+    /// Folder for storing Apache Parquet files in a remote object store.
+    pub remote_data_folder: Arc<dyn ObjectStore>,
+}
 
 /// Parse the command line arguments to extract the metadata database and the remote object store
 /// and start an Apache Arrow Flight server. Returns [`String`] if the command line arguments
@@ -58,16 +68,24 @@ fn main() -> Result<(), String> {
     let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
 
-    // TODO: Pass the connection and remote data folder to the Apache Arrow Flight server when it is implemented.
-    let (_connection, _remote_data_folder) = runtime.block_on(async {
+    let context = runtime.block_on(async {
         let (connection, remote_data_folder) = parse_command_line_arguments(&arguments).await?;
         validate_remote_data_folder_from_argument(arguments.get(1).unwrap(), &remote_data_folder)
             .await?;
 
-        Ok::<(PgPool, Arc<dyn ObjectStore>), String>((connection, remote_data_folder))
+        let metadata_manager = MetadataManager::try_new(connection)
+            .await
+            .map_err(|error| format!("Unable to setup metadata database: {error}"))?;
+
+        // Create the Context.
+        Ok::<Arc<Context>, String>(Arc::new(Context {
+            metadata_manager,
+            remote_data_folder,
+        }))
     })?;
 
-    start_apache_arrow_flight_server(&runtime, *PORT).map_err(|error| error.to_string())?;
+    start_apache_arrow_flight_server(context, &runtime, *PORT)
+        .map_err(|error| error.to_string())?;
 
     Ok(())
 }

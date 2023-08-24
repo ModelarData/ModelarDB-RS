@@ -28,14 +28,13 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::physical_plan::ExecutionPlan;
+use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
-use modelardb_common::types::{ArrowTimestamp, ArrowValue, TimestampArray, ValueArray};
-use modelardb_compression::ErrorBound;
+use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray};
 use object_store::local::LocalFileSystem;
 use tokio::sync::RwLock;
 
 use crate::configuration::ConfigurationManager;
-use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::query::ModelTable;
 use crate::storage::{self, StorageEngine};

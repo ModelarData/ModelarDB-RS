@@ -20,13 +20,11 @@
 use arrow::record_batch::RecordBatch;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
-use modelardb_common::types::{TimestampArray, ValueArray};
+use modelardb_common::types::{ErrorBound, TimestampArray, ValueArray};
 
 use crate::models::gorilla::Gorilla;
 use crate::models::{self, timestamps, GORILLA_ID};
-use crate::types::{
-    CompressedSegmentBatchBuilder, CompressedSegmentBuilder, ErrorBound, ModelBuilder,
-};
+use crate::types::{CompressedSegmentBatchBuilder, CompressedSegmentBuilder, ModelBuilder};
 
 /// Maximum number of residuals that can be stored as part of a compressed segment. The number of
 /// residuals in a segment is stored as the last value in the `residuals` [`BinaryArray`] so

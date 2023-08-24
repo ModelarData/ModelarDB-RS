@@ -24,12 +24,11 @@ use std::sync::Arc;
 
 use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
-use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
-use modelardb_compression::ErrorBound;
+use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::types::{ErrorBound, Timestamp, TimestampArray, Value, ValueArray};
 use tokio::sync::RwLock;
 use tracing::debug;
 
-use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::storage::types::MemoryPool;
 use crate::storage::uncompressed_data_buffer::{
@@ -525,7 +524,6 @@ mod tests {
     use datafusion::arrow::array::{ArrowPrimitiveType, StringBuilder};
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use modelardb_common::types::{ArrowTimestamp, ArrowValue, TimestampBuilder, ValueBuilder};
-    use modelardb_compression::ErrorBound;
     use ringbuf::Rb;
 
     use crate::common_test;

@@ -33,14 +33,17 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
 
+use crate::Context;
+
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
 pub fn start_apache_arrow_flight_server(
+    context: Arc<Context>,
     runtime: &Arc<Runtime>,
     port: u16,
 ) -> Result<(), Box<dyn Error>> {
     let localhost_with_port = "0.0.0.0:".to_owned() + &port.to_string();
     let localhost_with_port: SocketAddr = localhost_with_port.parse()?;
-    let handler = FlightServiceHandler {};
+    let handler = FlightServiceHandler::new(context);
     let flight_service_server = FlightServiceServer::new(handler);
 
     info!("Starting Apache Arrow Flight on {}.", localhost_with_port);
@@ -60,7 +63,17 @@ pub fn start_apache_arrow_flight_server(
 /// published under Apache2.
 ///
 /// [Apache Arrow Flight examples]: https://github.com/apache/arrow-rs/blob/master/arrow-flight/examples
-struct FlightServiceHandler {}
+#[allow(dead_code)]
+struct FlightServiceHandler {
+    /// Singleton that provides access to the system's components.
+    context: Arc<Context>,
+}
+
+impl FlightServiceHandler {
+    pub fn new(context: Arc<Context>) -> FlightServiceHandler {
+        Self { context }
+    }
+}
 
 #[tonic::async_trait]
 impl FlightService for FlightServiceHandler {

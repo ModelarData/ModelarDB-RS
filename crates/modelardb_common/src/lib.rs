@@ -15,8 +15,9 @@
 
 //! Implementation of functions, macros, and types used throughout ModelarDB.
 
+pub mod arguments;
 pub mod errors;
 pub mod macros;
+pub mod metadata;
 pub mod schemas;
 pub mod types;
-pub mod arguments;

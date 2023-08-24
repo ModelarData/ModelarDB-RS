@@ -38,8 +38,7 @@ static RANDOM_NUMBER_SEED: Lazy<[u8; 32]> = Lazy::new(|| {
         Ok(seed) => {
             let message = "MODELARDB_TEST_SEED must be 32 bytes, each separated by a space.";
 
-            seed
-                .split(' ')
+            seed.split(' ')
                 .map(|maybe_byte| maybe_byte.parse::<u8>())
                 .collect::<Result<Vec<u8>, ParseIntError>>()
                 .map_err(|_| message)
@@ -47,7 +46,7 @@ static RANDOM_NUMBER_SEED: Lazy<[u8; 32]> = Lazy::new(|| {
                 .try_into()
                 .map_err(|_| message)
                 .unwrap()
-        },
+        }
         Err(_) => {
             let random_number_seed = rand::random::<[u8; 32]>();
 

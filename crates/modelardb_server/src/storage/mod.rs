@@ -50,6 +50,7 @@ use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties}
 use datafusion::parquet::format::SortingColumn;
 use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
+use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
@@ -61,7 +62,6 @@ use tracing::debug;
 use uuid::{uuid, Uuid};
 
 use crate::configuration::ConfigurationManager;
-use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
@@ -540,7 +540,7 @@ impl StorageEngine {
 
 /// Create an Apache ArrowWriter that writes to `writer`. If the writer could not be created return
 /// [`ParquetError`].
-pub(self) fn create_apache_arrow_writer<W: Write + Send>(
+fn create_apache_arrow_writer<W: Write + Send>(
     writer: W,
     schema: SchemaRef,
     sorting_columns: Option<Vec<SortingColumn>>,
@@ -562,7 +562,7 @@ pub(self) fn create_apache_arrow_writer<W: Write + Send>(
 /// timestamp of the last segment in `batch`, the minimum value stored in `batch`, the maximum value
 /// stored in `batch`, an UUID to make it unique across edge and cloud in practice, and an ID that
 /// uniquely identifies the edge.
-pub(self) fn create_time_and_value_range_file_name(batch: &RecordBatch) -> String {
+fn create_time_and_value_range_file_name(batch: &RecordBatch) -> String {
     // unwrap() is safe as None is only returned if all of the values are None.
     let start_time = aggregate::min(modelardb_common::array!(batch, 2, TimestampArray)).unwrap();
     let end_time = aggregate::max(modelardb_common::array!(batch, 3, TimestampArray)).unwrap();
