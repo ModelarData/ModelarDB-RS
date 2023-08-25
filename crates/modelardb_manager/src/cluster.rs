@@ -30,10 +30,7 @@ pub struct ClusterNode {
 
 impl ClusterNode {
     pub fn new(url: String, mode: ServerMode) -> Self {
-        Self {
-            url,
-            mode
-        }
+        Self { url, mode }
     }
 }
 
@@ -41,14 +38,12 @@ impl ClusterNode {
 /// to be applied to every single node in the cluster.
 pub struct ClusterManager {
     /// The nodes that are currently managed by the cluster manager.
-    nodes: Vec<ClusterNode>
+    nodes: Vec<ClusterNode>,
 }
 
 impl ClusterManager {
     pub fn new(nodes: Vec<ClusterNode>) -> Self {
-        Self {
-            nodes
-        }
+        Self { nodes }
     }
 
     /// Checks if the cluster node is already registered and adds it to the current nodes if not. If
@@ -57,9 +52,10 @@ impl ClusterManager {
         let node_urls: Vec<String> = self.nodes.iter().map(|node| node.url.clone()).collect();
 
         if node_urls.contains(&cluster_node.url) {
-            Err(ModelarDbError::ConfigurationError(
-                format!("A cluster node with the url `{}` is already registered.", cluster_node.url),
-            ))
+            Err(ModelarDbError::ConfigurationError(format!(
+                "A cluster node with the url `{}` is already registered.",
+                cluster_node.url
+            )))
         } else {
             self.nodes.push(cluster_node);
             Ok(())

@@ -17,12 +17,12 @@
 //! such as metadata about registered edges, is handled here.
 
 use futures::TryStreamExt;
+use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::types::ServerMode;
 use sqlx::{Executor, PgPool, Row};
 use std::str::FromStr;
-use modelardb_common::errors::ModelarDbError;
 
 use crate::cluster::ClusterNode;
 

@@ -34,10 +34,10 @@ impl RemoteDataFolder {
     pub fn new(connection_info: Vec<u8>, object_store: Arc<dyn ObjectStore>) -> Self {
         Self {
             connection_info,
-            object_store
+            object_store,
         }
     }
-    
+
     pub fn connection_info(&self) -> Vec<u8> {
         self.connection_info.clone()
     }

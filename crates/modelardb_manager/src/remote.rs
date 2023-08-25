@@ -27,7 +27,7 @@ use crate::cluster::ClusterNode;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
-    HandshakeRequest, HandshakeResponse, PutResult, SchemaResult, Ticket, Result as FlightResult
+    HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaResult, Ticket,
 };
 use futures::{stream, Stream};
 use modelardb_common::arguments::extract_argument;
