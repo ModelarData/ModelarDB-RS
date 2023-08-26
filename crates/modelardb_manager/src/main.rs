@@ -74,7 +74,7 @@ fn main() -> Result<(), String> {
     let arguments = collect_command_line_arguments(3);
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
 
-    let (metadata_manager, remote_data_folder, cluster_nodes) = runtime.block_on(async {
+    let context = runtime.block_on(async {
         let (connection, remote_data_folder) = parse_command_line_arguments(&arguments).await?;
         validate_remote_data_folder_from_argument(
             arguments.get(1).unwrap(),
@@ -85,25 +85,19 @@ fn main() -> Result<(), String> {
         let metadata_manager = MetadataManager::try_new(connection)
             .await
             .map_err(|error| format!("Unable to setup metadata database: {error}"))?;
+		
+		let cluster_nodes = metadata_manager
+		.cluster_nodes()
+		.await
+		.map_err(|error| error.to_string())?;
 
-        let cluster_nodes = metadata_manager
-            .cluster_nodes()
-            .await
-            .map_err(|error| error.to_string())?;
-
-        Ok::<(MetadataManager, RemoteDataFolder, Vec<ClusterNode>), String>((
-            metadata_manager,
-            remote_data_folder,
-            cluster_nodes,
-        ))
+        // Create the Context.
+        Ok::<Arc<Context>, String>(Arc::new(Context {
+			metadata_manager,
+			remote_data_folder,
+			cluster_manager: RwLock::new(ClusterManager::new(cluster_nodes)),
+		}))
     })?;
-
-    // Create the Context.
-    let context = Arc::new(Context {
-        metadata_manager,
-        remote_data_folder,
-        cluster_manager: RwLock::new(ClusterManager::new(cluster_nodes)),
-    });
 
     start_apache_arrow_flight_server(context, &runtime, *PORT)
         .map_err(|error| error.to_string())?;

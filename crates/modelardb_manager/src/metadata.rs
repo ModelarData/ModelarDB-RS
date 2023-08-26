@@ -16,13 +16,14 @@
 //! Management of the metadata database for the manager. Metadata which is unique to the manager,
 //! such as metadata about registered edges, is handled here.
 
+use std::str::FromStr;
+
 use futures::TryStreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::types::ServerMode;
 use sqlx::{Executor, PgPool, Row};
-use std::str::FromStr;
 
 use crate::cluster::ClusterNode;
 
@@ -78,7 +79,8 @@ impl MetadataManager {
         metadata::save_table_metadata(&self.metadata_database_pool, name.to_string()).await
     }
 
-    // TODO: Move to common metadata manager to avoid duplicated code.
+    // TODO: Move to common metadata manager to avoid duplicated code when the issue with generic
+    //       functions that use transactions is fixed.
     /// Save the created model table to the metadata database. This includes creating a tags table
     /// for the model table, creating a compressed files table for the model table, adding a row to
     /// the model_table_metadata table, and adding a row to the model_table_field_columns table for
@@ -87,7 +89,7 @@ impl MetadataManager {
         &self,
         model_table_metadata: &ModelTableMetadata,
     ) -> Result<(), sqlx::Error> {
-        // Convert the query schema to bytes so it can be saved as a bytea in the metadata database.
+        // Convert the query schema to bytes so it can be saved as a BYTEA in the metadata database.
         let query_schema_bytes =
             metadata::try_convert_schema_to_blob(&model_table_metadata.query_schema)?;
 
@@ -121,7 +123,7 @@ impl MetadataManager {
         transaction
             .execute(
                 format!(
-                    "CREATE TABLE {}_compressed_files (file_name bytea PRIMARY KEY, field_column INTEGER,
+                    "CREATE TABLE {}_compressed_files (file_name BYTEA PRIMARY KEY, field_column INTEGER,
                      start_time INTEGER, end_time INTEGER, min_value REAL, max_value REAL)",
                     model_table_metadata.name
                 )
