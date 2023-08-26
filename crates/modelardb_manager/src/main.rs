@@ -33,7 +33,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::cluster::{ClusterManager, ClusterNode};
+use crate::cluster::ClusterManager;
 use crate::data_folder::RemoteDataFolder;
 use crate::metadata::MetadataManager;
 use crate::remote::start_apache_arrow_flight_server;
