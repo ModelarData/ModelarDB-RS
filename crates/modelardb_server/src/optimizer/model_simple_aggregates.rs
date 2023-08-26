@@ -999,16 +999,18 @@ mod tests {
             vec![TypeId::of::<ParquetExec>()],
         ];
 
-        common_test::assert_eq_physical_plan_expected(physical_plan, expected_plan);
+        common_test::assert_eq_physical_plan_expected(physical_plan, &expected_plan);
     }
 
     #[tokio::test]
     async fn test_rewrite_aggregates_on_one_column_without_predicates() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let query = "SELECT COUNT(field_1), MIN(field_1), MAX(field_1),
-                                  SUM(field_1), AVG(field_1) FROM model_table";
-        let physical_plan =
-            common_test::query_optimized_physical_query_plan(temp_dir.path(), query).await;
+
+        // Apache Arrow DataFusion 30 creates two input columns to AggregateExec when both SUM and
+        // AVG is computed in the same query, so for now, multiple queries are used for the test.
+        let query_no_avg = "SELECT COUNT(field_1), MIN(field_1), MAX(field_1), SUM(field_1)
+                                  FROM model_table";
+        let query_only_avg = "SELECT AVG(field_1) FROM model_table";
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -1017,7 +1019,11 @@ mod tests {
             vec![TypeId::of::<ParquetExec>()],
         ];
 
-        common_test::assert_eq_physical_plan_expected(physical_plan, expected_plan);
+        for query in [query_no_avg, query_only_avg] {
+            let physical_plan =
+                common_test::query_optimized_physical_query_plan(temp_dir.path(), query).await;
+            common_test::assert_eq_physical_plan_expected(physical_plan, &expected_plan);
+        }
     }
 
     #[tokio::test]
@@ -1039,7 +1045,7 @@ mod tests {
             vec![TypeId::of::<ParquetExec>()],
         ];
 
-        common_test::assert_eq_physical_plan_expected(physical_plan, expected_plan);
+        common_test::assert_eq_physical_plan_expected(physical_plan, &expected_plan);
     }
 
     #[tokio::test]
@@ -1059,6 +1065,6 @@ mod tests {
             vec![TypeId::of::<ParquetExec>(), TypeId::of::<ParquetExec>()],
         ];
 
-        common_test::assert_eq_physical_plan_expected(physical_plan, expected_plan);
+        common_test::assert_eq_physical_plan_expected(physical_plan, &expected_plan);
     }
 }
