@@ -575,6 +575,7 @@ fn test_can_list_actions() {
             "FlushEdge",
             "FlushMemory",
             "GetConfiguration",
+            "KillEdge",
             "UpdateConfiguration",
             "UpdateRemoteObjectStore",
         ]

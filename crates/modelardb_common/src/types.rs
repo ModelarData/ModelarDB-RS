@@ -103,7 +103,7 @@ impl PartialOrd<ErrorBound> for f32 {
 }
 
 /// The different possible modes of a ModelarDB server, assigned when the server is started.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ServerMode {
     Cloud,
     Edge,

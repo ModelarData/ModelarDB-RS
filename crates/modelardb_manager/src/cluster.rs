@@ -20,7 +20,7 @@ use modelardb_common::types::ServerMode;
 
 /// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
 /// or a cloud node. A node cannot be another manager.
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct ClusterNode {
     /// Arrow Flight URL for the node. This URL uniquely identifies the node.
     pub url: String,
@@ -61,6 +61,11 @@ impl ClusterManager {
             Ok(())
         }
     }
+
+    /// Remove the cluster node with an url matching `url` from the current nodes.
+    pub fn remove_node(&mut self, url: &str) {
+        self.nodes.retain(|node| node.url != url);
+    }
 }
 
 #[cfg(test)]
@@ -83,5 +88,18 @@ mod test {
         let mut cluster_manager = ClusterManager::new(vec![cluster_node.clone()]);
 
         assert!(cluster_manager.register_node(cluster_node).is_err());
+    }
+
+    #[test]
+    fn test_remove_node() {
+        let cluster_node_1 = ClusterNode::new("localhost_1".to_string(), ServerMode::Edge);
+        let cluster_node_2 = ClusterNode::new("localhost_2".to_string(), ServerMode::Edge);
+
+        let mut cluster_manager =
+            ClusterManager::new(vec![cluster_node_1.clone(), cluster_node_2.clone()]);
+
+        assert_eq!(cluster_manager.nodes, vec![cluster_node_1, cluster_node_2.clone()]);
+        cluster_manager.remove_node("localhost_1");
+        assert_eq!(cluster_manager.nodes, vec![cluster_node_2]);
     }
 }
