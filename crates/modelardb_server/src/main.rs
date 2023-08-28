@@ -37,7 +37,7 @@ use datafusion::execution::context::{SessionConfig, SessionContext, SessionState
 use datafusion::execution::runtime_env::RuntimeEnv;
 use modelardb_common::arguments::{
     argument_to_remote_object_store, collect_command_line_arguments, encode_argument,
-    validate_remote_data_folder_from_argument,
+    parse_object_store_arguments, validate_remote_data_folder_from_argument,
 };
 use modelardb_common::types::{ClusterMode, ServerMode};
 use object_store::{local::LocalFileSystem, ObjectStore};
@@ -305,8 +305,10 @@ async fn retrieve_manager_object_store(
         .await
         .map_err(|error| error.to_string())?;
 
-    if let Some(_response) = maybe_response {
-        Err("".to_string())
+    if let Some(response) = maybe_response {
+        Ok(parse_object_store_arguments(&response.body)
+            .await
+            .map_err(|error| error.to_string())?)
     } else {
         Err("Response for request to register the node is empty.".to_string())
     }
