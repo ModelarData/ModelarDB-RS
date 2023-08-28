@@ -49,9 +49,7 @@ impl ClusterManager {
     /// Checks if the cluster node is already registered and adds it to the current nodes if not. If
     /// it already exists, [`ConfigurationError`](ModelarDbError::ConfigurationError) is returned.
     pub fn register_node(&mut self, cluster_node: ClusterNode) -> Result<(), ModelarDbError> {
-        let node_urls: Vec<String> = self.nodes.iter().map(|node| node.url.clone()).collect();
-
-        if node_urls.contains(&cluster_node.url) {
+        if self.nodes.iter().any(|node| node.url == cluster_node.url) {
             Err(ModelarDbError::ConfigurationError(format!(
                 "A cluster node with the url `{}` is already registered.",
                 cluster_node.url
@@ -62,9 +60,17 @@ impl ClusterManager {
         }
     }
 
-    /// Remove the cluster node with an url matching `url` from the current nodes.
-    pub fn remove_node(&mut self, url: &str) {
-        self.nodes.retain(|node| node.url != url);
+    /// Remove the cluster node with an url matching `url` from the current nodes. If no cluster node
+    /// with `url` exists, [`ConfigurationError`](ModelarDbError::ConfigurationError) is returned.
+    pub fn remove_node(&mut self, url: &str) -> Result<(), ModelarDbError> {
+        if self.nodes.iter().any(|node| node.url == url) {
+            self.nodes.retain(|node| node.url != url);
+            Ok(())
+        } else {
+            Err(ModelarDbError::ConfigurationError(format!(
+                "A cluster node with the url `{url}` does not exist."
+            )))
+        }
     }
 }
 
@@ -98,8 +104,13 @@ mod test {
         let mut cluster_manager =
             ClusterManager::new(vec![cluster_node_1.clone(), cluster_node_2.clone()]);
 
-        assert_eq!(cluster_manager.nodes, vec![cluster_node_1, cluster_node_2.clone()]);
-        cluster_manager.remove_node("localhost_1");
+        cluster_manager.remove_node("localhost_1").unwrap();
         assert_eq!(cluster_manager.nodes, vec![cluster_node_2]);
+    }
+
+    #[test]
+    fn test_remove_node_invalid_url() {
+        let mut cluster_manager = ClusterManager::new(vec![]);
+        assert!(cluster_manager.remove_node("invalid_url").is_err());
     }
 }

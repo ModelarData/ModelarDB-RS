@@ -206,7 +206,12 @@ impl FlightService for FlightServiceHandler {
             // TODO: Remove the node with the given url from the metadata database.
 
             // Remove the node with the given url from the cluster manager.
-            self.context.cluster_manager.write().await.remove_node(url);
+            self.context
+                .cluster_manager
+                .write()
+                .await
+                .remove_node(url)
+                .map_err(|error| Status::internal(error.to_string()))?;
 
             // Flush the node and kill the process running the node.
             let mut flight_client = FlightServiceClient::connect(format!("grpc://{url}"))
