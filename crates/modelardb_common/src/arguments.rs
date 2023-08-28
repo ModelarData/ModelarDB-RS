@@ -79,7 +79,7 @@ pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
 
             Ok(credentials
                 .iter()
-                .flat_map(|credential| encode_credential(credential))
+                .flat_map(|credential| encode_argument(credential))
                 .collect())
         }
         Some(("azureblobstorage", container_name)) => {
@@ -92,7 +92,7 @@ pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
 
             Ok(credentials
                 .iter()
-                .flat_map(|credential| encode_credential(credential))
+                .flat_map(|credential| encode_argument(credential))
                 .collect())
         }
         _ => Err(REMOTE_DATA_FOLDER_ERROR.to_owned()),
@@ -163,21 +163,21 @@ pub async fn validate_remote_data_folder(
     }
 }
 
-/// Convert the given `credential` into padded bytes that contain the length of the byte
-/// representation of `credential` together with the byte representation. The length is exactly two
+/// Convert the given `argument` into padded bytes that contain the length of the byte
+/// representation of `argument` together with the byte representation. The length is exactly two
 /// bytes long.
-fn encode_credential(credential: &str) -> Vec<u8> {
-    let credential_bytes: Vec<u8> = credential.as_bytes().into();
-    let mut credential_size_bytes = vec![0; 2];
+fn encode_argument(argument: &str) -> Vec<u8> {
+    let argument_bytes: Vec<u8> = argument.as_bytes().into();
+    let mut argument_size_bytes = vec![0; 2];
 
     // unwrap() is safe since the buffer is in memory and no I/O errors can occur.
-    credential_size_bytes
-        .write(&credential_bytes.len().to_be_bytes())
+    argument_size_bytes
+        .write(&argument_bytes.len().to_be_bytes())
         .unwrap();
 
     [
-        &credential_size_bytes[(credential_size_bytes.len() - 2)..],
-        credential_bytes.as_slice(),
+        &argument_size_bytes[(argument_size_bytes.len() - 2)..],
+        argument_bytes.as_slice(),
     ]
     .concat()
 }
@@ -204,29 +204,29 @@ mod test {
     use super::*;
 
     #[test]
-    fn test_encode_credential() {
-        let encoded_credentials = encode_credential("test");
-        let (credential_size_bytes, credential_bytes) = encoded_credentials.split_at(2);
+    fn test_encode_argument() {
+        let encoded_argument = encode_argument("test");
+        let (argument_size_bytes, argument_bytes) = encoded_argument.split_at(2);
 
-        assert_eq!(credential_size_bytes, [0, 4]);
-        assert_eq!(credential_bytes, b"test");
+        assert_eq!(argument_size_bytes, [0, 4]);
+        assert_eq!(argument_bytes, b"test");
     }
 
     #[test]
     fn test_extract_arguments() {
-        let encoded_credential_1 = encode_credential("credential_1");
-        let encoded_credential_2 = encode_credential("credential_2");
+        let encoded_argument_1 = encode_argument("argument_1");
+        let encoded_argument_2 = encode_argument("argument_2");
 
         let data = [
-            encoded_credential_1.as_slice(),
-            encoded_credential_2.as_slice(),
+            encoded_argument_1.as_slice(),
+            encoded_argument_2.as_slice(),
         ]
         .concat();
 
-        let (credential_1, offset_data) = extract_argument(data.as_slice()).unwrap();
-        let (credential_2, _offset_data) = extract_argument(offset_data).unwrap();
+        let (argument_1, offset_data) = extract_argument(data.as_slice()).unwrap();
+        let (argument_2, _offset_data) = extract_argument(offset_data).unwrap();
 
-        assert_eq!(credential_1, "credential_1");
-        assert_eq!(credential_2, "credential_2");
+        assert_eq!(argument_1, "argument_1");
+        assert_eq!(argument_2, "argument_2");
     }
 }
