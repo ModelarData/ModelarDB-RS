@@ -619,19 +619,19 @@ fn extract_generation_exprs_for_all_columns(
                 generation_expr,
             } = &column_def_option.option
             {
-                // The expression is saved as a string so it can be stored in the metadata
-                // database, it is not in ModelTableMetadata as it not used for queries.
+                // The expression is saved as a string so it can be stored in the metadata database,
+                // it is not stored in ModelTableMetadata as it not used for during query execution.
                 let sql_expr = generation_expr.as_ref().unwrap();
                 let original_expr = Some(sql_expr.to_string());
 
-                // Ensure the parsed sqlparser expression can be converted to a logical
-                // Apache Arrow DataFusion expression within the context of schema.
+                // Ensure that the parsed sqlparser expression can be converted to a logical Apache
+                // Arrow DataFusion expression within the context of schema to check it for errors.
                 let expr =
                     sql_to_rel.sql_to_expr(sql_expr.clone(), &df_schema, &mut planner_context)?;
 
-                // Ensure the logical Apache Arrow DataFusion expression can be converted to
-                // a physical Apache Arrow DataFusion expression within the context of
-                // schema. This is done to ensure the user-defined expression is correct.
+                // Ensure the logical Apache Arrow DataFusion expression can be converted to a
+                // physical Apache Arrow DataFusion expression within the context of schema. This is
+                // to improve error messages if the user-defined expression has semantic errors.
                 let _physical_expr =
                     planner::create_physical_expr(&expr, &df_schema, &schema, &execution_props)?;
 
@@ -1057,9 +1057,18 @@ mod tests {
     }
 
     #[test]
-    fn test_semantic_checks_for_create_model_table_ensure_generated_as_expression_are_correct() {
+    fn test_semantic_checks_for_create_model_table_check_correct_generated_expression() {
         let statement = tokenize_and_parse_sql(
-            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (field_1 + 3773.0), tag TAG)",
+            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_1 * PI() / 180)), tag TAG)",
+        ).unwrap();
+
+        assert!(semantic_checks_for_create_table(statement).is_ok());
+    }
+
+    #[test]
+    fn test_semantic_checks_for_create_model_table_check_wrong_generated_expression() {
+        let statement = tokenize_and_parse_sql(
+            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD AS (COS(field_3 * PI() / 180)), tag TAG)",
         ).unwrap();
 
         assert!(semantic_checks_for_create_table(statement).is_err());

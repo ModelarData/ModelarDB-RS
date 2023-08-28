@@ -221,7 +221,7 @@ pub async fn query_optimized_physical_query_plan(
 /// only contains the type ids so the tests do not have to construct the actual operators.
 pub fn assert_eq_physical_plan_expected(
     physical_plan: Arc<dyn ExecutionPlan>,
-    expected_plan: Vec<Vec<TypeId>>,
+    expected_plan: &[Vec<TypeId>],
 ) {
     let mut level = 0;
     let mut current_execs = vec![physical_plan];
