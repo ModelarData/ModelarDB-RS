@@ -114,13 +114,18 @@ fn main() -> Result<(), String> {
     let (server_mode, cluster_mode, data_folders) =
         runtime.block_on(parse_command_line_arguments(&arguments))?;
 
-    // If a remote data folder was provided, check that it can be accessed. This check is performed
-    // after parse_command_line_arguments() as the Tokio Runtime is required.
-    if let Some(remote_data_folder) = &data_folders.remote_data_folder {
-        runtime.block_on(async {
-            validate_remote_data_folder_from_argument(arguments.get(2).unwrap(), remote_data_folder)
+    // If a remote data folder was provided, check that it can be accessed. If the cluster mode is
+    // "MultiNode" we assume the remote object store was validated by the manager.
+    if cluster_mode != ClusterMode::MultiNode {
+        if let Some(remote_data_folder) = &data_folders.remote_data_folder {
+            runtime.block_on(async {
+                validate_remote_data_folder_from_argument(
+                    arguments.get(2).unwrap(),
+                    remote_data_folder,
+                )
                 .await
-        })?;
+            })?;
+        }
     }
 
     // Create the components for the Context.
@@ -283,7 +288,7 @@ async fn retrieve_manager_object_store(
 ) -> Result<Arc<dyn ObjectStore>, String> {
     let mut flight_client = FlightServiceClient::connect(manager_url)
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| format!("Could not connect to manager: {}", error.to_string()))?;
 
     // Add the url and mode of the server to the action request.
     let localhost_with_port = "0.0.0.0:".to_owned() + &PORT.to_string();

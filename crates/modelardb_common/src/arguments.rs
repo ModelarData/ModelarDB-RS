@@ -71,6 +71,7 @@ pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
                 env::var("AWS_SECRET_ACCESS_KEY").map_err(|error| error.to_string())?;
 
             let credentials = [
+                "s3",
                 endpoint.as_str(),
                 bucket_name,
                 access_key_id.as_str(),
@@ -88,7 +89,12 @@ pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
             let access_key =
                 env::var("AZURE_STORAGE_ACCESS_KEY").map_err(|error| error.to_string())?;
 
-            let credentials = [account.as_str(), access_key.as_str(), container_name];
+            let credentials = [
+                "azureblobstorage",
+                account.as_str(),
+                access_key.as_str(),
+                container_name,
+            ];
 
             Ok(credentials
                 .iter()
