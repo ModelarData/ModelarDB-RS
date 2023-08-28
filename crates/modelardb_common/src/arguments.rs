@@ -163,6 +163,22 @@ pub async fn validate_remote_data_folder(
     }
 }
 
+/// Parse the arguments in `data` and return the resulting remote object store. If `data` does not
+/// contain valid connection information or the type of the new remote object store is not "s3" or
+/// "azureblobstorage", [`Status`] is returned.
+pub async fn parse_object_store_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status> {
+    // If the type of the new remote object store is not "s3" or "azureblobstorage", return an error.
+    let (object_store_type, offset_data) = extract_argument(data)?;
+
+    match object_store_type {
+        "s3" => Ok(parse_s3_arguments(offset_data).await),
+        "azureblobstorage" => Ok(parse_azure_blob_storage_arguments(offset_data).await),
+        _ => Err(Status::unimplemented(format!(
+            "{object_store_type} is currently not supported."
+        ))),
+    }?
+}
+
 /// Parse the arguments in `data` and return an [`Amazon S3`](object_store::aws::AmazonS3) object
 /// store if `data` contains the necessary arguments. If `data` is missing arguments or if the
 /// created [`Amazon S3`](object_store::aws::AmazonS3) object store connection is invalid,

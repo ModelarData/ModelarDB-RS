@@ -45,9 +45,7 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::prelude::ParquetReadOptions;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
-use modelardb_common::arguments::{
-    extract_argument, parse_azure_blob_storage_arguments, parse_s3_arguments,
-};
+use modelardb_common::arguments::{extract_argument, parse_object_store_arguments};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
 use modelardb_common::types::{ServerMode, TimestampBuilder};
@@ -704,16 +702,7 @@ impl FlightService for FlightServiceHandler {
                 ));
             }
 
-            // If the type of the new remote object store is not "s3" or "azureblobstorage", return an error.
-            let (object_store_type, offset_data) = extract_argument(&action.body)?;
-
-            let object_store = match object_store_type {
-                "s3" => parse_s3_arguments(offset_data).await,
-                "azureblobstorage" => parse_azure_blob_storage_arguments(offset_data).await,
-                _ => Err(Status::unimplemented(format!(
-                    "{object_store_type} is currently not supported."
-                ))),
-            }?;
+            let object_store = parse_object_store_arguments(&action.body).await?;
 
             // Update the object store used for data transfers.
             let mut storage_engine = self.context.storage_engine.write().await;
