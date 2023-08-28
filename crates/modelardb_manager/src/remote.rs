@@ -170,8 +170,7 @@ impl FlightService for FlightServiceHandler {
             let (url, offset_data) = extract_argument(&action.body)?;
             let (mode, _offset_data) = extract_argument(offset_data)?;
 
-            let server_mode =
-                ServerMode::from_str(mode).map_err(|error| Status::invalid_argument(error))?;
+            let server_mode = ServerMode::from_str(mode).map_err(Status::invalid_argument)?;
             let cluster_node = ClusterNode::new(url.to_string(), server_mode);
 
             // Use the metadata manager to persist the node to the metadata database.

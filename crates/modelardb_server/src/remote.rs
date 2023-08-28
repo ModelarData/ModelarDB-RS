@@ -46,14 +46,11 @@ use datafusion::prelude::ParquetReadOptions;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 use modelardb_common::arguments::{
-    extract_argument, validate_remote_data_folder, RemoteDataFolderType,
+    extract_argument, parse_azure_blob_storage_arguments, parse_s3_arguments,
 };
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
 use modelardb_common::types::{ServerMode, TimestampBuilder};
-use object_store::aws::AmazonS3Builder;
-use object_store::azure::MicrosoftAzureBuilder;
-use object_store::ObjectStore;
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
@@ -146,60 +143,6 @@ async fn send_flight_data(
         .send(flight_data_or_error)
         .await
         .map_err(|error| Status::internal(error.to_string()))
-}
-
-/// Parse the arguments in `data` and return an [`Amazon S3`](object_store::aws::AmazonS3) object
-/// store if `data` contains the necessary arguments. If `data` is missing arguments or if the
-/// created [`Amazon S3`](object_store::aws::AmazonS3) object store connection is invalid,
-/// [`Status`] is returned.
-async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status> {
-    let (endpoint, offset_data) = extract_argument(data)?;
-    let (bucket_name, offset_data) = extract_argument(offset_data)?;
-    let (access_key_id, offset_data) = extract_argument(offset_data)?;
-    let (secret_access_key, _offset_data) = extract_argument(offset_data)?;
-
-    let s3: Arc<dyn ObjectStore> = Arc::new(
-        AmazonS3Builder::new()
-            .with_region("")
-            .with_allow_http(true)
-            .with_endpoint(endpoint)
-            .with_bucket_name(bucket_name)
-            .with_access_key_id(access_key_id)
-            .with_secret_access_key(secret_access_key)
-            .build()
-            .map_err(|error| Status::invalid_argument(error.to_string()))?,
-    );
-
-    validate_remote_data_folder(RemoteDataFolderType::S3, &s3)
-        .await
-        .map_err(Status::invalid_argument)?;
-
-    Ok(s3)
-}
-
-/// Parse the arguments in `data` and return an [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
-/// object store if `data` contains the necessary arguments. If `data` is missing arguments or if the created
-/// [`Azure Blob Storage`](object_store::azure::MicrosoftAzure) object store connection is invalid,
-/// [`Status`] is returned.
-async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status> {
-    let (account, offset_data) = extract_argument(data)?;
-    let (access_key, offset_data) = extract_argument(offset_data)?;
-    let (container_name, _offset_data) = extract_argument(offset_data)?;
-
-    let azure_blob_storage: Arc<dyn ObjectStore> = Arc::new(
-        MicrosoftAzureBuilder::new()
-            .with_account(account)
-            .with_access_key(access_key)
-            .with_container_name(container_name)
-            .build()
-            .map_err(|error| Status::invalid_argument(error.to_string()))?,
-    );
-
-    validate_remote_data_folder(RemoteDataFolderType::AzureBlobStorage, &azure_blob_storage)
-        .await
-        .map_err(Status::invalid_argument)?;
-
-    Ok(azure_blob_storage)
 }
 
 /// Write the schema and corresponding record batch to a stream within a gRPC response.

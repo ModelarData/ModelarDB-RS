@@ -163,6 +163,62 @@ pub async fn validate_remote_data_folder(
     }
 }
 
+/// Parse the arguments in `data` and return an [`Amazon S3`](object_store::aws::AmazonS3) object
+/// store if `data` contains the necessary arguments. If `data` is missing arguments or if the
+/// created [`Amazon S3`](object_store::aws::AmazonS3) object store connection is invalid,
+/// [`Status`] is returned.
+pub async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status> {
+    let (endpoint, offset_data) = extract_argument(data)?;
+    let (bucket_name, offset_data) = extract_argument(offset_data)?;
+    let (access_key_id, offset_data) = extract_argument(offset_data)?;
+    let (secret_access_key, _offset_data) = extract_argument(offset_data)?;
+
+    let s3: Arc<dyn ObjectStore> = Arc::new(
+        AmazonS3Builder::new()
+            .with_region("")
+            .with_allow_http(true)
+            .with_endpoint(endpoint)
+            .with_bucket_name(bucket_name)
+            .with_access_key_id(access_key_id)
+            .with_secret_access_key(secret_access_key)
+            .build()
+            .map_err(|error| Status::invalid_argument(error.to_string()))?,
+    );
+
+    validate_remote_data_folder(RemoteDataFolderType::S3, &s3)
+        .await
+        .map_err(Status::invalid_argument)?;
+
+    Ok(s3)
+}
+
+/// Parse the arguments in `data` and return an [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
+/// object store if `data` contains the necessary arguments. If `data` is missing arguments or if the created
+/// [`Azure Blob Storage`](object_store::azure::MicrosoftAzure) object store connection is invalid,
+/// [`Status`] is returned.
+pub async fn parse_azure_blob_storage_arguments(
+    data: &[u8],
+) -> Result<Arc<dyn ObjectStore>, Status> {
+    let (account, offset_data) = extract_argument(data)?;
+    let (access_key, offset_data) = extract_argument(offset_data)?;
+    let (container_name, _offset_data) = extract_argument(offset_data)?;
+
+    let azure_blob_storage: Arc<dyn ObjectStore> = Arc::new(
+        MicrosoftAzureBuilder::new()
+            .with_account(account)
+            .with_access_key(access_key)
+            .with_container_name(container_name)
+            .build()
+            .map_err(|error| Status::invalid_argument(error.to_string()))?,
+    );
+
+    validate_remote_data_folder(RemoteDataFolderType::AzureBlobStorage, &azure_blob_storage)
+        .await
+        .map_err(Status::invalid_argument)?;
+
+    Ok(azure_blob_storage)
+}
+
 /// Convert the given `argument` into padded bytes that contain the length of the byte
 /// representation of `argument` together with the byte representation. The length is exactly two
 /// bytes long.
@@ -172,7 +228,7 @@ pub fn encode_argument(argument: &str) -> Vec<u8> {
 
     // unwrap() is safe since the buffer is in memory and no I/O errors can occur.
     argument_size_bytes
-        .write(&argument_bytes.len().to_be_bytes())
+        .write_all(&argument_bytes.len().to_be_bytes())
         .unwrap();
 
     [
