@@ -203,7 +203,12 @@ impl FlightService for FlightServiceHandler {
         } else if action.r#type == "RemoveNode" {
             let (url, _offset_data) = extract_argument(&action.body)?;
 
-            // TODO: Remove the node with the given url from the metadata database.
+            // Remove the node with the given url from the metadata database.
+            self.context
+                .metadata_manager
+                .remove_cluster_node(url)
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
 
             // Remove the node with the given url from the cluster manager.
             self.context

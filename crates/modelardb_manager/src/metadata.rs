@@ -212,6 +212,17 @@ impl MetadataManager {
         Ok(())
     }
 
+    /// Remove the row in the cluster_nodes table that correspond to the cluster node with `url` and
+    /// return [`Ok`]. If the row could not be removed, return [`sqlx::Error`].
+    pub async fn remove_cluster_node(&self, url: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM cluster_nodes WHERE url = $1")
+            .bind(url)
+            .execute(&self.metadata_database_pool)
+            .await?;
+
+        Ok(())
+    }
+
     /// Return the cluster nodes currently controlled by the manager that have been persisted to
     /// the metadata database. If the nodes could not be retrieved, [`sqlx::Error`] is returned.
     pub async fn cluster_nodes(&self) -> Result<Vec<ClusterNode>, sqlx::Error> {
