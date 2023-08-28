@@ -24,6 +24,7 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use crate::cluster::ClusterNode;
+use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
@@ -158,6 +159,9 @@ impl FlightService for FlightServiceHandler {
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
     /// to the cluster of nodes controlled by the manager and the object store and current database
     /// schema used in the cluster is returned.
+    /// * `RemoveNode`: Remove a node from the cluster of nodes controlled by the manager and
+    /// kill the process running the node. The specific node to remove is given through the
+    /// uniquely identifying URL of the node.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -196,6 +200,27 @@ impl FlightService for FlightServiceHandler {
                     body: connection_info.into(),
                 })
             }))))
+        } else if action.r#type == "RemoveNode" {
+            let (url, _offset_data) = extract_argument(&action.body)?;
+
+            // TODO: Remove the node with the given url from the metadata database.
+            // TODO: Remove the node with the given url from the cluster manager.
+
+            // Flush the node and kill the process running the node.
+            let mut flight_client = FlightServiceClient::connect(format!("grpc://{url}"))
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            let action = Action {
+                r#type: "KillEdge".to_owned(),
+                body: vec![].into(),
+            };
+
+            // Since the process is killed the error from the request is ignored.
+            let _ = flight_client.do_action(Request::new(action)).await;
+
+            // Confirm the node was removed.
+            Ok(Response::new(Box::pin(stream::empty())))
         } else {
             Err(Status::unimplemented("Action not implemented."))
         }
@@ -211,7 +236,13 @@ impl FlightService for FlightServiceHandler {
             description: "Register either an edge or cloud node with the manager.".to_owned(),
         };
 
-        let output = stream::iter(vec![Ok(register_node_action)]);
+        let remove_node_action = ActionType {
+            r#type: "RemoveNode".to_owned(),
+            description: "Remove a node from the manager and kill the process running the node."
+                .to_owned(),
+        };
+
+        let output = stream::iter(vec![Ok(register_node_action), Ok(remove_node_action)]);
 
         Ok(Response::new(Box::pin(output)))
     }

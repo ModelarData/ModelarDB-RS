@@ -291,7 +291,7 @@ async fn retrieve_manager_object_store(
         .map_err(|error| format!("Could not connect to manager: {}", error.to_string()))?;
 
     // Add the url and mode of the server to the action request.
-    let localhost_with_port = "0.0.0.0:".to_owned() + &PORT.to_string();
+    let localhost_with_port = "127.0.0.1:".to_owned() + &PORT.to_string();
     let mut body = encode_argument(localhost_with_port.as_str());
     body.append(&mut encode_argument(server_mode.to_string().as_str()));
 
