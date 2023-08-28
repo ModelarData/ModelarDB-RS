@@ -585,6 +585,10 @@ impl FlightService for FlightServiceHandler {
     /// currently in memory to disk and then flushes all compressed data on disk to the remote
     /// object store. Note that data is only transferred to the remote object store if one was
     /// provided when starting the server.
+    /// * `KillEdge`: An extension of the `FlushEdge` action that first flushes all data to disk,
+    /// then flushes all compressed data to the remote object store, and finally kills the process
+    /// that is running the server. Note that since the process is killed, a conventional response
+    /// cannot be returned.
     /// * `CollectMetrics`: Collect internal metrics describing the amount of memory used for
     /// uncompressed and compressed data, disk space used, and the number of data points ingested
     /// over time. Note that the metrics are cleared when collected, thus only the metrics
@@ -656,6 +660,14 @@ impl FlightService for FlightServiceHandler {
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "KillEdge" {
+            let mut storage_engine = self.context.storage_engine.write().await;
+            storage_engine.flush().await.map_err(Status::internal)?;
+            storage_engine.transfer().await?;
+
+            // Since the process is killed, a conventional response cannot be given. If the action
+            // returns a "Stream removed" message, the edge was successfully flushed and killed.
+            std::process::exit(0);
         } else if action.r#type == "CollectMetrics" {
             let mut storage_engine = self.context.storage_engine.write().await;
             let metrics = storage_engine.collect_metrics().await;
@@ -785,7 +797,7 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let flush_data_to_disk = ActionType {
+        let flush_memory_action = ActionType {
             r#type: "FlushMemory".to_owned(),
             description: "Flush the uncompressed data to disk by compressing and saving the data."
                 .to_owned(),
@@ -798,7 +810,15 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let collect_metrics = ActionType {
+        let kill_edge_action = ActionType {
+            r#type: "KillEdge".to_owned(),
+            description: "Flush uncompressed data to disk by compressing and saving the data, \
+            transfer all compressed data to the remote object store, and kill the process \
+            running the server."
+                .to_owned(),
+        };
+
+        let collect_metrics_action = ActionType {
             r#type: "CollectMetrics".to_owned(),
             description:
             "Collect internal metrics describing the amount of used memory for uncompressed \
@@ -807,31 +827,32 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let update_remote_object_store = ActionType {
+        let update_remote_object_store_action = ActionType {
             r#type: "UpdateRemoteObjectStore".to_owned(),
             description: "Update the remote object store, overriding the current remote object \
             store, if it exists."
                 .to_owned(),
         };
 
-        let get_configuration = ActionType {
+        let get_configuration_action = ActionType {
             r#type: "GetConfiguration".to_owned(),
             description: "Get the current server configuration.".to_owned(),
         };
 
-        let update_configuration = ActionType {
+        let update_configuration_action = ActionType {
             r#type: "UpdateConfiguration".to_owned(),
             description: "Update a specific setting in the server configuration.".to_owned(),
         };
 
         let output = stream::iter(vec![
             Ok(create_command_statement_update_action),
-            Ok(flush_data_to_disk),
+            Ok(flush_memory_action),
             Ok(flush_edge_action),
-            Ok(collect_metrics),
-            Ok(update_remote_object_store),
-            Ok(get_configuration),
-            Ok(update_configuration),
+            Ok(kill_edge_action),
+            Ok(collect_metrics_action),
+            Ok(update_remote_object_store_action),
+            Ok(get_configuration_action),
+            Ok(update_configuration_action),
         ]);
 
         Ok(Response::new(Box::pin(output)))
