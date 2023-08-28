@@ -85,18 +85,18 @@ fn main() -> Result<(), String> {
         let metadata_manager = MetadataManager::try_new(connection)
             .await
             .map_err(|error| format!("Unable to setup metadata database: {error}"))?;
-		
-		let cluster_nodes = metadata_manager
-		.cluster_nodes()
-		.await
-		.map_err(|error| error.to_string())?;
+
+        let cluster_nodes = metadata_manager
+            .cluster_nodes()
+            .await
+            .map_err(|error| error.to_string())?;
 
         // Create the Context.
         Ok::<Arc<Context>, String>(Arc::new(Context {
-			metadata_manager,
-			remote_data_folder,
-			cluster_manager: RwLock::new(ClusterManager::new(cluster_nodes)),
-		}))
+            metadata_manager,
+            remote_data_folder,
+            cluster_manager: RwLock::new(ClusterManager::new(cluster_nodes)),
+        }))
     })?;
 
     start_apache_arrow_flight_server(context, &runtime, *PORT)

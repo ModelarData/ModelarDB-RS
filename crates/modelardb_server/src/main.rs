@@ -36,7 +36,7 @@ use arrow_flight::Action;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
 use modelardb_common::arguments::{
-    argument_to_remote_object_store, collect_command_line_arguments,
+    argument_to_remote_object_store, collect_command_line_arguments, encode_argument,
     validate_remote_data_folder_from_argument,
 };
 use modelardb_common::types::{ClusterMode, ServerMode};
@@ -213,7 +213,7 @@ async fn parse_command_line_arguments(
         )),
         &["multi", "cloud", manager_url, local_data_folder] => {
             let remote_object_store =
-                retrieve_manager_object_store(manager_url.to_string()).await?;
+                retrieve_manager_object_store(manager_url.to_string(), ServerMode::Cloud).await?;
 
             Ok((
                 ServerMode::Cloud,
@@ -232,7 +232,8 @@ async fn parse_command_line_arguments(
             DataFolders {
                 local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                 remote_data_folder: Some(
-                    retrieve_manager_object_store(manager_url.to_string()).await?,
+                    retrieve_manager_object_store(manager_url.to_string(), ServerMode::Edge)
+                        .await?,
                 ),
                 query_data_folder: argument_to_local_object_store(local_data_folder)?,
             },
@@ -278,19 +279,37 @@ fn argument_to_local_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>
 /// could not be established, [`String`] is returned.
 async fn retrieve_manager_object_store(
     manager_url: String,
+    server_mode: ServerMode,
 ) -> Result<Arc<dyn ObjectStore>, String> {
-    let _flight_client = FlightServiceClient::connect(manager_url)
+    let mut flight_client = FlightServiceClient::connect(manager_url)
         .await
         .map_err(|error| error.to_string())?;
 
+    // Add the url and mode of the server to the action request.
+    let localhost_with_port = "0.0.0.0:".to_owned() + &PORT.to_string();
+    let mut body = encode_argument(localhost_with_port.as_str());
+    body.append(&mut encode_argument(server_mode.to_string().as_str()));
+
     let action = Action {
         r#type: "RegisterNode".to_owned(),
-        body: vec![].into(),
+        body: body.into(),
     };
 
-    let _request = Request::new(action);
+    // Extract the connection information for the remote object store from the response.
+    let maybe_response = flight_client
+        .do_action(Request::new(action))
+        .await
+        .map_err(|error| error.to_string())?
+        .into_inner()
+        .message()
+        .await
+        .map_err(|error| error.to_string())?;
 
-    Err("".to_string())
+    if let Some(response) = maybe_response {
+        Err("".to_string())
+    } else {
+        Err("Response for request to register the node is empty.".to_string())
+    }
 }
 
 /// Create a new [`SessionContext`] for interacting with Apache Arrow

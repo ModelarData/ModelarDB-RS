@@ -166,7 +166,7 @@ pub async fn validate_remote_data_folder(
 /// Convert the given `argument` into padded bytes that contain the length of the byte
 /// representation of `argument` together with the byte representation. The length is exactly two
 /// bytes long.
-fn encode_argument(argument: &str) -> Vec<u8> {
+pub fn encode_argument(argument: &str) -> Vec<u8> {
     let argument_bytes: Vec<u8> = argument.as_bytes().into();
     let mut argument_size_bytes = vec![0; 2];
 
@@ -217,11 +217,7 @@ mod test {
         let encoded_argument_1 = encode_argument("argument_1");
         let encoded_argument_2 = encode_argument("argument_2");
 
-        let data = [
-            encoded_argument_1.as_slice(),
-            encoded_argument_2.as_slice(),
-        ]
-        .concat();
+        let data = [encoded_argument_1.as_slice(), encoded_argument_2.as_slice()].concat();
 
         let (argument_1, offset_data) = extract_argument(data.as_slice()).unwrap();
         let (argument_2, _offset_data) = extract_argument(offset_data).unwrap();
