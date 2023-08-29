@@ -290,7 +290,7 @@ async fn retrieve_manager_object_store(
 ) -> Result<Arc<dyn ObjectStore>, String> {
     let mut flight_client = FlightServiceClient::connect(manager_url)
         .await
-        .map_err(|error| format!("Could not connect to manager: {}", error.to_string()))?;
+        .map_err(|error| format!("Could not connect to manager: {error}"))?;
 
     // Add the url and mode of the server to the action request.
     let localhost_with_port = "127.0.0.1:".to_owned() + &PORT.to_string();
