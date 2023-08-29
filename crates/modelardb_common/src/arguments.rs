@@ -173,7 +173,6 @@ pub async fn validate_remote_data_folder(
 /// contain valid connection information or the type of the new remote object store is not "s3" or
 /// "azureblobstorage", [`Status`] is returned.
 pub async fn parse_object_store_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status> {
-    // If the type of the new remote object store is not "s3" or "azureblobstorage", return an error.
     let (object_store_type, offset_data) = extract_argument(data)?;
 
     match object_store_type {

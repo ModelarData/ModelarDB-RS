@@ -228,7 +228,7 @@ impl MetadataManager {
                     "INSERT OR IGNORE INTO model_table_hash_table_name (hash, table_name) VALUES ({}, '{}')",
                     signed_tag_hash, model_table_metadata.name
                 )
-                    .as_str(),
+                .as_str(),
             ).await?;
 
             transaction.commit().await?;
@@ -767,7 +767,7 @@ impl MetadataManager {
                      start_time INTEGER, end_time INTEGER, min_value REAL, max_value REAL) STRICT",
                     model_table_metadata.name
                 )
-                    .as_str(),
+                .as_str(),
             )
             .await?;
 

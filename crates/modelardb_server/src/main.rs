@@ -244,11 +244,13 @@ async fn parse_command_line_arguments(
             },
         )),
         _ => {
+            // TODO: Update the usage instructions to specify that if cluster mode is "multi" a
+            //       manager url should be given and the remote data folder should not be given.
             // The errors are consciously ignored as the program is terminating.
             let binary_path = std::env::current_exe().unwrap();
             let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
             Err(format!(
-                "Usage: {binary_name} [mode] local_data_folder [remote_data_folder]."
+                "Usage: {binary_name} [cluster_mode] [server_mode] [manager_url] local_data_folder [remote_data_folder]."
             ))
         }
     }
@@ -315,7 +317,7 @@ async fn retrieve_manager_object_store(
             .await
             .map_err(|error| error.to_string())?)
     } else {
-        Err("Response for request to register the node is empty.".to_string())
+        Err("Response for request to register the node is empty.".to_owned())
     }
 }
 

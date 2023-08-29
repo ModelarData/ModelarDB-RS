@@ -23,7 +23,6 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use crate::cluster::ClusterNode;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
@@ -38,6 +37,7 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
 
+use crate::cluster::ClusterNode;
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
@@ -228,7 +228,7 @@ impl FlightService for FlightServiceHandler {
                 body: vec![].into(),
             };
 
-            // Since the process is killed the error from the request is ignored.
+            // Since the process is killed, the error from the request is ignored.
             let _ = flight_client.do_action(Request::new(action)).await;
 
             // Confirm the node was removed.

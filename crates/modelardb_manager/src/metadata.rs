@@ -53,14 +53,14 @@ impl MetadataManager {
         })
     }
 
-    /// If they do not already exist, create the tables that are specific to the manage metadata
+    /// If they do not already exist, create the tables that are specific to the manager metadata
     /// database.
     /// * The cluster_nodes table contains metadata for each node that is controlled by the manager.
     /// If the tables exist or were created, return [`Ok`], otherwise return [`sqlx::Error`].
     async fn create_manager_metadata_database_tables(
         metadata_database_pool: &PgPool,
     ) -> Result<(), sqlx::Error> {
-        // Create the nodes table if it does not exist.
+        // Create the cluster_nodes table if it does not exist.
         metadata_database_pool
             .execute(
                 "CREATE TABLE IF NOT EXISTS cluster_nodes (
@@ -212,8 +212,8 @@ impl MetadataManager {
         Ok(())
     }
 
-    /// Remove the row in the cluster_nodes table that correspond to the cluster node with `url` and
-    /// return [`Ok`]. If the row could not be removed, return [`sqlx::Error`].
+    /// Remove the row in the cluster_nodes table that corresponds to the cluster node with `url`
+    /// and return [`Ok`]. If the row could not be removed, return [`sqlx::Error`].
     pub async fn remove_cluster_node(&self, url: &str) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM cluster_nodes WHERE url = $1")
             .bind(url)
