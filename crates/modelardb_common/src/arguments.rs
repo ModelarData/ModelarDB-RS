@@ -279,27 +279,74 @@ pub fn extract_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
 #[cfg(test)]
 mod test {
     use super::*;
+    use proptest::proptest;
 
     #[test]
-    fn test_encode_argument() {
-        let encoded_argument = encode_argument("test");
-        let (argument_size_bytes, argument_bytes) = encoded_argument.split_at(2);
+    fn test_s3_argument_to_connection_info() {
+        env::set_var("AWS_ENDPOINT", "test_endpoint");
+        env::set_var("AWS_ACCESS_KEY_ID", "test_access_key_id");
+        env::set_var("AWS_SECRET_ACCESS_KEY", "test_secret_access_key");
 
-        assert_eq!(argument_size_bytes, [0, 4]);
-        assert_eq!(argument_bytes, b"test");
+        let connection_info = argument_to_connection_info("s3://test_bucket_name").unwrap();
+
+        let (object_store_type, offset_data) = extract_argument(&connection_info).unwrap();
+        assert_eq!(object_store_type, "s3");
+
+        let (endpoint, offset_data) = extract_argument(offset_data).unwrap();
+        assert_eq!(endpoint, "test_endpoint");
+
+        let (bucket_name, offset_data) = extract_argument(offset_data).unwrap();
+        assert_eq!(bucket_name, "test_bucket_name");
+
+        let (access_key_id, offset_data) = extract_argument(offset_data).unwrap();
+        assert_eq!(access_key_id, "test_access_key_id");
+
+        let (secret_access_key, _offset_data) = extract_argument(offset_data).unwrap();
+        assert_eq!(secret_access_key, "test_secret_access_key")
     }
 
     #[test]
-    fn test_extract_arguments() {
-        let encoded_argument_1 = encode_argument("argument_1");
-        let encoded_argument_2 = encode_argument("argument_2");
+    fn test_azureblobstorage_argument_to_connection_info() {
+        env::set_var("AZURE_STORAGE_ACCOUNT_NAME", "test_storage_account_name");
+        env::set_var("AZURE_STORAGE_ACCESS_KEY", "test_storage_access_key");
 
-        let data = [encoded_argument_1.as_slice(), encoded_argument_2.as_slice()].concat();
+        let connection_info =
+            argument_to_connection_info("azureblobstorage://test_container_name").unwrap();
 
-        let (argument_1, offset_data) = extract_argument(data.as_slice()).unwrap();
-        let (argument_2, _offset_data) = extract_argument(offset_data).unwrap();
+        let (object_store_type, offset_data) = extract_argument(&connection_info).unwrap();
+        assert_eq!(object_store_type, "azureblobstorage");
 
-        assert_eq!(argument_1, "argument_1");
-        assert_eq!(argument_2, "argument_2");
+        let (account, offset_data) = extract_argument(offset_data).unwrap();
+        assert_eq!(account, "test_storage_account_name");
+
+        let (access_key, offset_data) = extract_argument(offset_data).unwrap();
+        assert_eq!(access_key, "test_storage_access_key");
+
+        let (container_name, _offset_data) = extract_argument(offset_data).unwrap();
+        assert_eq!(container_name, "test_container_name");
+    }
+
+    #[test]
+    fn test_invalid_argument_to_connection_info() {
+        assert!(argument_to_connection_info("googlecloudstorage://test").is_err());
+    }
+
+    proptest! {
+        #[test]
+        fn test_encode_decode_argument(
+            argument_1 in "[A-Za-zÀ-ȕ0-9(),-_., ]",
+            argument_2 in "[A-Za-zÀ-ȕ0-9(),-_., ]"
+        ) {
+            let encoded_argument_1 = encode_argument(&argument_1);
+            let encoded_argument_2 = encode_argument(&argument_2);
+
+            let data = [encoded_argument_1.as_slice(), encoded_argument_2.as_slice()].concat();
+
+            let (decoded_argument_1, offset_data) = extract_argument(data.as_slice()).unwrap();
+            let (decoded_argument_2, _offset_data) = extract_argument(offset_data).unwrap();
+
+            assert_eq!(decoded_argument_1, argument_1);
+            assert_eq!(decoded_argument_2, argument_2);
+        }
     }
 }
