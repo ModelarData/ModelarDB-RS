@@ -15,11 +15,11 @@
 
 //! Management of the cluster of nodes that are currently controlled by the manager.
 
-use arrow_flight::Action;
 use arrow_flight::flight_service_client::FlightServiceClient;
-use tonic::Request;
+use arrow_flight::Action;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
+use tonic::Request;
 
 /// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
 /// or a cloud node. A node cannot be another manager.
@@ -90,6 +90,12 @@ impl Cluster {
                 "A node with the url `{url}` does not exist."
             )))
         }
+    }
+}
+
+impl Default for Cluster {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

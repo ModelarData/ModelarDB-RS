@@ -114,6 +114,8 @@ fn main() -> Result<(), String> {
     let (server_mode, cluster_mode, data_folders) =
         runtime.block_on(parse_command_line_arguments(&arguments))?;
 
+    // TODO: Check if the remote data folder can be validated without the remote data folder type.
+    //       If not possible, extract the remote data folder type when parsing the arguments.
     // If a remote data folder was provided, check that it can be accessed. If the cluster mode is
     // "MultiNode" we assume the remote object store was validated by the manager.
     if cluster_mode != ClusterMode::MultiNode {
@@ -237,8 +239,7 @@ async fn parse_command_line_arguments(
             DataFolders {
                 local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                 remote_data_folder: Some(
-                    retrieve_manager_object_store(manager_url, ServerMode::Edge)
-                        .await?,
+                    retrieve_manager_object_store(manager_url, ServerMode::Edge).await?,
                 ),
                 query_data_folder: argument_to_local_object_store(local_data_folder)?,
             },

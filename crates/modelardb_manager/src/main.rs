@@ -93,7 +93,9 @@ fn main() -> Result<(), String> {
 
         let mut cluster = Cluster::new();
         for node in nodes {
-            cluster.register_node(node).map_err(|error| error.to_string())?;
+            cluster
+                .register_node(node)
+                .map_err(|error| error.to_string())?;
         }
 
         // Create the Context.
