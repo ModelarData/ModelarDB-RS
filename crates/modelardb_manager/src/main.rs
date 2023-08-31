@@ -33,7 +33,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::cluster::ClusterManager;
+use crate::cluster::Cluster;
 use crate::data_folder::RemoteDataFolder;
 use crate::metadata::MetadataManager;
 use crate::remote::start_apache_arrow_flight_server;
@@ -53,8 +53,8 @@ pub struct Context {
     pub metadata_manager: MetadataManager,
     /// Folder for storing Apache Parquet files in a remote object store.
     pub remote_data_folder: RemoteDataFolder,
-    /// Manager for the nodes currently controlled by the manager.
-    pub cluster_manager: RwLock<ClusterManager>,
+    /// Cluster of nodes currently controlled by the manager.
+    pub cluster: RwLock<Cluster>,
 }
 
 /// Parse the command line arguments to extract the metadata database and the remote object store
@@ -86,8 +86,8 @@ fn main() -> Result<(), String> {
             .await
             .map_err(|error| format!("Unable to setup metadata database: {error}"))?;
 
-        let cluster_nodes = metadata_manager
-            .cluster_nodes()
+        let nodes = metadata_manager
+            .nodes()
             .await
             .map_err(|error| error.to_string())?;
 
@@ -95,7 +95,7 @@ fn main() -> Result<(), String> {
         Ok::<Arc<Context>, String>(Arc::new(Context {
             metadata_manager,
             remote_data_folder,
-            cluster_manager: RwLock::new(ClusterManager::new(cluster_nodes)),
+            cluster: RwLock::new(Cluster::new(nodes)),
         }))
     })?;
 

@@ -37,7 +37,7 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
 
-use crate::cluster::ClusterNode;
+use crate::cluster::Node;
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
@@ -170,26 +170,26 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "RegisterNode" {
-            // Extract the cluster node from the action body.
+            // Extract the node from the action body.
             let (url, offset_data) = extract_argument(&action.body)?;
             let (mode, _offset_data) = extract_argument(offset_data)?;
 
             let server_mode = ServerMode::from_str(mode).map_err(Status::invalid_argument)?;
-            let cluster_node = ClusterNode::new(url.to_string(), server_mode);
+            let node = Node::new(url.to_string(), server_mode);
 
             // Use the metadata manager to persist the node to the metadata database.
             self.context
                 .metadata_manager
-                .save_cluster_node(&cluster_node)
+                .save_node(&node)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 
-            // Use the cluster manager to register the node in memory.
+            // Use the cluster to register the node in memory.
             self.context
-                .cluster_manager
+                .cluster
                 .write()
                 .await
-                .register_node(cluster_node)
+                .register_node(node)
                 .map_err(|error| Status::internal(error.to_string()))?;
 
             // TODO: Return the current database schema as well.
@@ -206,13 +206,13 @@ impl FlightService for FlightServiceHandler {
             // Remove the node with the given url from the metadata database.
             self.context
                 .metadata_manager
-                .remove_cluster_node(url)
+                .remove_node(url)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 
-            // Remove the node with the given url from the cluster manager.
+            // Remove the node with the given url from the cluster.
             self.context
-                .cluster_manager
+                .cluster
                 .write()
                 .await
                 .remove_node(url)
