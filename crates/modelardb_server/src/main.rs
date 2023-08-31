@@ -218,7 +218,7 @@ async fn parse_command_line_arguments(
         )),
         &["multi", "cloud", manager_url, local_data_folder] => {
             let remote_object_store =
-                retrieve_manager_object_store(manager_url.to_string(), ServerMode::Cloud).await?;
+                retrieve_manager_object_store(manager_url, ServerMode::Cloud).await?;
 
             Ok((
                 ServerMode::Cloud,
@@ -237,7 +237,7 @@ async fn parse_command_line_arguments(
             DataFolders {
                 local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                 remote_data_folder: Some(
-                    retrieve_manager_object_store(manager_url.to_string(), ServerMode::Edge)
+                    retrieve_manager_object_store(manager_url, ServerMode::Edge)
                         .await?,
                 ),
                 query_data_folder: argument_to_local_object_store(local_data_folder)?,
@@ -285,10 +285,10 @@ fn argument_to_local_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>
 /// the remote object store. If the connection information could not be retrieved or a connection
 /// could not be established, [`String`] is returned.
 async fn retrieve_manager_object_store(
-    manager_url: String,
+    manager_url: &str,
     server_mode: ServerMode,
 ) -> Result<Arc<dyn ObjectStore>, String> {
-    let mut flight_client = FlightServiceClient::connect(manager_url)
+    let mut flight_client = FlightServiceClient::connect(manager_url.to_string())
         .await
         .map_err(|error| format!("Could not connect to manager: {error}"))?;
 

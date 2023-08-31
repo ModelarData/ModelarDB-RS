@@ -78,7 +78,7 @@ fn main() -> Result<(), String> {
         let (connection, remote_data_folder) = parse_command_line_arguments(&arguments).await?;
         validate_remote_data_folder_from_argument(
             arguments.get(1).unwrap(),
-            &remote_data_folder.object_store(),
+            remote_data_folder.object_store(),
         )
         .await?;
 
@@ -91,11 +91,16 @@ fn main() -> Result<(), String> {
             .await
             .map_err(|error| error.to_string())?;
 
+        let mut cluster = Cluster::new();
+        for node in nodes {
+            cluster.register_node(node).map_err(|error| error.to_string())?;
+        }
+
         // Create the Context.
         Ok::<Arc<Context>, String>(Arc::new(Context {
             metadata_manager,
             remote_data_folder,
-            cluster: RwLock::new(Cluster::new(nodes)),
+            cluster: RwLock::new(cluster),
         }))
     })?;
 

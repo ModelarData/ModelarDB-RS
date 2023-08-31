@@ -23,21 +23,20 @@ use std::pin::Pin;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaResult, Ticket,
 };
 use futures::{stream, Stream};
-use modelardb_common::arguments::extract_argument;
+use modelardb_common::arguments::decode_argument;
 use modelardb_common::types::ServerMode;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
 
-use crate::cluster::Node;
+use crate::cluster::{Node};
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
@@ -160,7 +159,7 @@ impl FlightService for FlightServiceHandler {
     /// to the cluster of nodes controlled by the manager and the object store and current database
     /// schema used in the cluster is returned.
     /// * `RemoveNode`: Remove a node from the cluster of nodes controlled by the manager and
-    /// kill the process running the node. The specific node to remove is given through the
+    /// kill the process running on the node. The specific node to remove is given through the
     /// uniquely identifying URL of the node.
     async fn do_action(
         &self,
@@ -171,8 +170,8 @@ impl FlightService for FlightServiceHandler {
 
         if action.r#type == "RegisterNode" {
             // Extract the node from the action body.
-            let (url, offset_data) = extract_argument(&action.body)?;
-            let (mode, _offset_data) = extract_argument(offset_data)?;
+            let (url, offset_data) = decode_argument(&action.body)?;
+            let (mode, _offset_data) = decode_argument(offset_data)?;
 
             let server_mode = ServerMode::from_str(mode).map_err(Status::invalid_argument)?;
             let node = Node::new(url.to_string(), server_mode);
@@ -184,7 +183,8 @@ impl FlightService for FlightServiceHandler {
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 
-            // Use the cluster to register the node in memory.
+            // Use the cluster to register the node in memory. Note that if this fails, the cluster
+            // and metadata database will be out of sync until the manager is restarted.
             self.context
                 .cluster
                 .write()
@@ -201,7 +201,7 @@ impl FlightService for FlightServiceHandler {
                 })
             }))))
         } else if action.r#type == "RemoveNode" {
-            let (url, _offset_data) = extract_argument(&action.body)?;
+            let (url, _offset_data) = decode_argument(&action.body)?;
 
             // Remove the node with the given url from the metadata database.
             self.context
@@ -210,26 +210,15 @@ impl FlightService for FlightServiceHandler {
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 
-            // Remove the node with the given url from the cluster.
+            // Remove the node with the given url from the cluster and kill it. Note that if this fails,
+            // the cluster and metadata database will be out of sync until the manager is restarted.
             self.context
                 .cluster
                 .write()
                 .await
                 .remove_node(url)
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            // Flush the node and kill the process running the node.
-            let mut flight_client = FlightServiceClient::connect(format!("grpc://{url}"))
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
-
-            let action = Action {
-                r#type: "KillEdge".to_owned(),
-                body: vec![].into(),
-            };
-
-            // Since the process is killed, the error from the request is ignored.
-            let _ = flight_client.do_action(Request::new(action)).await;
 
             // Confirm the node was removed.
             Ok(Response::new(Box::pin(stream::empty())))
@@ -250,7 +239,7 @@ impl FlightService for FlightServiceHandler {
 
         let remove_node_action = ActionType {
             r#type: "RemoveNode".to_owned(),
-            description: "Remove a node from the manager and kill the process running the node."
+            description: "Remove a node from the manager and kill the process running on the node."
                 .to_owned(),
         };
 

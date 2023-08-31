@@ -24,6 +24,7 @@ use std::sync::Arc;
 use object_store::{aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, path::Path, ObjectStore};
 use tonic::Status;
 
+/// Error to emit when an unknown remote data folder type is used.
 const REMOTE_DATA_FOLDER_ERROR: &str =
     "Remote data folder must be s3://bucket-name or azureblobstorage://container-name.";
 
@@ -173,7 +174,7 @@ pub async fn validate_remote_data_folder(
 /// contain valid connection information or the type of the new remote object store is not "s3" or
 /// "azureblobstorage", [`Status`] is returned.
 pub async fn parse_object_store_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status> {
-    let (object_store_type, offset_data) = extract_argument(data)?;
+    let (object_store_type, offset_data) = decode_argument(data)?;
 
     match object_store_type {
         "s3" => Ok(parse_s3_arguments(offset_data).await),
@@ -189,10 +190,10 @@ pub async fn parse_object_store_arguments(data: &[u8]) -> Result<Arc<dyn ObjectS
 /// created [`Amazon S3`](object_store::aws::AmazonS3) object store connection is invalid,
 /// [`Status`] is returned.
 pub async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status> {
-    let (endpoint, offset_data) = extract_argument(data)?;
-    let (bucket_name, offset_data) = extract_argument(offset_data)?;
-    let (access_key_id, offset_data) = extract_argument(offset_data)?;
-    let (secret_access_key, _offset_data) = extract_argument(offset_data)?;
+    let (endpoint, offset_data) = decode_argument(data)?;
+    let (bucket_name, offset_data) = decode_argument(offset_data)?;
+    let (access_key_id, offset_data) = decode_argument(offset_data)?;
+    let (secret_access_key, _offset_data) = decode_argument(offset_data)?;
 
     let s3: Arc<dyn ObjectStore> = Arc::new(
         AmazonS3Builder::new()
@@ -220,9 +221,9 @@ pub async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Sta
 pub async fn parse_azure_blob_storage_arguments(
     data: &[u8],
 ) -> Result<Arc<dyn ObjectStore>, Status> {
-    let (account, offset_data) = extract_argument(data)?;
-    let (access_key, offset_data) = extract_argument(offset_data)?;
-    let (container_name, _offset_data) = extract_argument(offset_data)?;
+    let (account, offset_data) = decode_argument(data)?;
+    let (access_key, offset_data) = decode_argument(offset_data)?;
+    let (container_name, _offset_data) = decode_argument(offset_data)?;
 
     let azure_blob_storage: Arc<dyn ObjectStore> = Arc::new(
         MicrosoftAzureBuilder::new()
@@ -240,9 +241,8 @@ pub async fn parse_azure_blob_storage_arguments(
     Ok(azure_blob_storage)
 }
 
-/// Convert the given `argument` into padded bytes that contain the length of the byte
-/// representation of `argument` together with the byte representation. The length is exactly two
-/// bytes long.
+/// Convert the given `argument` into bytes that contain the length of the byte representation of
+/// `argument` together with the byte representation. The length is exactly two bytes long.
 pub fn encode_argument(argument: &str) -> Vec<u8> {
     let argument_bytes: Vec<u8> = argument.as_bytes().into();
     let mut argument_size_bytes = vec![0; 2];
@@ -262,7 +262,7 @@ pub fn encode_argument(argument: &str) -> Vec<u8> {
 /// Assumes `data` is a slice containing one or more arguments with the following format:
 /// size of argument (2 bytes) followed by the argument (size bytes). Returns a tuple containing
 /// the first argument and `data` with the extracted argument's bytes removed.
-pub fn extract_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
+pub fn decode_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
     let size_bytes: [u8; 2] = data[..2]
         .try_into()
         .map_err(|_| Status::internal("Size of argument is not 2 bytes."))?;
@@ -289,19 +289,19 @@ mod test {
 
         let connection_info = argument_to_connection_info("s3://test_bucket_name").unwrap();
 
-        let (object_store_type, offset_data) = extract_argument(&connection_info).unwrap();
+        let (object_store_type, offset_data) = decode_argument(&connection_info).unwrap();
         assert_eq!(object_store_type, "s3");
 
-        let (endpoint, offset_data) = extract_argument(offset_data).unwrap();
+        let (endpoint, offset_data) = decode_argument(offset_data).unwrap();
         assert_eq!(endpoint, "test_endpoint");
 
-        let (bucket_name, offset_data) = extract_argument(offset_data).unwrap();
+        let (bucket_name, offset_data) = decode_argument(offset_data).unwrap();
         assert_eq!(bucket_name, "test_bucket_name");
 
-        let (access_key_id, offset_data) = extract_argument(offset_data).unwrap();
+        let (access_key_id, offset_data) = decode_argument(offset_data).unwrap();
         assert_eq!(access_key_id, "test_access_key_id");
 
-        let (secret_access_key, _offset_data) = extract_argument(offset_data).unwrap();
+        let (secret_access_key, _offset_data) = decode_argument(offset_data).unwrap();
         assert_eq!(secret_access_key, "test_secret_access_key")
     }
 
@@ -313,16 +313,16 @@ mod test {
         let connection_info =
             argument_to_connection_info("azureblobstorage://test_container_name").unwrap();
 
-        let (object_store_type, offset_data) = extract_argument(&connection_info).unwrap();
+        let (object_store_type, offset_data) = decode_argument(&connection_info).unwrap();
         assert_eq!(object_store_type, "azureblobstorage");
 
-        let (account, offset_data) = extract_argument(offset_data).unwrap();
+        let (account, offset_data) = decode_argument(offset_data).unwrap();
         assert_eq!(account, "test_storage_account_name");
 
-        let (access_key, offset_data) = extract_argument(offset_data).unwrap();
+        let (access_key, offset_data) = decode_argument(offset_data).unwrap();
         assert_eq!(access_key, "test_storage_access_key");
 
-        let (container_name, _offset_data) = extract_argument(offset_data).unwrap();
+        let (container_name, _offset_data) = decode_argument(offset_data).unwrap();
         assert_eq!(container_name, "test_container_name");
     }
 
@@ -342,8 +342,8 @@ mod test {
 
             let data = [encoded_argument_1.as_slice(), encoded_argument_2.as_slice()].concat();
 
-            let (decoded_argument_1, offset_data) = extract_argument(data.as_slice()).unwrap();
-            let (decoded_argument_2, _offset_data) = extract_argument(offset_data).unwrap();
+            let (decoded_argument_1, offset_data) = decode_argument(data.as_slice()).unwrap();
+            let (decoded_argument_2, _offset_data) = decode_argument(offset_data).unwrap();
 
             assert_eq!(decoded_argument_1, argument_1);
             assert_eq!(decoded_argument_2, argument_2);

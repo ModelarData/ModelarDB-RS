@@ -64,9 +64,9 @@ impl MetadataManager {
         metadata_database_pool
             .execute(
                 "CREATE TABLE IF NOT EXISTS nodes (
-            url TEXT PRIMARY KEY,
-            mode TEXT NOT NULL
-            )",
+                url TEXT PRIMARY KEY,
+                mode TEXT NOT NULL
+                )",
             )
             .await?;
 

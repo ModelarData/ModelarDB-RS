@@ -45,7 +45,7 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::prelude::ParquetReadOptions;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
-use modelardb_common::arguments::{extract_argument, parse_object_store_arguments};
+use modelardb_common::arguments::{decode_argument, parse_object_store_arguments};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
 use modelardb_common::types::{ServerMode, TimestampBuilder};
@@ -753,8 +753,8 @@ impl FlightService for FlightServiceHandler {
 
             send_record_batch(schema.0, batch)
         } else if action.r#type == "UpdateConfiguration" {
-            let (setting, offset_data) = extract_argument(&action.body)?;
-            let (new_value, _offset_data) = extract_argument(offset_data)?;
+            let (setting, offset_data) = decode_argument(&action.body)?;
+            let (new_value, _offset_data) = decode_argument(offset_data)?;
             let new_value: usize = new_value.parse().map_err(|error| {
                 Status::invalid_argument(format!("New value for {setting} is not valid: {error}"))
             })?;

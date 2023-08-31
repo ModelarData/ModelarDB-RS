@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use object_store::ObjectStore;
 
-/// Stores the connection information with the remote data folder and provides individual getters and
-/// a single setter to ensure that the connection information is consistent with the remote data folder.
+/// Stores the connection information with the remote data folder to ensure that the information
+/// is consistent with the remote data folder.
 pub struct RemoteDataFolder {
     /// Connection information saved as bytes to make it possible to transfer the information using
     /// Arrow Flight.
@@ -38,20 +38,11 @@ impl RemoteDataFolder {
         }
     }
 
-    pub fn connection_info(&self) -> Vec<u8> {
-        self.connection_info.clone()
+    pub fn connection_info(&self) -> &Vec<u8> {
+        &self.connection_info
     }
 
-    pub fn object_store(&self) -> Arc<dyn ObjectStore> {
-        self.object_store.clone()
-    }
-
-    pub fn set_object_store(
-        &mut self,
-        connection_info: Vec<u8>,
-        object_store: Arc<dyn ObjectStore>,
-    ) {
-        self.connection_info = connection_info;
-        self.object_store = object_store;
+    pub fn object_store(&self) -> &Arc<dyn ObjectStore> {
+        &self.object_store
     }
 }
