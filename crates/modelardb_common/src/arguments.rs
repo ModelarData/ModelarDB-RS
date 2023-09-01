@@ -18,7 +18,6 @@
 
 use std::env;
 use std::io::Write;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use object_store::{aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, path::Path, ObjectStore};
@@ -104,28 +103,6 @@ pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
                 .collect())
         }
         _ => Err(REMOTE_DATA_FOLDER_ERROR.to_owned()),
-    }
-}
-
-/// The object stores that are currently supported as remote data folders.
-#[derive(PartialEq, Eq)]
-pub enum RemoteDataFolderType {
-    S3,
-    AzureBlobStorage,
-}
-
-impl FromStr for RemoteDataFolderType {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "s3" => Ok(RemoteDataFolderType::S3),
-            "azureblobstorage" => Ok(RemoteDataFolderType::AzureBlobStorage),
-            _ => Err(format!(
-                "'{}' is not a valid value for RemoteDataFolderType.",
-                value
-            )),
-        }
     }
 }
 
