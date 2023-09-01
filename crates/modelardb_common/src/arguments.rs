@@ -259,9 +259,9 @@ pub fn encode_argument(argument: &str) -> Vec<u8> {
     .concat()
 }
 
-/// Assumes `data` is a slice containing one or more arguments with the following format:
-/// size of argument (2 bytes) followed by the argument (size bytes). Returns a tuple containing
-/// the first argument and `data` with the extracted argument's bytes removed.
+/// Return a tuple containing the first argument and `data` with the extracted argument's bytes
+/// removed. It is assumed that `data` is a slice containing one or more arguments with the
+/// following format: size of argument (2 bytes) followed by the argument (size bytes).
 pub fn decode_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
     let size_bytes: [u8; 2] = data[..2]
         .try_into()
