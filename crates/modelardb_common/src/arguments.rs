@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use object_store::{aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, path::Path, ObjectStore};
 use tonic::Status;
+use uuid::Uuid;
 
 /// Error to emit when an unknown remote data folder type is used.
 const REMOTE_DATA_FOLDER_ERROR: &str =
@@ -152,17 +153,21 @@ pub async fn validate_remote_data_folder(
     remote_data_folder_type: RemoteDataFolderType,
     remote_data_folder: &Arc<dyn ObjectStore>,
 ) -> Result<(), String> {
+    let invalid_path = Uuid::new_v4().to_string();
+
     // Check that the connection is valid by attempting to retrieve a file that does not exist.
-    match remote_data_folder.get(&Path::from("")).await {
+    match remote_data_folder.get(&Path::from(invalid_path)).await {
         Ok(_) => Ok(()),
         Err(error) => match error {
             object_store::Error::NotFound { .. } => {
-                // Note that for Azure Blob Storage the same error is returned if the object was not
-                // found due to the object not existing and due to the container not existing.
-                if remote_data_folder_type == RemoteDataFolderType::AzureBlobStorage {
+                let error = error.to_string();
+
+                // BlobNotFound and NoSuchKey errors are only returned if the object store
+                // connection is valid but the path does not exist.
+                if error.contains("BlobNotFound") || error.contains("NoSuchKey") {
                     Ok(())
                 } else {
-                    Err(error.to_string())
+                    Err(error)
                 }
             }
             _ => Err(error.to_string()),

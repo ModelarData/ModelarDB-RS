@@ -1922,6 +1922,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tonic",
+ "uuid",
 ]
 
 [[package]]
