@@ -20,19 +20,23 @@
 use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
-    HandshakeRequest, HandshakeResponse, PutResult, SchemaResult, Ticket,
+    HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaResult, Ticket,
 };
-use futures::Stream;
+use futures::{stream, Stream};
+use modelardb_common::arguments::decode_argument;
+use modelardb_common::types::ServerMode;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
 
+use crate::cluster::Node;
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
@@ -63,7 +67,6 @@ pub fn start_apache_arrow_flight_server(
 /// published under Apache2.
 ///
 /// [Apache Arrow Flight examples]: https://github.com/apache/arrow-rs/blob/master/arrow-flight/examples
-#[allow(dead_code)]
 struct FlightServiceHandler {
     /// Singleton that provides access to the system's components.
     context: Arc<Context>,
@@ -150,24 +153,98 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// TODO: Perform a specific action based on the type of the action in `request`.
-    ///       The following actions should be supported:
-    ///       * `CommandStatementUpdate`
-    ///       * `UpdateRemoteObjectStore`
-    ///       * `RegisterEdge`
-    ///       * `RemoveEdge`
+    /// Perform a specific action based on the type of the action in `request`. Currently the
+    /// following actions are supported:
+    /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
+    /// to the cluster of nodes controlled by the manager and the object store and current database
+    /// schema used in the cluster is returned.
+    /// * `RemoveNode`: Remove a node from the cluster of nodes controlled by the manager and
+    /// kill the process running on the node. The specific node to remove is given through the
+    /// uniquely identifying URL of the node.
     async fn do_action(
         &self,
-        _request: Request<Action>,
+        request: Request<Action>,
     ) -> Result<Response<Self::DoActionStream>, Status> {
-        Err(Status::unimplemented("Not implemented."))
+        let action = request.into_inner();
+        info!("Received request to perform action '{}'.", action.r#type);
+
+        if action.r#type == "RegisterNode" {
+            // Extract the node from the action body.
+            let (url, offset_data) = decode_argument(&action.body)?;
+            let (mode, _offset_data) = decode_argument(offset_data)?;
+
+            let server_mode = ServerMode::from_str(mode).map_err(Status::invalid_argument)?;
+            let node = Node::new(url.to_string(), server_mode);
+
+            // Use the metadata manager to persist the node to the metadata database.
+            self.context
+                .metadata_manager
+                .save_node(&node)
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            // Use the cluster to register the node in memory. Note that if this fails, the cluster
+            // and metadata database will be out of sync until the manager is restarted.
+            self.context
+                .cluster
+                .write()
+                .await
+                .register_node(node)
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            // TODO: Return the current database schema as well.
+            let connection_info = self.context.remote_data_folder.connection_info().clone();
+
+            Ok(Response::new(Box::pin(stream::once(async {
+                Ok(FlightResult {
+                    body: connection_info.into(),
+                })
+            }))))
+        } else if action.r#type == "RemoveNode" {
+            let (url, _offset_data) = decode_argument(&action.body)?;
+
+            // Remove the node with the given url from the metadata database.
+            self.context
+                .metadata_manager
+                .remove_node(url)
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            // Remove the node with the given url from the cluster and kill it. Note that if this fails,
+            // the cluster and metadata database will be out of sync until the manager is restarted.
+            self.context
+                .cluster
+                .write()
+                .await
+                .remove_node(url)
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            // Confirm the node was removed.
+            Ok(Response::new(Box::pin(stream::empty())))
+        } else {
+            Err(Status::unimplemented("Action not implemented."))
+        }
     }
 
-    /// TODO: Return all available actions, including both a name and a description for each action.
+    /// Return all available actions, including both a name and a description for each action.
     async fn list_actions(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::ListActionsStream>, Status> {
-        Err(Status::unimplemented("Not implemented."))
+        let register_node_action = ActionType {
+            r#type: "RegisterNode".to_owned(),
+            description: "Register either an edge or cloud node with the manager.".to_owned(),
+        };
+
+        let remove_node_action = ActionType {
+            r#type: "RemoveNode".to_owned(),
+            description: "Remove a node from the manager and kill the process running on the node."
+                .to_owned(),
+        };
+
+        let output = stream::iter(vec![Ok(register_node_action), Ok(remove_node_action)]);
+
+        Ok(Response::new(Box::pin(output)))
     }
 }

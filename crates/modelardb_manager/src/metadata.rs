@@ -16,9 +16,16 @@
 //! Management of the metadata database for the manager. Metadata which is unique to the manager,
 //! such as metadata about registered edges, is handled here.
 
+use std::str::FromStr;
+
+use futures::TryStreamExt;
+use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use sqlx::{Executor, PgPool};
+use modelardb_common::types::ServerMode;
+use sqlx::{Executor, PgPool, Row};
+
+use crate::cluster::Node;
 
 /// Stores the metadata required for reading from and writing to the tables and model tables and
 /// persisting edges. The data that needs to be persisted is stored in the metadata database.
@@ -39,9 +46,31 @@ impl MetadataManager {
         )
         .await?;
 
+        MetadataManager::create_manager_metadata_database_tables(&metadata_database_pool).await?;
+
         Ok(Self {
             metadata_database_pool,
         })
+    }
+
+    /// If they do not already exist, create the tables that are specific to the manager metadata
+    /// database.
+    /// * The nodes table contains metadata for each node that is controlled by the manager.
+    /// If the tables exist or were created, return [`Ok`], otherwise return [`sqlx::Error`].
+    async fn create_manager_metadata_database_tables(
+        metadata_database_pool: &PgPool,
+    ) -> Result<(), sqlx::Error> {
+        // Create the nodes table if it does not exist.
+        metadata_database_pool
+            .execute(
+                "CREATE TABLE IF NOT EXISTS nodes (
+                url TEXT PRIMARY KEY,
+                mode TEXT NOT NULL
+                )",
+            )
+            .await?;
+
+        Ok(())
     }
 
     /// Save the created table to the metadata database. This consists of adding a row to the
@@ -169,5 +198,50 @@ impl MetadataManager {
         }
 
         transaction.commit().await
+    }
+
+    /// Save the node to the metadata database and return [`Ok`]. If the node could not be saved,
+    /// return [`sqlx::Error`].
+    pub async fn save_node(&self, node: &Node) -> Result<(), sqlx::Error> {
+        sqlx::query("INSERT INTO nodes (url, mode) VALUES ($1, $2)")
+            .bind(&node.url)
+            .bind(node.mode.to_string())
+            .execute(&self.metadata_database_pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Remove the row in the nodes table that corresponds to the node with `url` and return [`Ok`].
+    /// If the row could not be removed, return [`sqlx::Error`].
+    pub async fn remove_node(&self, url: &str) -> Result<(), sqlx::Error> {
+        sqlx::query("DELETE FROM nodes WHERE url = $1")
+            .bind(url)
+            .execute(&self.metadata_database_pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Return the nodes currently controlled by the manager that have been persisted to the
+    /// metadata database. If the nodes could not be retrieved, [`sqlx::Error`] is returned.
+    pub async fn nodes(&self) -> Result<Vec<Node>, sqlx::Error> {
+        let mut nodes: Vec<Node> = vec![];
+
+        let mut rows =
+            sqlx::query("SELECT url, mode FROM nodes").fetch(&self.metadata_database_pool);
+
+        while let Some(row) = rows.try_next().await? {
+            let server_mode = ServerMode::from_str(row.get("mode")).map_err(|error| {
+                sqlx::Error::ColumnDecode {
+                    index: "mode".to_string(),
+                    source: Box::new(ModelarDbError::DataRetrievalError(error.to_string())),
+                }
+            })?;
+
+            nodes.push(Node::new(row.get("url"), server_mode))
+        }
+
+        Ok(nodes)
     }
 }

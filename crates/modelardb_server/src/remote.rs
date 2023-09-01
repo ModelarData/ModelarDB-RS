@@ -45,13 +45,10 @@ use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::prelude::ParquetReadOptions;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
-use modelardb_common::arguments::{validate_remote_data_folder, RemoteDataFolderType};
+use modelardb_common::arguments::{decode_argument, parse_object_store_arguments};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
-use modelardb_common::types::TimestampBuilder;
-use object_store::aws::AmazonS3Builder;
-use object_store::azure::MicrosoftAzureBuilder;
-use object_store::ObjectStore;
+use modelardb_common::types::{ServerMode, TimestampBuilder};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
@@ -64,7 +61,7 @@ use crate::metadata::MetadataManager;
 use crate::parser::{self, ValidStatement};
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::{Context, ServerMode};
+use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through [`FlightServiceHandler`].
@@ -144,77 +141,6 @@ async fn send_flight_data(
         .send(flight_data_or_error)
         .await
         .map_err(|error| Status::internal(error.to_string()))
-}
-
-/// Parse the arguments in `data` and return an [`Amazon S3`](object_store::aws::AmazonS3) object
-/// store if `data` contains the necessary arguments. If `data` is missing arguments or if the
-/// created [`Amazon S3`](object_store::aws::AmazonS3) object store connection is invalid,
-/// [`Status`] is returned.
-async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status> {
-    let (endpoint, offset_data) = extract_argument(data)?;
-    let (bucket_name, offset_data) = extract_argument(offset_data)?;
-    let (access_key_id, offset_data) = extract_argument(offset_data)?;
-    let (secret_access_key, _offset_data) = extract_argument(offset_data)?;
-
-    let s3: Arc<dyn ObjectStore> = Arc::new(
-        AmazonS3Builder::new()
-            .with_region("")
-            .with_allow_http(true)
-            .with_endpoint(endpoint)
-            .with_bucket_name(bucket_name)
-            .with_access_key_id(access_key_id)
-            .with_secret_access_key(secret_access_key)
-            .build()
-            .map_err(|error| Status::invalid_argument(error.to_string()))?,
-    );
-
-    validate_remote_data_folder(RemoteDataFolderType::S3, &s3)
-        .await
-        .map_err(Status::invalid_argument)?;
-
-    Ok(s3)
-}
-
-/// Parse the arguments in `data` and return an [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
-/// object store if `data` contains the necessary arguments. If `data` is missing arguments or if the created
-/// [`Azure Blob Storage`](object_store::azure::MicrosoftAzure) object store connection is invalid,
-/// [`Status`] is returned.
-async fn parse_azure_blob_storage_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Status> {
-    let (account, offset_data) = extract_argument(data)?;
-    let (access_key, offset_data) = extract_argument(offset_data)?;
-    let (container_name, _offset_data) = extract_argument(offset_data)?;
-
-    let azure_blob_storage: Arc<dyn ObjectStore> = Arc::new(
-        MicrosoftAzureBuilder::new()
-            .with_account(account)
-            .with_access_key(access_key)
-            .with_container_name(container_name)
-            .build()
-            .map_err(|error| Status::invalid_argument(error.to_string()))?,
-    );
-
-    validate_remote_data_folder(RemoteDataFolderType::AzureBlobStorage, &azure_blob_storage)
-        .await
-        .map_err(Status::invalid_argument)?;
-
-    Ok(azure_blob_storage)
-}
-
-/// Assumes `data` is a slice containing one or more arguments with the following format:
-/// size of argument (2 bytes) followed by the argument (size bytes). Returns a tuple containing
-/// the first argument and `data` with the extracted argument's bytes removed.
-fn extract_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
-    let size_bytes: [u8; 2] = data[..2]
-        .try_into()
-        .map_err(|_| Status::internal("Size of argument is not 2 bytes."))?;
-
-    let size = u16::from_be_bytes(size_bytes) as usize;
-
-    let argument = str::from_utf8(&data[2..(size + 2)])
-        .map_err(|error| Status::invalid_argument(error.to_string()))?;
-    let remaining_bytes = &data[(size + 2)..];
-
-    Ok((argument, remaining_bytes))
 }
 
 /// Write the schema and corresponding record batch to a stream within a gRPC response.
@@ -659,6 +585,10 @@ impl FlightService for FlightServiceHandler {
     /// currently in memory to disk and then flushes all compressed data on disk to the remote
     /// object store. Note that data is only transferred to the remote object store if one was
     /// provided when starting the server.
+    /// * `KillEdge`: An extension of the `FlushEdge` action that first flushes all data to disk,
+    /// then flushes all compressed data to the remote object store, and finally kills the process
+    /// that is running the server. Note that since the process is killed, a conventional response
+    /// cannot be returned.
     /// * `CollectMetrics`: Collect internal metrics describing the amount of memory used for
     /// uncompressed and compressed data, disk space used, and the number of data points ingested
     /// over time. Note that the metrics are cleared when collected, thus only the metrics
@@ -730,6 +660,14 @@ impl FlightService for FlightServiceHandler {
 
             // Confirm the data was flushed.
             Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "KillEdge" {
+            let mut storage_engine = self.context.storage_engine.write().await;
+            storage_engine.flush().await.map_err(Status::internal)?;
+            storage_engine.transfer().await?;
+
+            // Since the process is killed, a conventional response cannot be given. If the action
+            // returns a "Stream removed" message, the edge was successfully flushed and killed.
+            std::process::exit(0);
         } else if action.r#type == "CollectMetrics" {
             let mut storage_engine = self.context.storage_engine.write().await;
             let metrics = storage_engine.collect_metrics().await;
@@ -776,16 +714,7 @@ impl FlightService for FlightServiceHandler {
                 ));
             }
 
-            // If the type of the new remote object store is not "s3" or "azureblobstorage", return an error.
-            let (object_store_type, offset_data) = extract_argument(&action.body)?;
-
-            let object_store = match object_store_type {
-                "s3" => parse_s3_arguments(offset_data).await,
-                "azureblobstorage" => parse_azure_blob_storage_arguments(offset_data).await,
-                _ => Err(Status::unimplemented(format!(
-                    "{object_store_type} is currently not supported."
-                ))),
-            }?;
+            let object_store = parse_object_store_arguments(&action.body).await?;
 
             // Update the object store used for data transfers.
             let mut storage_engine = self.context.storage_engine.write().await;
@@ -824,8 +753,8 @@ impl FlightService for FlightServiceHandler {
 
             send_record_batch(schema.0, batch)
         } else if action.r#type == "UpdateConfiguration" {
-            let (setting, offset_data) = extract_argument(&action.body)?;
-            let (new_value, _offset_data) = extract_argument(offset_data)?;
+            let (setting, offset_data) = decode_argument(&action.body)?;
+            let (new_value, _offset_data) = decode_argument(offset_data)?;
             let new_value: usize = new_value.parse().map_err(|error| {
                 Status::invalid_argument(format!("New value for {setting} is not valid: {error}"))
             })?;
@@ -868,7 +797,7 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let flush_data_to_disk = ActionType {
+        let flush_memory_action = ActionType {
             r#type: "FlushMemory".to_owned(),
             description: "Flush the uncompressed data to disk by compressing and saving the data."
                 .to_owned(),
@@ -881,7 +810,15 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let collect_metrics = ActionType {
+        let kill_edge_action = ActionType {
+            r#type: "KillEdge".to_owned(),
+            description: "Flush uncompressed data to disk by compressing and saving the data, \
+            transfer all compressed data to the remote object store, and kill the process \
+            running the server."
+                .to_owned(),
+        };
+
+        let collect_metrics_action = ActionType {
             r#type: "CollectMetrics".to_owned(),
             description:
             "Collect internal metrics describing the amount of used memory for uncompressed \
@@ -890,31 +827,32 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let update_remote_object_store = ActionType {
+        let update_remote_object_store_action = ActionType {
             r#type: "UpdateRemoteObjectStore".to_owned(),
             description: "Update the remote object store, overriding the current remote object \
             store, if it exists."
                 .to_owned(),
         };
 
-        let get_configuration = ActionType {
+        let get_configuration_action = ActionType {
             r#type: "GetConfiguration".to_owned(),
             description: "Get the current server configuration.".to_owned(),
         };
 
-        let update_configuration = ActionType {
+        let update_configuration_action = ActionType {
             r#type: "UpdateConfiguration".to_owned(),
             description: "Update a specific setting in the server configuration.".to_owned(),
         };
 
         let output = stream::iter(vec![
             Ok(create_command_statement_update_action),
-            Ok(flush_data_to_disk),
+            Ok(flush_memory_action),
             Ok(flush_edge_action),
-            Ok(collect_metrics),
-            Ok(update_remote_object_store),
-            Ok(get_configuration),
-            Ok(update_configuration),
+            Ok(kill_edge_action),
+            Ok(collect_metrics_action),
+            Ok(update_remote_object_store_action),
+            Ok(get_configuration_action),
+            Ok(update_configuration_action),
         ]);
 
         Ok(Response::new(Box::pin(output)))

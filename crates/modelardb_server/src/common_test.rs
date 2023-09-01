@@ -30,7 +30,9 @@ use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::physical_plan::ExecutionPlan;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
-use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray};
+use modelardb_common::types::{
+    ArrowTimestamp, ArrowValue, ClusterMode, ErrorBound, TimestampArray, ValueArray,
+};
 use object_store::local::LocalFileSystem;
 use tokio::sync::RwLock;
 
@@ -97,6 +99,7 @@ pub async fn test_context(path: &Path) -> Arc<Context> {
         .unwrap();
 
     Arc::new(Context {
+        cluster_mode: ClusterMode::SingleNode,
         metadata_manager,
         configuration_manager,
         session,

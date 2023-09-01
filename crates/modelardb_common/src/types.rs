@@ -20,6 +20,8 @@
 //! of aliases are all for the same underlying type.
 
 use std::cmp::Ordering;
+use std::fmt;
+use std::str::FromStr;
 
 use crate::errors::ModelarDbError;
 
@@ -98,6 +100,42 @@ impl PartialOrd<ErrorBound> for f32 {
     fn partial_cmp(&self, other: &ErrorBound) -> Option<Ordering> {
         self.partial_cmp(&other.0)
     }
+}
+
+/// The different possible modes of a ModelarDB server, assigned when the server is started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerMode {
+    Cloud,
+    Edge,
+}
+
+impl FromStr for ServerMode {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "cloud" => Ok(ServerMode::Cloud),
+            "edge" => Ok(ServerMode::Edge),
+            _ => Err(format!("'{value}' is not a valid value for ServerMode.")),
+        }
+    }
+}
+
+impl fmt::Display for ServerMode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            ServerMode::Cloud => write!(f, "cloud"),
+            ServerMode::Edge => write!(f, "edge"),
+        }
+    }
+}
+
+/// The different possible modes that a ModelarDB server can be deployed in, assigned when the
+/// server is started.
+#[derive(PartialEq, Eq)]
+pub enum ClusterMode {
+    SingleNode,
+    MultiNode,
 }
 
 #[cfg(test)]
