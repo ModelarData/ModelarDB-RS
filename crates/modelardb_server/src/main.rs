@@ -37,7 +37,7 @@ use datafusion::execution::context::{SessionConfig, SessionContext, SessionState
 use datafusion::execution::runtime_env::RuntimeEnv;
 use modelardb_common::arguments::{
     argument_to_remote_object_store, collect_command_line_arguments, encode_argument,
-    parse_object_store_arguments, validate_remote_data_folder_from_argument,
+    parse_object_store_arguments, validate_remote_data_folder,
 };
 use modelardb_common::types::{ClusterMode, ServerMode};
 use object_store::{local::LocalFileSystem, ObjectStore};
@@ -120,13 +120,7 @@ fn main() -> Result<(), String> {
     // "MultiNode" we assume the remote object store was validated by the manager.
     if cluster_mode != ClusterMode::MultiNode {
         if let Some(remote_data_folder) = &data_folders.remote_data_folder {
-            runtime.block_on(async {
-                validate_remote_data_folder_from_argument(
-                    arguments.get(2).unwrap(),
-                    remote_data_folder,
-                )
-                .await
-            })?;
+            runtime.block_on(async { validate_remote_data_folder(remote_data_folder).await })?;
         }
     }
 

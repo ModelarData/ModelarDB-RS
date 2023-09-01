@@ -129,28 +129,9 @@ impl FromStr for RemoteDataFolderType {
     }
 }
 
-/// Extract the remote data folder type from the arguments and validate that the remote data folder can be
-/// accessed. If the remote data folder cannot be accessed, return the error that occurred as a [`String`].
-pub async fn validate_remote_data_folder_from_argument(
-    argument: &str,
-    remote_data_folder: &Arc<dyn ObjectStore>,
-) -> Result<(), String> {
-    if let Some(split_argument) = argument.split_once("://") {
-        let object_store_type = split_argument.0;
-        let remote_data_folder_type = RemoteDataFolderType::from_str(object_store_type)?;
-
-        validate_remote_data_folder(remote_data_folder_type, remote_data_folder).await
-    } else {
-        Err(format!(
-            "Remote data folder argument '{argument}' is invalid."
-        ))
-    }
-}
-
 /// Validate that the remote data folder can be accessed. If the remote data folder cannot be
 /// accessed, return the error that occurred as a [`String`].
 pub async fn validate_remote_data_folder(
-    remote_data_folder_type: RemoteDataFolderType,
     remote_data_folder: &Arc<dyn ObjectStore>,
 ) -> Result<(), String> {
     let invalid_path = Uuid::new_v4().to_string();
@@ -212,7 +193,7 @@ pub async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Sta
             .map_err(|error| Status::invalid_argument(error.to_string()))?,
     );
 
-    validate_remote_data_folder(RemoteDataFolderType::S3, &s3)
+    validate_remote_data_folder(&s3)
         .await
         .map_err(Status::invalid_argument)?;
 
@@ -239,7 +220,7 @@ pub async fn parse_azure_blob_storage_arguments(
             .map_err(|error| Status::invalid_argument(error.to_string()))?,
     );
 
-    validate_remote_data_folder(RemoteDataFolderType::AzureBlobStorage, &azure_blob_storage)
+    validate_remote_data_folder(&azure_blob_storage)
         .await
         .map_err(Status::invalid_argument)?;
 

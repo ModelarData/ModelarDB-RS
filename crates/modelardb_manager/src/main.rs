@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use modelardb_common::arguments::{
     argument_to_connection_info, argument_to_remote_object_store, collect_command_line_arguments,
-    validate_remote_data_folder_from_argument,
+    validate_remote_data_folder,
 };
 use once_cell::sync::Lazy;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
@@ -76,11 +76,7 @@ fn main() -> Result<(), String> {
 
     let context = runtime.block_on(async {
         let (connection, remote_data_folder) = parse_command_line_arguments(&arguments).await?;
-        validate_remote_data_folder_from_argument(
-            arguments.get(1).unwrap(),
-            remote_data_folder.object_store(),
-        )
-        .await?;
+        validate_remote_data_folder(remote_data_folder.object_store()).await?;
 
         let metadata_manager = MetadataManager::try_new(connection)
             .await
