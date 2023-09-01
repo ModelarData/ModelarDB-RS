@@ -114,14 +114,9 @@ fn main() -> Result<(), String> {
     let (server_mode, cluster_mode, data_folders) =
         runtime.block_on(parse_command_line_arguments(&arguments))?;
 
-    // TODO: Check if the remote data folder can be validated without the remote data folder type.
-    //       If not possible, extract the remote data folder type when parsing the arguments.
-    // If a remote data folder was provided, check that it can be accessed. If the cluster mode is
-    // "MultiNode" we assume the remote object store was validated by the manager.
-    if cluster_mode != ClusterMode::MultiNode {
-        if let Some(remote_data_folder) = &data_folders.remote_data_folder {
-            runtime.block_on(async { validate_remote_data_folder(remote_data_folder).await })?;
-        }
+    // If a remote data folder was provided, check that it can be accessed.
+    if let Some(remote_data_folder) = &data_folders.remote_data_folder {
+        runtime.block_on(async { validate_remote_data_folder(remote_data_folder).await })?;
     }
 
     // Create the components for the Context.
