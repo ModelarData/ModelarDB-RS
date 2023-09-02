@@ -111,6 +111,7 @@ pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
 pub async fn validate_remote_data_folder(
     remote_data_folder: &Arc<dyn ObjectStore>,
 ) -> Result<(), String> {
+    // Use an UUID for the path to minimize the chance of the path existing in the object store.
     let invalid_path = Uuid::new_v4().to_string();
 
     // Check that the connection is valid by attempting to retrieve a file that does not exist.
