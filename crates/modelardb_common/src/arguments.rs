@@ -18,11 +18,11 @@
 
 use std::env;
 use std::io::Write;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use object_store::{aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, path::Path, ObjectStore};
 use tonic::Status;
+use uuid::Uuid;
 
 /// Error to emit when an unknown remote data folder type is used.
 const REMOTE_DATA_FOLDER_ERROR: &str =
@@ -106,63 +106,27 @@ pub fn argument_to_connection_info(argument: &str) -> Result<Vec<u8>, String> {
     }
 }
 
-/// The object stores that are currently supported as remote data folders.
-#[derive(PartialEq, Eq)]
-pub enum RemoteDataFolderType {
-    S3,
-    AzureBlobStorage,
-}
-
-impl FromStr for RemoteDataFolderType {
-    type Err = String;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "s3" => Ok(RemoteDataFolderType::S3),
-            "azureblobstorage" => Ok(RemoteDataFolderType::AzureBlobStorage),
-            _ => Err(format!(
-                "'{}' is not a valid value for RemoteDataFolderType.",
-                value
-            )),
-        }
-    }
-}
-
-/// Extract the remote data folder type from the arguments and validate that the remote data folder can be
-/// accessed. If the remote data folder cannot be accessed, return the error that occurred as a [`String`].
-pub async fn validate_remote_data_folder_from_argument(
-    argument: &str,
-    remote_data_folder: &Arc<dyn ObjectStore>,
-) -> Result<(), String> {
-    if let Some(split_argument) = argument.split_once("://") {
-        let object_store_type = split_argument.0;
-        let remote_data_folder_type = RemoteDataFolderType::from_str(object_store_type)?;
-
-        validate_remote_data_folder(remote_data_folder_type, remote_data_folder).await
-    } else {
-        Err(format!(
-            "Remote data folder argument '{argument}' is invalid."
-        ))
-    }
-}
-
 /// Validate that the remote data folder can be accessed. If the remote data folder cannot be
 /// accessed, return the error that occurred as a [`String`].
 pub async fn validate_remote_data_folder(
-    remote_data_folder_type: RemoteDataFolderType,
     remote_data_folder: &Arc<dyn ObjectStore>,
 ) -> Result<(), String> {
+    // Use an UUID for the path to minimize the chance of the path existing in the object store.
+    let invalid_path = Uuid::new_v4().to_string();
+
     // Check that the connection is valid by attempting to retrieve a file that does not exist.
-    match remote_data_folder.get(&Path::from("")).await {
+    match remote_data_folder.get(&Path::from(invalid_path)).await {
         Ok(_) => Ok(()),
         Err(error) => match error {
             object_store::Error::NotFound { .. } => {
-                // Note that for Azure Blob Storage the same error is returned if the object was not
-                // found due to the object not existing and due to the container not existing.
-                if remote_data_folder_type == RemoteDataFolderType::AzureBlobStorage {
+                let error = error.to_string();
+
+                // BlobNotFound and NoSuchKey errors are only returned if the object store
+                // connection is valid but the path does not exist.
+                if error.contains("BlobNotFound") || error.contains("NoSuchKey") {
                     Ok(())
                 } else {
-                    Err(error.to_string())
+                    Err(error)
                 }
             }
             _ => Err(error.to_string()),
@@ -207,7 +171,7 @@ pub async fn parse_s3_arguments(data: &[u8]) -> Result<Arc<dyn ObjectStore>, Sta
             .map_err(|error| Status::invalid_argument(error.to_string()))?,
     );
 
-    validate_remote_data_folder(RemoteDataFolderType::S3, &s3)
+    validate_remote_data_folder(&s3)
         .await
         .map_err(Status::invalid_argument)?;
 
@@ -234,7 +198,7 @@ pub async fn parse_azure_blob_storage_arguments(
             .map_err(|error| Status::invalid_argument(error.to_string()))?,
     );
 
-    validate_remote_data_folder(RemoteDataFolderType::AzureBlobStorage, &azure_blob_storage)
+    validate_remote_data_folder(&azure_blob_storage)
         .await
         .map_err(Status::invalid_argument)?;
 

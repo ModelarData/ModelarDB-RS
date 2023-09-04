@@ -27,6 +27,7 @@ object_store = { workspace = true, features = ["aws", "azure"] }
 once_cell.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio-rustls"] }
 tonic.workspace = true
+uuid.workspace = true
 
 [dev-dependencies]
 futures.workspace = true
