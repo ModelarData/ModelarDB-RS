@@ -426,6 +426,31 @@ impl TestContext {
         self.runtime
             .block_on(async { self.client.do_action(Request::new(action)).await })
     }
+
+    /// Retrieve the response of the action with the name `action` and convert it into an Apache
+    /// Arrow record batch.
+    fn retrieve_action_record_batch(&mut self, action: String) -> RecordBatch {
+        self.runtime.block_on(async {
+            // Retrieve the bytes from the action response.
+            let response = self
+                .client
+                .do_action(Request::new(Action {
+                    r#type: action,
+                    body: Bytes::new(),
+                }))
+                .await
+                .unwrap()
+                .into_inner()
+                .message()
+                .await
+                .unwrap()
+                .unwrap();
+
+            // Convert the bytes in the response into an Apache Arrow record batch.
+            let mut reader = StreamReader::try_new(response.body.reader(), None).unwrap();
+            reader.next().unwrap().unwrap()
+        })
+    }
 }
 
 impl Drop for TestContext {
@@ -603,28 +628,10 @@ fn test_can_collect_metrics() {
     test_context.flush_data_to_disk();
 
     // Collect the metrics.
-    let metrics = test_context.runtime.block_on(async {
-        test_context
-            .client
-            .do_action(Request::new(Action {
-                r#type: "CollectMetrics".to_owned(),
-                body: Bytes::new(),
-            }))
-            .await
-            .unwrap()
-            .into_inner()
-            .message()
-            .await
-            .unwrap()
-            .unwrap()
-    });
-
-    // Convert the raw bytes in the response into a record batch with the metrics.
-    let mut reader = StreamReader::try_new(metrics.body.reader(), None).unwrap();
-    let batch = reader.next().unwrap().unwrap();
+    let metrics = test_context.retrieve_action_record_batch("CollectMetrics".to_owned());
 
     // Check that all metrics are present in the response.
-    let metrics_array = modelardb_common::array!(batch, 0, StringArray);
+    let metrics_array = modelardb_common::array!(metrics, 0, StringArray);
 
     assert_eq!(metrics_array.value(0), "used_uncompressed_memory");
     assert_eq!(metrics_array.value(1), "used_compressed_memory");
@@ -632,7 +639,7 @@ fn test_can_collect_metrics() {
     assert_eq!(metrics_array.value(3), "used_disk_space");
 
     // Check that the metrics are populated correctly when ingesting and flushing.
-    let timestamps_array = modelardb_common::array!(batch, 1, ListArray);
+    let timestamps_array = modelardb_common::array!(metrics, 1, ListArray);
     assert_eq!(timestamps_array.value(0).len(), 2);
     assert_eq!(timestamps_array.value(1).len(), 2);
     assert_eq!(timestamps_array.value(2).len(), 1);
