@@ -430,26 +430,27 @@ impl TestContext {
     /// Retrieve the response of the action with the name `action` and convert it into an Apache
     /// Arrow record batch.
     fn retrieve_action_record_batch(&mut self, action: &str) -> RecordBatch {
-        self.runtime.block_on(async {
-            // Retrieve the bytes from the action response.
-            let response = self
-                .client
-                .do_action(Request::new(Action {
-                    r#type: action.to_owned(),
-                    body: Bytes::new(),
-                }))
+        let action = Action {
+            r#type: action.to_owned(),
+            body: Bytes::new(),
+        };
+
+        // Retrieve the bytes from the action response.
+        let response = self.runtime.block_on(async {
+            self.client
+                .do_action(Request::new(action))
                 .await
                 .unwrap()
                 .into_inner()
                 .message()
                 .await
                 .unwrap()
-                .unwrap();
+                .unwrap()
+        });
 
-            // Convert the bytes in the response into an Apache Arrow record batch.
-            let mut reader = StreamReader::try_new(response.body.reader(), None).unwrap();
-            reader.next().unwrap().unwrap()
-        })
+        // Convert the bytes in the response into an Apache Arrow record batch.
+        let mut reader = StreamReader::try_new(response.body.reader(), None).unwrap();
+        reader.next().unwrap().unwrap()
     }
 }
 
@@ -638,7 +639,7 @@ fn test_can_collect_metrics() {
     assert_eq!(metrics_array.value(2), "ingested_data_points");
     assert_eq!(metrics_array.value(3), "used_disk_space");
 
-    // Check that the metrics are populated correctly when ingesting and flushing.
+    // Check that the metrics are populated when ingesting and flushing.
     let timestamps_array = modelardb_common::array!(metrics, 1, ListArray);
     assert_eq!(timestamps_array.value(0).len(), 2);
     assert_eq!(timestamps_array.value(1).len(), 2);
