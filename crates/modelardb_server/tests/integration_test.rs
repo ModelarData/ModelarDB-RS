@@ -32,7 +32,7 @@ use std::time::Duration;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket};
 use bytes::{Buf, Bytes};
-use datafusion::arrow::array::{Array, ListArray, StringArray};
+use datafusion::arrow::array::{Array, ListArray, StringArray, UInt64Array};
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Millisecond};
 use datafusion::arrow::ipc::convert;
@@ -429,13 +429,13 @@ impl TestContext {
 
     /// Retrieve the response of the action with the name `action` and convert it into an Apache
     /// Arrow record batch.
-    fn retrieve_action_record_batch(&mut self, action: String) -> RecordBatch {
+    fn retrieve_action_record_batch(&mut self, action: &str) -> RecordBatch {
         self.runtime.block_on(async {
             // Retrieve the bytes from the action response.
             let response = self
                 .client
                 .do_action(Request::new(Action {
-                    r#type: action,
+                    r#type: action.to_owned(),
                     body: Bytes::new(),
                 }))
                 .await
@@ -628,7 +628,7 @@ fn test_can_collect_metrics() {
     test_context.flush_data_to_disk();
 
     // Collect the metrics.
-    let metrics = test_context.retrieve_action_record_batch("CollectMetrics".to_owned());
+    let metrics = test_context.retrieve_action_record_batch("CollectMetrics");
 
     // Check that all metrics are present in the response.
     let metrics_array = modelardb_common::array!(metrics, 0, StringArray);
@@ -774,7 +774,7 @@ fn test_cannot_ingest_invalid_time_series() {
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
         .unwrap();
-    assert!(query_result.num_rows() == 0);
+    assert_eq!(query_result.num_rows(), 0);
 }
 
 #[test]
@@ -803,6 +803,32 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
         .unwrap();
 
     assert_eq!(optimized_query, non_optimized_query);
+}
+
+#[test]
+fn test_can_update_uncompressed_reserved_memory_in_bytes() {
+    let mut test_context = TestContext::new();
+    test_context
+        .update_configuration("uncompressed_reserved_memory_in_bytes", "1")
+        .unwrap();
+
+    let configuration = test_context.retrieve_action_record_batch("GetConfiguration");
+    let values_array = modelardb_common::array!(configuration, 1, UInt64Array);
+
+    assert_eq!(values_array.value(0), 1);
+}
+
+#[test]
+fn test_can_update_compressed_reserved_memory_in_bytes() {
+    let mut test_context = TestContext::new();
+    test_context
+        .update_configuration("compressed_reserved_memory_in_bytes", "1")
+        .unwrap();
+
+    let configuration = test_context.retrieve_action_record_batch("GetConfiguration");
+    let values_array = modelardb_common::array!(configuration, 1, UInt64Array);
+
+    assert_eq!(values_array.value(1), 1);
 }
 
 #[test]
