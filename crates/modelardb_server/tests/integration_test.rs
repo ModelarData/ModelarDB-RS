@@ -31,11 +31,12 @@ use std::time::Duration;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket};
-use bytes::Bytes;
-use datafusion::arrow::array::{Array, StringArray};
+use bytes::{Buf, Bytes};
+use datafusion::arrow::array::{Array, ListArray, StringArray};
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Millisecond};
 use datafusion::arrow::ipc::convert;
+use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, StreamExt};
@@ -586,6 +587,22 @@ fn test_can_list_actions() {
 fn test_can_collect_metrics() {
     let mut test_context = TestContext::new();
 
+    // Ingest data points and flush the edge to populate all currently collected metrics.
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
+    let flight_data = TestContext::create_flight_data_from_time_series(
+        TABLE_NAME.to_owned(),
+        &[time_series.clone()],
+    );
+
+    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+
+    test_context
+        .send_time_series_to_server(flight_data)
+        .unwrap();
+
+    test_context.flush_data_to_disk();
+
+    // Collect the metrics.
     let metrics = test_context.runtime.block_on(async {
         test_context
             .client
@@ -596,12 +613,30 @@ fn test_can_collect_metrics() {
             .await
             .unwrap()
             .into_inner()
-            .map(|metric| metric.unwrap().body)
-            .collect::<Vec<Bytes>>()
+            .message()
             .await
+            .unwrap()
+            .unwrap()
     });
 
-    assert!(!metrics.is_empty());
+    // Convert the raw bytes in the response into a record batch with the metrics.
+    let mut reader = StreamReader::try_new(metrics.body.reader(), None).unwrap();
+    let batch = reader.next().unwrap().unwrap();
+
+    // Check that all metrics are present in the response.
+    let metrics_array = modelardb_common::array!(batch, 0, StringArray);
+
+    assert_eq!(metrics_array.value(0), "used_uncompressed_memory");
+    assert_eq!(metrics_array.value(1), "used_compressed_memory");
+    assert_eq!(metrics_array.value(2), "ingested_data_points");
+    assert_eq!(metrics_array.value(3), "used_disk_space");
+
+    // Check that the metrics are populated correctly when ingesting and flushing.
+    let timestamps_array = modelardb_common::array!(batch, 1, ListArray);
+    assert_eq!(timestamps_array.value(0).len(), 2);
+    assert_eq!(timestamps_array.value(1).len(), 2);
+    assert_eq!(timestamps_array.value(2).len(), 1);
+    assert_eq!(timestamps_array.value(3).len(), 2);
 }
 
 #[test]
