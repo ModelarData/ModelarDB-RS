@@ -427,11 +427,11 @@ impl TestContext {
             .block_on(async { self.client.do_action(Request::new(action)).await })
     }
 
-    /// Retrieve the response of the action with the name `action` and convert it into an Apache
-    /// Arrow record batch.
-    fn retrieve_action_record_batch(&mut self, action: &str) -> RecordBatch {
+    /// Retrieve the response of the action with the type `action_type` and convert it into an
+    /// Apache Arrow record batch.
+    fn retrieve_action_record_batch(&mut self, action_type: &str) -> RecordBatch {
         let action = Action {
-            r#type: action.to_owned(),
+            r#type: action_type.to_owned(),
             body: Bytes::new(),
         };
 
