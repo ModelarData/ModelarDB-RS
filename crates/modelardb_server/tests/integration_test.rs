@@ -32,7 +32,7 @@ use std::time::Duration;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket};
 use bytes::{Buf, Bytes};
-use datafusion::arrow::array::{Array, ListArray, StringArray, UInt64Array};
+use datafusion::arrow::array::{Array, ListArray, StringArray, UInt32Array, UInt64Array};
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Millisecond};
 use datafusion::arrow::ipc::convert;
@@ -42,7 +42,6 @@ use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, StreamExt};
 use modelardb_common_test::data_generation;
 use sysinfo::{Pid, PidExt, System, SystemExt};
-
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
@@ -427,8 +426,8 @@ impl TestContext {
             .block_on(async { self.client.do_action(Request::new(action)).await })
     }
 
-    /// Retrieve the response of the action with the type `action_type` and convert it into an
-    /// Apache Arrow record batch.
+    /// Retrieve the response of the [`Action`] with the type `action_type` and convert it into an
+    /// Apache Arrow [`RecordBatch`].
     fn retrieve_action_record_batch(&mut self, action_type: &str) -> RecordBatch {
         let action = Action {
             r#type: action_type.to_owned(),
@@ -640,11 +639,37 @@ fn test_can_collect_metrics() {
     assert_eq!(metrics_array.value(3), "used_disk_space");
 
     // Check that the metrics are populated when ingesting and flushing.
-    let timestamps_array = modelardb_common::array!(metrics, 1, ListArray);
-    assert_eq!(timestamps_array.value(0).len(), 2);
-    assert_eq!(timestamps_array.value(1).len(), 2);
-    assert_eq!(timestamps_array.value(2).len(), 1);
-    assert_eq!(timestamps_array.value(3).len(), 2);
+    let values_array = modelardb_common::array!(metrics, 2, ListArray);
+
+    // The used_uncompressed_memory metric should record the change when ingesting and when flushing.
+    assert_eq!(
+        values_array
+            .value(0)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .unwrap()
+            .values(),
+        &[786432, 0]
+    );
+
+    // The amount of bytes used for compressed memory changes depending on the compression so we
+    // can only check that the metric is populated when compressing and when flushing.
+    assert_eq!(values_array.value(1).len(), 2);
+
+    // The ingested_data_points metric should record the single request to ingest data points.
+    assert_eq!(
+        values_array
+            .value(2)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .unwrap()
+            .values(),
+        &[TIME_SERIES_TEST_LENGTH as u32]
+    );
+
+    // The amount of bytes used for disk space changes depending on the compression so we
+    // can only check that the metric is populated when initializing and when flushing.
+    assert_eq!(values_array.value(3).len(), 2);
 }
 
 #[test]
@@ -808,28 +833,26 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
 
 #[test]
 fn test_can_update_uncompressed_reserved_memory_in_bytes() {
-    let mut test_context = TestContext::new();
-    test_context
-        .update_configuration("uncompressed_reserved_memory_in_bytes", "1")
-        .unwrap();
-
-    let configuration = test_context.retrieve_action_record_batch("GetConfiguration");
-    let values_array = modelardb_common::array!(configuration, 1, UInt64Array);
+    let values_array =
+        update_and_retrieve_configuration_values("uncompressed_reserved_memory_in_bytes");
 
     assert_eq!(values_array.value(0), 1);
 }
 
 #[test]
 fn test_can_update_compressed_reserved_memory_in_bytes() {
-    let mut test_context = TestContext::new();
-    test_context
-        .update_configuration("compressed_reserved_memory_in_bytes", "1")
-        .unwrap();
-
-    let configuration = test_context.retrieve_action_record_batch("GetConfiguration");
-    let values_array = modelardb_common::array!(configuration, 1, UInt64Array);
+    let values_array =
+        update_and_retrieve_configuration_values("compressed_reserved_memory_in_bytes");
 
     assert_eq!(values_array.value(1), 1);
+}
+
+fn update_and_retrieve_configuration_values(setting: &str) -> UInt64Array {
+    let mut test_context = TestContext::new();
+    test_context.update_configuration(setting, "1").unwrap();
+
+    let configuration = test_context.retrieve_action_record_batch("GetConfiguration");
+    modelardb_common::array!(configuration, 1, UInt64Array).clone()
 }
 
 #[test]
