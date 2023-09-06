@@ -31,17 +31,17 @@ use std::time::Duration;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket};
-use bytes::Bytes;
-use datafusion::arrow::array::{Array, StringArray};
+use bytes::{Buf, Bytes};
+use datafusion::arrow::array::{Array, ListArray, StringArray, UInt32Array, UInt64Array};
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Millisecond};
 use datafusion::arrow::ipc::convert;
+use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, StreamExt};
 use modelardb_common_test::data_generation;
 use sysinfo::{Pid, PidExt, System, SystemExt};
-
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
@@ -425,6 +425,32 @@ impl TestContext {
         self.runtime
             .block_on(async { self.client.do_action(Request::new(action)).await })
     }
+
+    /// Retrieve the response of the [`Action`] with the type `action_type` and convert it into an
+    /// Apache Arrow [`RecordBatch`].
+    fn retrieve_action_record_batch(&mut self, action_type: &str) -> RecordBatch {
+        let action = Action {
+            r#type: action_type.to_owned(),
+            body: Bytes::new(),
+        };
+
+        // Retrieve the bytes from the action response.
+        let response = self.runtime.block_on(async {
+            self.client
+                .do_action(Request::new(action))
+                .await
+                .unwrap()
+                .into_inner()
+                .message()
+                .await
+                .unwrap()
+                .unwrap()
+        });
+
+        // Convert the bytes in the response into an Apache Arrow record batch.
+        let mut reader = StreamReader::try_new(response.body.reader(), None).unwrap();
+        reader.next().unwrap().unwrap()
+    }
 }
 
 impl Drop for TestContext {
@@ -586,41 +612,65 @@ fn test_can_list_actions() {
 fn test_can_collect_metrics() {
     let mut test_context = TestContext::new();
 
-    let metrics = test_context.runtime.block_on(async {
-        test_context
-            .client
-            .do_action(Request::new(Action {
-                r#type: "CollectMetrics".to_owned(),
-                body: Bytes::new(),
-            }))
-            .await
-            .unwrap()
-            .into_inner()
-            .map(|metric| metric.unwrap().body)
-            .collect::<Vec<Bytes>>()
-            .await
-    });
+    // Ingest data points and flush the edge to populate all currently collected metrics.
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
+    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
 
-    assert!(!metrics.is_empty());
+    // Collect the metrics.
+    let metrics = test_context.retrieve_action_record_batch("CollectMetrics");
+
+    // Check that all metrics are present in the response.
+    let metrics_array = modelardb_common::array!(metrics, 0, StringArray);
+
+    assert_eq!(metrics_array.value(0), "used_uncompressed_memory");
+    assert_eq!(metrics_array.value(1), "used_compressed_memory");
+    assert_eq!(metrics_array.value(2), "ingested_data_points");
+    assert_eq!(metrics_array.value(3), "used_disk_space");
+
+    // Check that the metrics are populated when ingesting and flushing.
+    let values_array = modelardb_common::array!(metrics, 2, ListArray);
+
+    // The used_uncompressed_memory metric should record the change when ingesting and when flushing.
+    assert_eq!(
+        values_array
+            .value(0)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .unwrap()
+            .values(),
+        &[786432, 0]
+    );
+
+    // The amount of bytes used for compressed memory changes depending on the compression so we
+    // can only check that the metric is populated when compressing and when flushing.
+    assert_eq!(values_array.value(1).len(), 2);
+
+    // The ingested_data_points metric should record the single request to ingest data points.
+    assert_eq!(
+        values_array
+            .value(2)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .unwrap()
+            .values(),
+        &[TIME_SERIES_TEST_LENGTH as u32]
+    );
+
+    // The amount of bytes used for disk space changes depending on the compression so we
+    // can only check that the metric is populated when initializing and when flushing.
+    assert_eq!(values_array.value(3).len(), 2);
 }
 
 #[test]
 fn test_can_ingest_time_series_with_tags() {
     let mut test_context = TestContext::new();
-
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
-    let flight_data = TestContext::create_flight_data_from_time_series(
-        TABLE_NAME.to_owned(),
+
+    ingest_time_series_and_flush_data(
+        &mut test_context,
         &[time_series.clone()],
+        TableType::ModelTable,
     );
-
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
-
-    test_context
-        .send_time_series_to_server(flight_data)
-        .unwrap();
-
-    test_context.flush_data_to_disk();
 
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
@@ -632,20 +682,13 @@ fn test_can_ingest_time_series_with_tags() {
 #[test]
 fn test_can_ingest_time_series_without_tags() {
     let mut test_context = TestContext::new();
-
     let time_series = TestContext::generate_time_series_with_tag(false, None, None);
-    let flight_data = TestContext::create_flight_data_from_time_series(
-        TABLE_NAME.to_owned(),
+
+    ingest_time_series_and_flush_data(
+        &mut test_context,
         &[time_series.clone()],
+        TableType::ModelTableNoTag,
     );
-
-    test_context.create_table(TABLE_NAME, TableType::ModelTableNoTag);
-
-    test_context
-        .send_time_series_to_server(flight_data)
-        .unwrap();
-
-    test_context.flush_data_to_disk();
 
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
@@ -658,18 +701,12 @@ fn test_can_ingest_time_series_without_tags() {
 fn test_can_ingest_time_series_with_generated_field() {
     let mut test_context = TestContext::new();
     let time_series = TestContext::generate_time_series_with_tag(false, None, None);
-    let flight_data = TestContext::create_flight_data_from_time_series(
-        TABLE_NAME.to_owned(),
+
+    ingest_time_series_and_flush_data(
+        &mut test_context,
         &[time_series.clone()],
+        TableType::ModelTableAsField,
     );
-
-    test_context.create_table(TABLE_NAME, TableType::ModelTableAsField);
-
-    test_context
-        .send_time_series_to_server(flight_data)
-        .unwrap();
-
-    test_context.flush_data_to_disk();
 
     // The optimizer is allowed to add SortedJoinExec between SortedJoinExec and GeneratedAsExec.
     let query_result = test_context
@@ -693,16 +730,7 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
         TestContext::generate_time_series_with_tag(false, None, Some("tag_two"));
     let time_series = &[time_series_with_tag_one, time_series_with_tag_two];
 
-    let flight_data =
-        TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), time_series);
-
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
-
-    test_context
-        .send_time_series_to_server(flight_data)
-        .unwrap();
-
-    test_context.flush_data_to_disk();
+    ingest_time_series_and_flush_data(&mut test_context, time_series, TableType::ModelTable);
 
     let query_result = test_context
         .execute_query(format!(
@@ -732,24 +760,15 @@ fn test_cannot_ingest_invalid_time_series() {
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
         .unwrap();
-    assert!(query_result.num_rows() == 0);
+    assert_eq!(query_result.num_rows(), 0);
 }
 
 #[test]
 fn test_optimized_query_results_equals_non_optimized_query_results() {
     let mut test_context = TestContext::new();
-
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
-    let flight_data =
-        TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), &[time_series]);
 
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
-
-    test_context
-        .send_time_series_to_server(flight_data)
-        .unwrap();
-
-    test_context.flush_data_to_disk();
+    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
 
     let optimized_query = test_context
         .execute_query(format!("SELECT MIN(value) FROM {TABLE_NAME}"))
@@ -761,6 +780,47 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
         .unwrap();
 
     assert_eq!(optimized_query, non_optimized_query);
+}
+
+fn ingest_time_series_and_flush_data(
+    test_context: &mut TestContext,
+    time_series: &[RecordBatch],
+    table_type: TableType,
+) {
+    let flight_data =
+        TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), time_series);
+
+    test_context.create_table(TABLE_NAME, table_type);
+
+    test_context
+        .send_time_series_to_server(flight_data)
+        .unwrap();
+
+    test_context.flush_data_to_disk();
+}
+
+#[test]
+fn test_can_update_uncompressed_reserved_memory_in_bytes() {
+    let values_array =
+        update_and_retrieve_configuration_values("uncompressed_reserved_memory_in_bytes");
+
+    assert_eq!(values_array.value(0), 1);
+}
+
+#[test]
+fn test_can_update_compressed_reserved_memory_in_bytes() {
+    let values_array =
+        update_and_retrieve_configuration_values("compressed_reserved_memory_in_bytes");
+
+    assert_eq!(values_array.value(1), 1);
+}
+
+fn update_and_retrieve_configuration_values(setting: &str) -> UInt64Array {
+    let mut test_context = TestContext::new();
+    test_context.update_configuration(setting, "1").unwrap();
+
+    let configuration = test_context.retrieve_action_record_batch("GetConfiguration");
+    modelardb_common::array!(configuration, 1, UInt64Array).clone()
 }
 
 #[test]
