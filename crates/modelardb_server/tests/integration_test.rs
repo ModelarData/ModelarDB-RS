@@ -614,18 +614,7 @@ fn test_can_collect_metrics() {
 
     // Ingest data points and flush the edge to populate all currently collected metrics.
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
-    let flight_data = TestContext::create_flight_data_from_time_series(
-        TABLE_NAME.to_owned(),
-        &[time_series.clone()],
-    );
-
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
-
-    test_context
-        .send_time_series_to_server(flight_data)
-        .unwrap();
-
-    test_context.flush_data_to_disk();
+    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
 
     // Collect the metrics.
     let metrics = test_context.retrieve_action_record_batch("CollectMetrics");
@@ -675,20 +664,13 @@ fn test_can_collect_metrics() {
 #[test]
 fn test_can_ingest_time_series_with_tags() {
     let mut test_context = TestContext::new();
-
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
-    let flight_data = TestContext::create_flight_data_from_time_series(
-        TABLE_NAME.to_owned(),
+
+    ingest_time_series_and_flush_data(
+        &mut test_context,
         &[time_series.clone()],
+        TableType::ModelTable,
     );
-
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
-
-    test_context
-        .send_time_series_to_server(flight_data)
-        .unwrap();
-
-    test_context.flush_data_to_disk();
 
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
@@ -700,20 +682,13 @@ fn test_can_ingest_time_series_with_tags() {
 #[test]
 fn test_can_ingest_time_series_without_tags() {
     let mut test_context = TestContext::new();
-
     let time_series = TestContext::generate_time_series_with_tag(false, None, None);
-    let flight_data = TestContext::create_flight_data_from_time_series(
-        TABLE_NAME.to_owned(),
+
+    ingest_time_series_and_flush_data(
+        &mut test_context,
         &[time_series.clone()],
+        TableType::ModelTableNoTag,
     );
-
-    test_context.create_table(TABLE_NAME, TableType::ModelTableNoTag);
-
-    test_context
-        .send_time_series_to_server(flight_data)
-        .unwrap();
-
-    test_context.flush_data_to_disk();
 
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
@@ -726,18 +701,12 @@ fn test_can_ingest_time_series_without_tags() {
 fn test_can_ingest_time_series_with_generated_field() {
     let mut test_context = TestContext::new();
     let time_series = TestContext::generate_time_series_with_tag(false, None, None);
-    let flight_data = TestContext::create_flight_data_from_time_series(
-        TABLE_NAME.to_owned(),
+
+    ingest_time_series_and_flush_data(
+        &mut test_context,
         &[time_series.clone()],
+        TableType::ModelTableAsField,
     );
-
-    test_context.create_table(TABLE_NAME, TableType::ModelTableAsField);
-
-    test_context
-        .send_time_series_to_server(flight_data)
-        .unwrap();
-
-    test_context.flush_data_to_disk();
 
     // The optimizer is allowed to add SortedJoinExec between SortedJoinExec and GeneratedAsExec.
     let query_result = test_context
@@ -761,16 +730,7 @@ fn test_can_ingest_multiple_time_series_with_different_tags() {
         TestContext::generate_time_series_with_tag(false, None, Some("tag_two"));
     let time_series = &[time_series_with_tag_one, time_series_with_tag_two];
 
-    let flight_data =
-        TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), time_series);
-
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
-
-    test_context
-        .send_time_series_to_server(flight_data)
-        .unwrap();
-
-    test_context.flush_data_to_disk();
+    ingest_time_series_and_flush_data(&mut test_context, time_series, TableType::ModelTable);
 
     let query_result = test_context
         .execute_query(format!(
@@ -806,18 +766,9 @@ fn test_cannot_ingest_invalid_time_series() {
 #[test]
 fn test_optimized_query_results_equals_non_optimized_query_results() {
     let mut test_context = TestContext::new();
-
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
-    let flight_data =
-        TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), &[time_series]);
 
-    test_context.create_table(TABLE_NAME, TableType::ModelTable);
-
-    test_context
-        .send_time_series_to_server(flight_data)
-        .unwrap();
-
-    test_context.flush_data_to_disk();
+    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
 
     let optimized_query = test_context
         .execute_query(format!("SELECT MIN(value) FROM {TABLE_NAME}"))
@@ -829,6 +780,23 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
         .unwrap();
 
     assert_eq!(optimized_query, non_optimized_query);
+}
+
+fn ingest_time_series_and_flush_data(
+    test_context: &mut TestContext,
+    time_series: &[RecordBatch],
+    table_type: TableType,
+) {
+    let flight_data =
+        TestContext::create_flight_data_from_time_series(TABLE_NAME.to_owned(), time_series);
+
+    test_context.create_table(TABLE_NAME, table_type);
+
+    test_context
+        .send_time_series_to_server(flight_data)
+        .unwrap();
+
+    test_context.flush_data_to_disk();
 }
 
 #[test]
