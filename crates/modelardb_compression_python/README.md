@@ -8,7 +8,7 @@ and
 [jhoekx/python-rust-arrow-interop-example](https://github.com/jhoekx/python-rust-arrow-interop-example/blob/master/src/lib.rs).
 
 ## Installation
-1. Install the [dependencies](https://github.com/ModelarData/ModelarDB-RS#installation) required to build ModelarDB's compression library.
+1. Install the [dependencies](/docs/user/README.md#installation) required to build ModelarDB's compression library.
 2. Install and test the Python module using Python:
    * Install: `python3 -m pip install .`
    * Run Tests: `python3 -m unittest`
