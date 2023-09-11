@@ -19,11 +19,11 @@ one exists, e.g., the bug report if it is a bugfix, and as a new GitHub issue ot
 ## Structure
 The ModelarDB project consists of the following crates:
 
-- [modelardb_client](https://github.com/ModelarData/ModelarDB-RS/tree/master/crates/modelardb_client) - ModelarDB's command-line client in the form of the binary `modelardb`.
-- [modelardb_common](https://github.com/ModelarData/ModelarDB-RS/tree/master/crates/modelardb_common) - Library providing shared functions, macros, and types for use by the other crates.
-- [modelardb_compression](https://github.com/ModelarData/ModelarDB-RS/tree/master/crates/modelardb_compression) - Library providing lossless and lossy model-based compression of time series.
-- [modelardb_compression_python](https://github.com/ModelarData/ModelarDB-RS/tree/master/crates/modelardb_compression_python) - Python interface for the modelardb_compression crate.
-- [modelardb_server](https://github.com/ModelarData/ModelarDB-RS/tree/master/crates/modelardb_server) - The ModelarDB server in the form of the binary `modelardbd`.
+- [modelardb_client](/crates/modelardb_client) - ModelarDB's command-line client in the form of the binary `modelardb`.
+- [modelardb_common](/crates/modelardb_common) - Library providing shared functions, macros, and types for use by the other crates.
+- [modelardb_compression](/crates/modelardb_compression) - Library providing lossless and lossy model-based compression of time series.
+- [modelardb_compression_python](/crates/modelardb_compression_python) - Python interface for the modelardb_compression crate.
+- [modelardb_server](/crates/modelardb_server) - The ModelarDB server in the form of the binary `modelardbd`.
 
 ## Components
 Each major component in the ModelarDB server is described in detail to support further development of the components
