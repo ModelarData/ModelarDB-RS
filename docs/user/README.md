@@ -262,7 +262,7 @@ It is however ideal to use for experimenting with `modelardbd` or when developin
 
 Downloading [Docker Desktop](https://docs.docker.com/desktop/) is recommended to make maintenance of the created
 containers easier. Once [Docker](https://docs.docker.com/) is set up, the [MinIO](https://min.io/) instance can be
-created by running the services defined in [docker-compose-minio.yml](docker-compose-minio.yml). The services can
+created by running the services defined in [docker-compose-minio.yml](/docker-compose-minio.yml). The services can
 be built and started using the command:
 
 ```shell
