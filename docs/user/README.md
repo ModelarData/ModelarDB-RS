@@ -61,7 +61,7 @@ AWS_ALLOW_HTTP
 
 For example, to use a local instance of [MinIO](https://min.io/), assuming the access key id `KURo1eQeMhDeVsrz` and the
 secret access key `sp7TDyD2ZruJ0VdFHmkacT1Y90PVPF7p` has been created through
-[MinIO's web interface](http://127.0.0.1:9001/access-keys), set the environment variables as follows:
+MinIO's command line tool or web interface, set the environment variables as follows:
 
 ```shell
 AWS_ACCESS_KEY_ID="KURo1eQeMhDeVsrz"
@@ -71,9 +71,8 @@ AWS_ENDPOINT="http://127.0.0.1:9000"
 AWS_ALLOW_HTTP="true"
 ```
 
-Then, assuming a bucket named `wind-turbine` has been created through
-[MinIO's web interface](http://127.0.0.1:9001/buckets), `modelardbd` can be run in edge mode with automatic transfer of
-the ingested time series to the MinIO bucket `wind-turbine`:
+Then, assuming a bucket named `wind-turbine` has been created through MinIO's command line tool or web interface, `modelardbd` 
+can be run in edge mode with automatic transfer of the ingested time series to the MinIO bucket `wind-turbine`:
 
 ```shell
 modelardbd edge path_to_local_data_folder s3://wind-turbine
@@ -271,7 +270,7 @@ docker-compose -p modelardata-minio -f docker-compose-minio.yml up
 
 After the [MinIO](https://min.io/) service is created, a [MinIO](https://min.io/) client is used to initialize
 the development bucket `modelardata`, if it does not already exist. [MinIO](https://min.io/) can be administered through
-its [web interface](http://localhost:9001). The default username and password, `minioadmin`, can be used to log in.
+its [web interface](http://127.0.0.1:9001). The default username and password, `minioadmin`, can be used to log in.
 A separate compose file is used for [MinIO](https://min.io/) so an existing [MinIO](https://min.io/) instance can be
 used when `modelardbd` is deployed using [Docker](https://docker.com/), if necessary.
 
