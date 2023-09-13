@@ -255,6 +255,8 @@ impl ModelarDbDialect {
             like: None,
             clone: None,
             engine: Some(CREATE_MODEL_TABLE_ENGINE.to_owned()),
+            comment: None,
+            auto_increment_offset: None,
             default_charset: None,
             collation: None,
             on_commit: None,
@@ -451,6 +453,8 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
         like,
         clone,
         engine: _engine,
+        comment,
+        auto_increment_offset,
         default_charset,
         collation,
         on_commit,
@@ -487,6 +491,8 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
         check_unsupported_feature_is_disabled(*without_rowid, "Without ROWID")?;
         check_unsupported_feature_is_disabled(like.is_some(), "LIKE")?;
         check_unsupported_feature_is_disabled(clone.is_some(), "CLONE")?;
+        check_unsupported_feature_is_disabled(comment.is_some(), "Comment")?;
+        check_unsupported_feature_is_disabled(auto_increment_offset.is_some(), "AUTO INCREMENT")?;
         check_unsupported_feature_is_disabled(default_charset.is_some(), "Charset")?;
         check_unsupported_feature_is_disabled(collation.is_some(), "Collation")?;
         check_unsupported_feature_is_disabled(on_commit.is_some(), "ON COMMIT")?;
