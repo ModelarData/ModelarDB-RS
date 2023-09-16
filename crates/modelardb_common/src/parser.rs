@@ -29,8 +29,6 @@ use datafusion::logical_expr::{AggregateUDF, Expr as DFExpr, ScalarUDF, TableSou
 use datafusion::physical_expr::planner;
 use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
 use datafusion::sql::TableReference;
-use modelardb_common::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
-use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 use sqlparser::ast::{
     ColumnDef, ColumnOption, ColumnOptionDef, DataType as SQLDataType, GeneratedAs,
     HiveDistributionStyle, HiveFormat, Ident, ObjectName, Statement, TimezoneInfo,
@@ -40,7 +38,9 @@ use sqlparser::keywords::{Keyword, ALL_KEYWORDS};
 use sqlparser::parser::{Parser, ParserError};
 use sqlparser::tokenizer::Token;
 
-use crate::metadata::MetadataManager;
+use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
+use crate::metadata::normalize_name;
+use crate::types::{ArrowTimestamp, ArrowValue, ErrorBound};
 
 /// Constant specifying that a model table should be created.
 pub const CREATE_MODEL_TABLE_ENGINE: &str = "ModelTable";
@@ -349,7 +349,7 @@ pub fn semantic_checks_for_create_table(
         }
 
         // Check if the table name contains whitespace, e.g., spaces or tabs.
-        let normalized_name = MetadataManager::normalize_name(&name.0[0].value);
+        let normalized_name = normalize_name(&name.0[0].value);
         if normalized_name.contains(char::is_whitespace) {
             let message = "Table name cannot contain whitespace.";
             return Err(ParserError::ParserError(message.to_owned()));
@@ -526,7 +526,7 @@ fn column_defs_to_model_table_query_schema(
 
     // Manually convert TIMESTAMP, FIELD, and TAG columns to Apache Arrow DataFusion types.
     for column_def in column_defs {
-        let normalized_name = MetadataManager::normalize_name(&column_def.name.value);
+        let normalized_name = normalize_name(&column_def.name.value);
 
         let field = match column_def.data_type {
             SQLDataType::Timestamp(None, TimezoneInfo::None) => {
@@ -722,8 +722,6 @@ impl ContextProvider for EmptyContextProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use crate::common_test;
 
     // Tests for tokenize_and_parse_sql().
     #[test]
@@ -1048,8 +1046,13 @@ mod tests {
             "TAN(field_1 * PI() / 180)",
         ];
 
-        let schemaref = common_test::model_table_metadata().schema;
-        let df_schema = Arc::try_unwrap(schemaref).unwrap().to_dfschema().unwrap();
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("field_1", ArrowValue::DATA_TYPE, false),
+            Field::new("field_2", ArrowValue::DATA_TYPE, false),
+            Field::new("tag_1", DataType::Utf8, false),
+        ]));
+        let df_schema = Arc::try_unwrap(schema).unwrap().to_dfschema().unwrap();
 
         let dialect = ModelarDbDialect::new();
         for generation_expr in generation_exprs_sql {
