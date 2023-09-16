@@ -155,6 +155,10 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently the
     /// following actions are supported:
+    /// * `CommandStatementUpdate`: Execute a SQL query containing a command that does not
+    /// return a result. These commands can be `CREATE TABLE table_name(...` which creates a
+    /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a model table.
+    /// The table is created for all nodes controlled by the manager.
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
     /// to the cluster of nodes controlled by the manager and the object store and current database
     /// schema used in the cluster is returned.
@@ -168,7 +172,10 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        if action.r#type == "RegisterNode" {
+        if action.r#type == "CommandStatementUpdate" {
+            // Confirm the table was created.
+            Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "RegisterNode" {
             // Extract the node from the action body.
             let (url, offset_data) = decode_argument(&action.body)?;
             let (mode, _offset_data) = decode_argument(offset_data)?;
@@ -232,6 +239,12 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::ListActionsStream>, Status> {
+        let command_statement_update_action = ActionType {
+            r#type: "CommandStatementUpdate".to_owned(),
+            description: "Execute a SQL query containing a single command that produce no results."
+                .to_owned(),
+        };
+
         let register_node_action = ActionType {
             r#type: "RegisterNode".to_owned(),
             description: "Register either an edge or cloud node with the manager.".to_owned(),
@@ -243,7 +256,11 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let output = stream::iter(vec![Ok(register_node_action), Ok(remove_node_action)]);
+        let output = stream::iter(vec![
+            Ok(command_statement_update_action),
+            Ok(register_node_action),
+            Ok(remove_node_action),
+        ]);
 
         Ok(Response::new(Box::pin(output)))
     }

@@ -792,7 +792,7 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::ListActionsStream>, Status> {
-        let create_command_statement_update_action = ActionType {
+        let command_statement_update_action = ActionType {
             r#type: "CommandStatementUpdate".to_owned(),
             description: "Execute a SQL query containing a single command that produce no results."
                 .to_owned(),
@@ -846,7 +846,7 @@ impl FlightService for FlightServiceHandler {
         };
 
         let output = stream::iter(vec![
-            Ok(create_command_statement_update_action),
+            Ok(command_statement_update_action),
             Ok(flush_memory_action),
             Ok(flush_edge_action),
             Ok(kill_edge_action),
