@@ -187,6 +187,11 @@ pub fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>, Err
     }
 }
 
+/// Normalize `name` to allow direct comparisons between names.
+pub fn normalize_name(name: &str) -> String {
+    name.to_lowercase()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -298,5 +303,16 @@ mod tests {
             let usizes = try_convert_slice_u8_to_vec_usize(&bytes).unwrap();
             prop_assert_eq!(values, usizes);
         }
+    }
+
+    // Tests for normalize_name().
+    #[test]
+    fn test_normalize_table_name_lowercase_no_effect() {
+        assert_eq!("table_name", normalize_name("table_name"));
+    }
+
+    #[test]
+    fn test_normalize_table_name_uppercase() {
+        assert_eq!("table_name", normalize_name("TABLE_NAME"));
     }
 }

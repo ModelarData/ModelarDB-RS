@@ -45,7 +45,6 @@ use sqlx::{Executor, Result, Row, Sqlite, SqlitePool};
 use tracing::{error, info, warn};
 use uuid::Uuid;
 
-use crate::parser;
 use crate::query::ModelTable;
 use crate::storage::COMPRESSED_DATA_FOLDER;
 use crate::Context;
@@ -663,11 +662,6 @@ impl MetadataManager {
         } else {
             value
         }
-    }
-
-    /// Normalize `name` to allow direct comparisons between names.
-    pub fn normalize_name(name: &str) -> String {
-        name.to_lowercase()
     }
 
     /// Save the created table to the metadata database. This consists of adding a row to the
@@ -1710,16 +1704,6 @@ mod tests {
         }
 
         Ok(metadata_manager)
-    }
-
-    #[test]
-    fn test_normalize_table_name_lowercase_no_effect() {
-        assert_eq!("table_name", MetadataManager::normalize_name("table_name"));
-    }
-
-    #[test]
-    fn test_normalize_table_name_uppercase() {
-        assert_eq!("table_name", MetadataManager::normalize_name("TABLE_NAME"));
     }
 
     #[tokio::test]
