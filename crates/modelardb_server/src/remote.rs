@@ -47,6 +47,9 @@ use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 use modelardb_common::arguments::{decode_argument, parse_object_store_arguments};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::metadata::normalize_name;
+use modelardb_common::parser;
+use modelardb_common::parser::ValidStatement;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
 use modelardb_common::types::{ServerMode, TimestampBuilder};
 use tokio::runtime::Runtime;
@@ -57,8 +60,6 @@ use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
-use crate::metadata::MetadataManager;
-use crate::parser::{self, ValidStatement};
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 use crate::Context;
@@ -542,7 +543,7 @@ impl FlightService for FlightServiceHandler {
             .flight_descriptor
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
         let table_name = self.table_name_from_flight_descriptor(&flight_descriptor)?;
-        let normalized_table_name = MetadataManager::normalize_name(table_name);
+        let normalized_table_name = normalize_name(table_name);
 
         // Handle the data based on whether it is a normal table or a model table.
         if let Some(model_table_metadata) = self

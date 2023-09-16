@@ -22,7 +22,6 @@ mod common_test;
 mod configuration;
 mod metadata;
 mod optimizer;
-mod parser;
 mod query;
 mod remote;
 mod storage;
