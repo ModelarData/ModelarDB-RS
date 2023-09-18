@@ -76,6 +76,23 @@ impl FlightServiceHandler {
     pub fn new(context: Arc<Context>) -> FlightServiceHandler {
         Self { context }
     }
+
+    /// Return [`Status`] if a table named `table_name` already exists in the metadata database.
+    async fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
+        let existing_tables = self
+            .context
+            .metadata_manager
+            .table_names()
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        if existing_tables.iter().any(|existing_table| existing_table == table_name) {
+            let message = format!("Table with name '{table_name}' already exists.");
+            Err(Status::already_exists(message))
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[tonic::async_trait]
