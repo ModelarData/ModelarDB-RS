@@ -17,7 +17,7 @@
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::Action;
-use futures::future::join_all;
+use futures::future::try_join_all;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
 use tonic::codegen::Bytes;
@@ -105,7 +105,7 @@ impl Cluster {
         }
 
         // Create the table in each node concurrently.
-        join_all(create_table_actions).await;
+        try_join_all(create_table_actions).await?;
 
         Ok(())
     }
