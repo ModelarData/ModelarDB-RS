@@ -36,6 +36,8 @@ pub enum ModelarDbError {
     DataRetrievalError(String),
     /// Error returned when something happens that should be impossible.
     ImplementationError(String),
+    /// Error returned when failing to perform an action that should happen for each node in a cluster.
+    ClusterError(String),
 }
 
 impl Error for ModelarDbError {}
@@ -52,6 +54,9 @@ impl Display for ModelarDbError {
             }
             ModelarDbError::ImplementationError(reason) => {
                 write!(f, "Implementation Error: {reason}")
+            }
+            ModelarDbError::ClusterError(reason) => {
+                write!(f, "Cluster Error: {reason}")
             }
         }
     }

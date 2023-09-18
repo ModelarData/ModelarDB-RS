@@ -91,6 +91,13 @@ impl Cluster {
             )))
         }
     }
+
+    /// For each node in the cluster, use the `CommandStatementUpdate` action to create the table
+    /// given by `sql`. If the table was successfully created for each node, return
+    /// [`Ok`], otherwise return [`ClusterError`](ModelarDbError::ClusterError).
+    pub async fn create_table(&self, sql: &str) -> Result<(), ModelarDbError> {
+        Ok(())
+    }
 }
 
 impl Default for Cluster {

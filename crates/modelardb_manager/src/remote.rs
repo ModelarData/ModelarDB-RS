@@ -29,7 +29,6 @@ use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaResult, Ticket,
 };
-use datafusion::arrow::datatypes::Schema;
 use futures::{stream, Stream};
 use modelardb_common::arguments::decode_argument;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
@@ -102,24 +101,57 @@ impl FlightServiceHandler {
         }
     }
 
-    /// Create a normal table, save it to the metadata database and register and save it for each
+    /// Create a normal table, save it to the metadata database and register and save it to each
     /// node controlled by the manager. If the table cannot be saved to the metadata database or
-    /// registered and saved for each node, return [`Status`].
-    async fn save_and_register_table(
-        &self,
-        table_name: String,
-        schema: Schema,
-    ) -> Result<(), Status> {
+    /// registered and saved to each node, return [`Status`].
+    async fn save_and_register_table(&self, table_name: String, sql: &str) -> Result<(), Status> {
+        // Persist the new table to the metadata database.
+        self.context
+            .metadata_manager
+            .save_table_metadata(&table_name)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        // Register and save the table to each node in the cluster.
+        self.context
+            .cluster
+            .read()
+            .await
+            .create_table(sql)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        info!("Created table '{}'.", table_name);
+
         Ok(())
     }
 
-    /// Create a model table, save it to the metadata database and register and save it for each
+    /// Create a model table, save it to the metadata database and register and save it to each
     /// node controlled by the manager. If the table cannot be saved to the metadata database or
-    /// registered and saved for each node, return [`Status`].
+    /// registered and saved to each node, return [`Status`].
     async fn save_and_register_model_table(
         &self,
         model_table_metadata: ModelTableMetadata,
+        sql: &str,
     ) -> Result<(), Status> {
+        // Persist the new model table to the metadata database.
+        self.context
+            .metadata_manager
+            .save_model_table_metadata(&model_table_metadata)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        // Register and save the model table to each node in the cluster.
+        self.context
+            .cluster
+            .read()
+            .await
+            .create_table(sql)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        info!("Created model table '{}'.", model_table_metadata.name);
+
         Ok(())
     }
 }
@@ -234,14 +266,14 @@ impl FlightService for FlightServiceHandler {
 
             // Create the table or model table if it does not already exists.
             match valid_statement {
-                ValidStatement::CreateTable { name, schema } => {
+                ValidStatement::CreateTable { name, .. } => {
                     self.check_if_table_exists(&name).await?;
-                    self.save_and_register_table(name, schema).await?;
+                    self.save_and_register_table(name, sql).await?;
                 }
                 ValidStatement::CreateModelTable(model_table_metadata) => {
                     self.check_if_table_exists(&model_table_metadata.name)
                         .await?;
-                    self.save_and_register_model_table(model_table_metadata)
+                    self.save_and_register_model_table(model_table_metadata, sql)
                         .await?;
                 }
             };
