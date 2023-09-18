@@ -20,6 +20,7 @@
 use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::str;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -28,8 +29,12 @@ use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaResult, Ticket,
 };
+use datafusion::arrow::datatypes::Schema;
 use futures::{stream, Stream};
 use modelardb_common::arguments::decode_argument;
+use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::parser;
+use modelardb_common::parser::ValidStatement;
 use modelardb_common::types::ServerMode;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
@@ -86,12 +91,36 @@ impl FlightServiceHandler {
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
-        if existing_tables.iter().any(|existing_table| existing_table == table_name) {
+        if existing_tables
+            .iter()
+            .any(|existing_table| existing_table == table_name)
+        {
             let message = format!("Table with name '{table_name}' already exists.");
             Err(Status::already_exists(message))
         } else {
             Ok(())
         }
+    }
+
+    /// Create a normal table, save it to the metadata database and register and save it for each
+    /// node controlled by the manager. If the table cannot be saved to the metadata database or
+    /// registered and saved for each node, return [`Status`].
+    async fn save_and_register_table(
+        &self,
+        table_name: String,
+        schema: Schema,
+    ) -> Result<(), Status> {
+        Ok(())
+    }
+
+    /// Create a model table, save it to the metadata database and register and save it for each
+    /// node controlled by the manager. If the table cannot be saved to the metadata database or
+    /// registered and saved for each node, return [`Status`].
+    async fn save_and_register_model_table(
+        &self,
+        model_table_metadata: ModelTableMetadata,
+    ) -> Result<(), Status> {
+        Ok(())
     }
 }
 
@@ -190,6 +219,33 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "CommandStatementUpdate" {
+            // Read the SQL from the action.
+            let sql = str::from_utf8(&action.body)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            info!("Received request to execute '{}'.", sql);
+
+            // Parse the SQL.
+            let statement = parser::tokenize_and_parse_sql(sql)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+            // Perform semantic checks to ensure the parsed SQL is supported.
+            let valid_statement = parser::semantic_checks_for_create_table(statement)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+            // Create the table or model table if it does not already exists.
+            match valid_statement {
+                ValidStatement::CreateTable { name, schema } => {
+                    self.check_if_table_exists(&name).await?;
+                    self.save_and_register_table(name, schema).await?;
+                }
+                ValidStatement::CreateModelTable(model_table_metadata) => {
+                    self.check_if_table_exists(&model_table_metadata.name)
+                        .await?;
+                    self.save_and_register_model_table(model_table_metadata)
+                        .await?;
+                }
+            };
+
             // Confirm the table was created.
             Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "RegisterNode" {

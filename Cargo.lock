@@ -1958,6 +1958,7 @@ name = "modelardb_manager"
 version = "0.1.0"
 dependencies = [
  "arrow-flight",
+ "datafusion",
  "futures",
  "log",
  "modelardb_common",
