@@ -18,7 +18,7 @@
 
 use std::str::FromStr;
 
-use futures::TryStreamExt;
+use futures::{StreamExt, TryStreamExt};
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
@@ -198,6 +198,26 @@ impl MetadataManager {
         }
 
         transaction.commit().await
+    }
+
+    /// Retrieve the names of all tables in the metadata database, including both normal tables and
+    /// model tables and return them. If the table names could not be retrieved, return [`sqlx::Error`].
+    pub async fn table_names(&self) -> Result<Vec<String>, sqlx::Error> {
+        let mut table_names: Vec<String> = vec![];
+
+        // Retrieve the table_name column from both tables containing table metadata.
+        let table_rows = sqlx::query("SELECT table_name FROM table_metadata")
+            .fetch(&self.metadata_database_pool);
+        let model_table_rows = sqlx::query("SELECT table_name FROM model_table_metadata")
+            .fetch(&self.metadata_database_pool);
+
+        let mut rows = table_rows.chain(model_table_rows);
+
+        while let Some(row) = rows.try_next().await? {
+            table_names.push(row.get("table_name"))
+        }
+
+        Ok(table_names)
     }
 
     /// Save the node to the metadata database and return [`Ok`]. If the node could not be saved,
