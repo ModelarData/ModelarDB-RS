@@ -36,6 +36,7 @@ use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::types::ServerMode;
 use tokio::runtime::Runtime;
+use tonic::codegen::Bytes;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
@@ -104,7 +105,11 @@ impl FlightServiceHandler {
     /// Create a normal table, save it to the metadata database and create it for each node
     /// controlled by the manager. If the table cannot be saved to the metadata database or
     /// created for each node, return [`Status`].
-    async fn save_and_create_cluster_tables(&self, table_name: String, sql: &str) -> Result<(), Status> {
+    async fn save_and_create_cluster_tables(
+        &self,
+        table_name: String,
+        sql: Bytes,
+    ) -> Result<(), Status> {
         // Persist the new table to the metadata database.
         self.context
             .metadata_manager
@@ -132,7 +137,7 @@ impl FlightServiceHandler {
     async fn save_and_create_cluster_model_tables(
         &self,
         model_table_metadata: ModelTableMetadata,
-        sql: &str,
+        sql: Bytes,
     ) -> Result<(), Status> {
         // Persist the new model table to the metadata database.
         self.context
@@ -268,12 +273,13 @@ impl FlightService for FlightServiceHandler {
             match valid_statement {
                 ValidStatement::CreateTable { name, .. } => {
                     self.check_if_table_exists(&name).await?;
-                    self.save_and_create_cluster_tables(name, sql).await?;
+                    self.save_and_create_cluster_tables(name, action.body)
+                        .await?;
                 }
                 ValidStatement::CreateModelTable(model_table_metadata) => {
                     self.check_if_table_exists(&model_table_metadata.name)
                         .await?;
-                    self.save_and_create_cluster_model_tables(model_table_metadata, sql)
+                    self.save_and_create_cluster_model_tables(model_table_metadata, action.body)
                         .await?;
                 }
             };

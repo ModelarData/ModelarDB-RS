@@ -17,8 +17,10 @@
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::Action;
+use futures::future::join_all;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
+use tonic::codegen::Bytes;
 use tonic::Request;
 
 /// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
@@ -73,7 +75,7 @@ impl Cluster {
             // Flush the node and kill the process running on the node.
             let mut flight_client = FlightServiceClient::connect(format!("grpc://{url}"))
                 .await
-                .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
+                .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
 
             let action = Action {
                 r#type: "KillEdge".to_owned(),
@@ -95,7 +97,37 @@ impl Cluster {
     /// For each node in the cluster, use the `CommandStatementUpdate` action to create the table
     /// given by `sql`. If the table was successfully created for each node, return
     /// [`Ok`], otherwise return [`ClusterError`](ModelarDbError::ClusterError).
-    pub async fn create_table(&self, sql: &str) -> Result<(), ModelarDbError> {
+    pub async fn create_tables(&self, sql: Bytes) -> Result<(), ModelarDbError> {
+        let mut create_table_actions = vec![];
+
+        for node in &self.nodes {
+            create_table_actions.push(self.create_table(&node.url, sql.clone()))
+        }
+
+        // Create the table in each node concurrently.
+        join_all(create_table_actions).await;
+
+        Ok(())
+    }
+
+    /// Connect to the Apache Arrow flight client given by `url` and use the `CommandStatementUpdate`
+    /// action to create the table given by `sql`. If the table was successfully created, return
+    /// [`Ok`], otherwise return [`ClusterError`](ModelarDbError::ClusterError).
+    async fn create_table(&self, url: &String, sql: Bytes) -> Result<(), ModelarDbError> {
+        let mut flight_client = FlightServiceClient::connect(format!("grpc://{url}"))
+            .await
+            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+
+        let action = Action {
+            r#type: "CommandStatementUpdate".to_owned(),
+            body: sql,
+        };
+
+        flight_client
+            .do_action(Request::new(action))
+            .await
+            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+
         Ok(())
     }
 }
