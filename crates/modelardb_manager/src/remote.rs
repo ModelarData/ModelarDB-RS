@@ -101,10 +101,10 @@ impl FlightServiceHandler {
         }
     }
 
-    /// Create a normal table, save it to the metadata database and register and save it to each
-    /// node controlled by the manager. If the table cannot be saved to the metadata database or
-    /// registered and saved to each node, return [`Status`].
-    async fn save_and_register_table(&self, table_name: String, sql: &str) -> Result<(), Status> {
+    /// Create a normal table, save it to the metadata database and create it for each node
+    /// controlled by the manager. If the table cannot be saved to the metadata database or
+    /// created for each node, return [`Status`].
+    async fn save_and_create_cluster_tables(&self, table_name: String, sql: &str) -> Result<(), Status> {
         // Persist the new table to the metadata database.
         self.context
             .metadata_manager
@@ -117,7 +117,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_table(sql)
+            .create_tables(sql)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -126,10 +126,10 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// Create a model table, save it to the metadata database and register and save it to each
-    /// node controlled by the manager. If the table cannot be saved to the metadata database or
-    /// registered and saved to each node, return [`Status`].
-    async fn save_and_register_model_table(
+    /// Create a model table, save it to the metadata database and create it for each node
+    /// controlled by the manager. If the table cannot be saved to the metadata database or
+    /// created for each node, return [`Status`].
+    async fn save_and_create_cluster_model_tables(
         &self,
         model_table_metadata: ModelTableMetadata,
         sql: &str,
@@ -146,7 +146,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_table(sql)
+            .create_tables(sql)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -268,12 +268,12 @@ impl FlightService for FlightServiceHandler {
             match valid_statement {
                 ValidStatement::CreateTable { name, .. } => {
                     self.check_if_table_exists(&name).await?;
-                    self.save_and_register_table(name, sql).await?;
+                    self.save_and_create_cluster_tables(name, sql).await?;
                 }
                 ValidStatement::CreateModelTable(model_table_metadata) => {
                     self.check_if_table_exists(&model_table_metadata.name)
                         .await?;
-                    self.save_and_register_model_table(model_table_metadata, sql)
+                    self.save_and_create_cluster_model_tables(model_table_metadata, sql)
                         .await?;
                 }
             };
