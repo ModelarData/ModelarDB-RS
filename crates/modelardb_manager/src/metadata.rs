@@ -214,7 +214,7 @@ impl MetadataManager {
         let mut rows = table_rows.chain(model_table_rows);
 
         while let Some(row) = rows.try_next().await? {
-            table_names.push(row.get("table_name"))
+            table_names.push(row.try_get("table_name")?)
         }
 
         Ok(table_names)
@@ -252,14 +252,14 @@ impl MetadataManager {
             sqlx::query("SELECT url, mode FROM nodes").fetch(&self.metadata_database_pool);
 
         while let Some(row) = rows.try_next().await? {
-            let server_mode = ServerMode::from_str(row.get("mode")).map_err(|error| {
+            let server_mode = ServerMode::from_str(row.try_get("mode")?).map_err(|error| {
                 sqlx::Error::ColumnDecode {
                     index: "mode".to_string(),
                     source: Box::new(ModelarDbError::DataRetrievalError(error.to_string())),
                 }
             })?;
 
-            nodes.push(Node::new(row.get("url"), server_mode))
+            nodes.push(Node::new(row.try_get("url")?, server_mode))
         }
 
         Ok(nodes)
