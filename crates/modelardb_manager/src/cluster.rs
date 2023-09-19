@@ -26,6 +26,8 @@ use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
 use tonic::codegen::Bytes;
 use tonic::Request;
+use tryhard::backoff_strategies::{ExponentialBackoff};
+use tryhard::{NoOnRetry, RetryFutureConfig};
 
 /// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
 /// or a cloud node. A node cannot be another manager.
@@ -48,11 +50,19 @@ impl Node {
 pub struct Cluster {
     /// The nodes that are currently managed by the cluster.
     nodes: Vec<Node>,
+    /// The retry configuration used for performing cluster operations using retry with backoff.
+    retry_config: RetryFutureConfig<ExponentialBackoff, NoOnRetry>,
 }
 
 impl Cluster {
     pub fn new() -> Self {
-        Self { nodes: vec![] }
+        let retry_config = RetryFutureConfig::new(10)
+            .exponential_backoff(Duration::from_millis(1000));
+
+        Self {
+            nodes: vec![],
+            retry_config,
+        }
     }
 
     /// Checks if the node is already registered and adds it to the current nodes if not. If it
@@ -106,8 +116,7 @@ impl Cluster {
 
         for node in &self.nodes {
             let future = tryhard::retry_fn(|| self.create_table(node.url.clone(), sql.clone()))
-                .retries(10)
-                .exponential_backoff(Duration::from_millis(1000));
+                .with_config(self.retry_config);
 
             create_table_futures.push(future);
         }
