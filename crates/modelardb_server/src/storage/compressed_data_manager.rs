@@ -15,14 +15,16 @@
 
 //! Support for managing all compressed data that is inserted into the [`StorageEngine`].
 
-use std::collections::{HashMap, VecDeque};
 use std::fs;
-use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
+use std::io::{Error as IOError, ErrorKind};
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crossbeam_channel::Receiver;
+use crossbeam_queue::SegQueue;
+use dashmap::DashMap;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
@@ -38,37 +40,39 @@ use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::MemoryPool;
 use crate::storage::{Metric, StorageEngine, COMPRESSED_DATA_FOLDER};
 
+use super::compressed_data_buffer::CompressedSegmentBatch;
+
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
 pub(super) struct CompressedDataManager {
     /// Component that transfers saved compressed data to the remote data folder when it is necessary.
-    pub(super) data_transfer: Option<DataTransfer>,
+    pub(super) data_transfer: RwLock<Option<DataTransfer>>,
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
     pub(crate) local_data_folder: PathBuf,
     /// The compressed segments before they are saved to persistent storage. The key is the name of
     /// the table and the index of the column the compressed segments represents data points for so
     /// the Apache Parquet files can be partitioned by table and then column.
-    compressed_data_buffers: HashMap<(String, u16), CompressedDataBuffer>,
+    compressed_data_buffers: DashMap<(String, u16), CompressedDataBuffer>,
     /// FIFO queue of table names and column indices referring to [`CompressedDataBuffer`] that can
     /// be saved to persistent storage.
-    compressed_queue: VecDeque<(String, u16)>,
+    compressed_queue: SegQueue<(String, u16)>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used compressed memory in bytes, updated every time the used memory changes.
-    pub(super) used_compressed_memory_metric: Metric,
+    pub(super) used_compressed_memory_metric: Mutex<Metric>,
     /// Metric for the total used disk space in bytes, updated every time a new compressed file is
     /// saved to disk.
-    pub used_disk_space_metric: Arc<RwLock<Metric>>,
+    pub used_disk_space_metric: Arc<Mutex<Metric>>,
 }
 
 impl CompressedDataManager {
     /// Return a [`CompressedDataManager`] if the required folder can be created in
     /// `local_data_folder`, otherwise [`IOError`] is returned.
     pub(super) fn try_new(
-        data_transfer: Option<DataTransfer>,
+        data_transfer: RwLock<Option<DataTransfer>>,
         local_data_folder: PathBuf,
         memory_pool: Arc<MemoryPool>,
-        used_disk_space_metric: Arc<RwLock<Metric>>,
+        used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the compressed data manager exists.
         fs::create_dir_all(local_data_folder.join(COMPRESSED_DATA_FOLDER))?;
@@ -76,10 +80,10 @@ impl CompressedDataManager {
         Ok(Self {
             data_transfer,
             local_data_folder,
-            compressed_data_buffers: HashMap::new(),
-            compressed_queue: VecDeque::new(),
+            compressed_data_buffers: DashMap::new(),
+            compressed_queue: SegQueue::new(),
             memory_pool,
-            used_compressed_memory_metric: Metric::new(),
+            used_compressed_memory_metric: Mutex::new(Metric::new()),
             used_disk_space_metric,
         })
     }
@@ -117,51 +121,63 @@ impl CompressedDataManager {
     /// with `table_name` and the column at `column_index`. If `compressed_segments` is saved
     /// successfully, return [`Ok`], otherwise return [`IOError`].
     pub(super) async fn insert_compressed_segments(
-        &mut self,
-        table_name: &str,
-        column_index: u16,
-        compressed_segments: RecordBatch,
+        &self,
+        compressed_data_receiver: &Receiver<CompressedSegmentBatch>,
     ) -> Result<(), IOError> {
+        let compressed_segment_batch = compressed_data_receiver
+            .recv()
+            .map_err(|error| IOError::new(ErrorKind::BrokenPipe, error))?;
+
+        let column_index = compressed_segment_batch.column_index();
+        let model_table_name = compressed_segment_batch.model_table_name().to_owned();
+
         debug!(
             "Inserting batch with {} rows into compressed data buffer for column '{}' in table '{}'.",
-            compressed_segments.num_rows(),
+            compressed_segment_batch.compressed_segments.num_rows(),
             column_index,
-            table_name
+            model_table_name
         );
 
         // Since the compressed segments are already in memory, insert the segments into the
         // compressed data buffer first and check if the reserved memory limit is exceeded after.
-        let segments_size = if let Some(compressed_data_buffer) = self
+        let segments_size = if let Some(mut compressed_data_buffer) = self
             .compressed_data_buffers
-            .get_mut(&(table_name.to_owned(), column_index))
+            .get_mut(&(model_table_name.clone(), column_index))
         {
             debug!(
                 "Found existing compressed data buffer for column '{}' in table '{}'.",
-                column_index, table_name
+                column_index, model_table_name
             );
 
-            compressed_data_buffer.append_compressed_segments(compressed_segments)
+            compressed_data_buffer
+                .append_compressed_segments(compressed_segment_batch.compressed_segments)
         } else {
             debug!(
                 "Could not find compressed data buffer for column '{}' in table '{}'. Creating compressed data buffer.",
                 column_index,
-                table_name
+                model_table_name
             );
 
-            let mut compressed_data_buffer = CompressedDataBuffer::new();
-            let segment_size =
-                compressed_data_buffer.append_compressed_segments(compressed_segments);
+            let mut compressed_data_buffer = CompressedDataBuffer::new(
+                compressed_segment_batch.univariate_id,
+                compressed_segment_batch.model_table_metadata,
+            );
+            let segment_size = compressed_data_buffer
+                .append_compressed_segments(compressed_segment_batch.compressed_segments);
 
-            let key = (table_name.to_owned(), column_index);
+            let key = (model_table_name.to_owned(), column_index);
             self.compressed_data_buffers
                 .insert(key.clone(), compressed_data_buffer);
-            self.compressed_queue.push_back(key);
+            self.compressed_queue.push(key);
 
             segment_size
         };
 
         // Update the remaining memory for compressed data and record the change.
+        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         self.used_compressed_memory_metric
+            .lock()
+            .unwrap()
             .append(segments_size as isize, true);
 
         // If the reserved memory limit is exceeded, save compressed data to disk.
@@ -178,17 +194,16 @@ impl CompressedDataManager {
 
     /// Return an [`ObjectMeta`] for each compressed file in `query_data_folder` that belongs to the
     /// column at `column_index` in the table with `table_name` and contains compressed segments
-    /// within the given range of time and value. If some compressed data that belongs to
-    /// `column_index` in `table_name` is still in memory, save it to disk first. If no files belong
-    /// to the column at `column_index` for the table with `table_name` an empty [`Vec`] is
-    /// returned, while a [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
+    /// within the given range of time and value. If no files belong to the column at `column_index`
+    /// for the table with `table_name` an empty [`Vec`] is returned, while a
+    /// [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
     /// * A table with `table_name` does not exist.
     /// * The compressed files could not be listed.
     /// * A column with `column_index` does not exist.
     /// * The end time is before the start time.
     /// * The max value is smaller than the min value.
-    pub(super) async fn save_and_get_saved_compressed_files(
-        &mut self,
+    pub(super) async fn get_saved_compressed_files(
+        &self,
         table_name: &str,
         column_index: u16,
         start_time: Option<Timestamp>,
@@ -197,25 +212,6 @@ impl CompressedDataManager {
         max_value: Option<Value>,
         query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
-        // If there is any compressed data in memory, save it first.
-        if self
-            .compressed_data_buffers
-            .contains_key(&(table_name.to_owned(), column_index))
-        {
-            // Remove the data from the queue of compressed time series that are ready to be saved.
-            // unwrap() is safe since `compressed_data` has the same tables as `compressed_queue`.
-            let data_index = self
-                .compressed_queue
-                .iter()
-                .position(|(x, y)| *x == table_name && *y == column_index)
-                .unwrap();
-            self.compressed_queue.remove(data_index);
-
-            self.save_compressed_data(table_name, column_index)
-                .await
-                .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
-        }
-
         // Set default values for the parts of the time and value range that is not defined.
         let start_time = start_time.unwrap_or(0);
         let end_time = end_time.unwrap_or(Timestamp::MAX);
@@ -275,7 +271,7 @@ impl CompressedDataManager {
     /// bytes of memory is available. If all of the data is saved successfully, return [`Ok`],
     /// otherwise return [`IOError`].
     async fn save_compressed_data_to_free_memory(
-        &mut self,
+        &self,
         size_in_bytes: usize,
     ) -> Result<(), IOError> {
         debug!("Out of memory for compressed data. Saving compressed data to disk.");
@@ -283,7 +279,7 @@ impl CompressedDataManager {
         while self.memory_pool.remaining_compressed_memory_in_bytes() < size_in_bytes as isize {
             let (table_name, column_index) = self
                 .compressed_queue
-                .pop_front()
+                .pop()
                 .expect("Not enough compressed data to free up the required memory.");
             self.save_compressed_data(&table_name, column_index).await?;
         }
@@ -291,14 +287,14 @@ impl CompressedDataManager {
     }
 
     /// Flush the data that the [`CompressedDataManager`] is currently managing.
-    pub(super) async fn flush(&mut self) -> Result<(), IOError> {
+    pub(super) async fn flush(&self) -> Result<(), IOError> {
         info!(
             "Flushing the remaining {} compressed data buffers.",
             self.compressed_queue.len()
         );
 
         while !self.compressed_queue.is_empty() {
-            let (table_name, column_index) = self.compressed_queue.pop_front().unwrap();
+            let (table_name, column_index) = self.compressed_queue.pop().unwrap();
             self.save_compressed_data(&table_name, column_index).await?;
         }
 
@@ -310,7 +306,7 @@ impl CompressedDataManager {
     /// reserved memory. If the data is saved successfully, return [`Ok`], otherwise return
     /// [`IOError`].
     async fn save_compressed_data(
-        &mut self,
+        &self,
         table_name: &str,
         column_index: u16,
     ) -> Result<(), IOError> {
@@ -319,7 +315,9 @@ impl CompressedDataManager {
         let mut compressed_data_buffer = self
             .compressed_data_buffers
             .remove(&(table_name.to_owned(), column_index))
-            .unwrap();
+            .unwrap()
+            .1;
+
         let folder_path = self
             .local_data_folder
             .join(COMPRESSED_DATA_FOLDER)
@@ -331,14 +329,20 @@ impl CompressedDataManager {
         // Update the remaining memory for compressed data and record the change.
         let freed_memory = compressed_data_buffer.size_in_bytes;
         self.memory_pool.free_compressed_memory(freed_memory);
+
+        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         self.used_compressed_memory_metric
+            .lock()
+            .unwrap()
             .append(-(freed_memory as isize), true);
 
         // Record the change to the used disk space.
         let file_size = file_path.metadata()?.len() as isize;
+
+        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         self.used_disk_space_metric
-            .write()
-            .await
+            .lock()
+            .unwrap()
             .append(file_size, true);
 
         debug!(
@@ -350,7 +354,7 @@ impl CompressedDataManager {
         // Pass the saved compressed file to the data transfer component if a remote data folder
         // was provided. If the total size of the files related to table_name have reached the
         // transfer threshold, the files are transferred to the remote object store.
-        if let Some(data_transfer) = &mut self.data_transfer {
+        if let Some(data_transfer) = &*self.data_transfer.read().await {
             data_transfer
                 .add_compressed_file(table_name, column_index, file_path.as_path())
                 .await
@@ -364,7 +368,7 @@ impl CompressedDataManager {
     /// less than zero bytes remain, save compressed data to free memory. If all the data is saved
     /// successfully return [`Ok`], otherwise return [`IOError`].
     pub(super) async fn adjust_compressed_remaining_memory_in_bytes(
-        &mut self,
+        &self,
         value_change: isize,
     ) -> Result<(), IOError> {
         self.memory_pool.adjust_compressed_memory(value_change);
@@ -657,7 +661,7 @@ mod tests {
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
-            .save_and_get_saved_compressed_files(
+            .get_saved_compressed_files(
                 TABLE_NAME,
                 COLUMN_INDEX,
                 None,
@@ -678,7 +682,7 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.save_and_get_saved_compressed_files(
+        let result = data_manager.get_saved_compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             None,
@@ -703,7 +707,7 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.save_and_get_saved_compressed_files(
+        let result = data_manager.get_saved_compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             start_time,
@@ -733,7 +737,7 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.save_and_get_saved_compressed_files(
+        let result = data_manager.get_saved_compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             None,
@@ -763,7 +767,7 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.save_and_get_saved_compressed_files(
+        let result = data_manager.get_saved_compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             None,
@@ -793,7 +797,7 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.save_and_get_saved_compressed_files(
+        let result = data_manager.get_saved_compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             None,
@@ -829,7 +833,7 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.save_and_get_saved_compressed_files(
+        let result = data_manager.get_saved_compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             start_time,
@@ -872,7 +876,7 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.save_and_get_saved_compressed_files(
+        let result = data_manager.get_saved_compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             None,
@@ -945,7 +949,7 @@ mod tests {
             .unwrap();
 
         let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
-        let result = data_manager.save_and_get_saved_compressed_files(
+        let result = data_manager.get_saved_compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             Some(10),
@@ -973,7 +977,7 @@ mod tests {
             .unwrap();
 
         let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
-        let result = data_manager.save_and_get_saved_compressed_files(
+        let result = data_manager.get_saved_compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             None,
@@ -1007,7 +1011,7 @@ mod tests {
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
-            .save_and_get_saved_compressed_files(
+            .get_saved_compressed_files(
                 TABLE_NAME,
                 COLUMN_INDEX,
                 None,
@@ -1057,7 +1061,7 @@ mod tests {
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
-            .save_and_get_saved_compressed_files(
+            .get_saved_compressed_files(
                 TABLE_NAME,
                 COLUMN_INDEX,
                 None,
@@ -1089,7 +1093,7 @@ mod tests {
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
-            .save_and_get_saved_compressed_files(
+            .get_saved_compressed_files(
                 "NO_TABLE",
                 COLUMN_INDEX,
                 None,

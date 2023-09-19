@@ -29,17 +29,27 @@ use async_trait::async_trait;
 use datafusion::arrow::array::{Array, ArrayBuilder};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
+use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
 use modelardb_common::types::{
     ErrorBound, Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder,
 };
 use tracing::debug;
 
+use crate::metadata::MetadataManager;
 use crate::storage::{StorageEngine, UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER};
 
 /// Number of [`RecordBatches`](RecordBatch) that must be ingested without modifying an
 /// [`UncompressedInMemoryDataBuffer`] before it is considered unused and can be finished.
 const RECORD_BATCH_OFFSET_REQUIRED_FOR_UNUSED: u64 = 1;
+
+/// Data points from a multivariate time series to be inserted into a model table.
+pub(super) struct UncompressedDataMultivariate {
+    /// Metadata of the model table to insert the data points into.
+    pub(super) model_table_metadata: Arc<ModelTableMetadata>,
+    /// Metadata of the model table to insert the data points into.
+    pub(super) multivariate_data_points: RecordBatch,
+}
 
 /// Functionality shared by [`UncompressedInMemoryDataBuffer`] and [`UncompressedOnDiskDataBuffer`].
 /// Since the data buffers are part of the asynchronous storage engine the buffers must be [`Sync`]
@@ -55,6 +65,9 @@ pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
     /// stores data points from.
     fn univariate_id(&self) -> u64;
 
+    /// Return the metadata for the table the buffer stores data points from.
+    fn model_table_metadata(&self) -> &Arc<ModelTableMetadata>;
+
     /// Return the error bound the buffer must be compressed within.
     fn error_bound(&self) -> ErrorBound;
 
@@ -69,7 +82,7 @@ pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
     /// both structs need to implement spilling to Apache Parquet, with already spilled segments
     /// returning [`IOError`].
     async fn spill_to_apache_parquet(
-        &mut self,
+        self,
         local_data_folder: &Path,
     ) -> Result<UncompressedOnDiskDataBuffer, IOError>;
 }
@@ -78,12 +91,12 @@ pub trait UncompressedDataBuffer: fmt::Debug + Sync + Send {
 /// consists of an ordered sequence of timestamps and values being built using
 /// [`PrimitiveBuilder`](datafusion::arrow::array::PrimitiveBuilder).
 pub(super) struct UncompressedInMemoryDataBuffer {
-    /// Id that uniquely identifies the time series the buffer stores data points from.
+    /// Id that uniquely identifies the time series the buffer stores data points for.
     univariate_id: u64,
+    /// Metadata of the model table the buffer stores data for.
+    model_table_metadata: Arc<ModelTableMetadata>,
     /// Index of the last batch that caused the buffer to be updated.
     updated_by_batch_index: u64,
-    /// Error bound the buffer must be compressed within.
-    error_bound: ErrorBound,
     /// Builder consisting of timestamps.
     timestamps: TimestampBuilder,
     /// Builder consisting of float values.
@@ -93,13 +106,13 @@ pub(super) struct UncompressedInMemoryDataBuffer {
 impl UncompressedInMemoryDataBuffer {
     pub(super) fn new(
         univariate_id: u64,
+        model_table_metadata: Arc<ModelTableMetadata>,
         current_batch_index: u64,
-        error_bound: ErrorBound,
     ) -> Self {
         Self {
             univariate_id,
+            model_table_metadata,
             updated_by_batch_index: current_batch_index,
-            error_bound,
             timestamps: TimestampBuilder::with_capacity(UNCOMPRESSED_DATA_BUFFER_CAPACITY),
             values: ValueBuilder::with_capacity(UNCOMPRESSED_DATA_BUFFER_CAPACITY),
         }
@@ -191,9 +204,16 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
         self.univariate_id
     }
 
+    /// Return the metadata for the table the buffer stores data points from.
+    fn model_table_metadata(&self) -> &Arc<ModelTableMetadata> {
+        &self.model_table_metadata
+    }
+
     /// Return the error bound the buffer must be compressed within.
     fn error_bound(&self) -> ErrorBound {
-        self.error_bound
+        let column_index: usize =
+            MetadataManager::univariate_id_to_column_index(self.univariate_id).into();
+        self.model_table_metadata.error_bounds[column_index]
     }
 
     /// Return the total size of the [`UncompressedInMemoryDataBuffer`] in bytes.
@@ -209,7 +229,7 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
     /// Spill the in-memory [`UncompressedInMemoryDataBuffer`] to an Apache Parquet file and return
     /// the [`UncompressedOnDiskDataBuffer`] when finished.
     async fn spill_to_apache_parquet(
-        &mut self,
+        mut self,
         local_data_folder: &Path,
     ) -> Result<UncompressedOnDiskDataBuffer, IOError> {
         // Since the schema is constant and the columns are always the same length, creating the
@@ -217,7 +237,7 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
         let batch = self.record_batch().await.unwrap();
         UncompressedOnDiskDataBuffer::try_spill(
             self.univariate_id,
-            self.error_bound,
+            self.model_table_metadata,
             local_data_folder,
             batch,
         )
@@ -227,10 +247,10 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
 /// A read only uncompressed buffer that has been spilled to disk as an Apache Parquet file due to
 /// memory constraints.
 pub struct UncompressedOnDiskDataBuffer {
-    /// Id that uniquely identifies the time series the buffer stores data points from.
+    /// Id that uniquely identifies the time series the buffer stores data points for.
     univariate_id: u64,
-    /// Error bound the buffer must be compressed within.
-    error_bound: ErrorBound,
+    /// Metadata of the model table the buffer stores data for.
+    model_table_metadata: Arc<ModelTableMetadata>,
     /// Path to the Apache Parquet file containing the uncompressed data in the
     /// [`UncompressedOnDiskDataBuffer`].
     file_path: PathBuf,
@@ -242,7 +262,7 @@ impl UncompressedOnDiskDataBuffer {
     /// return an [`UncompressedOnDiskDataBuffer`], otherwise return [`IOError`].
     pub(super) fn try_spill(
         univariate_id: u64,
-        error_bound: ErrorBound,
+        model_table_metadata: Arc<ModelTableMetadata>,
         local_data_folder: &Path,
         data_points: RecordBatch,
     ) -> Result<Self, IOError> {
@@ -262,7 +282,7 @@ impl UncompressedOnDiskDataBuffer {
 
         Ok(Self {
             univariate_id,
-            error_bound,
+            model_table_metadata,
             file_path,
         })
     }
@@ -271,14 +291,14 @@ impl UncompressedOnDiskDataBuffer {
     /// `file_path` if a file at `file_path` exists, otherwise [`IOError`] is returned.
     pub(super) fn try_new(
         univariate_id: u64,
-        error_bound: ErrorBound,
+        model_table_metadata: Arc<ModelTableMetadata>,
         file_path: PathBuf,
     ) -> Result<Self, IOError> {
         file_path.try_exists()?;
 
         Ok(Self {
             univariate_id,
-            error_bound,
+            model_table_metadata,
             file_path,
         })
     }
@@ -316,9 +336,16 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
         self.univariate_id
     }
 
+    /// Return the metadata for the table the buffer stores data points from.
+    fn model_table_metadata(&self) -> &Arc<ModelTableMetadata> {
+        &self.model_table_metadata
+    }
+
     /// Return the error bound the buffer must be compressed within.
     fn error_bound(&self) -> ErrorBound {
-        self.error_bound
+        let column_index: usize =
+            MetadataManager::univariate_id_to_column_index(self.univariate_id).into();
+        self.model_table_metadata.error_bounds[column_index]
     }
 
     /// Since the data is not kept in memory, return 0.
@@ -334,7 +361,7 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
 
     /// Since the buffer has already been spilled, return [`IOError`].
     async fn spill_to_apache_parquet(
-        &mut self,
+        self,
         _local_data_folder: &Path,
     ) -> Result<UncompressedOnDiskDataBuffer, IOError> {
         Err(IOError::new(

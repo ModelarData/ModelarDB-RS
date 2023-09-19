@@ -15,19 +15,17 @@
 
 //! Support for efficiently transferring data to a remote object store. Data saved locally on disk
 //! is managed here until it is of a sufficient size to be transferred efficiently.
-
-use std::collections::HashMap;
 use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use dashmap::DashMap;
 use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
 use object_store::local::LocalFileSystem;
 use object_store::path::{Path as ObjectStorePath, PathPart};
 use object_store::{ObjectMeta, ObjectStore};
-use tokio::sync::RwLock;
 use tracing::debug;
 
 use crate::storage::Metric;
@@ -48,12 +46,12 @@ pub struct DataTransfer {
     pub remote_data_folder: Arc<dyn ObjectStore>,
     /// Map from table names and column indices to the combined size in bytes of the compressed
     /// files currently saved for the column in that table.
-    compressed_files: HashMap<(String, u16), usize>,
+    compressed_files: DashMap<(String, u16), usize>,
     /// The number of bytes that are required before transferring a batch of data to the remote
     /// object store.
     transfer_batch_size_in_bytes: usize,
     /// Metric for the total used disk space in bytes, updated when data is transferred.
-    pub used_disk_space_metric: Arc<RwLock<Metric>>,
+    pub used_disk_space_metric: Arc<Mutex<Metric>>,
 }
 
 impl DataTransfer {
@@ -64,14 +62,14 @@ impl DataTransfer {
         local_data_folder: PathBuf,
         remote_data_folder: Arc<dyn ObjectStore>,
         transfer_batch_size_in_bytes: usize,
-        used_disk_space_metric: Arc<RwLock<Metric>>,
+        used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Parse through the data folder to retrieve already existing files that should be transferred.
         let local_data_folder = Arc::new(LocalFileSystem::new_with_prefix(local_data_folder)?);
         let list_stream = local_data_folder.list(None).await?;
 
         let compressed_files = list_stream
-            .fold(HashMap::new(), |mut acc, maybe_meta| async {
+            .fold(DashMap::new(), |acc, maybe_meta| async {
                 if let Ok(meta) = maybe_meta {
                     // If the file is a compressed file, add the size of it to the total size of the
                     // files stored for the table with that table name.
@@ -84,7 +82,7 @@ impl DataTransfer {
             })
             .await;
 
-        let mut data_transfer = Self {
+        let data_transfer = Self {
             local_data_folder,
             remote_data_folder,
             compressed_files: compressed_files.clone(),
@@ -93,18 +91,24 @@ impl DataTransfer {
         };
 
         // Record the initial used disk space.
-        let initial_disk_space: usize = compressed_files.values().sum();
+        let initial_disk_space: usize = compressed_files.iter().map(|kv| *kv.value()).sum();
+
+        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         data_transfer
             .used_disk_space_metric
-            .write()
-            .await
+            .lock()
+            .unwrap()
             .append(initial_disk_space as isize, true);
 
         // Check if data should be transferred immediately.
-        for ((table_name, column_index), size_in_bytes) in compressed_files.iter() {
+        for table_name_column_index_size_in_bytes in compressed_files.iter() {
+            let table_name = &table_name_column_index_size_in_bytes.key().0;
+            let column_index = table_name_column_index_size_in_bytes.key().1;
+            let size_in_bytes = table_name_column_index_size_in_bytes.value();
+
             if size_in_bytes >= &transfer_batch_size_in_bytes {
                 data_transfer
-                    .transfer_data(table_name, *column_index)
+                    .transfer_data(table_name, column_index)
                     .await
                     .map_err(|err| IOError::new(Other, err.to_string()))?;
             }
@@ -116,7 +120,7 @@ impl DataTransfer {
     /// Insert the compressed file into the files to be transferred. Retrieve the size of the file
     /// and add it to the total size of the current local files in the table with `table_name`.
     pub async fn add_compressed_file(
-        &mut self,
+        &self,
         table_name: &str,
         column_index: u16,
         file_path: &Path,
@@ -132,8 +136,8 @@ impl DataTransfer {
         *self.compressed_files.get_mut(&key).unwrap() += file_size;
 
         // If the combined size of the files is larger than the batch size, transfer the data to the
-        // remote object store.
-        if self.compressed_files.get(&key).unwrap() >= &self.transfer_batch_size_in_bytes {
+        // remote object store. unwrap() is safe as key has just been added to the map.
+        if self.compressed_files.get(&key).unwrap().value() >= &self.transfer_batch_size_in_bytes {
             self.transfer_data(table_name, column_index).await?;
         }
 
@@ -145,10 +149,14 @@ impl DataTransfer {
     /// that if the function fails, some of the compressed files may still have been transferred.
     /// Since the data is transferred separately for each table, the function can be called again if
     /// it failed.
-    pub(crate) async fn flush(&mut self) -> Result<(), ParquetError> {
-        for ((table_name, column_index), size_in_bytes) in self.compressed_files.clone().iter() {
+    pub(crate) async fn flush(&self) -> Result<(), ParquetError> {
+        for table_name_column_index_size_in_bytes in self.compressed_files.clone().iter() {
+            let table_name = &table_name_column_index_size_in_bytes.key().0;
+            let column_index = table_name_column_index_size_in_bytes.key().1;
+            let size_in_bytes = table_name_column_index_size_in_bytes.value();
+
             if size_in_bytes > &0_usize {
-                self.transfer_data(table_name, *column_index)
+                self.transfer_data(table_name, column_index)
                     .await
                     .map_err(|err| IOError::new(Other, err.to_string()))?;
             }
@@ -161,11 +169,7 @@ impl DataTransfer {
     /// `table_name` to the remote object store. Once successfully transferred, the data is deleted
     /// from local storage. Return [`Ok`] if the files were transferred successfully, otherwise
     /// [`ParquetError`].
-    async fn transfer_data(
-        &mut self,
-        table_name: &str,
-        column_index: u16,
-    ) -> Result<(), ParquetError> {
+    async fn transfer_data(&self, table_name: &str, column_index: u16) -> Result<(), ParquetError> {
         // Read all files that is currently stored for the table with table_name.
         let path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}").into();
         let object_metas = self
@@ -198,9 +202,11 @@ impl DataTransfer {
             .compressed_files
             .get_mut(&(table_name.to_owned(), column_index))
             .unwrap() -= transferred_bytes;
+
+        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         self.used_disk_space_metric
-            .write()
-            .await
+            .lock()
+            .unwrap()
             .append(-(transferred_bytes as isize), true);
 
         debug!(
@@ -544,7 +550,7 @@ mod tests {
             local_data_folder_path.to_path_buf(),
             remote_data_folder_object_store,
             COMPRESSED_FILE_SIZE * 3 - 1,
-            Arc::new(RwLock::new(Metric::new())),
+            Arc::new(Mutes::new(Metric::new())),
         )
         .await
         .unwrap();

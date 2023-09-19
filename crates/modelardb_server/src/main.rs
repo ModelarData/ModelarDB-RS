@@ -20,6 +20,7 @@
 
 mod common_test;
 mod configuration;
+mod context;
 mod metadata;
 mod optimizer;
 mod parser;
@@ -33,6 +34,7 @@ use std::{env, fs};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::Action;
+use context::Context;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
 use modelardb_common::arguments::{
@@ -74,21 +76,6 @@ pub struct DataFolders {
     /// execution. It is equivalent to `local_data_folder` when deployed on the
     /// edge and `remote_data_folder` when deployed in the cloud.
     pub query_data_folder: Arc<dyn ObjectStore>,
-}
-
-/// Provides access to the system's configuration and components.
-pub struct Context {
-    /// The mode of the server used to determine the behaviour when starting the server,
-    /// creating tables, updating the remote object store, and querying.
-    pub cluster_mode: ClusterMode,
-    /// Metadata for the tables and model tables in the data folder.
-    pub metadata_manager: Arc<MetadataManager>,
-    /// Updatable configuration of the server.
-    pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
-    /// Main interface for Apache Arrow DataFusion.
-    pub session: SessionContext,
-    /// Manages all uncompressed and compressed data in the system.
-    pub storage_engine: Arc<RwLock<StorageEngine>>,
 }
 
 /// Setup tracing that prints to stdout, parse the command line arguments to
@@ -133,11 +120,11 @@ fn main() -> Result<(), String> {
         runtime
             .block_on(async {
                 StorageEngine::try_new(
-                    data_folders.local_data_folder,
+                    runtime.clone(),
+                    data_folders.local_data_folder.clone(),
                     data_folders.remote_data_folder,
                     &configuration_manager,
                     metadata_manager.clone(),
-                    true,
                 )
                 .await
             })
@@ -164,6 +151,18 @@ fn main() -> Result<(), String> {
 
     // Setup CTRL+C handler.
     setup_ctrl_c_handler(&context, &runtime);
+
+    // Initialize storage manager with spilled buffers.
+    runtime
+        .block_on(async {
+            context
+                .storage_engine
+                .read()
+                .await
+                .initialize(data_folders.local_data_folder, &context)
+                .await
+        })
+        .map_err(|error| error.to_string())?;
 
     // Start the Apache Arrow Flight interface.
     remote::start_apache_arrow_flight_server(context, &runtime, *PORT)

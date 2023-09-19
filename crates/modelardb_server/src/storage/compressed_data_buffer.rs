@@ -19,18 +19,51 @@ use std::fs;
 use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::format::SortingColumn;
+use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 
+use crate::metadata::MetadataManager;
 use crate::storage;
 use crate::storage::StorageEngine;
 
-/// A single compressed buffer, containing one or more compressed segments and providing
-/// functionality for appending segments and saving all segments to a single Apache Parquet file.
+/// Compressed segments representing data points from a column in a model table as one
+/// [`RecordBatch`].
+pub(super) struct CompressedSegmentBatch {
+    /// Univariate id that uniquely identifies the univariate time series the compressed segments
+    /// represents data points for.
+    pub(super) univariate_id: u64,
+    /// Metadata of the model table to insert the data points into.
+    pub(super) model_table_metadata: Arc<ModelTableMetadata>,
+    /// Metadata of the model table to insert the data points into.
+    pub(super) compressed_segments: RecordBatch,
+}
+
+impl CompressedSegmentBatch {
+    /// Return the name of the table the buffer stores data for.
+    pub(super) fn model_table_name(&self) -> &str {
+        self.model_table_metadata.name.as_str()
+    }
+
+    /// Return the index of the column the buffer stores data for.
+    pub(super) fn column_index(&self) -> u16 {
+        MetadataManager::univariate_id_to_column_index(self.univariate_id)
+    }
+}
+
+/// A single compressed buffer, containing one or more compressed segments for a column in a model
+/// table as one or more [RecordBatches](RecordBatch) and providing functionality for appending
+/// segments and saving all segments to a single Apache Parquet file.
 pub(super) struct CompressedDataBuffer {
+    /// Univariate id that uniquely identifies the univariate time series the buffer
+    /// stores data points from.
+    univariate_id: u64,
+    /// Metadata of the model table the buffer stores data for.
+    model_table_metadata: Arc<ModelTableMetadata>,
     /// Compressed segments that make up the compressed data in the [`CompressedDataBuffer`].
     compressed_segments: Vec<RecordBatch>,
     /// Continuously updated total sum of the size of the compressed segments.
@@ -38,8 +71,10 @@ pub(super) struct CompressedDataBuffer {
 }
 
 impl CompressedDataBuffer {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(univariate_id: u64, model_table_metadata: Arc<ModelTableMetadata>) -> Self {
         Self {
+            univariate_id,
+            model_table_metadata,
             compressed_segments: Vec::new(),
             size_in_bytes: 0,
         }
@@ -54,6 +89,16 @@ impl CompressedDataBuffer {
         self.size_in_bytes += segment_size;
 
         segment_size
+    }
+
+    /// Return the name of the table the buffer stores data for.
+    pub(super) fn model_table_name(&self) -> &str {
+        self.model_table_metadata.name.as_str()
+    }
+
+    /// Return the index of the column the buffer stores data for.
+    pub(super) fn column_index(&self) -> u16 {
+        MetadataManager::univariate_id_to_column_index(self.univariate_id)
     }
 
     /// If the compressed segments are successfully saved to an Apache Parquet file return the

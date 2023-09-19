@@ -1976,6 +1976,8 @@ dependencies = [
  "arrow-flight",
  "async-trait",
  "bytes",
+ "crossbeam-channel",
+ "crossbeam-queue",
  "dashmap",
  "datafusion",
  "futures",

@@ -17,6 +17,8 @@
 
 use std::fmt;
 use std::mem;
+use std::sync::atomic::AtomicIsize;
+use std::sync::atomic::Ordering;
 use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -36,7 +38,7 @@ pub(super) struct MemoryPool {
     /// series with metadata and
     /// [`UncompressedDataBuffers`](crate::storage::uncompressed_data_buffer::UncompressedDataBuffer)
     /// containing univariate time series without metadata.
-    remaining_uncompressed_memory_in_bytes: RwLock<isize>,
+    remaining_uncompressed_memory_in_bytes: AtomicIsize,
     /// How many bytes of memory that are left for storing
     /// [`CompressedDataBuffers`](crate::storage::compressed_data_buffer::CompressedDataBuffer).
     remaining_compressed_memory_in_bytes: RwLock<isize>,
@@ -55,7 +57,7 @@ impl MemoryPool {
     ) -> Self {
         // unwrap() is safe as i64::MAX is 8192 PiB and the value is from ConfigurationManager.
         Self {
-            remaining_uncompressed_memory_in_bytes: RwLock::new(
+            remaining_uncompressed_memory_in_bytes: AtomicIsize::new(
                 uncompressed_memory_in_bytes.try_into().unwrap(),
             ),
             remaining_compressed_memory_in_bytes: RwLock::new(
@@ -66,44 +68,37 @@ impl MemoryPool {
 
     /// Change the amount of memory available for uncompressed data by `size_in_bytes`.
     pub(super) fn adjust_uncompressed_memory(&self, size_in_bytes: isize) {
-        // unwrap() is safe as write() only returns an error if the lock is poisoned.
-        *self.remaining_uncompressed_memory_in_bytes.write().unwrap() += size_in_bytes
+        self.remaining_uncompressed_memory_in_bytes
+            .fetch_add(size_in_bytes, Ordering::Relaxed);
     }
 
     /// Return the amount of memory available for uncompressed data in bytes.
     pub(super) fn remaining_uncompressed_memory_in_bytes(&self) -> isize {
-        // unwrap() is safe as write() only returns an error if the lock is poisoned.
-        *self.remaining_uncompressed_memory_in_bytes.read().unwrap()
+        self.remaining_uncompressed_memory_in_bytes
+            .load(Ordering::Relaxed)
     }
 
-    /// Try to reserve `size_in_bytes` bytes of memory for uncompressed data. Returns [`true`] if
-    /// the reservation succeeds and [`false`] otherwise.
-    #[must_use]
-    pub(super) fn try_reserve_uncompressed_memory(&self, size_in_bytes: usize) -> bool {
-        // unwrap() is safe as write() only returns an error if the lock is poisoned.
-        let mut remaining_uncompressed_memory_in_bytes =
-            self.remaining_uncompressed_memory_in_bytes.write().unwrap();
-
-        let size_in_bytes = size_in_bytes as isize;
-
-        if size_in_bytes <= *remaining_uncompressed_memory_in_bytes {
-            *remaining_uncompressed_memory_in_bytes -= size_in_bytes;
-            true
-        } else {
-            false
-        }
+    /// Reserve `size_in_bytes` bytes of memory for uncompressed data. For simplicity and to not
+    /// immediately read spilled
+    /// [`UncompressedDataBuffers`](crate::storage::uncompressed_data_buffer::UncompressedDataBuffer),
+    /// [`StorageEngine`](crate::storage::StorageEngine) spills new instead of finished
+    /// [`UncompressedDataBuffers`](crate::storage::uncompressed_data_buffer::UncompressedDataBuffer),
+    /// thus, it may temporarily over allocate memory for uncompressed data.
+    pub(super) fn reserve_uncompressed_memory(&self, size_in_bytes: usize) {
+        self.remaining_uncompressed_memory_in_bytes
+            .fetch_sub(size_in_bytes as isize, Ordering::Relaxed);
     }
 
     /// Free `size_in_bytes` bytes of memory for storing uncompressed data.
     pub(super) fn free_uncompressed_memory(&self, size_in_bytes: usize) {
-        // unwrap() is safe as write() only returns an error if the lock is poisoned.
-        *self.remaining_uncompressed_memory_in_bytes.write().unwrap() += size_in_bytes as isize;
+        self.remaining_uncompressed_memory_in_bytes
+            .fetch_add(size_in_bytes as isize, Ordering::Relaxed);
     }
 
     /// Change the amount of memory available for storing compressed data by `size_in_bytes`.
     pub(super) fn adjust_compressed_memory(&self, size_in_bytes: isize) {
-        // unwrap() is safe as write() only returns an error if the lock is poisoned.
-        *self.remaining_compressed_memory_in_bytes.write().unwrap() += size_in_bytes;
+        self.remaining_uncompressed_memory_in_bytes
+            .fetch_add(size_in_bytes as isize, Ordering::Relaxed);
     }
 
     /// Return the amount of memory available for storing compressed data in bytes.
@@ -202,7 +197,7 @@ impl Metric {
 
     /// Return a reference to the metric's values for testing.
     #[cfg(test)]
-    pub(super) fn values(&self) -> &HeapRb<u32> {
+    pub(super) fn values(&mut self) -> &HeapRb<u32> {
         &self.values
     }
 
@@ -282,7 +277,7 @@ mod tests {
         );
 
         assert!(memory_pool
-            .try_reserve_uncompressed_memory(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES));
+            .reserve_uncompressed_memory(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES));
 
         assert_eq!(memory_pool.remaining_uncompressed_memory_in_bytes(), 0);
     }
@@ -295,9 +290,8 @@ mod tests {
             common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        assert!(!memory_pool.try_reserve_uncompressed_memory(
-            2 * common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
-        ));
+        assert!(!memory_pool
+            .reserve_uncompressed_memory(2 * common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,));
 
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
