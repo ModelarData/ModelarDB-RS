@@ -15,9 +15,13 @@
 
 //! Management of the cluster of nodes that are currently controlled by the manager.
 
+use std::time::Duration;
+
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::Action;
-use futures::future::try_join_all;
+use futures::stream::FuturesUnordered;
+use futures::StreamExt;
+use log::info;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
 use tonic::codegen::Bytes;
@@ -97,23 +101,31 @@ impl Cluster {
     /// For each node in the cluster, use the `CommandStatementUpdate` action to create the table
     /// given by `sql`. If the table was successfully created for each node, return
     /// [`Ok`], otherwise return [`ClusterError`](ModelarDbError::ClusterError).
-    pub async fn create_tables(&self, sql: Bytes) -> Result<(), ModelarDbError> {
-        let mut create_table_actions = vec![];
+    pub async fn create_tables(&self, table_name: &str, sql: Bytes) -> Result<(), ModelarDbError> {
+        let mut create_table_futures = FuturesUnordered::new();
 
         for node in &self.nodes {
-            create_table_actions.push(self.create_table(&node.url, sql.clone()))
+            let future = tryhard::retry_fn(|| self.create_table(node.url.clone(), sql.clone()))
+                .retries(10)
+                .exponential_backoff(Duration::from_millis(1000));
+
+            create_table_futures.push(future);
         }
 
-        // Create the table in each node concurrently.
-        try_join_all(create_table_actions).await?;
+        while let Some(result) = create_table_futures.next().await {
+            info!(
+                "Created table '{}' on node with url '{}'.",
+                table_name, result?
+            );
+        }
 
         Ok(())
     }
 
     /// Connect to the Apache Arrow flight client given by `url` and use the `CommandStatementUpdate`
     /// action to create the table given by `sql`. If the table was successfully created, return
-    /// [`Ok`], otherwise return [`ClusterError`](ModelarDbError::ClusterError).
-    async fn create_table(&self, url: &String, sql: Bytes) -> Result<(), ModelarDbError> {
+    /// the url of the node, otherwise return [`ClusterError`](ModelarDbError::ClusterError).
+    async fn create_table(&self, url: String, sql: Bytes) -> Result<String, ModelarDbError> {
         let mut flight_client = FlightServiceClient::connect(format!("grpc://{url}"))
             .await
             .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
@@ -128,7 +140,7 @@ impl Cluster {
             .await
             .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
 
-        Ok(())
+        Ok(url)
     }
 }
 
