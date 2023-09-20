@@ -186,12 +186,24 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// TODO: Provide the name of all tables in the catalog.
+    /// Provide the name of all tables in the catalog.
     async fn list_flights(
         &self,
         _request: Request<Criteria>,
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
-        Err(Status::unimplemented("Not implemented."))
+        // Retrieve the table names from the metadata database.
+        let table_names = self
+            .context
+            .metadata_manager
+            .table_names()
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        let flight_descriptor = FlightDescriptor::new_path(table_names);
+        let flight_info = FlightInfo::new().with_descriptor(flight_descriptor);
+
+        let output = stream::once(async { Ok(flight_info) });
+        Ok(Response::new(Box::pin(output)))
     }
 
     /// Not implemented.
