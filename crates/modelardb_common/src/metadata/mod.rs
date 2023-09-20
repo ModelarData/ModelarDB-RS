@@ -130,7 +130,7 @@ where
     <DB as HasArguments<'a>>::Arguments: IntoArguments<'a, DB>,
 {
     // Add a new row in the table_metadata table to persist the table.
-    sqlx::query("INSERT INTO table_metadata (table_name) VALUES (?1)")
+    sqlx::query("INSERT INTO table_metadata (table_name) VALUES ($1)")
         .bind(name)
         .execute(metadata_database_pool)
         .await?;
