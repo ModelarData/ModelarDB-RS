@@ -271,9 +271,9 @@ impl MetadataManager {
     /// that name does not exists, return [`sqlx::Error`].
     pub async fn table_sql(&self, table_name: &str) -> Result<String, sqlx::Error> {
         let select_statement = format!(
-            "SELECT sql FROM table_metadata WHERE table_name = {table_name}
+            "SELECT sql FROM table_metadata WHERE table_name = '{table_name}'
              UNION
-             SELECT sql FROM model_table_metadata WHERE table_name = {table_name}",
+             SELECT sql FROM model_table_metadata WHERE table_name = '{table_name}'",
         );
 
         let mut rows = sqlx::query(&select_statement).fetch(&self.metadata_database_pool);
