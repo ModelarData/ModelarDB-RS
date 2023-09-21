@@ -408,7 +408,7 @@ impl FlightServiceHandler {
         // Persist the new model table to the metadata database.
         self.context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, sql)
+            .save_model_table_metadata(&model_table_metadata, &sql)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 

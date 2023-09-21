@@ -88,7 +88,7 @@ impl MetadataManager {
     pub async fn save_model_table_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
-        sql: String,
+        sql: &str,
     ) -> Result<(), sqlx::Error> {
         // Convert the query schema to bytes so it can be saved as a BYTEA in the metadata database.
         let query_schema_bytes =
