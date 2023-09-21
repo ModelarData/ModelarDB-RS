@@ -61,7 +61,8 @@ where
         .execute(
             format!(
                 "CREATE TABLE IF NOT EXISTS table_metadata (
-            table_name TEXT PRIMARY KEY
+            table_name TEXT PRIMARY KEY,
+            sql TEXT NOT NULL
             ) {strict}"
             )
             .as_str(),
@@ -74,7 +75,8 @@ where
             format!(
                 "CREATE TABLE IF NOT EXISTS model_table_metadata (
             table_name TEXT PRIMARY KEY,
-            query_schema {binary_type} NOT NULL
+            query_schema {binary_type} NOT NULL,
+            sql TEXT NOT NULL
             ) {strict}"
             )
             .as_str(),
@@ -117,10 +119,11 @@ where
 }
 
 /// Save the created table to the metadata database. This consists of adding a row to the
-/// table_metadata table with the `name` of the created table.
+/// table_metadata table with the `name` of the table and the `sql` used to create the table.
 pub async fn save_table_metadata<'a, DB, E>(
     metadata_database_pool: E,
     name: String,
+    sql: String,
 ) -> Result<(), Error>
 where
     DB: Database,
@@ -130,8 +133,9 @@ where
     <DB as HasArguments<'a>>::Arguments: IntoArguments<'a, DB>,
 {
     // Add a new row in the table_metadata table to persist the table.
-    sqlx::query("INSERT INTO table_metadata (table_name) VALUES ($1)")
+    sqlx::query("INSERT INTO table_metadata (table_name, sql) VALUES ($1, $2)")
         .bind(name)
+        .bind(sql)
         .execute(metadata_database_pool)
         .await?;
 
@@ -253,9 +257,13 @@ mod tests {
             .unwrap();
 
         let table_name = "table_name";
-        save_table_metadata(&metadata_database_pool, table_name.to_string())
-            .await
-            .unwrap();
+        save_table_metadata(
+            &metadata_database_pool,
+            table_name.to_string(),
+            "sql".to_owned(),
+        )
+        .await
+        .unwrap();
 
         // Retrieve the table from the metadata database.
         let mut rows = metadata_database_pool.fetch("SELECT table_name FROM table_metadata");

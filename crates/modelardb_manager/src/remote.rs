@@ -36,7 +36,6 @@ use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::types::ServerMode;
 use tokio::runtime::Runtime;
-use tonic::codegen::Bytes;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
@@ -108,12 +107,12 @@ impl FlightServiceHandler {
     async fn save_and_create_cluster_tables(
         &self,
         table_name: String,
-        sql: Bytes,
+        sql: String,
     ) -> Result<(), Status> {
         // Persist the new table to the metadata database.
         self.context
             .metadata_manager
-            .save_table_metadata(&table_name)
+            .save_table_metadata(table_name.clone(), sql.clone())
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -122,7 +121,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_tables(&table_name, sql)
+            .create_tables(&table_name, sql.into())
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -137,12 +136,12 @@ impl FlightServiceHandler {
     async fn save_and_create_cluster_model_tables(
         &self,
         model_table_metadata: ModelTableMetadata,
-        sql: Bytes,
+        sql: String,
     ) -> Result<(), Status> {
         // Persist the new model table to the metadata database.
         self.context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, sql.clone())
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -151,7 +150,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_tables(&model_table_metadata.name, sql)
+            .create_tables(&model_table_metadata.name, sql.into())
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -285,14 +284,17 @@ impl FlightService for FlightServiceHandler {
             match valid_statement {
                 ValidStatement::CreateTable { name, .. } => {
                     self.check_if_table_exists(&name).await?;
-                    self.save_and_create_cluster_tables(name, action.body)
+                    self.save_and_create_cluster_tables(name, sql.to_string())
                         .await?;
                 }
                 ValidStatement::CreateModelTable(model_table_metadata) => {
                     self.check_if_table_exists(&model_table_metadata.name)
                         .await?;
-                    self.save_and_create_cluster_model_tables(model_table_metadata, action.body)
-                        .await?;
+                    self.save_and_create_cluster_model_tables(
+                        model_table_metadata,
+                        sql.to_string(),
+                    )
+                    .await?;
                 }
             };
 

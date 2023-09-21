@@ -345,6 +345,7 @@ impl FlightServiceHandler {
     async fn register_and_save_table(
         &self,
         table_name: String,
+        sql: String,
         schema: Schema,
     ) -> Result<(), Status> {
         // Ensure the folder for storing the table data exists.
@@ -375,7 +376,7 @@ impl FlightServiceHandler {
         // Persist the new table to the metadata database.
         self.context
             .metadata_manager
-            .save_table_metadata(&table_name)
+            .save_table_metadata(table_name.clone(), sql)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -391,6 +392,7 @@ impl FlightServiceHandler {
     async fn register_and_save_model_table(
         &self,
         model_table_metadata: ModelTableMetadata,
+        sql: String,
     ) -> Result<(), Status> {
         // Save the model table in the Apache Arrow DataFusion catalog.
         let model_table_metadata = Arc::new(model_table_metadata);
@@ -406,7 +408,7 @@ impl FlightServiceHandler {
         // Persist the new model table to the metadata database.
         self.context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, sql)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -631,12 +633,12 @@ impl FlightService for FlightServiceHandler {
             match valid_statement {
                 ValidStatement::CreateTable { name, schema } => {
                     self.check_if_table_exists(&name).await?;
-                    self.register_and_save_table(name, schema).await?;
+                    self.register_and_save_table(name, sql.to_string(), schema).await?;
                 }
                 ValidStatement::CreateModelTable(model_table_metadata) => {
                     self.check_if_table_exists(&model_table_metadata.name)
                         .await?;
-                    self.register_and_save_model_table(model_table_metadata)
+                    self.register_and_save_model_table(model_table_metadata, sql.to_string())
                         .await?;
                 }
             };

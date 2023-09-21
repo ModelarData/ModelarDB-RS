@@ -26,7 +26,7 @@ use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
 use tonic::codegen::Bytes;
 use tonic::Request;
-use tryhard::backoff_strategies::{ExponentialBackoff};
+use tryhard::backoff_strategies::ExponentialBackoff;
 use tryhard::{NoOnRetry, RetryFutureConfig};
 
 /// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
@@ -56,8 +56,8 @@ pub struct Cluster {
 
 impl Cluster {
     pub fn new() -> Self {
-        let retry_config = RetryFutureConfig::new(10)
-            .exponential_backoff(Duration::from_millis(1000));
+        let retry_config =
+            RetryFutureConfig::new(10).exponential_backoff(Duration::from_millis(1000));
 
         Self {
             nodes: vec![],

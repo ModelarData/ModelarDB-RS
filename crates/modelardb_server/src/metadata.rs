@@ -665,9 +665,9 @@ impl MetadataManager {
     }
 
     /// Save the created table to the metadata database. This consists of adding a row to the
-    /// table_metadata table with the `name` of the created table.
-    pub async fn save_table_metadata(&self, name: &str) -> Result<()> {
-        metadata::save_table_metadata(&self.metadata_database_pool, name.to_string()).await
+    /// table_metadata table with the `name` of the table and the `sql` used to create the table.
+    pub async fn save_table_metadata(&self, name: String, sql: String) -> Result<()> {
+        metadata::save_table_metadata(&self.metadata_database_pool, name, sql).await
     }
 
     /// Read the rows in the table_metadata table and use these to register tables in Apache Arrow
@@ -722,6 +722,7 @@ impl MetadataManager {
     pub async fn save_model_table_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
+        sql: String,
     ) -> Result<()> {
         // Convert the query schema to bytes so it can be saved as a BLOB in the metadata database.
         let query_schema_bytes =
@@ -769,10 +770,11 @@ impl MetadataManager {
         transaction
             .execute(
                 sqlx::query(
-                    "INSERT INTO model_table_metadata (table_name, query_schema) VALUES (?1, ?2)",
+                    "INSERT INTO model_table_metadata (table_name, query_schema, sql) VALUES (?1, ?2, ?3)",
                 )
                 .bind(&model_table_metadata.name)
-                .bind(query_schema_bytes),
+                .bind(query_schema_bytes)
+                .bind(sql),
             )
             .await?;
 
@@ -1716,7 +1718,7 @@ mod tests {
 
         context
             .metadata_manager
-            .save_table_metadata("table_name")
+            .save_table_metadata("table_name".to_owned(), "sql".to_owned())
             .await
             .unwrap();
 
