@@ -27,8 +27,11 @@ use std::sync::Arc;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
-    HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaResult, Ticket,
+    HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaAsIpc,
+    SchemaResult, Ticket,
 };
+use datafusion::arrow::error::ArrowError;
+use datafusion::arrow::ipc::writer::IpcWriteOptions;
 use futures::{stream, Stream};
 use modelardb_common::arguments::decode_argument;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
@@ -213,13 +216,48 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// TODO: Provide the schema of a table in the catalog. The name of the table must
-    ///       be provided as the first element in `FlightDescriptor.path`.
+    /// Provide the schema of a table in the catalog. The name of the table must be provided as the
+    /// first element in `FlightDescriptor.path`.
     async fn get_schema(
         &self,
-        _request: Request<FlightDescriptor>,
+        request: Request<FlightDescriptor>,
     ) -> Result<Response<SchemaResult>, Status> {
-        Err(Status::unimplemented("Not implemented."))
+        let flight_descriptor = request.into_inner();
+        let table_name = flight_descriptor
+            .path
+            .get(0)
+            .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))?;
+
+        let table_sql = self
+            .context
+            .metadata_manager
+            .table_sql(table_name)
+            .await
+            .map_err(|error| {
+                Status::not_found(format!(
+                    "Table with name '{}' does not exist: {}",
+                    table_name,
+                    error.to_string()
+                ))
+            })?;
+
+        // Parse the SQL and perform semantic checks to extract the schema from the statement.
+        // unwrap() is safe since the SQL was parsed and checked when the table was created.
+        let statement = parser::tokenize_and_parse_sql(table_sql.as_str()).unwrap();
+        let valid_statement = parser::semantic_checks_for_create_table(statement).unwrap();
+
+        let schema = match valid_statement {
+            ValidStatement::CreateTable { schema, .. } => Arc::new(schema),
+            ValidStatement::CreateModelTable(model_table_metadata) => model_table_metadata.schema,
+        };
+
+        let options = IpcWriteOptions::default();
+        let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
+        let schema_result = schema_as_ipc
+            .try_into()
+            .map_err(|error: ArrowError| Status::internal(error.to_string()))?;
+
+        Ok(Response::new(schema_result))
     }
 
     /// TODO: Execute a SQL query provided in UTF-8 and return the schema of the query
