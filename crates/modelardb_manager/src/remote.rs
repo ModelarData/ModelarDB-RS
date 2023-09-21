@@ -362,12 +362,21 @@ impl FlightService for FlightServiceHandler {
                 .register_node(node)
                 .map_err(|error| Status::internal(error.to_string()))?;
 
-            // TODO: Return the current database schema as well.
-            let connection_info = self.context.remote_data_folder.connection_info().clone();
+            // Return the connection info for the remote object store and a SQL query for each
+            // table in the database schema.
+            let mut response_body = self.context.remote_data_folder.connection_info().clone();
+            let table_sql_queries = self
+                .context
+                .metadata_manager
+                .table_metadata_column("sql")
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            response_body.extend_from_slice(table_sql_queries.join(";").as_bytes());
 
             Ok(Response::new(Box::pin(stream::once(async {
                 Ok(FlightResult {
-                    body: connection_info.into(),
+                    body: response_body.into(),
                 })
             }))))
         } else if action.r#type == "RemoveNode" {
