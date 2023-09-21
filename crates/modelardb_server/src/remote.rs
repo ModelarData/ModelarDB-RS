@@ -633,7 +633,8 @@ impl FlightService for FlightServiceHandler {
             match valid_statement {
                 ValidStatement::CreateTable { name, schema } => {
                     self.check_if_table_exists(&name).await?;
-                    self.register_and_save_table(name, sql.to_string(), schema).await?;
+                    self.register_and_save_table(name, sql.to_string(), schema)
+                        .await?;
                 }
                 ValidStatement::CreateModelTable(model_table_metadata) => {
                     self.check_if_table_exists(&model_table_metadata.name)
