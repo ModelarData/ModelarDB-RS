@@ -561,7 +561,7 @@ mod tests {
 
         let (model_table_metadata, data) = uncompressed_data(1);
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, "sql")
             .await
             .unwrap();
         data_manager
@@ -586,7 +586,7 @@ mod tests {
 
         let (model_table_metadata, data) = uncompressed_data(2);
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, "sql")
             .await
             .unwrap();
         data_manager
@@ -1123,7 +1123,7 @@ mod tests {
         .unwrap();
 
         metadata_manager
-            .save_model_table_metadata(&model_table)
+            .save_model_table_metadata(&model_table, "sql")
             .await
             .unwrap();
 
