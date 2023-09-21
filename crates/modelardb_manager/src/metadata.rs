@@ -18,7 +18,7 @@
 
 use std::str::FromStr;
 
-use futures::{StreamExt, TryStreamExt};
+use futures::TryStreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
@@ -202,26 +202,6 @@ impl MetadataManager {
         transaction.commit().await
     }
 
-    /// Retrieve the names of all tables in the metadata database, including both normal tables and
-    /// model tables and return them. If the table names could not be retrieved, return [`sqlx::Error`].
-    pub async fn table_names(&self) -> Result<Vec<String>, sqlx::Error> {
-        let mut table_names: Vec<String> = vec![];
-
-        // Retrieve the table_name column from both tables containing table metadata.
-        let table_rows = sqlx::query("SELECT table_name FROM table_metadata")
-            .fetch(&self.metadata_database_pool);
-        let model_table_rows = sqlx::query("SELECT table_name FROM model_table_metadata")
-            .fetch(&self.metadata_database_pool);
-
-        let mut rows = table_rows.chain(model_table_rows);
-
-        while let Some(row) = rows.try_next().await? {
-            table_names.push(row.try_get("table_name")?)
-        }
-
-        Ok(table_names)
-    }
-
     /// Save the node to the metadata database and return [`Ok`]. If the node could not be saved,
     /// return [`sqlx::Error`].
     pub async fn save_node(&self, node: &Node) -> Result<(), sqlx::Error> {
@@ -283,5 +263,24 @@ impl MetadataManager {
         } else {
             Err(sqlx::Error::RowNotFound)
         }
+    }
+
+    /// Retrieve all rows of `column` from both the table_metadata and model_table_metadata tables.
+    /// If the column could not be retrieved, either because it does not exist or because it could
+    /// not be converted to a string, return [`sqlx::Error`].
+    pub async fn table_metadata_column(&self, column: &str) -> Result<Vec<String>, sqlx::Error> {
+        let mut values: Vec<String> = vec![];
+
+        // Retrieve the column from both tables containing table metadata.
+        let select_statement = format!(
+            "SELECT {column} FROM table_metadata UNION SELECT {column} FROM model_table_metadata",
+        );
+
+        let mut rows = sqlx::query(&select_statement).fetch(&self.metadata_database_pool);
+        while let Some(row) = rows.try_next().await? {
+            values.push(row.try_get(column)?)
+        }
+
+        Ok(values)
     }
 }

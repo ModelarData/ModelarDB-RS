@@ -89,7 +89,7 @@ impl FlightServiceHandler {
         let existing_tables = self
             .context
             .metadata_manager
-            .table_names()
+            .table_metadata_column("table_name")
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -197,7 +197,7 @@ impl FlightService for FlightServiceHandler {
         let table_names = self
             .context
             .metadata_manager
-            .table_names()
+            .table_metadata_column("table_name")
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
