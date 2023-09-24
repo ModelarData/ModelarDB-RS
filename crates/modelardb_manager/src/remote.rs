@@ -287,6 +287,9 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently the
     /// following actions are supported:
+    /// * `InitializeDatabase`: Given a list of existing table names, respond with the SQL required
+    /// to create the tables and model tables that are missing in the list. The list of table names
+    /// is also checked to make sure all given tables actually exist.
     /// * `CommandStatementUpdate`: Execute a SQL query containing a command that does not
     /// return a result. These commands can be `CREATE TABLE table_name(...` which creates a
     /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a model table.
@@ -304,7 +307,14 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        if action.r#type == "CommandStatementUpdate" {
+        if action.r#type == "InitializeDatabase" {
+            // Return the SQL for the tables that need to be created in the requesting server.
+            Ok(Response::new(Box::pin(stream::once(async {
+                Ok(FlightResult {
+                    body: vec![].into(),
+                })
+            }))))
+        } else if action.r#type == "CommandStatementUpdate" {
             // Read the SQL from the action.
             let sql = str::from_utf8(&action.body)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
@@ -411,6 +421,13 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::ListActionsStream>, Status> {
+        let initialize_database_action = ActionType {
+            r#type: "InitializeDatabase".to_owned(),
+            description: "Return the SQL required to create all tables and models tables \
+            currently in the managers database schema."
+                .to_owned(),
+        };
+
         let command_statement_update_action = ActionType {
             r#type: "CommandStatementUpdate".to_owned(),
             description: "Execute a SQL query containing a single command that produce no results."
@@ -429,6 +446,7 @@ impl FlightService for FlightServiceHandler {
         };
 
         let output = stream::iter(vec![
+            Ok(initialize_database_action),
             Ok(command_statement_update_action),
             Ok(register_node_action),
             Ok(remove_node_action),
