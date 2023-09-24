@@ -295,8 +295,8 @@ impl FlightService for FlightServiceHandler {
     /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a model table.
     /// The table is created for all nodes controlled by the manager.
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
-    /// to the cluster of nodes controlled by the manager and the object store and current database
-    /// schema used in the cluster is returned.
+    /// to the cluster of nodes controlled by the manager and the object store used in the cluster
+    /// is returned.
     /// * `RemoveNode`: Remove a node from the cluster of nodes controlled by the manager and
     /// kill the process running on the node. The specific node to remove is given through the
     /// uniquely identifying URL of the node.
@@ -372,17 +372,8 @@ impl FlightService for FlightServiceHandler {
                 .register_node(node)
                 .map_err(|error| Status::internal(error.to_string()))?;
 
-            // Return the connection info for the remote object store and a SQL query for each
-            // table in the database schema.
-            let mut response_body = self.context.remote_data_folder.connection_info().clone();
-            let table_sql_queries = self
-                .context
-                .metadata_manager
-                .table_metadata_column("sql")
-                .await
-                .map_err(|error| Status::internal(error.to_string()))?;
-
-            response_body.extend_from_slice(table_sql_queries.join(";").as_bytes());
+            // Return the connection info for the remote object store.
+            let response_body = self.context.remote_data_folder.connection_info().clone();
 
             Ok(Response::new(Box::pin(stream::once(async {
                 Ok(FlightResult {
