@@ -653,7 +653,7 @@ impl FlightService for FlightServiceHandler {
             let configuration_manager = self.context.configuration_manager.read().await;
 
             // If on a cloud node, both the remote data folder and the query data folder should be updated.
-            if configuration_manager.server_mode() == &ServerMode::Cloud {
+            if configuration_manager.server_mode == ServerMode::Cloud {
                 // TODO: The query data folder should be updated in the session context.
                 return Err(Status::unimplemented(
                     "Currently not possible to update remote object store on cloud nodes.",
@@ -681,8 +681,8 @@ impl FlightService for FlightServiceHandler {
                 "compressed_reserved_memory_in_bytes",
             ];
             let values = [
-                configuration_manager.uncompressed_reserved_memory_in_bytes() as u64,
-                configuration_manager.compressed_reserved_memory_in_bytes() as u64,
+                configuration_manager.uncompressed_reserved_memory_in_bytes as u64,
+                configuration_manager.compressed_reserved_memory_in_bytes as u64,
             ];
 
             let schema = CONFIGURATION_SCHEMA.clone();

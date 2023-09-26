@@ -135,13 +135,10 @@ impl StorageEngine {
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
         metadata_manager: Arc<MetadataManager>,
     ) -> Result<Self, IOError> {
-        // TODO: make the number of threads per operation a value of ConfigurationManager
-        let thread_count = 2;
-
         // Create shared memory pool.
         let configuration_manager = configuration_manager.read().await;
         let memory_pool = Arc::new(MemoryPool::new(
-            configuration_manager.uncompressed_reserved_memory_in_bytes(),
+            configuration_manager.uncompressed_reserved_memory_in_bytes,
             configuration_manager.compressed_reserved_memory_in_bytes(),
         ));
 
@@ -165,7 +162,7 @@ impl StorageEngine {
             .await?,
         );
 
-        for thread_number in 0..thread_count {
+        for thread_number in 0..configuration_manager.ingestion_threads {
             let runtime = runtime.clone();
             let metadata_manager = metadata_manager.clone();
             let uncompressed_multivariate_receiver = uncompressed_multivariate_receiver.clone();
@@ -192,7 +189,7 @@ impl StorageEngine {
                 .unwrap();
         }
 
-        for thread_number in 0..thread_count {
+        for thread_number in 0..configuration_manager.writer_threads {
             let runtime = runtime.clone();
             let uncompressed_data_manager = uncompressed_data_manager.clone();
             let finished_uncompressed_data_receiver = finished_uncompressed_data_receiver.clone();
@@ -234,7 +231,7 @@ impl StorageEngine {
             used_disk_space_metric,
         )?);
 
-        for thread_number in 0..thread_count {
+        for thread_number in 0..configuration_manager.writer_threads {
             let runtime = runtime.clone();
             let compressed_data_manager = compressed_data_manager.clone();
             let compressed_data_receiver = compressed_data_receiver.clone();
