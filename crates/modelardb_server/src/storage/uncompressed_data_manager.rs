@@ -138,7 +138,7 @@ impl UncompressedDataManager {
                 self.channels
                     .finished_uncompressed_data_sender
                     .send(buffer)
-                    .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error));
+                    .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
             }
         }
 

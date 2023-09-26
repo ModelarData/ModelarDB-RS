@@ -54,6 +54,7 @@ use crate::storage::COMPRESSED_DATA_FOLDER;
 pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
 
 /// Metadata about a file tracked by [`MetadataManager`] which contains compressed segments.
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CompressedFile {
     /// Name of the file.
@@ -68,6 +69,7 @@ pub struct CompressedFile {
     max_value: Value,
 }
 
+#[allow(dead_code)]
 impl CompressedFile {
     pub fn new(
         name: Uuid,
@@ -309,6 +311,7 @@ impl MetadataManager {
     /// Compute the 64-bit univariate ids of the univariate time series to retrieve from the storage
     /// engine using the field columns, tag names, and tag values in the query. Returns a [`Error`]
     /// if the necessary data cannot be retrieved from the metadata database.
+    #[allow(dead_code)]
     pub async fn compute_univariate_ids_using_fields_and_tags(
         &self,
         table_name: &str,
@@ -414,6 +417,7 @@ impl MetadataManager {
     /// * The max value is smaller than the min value in `compressed_file`.
     /// * The metadata database could not be modified.
     /// * A model table with `model_table_name` does not exist.
+    #[allow(dead_code)]
     pub async fn save_compressed_file(
         &self,
         model_table_name: &str,
@@ -446,6 +450,7 @@ impl MetadataManager {
     /// * Less than the number of files in `compressed_files_to_delete` was deleted.
     /// * The metadata database could not be modified.
     /// * A model table with `model_table_name` does not exist.
+    #[allow(dead_code)]
     pub async fn replace_compressed_files(
         &self,
         model_table_name: &str,
@@ -546,6 +551,7 @@ impl MetadataManager {
 
     /// Create a [`Query`] that, when executed, stores `compressed_file` in the metadata database
     /// for the column at `query_schema_index` using `insert_statement`.
+    #[allow(dead_code)]
     fn create_insert_compressed_file_query<'a>(
         insert_statement: &'a str,
         query_schema_index: usize,
@@ -573,6 +579,7 @@ impl MetadataManager {
     /// * The max value is smaller than the min value.
     /// * The metadata database could not be accessed.
     /// * A model table with `model_table_name` does not exist.
+    #[allow(dead_code)]
     pub async fn compressed_files(
         &self,
         model_table_name: &str,
