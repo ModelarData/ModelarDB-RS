@@ -22,7 +22,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crossbeam_channel::Receiver;
 use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -37,10 +36,8 @@ use tracing::{debug, info};
 
 use crate::storage::compressed_data_buffer::CompressedDataBuffer;
 use crate::storage::data_transfer::DataTransfer;
-use crate::storage::types::MemoryPool;
+use crate::storage::types::{Channels, MemoryPool};
 use crate::storage::{Metric, StorageEngine, COMPRESSED_DATA_FOLDER};
-
-use super::compressed_data_buffer::CompressedSegmentBatch;
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
@@ -56,6 +53,8 @@ pub(super) struct CompressedDataManager {
     /// FIFO queue of table names and column indices referring to [`CompressedDataBuffer`] that can
     /// be saved to persistent storage.
     compressed_queue: SegQueue<(String, u16)>,
+    /// Channels used by the storage engine's threads to communicate.
+    channels: Arc<Channels>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used compressed memory in bytes, updated every time the used memory changes.
@@ -71,6 +70,7 @@ impl CompressedDataManager {
     pub(super) fn try_new(
         data_transfer: RwLock<Option<DataTransfer>>,
         local_data_folder: PathBuf,
+        channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
@@ -82,6 +82,7 @@ impl CompressedDataManager {
             local_data_folder,
             compressed_data_buffers: DashMap::new(),
             compressed_queue: SegQueue::new(),
+            channels,
             memory_pool,
             used_compressed_memory_metric: Mutex::new(Metric::new()),
             used_disk_space_metric,
@@ -120,11 +121,10 @@ impl CompressedDataManager {
     /// Insert the `compressed_segments` into the in-memory compressed data buffer for the table
     /// with `table_name` and the column at `column_index`. If `compressed_segments` is saved
     /// successfully, return [`Ok`], otherwise return [`IOError`].
-    pub(super) async fn insert_compressed_segments(
-        &self,
-        compressed_data_receiver: &Receiver<CompressedSegmentBatch>,
-    ) -> Result<(), IOError> {
-        let compressed_segment_batch = compressed_data_receiver
+    pub(super) async fn insert_compressed_segments(&self) -> Result<(), IOError> {
+        let compressed_segment_batch = self
+            .channels
+            .compressed_data_receiver
             .recv()
             .map_err(|error| IOError::new(ErrorKind::BrokenPipe, error))?;
 

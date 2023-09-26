@@ -22,10 +22,8 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crossbeam_channel::{Receiver, Sender};
 use dashmap::DashMap;
 use datafusion::arrow::array::{Array, StringArray};
-use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
 use tracing::debug;
@@ -33,6 +31,7 @@ use tracing::debug;
 use crate::context::Context;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
+use crate::storage::types::Channels;
 use crate::storage::types::MemoryPool;
 use crate::storage::uncompressed_data_buffer::{
     UncompressedDataBuffer, UncompressedInMemoryDataBuffer, UncompressedOnDiskDataBuffer,
@@ -51,6 +50,10 @@ pub(super) struct UncompressedDataManager {
     /// The [`UncompressedDataBuffers`](UncompressedDataBuffer) currently being filled with ingested
     /// data points.
     active_uncompressed_data_buffers: DashMap<u64, UncompressedInMemoryDataBuffer>,
+    /// Channels used by the storage engine's threads to communicate.
+    channels: Arc<Channels>,
+    /// Management of metadata for ingesting and compressing time series.
+    metadata_manager: Arc<MetadataManager>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used uncompressed memory in bytes, updated every time the used memory changes.
@@ -69,6 +72,8 @@ impl UncompressedDataManager {
     pub(super) async fn try_new(
         local_data_folder: PathBuf,
         memory_pool: Arc<MemoryPool>,
+        channels: Arc<Channels>,
+        metadata_manager: Arc<MetadataManager>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the uncompressed data manager exists.
@@ -79,6 +84,8 @@ impl UncompressedDataManager {
             local_data_folder,
             current_batch_index: AtomicU64::new(0),
             active_uncompressed_data_buffers: DashMap::new(),
+            channels,
+            metadata_manager,
             memory_pool,
             used_uncompressed_memory_metric: Mutex::new(Metric::new()),
             ingested_data_points_metric: Mutex::new(Metric::new()),
@@ -91,7 +98,6 @@ impl UncompressedDataManager {
         &self,
         local_data_folder: PathBuf,
         context: &Context,
-        finished_uncompressed_data_sender: &Sender<Box<dyn UncompressedDataBuffer>>,
     ) -> Result<(), IOError> {
         let local_uncompressed_data_folder = local_data_folder.join(UNCOMPRESSED_DATA_FOLDER);
         let mut initial_disk_space = 0;
@@ -129,7 +135,8 @@ impl UncompressedDataManager {
 
                 initial_disk_space += buffer.disk_size();
 
-                finished_uncompressed_data_sender
+                self.channels
+                    .finished_uncompressed_data_sender
                     .send(buffer)
                     .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error));
             }
@@ -145,19 +152,19 @@ impl UncompressedDataManager {
         Ok(())
     }
 
-    /// Split `data_points` and insert them into the in-memory buffer. The multivariate time series
-    /// in `data_points` are first split into multiple univariate time series based on
-    /// `model_table`. These univariate time series are then inserted into the storage engine.
-    /// Return a list of buffers that were compressed as a result of inserting the data points with
-    /// their corresponding univariate id if the data was successfully inserted, otherwise return
-    /// [`Err`].
-    pub(super) async fn insert_data_points(
-        &self,
-        metadata_manager: &MetadataManager,
-        model_table_metadata: &Arc<ModelTableMetadata>,
-        data_points: &RecordBatch,
-        finished_uncompressed_data_sender: &Sender<Box<dyn UncompressedDataBuffer>>,
-    ) -> Result<(), String> {
+    /// Read data points from a channel and insert them into the in-memory buffer. If the data
+    /// points are from a multivariate time series, they are first split into multiple univariate
+    /// time series. These univariate time series are then inserted into the storage engine.
+    /// Return [`Err`] if the channel or the metadata database could not be read from.
+    pub(super) async fn insert_data_points(&self) -> Result<(), String> {
+        let uncompressed_data_multivariate = self
+            .channels
+            .uncompressed_multivariate_receiver
+            .recv()
+            .map_err(|error| error.to_string())?;
+        let data_points = uncompressed_data_multivariate.multivariate_data_points;
+        let model_table_metadata = uncompressed_data_multivariate.model_table_metadata;
+
         debug!(
             "Received record batch with {} data points for the table '{}'.",
             data_points.num_rows(),
@@ -225,8 +232,9 @@ impl UncompressedDataManager {
                 .map(|array| array.value(index).to_string())
                 .collect();
 
-            let tag_hash = metadata_manager
-                .lookup_or_compute_tag_hash(model_table_metadata, &tag_values)
+            let tag_hash = self
+                .metadata_manager
+                .lookup_or_compute_tag_hash(&model_table_metadata, &tag_values)
                 .await
                 .map_err(|error| format!("Tag hash could not be saved: {error}"))?;
 
@@ -243,7 +251,6 @@ impl UncompressedDataManager {
                     value,
                     model_table_metadata.clone(),
                     current_batch_index,
-                    &finished_uncompressed_data_sender,
                 )
                 .await
                 .map_err(|error| error.to_string())?
@@ -253,23 +260,20 @@ impl UncompressedDataManager {
         // Unused buffers are purposely only finished at the end of insert_data_points() so that the
         // buffers required for any of the data points in the current batch are never finished.
         let current_batch_index = self.current_batch_index.fetch_add(1, Ordering::Relaxed);
-        self.finish_unused_buffers(current_batch_index, finished_uncompressed_data_sender)
+        self.finish_unused_buffers(current_batch_index)
             .await
             .map_err(|error| error.to_string())?;
 
         Ok(())
     }
 
-    /// Compress the full [`UncompressedInMemoryDataBuffer`] read from
-    /// `finished_uncompressed_data_receiver` and return the resulting compressed segments as a
-    /// [`RecordBatch`]. Returns [`IOError`] if the error bound cannot be retrieved from the
-    /// [`MetadataManager`].
-    pub(super) async fn compress_finished_buffer(
-        &self,
-        finished_uncompressed_data_receiver: &Receiver<Box<dyn UncompressedDataBuffer>>,
-        compressed_data_sender: &Sender<CompressedSegmentBatch>,
-    ) -> Result<(), IOError> {
-        let mut data_buffer = finished_uncompressed_data_receiver
+    /// Read the next full [`UncompressedInMemoryDataBuffer`] from a channel, compress it, and send
+    /// the compressed segments to the [`CompressedInMemoryDataBuffer`] over a channel. Returns
+    /// [`IOError`] if the error bound cannot be retrieved from the [`MetadataManager`].
+    pub(super) async fn compress_finished_buffer(&self) -> Result<(), IOError> {
+        let mut data_buffer = self
+            .channels
+            .finished_uncompressed_data_receiver
             .recv()
             .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
 
@@ -299,7 +303,8 @@ impl UncompressedDataManager {
         )
         .unwrap();
 
-        compressed_data_sender
+        self.channels
+            .compressed_data_sender
             .send(CompressedSegmentBatch {
                 univariate_id,
                 model_table_metadata: data_buffer.model_table_metadata().clone(),
@@ -311,10 +316,7 @@ impl UncompressedDataManager {
     /// Compress the uncompressed data buffer that the [`UncompressedDataManager`] is currently
     /// managing, and return the compressed buffers and their univariate ids. Returns [`IOError`] if
     /// the error bound cannot be retrieved from the [`MetadataManager`].
-    pub(super) async fn flush(
-        &self,
-        finished_uncompressed_data_sender: &Sender<Box<dyn UncompressedDataBuffer>>,
-    ) -> Result<(), IOError> {
+    pub(super) async fn flush(&self) -> Result<(), IOError> {
         // The univariate ids are copied to not have multiple borrows to self at the same time.
         let univariate_ids: Vec<u64> = self
             .active_uncompressed_data_buffers
@@ -326,7 +328,8 @@ impl UncompressedDataManager {
             if let Some(univariate_id_buffer) =
                 self.active_uncompressed_data_buffers.remove(&univariate_id)
             {
-                finished_uncompressed_data_sender
+                self.channels
+                    .finished_uncompressed_data_sender
                     .send(Box::new(univariate_id_buffer.1))
                     .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
             }
@@ -346,7 +349,6 @@ impl UncompressedDataManager {
         value: Value,
         model_table_metadata: Arc<ModelTableMetadata>,
         current_batch_index: u64,
-        finished_uncompressed_data_sender: &Sender<Box<dyn UncompressedDataBuffer>>,
     ) -> Result<(), IOError> {
         debug!(
             "Inserting data point ({}, {}) into uncompressed data buffer for {}.",
@@ -389,7 +391,9 @@ impl UncompressedDataManager {
                         Box::new(full_uncompressed_in_memory_data_buffer)
                     };
 
-                return finished_uncompressed_data_sender
+                return self
+                    .channels
+                    .finished_uncompressed_data_sender
                     .send(finished_uncompressed_data_buffer)
                     .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error));
             }
@@ -432,11 +436,7 @@ impl UncompressedDataManager {
     }
 
     /// Finish active in-memory data buffers that are no longer used to free memory.
-    async fn finish_unused_buffers(
-        &self,
-        current_batch_index: u64,
-        finished_uncompressed_data_sender: &Sender<Box<dyn UncompressedDataBuffer>>,
-    ) -> Result<(), IOError> {
+    async fn finish_unused_buffers(&self, current_batch_index: u64) -> Result<(), IOError> {
         debug!("Freeing memory by finishing all in-memory buffers that are no longer used.");
 
         // Extract the univariate ids of the unused buffers and then delete the unused buffers as it
@@ -458,7 +458,8 @@ impl UncompressedDataManager {
                 .unwrap()
                 .1;
 
-            finished_uncompressed_data_sender
+            self.channels
+                .finished_uncompressed_data_sender
                 .send(Box::new(buffer))
                 .map_err(|error| IOError::new(IOErrorKind::InvalidData, error))?;
 

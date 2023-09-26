@@ -35,7 +35,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use bytes::buf::BufMut;
-use crossbeam_channel::{Receiver, Sender};
 use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::compute;
 use datafusion::arrow::compute::kernels::aggregate;
@@ -69,10 +68,8 @@ use crate::context::Context;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
-use crate::storage::types::{MemoryPool, Metric, MetricType};
-use crate::storage::uncompressed_data_buffer::{
-    UncompressedDataBuffer, UncompressedDataMultivariate,
-};
+use crate::storage::types::{Channels, MemoryPool, Metric, MetricType};
+use crate::storage::uncompressed_data_buffer::UncompressedDataMultivariate;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::PORT;
 
@@ -106,24 +103,17 @@ const TRANSFER_BATCH_SIZE_IN_BYTES: usize = 64 * 1024 * 1024; // 64 MiB;
 /// Manages all uncompressed and compressed data, both while being stored in memory during ingestion
 /// and when persisted to disk afterwards.
 pub struct StorageEngine {
-    /// Sender of [`RecordBatches`](RecordBatch) with parts of a multivariate time series to be
-    /// split into univariate time series and then compressed by the [`UncompressedDataManager`].
-    uncompressed_multivariate_sender: Sender<UncompressedDataMultivariate>,
-    /// Receiver of [`RecordBatches`](RecordBatch) with parts of a multivariate time series to be
-    /// split into univariate time series and then compressed by the [`UncompressedDataManager`].
-    uncompressed_multivariate_receiver: Receiver<UncompressedDataMultivariate>,
     /// Manager that contains and controls all uncompressed data.
     uncompressed_data_manager: Arc<UncompressedDataManager>,
-    /// Sender of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
-    /// time series that are ready to be compressed by the [`UncompressedDataManager`].
-    finished_uncompressed_data_sender: Sender<Box<dyn UncompressedDataBuffer>>,
-    /// Receiver of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
-    /// time series that are ready to be compressed by the [`UncompressedDataManager`].
-    finished_uncompressed_data_receiver: Receiver<Box<dyn UncompressedDataBuffer>>,
     /// Manager that contains and controls all compressed data.
     compressed_data_manager: Arc<CompressedDataManager>,
+    /// Channels used by the storage engine's threads to communicate.
+    channels: Arc<Channels>,
 }
 
+// TODO: remove Arc's in the storage engine.
+// TODO: Handle errors by removing unwrap .
+// TODO: Evaluate effect of block_on() (is async needed when we block the read anyway?) and handle errors?.
 impl StorageEngine {
     /// Return [`StorageEngine`] that writes ingested data to `local_data_folder` and optionally
     /// transfers compressed data to `remote_data_folder` if it is given. Returns [`String`] if
@@ -146,17 +136,15 @@ impl StorageEngine {
         let used_disk_space_metric = Arc::new(Mutex::new(Metric::new()));
 
         // Create shared channels.
-        let (uncompressed_multivariate_sender, uncompressed_multivariate_receiver) =
-            crossbeam_channel::unbounded();
-        let (finished_uncompressed_data_sender, finished_uncompressed_data_receiver) =
-            crossbeam_channel::unbounded();
-        let (compressed_data_sender, compressed_data_receiver) = crossbeam_channel::unbounded();
+        let channels = Arc::new(Channels::new());
 
         // Create the uncompressed data manager.
         let uncompressed_data_manager = Arc::new(
             UncompressedDataManager::try_new(
                 local_data_folder.clone(),
                 memory_pool.clone(),
+                channels.clone(),
+                metadata_manager,
                 used_disk_space_metric.clone(),
             )
             .await?,
@@ -164,26 +152,13 @@ impl StorageEngine {
 
         for thread_number in 0..configuration_manager.ingestion_threads {
             let runtime = runtime.clone();
-            let metadata_manager = metadata_manager.clone();
-            let uncompressed_multivariate_receiver = uncompressed_multivariate_receiver.clone();
-            let finished_uncompressed_data_sender = finished_uncompressed_data_sender.clone();
             let uncompressed_data_manager = uncompressed_data_manager.clone();
 
             thread::Builder::new()
                 .name(format!("Ingestion {}", thread_number))
                 .spawn(move || loop {
-                    // TODO: Handle errors
-                    let uncompressed_data_multivariate: UncompressedDataMultivariate =
-                        uncompressed_multivariate_receiver.recv().unwrap();
-
-                    // TODO: Evaluate effect of block_on() (is async needed when we block the read anyway?) and handle errors?.
                     runtime
-                        .block_on(uncompressed_data_manager.insert_data_points(
-                            &metadata_manager,
-                            &uncompressed_data_multivariate.model_table_metadata,
-                            &uncompressed_data_multivariate.multivariate_data_points,
-                            &finished_uncompressed_data_sender,
-                        ))
+                        .block_on(uncompressed_data_manager.insert_data_points())
                         .unwrap();
                 })
                 .unwrap();
@@ -192,18 +167,12 @@ impl StorageEngine {
         for thread_number in 0..configuration_manager.writer_threads {
             let runtime = runtime.clone();
             let uncompressed_data_manager = uncompressed_data_manager.clone();
-            let finished_uncompressed_data_receiver = finished_uncompressed_data_receiver.clone();
-            let compressed_data_sender = compressed_data_sender.clone();
 
             thread::Builder::new()
                 .name(format!("Compression {}", thread_number))
                 .spawn(move || loop {
-                    // TODO: Evaluate effect of block_on() (is async needed when we block the read anyway?) and handle errors?.
                     runtime
-                        .block_on(uncompressed_data_manager.compress_finished_buffer(
-                            &finished_uncompressed_data_receiver,
-                            &compressed_data_sender,
-                        ))
+                        .block_on(uncompressed_data_manager.compress_finished_buffer())
                         .unwrap();
                 })
                 .unwrap();
@@ -227,6 +196,7 @@ impl StorageEngine {
         let compressed_data_manager = Arc::new(CompressedDataManager::try_new(
             RwLock::new(data_transfer),
             local_data_folder,
+            channels.clone(),
             memory_pool,
             used_disk_space_metric,
         )?);
@@ -234,29 +204,21 @@ impl StorageEngine {
         for thread_number in 0..configuration_manager.writer_threads {
             let runtime = runtime.clone();
             let compressed_data_manager = compressed_data_manager.clone();
-            let compressed_data_receiver = compressed_data_receiver.clone();
 
             thread::Builder::new()
                 .name(format!("Writer {}", thread_number))
                 .spawn(move || loop {
-                    // TODO: Evaluate effect of block_on() (is async needed when we block the read anyway?) and handle errors?.
                     runtime
-                        .block_on(
-                            compressed_data_manager
-                                .insert_compressed_segments(&compressed_data_receiver),
-                        )
+                        .block_on(compressed_data_manager.insert_compressed_segments())
                         .unwrap();
                 })
                 .unwrap();
         }
 
         Ok(Self {
-            uncompressed_multivariate_sender,
-            uncompressed_multivariate_receiver,
-            finished_uncompressed_data_sender,
-            finished_uncompressed_data_receiver,
             uncompressed_data_manager,
             compressed_data_manager,
+            channels,
         })
     }
 
@@ -267,11 +229,7 @@ impl StorageEngine {
         context: &Context,
     ) -> Result<(), IOError> {
         self.uncompressed_data_manager
-            .initialize(
-                local_data_folder,
-                context,
-                &self.finished_uncompressed_data_sender,
-            )
+            .initialize(local_data_folder, context)
             .await
     }
 
@@ -295,7 +253,8 @@ impl StorageEngine {
         multivariate_data_points: RecordBatch,
     ) -> Result<(), String> {
         // TODO: ensure there is enough uncompressed memory and write to WAL before returning OK.
-        self.uncompressed_multivariate_sender
+        self.channels
+            .uncompressed_multivariate_sender
             .send(UncompressedDataMultivariate {
                 model_table_metadata,
                 multivariate_data_points,
@@ -308,7 +267,7 @@ impl StorageEngine {
     pub async fn flush(&self) -> Result<(), String> {
         // Flush UncompressedDataManager.
         self.uncompressed_data_manager
-            .flush(&self.finished_uncompressed_data_sender)
+            .flush()
             .await
             .map_err(|error| error.to_string())?;
 

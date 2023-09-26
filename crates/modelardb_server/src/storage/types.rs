@@ -22,9 +22,15 @@ use std::sync::atomic::Ordering;
 use std::sync::RwLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crossbeam_channel::{Receiver, Sender};
 use datafusion::arrow::array::UInt32Array;
 use modelardb_common::types::{Timestamp, TimestampArray};
 use ringbuf::{HeapRb, Rb};
+
+use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
+use crate::storage::uncompressed_data_buffer::{
+    UncompressedDataBuffer, UncompressedDataMultivariate,
+};
 
 /// Resizeable pool of memory for tracking and limiting the amount of memory used by the
 /// [`StorageEngine`](crate::storage::StorageEngine). Signed integers are used to simplify updating
@@ -129,6 +135,53 @@ impl MemoryPool {
     pub(super) fn free_compressed_memory(&self, size_in_bytes: usize) {
         // unwrap() is safe as write() only returns an error if the lock is poisoned.
         *self.remaining_compressed_memory_in_bytes.write().unwrap() += size_in_bytes as isize;
+    }
+}
+
+/// Channels used by the threads in the storage engine to communicate.
+pub(super) struct Channels {
+    /// Sender of [`RecordBatches`](RecordBatch) with parts of a multivariate time series from the
+    /// [`StorageEngine`] to the [`UncompressedDataManager`] were they are split into fixed-length
+    /// univariate time series.
+    pub(super) uncompressed_multivariate_sender: Sender<UncompressedDataMultivariate>,
+    /// Receiver of [`RecordBatches`](RecordBatch) with parts of a multivariate time series from the
+    /// [`StorageEngine`] in the [`UncompressedDataManager`] were they are split into fixed-length
+    /// univariate time series.
+    pub(super) uncompressed_multivariate_receiver: Receiver<UncompressedDataMultivariate>,
+    /// Sender of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
+    /// time series from the [`UncompressedDataManager`] to the [`UncompressedDataManager`] where
+    /// they are compressed into compressed segments.
+    pub(super) finished_uncompressed_data_sender: Sender<Box<dyn UncompressedDataBuffer>>,
+    /// Receiver of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
+    /// time series from the [`UncompressedDataManager`] in the [`UncompressedDataManager`] where
+    /// they are compressed into compressed segments.
+    pub(super) finished_uncompressed_data_receiver: Receiver<Box<dyn UncompressedDataBuffer>>,
+    /// Sender of [`CompressedSegmentBatchs`](CompressedSegmentBatch) with compressed segments from
+    /// the [`UncompressedDataManager`] to the [`CompressedDataManager`] were they are written to a
+    /// local data folder and later, possibly, a remote data folder.
+    pub(super) compressed_data_sender: Sender<CompressedSegmentBatch>,
+    /// Receiver of [`CompressedSegmentBatchs`](CompressedSegmentBatch) with compressed segments
+    /// from the [`UncompressedDataManager`] in the [`CompressedDataManager`] were they are written
+    /// to a local data folder and later, possibly, a remote data folder.
+    pub(super) compressed_data_receiver: Receiver<CompressedSegmentBatch>,
+}
+
+impl Channels {
+    pub(super) fn new() -> Self {
+        let (uncompressed_multivariate_sender, uncompressed_multivariate_receiver) =
+            crossbeam_channel::unbounded();
+        let (finished_uncompressed_data_sender, finished_uncompressed_data_receiver) =
+            crossbeam_channel::unbounded();
+        let (compressed_data_sender, compressed_data_receiver) = crossbeam_channel::unbounded();
+
+        Self {
+            uncompressed_multivariate_sender,
+            uncompressed_multivariate_receiver,
+            finished_uncompressed_data_sender,
+            finished_uncompressed_data_receiver,
+            compressed_data_sender,
+            compressed_data_receiver,
+        }
     }
 }
 
