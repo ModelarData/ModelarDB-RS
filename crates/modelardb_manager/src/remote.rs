@@ -308,10 +308,19 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "InitializeDatabase" {
+            // TODO: Extract the list of tables that already exist in the server.
+            // TODO: If no list is present, assume the server does not have any tables (delete)
+            // TODO: Get the tables names in the clusters current database schema.
+            // TODO: Check that all of the servers tables exist in the actual database schema.
+            // TODO: For each table that does not already exist, retrieve the SQL required to create it.
+            let table_sql_queries: Vec<String> = vec![];
+
+            let response_body = table_sql_queries.join(";").as_bytes().to_vec();
+
             // Return the SQL for the tables that need to be created in the requesting server.
             Ok(Response::new(Box::pin(stream::once(async {
                 Ok(FlightResult {
-                    body: vec![].into(),
+                    body: response_body.into(),
                 })
             }))))
         } else if action.r#type == "CommandStatementUpdate" {
