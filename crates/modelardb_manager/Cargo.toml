@@ -34,6 +34,7 @@ sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tonic.workspace = true
 tryhard.workspace = true
+uuid.workspace = true
 
 # Log is a dependency so the compile time filters for log and tracing can be set to the same values.
 log = { workspace = true, features = ["max_level_debug", "release_max_level_info"] }

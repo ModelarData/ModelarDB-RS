@@ -32,6 +32,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use uuid::Uuid;
 
 use crate::cluster::Cluster;
 use crate::data_folder::RemoteDataFolder;
@@ -55,6 +56,8 @@ pub struct Context {
     pub remote_data_folder: RemoteDataFolder,
     /// Cluster of nodes currently controlled by the manager.
     pub cluster: RwLock<Cluster>,
+    /// Key used to authenticate requests coming from the manager.
+    pub key: Uuid,
 }
 
 /// Parse the command line arguments to extract the metadata database and the remote object store
@@ -99,6 +102,7 @@ fn main() -> Result<(), String> {
             metadata_manager,
             remote_data_folder,
             cluster: RwLock::new(cluster),
+            key: Uuid::new_v4(),
         }))
     })?;
 
