@@ -124,7 +124,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_tables(&table_name, sql.into())
+            .create_tables(&table_name, sql.into(), self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -153,7 +153,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_tables(&model_table_metadata.name, sql.into())
+            .create_tables(&model_table_metadata.name, sql.into(), self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 

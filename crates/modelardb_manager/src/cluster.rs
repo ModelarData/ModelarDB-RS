@@ -28,6 +28,7 @@ use tonic::codegen::Bytes;
 use tonic::Request;
 use tryhard::backoff_strategies::ExponentialBackoff;
 use tryhard::{NoOnRetry, RetryFutureConfig};
+use uuid::Uuid;
 
 /// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
 /// or a cloud node. A node cannot be another manager.
@@ -111,11 +112,16 @@ impl Cluster {
     /// For each node in the cluster, use the `CommandStatementUpdate` action to create the table
     /// given by `sql`. If the table was successfully created for each node, return
     /// [`Ok`], otherwise return [`ClusterError`](ModelarDbError::ClusterError).
-    pub async fn create_tables(&self, table_name: &str, sql: Bytes) -> Result<(), ModelarDbError> {
+    pub async fn create_tables(
+        &self,
+        table_name: &str,
+        sql: Bytes,
+        key: Uuid,
+    ) -> Result<(), ModelarDbError> {
         let mut create_table_futures = FuturesUnordered::new();
 
         for node in &self.nodes {
-            let future = tryhard::retry_fn(|| self.create_table(node.url.clone(), sql.clone()))
+            let future = tryhard::retry_fn(|| self.create_table(node.url.clone(), sql.clone(), key))
                 .with_config(self.retry_config);
 
             create_table_futures.push(future);
@@ -134,7 +140,12 @@ impl Cluster {
     /// Connect to the Apache Arrow flight client given by `url` and use the `CommandStatementUpdate`
     /// action to create the table given by `sql`. If the table was successfully created, return
     /// the url of the node, otherwise return [`ClusterError`](ModelarDbError::ClusterError).
-    async fn create_table(&self, url: String, sql: Bytes) -> Result<String, ModelarDbError> {
+    async fn create_table(
+        &self,
+        url: String,
+        sql: Bytes,
+        key: Uuid,
+    ) -> Result<String, ModelarDbError> {
         let mut flight_client = FlightServiceClient::connect(format!("grpc://{url}"))
             .await
             .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
@@ -144,8 +155,13 @@ impl Cluster {
             body: sql,
         };
 
+        // Add the key to the request metadata to authenticate that the request is from the manager.
+        // unwrap() is safe since a UUID cannot contain invalid characters.
+        let mut request = Request::new(action);
+        request.metadata_mut().insert("x-manager-key", key.to_string().parse().unwrap());
+
         flight_client
-            .do_action(Request::new(action))
+            .do_action(request)
             .await
             .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
 
