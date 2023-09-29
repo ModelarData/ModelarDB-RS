@@ -83,7 +83,7 @@ impl Cluster {
     /// Remove the node with an url matching `url` from the current nodes, flush the node, and
     /// finally kill the process running on the node. If no node with `url` exists,
     /// [`ConfigurationError`](ModelarDbError::ConfigurationError) is returned.
-    pub async fn remove_node(&mut self, url: &str) -> Result<(), ModelarDbError> {
+    pub async fn remove_node(&mut self, url: &str, key: Uuid) -> Result<(), ModelarDbError> {
         if self.nodes.iter().any(|n| n.url == url) {
             self.nodes.retain(|n| n.url != url);
 
@@ -97,9 +97,14 @@ impl Cluster {
                 body: vec![].into(),
             };
 
+            // Add the key to the request metadata to authenticate that the request is from the manager.
+            // unwrap() is safe since a UUID cannot contain invalid characters.
+            let mut request = Request::new(action);
+            request.metadata_mut().insert("x-manager-key", key.to_string().parse().unwrap());
+
             // TODO: Retry the request if the wrong error was returned.
             // Since the process is killed, the error from the request is ignored.
-            let _ = flight_client.do_action(Request::new(action)).await;
+            let _ = flight_client.do_action(request).await;
 
             Ok(())
         } else {
@@ -201,6 +206,6 @@ mod test {
     #[tokio::test]
     async fn test_remove_node_invalid_url() {
         let mut cluster = Cluster::new();
-        assert!(cluster.remove_node("invalid_url").await.is_err());
+        assert!(cluster.remove_node("invalid_url", Uuid::new_v4()).await.is_err());
     }
 }

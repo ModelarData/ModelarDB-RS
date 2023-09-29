@@ -406,7 +406,7 @@ impl FlightService for FlightServiceHandler {
                 .cluster
                 .write()
                 .await
-                .remove_node(url)
+                .remove_node(url, self.context.key)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 
