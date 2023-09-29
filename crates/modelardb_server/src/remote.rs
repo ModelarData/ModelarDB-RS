@@ -51,7 +51,7 @@ use modelardb_common::metadata::normalize_name;
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
-use modelardb_common::types::{ServerMode, TimestampBuilder};
+use modelardb_common::types::{ClusterMode, ServerMode, TimestampBuilder};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
@@ -612,8 +612,29 @@ impl FlightService for FlightServiceHandler {
         &self,
         request: Request<Action>,
     ) -> Result<Response<Self::DoActionStream>, Status> {
+        let metadata = request.metadata().clone();
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
+
+        // If the server was started with a manager, and the requested action is restricted to only
+        // be called by the manager, check that the request actually came from the manager.
+        if let ClusterMode::MultiNode(key) = &self.context.cluster_mode {
+            let restricted_actions = vec![
+                "CommandStatementUpdate",
+                "UpdateRemoteObjectStore",
+                "KillEdge",
+            ];
+
+            if restricted_actions.iter().any(|&a| a == action.r#type) {
+                let request_key = metadata
+                    .get("x-manager-key")
+                    .ok_or(Status::internal("Missing manager authentication key."))?;
+
+                if key != request_key {
+                    return Err(Status::internal("Manager authentication key is invalid."));
+                }
+            }
+        }
 
         if action.r#type == "CommandStatementUpdate" {
             // Read the SQL from the action.
