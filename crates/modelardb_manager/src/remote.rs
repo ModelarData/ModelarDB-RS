@@ -33,7 +33,7 @@ use arrow_flight::{
 use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::ipc::writer::IpcWriteOptions;
 use futures::{stream, Stream};
-use modelardb_common::arguments::decode_argument;
+use modelardb_common::arguments::{decode_argument, encode_argument};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
@@ -381,8 +381,9 @@ impl FlightService for FlightServiceHandler {
                 .register_node(node)
                 .map_err(|error| Status::internal(error.to_string()))?;
 
-            // Return the connection info for the remote object store.
-            let response_body = self.context.remote_data_folder.connection_info().clone();
+            // Return the key for the manager and connection info for the remote object store.
+            let mut response_body = encode_argument(self.context.key.to_string().as_str());
+            response_body.append(&mut self.context.remote_data_folder.connection_info().clone());
 
             Ok(Response::new(Box::pin(stream::once(async {
                 Ok(FlightResult {

@@ -35,8 +35,8 @@ use arrow_flight::Action;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
 use modelardb_common::arguments::{
-    argument_to_remote_object_store, collect_command_line_arguments, encode_argument,
-    parse_object_store_arguments, validate_remote_data_folder,
+    argument_to_remote_object_store, collect_command_line_arguments, decode_argument,
+    encode_argument, parse_object_store_arguments, validate_remote_data_folder,
 };
 use modelardb_common::types::{ClusterMode, ServerMode};
 use object_store::{local::LocalFileSystem, ObjectStore};
@@ -207,12 +207,11 @@ async fn parse_command_line_arguments(
             },
         )),
         &["multi", "cloud", manager_url, local_data_folder] => {
-            let remote_object_store =
-                retrieve_manager_object_store(manager_url, ServerMode::Cloud).await?;
+            let (key, remote_object_store) = register_node(manager_url, ServerMode::Cloud).await?;
 
             Ok((
                 ServerMode::Cloud,
-                ClusterMode::MultiNode,
+                ClusterMode::MultiNode(key),
                 DataFolders {
                     local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                     remote_data_folder: Some(remote_object_store.clone()),
@@ -221,17 +220,19 @@ async fn parse_command_line_arguments(
             ))
         }
         &["multi", "edge", manager_url, local_data_folder]
-        | &["multi", manager_url, local_data_folder] => Ok((
-            ServerMode::Edge,
-            ClusterMode::MultiNode,
-            DataFolders {
-                local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
-                remote_data_folder: Some(
-                    retrieve_manager_object_store(manager_url, ServerMode::Edge).await?,
-                ),
-                query_data_folder: argument_to_local_object_store(local_data_folder)?,
-            },
-        )),
+        | &["multi", manager_url, local_data_folder] => {
+            let (key, remote_object_store) = register_node(manager_url, ServerMode::Cloud).await?;
+
+            Ok((
+                ServerMode::Edge,
+                ClusterMode::MultiNode(key),
+                DataFolders {
+                    local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
+                    remote_data_folder: Some(remote_object_store),
+                    query_data_folder: argument_to_local_object_store(local_data_folder)?,
+                },
+            ))
+        }
         _ => {
             // TODO: Update the usage instructions to specify that if cluster mode is "multi" a
             //       manager url should be given and the remote data folder should not be given.
@@ -270,13 +271,13 @@ fn argument_to_local_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>
     Ok(Arc::new(object_store))
 }
 
-/// Retrieve the object store connection info from the ModelarDB manager and use it to connect to
-/// the remote object store. If the connection information could not be retrieved or a connection
-/// could not be established, [`String`] is returned.
-async fn retrieve_manager_object_store(
+/// Register the node and retrieve the key and object store connection info from the ModelarDB
+/// manager and use it to connect to the remote object store. If the key and connection information
+/// could not be retrieved or a connection could not be established, [`String`] is returned.
+async fn register_node(
     manager_url: &str,
     server_mode: ServerMode,
-) -> Result<Arc<dyn ObjectStore>, String> {
+) -> Result<(String, Arc<dyn ObjectStore>), String> {
     let mut flight_client = FlightServiceClient::connect(manager_url.to_string())
         .await
         .map_err(|error| format!("Could not connect to manager: {error}"))?;
@@ -302,9 +303,15 @@ async fn retrieve_manager_object_store(
         .map_err(|error| error.to_string())?;
 
     if let Some(response) = maybe_response {
-        Ok(parse_object_store_arguments(&response.body)
-            .await
-            .map_err(|error| error.to_string())?)
+        let (key, offset_data) =
+            decode_argument(&response.body).map_err(|error| error.to_string())?;
+
+        Ok((
+            key.to_string(),
+            parse_object_store_arguments(offset_data)
+                .await
+                .map_err(|error| error.to_string())?,
+        ))
     } else {
         Err("Response for request to register the node is empty.".to_owned())
     }

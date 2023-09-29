@@ -131,11 +131,11 @@ impl fmt::Display for ServerMode {
 }
 
 /// The different possible modes that a ModelarDB server can be deployed in, assigned when the
-/// server is started.
+/// server is started. MultiNode includes the key received from the manager when registering.
 #[derive(PartialEq, Eq)]
 pub enum ClusterMode {
     SingleNode,
-    MultiNode,
+    MultiNode(String),
 }
 
 #[cfg(test)]
