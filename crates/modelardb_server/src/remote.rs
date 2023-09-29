@@ -56,6 +56,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
+use tonic::metadata::MetadataMap;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
@@ -338,6 +339,35 @@ impl FlightServiceHandler {
             .map_err(|error| Status::invalid_argument(error.to_string()))
     }
 
+    /// If the server was started with a manager, and the requested action is restricted to only
+    /// be called by the manager, check that the request actually came from the manager. If the
+    /// request is valid, return [`Ok`], otherwise return [`Status`].
+    fn validate_action_request(
+        &self,
+        action_type: String,
+        metadata: MetadataMap,
+    ) -> Result<(), Status> {
+        if let ClusterMode::MultiNode(key) = &self.context.cluster_mode {
+            let restricted_actions = vec![
+                "CommandStatementUpdate",
+                "UpdateRemoteObjectStore",
+                "KillEdge",
+            ];
+
+            if restricted_actions.iter().any(|&a| a == action_type) {
+                let request_key = metadata
+                    .get("x-manager-key")
+                    .ok_or(Status::internal("Missing manager authentication key."))?;
+
+                if key != request_key {
+                    return Err(Status::internal("Manager authentication key is invalid."));
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Create a normal table, register it with Apache Arrow DataFusion's
     /// catalog, and save it to the [`MetadataManager`]. If the table exists,
     /// the Apache Parquet file cannot be created, or if the table cannot be
@@ -616,25 +646,7 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        // If the server was started with a manager, and the requested action is restricted to only
-        // be called by the manager, check that the request actually came from the manager.
-        if let ClusterMode::MultiNode(key) = &self.context.cluster_mode {
-            let restricted_actions = vec![
-                "CommandStatementUpdate",
-                "UpdateRemoteObjectStore",
-                "KillEdge",
-            ];
-
-            if restricted_actions.iter().any(|&a| a == action.r#type) {
-                let request_key = metadata
-                    .get("x-manager-key")
-                    .ok_or(Status::internal("Missing manager authentication key."))?;
-
-                if key != request_key {
-                    return Err(Status::internal("Manager authentication key is invalid."));
-                }
-            }
-        }
+        self.validate_action_request(action.r#type.clone(), metadata)?;
 
         if action.r#type == "CommandStatementUpdate" {
             // Read the SQL from the action.
