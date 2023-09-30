@@ -39,7 +39,6 @@ use datafusion::arrow::ipc::writer::{
     DictionaryTracker, IpcDataGenerator, IpcWriteOptions, StreamWriter,
 };
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::catalog::schema::SchemaProvider;
 use datafusion::common::DFSchema;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use datafusion::prelude::ParquetReadOptions;
@@ -199,7 +198,7 @@ impl FlightServiceHandler {
         &self,
         table_name: &str,
     ) -> Result<SchemaRef, Status> {
-        let database_schema = self.default_database_schema()?;
+        let database_schema = self.context.default_database_schema()?;
 
         let table = database_schema
             .table(table_name)
@@ -207,22 +206,6 @@ impl FlightServiceHandler {
             .ok_or_else(|| Status::not_found("Table does not exist."))?;
 
         Ok(table.schema())
-    }
-
-    /// Return the default database schema if it exists, otherwise a [`Status`]
-    /// indicating at what level the lookup failed is returned.
-    fn default_database_schema(&self) -> Result<Arc<dyn SchemaProvider>, Status> {
-        let session = self.context.session.clone();
-
-        let catalog = session
-            .catalog("datafusion")
-            .ok_or_else(|| Status::internal("Default catalog does not exist."))?;
-
-        let schema = catalog
-            .schema("public")
-            .ok_or_else(|| Status::internal("Default schema does not exist."))?;
-
-        Ok(schema)
     }
 
     /// Return the table stored as the first element in
@@ -250,7 +233,7 @@ impl FlightServiceHandler {
         &self,
         table_name: &str,
     ) -> Result<Option<Arc<ModelTableMetadata>>, Status> {
-        let database_schema = self.default_database_schema()?;
+        let database_schema = self.context.default_database_schema()?;
 
         let table = database_schema
             .table(table_name)
@@ -347,7 +330,7 @@ impl FlightServiceHandler {
         action_type: String,
         metadata: MetadataMap,
     ) -> Result<(), Status> {
-        if let ClusterMode::MultiNode(key) = &self.context.cluster_mode {
+        if let ClusterMode::MultiNode((_manager_url, key)) = &self.context.cluster_mode {
             let restricted_actions = vec![
                 "CommandStatementUpdate",
                 "UpdateRemoteObjectStore",
@@ -357,10 +340,10 @@ impl FlightServiceHandler {
             if restricted_actions.iter().any(|&a| a == action_type) {
                 let request_key = metadata
                     .get("x-manager-key")
-                    .ok_or(Status::internal("Missing manager authentication key."))?;
+                    .ok_or(Status::unauthenticated("Missing manager authentication key."))?;
 
                 if key != request_key {
-                    return Err(Status::internal("Manager authentication key is invalid."));
+                    return Err(Status::unauthenticated("Manager authentication key is invalid."));
                 }
             }
         }
@@ -470,7 +453,7 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Criteria>,
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
-        let table_names = self.default_database_schema()?.table_names();
+        let table_names = self.context.default_database_schema()?.table_names();
         let flight_descriptor = FlightDescriptor::new_path(table_names);
         let flight_info = FlightInfo::new().with_descriptor(flight_descriptor);
 

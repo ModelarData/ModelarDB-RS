@@ -32,6 +32,7 @@ use std::{env, fs};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::Action;
+use datafusion::catalog::schema::SchemaProvider;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
 use modelardb_common::arguments::{
@@ -43,7 +44,7 @@ use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
-use tonic::Request;
+use tonic::{Request, Status};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::configuration::ConfigurationManager;
@@ -88,6 +89,25 @@ pub struct Context {
     pub session: SessionContext,
     /// Manages all uncompressed and compressed data in the system.
     pub storage_engine: Arc<RwLock<StorageEngine>>,
+}
+
+impl Context {
+
+    /// Return the default database schema if it exists, otherwise a [`Status`]
+    /// indicating at what level the lookup failed is returned.
+    fn default_database_schema(&self) -> Result<Arc<dyn SchemaProvider>, Status> {
+        let session = self.session.clone();
+
+        let catalog = session
+            .catalog("datafusion")
+            .ok_or_else(|| Status::internal("Default catalog does not exist."))?;
+
+        let schema = catalog
+            .schema("public")
+            .ok_or_else(|| Status::internal("Default schema does not exist."))?;
+
+        Ok(schema)
+    }
 }
 
 /// Setup tracing that prints to stdout, parse the command line arguments to
@@ -211,7 +231,7 @@ async fn parse_command_line_arguments(
 
             Ok((
                 ServerMode::Cloud,
-                ClusterMode::MultiNode(key),
+                ClusterMode::MultiNode((manager_url.to_string(), key)),
                 DataFolders {
                     local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                     remote_data_folder: Some(remote_object_store.clone()),
@@ -225,7 +245,7 @@ async fn parse_command_line_arguments(
 
             Ok((
                 ServerMode::Edge,
-                ClusterMode::MultiNode(key),
+                ClusterMode::MultiNode((manager_url.to_string(), key)),
                 DataFolders {
                     local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                     remote_data_folder: Some(remote_object_store),
