@@ -308,21 +308,61 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "InitializeDatabase" {
-            // TODO: Extract the list of tables that already exist in the server.
-            // TODO: If no list is present, assume the server does not have any tables (delete)
-            // TODO: Get the tables names in the clusters current database schema.
-            // TODO: Check that all of the servers tables exist in the actual database schema.
-            // TODO: For each table that does not already exist, retrieve the SQL required to create it.
-            let table_sql_queries: Vec<String> = vec![];
+            // Extract the list of comma seperated tables that already exist in the server.
+            let server_tables: Vec<&str> = str::from_utf8(&action.body)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?
+                .split(",")
+                .filter(|table| !table.is_empty())
+                .collect();
 
-            let response_body = table_sql_queries.join(";").as_bytes().to_vec();
+            // Get the table names in the clusters current database schema.
+            let cluster_tables = self
+                .context
+                .metadata_manager
+                .table_metadata_column("table_name")
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
 
-            // Return the SQL for the tables that need to be created in the requesting server.
-            Ok(Response::new(Box::pin(stream::once(async {
-                Ok(FlightResult {
-                    body: response_body.into(),
-                })
-            }))))
+            // Check that all of the servers tables exist in the clusters database schema already.
+            let invalid_server_tables: Vec<&str> = server_tables
+                .iter()
+                .filter(|table| !cluster_tables.contains(&table.to_string()))
+                .cloned()
+                .collect();
+
+            if invalid_server_tables.is_empty() {
+                // For each table that does not already exist in the server, retrieve the SQL
+                // required to create it.
+                let missing_cluster_tables = cluster_tables
+                    .iter()
+                    .filter(|table| !server_tables.contains(&table.as_str()));
+
+                let mut table_sql_queries: Vec<String> = vec![];
+
+                for table in missing_cluster_tables {
+                    table_sql_queries.push(
+                        self.context
+                            .metadata_manager
+                            .table_sql(table)
+                            .await
+                            .map_err(|error| Status::internal(error.to_string()))?,
+                    )
+                }
+
+                let response_body = table_sql_queries.join(";").as_bytes().to_vec();
+
+                // Return the SQL for the tables that need to be created in the requesting server.
+                Ok(Response::new(Box::pin(stream::once(async {
+                    Ok(FlightResult {
+                        body: response_body.into(),
+                    })
+                }))))
+            } else {
+                Err(Status::invalid_argument(format!(
+                    "The tables '{}' do not exist in the cluster database schema.",
+                    invalid_server_tables.join(", ")
+                )))
+            }
         } else if action.r#type == "CommandStatementUpdate" {
             // Read the SQL from the action.
             let sql = str::from_utf8(&action.body)
