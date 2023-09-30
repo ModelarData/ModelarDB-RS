@@ -19,7 +19,6 @@
 
 use std::collections::HashMap;
 use std::error::Error;
-use std::fs;
 use std::net::SocketAddr;
 use std::str;
 use std::sync::Arc;
@@ -33,7 +32,7 @@ use arrow_flight::{
 use datafusion::arrow::array::{
     ArrayRef, ListBuilder, StringArray, StringBuilder, UInt32Builder, UInt64Array,
 };
-use datafusion::arrow::datatypes::{Schema, SchemaRef};
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::ipc::writer::{
     DictionaryTracker, IpcDataGenerator, IpcWriteOptions, StreamWriter,
@@ -41,7 +40,6 @@ use datafusion::arrow::ipc::writer::{
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::DFSchema;
 use datafusion::physical_plan::SendableRecordBatchStream;
-use datafusion::prelude::ParquetReadOptions;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 use modelardb_common::arguments::{decode_argument, parse_object_store_arguments};
@@ -61,7 +59,6 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
 use crate::query::ModelTable;
-use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
@@ -340,92 +337,18 @@ impl FlightServiceHandler {
             if restricted_actions.iter().any(|&a| a == action_type) {
                 let request_key = metadata
                     .get("x-manager-key")
-                    .ok_or(Status::unauthenticated("Missing manager authentication key."))?;
+                    .ok_or(Status::unauthenticated(
+                        "Missing manager authentication key.",
+                    ))?;
 
                 if key != request_key {
-                    return Err(Status::unauthenticated("Manager authentication key is invalid."));
+                    return Err(Status::unauthenticated(
+                        "Manager authentication key is invalid.",
+                    ));
                 }
             }
         }
 
-        Ok(())
-    }
-
-    /// Create a normal table, register it with Apache Arrow DataFusion's
-    /// catalog, and save it to the [`MetadataManager`]. If the table exists,
-    /// the Apache Parquet file cannot be created, or if the table cannot be
-    /// saved to the [`MetadataManager`], return [`Status`] error.
-    async fn register_and_save_table(
-        &self,
-        table_name: String,
-        sql: String,
-        schema: Schema,
-    ) -> Result<(), Status> {
-        // Ensure the folder for storing the table data exists.
-        let metadata_manager = &self.context.metadata_manager;
-        let folder_path = metadata_manager
-            .local_data_folder()
-            .join(COMPRESSED_DATA_FOLDER)
-            .join(&table_name);
-        fs::create_dir_all(&folder_path)?;
-
-        // Create an empty Apache Parquet file to save the schema.
-        let file_path = folder_path.join("empty_for_schema.parquet");
-        let empty_batch = RecordBatch::new_empty(Arc::new(schema));
-        StorageEngine::write_batch_to_apache_parquet_file(empty_batch, &file_path, None)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-        // Save the table in the Apache Arrow Datafusion catalog.
-        self.context
-            .session
-            .register_parquet(
-                &table_name,
-                folder_path.to_str().unwrap(),
-                ParquetReadOptions::default(),
-            )
-            .await
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-        // Persist the new table to the metadata database.
-        self.context
-            .metadata_manager
-            .save_table_metadata(table_name.clone(), sql)
-            .await
-            .map_err(|error| Status::internal(error.to_string()))?;
-
-        info!("Created table '{}'.", table_name);
-
-        Ok(())
-    }
-
-    /// Create a model table, register it with Apache Arrow DataFusion's
-    /// catalog, and save it to the [`MetadataManager`]. If the table exists or
-    /// if the table cannot be saved to the [`MetadataManager`], return
-    /// [`Status`] error.
-    async fn register_and_save_model_table(
-        &self,
-        model_table_metadata: ModelTableMetadata,
-        sql: String,
-    ) -> Result<(), Status> {
-        // Save the model table in the Apache Arrow DataFusion catalog.
-        let model_table_metadata = Arc::new(model_table_metadata);
-
-        self.context
-            .session
-            .register_table(
-                model_table_metadata.name.as_str(),
-                ModelTable::new(self.context.clone(), model_table_metadata.clone()),
-            )
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-        // Persist the new model table to the metadata database.
-        self.context
-            .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, &sql)
-            .await
-            .map_err(|error| Status::internal(error.to_string()))?;
-
-        info!("Created model table '{}'.", model_table_metadata.name);
         Ok(())
     }
 }
@@ -649,13 +572,19 @@ impl FlightService for FlightServiceHandler {
             match valid_statement {
                 ValidStatement::CreateTable { name, schema } => {
                     self.check_if_table_exists(&name).await?;
-                    self.register_and_save_table(name, sql.to_string(), schema)
+                    self.context
+                        .register_and_save_table(name, sql.to_string(), schema)
                         .await?;
                 }
                 ValidStatement::CreateModelTable(model_table_metadata) => {
                     self.check_if_table_exists(&model_table_metadata.name)
                         .await?;
-                    self.register_and_save_model_table(model_table_metadata, sql.to_string())
+                    self.context
+                        .register_and_save_model_table(
+                            model_table_metadata,
+                            sql.to_string(),
+                            &self.context.clone(),
+                        )
                         .await?;
                 }
             };

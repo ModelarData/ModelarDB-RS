@@ -32,9 +32,12 @@ use std::{env, fs};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::Action;
+use datafusion::arrow::datatypes::Schema;
+use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::schema::SchemaProvider;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
+use datafusion::prelude::ParquetReadOptions;
 use modelardb_common::arguments::{
     argument_to_remote_object_store, collect_command_line_arguments, decode_argument,
     encode_argument, parse_object_store_arguments, validate_remote_data_folder,
@@ -45,11 +48,14 @@ use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::{Request, Status};
+use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 
 use crate::configuration::ConfigurationManager;
 use crate::metadata::MetadataManager;
-use crate::storage::StorageEngine;
+use crate::query::ModelTable;
+use crate::storage::{COMPRESSED_DATA_FOLDER, StorageEngine};
 
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
@@ -107,6 +113,81 @@ impl Context {
             .ok_or_else(|| Status::internal("Default schema does not exist."))?;
 
         Ok(schema)
+    }
+
+    /// Create a normal table, register it with Apache Arrow DataFusion's
+    /// catalog, and save it to the [`MetadataManager`]. If the table exists,
+    /// the Apache Parquet file cannot be created, or if the table cannot be
+    /// saved to the [`MetadataManager`], return [`Status`] error.
+    async fn register_and_save_table(
+        &self,
+        table_name: String,
+        sql: String,
+        schema: Schema,
+    ) -> Result<(), Status> {
+        // Ensure the folder for storing the table data exists.
+        let metadata_manager = &self.metadata_manager;
+        let folder_path = metadata_manager
+            .local_data_folder()
+            .join(COMPRESSED_DATA_FOLDER)
+            .join(&table_name);
+        fs::create_dir_all(&folder_path)?;
+
+        // Create an empty Apache Parquet file to save the schema.
+        let file_path = folder_path.join("empty_for_schema.parquet");
+        let empty_batch = RecordBatch::new_empty(Arc::new(schema));
+        StorageEngine::write_batch_to_apache_parquet_file(empty_batch, &file_path, None)
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+        // Save the table in the Apache Arrow Datafusion catalog.
+        self.session
+            .register_parquet(
+                &table_name,
+                folder_path.to_str().unwrap(),
+                ParquetReadOptions::default(),
+            )
+            .await
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+        // Persist the new table to the metadata database.
+        self.metadata_manager
+            .save_table_metadata(table_name.clone(), sql)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        info!("Created table '{}'.", table_name);
+
+        Ok(())
+    }
+
+    /// Create a model table, register it with Apache Arrow DataFusion's
+    /// catalog, and save it to the [`MetadataManager`]. If the table exists or
+    /// if the table cannot be saved to the [`MetadataManager`], return
+    /// [`Status`] error.
+    async fn register_and_save_model_table(
+        &self,
+        model_table_metadata: ModelTableMetadata,
+        sql: String,
+        context: &Arc<Context>,
+    ) -> Result<(), Status> {
+        // Save the model table in the Apache Arrow DataFusion catalog.
+        let model_table_metadata = Arc::new(model_table_metadata);
+
+        self.session
+            .register_table(
+                model_table_metadata.name.as_str(),
+                ModelTable::new(context.clone(), model_table_metadata.clone()),
+            )
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+        // Persist the new model table to the metadata database.
+        self.metadata_manager
+            .save_model_table_metadata(&model_table_metadata, &sql)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        info!("Created model table '{}'.", model_table_metadata.name);
+        Ok(())
     }
 }
 
