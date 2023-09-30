@@ -88,9 +88,9 @@ impl Cluster {
             };
 
             // Add the key to the request metadata to authenticate that the request is from the manager.
-            // unwrap() is safe since a UUID cannot contain invalid characters.
             let mut request = Request::new(action);
 
+            // unwrap() is safe since a UUID cannot contain invalid characters.
             request
                 .metadata_mut()
                 .insert("x-manager-key", key.to_string().parse().unwrap());
@@ -156,9 +156,9 @@ impl Cluster {
         };
 
         // Add the key to the request metadata to authenticate that the request is from the manager.
-        // unwrap() is safe since a UUID cannot contain invalid characters.
         let mut request = Request::new(action);
 
+        // unwrap() is safe since a UUID cannot contain invalid characters.
         request
             .metadata_mut()
             .insert("x-manager-key", key.to_string().parse().unwrap());

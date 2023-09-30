@@ -24,6 +24,7 @@ use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::types::ServerMode;
 use sqlx::{Executor, PgPool, Row};
+use uuid::Uuid;
 
 use crate::cluster::Node;
 
@@ -55,11 +56,18 @@ impl MetadataManager {
 
     /// If they do not already exist, create the tables that are specific to the manager metadata
     /// database.
+    /// * The manager_metadata table contains metadata for the manager itself. It is assumed that
+    /// this table will only have a single row.
     /// * The nodes table contains metadata for each node that is controlled by the manager.
     /// If the tables exist or were created, return [`Ok`], otherwise return [`sqlx::Error`].
     async fn create_manager_metadata_database_tables(
         metadata_database_pool: &PgPool,
     ) -> Result<(), sqlx::Error> {
+        // Create the manager_metadata table if it does not exist.
+        metadata_database_pool
+            .execute("CREATE TABLE IF NOT EXISTS manager_metadata (auth_key TEXT PRIMARY KEY)")
+            .await?;
+
         // Create the nodes table if it does not exist.
         metadata_database_pool
             .execute(
@@ -71,6 +79,35 @@ impl MetadataManager {
             .await?;
 
         Ok(())
+    }
+
+    /// Retrieve the authentication key for the manager from the manager_metadata table. If a key
+    /// does not already exist, create one and save it to the database.
+    pub async fn auth_key(&self) -> Result<Uuid, sqlx::Error> {
+        let maybe_row = sqlx::query("SELECT auth_key FROM manager_metadata")
+            .fetch_optional(&self.metadata_database_pool)
+            .await?;
+
+        if let Some(row) = maybe_row {
+            let auth_key: String = row.try_get("auth_key")?;
+
+            Ok(auth_key.parse().map_err(|error| {
+                sqlx::Error::ColumnDecode {
+                    index: "auth_key".to_string(),
+                    source: Box::new(error),
+                }
+            })?)
+        } else {
+            let auth_key = Uuid::new_v4();
+
+            // Add a new row in the manager_metadata table to persist the auth key.
+            sqlx::query("INSERT INTO manager_metadata (auth_key) VALUES ($1)")
+                .bind(auth_key.to_string())
+                .execute(&self.metadata_database_pool)
+                .await?;
+
+            Ok(auth_key)
+        }
     }
 
     /// Save the created table to the metadata database. This consists of adding a row to the

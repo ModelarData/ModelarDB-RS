@@ -97,12 +97,17 @@ fn main() -> Result<(), String> {
                 .map_err(|error| error.to_string())?;
         }
 
+        let key = metadata_manager
+            .auth_key()
+            .await
+            .map_err(|error| error.to_string())?;
+
         // Create the Context.
         Ok::<Arc<Context>, String>(Arc::new(Context {
             metadata_manager,
             remote_data_folder,
             cluster: RwLock::new(cluster),
-            key: Uuid::new_v4(),
+            key,
         }))
     })?;
 
