@@ -26,8 +26,6 @@ use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
 use tonic::codegen::Bytes;
 use tonic::Request;
-use tryhard::backoff_strategies::ExponentialBackoff;
-use tryhard::{NoOnRetry, RetryFutureConfig};
 use uuid::Uuid;
 
 /// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
@@ -51,19 +49,11 @@ impl Node {
 pub struct Cluster {
     /// The nodes that are currently managed by the cluster.
     nodes: Vec<Node>,
-    /// The retry configuration used for performing cluster operations using retry with backoff.
-    retry_config: RetryFutureConfig<ExponentialBackoff, NoOnRetry>,
 }
 
 impl Cluster {
     pub fn new() -> Self {
-        let retry_config =
-            RetryFutureConfig::new(10).exponential_backoff(Duration::from_millis(1000));
-
-        Self {
-            nodes: vec![],
-            retry_config,
-        }
+        Self { nodes: vec![] }
     }
 
     /// Checks if the node is already registered and adds it to the current nodes if not. If it
@@ -100,7 +90,10 @@ impl Cluster {
             // Add the key to the request metadata to authenticate that the request is from the manager.
             // unwrap() is safe since a UUID cannot contain invalid characters.
             let mut request = Request::new(action);
-            request.metadata_mut().insert("x-manager-key", key.to_string().parse().unwrap());
+
+            request
+                .metadata_mut()
+                .insert("x-manager-key", key.to_string().parse().unwrap());
 
             // TODO: Retry the request if the wrong error was returned.
             // Since the process is killed, the error from the request is ignored.
@@ -126,8 +119,10 @@ impl Cluster {
         let mut create_table_futures = FuturesUnordered::new();
 
         for node in &self.nodes {
-            let future = tryhard::retry_fn(|| self.create_table(node.url.clone(), sql.clone(), key))
-                .with_config(self.retry_config);
+            let future =
+                tryhard::retry_fn(|| self.create_table(node.url.clone(), sql.clone(), key))
+                    .retries(10)
+                    .exponential_backoff(Duration::from_secs(1));
 
             create_table_futures.push(future);
         }
@@ -163,7 +158,10 @@ impl Cluster {
         // Add the key to the request metadata to authenticate that the request is from the manager.
         // unwrap() is safe since a UUID cannot contain invalid characters.
         let mut request = Request::new(action);
-        request.metadata_mut().insert("x-manager-key", key.to_string().parse().unwrap());
+
+        request
+            .metadata_mut()
+            .insert("x-manager-key", key.to_string().parse().unwrap());
 
         flight_client
             .do_action(request)
@@ -206,6 +204,9 @@ mod test {
     #[tokio::test]
     async fn test_remove_node_invalid_url() {
         let mut cluster = Cluster::new();
-        assert!(cluster.remove_node("invalid_url", Uuid::new_v4()).await.is_err());
+        assert!(cluster
+            .remove_node("invalid_url", Uuid::new_v4())
+            .await
+            .is_err());
     }
 }
