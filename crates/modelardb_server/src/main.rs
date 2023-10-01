@@ -84,6 +84,8 @@ pub struct DataFolders {
     pub query_data_folder: Arc<dyn ObjectStore>,
 }
 
+// TODO: Maybe move this into separate file.
+
 /// Provides access to the system's configuration and components.
 pub struct Context {
     /// The mode of the server used to determine the behaviour when starting the server,
@@ -140,6 +142,40 @@ impl Context {
             let message = format!("Table with name '{table_name}' already exists.");
             return Err(Status::already_exists(message));
         }
+        Ok(())
+    }
+
+
+    /// Parse `sql` and create a normal table or a model table based on the SQL. If `sql` is not
+    /// valid or the table could not be created, return [`Status`].
+    async fn parse_and_create_table(
+        &self,
+        sql: &str,
+        context: &Arc<Context>,
+    ) -> Result<(), Status> {
+        // Parse the SQL.
+        let statement = parser::tokenize_and_parse_sql(sql)
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+        // Perform semantic checks to ensure the parsed SQL is supported.
+        let valid_statement = parser::semantic_checks_for_create_table(statement)
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+        // Create the table or model table if it does not already exists.
+        match valid_statement {
+            ValidStatement::CreateTable { name, schema } => {
+                self.check_if_table_exists(&name).await?;
+                self.register_and_save_table(name, sql.to_string(), schema)
+                    .await?;
+            }
+            ValidStatement::CreateModelTable(model_table_metadata) => {
+                self.check_if_table_exists(&model_table_metadata.name)
+                    .await?;
+                self.register_and_save_model_table(model_table_metadata, sql.to_string(), context)
+                    .await?;
+            }
+        };
+
         Ok(())
     }
 

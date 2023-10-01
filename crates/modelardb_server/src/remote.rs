@@ -45,8 +45,6 @@ use futures::StreamExt;
 use modelardb_common::arguments::{decode_argument, parse_object_store_arguments};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::normalize_name;
-use modelardb_common::parser;
-use modelardb_common::parser::ValidStatement;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
 use modelardb_common::types::{ClusterMode, ServerMode, TimestampBuilder};
 use tokio::runtime::Runtime;
@@ -535,35 +533,7 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
             info!("Received request to execute '{}'.", sql);
 
-            // Parse the SQL.
-            let statement = parser::tokenize_and_parse_sql(sql)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-            // Perform semantic checks to ensure the parsed SQL is supported.
-            let valid_statement = parser::semantic_checks_for_create_table(statement)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-            // Create the table or model table if it does not already exists.
-            match valid_statement {
-                ValidStatement::CreateTable { name, schema } => {
-                    self.context.check_if_table_exists(&name).await?;
-                    self.context
-                        .register_and_save_table(name, sql.to_string(), schema)
-                        .await?;
-                }
-                ValidStatement::CreateModelTable(model_table_metadata) => {
-                    self.context
-                        .check_if_table_exists(&model_table_metadata.name)
-                        .await?;
-                    self.context
-                        .register_and_save_model_table(
-                            model_table_metadata,
-                            sql.to_string(),
-                            &self.context.clone(),
-                        )
-                        .await?;
-                }
-            };
+            self.context.parse_and_create_table(sql, &self.context.clone()).await?;
 
             // Confirm the table was created.
             Ok(Response::new(Box::pin(stream::empty())))
