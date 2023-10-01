@@ -145,6 +145,52 @@ impl Context {
         Ok(())
     }
 
+    /// Initialize the local database schema with the tables and model tables from the managers
+    /// database schema. If the tables to create could not be retrieved from the manager, or the
+    /// tables could not be created, return [`Status`].
+    async fn register_and_save_manager_tables(
+        &self,
+        manager_url: &str,
+        context: &Arc<Context>,
+    ) -> Result<(), Status> {
+        let existing_tables = self.default_database_schema()?.table_names();
+
+        // Retrieve the tables to create from the manager.
+        let mut flight_client = FlightServiceClient::connect(manager_url.to_string())
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        // Add the already existing tables to the action request.
+        let action = Action {
+            r#type: "InitializeDatabase".to_owned(),
+            body: existing_tables.join(",").into_bytes().into(),
+        };
+
+        // Extract the SQL for the tables that need to be created from the response.
+        let maybe_response = flight_client
+            .do_action(Request::new(action))
+            .await?
+            .into_inner()
+            .message()
+            .await?;
+
+        if let Some(response) = maybe_response {
+            let table_sql_queries = std::str::from_utf8(&response.body)
+                .map_err(|error| Status::internal(error.to_string()))?
+                .split(";");
+
+            // For each table to create, register and save the table in the metadata database.
+            for sql in table_sql_queries {
+                self.parse_and_create_table(sql, context).await?;
+            }
+
+            Ok(())
+        } else {
+            Err(Status::internal(
+                "Response for request to initialize database is empty.".to_owned(),
+            ))
+        }
+    }
 
     /// Parse `sql` and create a normal table or a model table based on the SQL. If `sql` is not
     /// valid or the table could not be created, return [`Status`].
@@ -328,7 +374,7 @@ fn main() -> Result<(), String> {
 
     if let ClusterMode::MultiNode((manager_url, _key)) = &context.cluster_mode {
         runtime
-            .block_on(context.register_and_save_manager_tables(manager_url))
+            .block_on(context.register_and_save_manager_tables(manager_url, &context))
             .map_err(|error| format!("Unable to register manager tables: {error}"))?;
     }
 
