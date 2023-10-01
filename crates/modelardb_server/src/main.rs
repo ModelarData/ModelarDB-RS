@@ -32,7 +32,7 @@ use std::{env, fs};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::Action;
-use datafusion::arrow::datatypes::Schema;
+use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::schema::SchemaProvider;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
@@ -42,6 +42,9 @@ use modelardb_common::arguments::{
     argument_to_remote_object_store, collect_command_line_arguments, decode_argument,
     encode_argument, parse_object_store_arguments, validate_remote_data_folder,
 };
+use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::parser;
+use modelardb_common::parser::ValidStatement;
 use modelardb_common::types::{ClusterMode, ServerMode};
 use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
@@ -50,12 +53,11 @@ use tokio::sync::RwLock;
 use tonic::{Request, Status};
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 
 use crate::configuration::ConfigurationManager;
 use crate::metadata::MetadataManager;
 use crate::query::ModelTable;
-use crate::storage::{COMPRESSED_DATA_FOLDER, StorageEngine};
+use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
@@ -98,6 +100,22 @@ pub struct Context {
 }
 
 impl Context {
+    /// Return the schema of `table_name` if the table exists in the default
+    /// database schema, otherwise a [`Status`] indicating at what level the
+    /// lookup failed is returned.
+    async fn schema_of_table_in_default_database_schema(
+        &self,
+        table_name: &str,
+    ) -> Result<SchemaRef, Status> {
+        let database_schema = self.default_database_schema()?;
+
+        let table = database_schema
+            .table(table_name)
+            .await
+            .ok_or_else(|| Status::not_found("Table does not exist."))?;
+
+        Ok(table.schema())
+    }
 
     /// Return the default database schema if it exists, otherwise a [`Status`]
     /// indicating at what level the lookup failed is returned.
@@ -113,6 +131,16 @@ impl Context {
             .ok_or_else(|| Status::internal("Default schema does not exist."))?;
 
         Ok(schema)
+    }
+
+    /// Return [`Status`] if a table named `table_name` exists in the default catalog.
+    async fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
+        let maybe_schema = self.schema_of_table_in_default_database_schema(table_name);
+        if maybe_schema.await.is_ok() {
+            let message = format!("Table with name '{table_name}' already exists.");
+            return Err(Status::already_exists(message));
+        }
+        Ok(())
     }
 
     /// Create a normal table, register it with Apache Arrow DataFusion's
@@ -261,6 +289,12 @@ fn main() -> Result<(), String> {
     runtime
         .block_on(context.metadata_manager.register_model_tables(&context))
         .map_err(|error| format!("Unable to register model tables: {error}"))?;
+
+    if let ClusterMode::MultiNode((manager_url, _key)) = &context.cluster_mode {
+        runtime
+            .block_on(context.register_and_save_manager_tables(manager_url))
+            .map_err(|error| format!("Unable to register manager tables: {error}"))?;
+    }
 
     // Setup CTRL+C handler.
     setup_ctrl_c_handler(&context, &runtime);

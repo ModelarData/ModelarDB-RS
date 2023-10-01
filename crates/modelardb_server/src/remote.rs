@@ -188,23 +188,6 @@ impl FlightServiceHandler {
         }
     }
 
-    /// Return the schema of `table_name` if the table exists in the default
-    /// database schema, otherwise a [`Status`] indicating at what level the
-    /// lookup failed is returned.
-    async fn schema_of_table_in_default_database_schema(
-        &self,
-        table_name: &str,
-    ) -> Result<SchemaRef, Status> {
-        let database_schema = self.context.default_database_schema()?;
-
-        let table = database_schema
-            .table(table_name)
-            .await
-            .ok_or_else(|| Status::not_found("Table does not exist."))?;
-
-        Ok(table.schema())
-    }
-
     /// Return the table stored as the first element in
     /// [`FlightDescriptor.path`], otherwise a [`Status`] that specifies that
     /// the table name is missing.
@@ -242,16 +225,6 @@ impl FlightServiceHandler {
         } else {
             Ok(None)
         }
-    }
-
-    /// Return [`Status`] if a table named `table_name` exists in the default catalog.
-    async fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
-        let maybe_schema = self.schema_of_table_in_default_database_schema(table_name);
-        if maybe_schema.await.is_ok() {
-            let message = format!("Table with name '{table_name}' already exists.");
-            return Err(Status::already_exists(message));
-        }
-        Ok(())
     }
 
     /// While there is still more data to receive, ingest the data into the
@@ -401,6 +374,7 @@ impl FlightService for FlightServiceHandler {
         let flight_descriptor = request.into_inner();
         let table_name = self.table_name_from_flight_descriptor(&flight_descriptor)?;
         let schema = self
+            .context
             .schema_of_table_in_default_database_schema(table_name)
             .await?;
 
@@ -494,6 +468,7 @@ impl FlightService for FlightServiceHandler {
         } else {
             debug!("Writing data to table '{}'.", normalized_table_name);
             let schema = self
+                .context
                 .schema_of_table_in_default_database_schema(&normalized_table_name)
                 .await?;
             self.ingest_into_table(&normalized_table_name, &schema, &mut flight_data_stream)
@@ -571,13 +546,14 @@ impl FlightService for FlightServiceHandler {
             // Create the table or model table if it does not already exists.
             match valid_statement {
                 ValidStatement::CreateTable { name, schema } => {
-                    self.check_if_table_exists(&name).await?;
+                    self.context.check_if_table_exists(&name).await?;
                     self.context
                         .register_and_save_table(name, sql.to_string(), schema)
                         .await?;
                 }
                 ValidStatement::CreateModelTable(model_table_metadata) => {
-                    self.check_if_table_exists(&model_table_metadata.name)
+                    self.context
+                        .check_if_table_exists(&model_table_metadata.name)
                         .await?;
                     self.context
                         .register_and_save_model_table(

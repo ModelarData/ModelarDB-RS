@@ -91,12 +91,12 @@ impl MetadataManager {
         if let Some(row) = maybe_row {
             let auth_key: String = row.try_get("auth_key")?;
 
-            Ok(auth_key.parse().map_err(|error| {
-                sqlx::Error::ColumnDecode {
+            Ok(auth_key
+                .parse()
+                .map_err(|error| sqlx::Error::ColumnDecode {
                     index: "auth_key".to_string(),
                     source: Box::new(error),
-                }
-            })?)
+                })?)
         } else {
             let auth_key = Uuid::new_v4();
 
