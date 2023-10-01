@@ -105,6 +105,32 @@ impl Cluster {
         }
     }
 
+    /// For each node in the cluster, use the `UpdateRemoteObjectStore` action to update the remote
+    /// object store. If the remote object store was successfully updated for each node, return
+    /// [`Ok`], otherwise return [`ClusterError`](ModelarDbError::ClusterError).
+    pub async fn update_remote_object_stores(
+        &self,
+        connection_info: Bytes,
+        key: Uuid,
+    ) -> Result<(), ModelarDbError> {
+        let action = Action {
+            r#type: "UpdateRemoteObjectStore".to_owned(),
+            body: connection_info,
+        };
+
+        let mut update_object_store_futures: FuturesUnordered<_> = self
+            .nodes
+            .iter()
+            .map(|node| self.connect_and_do_action(node.url.clone(), action.clone(), key))
+            .collect();
+
+        while let Some(result) = update_object_store_futures.next().await {
+            info!("Updated remote object store on node with url '{}'.", result?);
+        }
+
+        Ok(())
+    }
+
     /// For each node in the cluster, use the `CommandStatementUpdate` action to create the table
     /// given by `sql`. If the table was successfully created for each node, return
     /// [`Ok`], otherwise return [`ClusterError`](ModelarDbError::ClusterError).
@@ -114,10 +140,15 @@ impl Cluster {
         sql: Bytes,
         key: Uuid,
     ) -> Result<(), ModelarDbError> {
+        let action = Action {
+            r#type: "CommandStatementUpdate".to_owned(),
+            body: sql,
+        };
+
         let mut create_table_futures: FuturesUnordered<_> = self
             .nodes
             .iter()
-            .map(|node| self.create_table(node.url.clone(), sql.clone(), key))
+            .map(|node| self.connect_and_do_action(node.url.clone(), action.clone(), key))
             .collect();
 
         while let Some(result) = create_table_futures.next().await {
@@ -130,23 +161,18 @@ impl Cluster {
         Ok(())
     }
 
-    /// Connect to the Apache Arrow flight client given by `url` and use the `CommandStatementUpdate`
-    /// action to create the table given by `sql`. If the table was successfully created, return
-    /// the url of the node, otherwise return [`ClusterError`](ModelarDbError::ClusterError).
-    async fn create_table(
+    /// Connect to the Apache Arrow flight client given by `url` and make a request to do `action`.
+    /// If the action was successfully executed, return the url of the node, otherwise return
+    /// [`ClusterError`](ModelarDbError::ClusterError).
+    async fn connect_and_do_action(
         &self,
         url: String,
-        sql: Bytes,
+        action: Action,
         key: Uuid,
     ) -> Result<String, ModelarDbError> {
         let mut flight_client = FlightServiceClient::connect(format!("grpc://{url}"))
             .await
             .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
-
-        let action = Action {
-            r#type: "CommandStatementUpdate".to_owned(),
-            body: sql,
-        };
 
         // Add the key to the request metadata to authenticate that the request is from the manager.
         let mut request = Request::new(action);
