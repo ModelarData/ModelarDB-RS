@@ -53,7 +53,7 @@ pub struct Context {
     /// Manager for the access to the metadata database.
     pub metadata_manager: MetadataManager,
     /// Folder for storing Apache Parquet files in a remote object store.
-    pub remote_data_folder: RemoteDataFolder,
+    pub remote_data_folder: RwLock<RemoteDataFolder>,
     /// Cluster of nodes currently controlled by the manager.
     pub cluster: RwLock<Cluster>,
     /// Key used to authenticate requests coming from the manager.
@@ -105,7 +105,7 @@ fn main() -> Result<(), String> {
         // Create the Context.
         Ok::<Arc<Context>, String>(Arc::new(Context {
             metadata_manager,
-            remote_data_folder,
+            remote_data_folder: RwLock::new(remote_data_folder),
             cluster: RwLock::new(cluster),
             key,
         }))

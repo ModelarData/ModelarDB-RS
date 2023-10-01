@@ -33,7 +33,7 @@ use arrow_flight::{
 use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::ipc::writer::IpcWriteOptions;
 use futures::{stream, Stream};
-use modelardb_common::arguments::{decode_argument, encode_argument};
+use modelardb_common::arguments::{decode_argument, encode_argument, parse_object_store_arguments};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
@@ -44,6 +44,7 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
 
 use crate::cluster::Node;
+use crate::data_folder::RemoteDataFolder;
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
@@ -361,6 +362,24 @@ impl FlightService for FlightServiceHandler {
                     invalid_server_tables.join(", ")
                 )))
             }
+        } else if action.r#type == "UpdateRemoteObjectStore" {
+            let object_store = parse_object_store_arguments(&action.body).await?;
+
+            // Create a new remote data folder and update it in the context.
+            let mut remote_data_folder = self.context.remote_data_folder.write().await;
+            *remote_data_folder = RemoteDataFolder::new(action.body.clone().into(), object_store);
+
+            // For each node in the cluster, update the remote object store.
+            self.context
+                .cluster
+                .read()
+                .await
+                .update_remote_object_stores(action.body, self.context.key)
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            // Confirm the remote object store was updated.
+            Ok(Response::new(Box::pin(stream::empty())))
         } else if action.r#type == "CommandStatementUpdate" {
             // Read the SQL from the action.
             let sql = str::from_utf8(&action.body)
@@ -421,7 +440,9 @@ impl FlightService for FlightServiceHandler {
 
             // Return the key for the manager and connection info for the remote object store.
             let mut response_body = encode_argument(self.context.key.to_string().as_str());
-            response_body.append(&mut self.context.remote_data_folder.connection_info().clone());
+
+            let remote_data_folder = self.context.remote_data_folder.read().await;
+            response_body.append(&mut remote_data_folder.connection_info().clone());
 
             Ok(Response::new(Box::pin(stream::once(async {
                 Ok(FlightResult {
