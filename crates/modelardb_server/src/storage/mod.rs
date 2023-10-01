@@ -212,6 +212,7 @@ impl StorageEngine {
     /// Retrieve the oldest finished [`UncompressedDataBuffer`] from [`UncompressedDataManager`] and
     /// return it. Return [`None`] if there are no finished
     /// [`UncompressedDataBuffers`](UncompressedDataBuffer).
+    #[allow(dead_code)]
     pub async fn finished_uncompressed_data_buffer(
         &mut self,
     ) -> Option<Box<dyn UncompressedDataBuffer>> {

@@ -347,6 +347,7 @@ impl UncompressedDataManager {
     /// Remove the oldest finished [`UncompressedDataBuffer`] from the queue and return it. Returns
     /// [`None`] if there are no finished [`UncompressedDataBuffers`](UncompressedDataBuffer) in the
     /// queue.
+    #[allow(dead_code)]
     pub(super) async fn finished_data_buffer(&mut self) -> Option<Box<dyn UncompressedDataBuffer>> {
         if let Some(uncompressed_data_buffer) = self.finished_uncompressed_data_buffers.pop_front()
         {
