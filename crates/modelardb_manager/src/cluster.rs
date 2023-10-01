@@ -15,8 +15,6 @@
 
 //! Management of the cluster of nodes that are currently controlled by the manager.
 
-use std::time::Duration;
-
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::Action;
 use futures::stream::FuturesUnordered;
@@ -116,16 +114,11 @@ impl Cluster {
         sql: Bytes,
         key: Uuid,
     ) -> Result<(), ModelarDbError> {
-        let mut create_table_futures = FuturesUnordered::new();
-
-        for node in &self.nodes {
-            let future =
-                tryhard::retry_fn(|| self.create_table(node.url.clone(), sql.clone(), key))
-                    .retries(10)
-                    .exponential_backoff(Duration::from_secs(1));
-
-            create_table_futures.push(future);
-        }
+        let mut create_table_futures: FuturesUnordered<_> = self
+            .nodes
+            .iter()
+            .map(|node| self.create_table(node.url.clone(), sql.clone(), key))
+            .collect();
 
         while let Some(result) = create_table_futures.next().await {
             info!(
