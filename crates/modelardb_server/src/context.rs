@@ -31,7 +31,6 @@ use tracing::info;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
-use modelardb_common::types::ClusterMode;
 
 use crate::configuration::ConfigurationManager;
 use crate::metadata::MetadataManager;
@@ -40,9 +39,6 @@ use crate::storage::{COMPRESSED_DATA_FOLDER, StorageEngine};
 
 /// Provides access to the system's configuration and components.
 pub struct Context {
-    /// The mode of the server used to determine the behaviour when starting the server,
-    /// creating tables, updating the remote object store, and querying.
-    pub cluster_mode: ClusterMode,
     /// Metadata for the tables and model tables in the data folder.
     pub metadata_manager: Arc<MetadataManager>,
     /// Updatable configuration of the server.

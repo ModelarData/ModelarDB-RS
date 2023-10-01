@@ -293,12 +293,14 @@ impl FlightServiceHandler {
     /// If the server was started with a manager, and the requested action is restricted to only
     /// be called by the manager, check that the request actually came from the manager. If the
     /// request is valid, return [`Ok`], otherwise return [`Status`].
-    fn validate_action_request(
+    async fn validate_action_request(
         &self,
         action_type: String,
         metadata: MetadataMap,
     ) -> Result<(), Status> {
-        if let ClusterMode::MultiNode((_manager_url, key)) = &self.context.cluster_mode {
+        let configuration_manager = self.context.configuration_manager.read().await;
+
+        if let ClusterMode::MultiNode((_manager_url, key)) = configuration_manager.cluster_mode() {
             let restricted_actions = [
                 "CommandStatementUpdate",
                 "UpdateRemoteObjectStore",
@@ -525,7 +527,8 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        self.validate_action_request(action.r#type.clone(), metadata)?;
+        self.validate_action_request(action.r#type.clone(), metadata)
+            .await?;
 
         if action.r#type == "CommandStatementUpdate" {
             // Read the SQL from the action.

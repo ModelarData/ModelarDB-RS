@@ -56,7 +56,10 @@ pub const COMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
 /// faster to run unit tests.
 pub async fn test_context(path: &Path) -> Arc<Context> {
     let metadata_manager = Arc::new(MetadataManager::try_new(path).await.unwrap());
-    let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(ServerMode::Edge)));
+    let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
+        ClusterMode::SingleNode,
+        ServerMode::Edge,
+    )));
 
     let session = test_session_context();
     let object_store_url = storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST
@@ -99,7 +102,6 @@ pub async fn test_context(path: &Path) -> Arc<Context> {
         .unwrap();
 
     Arc::new(Context {
-        cluster_mode: ClusterMode::SingleNode,
         metadata_manager,
         configuration_manager,
         session,

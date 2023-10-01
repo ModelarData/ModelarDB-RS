@@ -20,12 +20,12 @@
 
 mod common_test;
 mod configuration;
+mod context;
 mod metadata;
 mod optimizer;
 mod query;
 mod remote;
 mod storage;
-mod context;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -112,7 +112,11 @@ fn main() -> Result<(), String> {
             .map_err(|error| format!("Unable to create a MetadataManager: {error}"))?,
     );
 
-    let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(server_mode)));
+    let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
+        cluster_mode.clone(),
+        server_mode,
+    )));
+
     let session = create_session_context(data_folders.query_data_folder);
 
     let storage_engine = Arc::new(RwLock::new(
@@ -132,7 +136,6 @@ fn main() -> Result<(), String> {
 
     // Create the Context.
     let context = Arc::new(Context {
-        cluster_mode,
         metadata_manager,
         configuration_manager,
         session,
@@ -148,7 +151,7 @@ fn main() -> Result<(), String> {
         .block_on(context.metadata_manager.register_model_tables(&context))
         .map_err(|error| format!("Unable to register model tables: {error}"))?;
 
-    if let ClusterMode::MultiNode((manager_url, _key)) = &context.cluster_mode {
+    if let ClusterMode::MultiNode((manager_url, _key)) = &cluster_mode {
         runtime
             .block_on(context.register_and_save_manager_tables(manager_url, &context))
             .map_err(|error| format!("Unable to register manager tables: {error}"))?;
