@@ -235,9 +235,7 @@ impl FlightService for FlightServiceHandler {
             .await
             .map_err(|error| {
                 Status::not_found(format!(
-                    "Table with name '{}' does not exist: {}",
-                    table_name,
-                    error.to_string()
+                    "Table with name '{table_name}' does not exist: {error}",
                 ))
             })?;
 
@@ -311,7 +309,7 @@ impl FlightService for FlightServiceHandler {
             // Extract the list of comma seperated tables that already exist in the server.
             let server_tables: Vec<&str> = str::from_utf8(&action.body)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?
-                .split(",")
+                .split(',')
                 .filter(|table| !table.is_empty())
                 .collect();
 

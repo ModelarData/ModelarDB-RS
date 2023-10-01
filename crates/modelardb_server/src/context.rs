@@ -129,7 +129,8 @@ impl Context {
         if let Some(response) = maybe_response {
             let table_sql_queries = std::str::from_utf8(&response.body)
                 .map_err(|error| Status::internal(error.to_string()))?
-                .split(";");
+                .split(';')
+                .filter(|sql| !sql.is_empty());
 
             // For each table to create, register and save the table in the metadata database.
             for sql in table_sql_queries {

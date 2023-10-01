@@ -299,7 +299,7 @@ impl FlightServiceHandler {
         metadata: MetadataMap,
     ) -> Result<(), Status> {
         if let ClusterMode::MultiNode((_manager_url, key)) = &self.context.cluster_mode {
-            let restricted_actions = vec![
+            let restricted_actions = [
                 "CommandStatementUpdate",
                 "UpdateRemoteObjectStore",
                 "KillEdge",
