@@ -19,23 +19,23 @@
 use std::fs;
 use std::sync::Arc;
 
-use arrow_flight::Action;
 use arrow_flight::flight_service_client::FlightServiceClient;
+use arrow_flight::Action;
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::schema::SchemaProvider;
 use datafusion::prelude::{ParquetReadOptions, SessionContext};
-use tokio::sync::RwLock;
-use tonic::{Request, Status};
-use tracing::info;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
+use tokio::sync::RwLock;
+use tonic::{Request, Status};
+use tracing::info;
 
 use crate::configuration::ConfigurationManager;
 use crate::metadata::MetadataManager;
 use crate::query::ModelTable;
-use crate::storage::{COMPRESSED_DATA_FOLDER, StorageEngine};
+use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 
 /// Provides access to the system's configuration and components.
 pub struct Context {
@@ -50,9 +50,8 @@ pub struct Context {
 }
 
 impl Context {
-    /// Return the schema of `table_name` if the table exists in the default
-    /// database schema, otherwise a [`Status`] indicating at what level the
-    /// lookup failed is returned.
+    /// Return the schema of `table_name` if the table exists in the default database schema,
+    /// otherwise a [`Status`] indicating at what level the lookup failed is returned.
     pub(crate) async fn schema_of_table_in_default_database_schema(
         &self,
         table_name: &str,
@@ -67,8 +66,8 @@ impl Context {
         Ok(table.schema())
     }
 
-    /// Return the default database schema if it exists, otherwise a [`Status`]
-    /// indicating at what level the lookup failed is returned.
+    /// Return the default database schema if it exists, otherwise a [`Status`] indicating at what
+    /// level the lookup failed is returned.
     pub(crate) fn default_database_schema(&self) -> Result<Arc<dyn SchemaProvider>, Status> {
         let session = self.session.clone();
 
@@ -174,10 +173,9 @@ impl Context {
         Ok(())
     }
 
-    /// Create a normal table, register it with Apache Arrow DataFusion's
-    /// catalog, and save it to the [`MetadataManager`]. If the table exists,
-    /// the Apache Parquet file cannot be created, or if the table cannot be
-    /// saved to the [`MetadataManager`], return [`Status`] error.
+    /// Create a normal table, register it with Apache Arrow DataFusion's catalog, and save it to
+    /// the [`MetadataManager`]. If the table exists, the Apache Parquet file cannot be created,
+    /// or if the table cannot be saved to the [`MetadataManager`], return [`Status`] error.
     async fn register_and_save_table(
         &self,
         table_name: String,
@@ -219,10 +217,9 @@ impl Context {
         Ok(())
     }
 
-    /// Create a model table, register it with Apache Arrow DataFusion's
-    /// catalog, and save it to the [`MetadataManager`]. If the table exists or
-    /// if the table cannot be saved to the [`MetadataManager`], return
-    /// [`Status`] error.
+    /// Create a model table, register it with Apache Arrow DataFusion's catalog, and save it to
+    /// the [`MetadataManager`]. If the table exists or if the table cannot be saved to the
+    /// [`MetadataManager`], return [`Status`] error.
     async fn register_and_save_model_table(
         &self,
         model_table_metadata: ModelTableMetadata,

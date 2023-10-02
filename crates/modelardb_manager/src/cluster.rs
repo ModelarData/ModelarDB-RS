@@ -125,7 +125,10 @@ impl Cluster {
             .collect();
 
         while let Some(result) = update_object_store_futures.next().await {
-            info!("Updated remote object store on node with url '{}'.", result?);
+            info!(
+                "Updated remote object store on node with url '{}'.",
+                result?
+            );
         }
 
         Ok(())

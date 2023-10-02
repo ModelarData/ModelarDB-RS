@@ -537,7 +537,7 @@ impl FlightService for FlightServiceHandler {
             info!("Received request to execute '{}'.", sql);
 
             self.context
-                .parse_and_create_table(sql, &self.context.clone())
+                .parse_and_create_table(sql, &self.context)
                 .await?;
 
             // Confirm the table was created.

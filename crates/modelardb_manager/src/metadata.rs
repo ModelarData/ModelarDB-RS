@@ -293,13 +293,11 @@ impl MetadataManager {
              SELECT sql FROM model_table_metadata WHERE table_name = '{table_name}'",
         );
 
-        let mut rows = sqlx::query(&select_statement).fetch(&self.metadata_database_pool);
+        let row = sqlx::query(&select_statement)
+            .fetch_one(&self.metadata_database_pool)
+            .await?;
 
-        if let Some(row) = rows.try_next().await? {
-            Ok(row.try_get("sql")?)
-        } else {
-            Err(sqlx::Error::RowNotFound)
-        }
+        row.try_get("sql")
     }
 
     /// Retrieve all rows of `column` from both the table_metadata and model_table_metadata tables.

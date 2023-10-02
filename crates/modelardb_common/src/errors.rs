@@ -36,7 +36,7 @@ pub enum ModelarDbError {
     DataRetrievalError(String),
     /// Error returned when something happens that should be impossible.
     ImplementationError(String),
-    /// Error returned when failing to connect to node or perform an action on a node in a cluster.
+    /// Error returned when failing to connect to a node or perform an action on a node in a cluster.
     ClusterError(String),
 }
 
