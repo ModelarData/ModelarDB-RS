@@ -31,6 +31,7 @@ use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::{Timestamp, Value};
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
+use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::{debug, info};
 
@@ -38,6 +39,9 @@ use crate::storage::compressed_data_buffer::CompressedDataBuffer;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::{Channels, MemoryPool};
 use crate::storage::{Metric, StorageEngine, COMPRESSED_DATA_FOLDER};
+
+use super::compressed_data_buffer::CompressedSegmentBatch;
+use super::types::Message;
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
@@ -118,16 +122,42 @@ impl CompressedDataManager {
         StorageEngine::write_batch_to_apache_parquet_file(record_batch, file_path.as_path(), None)
     }
 
+    /// Read and process messages received from the [`UncompressedDataManager`] to either ingest
+    /// compressed data, flush buffers, or stop.
+    pub(super) fn process_compressed_messages(&self, runtime: Arc<Runtime>) -> Result<(), IOError> {
+        loop {
+            let message = self
+                .channels
+                .compressed_data_receiver
+                .recv()
+                .map_err(|error| IOError::new(ErrorKind::BrokenPipe, error))?;
+
+            // TODO: Handle errors
+            match message {
+                Message::Data(compressed_segment_batch) => {
+                    runtime
+                        .block_on(self.insert_compressed_segments(compressed_segment_batch))
+                        .unwrap();
+                }
+                Message::Flush | Message::Stop => {
+                    runtime.block_on(self.flush()).unwrap();
+                    if let Message::Stop = message {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Insert the `compressed_segments` into the in-memory compressed data buffer for the table
     /// with `table_name` and the column at `column_index`. If `compressed_segments` is saved
     /// successfully, return [`Ok`], otherwise return [`IOError`].
-    pub(super) async fn insert_compressed_segments(&self) -> Result<(), IOError> {
-        let compressed_segment_batch = self
-            .channels
-            .compressed_data_receiver
-            .recv()
-            .map_err(|error| IOError::new(ErrorKind::BrokenPipe, error))?;
-
+    async fn insert_compressed_segments(
+        &self,
+        compressed_segment_batch: CompressedSegmentBatch,
+    ) -> Result<(), IOError> {
         let column_index = compressed_segment_batch.column_index();
         let model_table_name = compressed_segment_batch.model_table_name().to_owned();
 
@@ -158,10 +188,7 @@ impl CompressedDataManager {
                 model_table_name
             );
 
-            let mut compressed_data_buffer = CompressedDataBuffer::new(
-                compressed_segment_batch.univariate_id,
-                compressed_segment_batch.model_table_metadata,
-            );
+            let mut compressed_data_buffer = CompressedDataBuffer::new();
             let segment_size = compressed_data_buffer
                 .append_compressed_segments(compressed_segment_batch.compressed_segments);
 
@@ -286,21 +313,6 @@ impl CompressedDataManager {
         Ok(())
     }
 
-    /// Flush the data that the [`CompressedDataManager`] is currently managing.
-    pub(super) async fn flush(&self) -> Result<(), IOError> {
-        info!(
-            "Flushing the remaining {} compressed data buffers.",
-            self.compressed_queue.len()
-        );
-
-        while !self.compressed_queue.is_empty() {
-            let (table_name, column_index) = self.compressed_queue.pop().unwrap();
-            self.save_compressed_data(&table_name, column_index).await?;
-        }
-
-        Ok(())
-    }
-
     /// Save the compressed data that belongs to the column at `column_index` in the table with
     /// `table_name` to disk. The size of the saved compressed data is added back to the remaining
     /// reserved memory. If the data is saved successfully, return [`Ok`], otherwise return
@@ -359,6 +371,21 @@ impl CompressedDataManager {
                 .add_compressed_file(table_name, column_index, file_path.as_path())
                 .await
                 .map_err(|error| IOError::new(Other, error.to_string()))?;
+        }
+
+        Ok(())
+    }
+
+    /// Flush the data that the [`CompressedDataManager`] is currently managing.
+    async fn flush(&self) -> Result<(), IOError> {
+        info!(
+            "Flushing the remaining {} compressed data buffers.",
+            self.compressed_queue.len()
+        );
+
+        while !self.compressed_queue.is_empty() {
+            let (table_name, column_index) = self.compressed_queue.pop().unwrap();
+            self.save_compressed_data(&table_name, column_index).await?;
         }
 
         Ok(())

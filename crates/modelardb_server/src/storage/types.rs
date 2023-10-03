@@ -138,32 +138,40 @@ impl MemoryPool {
     }
 }
 
+/// Messages that can be send between the components of [`StorageEngine`].
+pub(super) enum Message<T> {
+    Data(T),
+    Flush,
+    Stop,
+}
+
 /// Channels used by the threads in the storage engine to communicate.
 pub(super) struct Channels {
     /// Sender of [`RecordBatches`](RecordBatch) with parts of a multivariate time series from the
     /// [`StorageEngine`] to the [`UncompressedDataManager`] were they are split into fixed-length
     /// univariate time series.
-    pub(super) uncompressed_multivariate_sender: Sender<UncompressedDataMultivariate>,
+    pub(super) uncompressed_multivariate_sender: Sender<Message<UncompressedDataMultivariate>>,
     /// Receiver of [`RecordBatches`](RecordBatch) with parts of a multivariate time series from the
     /// [`StorageEngine`] in the [`UncompressedDataManager`] were they are split into fixed-length
     /// univariate time series.
-    pub(super) uncompressed_multivariate_receiver: Receiver<UncompressedDataMultivariate>,
+    pub(super) uncompressed_multivariate_receiver: Receiver<Message<UncompressedDataMultivariate>>,
     /// Sender of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
     /// time series from the [`UncompressedDataManager`] to the [`UncompressedDataManager`] where
     /// they are compressed into compressed segments.
-    pub(super) finished_uncompressed_data_sender: Sender<Box<dyn UncompressedDataBuffer>>,
+    pub(super) finished_uncompressed_data_sender: Sender<Message<Box<dyn UncompressedDataBuffer>>>,
     /// Receiver of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
     /// time series from the [`UncompressedDataManager`] in the [`UncompressedDataManager`] where
     /// they are compressed into compressed segments.
-    pub(super) finished_uncompressed_data_receiver: Receiver<Box<dyn UncompressedDataBuffer>>,
+    pub(super) finished_uncompressed_data_receiver:
+        Receiver<Message<Box<dyn UncompressedDataBuffer>>>,
     /// Sender of [`CompressedSegmentBatchs`](CompressedSegmentBatch) with compressed segments from
     /// the [`UncompressedDataManager`] to the [`CompressedDataManager`] were they are written to a
     /// local data folder and later, possibly, a remote data folder.
-    pub(super) compressed_data_sender: Sender<CompressedSegmentBatch>,
+    pub(super) compressed_data_sender: Sender<Message<CompressedSegmentBatch>>,
     /// Receiver of [`CompressedSegmentBatchs`](CompressedSegmentBatch) with compressed segments
     /// from the [`UncompressedDataManager`] in the [`CompressedDataManager`] were they are written
     /// to a local data folder and later, possibly, a remote data folder.
-    pub(super) compressed_data_receiver: Receiver<CompressedSegmentBatch>,
+    pub(super) compressed_data_receiver: Receiver<Message<CompressedSegmentBatch>>,
 }
 
 impl Channels {

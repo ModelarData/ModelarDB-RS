@@ -26,6 +26,7 @@ use dashmap::DashMap;
 use datafusion::arrow::array::{Array, StringArray};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
+use tokio::runtime::Runtime;
 use tracing::debug;
 
 use crate::context::Context;
@@ -37,6 +38,9 @@ use crate::storage::uncompressed_data_buffer::{
     UncompressedDataBuffer, UncompressedInMemoryDataBuffer, UncompressedOnDiskDataBuffer,
 };
 use crate::storage::{Metric, UNCOMPRESSED_DATA_FOLDER};
+
+use super::types::Message;
+use super::uncompressed_data_buffer::UncompressedDataMultivariate;
 
 /// Stores uncompressed data points temporarily in an in-memory buffer that spills to Apache Parquet
 /// files. When a uncompressed data buffer is finished the data is made available for compression.
@@ -137,7 +141,7 @@ impl UncompressedDataManager {
 
                 self.channels
                     .finished_uncompressed_data_sender
-                    .send(buffer)
+                    .send(Message::Data(buffer))
                     .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
             }
         }
@@ -152,16 +156,46 @@ impl UncompressedDataManager {
         Ok(())
     }
 
-    /// Read data points from a channel and insert them into the in-memory buffer. If the data
-    /// points are from a multivariate time series, they are first split into multiple univariate
-    /// time series. These univariate time series are then inserted into the storage engine.
-    /// Return [`Err`] if the channel or the metadata database could not be read from.
-    pub(super) async fn insert_data_points(&self) -> Result<(), String> {
-        let uncompressed_data_multivariate = self
-            .channels
-            .uncompressed_multivariate_receiver
-            .recv()
-            .map_err(|error| error.to_string())?;
+    /// Read and process messages received from the [`StorageEngine`] to either ingest uncompressed
+    /// data, flush buffers, or stop.
+    pub(super) fn process_uncompressed_messages(
+        &self,
+        runtime: Arc<Runtime>,
+    ) -> Result<(), String> {
+        loop {
+            let message = self
+                .channels
+                .uncompressed_multivariate_receiver
+                .recv()
+                .map_err(|error| error.to_string())?;
+
+            // TODO: Handle errors
+            match message {
+                Message::Data(uncompressed_data_multivariate) => {
+                    runtime
+                        .block_on(self.insert_data_points(uncompressed_data_multivariate))
+                        .unwrap();
+                }
+                Message::Flush | Message::Stop => {
+                    self.flush().unwrap();
+                    if let Message::Stop = message {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Insert `uncompressed_data_multivariate` into the in-memory buffer. If the data points are
+    /// from a multivariate time series, they are first split into multiple univariate time series.
+    /// These univariate time series are then inserted into the storage engine. Return [`Err`] if
+    /// the channel or the metadata database could not be read from.
+    async fn insert_data_points(
+        &self,
+        uncompressed_data_multivariate: UncompressedDataMultivariate,
+    ) -> Result<(), String> {
         let data_points = uncompressed_data_multivariate.multivariate_data_points;
         let model_table_metadata = uncompressed_data_multivariate.model_table_metadata;
 
@@ -267,77 +301,6 @@ impl UncompressedDataManager {
         Ok(())
     }
 
-    /// Read the next full [`UncompressedInMemoryDataBuffer`] from a channel, compress it, and send
-    /// the compressed segments to the [`CompressedInMemoryDataBuffer`] over a channel. Returns
-    /// [`IOError`] if the error bound cannot be retrieved from the [`MetadataManager`].
-    pub(super) async fn compress_finished_buffer(&self) -> Result<(), IOError> {
-        let mut data_buffer = self
-            .channels
-            .finished_uncompressed_data_receiver
-            .recv()
-            .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
-
-        // Add the size of the segment back to the remaining reserved bytes and record the change.
-        let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
-        self.memory_pool.free_uncompressed_memory(freed_memory);
-
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_uncompressed_memory_metric
-            .lock()
-            .unwrap()
-            .append(-(freed_memory as isize), true);
-
-        // unwrap() is safe to use since record_batch() can only fail for spilled buffers.
-        let data_points = data_buffer.record_batch().await.unwrap();
-        let univariate_id = data_buffer.univariate_id();
-        let uncompressed_timestamps = modelardb_common::array!(data_points, 0, TimestampArray);
-        let uncompressed_values = modelardb_common::array!(data_points, 1, ValueArray);
-        let error_bound = data_buffer.error_bound();
-
-        // unwrap() is safe to use since uncompressed_timestamps and uncompressed_values have the same length.
-        let compressed_segments = modelardb_compression::try_compress(
-            univariate_id,
-            error_bound,
-            uncompressed_timestamps,
-            uncompressed_values,
-        )
-        .unwrap();
-
-        self.channels
-            .compressed_data_sender
-            .send(CompressedSegmentBatch {
-                univariate_id,
-                model_table_metadata: data_buffer.model_table_metadata().clone(),
-                compressed_segments,
-            })
-            .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))
-    }
-
-    /// Compress the uncompressed data buffer that the [`UncompressedDataManager`] is currently
-    /// managing, and return the compressed buffers and their univariate ids. Returns [`IOError`] if
-    /// the error bound cannot be retrieved from the [`MetadataManager`].
-    pub(super) async fn flush(&self) -> Result<(), IOError> {
-        // The univariate ids are copied to not have multiple borrows to self at the same time.
-        let univariate_ids: Vec<u64> = self
-            .active_uncompressed_data_buffers
-            .iter()
-            .map(|kv| *kv.key())
-            .collect();
-
-        for univariate_id in univariate_ids {
-            if let Some(univariate_id_buffer) =
-                self.active_uncompressed_data_buffers.remove(&univariate_id)
-            {
-                self.channels
-                    .finished_uncompressed_data_sender
-                    .send(Box::new(univariate_id_buffer.1))
-                    .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
-            }
-        }
-
-        Ok(())
-    }
-
     /// Insert a single data point into the in-memory buffer for `univariate_id` if one exists. If
     /// no in-memory buffer exist for `univariate_id`, allocate a new buffer that will be compressed
     /// within `error_bound`. Returns [`IOError`] if the error bound cannot be retrieved from the
@@ -394,7 +357,7 @@ impl UncompressedDataManager {
                 return self
                     .channels
                     .finished_uncompressed_data_sender
-                    .send(finished_uncompressed_data_buffer)
+                    .send(Message::Data(finished_uncompressed_data_buffer))
                     .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error));
             }
         } else {
@@ -430,43 +393,6 @@ impl UncompressedDataManager {
             buffer.insert_data(current_batch_index, timestamp, value);
             self.active_uncompressed_data_buffers
                 .insert(univariate_id, buffer);
-        }
-
-        Ok(())
-    }
-
-    /// Finish active in-memory data buffers that are no longer used to free memory.
-    async fn finish_unused_buffers(&self, current_batch_index: u64) -> Result<(), IOError> {
-        debug!("Freeing memory by finishing all in-memory buffers that are no longer used.");
-
-        // Extract the univariate ids of the unused buffers and then delete the unused buffers as it
-        // is not possible to iterate and delete together until HashMap::drain_filter() is stable.
-        let mut univariate_ids_of_unused_buffers =
-            Vec::with_capacity(self.active_uncompressed_data_buffers.len());
-
-        for univariate_id_buffer in &self.active_uncompressed_data_buffers {
-            if univariate_id_buffer.value().is_unused(current_batch_index) {
-                univariate_ids_of_unused_buffers.push(*univariate_id_buffer.key());
-            }
-        }
-
-        for univariate_id in univariate_ids_of_unused_buffers {
-            // unwrap() is safe as the univariate_ids were just extracted from the map.
-            let buffer = self
-                .active_uncompressed_data_buffers
-                .remove(&univariate_id)
-                .unwrap()
-                .1;
-
-            self.channels
-                .finished_uncompressed_data_sender
-                .send(Box::new(buffer))
-                .map_err(|error| IOError::new(IOErrorKind::InvalidData, error))?;
-
-            debug!(
-                "Finished in-memory buffer for {} as it is no longer used.",
-                univariate_id
-            );
         }
 
         Ok(())
@@ -508,6 +434,148 @@ impl UncompressedDataManager {
         );
 
         Ok(uncompressed_on_disk_data_buffer)
+    }
+
+    /// Finish active in-memory data buffers that are no longer used to free memory.
+    async fn finish_unused_buffers(&self, current_batch_index: u64) -> Result<(), IOError> {
+        debug!("Freeing memory by finishing all in-memory buffers that are no longer used.");
+
+        // Extract the univariate ids of the unused buffers and then delete the unused buffers as it
+        // is not possible to iterate and delete together until HashMap::drain_filter() is stable.
+        let mut univariate_ids_of_unused_buffers =
+            Vec::with_capacity(self.active_uncompressed_data_buffers.len());
+
+        for univariate_id_buffer in &self.active_uncompressed_data_buffers {
+            if univariate_id_buffer.value().is_unused(current_batch_index) {
+                univariate_ids_of_unused_buffers.push(*univariate_id_buffer.key());
+            }
+        }
+
+        for univariate_id in univariate_ids_of_unused_buffers {
+            // unwrap() is safe as the univariate_ids were just extracted from the map.
+            let buffer = self
+                .active_uncompressed_data_buffers
+                .remove(&univariate_id)
+                .unwrap()
+                .1;
+
+            self.channels
+                .finished_uncompressed_data_sender
+                .send(Message::Data(Box::new(buffer)))
+                .map_err(|error| IOError::new(IOErrorKind::InvalidData, error))?;
+
+            debug!(
+                "Finished in-memory buffer for {} as it is no longer used.",
+                univariate_id
+            );
+        }
+
+        Ok(())
+    }
+
+    /// Compress the uncompressed data buffer that the [`UncompressedDataManager`] is currently
+    /// managing, and return the compressed buffers and their univariate ids. Returns [`IOError`] if
+    /// the error bound cannot be retrieved from the [`MetadataManager`].
+    fn flush(&self) -> Result<(), IOError> {
+        // The univariate ids are copied to not have multiple borrows to self at the same time.
+        let univariate_ids: Vec<u64> = self
+            .active_uncompressed_data_buffers
+            .iter()
+            .map(|kv| *kv.key())
+            .collect();
+
+        for univariate_id in univariate_ids {
+            if let Some(univariate_id_buffer) =
+                self.active_uncompressed_data_buffers.remove(&univariate_id)
+            {
+                self.channels
+                    .finished_uncompressed_data_sender
+                    .send(Message::Data(Box::new(univariate_id_buffer.1)))
+                    .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
+            }
+        }
+
+        // Inform the compression thread that a flush is in progress.
+        self.channels
+            .finished_uncompressed_data_sender
+            .send(Message::Flush)
+            .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))
+    }
+
+    /// Read and process messages received from the [`UncompressedDataManager`] to either compress
+    /// uncompressed data, forward a flush message, or stop.
+    pub(super) fn process_compressor_messages(&self, runtime: Arc<Runtime>) -> Result<(), IOError> {
+        loop {
+            let message = self
+                .channels
+                .finished_uncompressed_data_receiver
+                .recv()
+                .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
+
+            // TODO: Handle errors
+            match message {
+                Message::Data(data_buffer) => {
+                    runtime
+                        .block_on(self.compress_finished_buffer(data_buffer))
+                        .unwrap();
+                }
+                Message::Flush | Message::Stop => {
+                    self.channels
+                        .compressed_data_sender
+                        .send(Message::Flush)
+                        .unwrap();
+
+                    if let Message::Stop = message {
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Read the next full [`UncompressedInMemoryDataBuffer`] from a channel, compress it, and send
+    /// the compressed segments to the [`CompressedInMemoryDataBuffer`] over a channel. Returns
+    /// [`IOError`] if the error bound cannot be retrieved from the [`MetadataManager`].
+    async fn compress_finished_buffer(
+        &self,
+        mut data_buffer: Box<dyn UncompressedDataBuffer>,
+    ) -> Result<(), IOError> {
+        // Add the size of the segment back to the remaining reserved bytes and record the change.
+        let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
+        self.memory_pool.free_uncompressed_memory(freed_memory);
+
+        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
+        self.used_uncompressed_memory_metric
+            .lock()
+            .unwrap()
+            .append(-(freed_memory as isize), true);
+
+        // unwrap() is safe to use since record_batch() can only fail for spilled buffers.
+        let data_points = data_buffer.record_batch().await.unwrap();
+        let univariate_id = data_buffer.univariate_id();
+        let uncompressed_timestamps = modelardb_common::array!(data_points, 0, TimestampArray);
+        let uncompressed_values = modelardb_common::array!(data_points, 1, ValueArray);
+        let error_bound = data_buffer.error_bound();
+
+        // unwrap() is safe to use since uncompressed_timestamps and uncompressed_values have the same length.
+        let compressed_segments = modelardb_compression::try_compress(
+            univariate_id,
+            error_bound,
+            uncompressed_timestamps,
+            uncompressed_values,
+        )
+        .unwrap();
+
+        self.channels
+            .compressed_data_sender
+            .send(Message::Data(CompressedSegmentBatch {
+                univariate_id,
+                model_table_metadata: data_buffer.model_table_metadata().clone(),
+                compressed_segments,
+            }))
+            .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))
     }
 
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.

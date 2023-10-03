@@ -32,7 +32,7 @@ use std::fs::File;
 use std::io::{Error as IOError, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::thread::{self, JoinHandle};
 
 use bytes::buf::BufMut;
 use datafusion::arrow::array::UInt32Array;
@@ -73,6 +73,8 @@ use crate::storage::uncompressed_data_buffer::UncompressedDataMultivariate;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::PORT;
 
+use self::types::Message;
+
 /// The folder storing uncompressed data in the data folders.
 pub const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
 
@@ -107,11 +109,13 @@ pub struct StorageEngine {
     uncompressed_data_manager: Arc<UncompressedDataManager>,
     /// Manager that contains and controls all compressed data.
     compressed_data_manager: Arc<CompressedDataManager>,
-    /// Channels used by the storage engine's threads to communicate.
+    /// Threads used for ingestion, compression, and writing.
+    join_handles: Vec<JoinHandle<()>>,
+    /// Unbounded channels used by the threads to communicate.
     channels: Arc<Channels>,
 }
 
-// TODO: remove Arc's in the storage engine.
+// TODO: Remove Arc's in the storage engine.
 // TODO: Handle errors by removing unwrap .
 // TODO: Evaluate effect of block_on() (is async needed when we block the read anyway?) and handle errors?.
 impl StorageEngine {
@@ -135,7 +139,8 @@ impl StorageEngine {
         // Create shared metrics.
         let used_disk_space_metric = Arc::new(Mutex::new(Metric::new()));
 
-        // Create shared channels.
+        // Create threads and shared channels.
+        let mut join_handlers = vec![];
         let channels = Arc::new(Channels::new());
 
         // Create the uncompressed data manager.
@@ -154,28 +159,32 @@ impl StorageEngine {
             let runtime = runtime.clone();
             let uncompressed_data_manager = uncompressed_data_manager.clone();
 
-            thread::Builder::new()
+            let join_handle = thread::Builder::new()
                 .name(format!("Ingestion {}", thread_number))
-                .spawn(move || loop {
-                    runtime
-                        .block_on(uncompressed_data_manager.insert_data_points())
+                .spawn(move || {
+                    uncompressed_data_manager
+                        .process_uncompressed_messages(runtime)
                         .unwrap();
                 })
                 .unwrap();
+
+            join_handlers.push(join_handle);
         }
 
-        for thread_number in 0..configuration_manager.writer_threads {
+        for thread_number in 0..configuration_manager.compression_threads {
             let runtime = runtime.clone();
             let uncompressed_data_manager = uncompressed_data_manager.clone();
 
-            thread::Builder::new()
+            let join_handle = thread::Builder::new()
                 .name(format!("Compression {}", thread_number))
-                .spawn(move || loop {
-                    runtime
-                        .block_on(uncompressed_data_manager.compress_finished_buffer())
-                        .unwrap();
+                .spawn(move || {
+                    uncompressed_data_manager
+                        .process_compressor_messages(runtime)
+                        .unwrap()
                 })
                 .unwrap();
+
+            join_handlers.push(join_handle);
         }
 
         // Create the compressed data manager.
@@ -205,19 +214,22 @@ impl StorageEngine {
             let runtime = runtime.clone();
             let compressed_data_manager = compressed_data_manager.clone();
 
-            thread::Builder::new()
+            let join_handle = thread::Builder::new()
                 .name(format!("Writer {}", thread_number))
-                .spawn(move || loop {
-                    runtime
-                        .block_on(compressed_data_manager.insert_compressed_segments())
-                        .unwrap();
+                .spawn(move || {
+                    compressed_data_manager
+                        .process_compressed_messages(runtime)
+                        .unwrap()
                 })
                 .unwrap();
+
+            join_handlers.push(join_handle);
         }
 
         Ok(Self {
             uncompressed_data_manager,
             compressed_data_manager,
+            join_handles: join_handlers,
             channels,
         })
     }
@@ -255,29 +267,20 @@ impl StorageEngine {
         // TODO: ensure there is enough uncompressed memory and write to WAL before returning OK.
         self.channels
             .uncompressed_multivariate_sender
-            .send(UncompressedDataMultivariate {
+            .send(Message::Data(UncompressedDataMultivariate {
                 model_table_metadata,
                 multivariate_data_points,
-            })
+            }))
             .map_err(|error| error.to_string())
     }
 
     /// Flush all of the data the [`StorageEngine`] is currently storing in memory to disk. If all
     /// of the data is successfully flushed to disk, return [`Ok`], otherwise return [`String`].
     pub async fn flush(&self) -> Result<(), String> {
-        // Flush UncompressedDataManager.
-        self.uncompressed_data_manager
-            .flush()
-            .await
-            .map_err(|error| error.to_string())?;
-
-        // Flush CompressedDataManager.
-        self.compressed_data_manager
-            .flush()
-            .await
-            .map_err(|error| error.to_string())?;
-
-        Ok(())
+        self.channels
+            .uncompressed_multivariate_sender
+            .send(Message::Flush)
+            .map_err(|_| "Unable to flush data in storage engine.".to_owned())
     }
 
     /// Transfer all of the compressed data the [`StorageEngine`] is managing to the remote object
@@ -291,6 +294,23 @@ impl StorageEngine {
         } else {
             Err(Status::internal("No remote object store available."))
         }
+    }
+
+    /// Flush all of the data the [`StorageEngine`] is currently storing in memory to disk and stop
+    /// all of the threads. If all of the data is successfully flushed to disk and all of the
+    /// threads stopped, return [`Ok`], otherwise return [`String`].
+    pub fn close(&mut self) -> Result<(), String> {
+        self.channels
+            .uncompressed_multivariate_sender
+            .send(Message::Stop)
+            .map_err(|_| "Unable to stop the storage engine.".to_owned())?;
+
+        // unwrap() is safe as join() only returns an error if the thread panicked.
+        self.join_handles
+            .drain(..)
+            .for_each(|join_handle: JoinHandle<()>| join_handle.join().unwrap());
+
+        Ok(())
     }
 
     /// Retrieve the compressed sorted files that correspond to the column at `column_index` in the

@@ -59,11 +59,6 @@ impl CompressedSegmentBatch {
 /// table as one or more [RecordBatches](RecordBatch) and providing functionality for appending
 /// segments and saving all segments to a single Apache Parquet file.
 pub(super) struct CompressedDataBuffer {
-    /// Univariate id that uniquely identifies the univariate time series the buffer
-    /// stores data points from.
-    univariate_id: u64,
-    /// Metadata of the model table the buffer stores data for.
-    model_table_metadata: Arc<ModelTableMetadata>,
     /// Compressed segments that make up the compressed data in the [`CompressedDataBuffer`].
     compressed_segments: Vec<RecordBatch>,
     /// Continuously updated total sum of the size of the compressed segments.
@@ -71,10 +66,8 @@ pub(super) struct CompressedDataBuffer {
 }
 
 impl CompressedDataBuffer {
-    pub(super) fn new(univariate_id: u64, model_table_metadata: Arc<ModelTableMetadata>) -> Self {
+    pub(super) fn new() -> Self {
         Self {
-            univariate_id,
-            model_table_metadata,
             compressed_segments: Vec::new(),
             size_in_bytes: 0,
         }
@@ -89,16 +82,6 @@ impl CompressedDataBuffer {
         self.size_in_bytes += segment_size;
 
         segment_size
-    }
-
-    /// Return the name of the table the buffer stores data for.
-    pub(super) fn model_table_name(&self) -> &str {
-        self.model_table_metadata.name.as_str()
-    }
-
-    /// Return the index of the column the buffer stores data for.
-    pub(super) fn column_index(&self) -> u16 {
-        MetadataManager::univariate_id_to_column_index(self.univariate_id)
     }
 
     /// If the compressed segments are successfully saved to an Apache Parquet file return the
