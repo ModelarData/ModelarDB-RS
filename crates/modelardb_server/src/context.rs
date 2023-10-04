@@ -159,13 +159,13 @@ impl Context {
         match valid_statement {
             ValidStatement::CreateTable { name, schema } => {
                 self.check_if_table_exists(&name).await?;
-                self.register_and_save_table(name, sql.to_string(), schema)
+                self.register_and_save_table(name, sql, schema)
                     .await?;
             }
             ValidStatement::CreateModelTable(model_table_metadata) => {
                 self.check_if_table_exists(&model_table_metadata.name)
                     .await?;
-                self.register_and_save_model_table(model_table_metadata, sql.to_string(), context)
+                self.register_and_save_model_table(model_table_metadata, sql, context)
                     .await?;
             }
         };
@@ -179,7 +179,7 @@ impl Context {
     async fn register_and_save_table(
         &self,
         table_name: String,
-        sql: String,
+        sql: &str,
         schema: Schema,
     ) -> Result<(), Status> {
         // Ensure the folder for storing the table data exists.
@@ -208,7 +208,7 @@ impl Context {
 
         // Persist the new table to the metadata database.
         self.metadata_manager
-            .save_table_metadata(table_name.clone(), sql)
+            .save_table_metadata(&table_name, sql)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -223,7 +223,7 @@ impl Context {
     async fn register_and_save_model_table(
         &self,
         model_table_metadata: ModelTableMetadata,
-        sql: String,
+        sql: &str,
         context: &Arc<Context>,
     ) -> Result<(), Status> {
         // Save the model table in the Apache Arrow DataFusion catalog.
@@ -238,7 +238,7 @@ impl Context {
 
         // Persist the new model table to the metadata database.
         self.metadata_manager
-            .save_model_table_metadata(&model_table_metadata, &sql)
+            .save_model_table_metadata(&model_table_metadata, sql)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 

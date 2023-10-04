@@ -140,12 +140,12 @@ impl Cluster {
     pub async fn create_tables(
         &self,
         table_name: &str,
-        sql: Bytes,
+        sql: &str,
         key: Uuid,
     ) -> Result<(), ModelarDbError> {
         let action = Action {
             r#type: "CommandStatementUpdate".to_owned(),
-            body: sql,
+            body: sql.to_string().into(),
         };
 
         let mut create_table_futures: FuturesUnordered<_> = self

@@ -112,7 +112,7 @@ impl MetadataManager {
 
     /// Save the created table to the metadata database. This consists of adding a row to the
     /// table_metadata table with the `name` of the table and the `sql` used to create the table.
-    pub async fn save_table_metadata(&self, name: String, sql: String) -> Result<(), sqlx::Error> {
+    pub async fn save_table_metadata(&self, name: &str, sql: &str) -> Result<(), sqlx::Error> {
         metadata::save_table_metadata(&self.metadata_database_pool, name, sql).await
     }
 

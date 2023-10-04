@@ -111,12 +111,12 @@ impl FlightServiceHandler {
     async fn save_and_create_cluster_tables(
         &self,
         table_name: String,
-        sql: String,
+        sql: &str,
     ) -> Result<(), Status> {
         // Persist the new table to the metadata database.
         self.context
             .metadata_manager
-            .save_table_metadata(table_name.clone(), sql.clone())
+            .save_table_metadata(&table_name, sql)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -125,7 +125,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_tables(&table_name, sql.into(), self.context.key)
+            .create_tables(&table_name, sql, self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -140,12 +140,12 @@ impl FlightServiceHandler {
     async fn save_and_create_cluster_model_tables(
         &self,
         model_table_metadata: ModelTableMetadata,
-        sql: String,
+        sql: &str,
     ) -> Result<(), Status> {
         // Persist the new model table to the metadata database.
         self.context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, &sql)
+            .save_model_table_metadata(&model_table_metadata, sql)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -154,7 +154,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_tables(&model_table_metadata.name, sql.into(), self.context.key)
+            .create_tables(&model_table_metadata.name, sql, self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -404,17 +404,13 @@ impl FlightService for FlightServiceHandler {
             match valid_statement {
                 ValidStatement::CreateTable { name, .. } => {
                     self.check_if_table_exists(&name).await?;
-                    self.save_and_create_cluster_tables(name, sql.to_string())
-                        .await?;
+                    self.save_and_create_cluster_tables(name, sql).await?;
                 }
                 ValidStatement::CreateModelTable(model_table_metadata) => {
                     self.check_if_table_exists(&model_table_metadata.name)
                         .await?;
-                    self.save_and_create_cluster_model_tables(
-                        model_table_metadata,
-                        sql.to_string(),
-                    )
-                    .await?;
+                    self.save_and_create_cluster_model_tables(model_table_metadata, sql)
+                        .await?;
                 }
             };
 

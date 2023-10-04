@@ -23,8 +23,7 @@ use std::mem;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
-use sqlx::database::HasArguments;
-use sqlx::{Database, Error, Executor, IntoArguments};
+use sqlx::{Database, Error, Executor};
 
 use crate::errors::ModelarDbError;
 
@@ -61,9 +60,9 @@ where
         .execute(
             format!(
                 "CREATE TABLE IF NOT EXISTS table_metadata (
-            table_name TEXT PRIMARY KEY,
-            sql TEXT NOT NULL
-            ) {strict}"
+                table_name TEXT PRIMARY KEY,
+                sql TEXT NOT NULL
+                ) {strict}"
             )
             .as_str(),
         )
@@ -74,10 +73,10 @@ where
         .execute(
             format!(
                 "CREATE TABLE IF NOT EXISTS model_table_metadata (
-            table_name TEXT PRIMARY KEY,
-            query_schema {binary_type} NOT NULL,
-            sql TEXT NOT NULL
-            ) {strict}"
+                table_name TEXT PRIMARY KEY,
+                query_schema {binary_type} NOT NULL,
+                sql TEXT NOT NULL
+                ) {strict}"
             )
             .as_str(),
         )
@@ -88,9 +87,9 @@ where
         .execute(
             format!(
                 "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
-            hash INTEGER PRIMARY KEY,
-            table_name TEXT
-            ) {strict}"
+                hash INTEGER PRIMARY KEY,
+                table_name TEXT
+                ) {strict}"
             )
             .as_str(),
         )
@@ -102,14 +101,14 @@ where
         .execute(
             format!(
                 "CREATE TABLE IF NOT EXISTS model_table_field_columns (
-            table_name TEXT NOT NULL,
-            column_name TEXT NOT NULL,
-            column_index INTEGER NOT NULL,
-            error_bound REAL NOT NULL,
-            generated_column_expr TEXT,
-            generated_column_sources {binary_type},
-            PRIMARY KEY (table_name, column_name)
-            ) {strict}"
+                table_name TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                column_index INTEGER NOT NULL,
+                error_bound REAL NOT NULL,
+                generated_column_expr TEXT,
+                generated_column_sources {binary_type},
+                PRIMARY KEY (table_name, column_name)
+                ) {strict}"
             )
             .as_str(),
         )
@@ -122,21 +121,18 @@ where
 /// table_metadata table with the `name` of the table and the `sql` used to create the table.
 pub async fn save_table_metadata<'a, DB, E>(
     metadata_database_pool: E,
-    name: String,
-    sql: String,
+    name: &str,
+    sql: &str,
 ) -> Result<(), Error>
 where
     DB: Database,
     E: Executor<'a, Database = DB> + Copy,
-    String: sqlx::Encode<'a, DB>,
-    String: sqlx::Type<DB>,
-    <DB as HasArguments<'a>>::Arguments: IntoArguments<'a, DB>,
 {
     // Add a new row in the table_metadata table to persist the table.
-    sqlx::query("INSERT INTO table_metadata (table_name, sql) VALUES ($1, $2)")
-        .bind(name)
-        .bind(sql)
-        .execute(metadata_database_pool)
+    metadata_database_pool
+        .execute(
+            format!("INSERT INTO table_metadata (table_name, sql) VALUES ('{name}', '{sql}')").as_str(),
+        )
         .await?;
 
     Ok(())
