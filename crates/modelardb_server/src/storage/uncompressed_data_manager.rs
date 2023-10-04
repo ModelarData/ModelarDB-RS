@@ -307,6 +307,10 @@ impl UncompressedDataManager {
             .await
             .map_err(|error| error.to_string())?;
 
+        // Return the memory used by model_table_metadata to the pool right before it is de-allocated.
+        self.memory_pool
+            .free_uncompressed_memory(data_points.get_array_memory_size());
+
         Ok(())
     }
 
@@ -427,11 +431,14 @@ impl UncompressedDataManager {
             .spill_to_apache_parquet(self.local_data_folder.as_path())
             .await?;
 
-        // Add the size of the in-memory data buffer back to the remaining reserved bytes.
-        let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
-        self.memory_pool.free_uncompressed_memory(freed_memory);
+        debug!(
+            "Spilled '{}'. Remaining reserved bytes: {}.",
+            uncompressed_in_memory_data_buffer_debug_string,
+            self.memory_pool.remaining_uncompressed_memory_in_bytes()
+        );
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
+        let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
         self.used_uncompressed_memory_metric
             .lock()
             .unwrap()
@@ -444,11 +451,8 @@ impl UncompressedDataManager {
             .unwrap()
             .append(uncompressed_on_disk_data_buffer.disk_size() as isize, true);
 
-        debug!(
-            "Spilled '{}'. Remaining reserved bytes: {}.",
-            uncompressed_in_memory_data_buffer_debug_string,
-            self.memory_pool.remaining_uncompressed_memory_in_bytes()
-        );
+        // Add the size of the in-memory data buffer back to the remaining reserved bytes.
+        self.memory_pool.free_uncompressed_memory(freed_memory);
 
         Ok(uncompressed_on_disk_data_buffer)
     }
@@ -558,16 +562,6 @@ impl UncompressedDataManager {
         &self,
         mut data_buffer: Box<dyn UncompressedDataBuffer>,
     ) -> Result<(), IOError> {
-        // Add the size of the segment back to the remaining reserved bytes and record the change.
-        let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
-        self.memory_pool.free_uncompressed_memory(freed_memory);
-
-        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_uncompressed_memory_metric
-            .lock()
-            .unwrap()
-            .append(-(freed_memory as isize), true);
-
         // unwrap() is safe to use since record_batch() can only fail for spilled buffers.
         let data_points = data_buffer.record_batch().await.unwrap();
         let univariate_id = data_buffer.univariate_id();
@@ -582,7 +576,17 @@ impl UncompressedDataManager {
             uncompressed_timestamps,
             uncompressed_values,
         )
-        .unwrap();
+            .unwrap();
+
+        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
+        let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
+        self.used_uncompressed_memory_metric
+            .lock()
+            .unwrap()
+            .append(-(freed_memory as isize), true);
+
+        // Add the size of the segment back to the remaining reserved bytes and record the change.
+        self.memory_pool.free_uncompressed_memory(freed_memory);
 
         self.channels
             .compressed_data_sender

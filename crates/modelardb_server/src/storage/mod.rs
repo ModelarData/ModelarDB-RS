@@ -109,15 +109,15 @@ pub struct StorageEngine {
     uncompressed_data_manager: Arc<UncompressedDataManager>,
     /// Manager that contains and controls all compressed data.
     compressed_data_manager: Arc<CompressedDataManager>,
+    /// Track how much memory is left for storing uncompressed and compressed data.
+    memory_pool: Arc<MemoryPool>,
     /// Threads used for ingestion, compression, and writing.
     join_handles: Vec<JoinHandle<()>>,
     /// Unbounded channels used by the threads to communicate.
     channels: Arc<Channels>,
 }
 
-// TODO: Remove Arc's in the storage engine.
 // TODO: Handle errors by removing unwrap .
-// TODO: Evaluate effect of block_on() (is async needed when we block the read anyway?) and handle errors?.
 impl StorageEngine {
     /// Return [`StorageEngine`] that writes ingested data to `local_data_folder` and optionally
     /// transfers compressed data to `remote_data_folder` if it is given. Returns [`String`] if
@@ -140,7 +140,7 @@ impl StorageEngine {
         let used_disk_space_metric = Arc::new(Mutex::new(Metric::new()));
 
         // Create threads and shared channels.
-        let mut join_handlers = vec![];
+        let mut join_handles = vec![];
         let channels = Arc::new(Channels::new());
 
         // Create the uncompressed data manager.
@@ -168,7 +168,7 @@ impl StorageEngine {
                 })
                 .unwrap();
 
-            join_handlers.push(join_handle);
+            join_handles.push(join_handle);
         }
 
         for thread_number in 0..configuration_manager.compression_threads {
@@ -184,7 +184,7 @@ impl StorageEngine {
                 })
                 .unwrap();
 
-            join_handlers.push(join_handle);
+            join_handles.push(join_handle);
         }
 
         // Create the compressed data manager.
@@ -206,7 +206,7 @@ impl StorageEngine {
             RwLock::new(data_transfer),
             local_data_folder,
             channels.clone(),
-            memory_pool,
+            memory_pool.clone(),
             used_disk_space_metric,
         )?);
 
@@ -223,13 +223,14 @@ impl StorageEngine {
                 })
                 .unwrap();
 
-            join_handlers.push(join_handle);
+            join_handles.push(join_handle);
         }
 
         Ok(Self {
             uncompressed_data_manager,
             compressed_data_manager,
-            join_handles: join_handlers,
+            memory_pool,
+            join_handles,
             channels,
         })
     }
@@ -264,7 +265,10 @@ impl StorageEngine {
         model_table_metadata: Arc<ModelTableMetadata>,
         multivariate_data_points: RecordBatch,
     ) -> Result<(), String> {
-        // TODO: ensure there is enough uncompressed memory and write to WAL before returning OK.
+        // TODO: write to WAL before returning OK.
+        self.memory_pool
+            .wait_for_uncompressed_memory(multivariate_data_points.get_array_memory_size());
+
         self.channels
             .multivariate_data_sender
             .send(Message::Data(UncompressedDataMultivariate {

@@ -339,11 +339,8 @@ impl CompressedDataManager {
 
         let file_path = compressed_data_buffer.save_to_apache_parquet(folder_path.as_path())?;
 
-        // Update the remaining memory for compressed data and record the change.
-        let freed_memory = compressed_data_buffer.size_in_bytes;
-        self.memory_pool.free_compressed_memory(freed_memory);
-
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
+        let freed_memory = compressed_data_buffer.size_in_bytes;
         self.used_compressed_memory_metric
             .lock()
             .unwrap()
@@ -373,6 +370,9 @@ impl CompressedDataManager {
                 .await
                 .map_err(|error| IOError::new(Other, error.to_string()))?;
         }
+
+        // Update the remaining memory for compressed data and record the change.
+        self.memory_pool.free_compressed_memory(freed_memory);
 
         Ok(())
     }
