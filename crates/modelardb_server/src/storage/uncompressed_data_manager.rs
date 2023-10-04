@@ -140,7 +140,7 @@ impl UncompressedDataManager {
                 initial_disk_space += buffer.disk_size();
 
                 self.channels
-                    .finished_uncompressed_data_sender
+                    .univariate_data_sender
                     .send(Message::Data(buffer))
                     .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
             }
@@ -165,7 +165,7 @@ impl UncompressedDataManager {
         loop {
             let message = self
                 .channels
-                .uncompressed_multivariate_receiver
+                .multivariate_data_receiver
                 .recv()
                 .map_err(|error| error.to_string())?;
 
@@ -318,48 +318,20 @@ impl UncompressedDataManager {
             timestamp, value, univariate_id
         );
 
+        // get_mut() maintains a reference into active_uncompressed_data_buffers which causes
+        // remove() to deadlock, so removing buffers must be done after the reference is dropped.
+        let mut buffer_is_full = false;
+
+        // Insert the data point into an existing or new buffer.
         if let Some(mut univariate_id_buffer) = self
             .active_uncompressed_data_buffers
             .get_mut(&univariate_id)
         {
+            // TODO: How to prevent race conditions due to multiple threads appending data points to the same buffer, e.g., so that the buffer is not removed twice?
             debug!("Found existing buffer for {}.", univariate_id);
             let buffer = univariate_id_buffer.value_mut();
             buffer.insert_data(current_batch_index, timestamp, value);
-
-            if buffer.is_full() {
-                debug!(
-                    "Buffer for {} is full, moving it to the queue of finished buffers.",
-                    univariate_id
-                );
-
-                // unwrap() is safe as this is only reachable if the buffer exists in the HashMap.
-                let full_uncompressed_in_memory_data_buffer = self
-                    .active_uncompressed_data_buffers
-                    .remove(&univariate_id)
-                    .unwrap()
-                    .1;
-
-                let finished_uncompressed_data_buffer: Box<dyn UncompressedDataBuffer> =
-                    if self.memory_pool.remaining_compressed_memory_in_bytes() > 0 {
-                        debug!(
-                            "Over allocated memory for uncompressed data, spilling finished buffer."
-                        );
-
-                        let uncompressed_on_disk_data_buffer = self
-                            .spill_finished_buffer(full_uncompressed_in_memory_data_buffer)
-                            .await?;
-
-                        Box::new(uncompressed_on_disk_data_buffer)
-                    } else {
-                        Box::new(full_uncompressed_in_memory_data_buffer)
-                    };
-
-                return self
-                    .channels
-                    .finished_uncompressed_data_sender
-                    .send(Message::Data(finished_uncompressed_data_buffer))
-                    .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error));
-            }
+            buffer_is_full = buffer.is_full();
         } else {
             debug!(
                 "Could not find buffer for {}. Creating Buffer.",
@@ -393,6 +365,42 @@ impl UncompressedDataManager {
             buffer.insert_data(current_batch_index, timestamp, value);
             self.active_uncompressed_data_buffers
                 .insert(univariate_id, buffer);
+        }
+
+        // Transfer the full buffer to the compressor.
+        if buffer_is_full {
+            debug!(
+                "Buffer for {} is full, moving it to the channel of finished buffers.",
+                univariate_id
+            );
+
+            // unwrap() is safe as this is only reachable if the buffer exists in the HashMap.
+            let full_uncompressed_in_memory_data_buffer = self
+                .active_uncompressed_data_buffers
+                .remove(&univariate_id)
+                .unwrap()
+                .1;
+
+            let finished_uncompressed_data_buffer: Box<dyn UncompressedDataBuffer> =
+                if self.memory_pool.remaining_compressed_memory_in_bytes() > 0 {
+                    debug!(
+                        "Over allocated memory for uncompressed data, spilling finished buffer."
+                    );
+
+                    let uncompressed_on_disk_data_buffer = self
+                        .spill_finished_buffer(full_uncompressed_in_memory_data_buffer)
+                        .await?;
+
+                    Box::new(uncompressed_on_disk_data_buffer)
+                } else {
+                    Box::new(full_uncompressed_in_memory_data_buffer)
+                };
+
+            return self
+                .channels
+                .univariate_data_sender
+                .send(Message::Data(finished_uncompressed_data_buffer))
+                .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error));
         }
 
         Ok(())
@@ -460,7 +468,7 @@ impl UncompressedDataManager {
                 .1;
 
             self.channels
-                .finished_uncompressed_data_sender
+                .univariate_data_sender
                 .send(Message::Data(Box::new(buffer)))
                 .map_err(|error| IOError::new(IOErrorKind::InvalidData, error))?;
 
@@ -489,7 +497,7 @@ impl UncompressedDataManager {
                 self.active_uncompressed_data_buffers.remove(&univariate_id)
             {
                 self.channels
-                    .finished_uncompressed_data_sender
+                    .univariate_data_sender
                     .send(Message::Data(Box::new(univariate_id_buffer.1)))
                     .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
             }
@@ -497,7 +505,7 @@ impl UncompressedDataManager {
 
         // Inform the compression thread that a flush is in progress.
         self.channels
-            .finished_uncompressed_data_sender
+            .univariate_data_sender
             .send(Message::Flush)
             .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))
     }
@@ -508,7 +516,7 @@ impl UncompressedDataManager {
         loop {
             let message = self
                 .channels
-                .finished_uncompressed_data_receiver
+                .univariate_data_receiver
                 .recv()
                 .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
 

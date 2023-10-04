@@ -150,19 +150,19 @@ pub(super) struct Channels {
     /// Sender of [`RecordBatches`](RecordBatch) with parts of a multivariate time series from the
     /// [`StorageEngine`] to the [`UncompressedDataManager`] were they are split into fixed-length
     /// univariate time series.
-    pub(super) uncompressed_multivariate_sender: Sender<Message<UncompressedDataMultivariate>>,
+    pub(super) multivariate_data_sender: Sender<Message<UncompressedDataMultivariate>>,
     /// Receiver of [`RecordBatches`](RecordBatch) with parts of a multivariate time series from the
     /// [`StorageEngine`] in the [`UncompressedDataManager`] were they are split into fixed-length
     /// univariate time series.
-    pub(super) uncompressed_multivariate_receiver: Receiver<Message<UncompressedDataMultivariate>>,
+    pub(super) multivariate_data_receiver: Receiver<Message<UncompressedDataMultivariate>>,
     /// Sender of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
     /// time series from the [`UncompressedDataManager`] to the [`UncompressedDataManager`] where
     /// they are compressed into compressed segments.
-    pub(super) finished_uncompressed_data_sender: Sender<Message<Box<dyn UncompressedDataBuffer>>>,
+    pub(super) univariate_data_sender: Sender<Message<Box<dyn UncompressedDataBuffer>>>,
     /// Receiver of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
     /// time series from the [`UncompressedDataManager`] in the [`UncompressedDataManager`] where
     /// they are compressed into compressed segments.
-    pub(super) finished_uncompressed_data_receiver:
+    pub(super) univariate_data_receiver:
         Receiver<Message<Box<dyn UncompressedDataBuffer>>>,
     /// Sender of [`CompressedSegmentBatchs`](CompressedSegmentBatch) with compressed segments from
     /// the [`UncompressedDataManager`] to the [`CompressedDataManager`] were they are written to a
@@ -176,17 +176,17 @@ pub(super) struct Channels {
 
 impl Channels {
     pub(super) fn new() -> Self {
-        let (uncompressed_multivariate_sender, uncompressed_multivariate_receiver) =
+        let (multivariate_data_sender, multivariate_data_receiver) =
             crossbeam_channel::unbounded();
-        let (finished_uncompressed_data_sender, finished_uncompressed_data_receiver) =
+        let (univariate_data_sender, univariate_data_receiver) =
             crossbeam_channel::unbounded();
         let (compressed_data_sender, compressed_data_receiver) = crossbeam_channel::unbounded();
 
         Self {
-            uncompressed_multivariate_sender,
-            uncompressed_multivariate_receiver,
-            finished_uncompressed_data_sender,
-            finished_uncompressed_data_receiver,
+            multivariate_data_sender,
+            multivariate_data_receiver,
+            univariate_data_sender,
+            univariate_data_receiver,
             compressed_data_sender,
             compressed_data_receiver,
         }

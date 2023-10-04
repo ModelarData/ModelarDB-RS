@@ -266,7 +266,7 @@ impl StorageEngine {
     ) -> Result<(), String> {
         // TODO: ensure there is enough uncompressed memory and write to WAL before returning OK.
         self.channels
-            .uncompressed_multivariate_sender
+            .multivariate_data_sender
             .send(Message::Data(UncompressedDataMultivariate {
                 model_table_metadata,
                 multivariate_data_points,
@@ -278,7 +278,7 @@ impl StorageEngine {
     /// of the data is successfully flushed to disk, return [`Ok`], otherwise return [`String`].
     pub async fn flush(&self) -> Result<(), String> {
         self.channels
-            .uncompressed_multivariate_sender
+            .multivariate_data_sender
             .send(Message::Flush)
             .map_err(|_| "Unable to flush data in storage engine.".to_owned())
     }
@@ -301,14 +301,17 @@ impl StorageEngine {
     /// threads stopped, return [`Ok`], otherwise return [`String`].
     pub fn close(&mut self) -> Result<(), String> {
         self.channels
-            .uncompressed_multivariate_sender
+            .multivariate_data_sender
             .send(Message::Stop)
             .map_err(|_| "Unable to stop the storage engine.".to_owned())?;
 
         // unwrap() is safe as join() only returns an error if the thread panicked.
         self.join_handles
             .drain(..)
-            .for_each(|join_handle: JoinHandle<()>| join_handle.join().unwrap());
+            .for_each(|join_handle: JoinHandle<()>| {
+                dbg!(&join_handle.thread());
+                join_handle.join().unwrap()
+            });
 
         Ok(())
     }
