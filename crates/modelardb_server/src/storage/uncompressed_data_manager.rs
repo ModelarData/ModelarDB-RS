@@ -82,7 +82,7 @@ impl UncompressedDataManager {
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the uncompressed data manager exists.
         let local_uncompressed_data_folder = local_data_folder.join(UNCOMPRESSED_DATA_FOLDER);
-        fs::create_dir_all(&local_uncompressed_data_folder)?;
+        fs::create_dir_all(local_uncompressed_data_folder)?;
 
         Ok(Self {
             local_data_folder,
