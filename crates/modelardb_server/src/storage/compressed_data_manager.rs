@@ -139,11 +139,12 @@ impl CompressedDataManager {
                         .block_on(self.insert_compressed_segments(compressed_segment_batch))
                         .unwrap();
                 }
-                Message::Flush | Message::Stop => {
+                Message::Flush => {
                     runtime.block_on(self.flush()).unwrap();
-                    if let Message::Stop = message {
-                        break;
-                    }
+                }
+                Message::Stop => {
+                    runtime.block_on(self.flush()).unwrap();
+                    break;
                 }
             }
         }

@@ -300,6 +300,7 @@ impl StorageEngine {
     /// all of the threads. If all of the data is successfully flushed to disk and all of the
     /// threads stopped, return [`Ok`], otherwise return [`String`].
     pub fn close(&mut self) -> Result<(), String> {
+        // close() is purposely &mut self instead of self so it can be called through an Arc.
         self.channels
             .multivariate_data_sender
             .send(Message::Stop)
@@ -308,10 +309,7 @@ impl StorageEngine {
         // unwrap() is safe as join() only returns an error if the thread panicked.
         self.join_handles
             .drain(..)
-            .for_each(|join_handle: JoinHandle<()>| {
-                dbg!(&join_handle.thread());
-                join_handle.join().unwrap()
-            });
+            .for_each(|join_handle: JoinHandle<()>| join_handle.join().unwrap());
 
         Ok(())
     }

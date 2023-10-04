@@ -176,11 +176,20 @@ impl UncompressedDataManager {
                         .block_on(self.insert_data_points(uncompressed_data_multivariate))
                         .unwrap();
                 }
-                Message::Flush | Message::Stop => {
+                Message::Flush => {
                     self.flush().unwrap();
-                    if let Message::Stop = message {
-                        break;
-                    }
+                    self.channels
+                        .univariate_data_sender
+                        .send(Message::Flush)
+                        .map_err(|error| error.to_string())?;
+                }
+                Message::Stop => {
+                    self.flush().unwrap();
+                    self.channels
+                        .univariate_data_sender
+                        .send(Message::Stop)
+                        .map_err(|error| error.to_string())?;
+                    break;
                 }
             }
         }
@@ -503,11 +512,7 @@ impl UncompressedDataManager {
             }
         }
 
-        // Inform the compression thread that a flush is in progress.
-        self.channels
-            .univariate_data_sender
-            .send(Message::Flush)
-            .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))
+        Ok(())
     }
 
     /// Read and process messages received from the [`UncompressedDataManager`] to either compress
@@ -527,15 +532,18 @@ impl UncompressedDataManager {
                         .block_on(self.compress_finished_buffer(data_buffer))
                         .unwrap();
                 }
-                Message::Flush | Message::Stop => {
+                Message::Flush => {
                     self.channels
                         .compressed_data_sender
                         .send(Message::Flush)
                         .unwrap();
-
-                    if let Message::Stop = message {
-                        break;
-                    }
+                }
+                Message::Stop => {
+                    self.channels
+                        .compressed_data_sender
+                        .send(Message::Stop)
+                        .unwrap();
+                    break;
                 }
             }
         }
