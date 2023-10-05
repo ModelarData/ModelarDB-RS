@@ -15,6 +15,7 @@
 
 //! The minor types used throughout the [`StorageEngine`](crate::storage::StorageEngine).
 
+use std::error::Error;
 use std::fmt;
 use std::mem;
 use std::sync::Condvar;
@@ -192,6 +193,13 @@ pub(super) struct Channels {
     /// from the [`UncompressedDataManager`] in the [`CompressedDataManager`] were they are written
     /// to a local data folder and later, possibly, a remote data folder.
     pub(super) compressed_data_receiver: Receiver<Message<CompressedSegmentBatch>>,
+    /// Sender of [`Results`](Result) from [`UncompressedDataManager`] or [`CompressedDataManager`]
+    /// to indicate that an asynchronous process has succeeded or failed to [`StorageEngine`].
+    pub(super) result_sender: Sender<Result<(), Box<dyn Error + Send + Sync>>>,
+    /// Receiver of [`Results`](Result) from [`UncompressedDataManager`] or
+    /// [`CompressedDataManager`] to indicate that an asynchronous process has succeeded or failed
+    /// to [`StorageEngine`].
+    pub(super) result_receiver: Receiver<Result<(), Box<dyn Error + Send + Sync>>>,
 }
 
 impl Channels {
@@ -199,6 +207,7 @@ impl Channels {
         let (multivariate_data_sender, multivariate_data_receiver) = crossbeam_channel::unbounded();
         let (univariate_data_sender, univariate_data_receiver) = crossbeam_channel::unbounded();
         let (compressed_data_sender, compressed_data_receiver) = crossbeam_channel::unbounded();
+        let (result_sender, result_receiver) = crossbeam_channel::unbounded();
 
         Self {
             multivariate_data_sender,
@@ -207,6 +216,8 @@ impl Channels {
             univariate_data_receiver,
             compressed_data_sender,
             compressed_data_receiver,
+            result_sender,
+            result_receiver,
         }
     }
 }

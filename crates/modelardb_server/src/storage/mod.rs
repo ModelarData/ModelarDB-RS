@@ -284,7 +284,14 @@ impl StorageEngine {
         self.channels
             .multivariate_data_sender
             .send(Message::Flush)
-            .map_err(|_| "Unable to flush data in storage engine.".to_owned())
+            .map_err(|_| "Unable to flush data in storage engine.".to_owned())?;
+
+        // Wait until all of the data in the storage engine have been flushed.
+        self.channels
+            .result_receiver
+            .recv()
+            .unwrap()
+            .map_err(|error| format!("Failed to flush data in storage engine due to: {}", error))
     }
 
     /// Transfer all of the compressed data the [`StorageEngine`] is managing to the remote object
@@ -309,6 +316,13 @@ impl StorageEngine {
             .multivariate_data_sender
             .send(Message::Stop)
             .map_err(|_| "Unable to stop the storage engine.".to_owned())?;
+
+        // Wait until all of the data in the storage engine have been flushed.
+        self.channels
+            .result_receiver
+            .recv()
+            .unwrap()
+            .map_err(|error| format!("Failed to flush data in storage engine due to: {}", error))?;
 
         // unwrap() is safe as join() only returns an error if the thread panicked.
         self.join_handles

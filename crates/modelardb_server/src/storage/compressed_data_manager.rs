@@ -141,9 +141,11 @@ impl CompressedDataManager {
                 }
                 Message::Flush => {
                     runtime.block_on(self.flush()).unwrap();
+                    self.channels.result_sender.send(Ok(())).unwrap();
                 }
                 Message::Stop => {
                     runtime.block_on(self.flush()).unwrap();
+                    self.channels.result_sender.send(Ok(())).unwrap();
                     break;
                 }
             }
