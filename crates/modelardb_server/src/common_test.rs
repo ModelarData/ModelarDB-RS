@@ -51,6 +51,10 @@ pub const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 M
 /// Number of bytes reserved for compressed data in tests.
 pub const COMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
 
+/// SQL to create a model table with a timestamp column, two field columns, and a tag column.
+pub const MODEL_TABLE_SQL: &str =
+    "CREATE MODEL TABLE model_table(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD, tag TAG)";
+
 /// Return a [`Context`] with a [`ConfigurationManager`] with 5 MiBs reserved for uncompressed
 /// data and 5 MiBs reserved for compressed data. Reducing the amount of reserved memory makes it
 /// faster to run unit tests.

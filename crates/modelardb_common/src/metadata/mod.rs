@@ -131,7 +131,8 @@ where
     // Add a new row in the table_metadata table to persist the table.
     metadata_database_pool
         .execute(
-            format!("INSERT INTO table_metadata (table_name, sql) VALUES ('{name}', '{sql}')").as_str(),
+            format!("INSERT INTO table_metadata (table_name, sql) VALUES ('{name}', '{sql}')")
+                .as_str(),
         )
         .await?;
 
@@ -253,20 +254,21 @@ mod tests {
             .unwrap();
 
         let table_name = "table_name";
-        save_table_metadata(
-            &metadata_database_pool,
-            table_name.to_string(),
-            "sql".to_owned(),
-        )
-        .await
-        .unwrap();
+        let sql = "CREATE TABLE table_name(timestamp TIMESTAMP, values REAL, metadata REAL)";
+
+        save_table_metadata(&metadata_database_pool, table_name, sql)
+            .await
+            .unwrap();
 
         // Retrieve the table from the metadata database.
-        let mut rows = metadata_database_pool.fetch("SELECT table_name FROM table_metadata");
+        let mut rows = metadata_database_pool.fetch("SELECT table_name, sql FROM table_metadata");
 
         let row = rows.try_next().await.unwrap().unwrap();
         let retrieved_table_name = row.try_get::<&str, _>(0).unwrap();
         assert_eq!(table_name, retrieved_table_name);
+
+        let retrieved_sql = row.try_get::<&str, _>(1).unwrap();
+        assert_eq!(sql, retrieved_sql);
 
         assert!(rows.try_next().await.unwrap().is_none());
     }

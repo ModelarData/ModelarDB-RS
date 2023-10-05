@@ -1036,7 +1036,7 @@ mod tests {
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, "sql")
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1071,7 +1071,7 @@ mod tests {
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, "sql")
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1130,7 +1130,7 @@ mod tests {
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, "sql")
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1236,7 +1236,7 @@ mod tests {
     ) {
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, "sql")
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1363,7 +1363,7 @@ mod tests {
         let model_table_metadata = common_test::model_table_metadata();
 
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, "sql")
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1439,7 +1439,7 @@ mod tests {
         let model_table_metadata = common_test::model_table_metadata();
 
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, "sql")
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1724,7 +1724,10 @@ mod tests {
 
         context
             .metadata_manager
-            .save_table_metadata("table_name".to_owned(), "sql".to_owned())
+            .save_table_metadata(
+                "table_name",
+                "CREATE TABLE table_name(timestamp TIMESTAMP, values REAL, metadata REAL)",
+            )
             .await
             .unwrap();
 
@@ -1744,7 +1747,7 @@ mod tests {
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, "sql")
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1810,7 +1813,7 @@ mod tests {
         let model_table_metadata = common_test::model_table_metadata();
         context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, "sql")
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1830,7 +1833,7 @@ mod tests {
         let model_table_metadata = common_test::model_table_metadata();
         context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, "sql")
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1855,7 +1858,7 @@ mod tests {
         let model_table_metadata = common_test::model_table_metadata();
         context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, "sql")
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
