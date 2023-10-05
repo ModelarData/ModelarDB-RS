@@ -271,10 +271,10 @@ impl StorageEngine {
 
         self.channels
             .multivariate_data_sender
-            .send(Message::Data(UncompressedDataMultivariate {
+            .send(Message::Data(UncompressedDataMultivariate::new(
                 model_table_metadata,
                 multivariate_data_points,
-            }))
+            )))
             .map_err(|error| error.to_string())
     }
 

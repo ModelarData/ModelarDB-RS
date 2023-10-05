@@ -51,6 +51,18 @@ pub(super) struct UncompressedDataMultivariate {
     pub(super) multivariate_data_points: RecordBatch,
 }
 
+impl UncompressedDataMultivariate {
+    pub(super) fn new(
+        model_table_metadata: Arc<ModelTableMetadata>,
+        multivariate_data_points: RecordBatch,
+    ) -> Self {
+        Self {
+            model_table_metadata,
+            multivariate_data_points,
+        }
+    }
+}
+
 /// Functionality shared by [`UncompressedInMemoryDataBuffer`] and [`UncompressedOnDiskDataBuffer`].
 /// Since the data buffers are part of the asynchronous storage engine the buffers must be [`Sync`]
 /// and [`Send`]. Both [`UncompressedInMemoryDataBuffer`] and [`UncompressedOnDiskDataBuffer`]
