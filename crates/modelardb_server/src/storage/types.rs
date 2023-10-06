@@ -359,33 +359,32 @@ mod tests {
     }
 
     #[test]
-    fn test_try_reserve_available_uncompressed_memory() {
+    fn test_reserve_uncompressed_memory_to_zero() {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
             common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        assert!(memory_pool
-            .reserve_uncompressed_memory(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES));
+        memory_pool.reserve_uncompressed_memory(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES);
 
         assert_eq!(memory_pool.remaining_uncompressed_memory_in_bytes(), 0);
     }
 
     #[test]
-    fn test_try_reserve_unavailable_uncompressed_memory() {
+    fn test_reserve_uncompressed_memory_decrease_below_zero() {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
             common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        assert!(!memory_pool
-            .reserve_uncompressed_memory(2 * common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,));
+        memory_pool
+            .reserve_uncompressed_memory(2 * common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES);
 
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            -(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize)
         );
     }
 

@@ -316,8 +316,8 @@ mod tests {
         assert_eq!(
             data_transfer
                 .used_disk_space_metric
-                .read()
-                .await
+                .lock()
+                .unwrap()
                 .values()
                 .len(),
             1
@@ -327,7 +327,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_compressed_file_for_new_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_target_dir, mut data_transfer) =
+        let (_target_dir, data_transfer) =
             create_data_transfer_component(temp_dir.path()).await;
         let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
 
@@ -340,7 +340,8 @@ mod tests {
             data_transfer
                 .compressed_files
                 .get(&(TABLE_NAME.to_owned(), COLUMN_INDEX))
-                .unwrap(),
+                .unwrap()
+                .value(),
             &COMPRESSED_FILE_SIZE
         );
     }
@@ -348,7 +349,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_compressed_file_for_existing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_target_dir, mut data_transfer) =
+        let (_target_dir, data_transfer) =
             create_data_transfer_component(temp_dir.path()).await;
         let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
 
@@ -365,7 +366,8 @@ mod tests {
             data_transfer
                 .compressed_files
                 .get(&(TABLE_NAME.to_owned(), COLUMN_INDEX))
-                .unwrap(),
+                .unwrap()
+                .value(),
             &(COMPRESSED_FILE_SIZE * 2)
         );
     }
@@ -378,7 +380,7 @@ mod tests {
             .join(format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}"));
         fs::create_dir_all(path.clone()).unwrap();
 
-        let (_target_dir, mut data_transfer) =
+        let (_target_dir, data_transfer) =
             create_data_transfer_component(temp_dir.path()).await;
 
         let apache_parquet_path = path.join("test_apache_parquet.parquet");
@@ -391,7 +393,7 @@ mod tests {
     #[tokio::test]
     async fn test_transfer_single_file() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path()).await;
+        let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
         let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         data_transfer
@@ -409,7 +411,7 @@ mod tests {
     #[tokio::test]
     async fn test_transfer_multiple_files() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path()).await;
+        let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
         let path_1 = create_compressed_file(temp_dir.path(), "test_1");
         let path_2 = create_compressed_file(temp_dir.path(), "test_2");
 
@@ -463,7 +465,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let path_1 = create_compressed_file(temp_dir.path(), "test_1");
         let path_2 = create_compressed_file(temp_dir.path(), "test_2");
-        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path()).await;
+        let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
 
         data_transfer.flush().await.unwrap();
 
@@ -508,8 +510,8 @@ mod tests {
         assert_eq!(
             data_transfer
                 .used_disk_space_metric
-                .read()
-                .await
+                .lock()
+                .unwrap()
                 .values()
                 .len(),
             2
@@ -550,7 +552,7 @@ mod tests {
             local_data_folder_path.to_path_buf(),
             remote_data_folder_object_store,
             COMPRESSED_FILE_SIZE * 3 - 1,
-            Arc::new(Mutes::new(Metric::new())),
+            Arc::new(Mutex::new(Metric::new())),
         )
         .await
         .unwrap();

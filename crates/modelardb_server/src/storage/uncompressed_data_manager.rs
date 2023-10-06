@@ -629,7 +629,6 @@ mod tests {
     async fn test_can_find_existing_on_disk_data_buffers() {
         // Spill an uncompressed buffer to disk.
         let temp_dir = tempfile::tempdir().unwrap();
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
         let model_table_metadata = create_model_table_metadata();
         let mut buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
@@ -651,7 +650,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_insert_record_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (metadata_manager, mut data_manager, _model_table_metadata) =
+        let (metadata_manager, data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
         let (model_table_metadata, data) = uncompressed_data(1);
@@ -682,7 +681,7 @@ mod tests {
     #[tokio::test]
     async fn test_can_insert_record_batch_with_multiple_data_points() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (metadata_manager, mut data_manager, model_table_metadata) =
+        let (metadata_manager, data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
         let (model_table_metadata, data) = uncompressed_data(2);
@@ -803,7 +802,7 @@ mod tests {
     #[tokio::test]
     async fn test_will_finish_unused_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (metadata_manager, mut data_manager, model_table_metadata) =
+        let (_metadata_manager, data_manager, model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
         // Insert using insert_data_points() to increment the batch counter.
@@ -829,7 +828,7 @@ mod tests {
         .unwrap();
 
         let uncompressed_data_multivariate =
-            UncompressedDataMultivariate::new(model_table_metadata, data);
+            UncompressedDataMultivariate::new(model_table_metadata.clone(), data);
         data_manager
             .insert_data_points(uncompressed_data_multivariate)
             .await
@@ -840,9 +839,7 @@ mod tests {
         assert_eq!(
             data_manager
                 .active_uncompressed_data_buffers
-                .into_read_only()
-                .values()
-                .next()
+                .get(&12312) // TODO: use correct key
                 .unwrap()
                 .len(),
             3
@@ -911,7 +908,7 @@ mod tests {
     #[tokio::test]
     async fn test_cannot_get_finished_uncompressed_data_buffers_when_none_are_finished() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager, _model_table_metadata) =
+        let (_metadata_manager, data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
         assert!(data_manager
@@ -1004,8 +1001,10 @@ mod tests {
             .remaining_uncompressed_memory_in_bytes();
 
         let runtime = Arc::new(Runtime::new().unwrap());
-        data_manager.process_uncompressed_messages(runtime);
-        data_manager.process_compressor_messages(runtime);
+        data_manager
+            .process_uncompressed_messages(runtime.clone())
+            .unwrap();
+        data_manager.process_compressor_messages(runtime).unwrap();
 
         assert!(
             remaining_memory
@@ -1027,27 +1026,21 @@ mod tests {
     #[tokio::test]
     async fn test_remaining_memory_not_incremented_when_popping_spilled() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager, model_table_metadata) =
+        let (_metadata_manager, data_manager, model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
-        insert_data_points(
-            UNCOMPRESSED_DATA_BUFFER_CAPACITY,
-            &mut data_manager,
+        // Add spilled the buffer.
+        let spilled_buffer = UncompressedOnDiskDataBuffer::try_new(
+            0,
             model_table_metadata,
-            UNIVARIATE_ID,
+            temp_dir.path().to_path_buf(),
         )
-        .await;
-
-        // Manually spill the buffer.
-        let buffer = next_data_message(&data_manager);
-        let spilled_buffer = buffer
-            .spill_to_apache_parquet(temp_dir.path())
-            .await
-            .unwrap();
+        .unwrap();
         data_manager
             .channels
             .univariate_data_sender
-            .send(Message::Data(Box::new(spilled_buffer)));
+            .send(Message::Data(Box::new(spilled_buffer)))
+            .unwrap();
 
         let remaining_memory = data_manager
             .memory_pool
@@ -1056,8 +1049,10 @@ mod tests {
         // Since the UncompressedOnDiskDataBuffer is not in memory, the remaining amount of memory
         // should not increase when it is processed.
         let runtime = Arc::new(Runtime::new().unwrap());
-        data_manager.process_uncompressed_messages(runtime);
-        data_manager.process_compressor_messages(runtime);
+        data_manager
+            .process_uncompressed_messages(runtime.clone())
+            .unwrap();
+        data_manager.process_compressor_messages(runtime).unwrap();
 
         assert_eq!(
             remaining_memory,
@@ -1101,14 +1096,14 @@ mod tests {
 
         // If there is enough reserved memory to hold n builders, we need to create n + 1 to panic.
         for i in 0..(reserved_memory / UncompressedInMemoryDataBuffer::memory_size()) + 1 {
-            insert_data_points(1, &mut data_manager, model_table_metadata, i as u64).await;
+            insert_data_points(1, &mut data_manager, model_table_metadata.clone(), i as u64).await;
         }
     }
 
     #[tokio::test]
     async fn test_increase_uncompressed_remaining_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager, _model_table_metadata) =
+        let (_metadata_manager, data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
         data_manager
@@ -1133,7 +1128,7 @@ mod tests {
         insert_data_points(
             UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
-            model_table_metadata,
+            model_table_metadata.clone(),
             UNIVARIATE_ID,
         )
         .await;
@@ -1173,7 +1168,7 @@ mod tests {
     #[should_panic(expected = "Not enough reserved memory for the necessary uncompressed buffers.")]
     async fn test_panic_if_decreasing_uncompressed_remaining_memory_in_bytes_below_zero() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager, _model_table_metadata) =
+        let (_metadata_manager, data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
         data_manager

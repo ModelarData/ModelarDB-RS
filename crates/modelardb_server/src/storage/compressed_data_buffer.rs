@@ -33,6 +33,7 @@ use crate::storage::StorageEngine;
 
 /// Compressed segments representing data points from a column in a model table as one
 /// [`RecordBatch`].
+#[derive(Clone,Debug)]
 pub(super) struct CompressedSegmentBatch {
     /// Univariate id that uniquely identifies the univariate time series the compressed segments
     /// represents data points for.

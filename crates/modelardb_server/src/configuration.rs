@@ -120,7 +120,7 @@ mod tests {
             configuration_manager
                 .read()
                 .await
-                .uncompressed_reserved_memory_in_bytes(),
+                .uncompressed_reserved_memory_in_bytes,
             common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
         );
 
@@ -134,7 +134,7 @@ mod tests {
             configuration_manager
                 .read()
                 .await
-                .uncompressed_reserved_memory_in_bytes(),
+                .uncompressed_reserved_memory_in_bytes,
             1024
         );
     }
