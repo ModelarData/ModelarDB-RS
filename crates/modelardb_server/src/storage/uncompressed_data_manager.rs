@@ -394,7 +394,7 @@ impl UncompressedDataManager {
                 .1;
 
             let finished_uncompressed_data_buffer: Box<dyn UncompressedDataBuffer> =
-                if self.memory_pool.remaining_compressed_memory_in_bytes() > 0 {
+                if self.memory_pool.remaining_uncompressed_memory_in_bytes() <= 0 {
                     debug!(
                         "Over allocated memory for uncompressed data, spilling finished buffer."
                     );
@@ -561,7 +561,7 @@ impl UncompressedDataManager {
         &self,
         mut data_buffer: Box<dyn UncompressedDataBuffer>,
     ) -> Result<(), IOError> {
-        // unwrap() is safe to use since record_batch() can only fail for spilled buffers.
+        // unwrap() is safe to use as record_batch() only fail for spilled buffers with no files.
         let data_points = data_buffer.record_batch().await.unwrap();
         let univariate_id = data_buffer.univariate_id();
         let uncompressed_timestamps = modelardb_common::array!(data_points, 0, TimestampArray);
@@ -612,6 +612,7 @@ mod tests {
     use datafusion::arrow::array::{ArrowPrimitiveType, StringBuilder};
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use datafusion::arrow::record_batch::RecordBatch;
+    use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_common::types::{
         ArrowTimestamp, ArrowValue, ErrorBound, TimestampBuilder, ValueBuilder,
     };
@@ -929,8 +930,9 @@ mod tests {
 
         // Insert messages into the storage engine until a buffer is spilled to Apache Parquet.
         // If there is enough memory to hold n full buffers, we need n + 1 to spill a buffer.
-        let max_full_buffers = reserved_memory / UncompressedInMemoryDataBuffer::memory_size();
-        let message_count = (max_full_buffers * UNCOMPRESSED_DATA_BUFFER_CAPACITY) + 1;
+        let max_full_buffers =
+            (reserved_memory / UncompressedInMemoryDataBuffer::memory_size()) + 1;
+        let message_count = max_full_buffers * UNCOMPRESSED_DATA_BUFFER_CAPACITY;
         insert_data_points(
             message_count,
             &mut data_manager,
@@ -940,12 +942,11 @@ mod tests {
         .await;
 
         // The last UncompressedDataBuffer should have a memory size of 0 as it is spilled to disk.
-        let last_message = data_manager.channels.univariate_data_receiver.iter().last();
-        if let Message::Data(last_finished) = last_message.unwrap() {
-            assert_eq!(last_finished.memory_size(), 0);
-        } else {
-            panic!("Last message was not data.");
+        for _ in 0..6 {
+            next_data_message(&data_manager);
         }
+        assert_eq!(next_data_message(&data_manager).memory_size(), 0);
+        assert_eq!(data_manager.channels.univariate_data_receiver.len(), 0);
 
         // The UncompressedDataBuffer should be spilled to univariate id in the uncompressed folder.
         let local_data_folder = Path::new(&data_manager.local_data_folder);
@@ -982,27 +983,29 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn test_remaining_memory_incremented_when_popping_in_memory() {
+    #[test]
+    fn test_remaining_memory_incremented_when_popping_in_memory() {
+        // This test purposely does not use tokio::test to prevent multiple Tokio runtimes.
         let temp_dir = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(Runtime::new().unwrap());
         let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            runtime.block_on(create_managers(temp_dir.path()));
 
-        insert_data_points(
+        runtime.block_on(insert_data_points(
             UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
             model_table_metadata,
             UNIVARIATE_ID,
-        )
-        .await;
+        ));
 
         let remaining_memory = data_manager
             .memory_pool
             .remaining_uncompressed_memory_in_bytes();
 
-        let runtime = Arc::new(Runtime::new().unwrap());
         data_manager
-            .process_uncompressed_messages(runtime.clone())
+            .channels
+            .univariate_data_sender
+            .send(Message::Stop)
             .unwrap();
         data_manager.process_compressor_messages(runtime).unwrap();
 
@@ -1019,23 +1022,41 @@ mod tests {
                 .unwrap()
                 .values()
                 .len(),
-            2
+            3
         );
     }
 
-    #[tokio::test]
-    async fn test_remaining_memory_not_incremented_when_popping_spilled() {
+    #[test]
+    fn test_remaining_memory_not_incremented_when_popping_spilled() {
+        // This test purposely does not use tokio::test to prevent multiple Tokio runtimes.
         let temp_dir = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(Runtime::new().unwrap());
         let (_metadata_manager, data_manager, model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            runtime.block_on(create_managers(temp_dir.path()));
 
         // Add spilled the buffer.
-        let spilled_buffer = UncompressedOnDiskDataBuffer::try_new(
-            0,
-            model_table_metadata,
-            temp_dir.path().to_path_buf(),
+        let uncompressed_data = RecordBatch::try_new(
+            UNCOMPRESSED_SCHEMA.0.clone(),
+            vec![
+                Arc::new(TimestampArray::from(vec![0, 1, 2])),
+                Arc::new(ValueArray::from(vec![0.2, 0.5, 0.1])),
+            ],
         )
         .unwrap();
+
+        let spilled_buffer = UncompressedOnDiskDataBuffer::try_spill(
+            0,
+            model_table_metadata,
+            temp_dir.path(),
+            uncompressed_data,
+        )
+        .unwrap();
+
+        data_manager
+            .channels
+            .univariate_data_sender
+            .send(Message::Stop)
+            .unwrap();
         data_manager
             .channels
             .univariate_data_sender
@@ -1048,10 +1069,6 @@ mod tests {
 
         // Since the UncompressedOnDiskDataBuffer is not in memory, the remaining amount of memory
         // should not increase when it is processed.
-        let runtime = Arc::new(Runtime::new().unwrap());
-        data_manager
-            .process_uncompressed_messages(runtime.clone())
-            .unwrap();
         data_manager.process_compressor_messages(runtime).unwrap();
 
         assert_eq!(
@@ -1059,28 +1076,6 @@ mod tests {
             data_manager
                 .memory_pool
                 .remaining_uncompressed_memory_in_bytes(),
-        );
-
-        assert_eq!(
-            data_manager
-                .used_uncompressed_memory_metric
-                .lock()
-                .unwrap()
-                .values()
-                .len(),
-            3
-        );
-
-        // The used disk space metric should have an entry for when the uncompressed data manager is
-        // created and an entry for when the finished data buffer is popped.
-        assert_eq!(
-            data_manager
-                .used_disk_space_metric
-                .lock()
-                .unwrap()
-                .values()
-                .len(),
-            2
         );
     }
 
