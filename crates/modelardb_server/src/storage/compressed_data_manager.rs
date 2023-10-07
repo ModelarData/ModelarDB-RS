@@ -16,7 +16,6 @@
 //! Support for managing all compressed data that is inserted into the [`StorageEngine`].
 
 use std::fs;
-use std::io::ErrorKind::Other;
 use std::io::{Error as IOError, ErrorKind};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -122,28 +121,33 @@ impl CompressedDataManager {
 
     /// Read and process messages received from the [`super::UncompressedDataManager`] to either
     /// ingest compressed data, flush buffers, or stop.
-    pub(super) fn process_compressed_messages(&self, runtime: Arc<Runtime>) -> Result<(), IOError> {
+    pub(super) fn process_compressed_messages(&self, runtime: Arc<Runtime>) -> Result<(), String> {
         loop {
             let message = self
                 .channels
                 .compressed_data_receiver
                 .recv()
-                .map_err(|error| IOError::new(ErrorKind::BrokenPipe, error))?;
+                .map_err(|error| error.to_string())?;
 
-            // TODO: Handle errors
             match message {
                 Message::Data(compressed_segment_batch) => {
                     runtime
                         .block_on(self.insert_compressed_segments(compressed_segment_batch))
-                        .unwrap();
+                        .map_err(|error| error.to_string())?;
                 }
                 Message::Flush => {
                     runtime.block_on(self.flush()).unwrap();
-                    self.channels.result_sender.send(Ok(())).unwrap();
+                    self.channels
+                        .result_sender
+                        .send(Ok(()))
+                        .map_err(|error| error.to_string())?;
                 }
                 Message::Stop => {
                     runtime.block_on(self.flush()).unwrap();
-                    self.channels.result_sender.send(Ok(())).unwrap();
+                    self.channels
+                        .result_sender
+                        .send(Ok(()))
+                        .map_err(|error| error.to_string())?;
                     break;
                 }
             }
@@ -368,7 +372,7 @@ impl CompressedDataManager {
             data_transfer
                 .add_compressed_file(table_name, column_index, file_path.as_path())
                 .await
-                .map_err(|error| IOError::new(Other, error.to_string()))?;
+                .map_err(|error| IOError::new(ErrorKind::Other, error.to_string()))?;
         }
 
         // Update the remaining memory for compressed data and record the change.

@@ -169,12 +169,11 @@ impl UncompressedDataManager {
                 .recv()
                 .map_err(|error| error.to_string())?;
 
-            // TODO: Handle errors
             match message {
                 Message::Data(uncompressed_data_multivariate) => {
                     runtime
                         .block_on(self.insert_data_points(uncompressed_data_multivariate))
-                        .unwrap();
+                        .map_err(|error| error.to_string())?;
                 }
                 Message::Flush => {
                     self.flush().unwrap();
@@ -340,7 +339,6 @@ impl UncompressedDataManager {
             .active_uncompressed_data_buffers
             .get_mut(&univariate_id)
         {
-            // TODO: How to prevent race conditions due to multiple threads appending data points to the same buffer, e.g., so that the buffer is not removed twice?
             debug!("Found existing buffer for {}.", univariate_id);
             let buffer = univariate_id_buffer.value_mut();
             buffer.insert_data(current_batch_index, timestamp, value);
@@ -521,32 +519,31 @@ impl UncompressedDataManager {
 
     /// Read and process messages received from the [`UncompressedDataManager`] to either compress
     /// uncompressed data, forward a flush message, or stop.
-    pub(super) fn process_compressor_messages(&self, runtime: Arc<Runtime>) -> Result<(), IOError> {
+    pub(super) fn process_compressor_messages(&self, runtime: Arc<Runtime>) -> Result<(), String> {
         loop {
             let message = self
                 .channels
                 .univariate_data_receiver
                 .recv()
-                .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
+                .map_err(|error| error.to_string())?;
 
-            // TODO: Handle errors
             match message {
                 Message::Data(data_buffer) => {
                     runtime
                         .block_on(self.compress_finished_buffer(data_buffer))
-                        .unwrap();
+                        .map_err(|error| error.to_string())?;
                 }
                 Message::Flush => {
                     self.channels
                         .compressed_data_sender
                         .send(Message::Flush)
-                        .unwrap();
+                        .map_err(|error| error.to_string())?;
                 }
                 Message::Stop => {
                     self.channels
                         .compressed_data_sender
                         .send(Message::Stop)
-                        .unwrap();
+                        .map_err(|error| error.to_string())?;
                     break;
                 }
             }

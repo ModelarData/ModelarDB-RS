@@ -48,6 +48,9 @@ impl ConfigurationManager {
             server_mode,
             uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
             compressed_reserved_memory_in_bytes: 512 * 1024 * 1024,   // 512 MiB
+            // The individual components in the storage engine have not been validated with multiple
+            // threads, e.g., UncompressedDataManager may have race conditions finishing buffers if
+            // multiple different data points are added by multiple different clients in parallel.
             ingestion_threads: 1,
             compression_threads: 1,
             writer_threads: 1,

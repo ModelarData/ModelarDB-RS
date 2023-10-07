@@ -29,7 +29,7 @@ mod uncompressed_data_manager;
 
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{Error as IOError, Write};
+use std::io::{Error as IOError, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -60,7 +60,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::codegen::Bytes;
 use tonic::Status;
-use tracing::debug;
+use tracing::{debug, error};
 use uuid::{uuid, Uuid};
 
 use crate::configuration::ConfigurationManager;
@@ -117,7 +117,6 @@ pub struct StorageEngine {
     channels: Arc<Channels>,
 }
 
-// TODO: Handle errors by removing unwrap .
 impl StorageEngine {
     /// Return [`StorageEngine`] that writes ingested data to `local_data_folder` and optionally
     /// transfers compressed data to `remote_data_folder` if it is given. Returns [`String`] if
@@ -162,11 +161,13 @@ impl StorageEngine {
             let join_handle = thread::Builder::new()
                 .name(format!("Ingestion {}", thread_number))
                 .spawn(move || {
-                    uncompressed_data_manager
-                        .process_uncompressed_messages(runtime)
-                        .unwrap();
+                    if let Err(error) =
+                        uncompressed_data_manager.process_uncompressed_messages(runtime)
+                    {
+                        error!("Failed to receive uncompressed message due to: {}", error);
+                    };
                 })
-                .unwrap();
+                .map_err(|error| IOError::new(ErrorKind::Other, error))?;
 
             join_handles.push(join_handle);
         }
@@ -178,11 +179,13 @@ impl StorageEngine {
             let join_handle = thread::Builder::new()
                 .name(format!("Compression {}", thread_number))
                 .spawn(move || {
-                    uncompressed_data_manager
-                        .process_compressor_messages(runtime)
-                        .unwrap()
+                    if let Err(error) =
+                        uncompressed_data_manager.process_compressor_messages(runtime)
+                    {
+                        error!("Failed to receive compressor message due to: {}", error);
+                    };
                 })
-                .unwrap();
+                .map_err(|error| IOError::new(ErrorKind::Other, error))?;
 
             join_handles.push(join_handle);
         }
@@ -217,11 +220,12 @@ impl StorageEngine {
             let join_handle = thread::Builder::new()
                 .name(format!("Writer {}", thread_number))
                 .spawn(move || {
-                    compressed_data_manager
-                        .process_compressed_messages(runtime)
-                        .unwrap()
+                    if let Err(error) = compressed_data_manager.process_compressed_messages(runtime)
+                    {
+                        error!("Failed to receive compressed message due to: {}", error);
+                    };
                 })
-                .unwrap();
+                .map_err(|error| IOError::new(ErrorKind::Other, error))?;
 
             join_handles.push(join_handle);
         }
@@ -266,7 +270,7 @@ impl StorageEngine {
         model_table_metadata: Arc<ModelTableMetadata>,
         multivariate_data_points: RecordBatch,
     ) -> Result<(), String> {
-        // TODO: write to WAL before returning OK.
+        // TODO: write to WAL before returning and ensure termination never duplicates or loss data.
         self.memory_pool
             .wait_for_uncompressed_memory(multivariate_data_points.get_array_memory_size());
 
@@ -291,7 +295,7 @@ impl StorageEngine {
         self.channels
             .result_receiver
             .recv()
-            .unwrap()
+            .map_err(|error| format!("Failed to receive result message due to: {}", error))?
             .map_err(|error| format!("Failed to flush data in storage engine due to: {}", error))
     }
 
@@ -322,7 +326,7 @@ impl StorageEngine {
         self.channels
             .result_receiver
             .recv()
-            .unwrap()
+            .map_err(|error| format!("Failed to receive result message due to: {}", error))?
             .map_err(|error| format!("Failed to flush data in storage engine due to: {}", error))?;
 
         // unwrap() is safe as join() only returns an error if the thread panicked.
@@ -532,7 +536,6 @@ impl StorageEngine {
         output_data_folder: &Arc<dyn ObjectStore>,
         output_folder: &str,
     ) -> Result<ObjectMeta, ParquetError> {
-        // TODO: ensure termination at any place does not duplicate or loss data.
         // Read input files, for_each is not used so errors can be returned with ?.
         let mut record_batches = Vec::with_capacity(input_files.len());
         for input_file in input_files {
@@ -593,7 +596,6 @@ impl StorageEngine {
         );
 
         // Return an ObjectMeta that represent the successfully merged and written file.
-        // unwrap() is safe as the file have just been written successfully to output_file_path.
         output_data_folder
             .head(&output_file_path)
             .await
