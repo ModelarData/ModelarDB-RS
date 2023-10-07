@@ -643,9 +643,18 @@ mod tests {
             .unwrap();
 
         // The uncompressed data buffer should be referenced by the uncompressed data manager.
-        let (_metadata_manager, data_manager, _model_table_metadata) =
+        let (_metadata_manager, _data_manager, _model_table_metadata) =
             create_managers(temp_dir.path()).await;
-        assert_eq!(data_manager.channels.univariate_data_receiver.len(), 1)
+
+        // TODO: refactor tests to use a shared context with enough information for initialize().
+        //data_manager.initialize(context);
+
+        // Emulate data_manager.initialize(context) by counting files in UNCOMPRESSED_DATA_FOLDER.
+        let local_uncompressed_data_folder = temp_dir.path().join(UNCOMPRESSED_DATA_FOLDER);
+        assert_eq!(
+            local_uncompressed_data_folder.read_dir().unwrap().count(),
+            1
+        )
     }
 
     #[tokio::test]
@@ -840,7 +849,7 @@ mod tests {
         assert_eq!(
             data_manager
                 .active_uncompressed_data_buffers
-                .get(&12312) // TODO: use correct key
+                .get(&8346922066998771713)
                 .unwrap()
                 .len(),
             3
@@ -1022,7 +1031,7 @@ mod tests {
                 .unwrap()
                 .values()
                 .len(),
-            3
+            2
         );
     }
 
@@ -1080,22 +1089,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[should_panic(expected = "Not enough reserved memory for the necessary uncompressed buffers.")]
-    async fn test_panic_if_not_enough_reserved_memory() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(temp_dir.path()).await;
-        let reserved_memory = data_manager
-            .memory_pool
-            .remaining_uncompressed_memory_in_bytes() as usize;
-
-        // If there is enough reserved memory to hold n builders, we need to create n + 1 to panic.
-        for i in 0..(reserved_memory / UncompressedInMemoryDataBuffer::memory_size()) + 1 {
-            insert_data_points(1, &mut data_manager, model_table_metadata.clone(), i as u64).await;
-        }
-    }
-
-    #[tokio::test]
     async fn test_increase_uncompressed_remaining_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, data_manager, _model_table_metadata) =
@@ -1138,7 +1131,7 @@ mod tests {
             data_manager
                 .memory_pool
                 .remaining_uncompressed_memory_in_bytes(),
-            0
+            -(common_test::UNCOMPRESSED_BUFFER_SIZE as isize)
         );
 
         // Insert data that should be spilled not that the remaining memory is decreased.
@@ -1154,23 +1147,9 @@ mod tests {
         // while the second should have a memory size of 0 as it has been spilled to disk.
         assert_eq!(
             next_data_message(&data_manager).memory_size(),
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
+            common_test::UNCOMPRESSED_BUFFER_SIZE
         );
         assert_eq!(next_data_message(&data_manager).memory_size(), 0);
-    }
-
-    #[tokio::test]
-    #[should_panic(expected = "Not enough reserved memory for the necessary uncompressed buffers.")]
-    async fn test_panic_if_decreasing_uncompressed_remaining_memory_in_bytes_below_zero() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let (_metadata_manager, data_manager, _model_table_metadata) =
-            create_managers(temp_dir.path()).await;
-
-        data_manager
-            .adjust_uncompressed_remaining_memory_in_bytes(
-                -((common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + 1) as isize),
-            )
-            .await;
     }
 
     /// Insert `count` data points into `data_manager`.

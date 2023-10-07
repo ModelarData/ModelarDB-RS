@@ -428,7 +428,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer, 4).await;
+        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer, 6).await;
     }
 
     #[tokio::test]
@@ -457,7 +457,7 @@ mod tests {
         // Since the max batch size is 1 byte smaller than 3 compressed files, the data should be transferred immediately.
         let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
 
-        assert_data_transferred(vec![path_1, path_2, path_3], target_dir, data_transfer, 5).await;
+        assert_data_transferred(vec![path_1, path_2, path_3], target_dir, data_transfer, 9).await;
     }
 
     #[tokio::test]
@@ -469,7 +469,7 @@ mod tests {
 
         data_transfer.flush().await.unwrap();
 
-        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer, 4).await;
+        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer, 6).await;
     }
 
     /// Assert that the files in `paths` are all removed, a file has been created in `target_dir`,

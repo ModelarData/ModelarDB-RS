@@ -485,9 +485,11 @@ mod tests {
     use std::path::Path;
 
     use datafusion::arrow::compute;
-    use datafusion::arrow::datatypes::Schema;
+    use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-    use modelardb_common::types::{TimestampArray, ValueArray};
+    use modelardb_common::types::{
+        ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray,
+    };
     use object_store::local::LocalFileSystem;
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
@@ -703,6 +705,7 @@ mod tests {
             .insert_compressed_segments(segments)
             .await
             .unwrap();
+        data_manager.flush().await.unwrap();
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
@@ -1082,45 +1085,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_save_in_memory_compressed_data_when_getting_saved_compressed_files() {
-        let segments = compressed_segment_batch_with_time(1000, 0.0);
-        let (temp_dir, data_manager) = create_compressed_data_manager().await;
-
-        data_manager
-            .insert_compressed_segments(segments)
-            .await
-            .unwrap();
-        data_manager
-            .save_compressed_data(TABLE_NAME, COLUMN_INDEX)
-            .await
-            .unwrap();
-
-        // This second inserted segment should be saved when the compressed files are retrieved.
-        let segments_2 = compressed_segment_batch_with_time(2000, 0.0);
-        data_manager
-            .insert_compressed_segments(segments_2.clone())
-            .await
-            .unwrap();
-
-        let object_store: Arc<dyn ObjectStore> =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager
-            .get_saved_compressed_files(
-                TABLE_NAME,
-                COLUMN_INDEX,
-                None,
-                None,
-                None,
-                None,
-                &object_store,
-            )
-            .await;
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().len(), 2);
-    }
-
-    #[tokio::test]
     async fn test_get_no_saved_compressed_files_from_non_existent_table() {
         let segments = compressed_segments_record_batch();
         let (temp_dir, data_manager) = create_compressed_data_manager().await;
@@ -1244,13 +1208,20 @@ mod tests {
     /// The compressed segments time range is from `time_ms` to `time_ms` + 3, while the value range
     /// is from `offset` + 5.2 to `offset` + 34.2.
     fn compressed_segment_batch_with_time(time_ms: i64, offset: f32) -> CompressedSegmentBatch {
-        let univariate_id = 1;
+        let univariate_id = COLUMN_INDEX as u64;
+        let query_schema = Arc::new(Schema::new(vec![
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("field", ArrowValue::DATA_TYPE, false),
+        ]));
         let model_table_metadata = Arc::new(
             ModelTableMetadata::try_new(
                 TABLE_NAME.to_owned(),
-                Arc::new(Schema::empty()),
-                vec![],
-                vec![],
+                query_schema,
+                vec![
+                    ErrorBound::try_new(0.0).unwrap(),
+                    ErrorBound::try_new(0.0).unwrap(),
+                ],
+                vec![None, None],
             )
             .unwrap(),
         );

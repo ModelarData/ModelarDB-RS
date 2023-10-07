@@ -43,6 +43,9 @@ use crate::query::ModelTable;
 use crate::storage::{self, StorageEngine};
 use crate::{optimizer, Context, ServerMode};
 
+/// Expected size of the compressed data buffers produced in the tests.
+pub const UNCOMPRESSED_BUFFER_SIZE: usize = 786432;
+
 /// Expected size of the compressed segments produced in the tests.
 pub const COMPRESSED_SEGMENTS_SIZE: usize = 1335;
 
@@ -148,6 +151,12 @@ pub fn model_table_metadata() -> ModelTableMetadata {
     .unwrap()
 }
 
+/// Return [`ModelTableMetadata`] in an [`Arc`] for a model table with a schema containing a tag
+/// column, a timestamp column, and two field columns.
+pub fn model_table_metadata_arc() -> Arc<ModelTableMetadata> {
+    Arc::new(model_table_metadata())
+}
+
 /// Return a [`RecordBatch`] containing three compressed segments.
 pub fn compressed_segments_record_batch() -> RecordBatch {
     compressed_segments_record_batch_with_time(1, 0, 0.0)
@@ -197,32 +206,19 @@ pub fn compressed_segments_record_batch_with_time(
     .unwrap()
 }
 
-/// Create an instance of [`ModelTableMetadata`] with as little information as possible.
-pub fn empty_model_table_metadata() -> Arc<ModelTableMetadata> {
-    Arc::new(
-        ModelTableMetadata::try_new(
-            "table_name".to_owned(),
-            Arc::new(Schema::empty()),
-            vec![],
-            vec![],
-        )
-        .unwrap(),
-    )
-}
-
 /// Parse, plan, and optimize the `query` for execution on data in `path`.
 pub async fn query_optimized_physical_query_plan(
     path: &Path,
     query: &str,
 ) -> Arc<dyn ExecutionPlan> {
     let context = test_context(path).await;
-    let model_table_metadata = model_table_metadata();
+    let model_table_metadata = model_table_metadata_arc();
 
     context
         .session
         .register_table(
             "model_table",
-            ModelTable::new(context.clone(), Arc::new(model_table_metadata)),
+            ModelTable::new(context.clone(), model_table_metadata),
         )
         .unwrap();
 

@@ -79,6 +79,7 @@ impl MemoryPool {
     pub(super) fn adjust_uncompressed_memory(&self, size_in_bytes: isize) {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         *self.remaining_uncompressed_memory_in_bytes.lock().unwrap() += size_in_bytes;
+        self.wait_for_uncompressed_memory.notify_all();
     }
 
     /// Return the amount of memory available for uncompressed data in bytes.
@@ -125,8 +126,7 @@ impl MemoryPool {
     /// Change the amount of memory available for storing compressed data by `size_in_bytes`.
     pub(super) fn adjust_compressed_memory(&self, size_in_bytes: isize) {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        *self.remaining_uncompressed_memory_in_bytes.lock().unwrap() += size_in_bytes;
-        self.wait_for_uncompressed_memory.notify_all();
+        *self.remaining_compressed_memory_in_bytes.lock().unwrap() += size_in_bytes;
     }
 
     /// Return the amount of memory available for storing compressed data in bytes.

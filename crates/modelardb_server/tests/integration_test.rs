@@ -638,7 +638,7 @@ fn test_can_collect_metrics() {
             .downcast_ref::<UInt32Array>()
             .unwrap()
             .values(),
-        &[786432, 0]
+        &[786432, 0] // 786432 is common_test::UNCOMPRESSED_BUFFER_SIZE
     );
 
     // The amount of bytes used for compressed memory changes depending on the compression so we
