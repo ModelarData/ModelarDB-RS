@@ -235,7 +235,8 @@ impl StorageEngine {
         })
     }
 
-    /// Add references to the [`UncompressedDataBuffer`] currently on disk to [`UncompressedDataManager`].
+    /// Add references to the [`uncompressed_data_buffer::UncompressedDataBuffer`] currently on disk
+    /// to [`UncompressedDataManager`].
     pub(super) async fn initialize(
         &self,
         local_data_folder: PathBuf,

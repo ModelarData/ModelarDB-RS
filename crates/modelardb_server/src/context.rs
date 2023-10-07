@@ -103,7 +103,7 @@ impl Context {
         }
     }
 
-    /// Return [`Status`] if a table named `table_name` exists in the default catalog.
+    /// Return [`ModelarDbError`] if a table named `table_name` exists in the default catalog.
     pub async fn check_if_table_exists(&self, table_name: &str) -> Result<(), ModelarDbError> {
         let maybe_schema = self.schema_of_table_in_default_database_schema(table_name);
         if maybe_schema.await.is_ok() {

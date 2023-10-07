@@ -47,8 +47,9 @@ pub(super) struct UncompressedDataManager {
     /// Path to the folder containing all uncompressed data managed by the
     /// [`StorageEngine`](crate::storage::StorageEngine).
     local_data_folder: PathBuf,
-    /// Counter incremented for each [`RecordBatch`] of data points ingested. The value is assigned
-    /// to buffers that are created or updated and is used to flush buffers that are no longer used.
+    /// Counter incremented for each [`datafusion::arrow::record_batch::RecordBatch`] of data points
+    /// ingested. The value is assigned to buffers that are created or updated and is used to flush
+    /// buffers that are no longer used.
     current_batch_index: AtomicU64,
     /// The [`UncompressedDataBuffers`](UncompressedDataBuffer) currently being filled with ingested
     /// data points.
@@ -155,8 +156,8 @@ impl UncompressedDataManager {
         Ok(())
     }
 
-    /// Read and process messages received from the [`StorageEngine`] to either ingest uncompressed
-    /// data, flush buffers, or stop.
+    /// Read and process messages received from the [`super::StorageEngine`] to either ingest
+    /// uncompressed data, flush buffers, or stop.
     pub(super) fn process_uncompressed_messages(
         &self,
         runtime: Arc<Runtime>,
@@ -554,9 +555,10 @@ impl UncompressedDataManager {
         Ok(())
     }
 
-    /// Read the next full [`UncompressedInMemoryDataBuffer`] from a channel, compress it, and send
-    /// the compressed segments to the [`CompressedInMemoryDataBuffer`] over a channel. Returns
-    /// [`IOError`] if the error bound cannot be retrieved from the [`MetadataManager`].
+    /// Read the next full [`super::uncompressed_data_buffer::UncompressedInMemoryDataBuffer`] from
+    /// a channel, compress it, and send the compressed segments to the
+    /// [`super::CompressedDataManager`] over a channel. Returns [`IOError`] if the error bound
+    /// cannot be retrieved from the [`MetadataManager`].
     async fn compress_finished_buffer(
         &self,
         mut data_buffer: Box<dyn UncompressedDataBuffer>,

@@ -120,8 +120,8 @@ impl CompressedDataManager {
         StorageEngine::write_batch_to_apache_parquet_file(record_batch, file_path.as_path(), None)
     }
 
-    /// Read and process messages received from the [`UncompressedDataManager`] to either ingest
-    /// compressed data, flush buffers, or stop.
+    /// Read and process messages received from the [`super::UncompressedDataManager`] to either
+    /// ingest compressed data, flush buffers, or stop.
     pub(super) fn process_compressed_messages(&self, runtime: Arc<Runtime>) -> Result<(), IOError> {
         loop {
             let message = self
