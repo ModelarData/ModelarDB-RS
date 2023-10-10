@@ -65,7 +65,7 @@ impl MetadataManager {
     ) -> Result<(), sqlx::Error> {
         // Create the manager_metadata table if it does not exist.
         metadata_database_pool
-            .execute("CREATE TABLE IF NOT EXISTS manager_metadata (auth_key TEXT PRIMARY KEY)")
+            .execute("CREATE TABLE IF NOT EXISTS manager_metadata (key TEXT PRIMARY KEY)")
             .await?;
 
         // Create the nodes table if it does not exist.
@@ -81,32 +81,32 @@ impl MetadataManager {
         Ok(())
     }
 
-    /// Retrieve the authentication key for the manager from the manager_metadata table. If a key
-    /// does not already exist, create one and save it to the database.
-    pub async fn auth_key(&self) -> Result<Uuid, sqlx::Error> {
-        let maybe_row = sqlx::query("SELECT auth_key FROM manager_metadata")
+    /// Retrieve the key for the manager from the manager_metadata table. If a key does not already
+    /// exist, create one and save it to the database.
+    pub async fn manager_key(&self) -> Result<Uuid, sqlx::Error> {
+        let maybe_row = sqlx::query("SELECT key FROM manager_metadata")
             .fetch_optional(&self.metadata_database_pool)
             .await?;
 
         if let Some(row) = maybe_row {
-            let auth_key: String = row.try_get("auth_key")?;
+            let manager_key: String = row.try_get("key")?;
 
-            Ok(auth_key
+            Ok(manager_key
                 .parse()
                 .map_err(|error| sqlx::Error::ColumnDecode {
-                    index: "auth_key".to_string(),
+                    index: "key".to_string(),
                     source: Box::new(error),
                 })?)
         } else {
-            let auth_key = Uuid::new_v4();
+            let manager_key = Uuid::new_v4();
 
-            // Add a new row in the manager_metadata table to persist the auth key.
-            sqlx::query("INSERT INTO manager_metadata (auth_key) VALUES ($1)")
-                .bind(auth_key.to_string())
+            // Add a new row in the manager_metadata table to persist the key.
+            sqlx::query("INSERT INTO manager_metadata (key) VALUES ($1)")
+                .bind(manager_key.to_string())
                 .execute(&self.metadata_database_pool)
                 .await?;
 
-            Ok(auth_key)
+            Ok(manager_key)
         }
     }
 

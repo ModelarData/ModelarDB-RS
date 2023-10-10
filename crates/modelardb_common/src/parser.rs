@@ -1046,13 +1046,14 @@ mod tests {
             "TAN(field_1 * PI() / 180)",
         ];
 
-        let schema = Arc::new(Schema::new(vec![
+        let df_schema = Schema::new(vec![
             Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
             Field::new("field_1", ArrowValue::DATA_TYPE, false),
             Field::new("field_2", ArrowValue::DATA_TYPE, false),
             Field::new("tag_1", DataType::Utf8, false),
-        ]));
-        let df_schema = Arc::try_unwrap(schema).unwrap().to_dfschema().unwrap();
+        ])
+        .to_dfschema()
+        .unwrap();
 
         let dialect = ModelarDbDialect::new();
         for generation_expr in generation_exprs_sql {

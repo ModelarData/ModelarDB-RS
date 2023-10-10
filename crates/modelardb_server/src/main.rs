@@ -151,7 +151,7 @@ fn main() -> Result<(), String> {
         .block_on(context.metadata_manager.register_model_tables(&context))
         .map_err(|error| format!("Unable to register model tables: {error}"))?;
 
-    if let ClusterMode::MultiNode((manager_url, _key)) = &cluster_mode {
+    if let ClusterMode::MultiNode(manager_url, _key) = &cluster_mode {
         runtime
             .block_on(context.register_and_save_manager_tables(manager_url, &context))
             .map_err(|error| format!("Unable to register manager tables: {error}"))?;
@@ -207,7 +207,7 @@ async fn parse_command_line_arguments(
 
             Ok((
                 ServerMode::Cloud,
-                ClusterMode::MultiNode((manager_url.to_string(), key)),
+                ClusterMode::MultiNode(manager_url.to_string(), key),
                 DataFolders {
                     local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                     remote_data_folder: Some(remote_object_store.clone()),
@@ -221,7 +221,7 @@ async fn parse_command_line_arguments(
 
             Ok((
                 ServerMode::Edge,
-                ClusterMode::MultiNode((manager_url.to_string(), key)),
+                ClusterMode::MultiNode(manager_url.to_string(), key),
                 DataFolders {
                     local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                     remote_data_folder: Some(remote_object_store),
@@ -279,7 +279,7 @@ async fn register_node(
         .map_err(|error| format!("Could not connect to manager: {error}"))?;
 
     // Add the url and mode of the server to the action request.
-    let localhost_with_port = "127.0.0.1:".to_owned() + &PORT.to_string();
+    let localhost_with_port = "grpc://127.0.0.1:".to_owned() + &PORT.to_string();
     let mut body = encode_argument(localhost_with_port.as_str());
     body.append(&mut encode_argument(server_mode.to_string().as_str()));
 

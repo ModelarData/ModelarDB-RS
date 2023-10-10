@@ -30,8 +30,8 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
-use datafusion::arrow::error::ArrowError;
-use datafusion::arrow::ipc::writer::IpcWriteOptions;
+use arrow::error::ArrowError;
+use arrow::ipc::writer::IpcWriteOptions;
 use futures::{stream, Stream};
 use modelardb_common::arguments::{decode_argument, encode_argument, parse_object_store_arguments};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;

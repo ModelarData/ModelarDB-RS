@@ -76,7 +76,7 @@ impl Cluster {
             self.nodes.retain(|n| n.url != url);
 
             // Flush the node and kill the process running on the node.
-            let mut flight_client = FlightServiceClient::connect(format!("grpc://{url}"))
+            let mut flight_client = FlightServiceClient::connect(url.to_owned())
                 .await
                 .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
 
@@ -85,7 +85,7 @@ impl Cluster {
                 body: vec![].into(),
             };
 
-            // Add the key to the request metadata to authenticate that the request is from the manager.
+            // Add the key to the request metadata to indicate that the request is from the manager.
             let mut request = Request::new(action);
 
             // unwrap() is safe since a UUID cannot contain invalid characters.
@@ -121,9 +121,12 @@ impl Cluster {
         let mut update_object_store_futures: FuturesUnordered<_> = self
             .nodes
             .iter()
-            .map(|node| self.connect_and_do_action(node.url.clone(), action.clone(), key))
+            .map(|node| self.connect_and_do_action(&node.url, action.clone(), key))
             .collect();
 
+        // TODO: Fix issue where we return immediately if we encounter an error. If it is a
+        //       connection error, we either need to retry later or remove the node.
+        // Run the futures concurrently and log when the object store has been updated on each node.
         while let Some(result) = update_object_store_futures.next().await {
             info!(
                 "Updated remote object store on node with url '{}'.",
@@ -151,9 +154,12 @@ impl Cluster {
         let mut create_table_futures: FuturesUnordered<_> = self
             .nodes
             .iter()
-            .map(|node| self.connect_and_do_action(node.url.clone(), action.clone(), key))
+            .map(|node| self.connect_and_do_action(&node.url, action.clone(), key))
             .collect();
 
+        // TODO: Fix issue where we return immediately if we encounter an error. If it is a
+        //       connection error, we either need to retry later or remove the node.
+        // Run the futures concurrently and log when the table has been created on each node.
         while let Some(result) = create_table_futures.next().await {
             info!(
                 "Created table '{}' on node with url '{}'.",
@@ -169,15 +175,15 @@ impl Cluster {
     /// [`ClusterError`](ModelarDbError::ClusterError).
     async fn connect_and_do_action(
         &self,
-        url: String,
+        url: &str,
         action: Action,
         key: Uuid,
     ) -> Result<String, ModelarDbError> {
-        let mut flight_client = FlightServiceClient::connect(format!("grpc://{url}"))
+        let mut flight_client = FlightServiceClient::connect(url.to_owned())
             .await
             .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
 
-        // Add the key to the request metadata to authenticate that the request is from the manager.
+        // Add the key to the request metadata to indicate that the request is from the manager.
         let mut request = Request::new(action);
 
         // unwrap() is safe since a UUID cannot contain invalid characters.
@@ -190,7 +196,7 @@ impl Cluster {
             .await
             .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
 
-        Ok(url)
+        Ok(url.to_owned())
     }
 }
 

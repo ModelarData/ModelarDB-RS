@@ -321,4 +321,9 @@ mod tests {
     fn test_normalize_table_name_uppercase() {
         assert_eq!("table_name", normalize_name("TABLE_NAME"));
     }
+
+    #[test]
+    fn test_normalize_table_name_mixed_case() {
+        assert_eq!("table_name", normalize_name("Table_Name"));
+    }
 }

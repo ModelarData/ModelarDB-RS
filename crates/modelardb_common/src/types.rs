@@ -136,7 +136,7 @@ impl fmt::Display for ServerMode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClusterMode {
     SingleNode,
-    MultiNode((String, String)),
+    MultiNode(String, String),
 }
 
 #[cfg(test)]

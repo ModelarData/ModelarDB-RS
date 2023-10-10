@@ -300,7 +300,7 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         let configuration_manager = self.context.configuration_manager.read().await;
 
-        if let ClusterMode::MultiNode((_manager_url, key)) = configuration_manager.cluster_mode() {
+        if let ClusterMode::MultiNode(_manager_url, key) = configuration_manager.cluster_mode() {
             let restricted_actions = [
                 "CommandStatementUpdate",
                 "UpdateRemoteObjectStore",
@@ -311,12 +311,12 @@ impl FlightServiceHandler {
                 let request_key = metadata
                     .get("x-manager-key")
                     .ok_or(Status::unauthenticated(
-                        "Missing manager authentication key.",
+                        "Missing manager key.",
                     ))?;
 
                 if key != request_key {
                     return Err(Status::unauthenticated(
-                        "Manager authentication key is invalid.",
+                        "Manager key is invalid.",
                     ));
                 }
             }

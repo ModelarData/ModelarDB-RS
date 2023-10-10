@@ -56,7 +56,7 @@ pub struct Context {
     pub remote_data_folder: RwLock<RemoteDataFolder>,
     /// Cluster of nodes currently controlled by the manager.
     pub cluster: RwLock<Cluster>,
-    /// Key used to authenticate requests coming from the manager.
+    /// Key used to identify requests coming from the manager.
     pub key: Uuid,
 }
 
@@ -98,7 +98,7 @@ fn main() -> Result<(), String> {
         }
 
         let key = metadata_manager
-            .auth_key()
+            .manager_key()
             .await
             .map_err(|error| error.to_string())?;
 
