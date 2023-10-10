@@ -88,19 +88,15 @@ impl MemoryPool {
         *self.remaining_uncompressed_memory_in_bytes.lock().unwrap()
     }
 
-    /// Reserve `size_in_bytes` bytes of memory for uncompressed data. For simplicity and to not
-    /// immediately read spilled
-    /// [`UncompressedDataBuffers`](crate::storage::uncompressed_data_buffer::UncompressedDataBuffer),
-    /// [`StorageEngine`](crate::storage::StorageEngine) spills new instead of finished
-    /// [`UncompressedDataBuffers`](crate::storage::uncompressed_data_buffer::UncompressedDataBuffer),
-    /// thus, it may temporarily over allocate memory for uncompressed data.
+    /// Reserve `size_in_bytes` bytes of memory for uncompressed data. This is a soft limit, thus
+    /// there may temporarily be an over allocation of memory for uncompressed data.
     pub(super) fn reserve_uncompressed_memory(&self, size_in_bytes: usize) {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         *self.remaining_uncompressed_memory_in_bytes.lock().unwrap() -= size_in_bytes as isize;
     }
 
     /// Wait until `size_in_bytes` bytes of memory is available for uncompressed data and then
-    /// reserve it. Thus, it this method never over allocates memory for uncompressed data.
+    /// reserve it. Thus, this method never over allocates memory for uncompressed data.
     pub(super) fn wait_for_uncompressed_memory(&self, size_in_bytes: usize) {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         let mut memory_in_bytes = self.remaining_uncompressed_memory_in_bytes.lock().unwrap();
@@ -160,7 +156,7 @@ impl MemoryPool {
     }
 }
 
-/// Messages that can be send between the components of [`super::StorageEngine`].
+/// Messages that can be sent between the components of [`StorageEngine`](super::StorageEngine).
 pub(super) enum Message<T> {
     Data(T),
     Flush,
@@ -170,38 +166,44 @@ pub(super) enum Message<T> {
 /// Channels used by the threads in the storage engine to communicate.
 pub(super) struct Channels {
     /// Sender of [`UncompressedDataMultivariates`](UncompressedDataMultivariate) with parts of a
-    /// multivariate time series from the [`super::StorageEngine`] to the
-    /// [`super::UncompressedDataManager`] were they are split into fixed-length univariate time
-    /// series.
+    /// multivariate time series from the [`StorageEngine`](super::StorageEngine) to the
+    /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are split into
+    /// fixed-length univariate time series.
     pub(super) multivariate_data_sender: Sender<Message<UncompressedDataMultivariate>>,
     /// Receiver of [`UncompressedDataMultivariates`](UncompressedDataMultivariate) with parts of a
-    /// multivariate time series from the [`super::StorageEngine`] in the
-    /// [`super::UncompressedDataManager`] were they are split into fixed-length univariate time
-    /// series.
+    /// multivariate time series from the [`StorageEngine`](super::StorageEngine) in the
+    /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are split into
+    /// fixed-length univariate time series.
     pub(super) multivariate_data_receiver: Receiver<Message<UncompressedDataMultivariate>>,
     /// Sender of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
-    /// time series from the [`super::UncompressedDataManager`] to the
-    /// [`super::UncompressedDataManager`] where they are compressed into compressed segments.
+    /// time series from the [`UncompressedDataManager`](super::UncompressedDataManager) to the
+    /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are compressed into
+    /// compressed segments.
     pub(super) univariate_data_sender: Sender<Message<Box<dyn UncompressedDataBuffer>>>,
-    /// Receiver of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an
-    /// univariate time series from the [`super::UncompressedDataManager`] in the
-    /// [`super::UncompressedDataManager`] where they are compressed into compressed segments.
+    /// Receiver of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
+    /// time series from the [`UncompressedDataManager`](super::UncompressedDataManager) in the
+    /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are compressed into
+    /// compressed segments.
     pub(super) univariate_data_receiver: Receiver<Message<Box<dyn UncompressedDataBuffer>>>,
-    /// Sender of [`CompressedSegmentBatchs`](CompressedSegmentBatch) with compressed segments from
-    /// the [`super::UncompressedDataManager`] to the [`super::CompressedDataManager`] were they are
-    /// written to a local data folder and later, possibly, a remote data folder.
+    /// Sender of [`CompressedSegmentBatches`](CompressedSegmentBatch) with compressed segments from
+    /// the [`UncompressedDataManager`](super::UncompressedDataManager) to the
+    /// [`CompressedDataManager`](super::CompressedDataManager) where they are written to a local
+    /// data folder and later, possibly, a remote data folder.
     pub(super) compressed_data_sender: Sender<Message<CompressedSegmentBatch>>,
     /// Receiver of [`CompressedSegmentBatchs`](CompressedSegmentBatch) with compressed segments
-    /// from the [`super::UncompressedDataManager`] in the [`super::CompressedDataManager`] were
-    /// they are written to a local data folder and later, possibly, a remote data folder.
+    /// from the [`UncompressedDataManager`](super::UncompressedDataManager) in the
+    /// [`CompressedDataManager`](super::CompressedDataManager) where they are written to a local
+    /// data folder and later, possibly, a remote data folder.
     pub(super) compressed_data_receiver: Receiver<Message<CompressedSegmentBatch>>,
-    /// Sender of [`Results`](Result) from [`super::UncompressedDataManager`] or
-    /// [`super::CompressedDataManager`] to indicate that an asynchronous process has succeeded or
-    /// failed to [`super::StorageEngine`].
+    /// Sender of [`Results`](Result) from
+    /// [`UncompressedDataManager`](super::UncompressedDataManager) or
+    /// [`CompressedDataManager`](super::CompressedDataManager) to indicate that an asynchronous
+    /// process has succeeded or failed to [`StorageEngine`](super::StorageEngine).
     pub(super) result_sender: Sender<Result<(), Box<dyn Error + Send + Sync>>>,
-    /// Receiver of [`Results`](Result) from [`super::UncompressedDataManager`] or
-    /// [`super::CompressedDataManager`] to indicate that an asynchronous process has succeeded or
-    /// failed to [`super::StorageEngine`].
+    /// Receiver of [`Results`](Result) from
+    /// [`UncompressedDataManager`](super::UncompressedDataManager) or
+    /// [`CompressedDataManager`](super::CompressedDataManager) to indicate that an asynchronous
+    /// process has succeeded or failed to [`StorageEngine`](super::StorageEngine).
     pub(super) result_receiver: Receiver<Result<(), Box<dyn Error + Send + Sync>>>,
 }
 

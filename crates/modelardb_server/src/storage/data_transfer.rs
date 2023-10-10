@@ -15,6 +15,7 @@
 
 //! Support for efficiently transferring data to a remote object store. Data saved locally on disk
 //! is managed here until it is of a sufficient size to be transferred efficiently.
+
 use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
 use std::path::{Path, PathBuf};

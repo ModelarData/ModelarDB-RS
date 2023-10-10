@@ -32,7 +32,7 @@ use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, error, info};
 
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
 use crate::storage::data_transfer::DataTransfer;
@@ -119,8 +119,9 @@ impl CompressedDataManager {
         StorageEngine::write_batch_to_apache_parquet_file(record_batch, file_path.as_path(), None)
     }
 
-    /// Read and process messages received from the [`super::UncompressedDataManager`] to either
-    /// ingest compressed data, flush buffers, or stop.
+    /// Read and process messages received from the
+    /// [`UncompressedDataManager`](super::UncompressedDataManager) to either insert compressed
+    /// data, flush buffers, or stop.
     pub(super) fn process_compressed_messages(&self, runtime: Arc<Runtime>) -> Result<(), String> {
         loop {
             let message = self
@@ -136,14 +137,14 @@ impl CompressedDataManager {
                         .map_err(|error| error.to_string())?;
                 }
                 Message::Flush => {
-                    runtime.block_on(self.flush()).unwrap();
+                    self.flush_and_log_errors(&runtime);
                     self.channels
                         .result_sender
                         .send(Ok(()))
                         .map_err(|error| error.to_string())?;
                 }
                 Message::Stop => {
-                    runtime.block_on(self.flush()).unwrap();
+                    self.flush_and_log_errors(&runtime);
                     self.channels
                         .result_sender
                         .send(Ok(()))
@@ -164,7 +165,7 @@ impl CompressedDataManager {
         compressed_segment_batch: CompressedSegmentBatch,
     ) -> Result<(), IOError> {
         let column_index = compressed_segment_batch.column_index();
-        let model_table_name = compressed_segment_batch.model_table_name().to_owned();
+        let model_table_name = compressed_segment_batch.model_table_name();
 
         debug!(
             "Inserting batch with {} rows into compressed data buffer for column '{}' in table '{}'.",
@@ -318,6 +319,35 @@ impl CompressedDataManager {
         Ok(())
     }
 
+    /// Flush the data that the [`CompressedDataManager`] is currently managing. Writes a log
+    /// message if the data cannot be flushed.
+    fn flush_and_log_errors(&self, runtime: &Runtime) {
+        runtime.block_on(async {
+            if let Err(error) = self.flush().await {
+                error!(
+                    "Failed to flush data in compressed data manager due to: {}",
+                    error
+                );
+            }
+        });
+    }
+
+    /// Flush the data that the [`CompressedDataManager`] is currently managing. Returns an
+    /// [`IOError`] if the data cannot be flushed.
+    async fn flush(&self) -> Result<(), IOError> {
+        info!(
+            "Flushing the remaining {} compressed data buffers.",
+            self.compressed_queue.len()
+        );
+
+        while !self.compressed_queue.is_empty() {
+            let (table_name, column_index) = self.compressed_queue.pop().unwrap();
+            self.save_compressed_data(&table_name, column_index).await?;
+        }
+
+        Ok(())
+    }
+
     /// Save the compressed data that belongs to the column at `column_index` in the table with
     /// `table_name` to disk. The size of the saved compressed data is added back to the remaining
     /// reserved memory. If the data is saved successfully, return [`Ok`], otherwise return
@@ -329,11 +359,11 @@ impl CompressedDataManager {
     ) -> Result<(), IOError> {
         debug!("Saving compressed time series to disk.");
 
-        let mut compressed_data_buffer = self
+        // unwrap() is safe as key is read from compressed_queue.
+        let (_key, mut compressed_data_buffer) = self
             .compressed_data_buffers
             .remove(&(table_name.to_owned(), column_index))
-            .unwrap()
-            .1;
+            .unwrap();
 
         let folder_path = self
             .local_data_folder
@@ -359,12 +389,6 @@ impl CompressedDataManager {
             .unwrap()
             .append(file_size, true);
 
-        debug!(
-            "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
-            freed_memory,
-            self.memory_pool.remaining_compressed_memory_in_bytes()
-        );
-
         // Pass the saved compressed file to the data transfer component if a remote data folder
         // was provided. If the total size of the files related to table_name have reached the
         // transfer threshold, the files are transferred to the remote object store.
@@ -375,23 +399,14 @@ impl CompressedDataManager {
                 .map_err(|error| IOError::new(ErrorKind::Other, error.to_string()))?;
         }
 
-        // Update the remaining memory for compressed data and record the change.
+        // Update the remaining memory for compressed data.
         self.memory_pool.free_compressed_memory(freed_memory);
 
-        Ok(())
-    }
-
-    /// Flush the data that the [`CompressedDataManager`] is currently managing.
-    async fn flush(&self) -> Result<(), IOError> {
-        info!(
-            "Flushing the remaining {} compressed data buffers.",
-            self.compressed_queue.len()
+        debug!(
+            "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
+            freed_memory,
+            self.memory_pool.remaining_compressed_memory_in_bytes()
         );
-
-        while !self.compressed_queue.is_empty() {
-            let (table_name, column_index) = self.compressed_queue.pop().unwrap();
-            self.save_compressed_data(&table_name, column_index).await?;
-        }
 
         Ok(())
     }
@@ -1208,9 +1223,9 @@ mod tests {
         compressed_segment_batch_with_time(0, 0.0)
     }
 
-    /// Return a [`CompressedSegmentBatch`] containing three compressed segments from univariate_id.
-    /// The compressed segments time range is from `time_ms` to `time_ms` + 3, while the value range
-    /// is from `offset` + 5.2 to `offset` + 34.2.
+    /// Return a [`CompressedSegmentBatch`] containing three compressed segments. The compressed
+    /// segments time range is from `time_ms` to `time_ms` + 3, while the value range is from
+    /// `offset` + 5.2 to `offset` + 34.2.
     fn compressed_segment_batch_with_time(time_ms: i64, offset: f32) -> CompressedSegmentBatch {
         let univariate_id = COLUMN_INDEX as u64;
         let query_schema = Arc::new(Schema::new(vec![
@@ -1232,11 +1247,7 @@ mod tests {
         let compressed_segments =
             common_test::compressed_segments_record_batch_with_time(univariate_id, time_ms, offset);
 
-        CompressedSegmentBatch {
-            univariate_id,
-            model_table_metadata,
-            compressed_segments,
-        }
+        CompressedSegmentBatch::new(univariate_id, model_table_metadata, compressed_segments)
     }
 
     // Tests for is_compressed_file_within_time_and_value_range().

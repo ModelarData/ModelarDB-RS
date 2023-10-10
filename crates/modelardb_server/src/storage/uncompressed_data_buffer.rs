@@ -47,7 +47,7 @@ const RECORD_BATCH_OFFSET_REQUIRED_FOR_UNUSED: u64 = 1;
 pub(super) struct UncompressedDataMultivariate {
     /// Metadata of the model table to insert the data points into.
     pub(super) model_table_metadata: Arc<ModelTableMetadata>,
-    /// Metadata of the model table to insert the data points into.
+    /// Uncompressed multivariate data points to insert.
     pub(super) multivariate_data_points: RecordBatch,
 }
 
@@ -216,7 +216,7 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
         self.univariate_id
     }
 
-    /// Return the metadata for the table the buffer stores data points from.
+    /// Return the metadata for the model table the buffer stores data points for.
     fn model_table_metadata(&self) -> &Arc<ModelTableMetadata> {
         &self.model_table_metadata
     }
@@ -348,7 +348,7 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
         self.univariate_id
     }
 
-    /// Return the metadata for the table the buffer stores data points from.
+    /// Return the metadata for the model table the buffer stores data points for.
     fn model_table_metadata(&self) -> &Arc<ModelTableMetadata> {
         &self.model_table_metadata
     }

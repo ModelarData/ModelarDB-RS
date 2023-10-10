@@ -47,9 +47,8 @@ pub struct Context {
 }
 
 impl Context {
-    /// Return the schema of `table_name` if the table exists in the default
-    /// database schema, otherwise a [`ModelarDbError`] indicating at what level the
-    /// lookup failed is returned.
+    /// Return the schema of `table_name` if the table exists in the default database schema,
+    /// otherwise a [`ModelarDbError`] indicating at what level the lookup failed is returned.
     pub async fn schema_of_table_in_default_database_schema(
         &self,
         table_name: &str,
@@ -79,10 +78,9 @@ impl Context {
         Ok(schema)
     }
 
-    /// Lookup the [`ModelTableMetadata`] of the model table with name
-    /// `table_name` if it exists. Specifically, the method returns:
-    /// * [`ModelTableMetadata`] if a model table with the name `table_name`
-    /// exists.
+    /// Lookup the [`ModelTableMetadata`] of the model table with name `table_name` if it exists.
+    /// Specifically, the method returns:
+    /// * [`ModelTableMetadata`] if a model table with the name `table_name` exists.
     /// * [`None`] if a table with the name `table_name` exists.
     /// * [`ModelarDbError`] if the default catalog, the default schema, a table with the name
     /// `table_name`, or a model table with the name `table_name` does not exists.

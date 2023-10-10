@@ -249,8 +249,8 @@ impl MetadataManager {
         (univariate_id & 1023) as u16
     }
 
-    /// Return a mapping from tag hash to table names. Returns an [`Error`] if the necessary data
-    /// cannot be retrieved from the metadata database.
+    /// Return the name of the table that contains the time series with `univariate_id`. Returns an
+    /// [`Error`] if the necessary data cannot be retrieved from the metadata database.
     pub async fn univariate_id_to_table_name(&self, univariate_id: u64) -> Result<String> {
         let mut connection = self.metadata_database_pool.acquire().await?;
 
@@ -261,13 +261,11 @@ impl MetadataManager {
         let select_statement = format!(
             "SELECT table_name FROM model_table_hash_table_name WHERE hash = {signed_tag_hash}",
         );
-        let mut rows = sqlx::query(&select_statement).fetch(&mut *connection);
 
-        if let Some(row) = rows.try_next().await? {
-            Ok(row.try_get(0)?)
-        } else {
-            Err(Error::RowNotFound)
-        }
+        sqlx::query(&select_statement)
+            .fetch_one(&mut *connection)
+            .await?
+            .try_get(0)
     }
 
     /// Return a mapping from tag hashes to the tags in the columns with the names in

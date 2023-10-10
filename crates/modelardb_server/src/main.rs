@@ -152,7 +152,7 @@ fn main() -> Result<(), String> {
     // Setup CTRL+C handler.
     setup_ctrl_c_handler(&context, &runtime);
 
-    // Initialize storage manager with spilled buffers.
+    // Initialize storage engine with spilled buffers.
     runtime
         .block_on(async {
             context

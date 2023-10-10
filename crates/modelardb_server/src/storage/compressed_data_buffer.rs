@@ -33,21 +33,33 @@ use crate::storage::StorageEngine;
 
 /// Compressed segments representing data points from a column in a model table as one
 /// [`RecordBatch`].
-#[derive(Clone,Debug)]
+#[derive(Clone, Debug)]
 pub(super) struct CompressedSegmentBatch {
     /// Univariate id that uniquely identifies the univariate time series the compressed segments
     /// represents data points for.
-    pub(super) univariate_id: u64,
+    univariate_id: u64,
     /// Metadata of the model table to insert the data points into.
-    pub(super) model_table_metadata: Arc<ModelTableMetadata>,
-    /// Metadata of the model table to insert the data points into.
+    model_table_metadata: Arc<ModelTableMetadata>,
+    /// Compressed segments representing the data points to insert.
     pub(super) compressed_segments: RecordBatch,
 }
 
 impl CompressedSegmentBatch {
+    pub(super) fn new(
+        univariate_id: u64,
+        model_table_metadata: Arc<ModelTableMetadata>,
+        compressed_segments: RecordBatch,
+    ) -> Self {
+        Self {
+            univariate_id,
+            model_table_metadata,
+            compressed_segments,
+        }
+    }
+
     /// Return the name of the table the buffer stores data for.
-    pub(super) fn model_table_name(&self) -> &str {
-        self.model_table_metadata.name.as_str()
+    pub(super) fn model_table_name(&self) -> String {
+        self.model_table_metadata.name.clone()
     }
 
     /// Return the index of the column the buffer stores data for.

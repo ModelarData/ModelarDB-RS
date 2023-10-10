@@ -93,7 +93,7 @@ pub static QUERY_SCHEMA: Lazy<QuerySchema> = Lazy::new(|| {
     ])))
 });
 
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`]used for the configuration.
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for the configuration.
 pub static CONFIGURATION_SCHEMA: Lazy<ConfigurationSchema> = Lazy::new(|| {
     ConfigurationSchema(Arc::new(Schema::new(vec![
         Field::new("setting", DataType::Utf8, false),

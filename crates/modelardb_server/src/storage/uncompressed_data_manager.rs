@@ -22,12 +22,13 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
+use crossbeam_channel::SendError;
 use dashmap::DashMap;
 use datafusion::arrow::array::{Array, StringArray};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
 use tokio::runtime::Runtime;
-use tracing::debug;
+use tracing::{debug, error};
 
 use crate::context::Context;
 use crate::metadata::MetadataManager;
@@ -97,7 +98,8 @@ impl UncompressedDataManager {
         })
     }
 
-    /// Add references to the [`UncompressedDataBuffer`] currently on disk to [`UncompressedDataManager`].
+    /// Add references to the [`UncompressedDataBuffers`](UncompressedDataBuffer) currently on disk
+    /// to [`UncompressedDataManager`].
     pub(super) async fn initialize(
         &self,
         local_data_folder: PathBuf,
@@ -156,8 +158,8 @@ impl UncompressedDataManager {
         Ok(())
     }
 
-    /// Read and process messages received from the [`super::StorageEngine`] to either ingest
-    /// uncompressed data, flush buffers, or stop.
+    /// Read and process messages received from the [`StorageEngine`](super::StorageEngine) to
+    /// either ingest uncompressed data, flush buffers, or stop.
     pub(super) fn process_uncompressed_messages(
         &self,
         runtime: Arc<Runtime>,
@@ -176,14 +178,14 @@ impl UncompressedDataManager {
                         .map_err(|error| error.to_string())?;
                 }
                 Message::Flush => {
-                    self.flush().unwrap();
+                    self.flush_and_log_errors();
                     self.channels
                         .univariate_data_sender
                         .send(Message::Flush)
                         .map_err(|error| error.to_string())?;
                 }
                 Message::Stop => {
-                    self.flush().unwrap();
+                    self.flush_and_log_errors();
                     self.channels
                         .univariate_data_sender
                         .send(Message::Stop)
@@ -198,7 +200,7 @@ impl UncompressedDataManager {
 
     /// Insert `uncompressed_data_multivariate` into the in-memory buffer. If the data points are
     /// from a multivariate time series, they are first split into multiple univariate time series.
-    /// These univariate time series are then inserted into the storage engine. Return [`Err`] if
+    /// These univariate time series are then inserted into the storage engine. Return [`String`] if
     /// the channel or the metadata database could not be read from.
     async fn insert_data_points(
         &self,
@@ -306,7 +308,7 @@ impl UncompressedDataManager {
             .await
             .map_err(|error| error.to_string())?;
 
-        // Return the memory used by model_table_metadata to the pool right before it is de-allocated.
+        // Return the memory used by the data points to the pool right before they are de-allocated.
         self.memory_pool
             .free_uncompressed_memory(data_points.get_array_memory_size());
 
@@ -386,11 +388,10 @@ impl UncompressedDataManager {
             );
 
             // unwrap() is safe as this is only reachable if the buffer exists in the HashMap.
-            let full_uncompressed_in_memory_data_buffer = self
+            let (_univariate_id, full_uncompressed_in_memory_data_buffer) = self
                 .active_uncompressed_data_buffers
                 .remove(&univariate_id)
-                .unwrap()
-                .1;
+                .unwrap();
 
             let finished_uncompressed_data_buffer: Box<dyn UncompressedDataBuffer> =
                 if self.memory_pool.remaining_uncompressed_memory_in_bytes() <= 0 {
@@ -423,17 +424,13 @@ impl UncompressedDataManager {
         &self,
         uncompressed_in_memory_data_buffer: UncompressedInMemoryDataBuffer,
     ) -> Result<UncompressedOnDiskDataBuffer, IOError> {
+        debug_assert!(uncompressed_in_memory_data_buffer.is_full());
+
         let uncompressed_in_memory_data_buffer_debug_string =
             format!("{:?}", uncompressed_in_memory_data_buffer);
         let uncompressed_on_disk_data_buffer = uncompressed_in_memory_data_buffer
             .spill_to_apache_parquet(self.local_data_folder.as_path())
             .await?;
-
-        debug!(
-            "Spilled '{}'. Remaining reserved bytes: {}.",
-            uncompressed_in_memory_data_buffer_debug_string,
-            self.memory_pool.remaining_uncompressed_memory_in_bytes()
-        );
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
@@ -451,6 +448,12 @@ impl UncompressedDataManager {
 
         // Add the size of the in-memory data buffer back to the remaining reserved bytes.
         self.memory_pool.free_uncompressed_memory(freed_memory);
+
+        debug!(
+            "Spilled '{}'. Remaining reserved bytes: {}.",
+            uncompressed_in_memory_data_buffer_debug_string,
+            self.memory_pool.remaining_uncompressed_memory_in_bytes()
+        );
 
         Ok(uncompressed_on_disk_data_buffer)
     }
@@ -472,11 +475,10 @@ impl UncompressedDataManager {
 
         for univariate_id in univariate_ids_of_unused_buffers {
             // unwrap() is safe as the univariate_ids were just extracted from the map.
-            let buffer = self
+            let (_univariate_id, buffer) = self
                 .active_uncompressed_data_buffers
                 .remove(&univariate_id)
-                .unwrap()
-                .1;
+                .unwrap();
 
             self.channels
                 .univariate_data_sender
@@ -493,9 +495,21 @@ impl UncompressedDataManager {
     }
 
     /// Compress the uncompressed data buffer that the [`UncompressedDataManager`] is currently
-    /// managing, and return the compressed buffers and their univariate ids. Returns [`IOError`] if
-    /// the error bound cannot be retrieved from the [`MetadataManager`].
-    fn flush(&self) -> Result<(), IOError> {
+    /// managing, and return the compressed buffers and their univariate ids. Writes a log message
+    /// if a [`Message`] cannot be send to [`CompressedDataManager`](super::CompressedDataManager).
+    fn flush_and_log_errors(&self) {
+        if let Err(error) = self.flush() {
+            error!(
+                "Failed to flush data in uncompressed data manager due to: {}",
+                error
+            );
+        }
+    }
+
+    /// Compress the uncompressed data buffers that the [`UncompressedDataManager`] is currently
+    /// managing, and return the compressed buffers and their univariate ids. Returns [`SendError`]
+    /// if a [`Message`] cannot be send to [`CompressedDataManager`](super::CompressedDataManager).
+    fn flush(&self) -> Result<(), SendError<Message<Box<dyn UncompressedDataBuffer>>>> {
         // The univariate ids are copied to not have multiple borrows to self at the same time.
         let univariate_ids: Vec<u64> = self
             .active_uncompressed_data_buffers
@@ -504,13 +518,12 @@ impl UncompressedDataManager {
             .collect();
 
         for univariate_id in univariate_ids {
-            if let Some(univariate_id_buffer) =
+            if let Some((_univariate_id, buffer)) =
                 self.active_uncompressed_data_buffers.remove(&univariate_id)
             {
                 self.channels
                     .univariate_data_sender
-                    .send(Message::Data(Box::new(univariate_id_buffer.1)))
-                    .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
+                    .send(Message::Data(Box::new(buffer)))?;
             }
         }
 
@@ -552,14 +565,14 @@ impl UncompressedDataManager {
         Ok(())
     }
 
-    /// Read the next full [`super::uncompressed_data_buffer::UncompressedInMemoryDataBuffer`] from
-    /// a channel, compress it, and send the compressed segments to the
-    /// [`super::CompressedDataManager`] over a channel. Returns [`IOError`] if the error bound
-    /// cannot be retrieved from the [`MetadataManager`].
+    /// Compress `data_buffer` and send the compressed segments to the
+    /// [`CompressedDataManager`]()super::CompressedDataManager over a channel. Returns
+    /// [`SendError`] if a [`Message`] cannot be send to
+    /// [`CompressedDataManager`](super::CompressedDataManager).
     async fn compress_finished_buffer(
         &self,
         mut data_buffer: Box<dyn UncompressedDataBuffer>,
-    ) -> Result<(), IOError> {
+    ) -> Result<(), SendError<Message<CompressedSegmentBatch>>> {
         // unwrap() is safe to use as record_batch() only fail for spilled buffers with no files.
         let data_points = data_buffer.record_batch().await.unwrap();
         let univariate_id = data_buffer.univariate_id();
@@ -577,7 +590,7 @@ impl UncompressedDataManager {
         .unwrap();
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
+        let freed_memory = data_buffer.memory_size();
         self.used_uncompressed_memory_metric
             .lock()
             .unwrap()
@@ -588,12 +601,11 @@ impl UncompressedDataManager {
 
         self.channels
             .compressed_data_sender
-            .send(Message::Data(CompressedSegmentBatch {
+            .send(Message::Data(CompressedSegmentBatch::new(
                 univariate_id,
-                model_table_metadata: data_buffer.model_table_metadata().clone(),
+                data_buffer.model_table_metadata().clone(),
                 compressed_segments,
-            }))
-            .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))
+            )))
     }
 
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.
@@ -1042,7 +1054,7 @@ mod tests {
         let (_metadata_manager, data_manager, model_table_metadata) =
             runtime.block_on(create_managers(temp_dir.path()));
 
-        // Add spilled the buffer.
+        // Add the spilled buffer.
         let uncompressed_data = RecordBatch::try_new(
             UNCOMPRESSED_SCHEMA.0.clone(),
             vec![
@@ -1175,33 +1187,6 @@ mod tests {
         }
     }
 
-    /// Create a [`ModelTableMetadata`].
-    fn create_model_table_metadata() -> Arc<ModelTableMetadata> {
-        let query_schema = Arc::new(Schema::new(vec![
-            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("field", ArrowValue::DATA_TYPE, false),
-            Field::new("tag", DataType::Utf8, false),
-        ]));
-
-        let error_bounds = vec![
-            ErrorBound::try_new(0.0).unwrap(),
-            ErrorBound::try_new(0.0).unwrap(),
-            ErrorBound::try_new(0.0).unwrap(),
-        ];
-
-        let generated_columns = vec![None, None, None];
-
-        Arc::new(
-            ModelTableMetadata::try_new(
-                "Table".to_owned(),
-                query_schema,
-                error_bounds,
-                generated_columns,
-            )
-            .unwrap(),
-        )
-    }
-
     /// Create an [`UncompressedDataManager`] with a folder that is deleted once the test is finished.
     async fn create_managers(
         path: &Path,
@@ -1247,6 +1232,33 @@ mod tests {
             metadata_manager,
             uncompressed_data_manager,
             model_table_metadata,
+        )
+    }
+
+    /// Create a [`ModelTableMetadata`].
+    fn create_model_table_metadata() -> Arc<ModelTableMetadata> {
+        let query_schema = Arc::new(Schema::new(vec![
+            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
+            Field::new("field", ArrowValue::DATA_TYPE, false),
+            Field::new("tag", DataType::Utf8, false),
+        ]));
+
+        let error_bounds = vec![
+            ErrorBound::try_new(0.0).unwrap(),
+            ErrorBound::try_new(0.0).unwrap(),
+            ErrorBound::try_new(0.0).unwrap(),
+        ];
+
+        let generated_columns = vec![None, None, None];
+
+        Arc::new(
+            ModelTableMetadata::try_new(
+                "Table".to_owned(),
+                query_schema,
+                error_bounds,
+                generated_columns,
+            )
+            .unwrap(),
         )
     }
 

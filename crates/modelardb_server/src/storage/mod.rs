@@ -68,12 +68,10 @@ use crate::context::Context;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
-use crate::storage::types::{Channels, MemoryPool, Metric, MetricType};
+use crate::storage::types::{Channels, MemoryPool, Message, Metric, MetricType};
 use crate::storage::uncompressed_data_buffer::UncompressedDataMultivariate;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::PORT;
-
-use self::types::Message;
 
 /// The folder storing uncompressed data in the data folders.
 pub const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
@@ -131,7 +129,7 @@ impl StorageEngine {
         // Create shared memory pool.
         let configuration_manager = configuration_manager.read().await;
         let memory_pool = Arc::new(MemoryPool::new(
-            configuration_manager.uncompressed_reserved_memory_in_bytes,
+            configuration_manager.uncompressed_reserved_memory_in_bytes(),
             configuration_manager.compressed_reserved_memory_in_bytes(),
         ));
 
@@ -154,40 +152,40 @@ impl StorageEngine {
             .await?,
         );
 
-        for thread_number in 0..configuration_manager.ingestion_threads {
+        {
             let runtime = runtime.clone();
             let uncompressed_data_manager = uncompressed_data_manager.clone();
 
-            let join_handle = thread::Builder::new()
-                .name(format!("Ingestion {}", thread_number))
-                .spawn(move || {
+            Self::start_threads(
+                configuration_manager.ingestion_threads,
+                "Ingestion",
+                move || {
                     if let Err(error) =
                         uncompressed_data_manager.process_uncompressed_messages(runtime)
                     {
                         error!("Failed to receive uncompressed message due to: {}", error);
                     };
-                })
-                .map_err(|error| IOError::new(ErrorKind::Other, error))?;
-
-            join_handles.push(join_handle);
+                },
+                &mut join_handles,
+            )?;
         }
 
-        for thread_number in 0..configuration_manager.compression_threads {
+        {
             let runtime = runtime.clone();
             let uncompressed_data_manager = uncompressed_data_manager.clone();
 
-            let join_handle = thread::Builder::new()
-                .name(format!("Compression {}", thread_number))
-                .spawn(move || {
+            Self::start_threads(
+                configuration_manager.compression_threads,
+                "Compression",
+                move || {
                     if let Err(error) =
                         uncompressed_data_manager.process_compressor_messages(runtime)
                     {
                         error!("Failed to receive compressor message due to: {}", error);
                     };
-                })
-                .map_err(|error| IOError::new(ErrorKind::Other, error))?;
-
-            join_handles.push(join_handle);
+                },
+                &mut join_handles,
+            )?;
         }
 
         // Create the compressed data manager.
@@ -213,21 +211,21 @@ impl StorageEngine {
             used_disk_space_metric,
         )?);
 
-        for thread_number in 0..configuration_manager.writer_threads {
+        {
             let runtime = runtime.clone();
             let compressed_data_manager = compressed_data_manager.clone();
 
-            let join_handle = thread::Builder::new()
-                .name(format!("Writer {}", thread_number))
-                .spawn(move || {
+            Self::start_threads(
+                configuration_manager.writer_threads,
+                "Writer",
+                move || {
                     if let Err(error) = compressed_data_manager.process_compressed_messages(runtime)
                     {
                         error!("Failed to receive compressed message due to: {}", error);
                     };
-                })
-                .map_err(|error| IOError::new(ErrorKind::Other, error))?;
-
-            join_handles.push(join_handle);
+                },
+                &mut join_handles,
+            )?;
         }
 
         Ok(Self {
@@ -239,8 +237,32 @@ impl StorageEngine {
         })
     }
 
-    /// Add references to the [`uncompressed_data_buffer::UncompressedDataBuffer`] currently on disk
-    /// to [`UncompressedDataManager`].
+    /// Start `threads` threads with `name` that executes `function` and whose [`JoinHandle`] is
+    /// added to `join_handles.
+    fn start_threads<F>(
+        threads: usize,
+        name: &str,
+        function: F,
+        join_handles: &mut Vec<JoinHandle<()>>,
+    ) -> Result<(), IOError>
+    where
+        F: FnOnce() + Send + Clone + 'static,
+    {
+        for thread_number in 0..threads {
+            let join_handle = thread::Builder::new()
+                .name(format!("{} {}", name, thread_number))
+                .spawn(function.clone())
+                .map_err(|error| IOError::new(ErrorKind::Other, error))?;
+
+            join_handles.push(join_handle);
+        }
+
+        Ok(())
+    }
+
+    /// Add references to the
+    /// [`UncompressedDataBuffers`](uncompressed_data_buffer::UncompressedDataBuffer) currently on
+    /// disk to [`UncompressedDataManager`].
     pub(super) async fn initialize(
         &self,
         local_data_folder: PathBuf,
@@ -270,7 +292,7 @@ impl StorageEngine {
         model_table_metadata: Arc<ModelTableMetadata>,
         multivariate_data_points: RecordBatch,
     ) -> Result<(), String> {
-        // TODO: write to WAL before returning and ensure termination never duplicates or loss data.
+        // TODO: write to a WAL and use it to ensure termination never duplicates or loses data.
         self.memory_pool
             .wait_for_uncompressed_memory(multivariate_data_points.get_array_memory_size());
 
@@ -289,7 +311,7 @@ impl StorageEngine {
         self.channels
             .multivariate_data_sender
             .send(Message::Flush)
-            .map_err(|_| "Unable to flush data in storage engine.".to_owned())?;
+            .map_err(|error| format!("Unable to flush data in storage engine due to: {}", error))?;
 
         // Wait until all of the data in the storage engine have been flushed.
         self.channels
@@ -314,9 +336,9 @@ impl StorageEngine {
 
     /// Flush all of the data the [`StorageEngine`] is currently storing in memory to disk and stop
     /// all of the threads. If all of the data is successfully flushed to disk and all of the
-    /// threads stopped, return [`Ok`], otherwise return [`String`].
+    /// threads stopped, return [`Ok`], otherwise return [`String`]. This method is purposely `&mut
+    /// self` instead of `self` so it can be called through an Arc.
     pub fn close(&mut self) -> Result<(), String> {
-        // close() is purposely &mut self instead of self so it can be called through an Arc.
         self.channels
             .multivariate_data_sender
             .send(Message::Stop)
