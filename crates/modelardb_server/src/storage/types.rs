@@ -190,7 +190,7 @@ pub(super) struct Channels {
     /// [`CompressedDataManager`](super::CompressedDataManager) where they are written to a local
     /// data folder and later, possibly, a remote data folder.
     pub(super) compressed_data_sender: Sender<Message<CompressedSegmentBatch>>,
-    /// Receiver of [`CompressedSegmentBatchs`](CompressedSegmentBatch) with compressed segments
+    /// Receiver of [`CompressedSegmentBatches`](CompressedSegmentBatch) with compressed segments
     /// from the [`UncompressedDataManager`](super::UncompressedDataManager) in the
     /// [`CompressedDataManager`](super::CompressedDataManager) where they are written to a local
     /// data folder and later, possibly, a remote data folder.

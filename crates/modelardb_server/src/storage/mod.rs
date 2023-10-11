@@ -240,7 +240,7 @@ impl StorageEngine {
     /// Start `threads` threads with `name` that executes `function` and whose [`JoinHandle`] is
     /// added to `join_handles.
     fn start_threads<F>(
-        threads: usize,
+        num_threads: usize,
         name: &str,
         function: F,
         join_handles: &mut Vec<JoinHandle<()>>,
@@ -248,7 +248,7 @@ impl StorageEngine {
     where
         F: FnOnce() + Send + Clone + 'static,
     {
-        for thread_number in 0..threads {
+        for thread_number in 0..num_threads {
             let join_handle = thread::Builder::new()
                 .name(format!("{} {}", name, thread_number))
                 .spawn(function.clone())
@@ -262,7 +262,7 @@ impl StorageEngine {
 
     /// Add references to the
     /// [`UncompressedDataBuffers`](uncompressed_data_buffer::UncompressedDataBuffer) currently on
-    /// disk to [`UncompressedDataManager`].
+    /// disk to [`UncompressedDataManager`] which immediately will start compressing them.
     pub(super) async fn initialize(
         &self,
         local_data_folder: PathBuf,
@@ -342,7 +342,7 @@ impl StorageEngine {
         self.channels
             .multivariate_data_sender
             .send(Message::Stop)
-            .map_err(|_| "Unable to stop the storage engine.".to_owned())?;
+            .map_err(|error| format!("Unable to stop the storage engine due to: {}", error))?;
 
         // Wait until all of the data in the storage engine have been flushed.
         self.channels

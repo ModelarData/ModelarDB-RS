@@ -99,7 +99,7 @@ impl UncompressedDataManager {
     }
 
     /// Add references to the [`UncompressedDataBuffers`](UncompressedDataBuffer) currently on disk
-    /// to [`UncompressedDataManager`].
+    /// to [`UncompressedDataManager`] which immediately will start compressing them.
     pub(super) async fn initialize(
         &self,
         local_data_folder: PathBuf,
@@ -494,9 +494,9 @@ impl UncompressedDataManager {
         Ok(())
     }
 
-    /// Compress the uncompressed data buffer that the [`UncompressedDataManager`] is currently
+    /// Compress the uncompressed data buffers that the [`UncompressedDataManager`] is currently
     /// managing, and return the compressed buffers and their univariate ids. Writes a log message
-    /// if a [`Message`] cannot be send to [`CompressedDataManager`](super::CompressedDataManager).
+    /// if a [`Message`] cannot be sent to [`CompressedDataManager`](super::CompressedDataManager).
     fn flush_and_log_errors(&self) {
         if let Err(error) = self.flush() {
             error!(
@@ -508,7 +508,7 @@ impl UncompressedDataManager {
 
     /// Compress the uncompressed data buffers that the [`UncompressedDataManager`] is currently
     /// managing, and return the compressed buffers and their univariate ids. Returns [`SendError`]
-    /// if a [`Message`] cannot be send to [`CompressedDataManager`](super::CompressedDataManager).
+    /// if a [`Message`] cannot be sent to [`CompressedDataManager`](super::CompressedDataManager).
     fn flush(&self) -> Result<(), SendError<Message<Box<dyn UncompressedDataBuffer>>>> {
         // The univariate ids are copied to not have multiple borrows to self at the same time.
         let univariate_ids: Vec<u64> = self
@@ -567,7 +567,7 @@ impl UncompressedDataManager {
 
     /// Compress `data_buffer` and send the compressed segments to the
     /// [`CompressedDataManager`]()super::CompressedDataManager over a channel. Returns
-    /// [`SendError`] if a [`Message`] cannot be send to
+    /// [`SendError`] if a [`Message`] cannot be sent to
     /// [`CompressedDataManager`](super::CompressedDataManager).
     async fn compress_finished_buffer(
         &self,

@@ -151,6 +151,7 @@ impl DataTransfer {
     /// Since the data is transferred separately for each table, the function can be called again if
     /// it failed.
     pub(crate) async fn flush(&self) -> Result<(), ParquetError> {
+        // The clone is performed to not create a deadlock with transfer_data().
         for table_name_column_index_size_in_bytes in self.compressed_files.clone().iter() {
             let table_name = &table_name_column_index_size_in_bytes.key().0;
             let column_index = table_name_column_index_size_in_bytes.key().1;
@@ -328,8 +329,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_compressed_file_for_new_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_target_dir, data_transfer) =
-            create_data_transfer_component(temp_dir.path()).await;
+        let (_target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
         let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         assert!(data_transfer
@@ -350,8 +350,7 @@ mod tests {
     #[tokio::test]
     async fn test_add_compressed_file_for_existing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_target_dir, data_transfer) =
-            create_data_transfer_component(temp_dir.path()).await;
+        let (_target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
         let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
 
         data_transfer
@@ -381,8 +380,7 @@ mod tests {
             .join(format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}"));
         fs::create_dir_all(path.clone()).unwrap();
 
-        let (_target_dir, data_transfer) =
-            create_data_transfer_component(temp_dir.path()).await;
+        let (_target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
 
         let apache_parquet_path = path.join("test_apache_parquet.parquet");
         assert!(data_transfer
