@@ -237,7 +237,7 @@ impl StorageEngine {
         })
     }
 
-    /// Start `threads` threads with `name` that executes `function` and whose [`JoinHandle`] is
+    /// Start `num_threads` threads with `name` that executes `function` and whose [`JoinHandle`] is
     /// added to `join_handles.
     fn start_threads<F>(
         num_threads: usize,
