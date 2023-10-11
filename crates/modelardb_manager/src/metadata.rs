@@ -57,7 +57,7 @@ impl MetadataManager {
     /// If they do not already exist, create the tables that are specific to the manager metadata
     /// database.
     /// * The manager_metadata table contains metadata for the manager itself. It is assumed that
-    /// this table will only have a single row.
+    /// this table will only have a single row since there can only be a single manager.
     /// * The nodes table contains metadata for each node that is controlled by the manager.
     /// If the tables exist or were created, return [`Ok`], otherwise return [`sqlx::Error`].
     async fn create_manager_metadata_database_tables(
@@ -94,13 +94,13 @@ impl MetadataManager {
             Ok(manager_key
                 .parse()
                 .map_err(|error| sqlx::Error::ColumnDecode {
-                    index: "key".to_string(),
+                    index: "key".to_owned(),
                     source: Box::new(error),
                 })?)
         } else {
             let manager_key = Uuid::new_v4();
 
-            // Add a new row in the manager_metadata table to persist the key.
+            // Add a new row to the manager_metadata table to persist the key.
             sqlx::query("INSERT INTO manager_metadata (key) VALUES ($1)")
                 .bind(manager_key.to_string())
                 .execute(&self.metadata_database_pool)
@@ -273,7 +273,7 @@ impl MetadataManager {
         while let Some(row) = rows.try_next().await? {
             let server_mode = ServerMode::from_str(row.try_get("mode")?).map_err(|error| {
                 sqlx::Error::ColumnDecode {
-                    index: "mode".to_string(),
+                    index: "mode".to_owned(),
                     source: Box::new(ModelarDbError::DataRetrievalError(error.to_string())),
                 }
             })?;

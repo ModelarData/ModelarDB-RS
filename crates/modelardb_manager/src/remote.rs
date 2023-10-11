@@ -24,14 +24,14 @@ use std::str;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use arrow::error::ArrowError;
+use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
-use arrow::error::ArrowError;
-use arrow::ipc::writer::IpcWriteOptions;
 use futures::{stream, Stream};
 use modelardb_common::arguments::{decode_argument, encode_argument, parse_object_store_arguments};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
@@ -85,7 +85,8 @@ impl FlightServiceHandler {
         Self { context }
     }
 
-    /// Return [`Status`] if a table named `table_name` already exists in the metadata database.
+    /// Return [`Ok`] if a table named `table_name` does not exist already in the metadata
+    /// database, otherwise return [`Status`].
     async fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
         let existing_tables = self
             .context
@@ -125,7 +126,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_tables(&table_name, sql, self.context.key)
+            .create_tables(&table_name, sql, &self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -154,7 +155,7 @@ impl FlightServiceHandler {
             .cluster
             .read()
             .await
-            .create_tables(&model_table_metadata.name, sql, self.context.key)
+            .create_tables(&model_table_metadata.name, sql, &self.context.key)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -313,8 +314,8 @@ impl FlightService for FlightServiceHandler {
         info!("Received request to perform action '{}'.", action.r#type);
 
         if action.r#type == "InitializeDatabase" {
-            // Extract the list of comma seperated tables that already exist in the server.
-            let server_tables: Vec<&str> = str::from_utf8(&action.body)
+            // Extract the list of comma seperated tables that already exist in the node.
+            let node_tables: Vec<&str> = str::from_utf8(&action.body)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?
                 .split(',')
                 .filter(|table| !table.is_empty())
@@ -328,19 +329,19 @@ impl FlightService for FlightServiceHandler {
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 
-            // Check that all of the servers tables exist in the clusters database schema already.
-            let invalid_server_tables: Vec<&str> = server_tables
+            // Check that all of the nodes tables exist in the clusters database schema already.
+            let invalid_node_tables: Vec<&str> = node_tables
                 .iter()
                 .filter(|table| !cluster_tables.contains(&table.to_string()))
                 .cloned()
                 .collect();
 
-            if invalid_server_tables.is_empty() {
-                // For each table that does not already exist in the server, retrieve the SQL
+            if invalid_node_tables.is_empty() {
+                // For each table that does not already exist in the node, retrieve the SQL
                 // required to create it.
                 let missing_cluster_tables = cluster_tables
                     .iter()
-                    .filter(|table| !server_tables.contains(&table.as_str()));
+                    .filter(|table| !node_tables.contains(&table.as_str()));
 
                 let mut table_sql_queries: Vec<String> = vec![];
 
@@ -356,7 +357,7 @@ impl FlightService for FlightServiceHandler {
 
                 let response_body = table_sql_queries.join(";").as_bytes().to_vec();
 
-                // Return the SQL for the tables that need to be created in the requesting server.
+                // Return the SQL for the tables that need to be created in the requesting node.
                 Ok(Response::new(Box::pin(stream::once(async {
                     Ok(FlightResult {
                         body: response_body.into(),
@@ -365,7 +366,7 @@ impl FlightService for FlightServiceHandler {
             } else {
                 Err(Status::invalid_argument(format!(
                     "The tables '{}' do not exist in the cluster database schema.",
-                    invalid_server_tables.join(", ")
+                    invalid_node_tables.join(", ")
                 )))
             }
         } else if action.r#type == "UpdateRemoteObjectStore" {
@@ -380,7 +381,7 @@ impl FlightService for FlightServiceHandler {
                 .cluster
                 .read()
                 .await
-                .update_remote_object_stores(action.body, self.context.key)
+                .update_remote_object_stores(action.body, &self.context.key)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -441,7 +442,8 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::internal(error.to_string()))?;
 
             // Return the key for the manager and connection info for the remote object store.
-            let mut response_body = encode_argument(self.context.key.to_string().as_str());
+            // unwrap() is safe since the key cannot contain invalid characters.
+            let mut response_body = encode_argument(self.context.key.to_str().unwrap());
 
             let remote_data_folder = self.context.remote_data_folder.read().await;
             response_body.append(&mut remote_data_folder.connection_info().clone());
@@ -467,7 +469,7 @@ impl FlightService for FlightServiceHandler {
                 .cluster
                 .write()
                 .await
-                .remove_node(url, self.context.key)
+                .remove_node(url, &self.context.key)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 

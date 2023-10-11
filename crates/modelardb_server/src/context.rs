@@ -38,6 +38,7 @@ use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 
 /// Provides access to the system's configuration and components.
+#[derive(Clone)]
 pub struct Context {
     /// Metadata for the tables and model tables in the data folder.
     pub metadata_manager: Arc<MetadataManager>,
@@ -82,7 +83,8 @@ impl Context {
         Ok(schema)
     }
 
-    /// Return [`Status`] if a table named `table_name` exists in the default catalog.
+    /// Return [`Ok`] if a table named `table_name` does not exist already in the metadata
+    /// database, otherwise return [`Status`].
     async fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
         let maybe_schema = self.schema_of_table_in_default_database_schema(table_name);
         if maybe_schema.await.is_ok() {
@@ -98,12 +100,11 @@ impl Context {
     pub(crate) async fn register_and_save_manager_tables(
         &self,
         manager_url: &str,
-        context: &Arc<Context>,
     ) -> Result<(), Status> {
         let existing_tables = self.default_database_schema()?.table_names();
 
         // Retrieve the tables to create from the manager.
-        let mut flight_client = FlightServiceClient::connect(manager_url.to_string())
+        let mut flight_client = FlightServiceClient::connect(manager_url.to_owned())
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -129,7 +130,7 @@ impl Context {
 
             // For each table to create, register and save the table in the metadata database.
             for sql in table_sql_queries {
-                self.parse_and_create_table(sql, context).await?;
+                self.parse_and_create_table(sql).await?;
             }
 
             Ok(())
@@ -142,11 +143,7 @@ impl Context {
 
     /// Parse `sql` and create a normal table or a model table based on the SQL. If `sql` is not
     /// valid or the table could not be created, return [`Status`].
-    pub(crate) async fn parse_and_create_table(
-        &self,
-        sql: &str,
-        context: &Arc<Context>,
-    ) -> Result<(), Status> {
+    pub(crate) async fn parse_and_create_table(&self, sql: &str) -> Result<(), Status> {
         // Parse the SQL.
         let statement = parser::tokenize_and_parse_sql(sql)
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
@@ -159,12 +156,12 @@ impl Context {
         match valid_statement {
             ValidStatement::CreateTable { name, schema } => {
                 self.check_if_table_exists(&name).await?;
-                self.register_and_save_table(name, sql, schema).await?;
+                self.register_and_save_table(&name, sql, schema).await?;
             }
             ValidStatement::CreateModelTable(model_table_metadata) => {
                 self.check_if_table_exists(&model_table_metadata.name)
                     .await?;
-                self.register_and_save_model_table(model_table_metadata, sql, context)
+                self.register_and_save_model_table(model_table_metadata, sql)
                     .await?;
             }
         };
@@ -177,7 +174,7 @@ impl Context {
     /// or if the table cannot be saved to the [`MetadataManager`], return [`Status`] error.
     async fn register_and_save_table(
         &self,
-        table_name: String,
+        table_name: &str,
         sql: &str,
         schema: Schema,
     ) -> Result<(), Status> {
@@ -186,7 +183,7 @@ impl Context {
         let folder_path = metadata_manager
             .local_data_folder()
             .join(COMPRESSED_DATA_FOLDER)
-            .join(&table_name);
+            .join(table_name);
         fs::create_dir_all(&folder_path)?;
 
         // Create an empty Apache Parquet file to save the schema.
@@ -198,7 +195,7 @@ impl Context {
         // Save the table in the Apache Arrow Datafusion catalog.
         self.session
             .register_parquet(
-                &table_name,
+                table_name,
                 folder_path.to_str().unwrap(),
                 ParquetReadOptions::default(),
             )
@@ -207,7 +204,7 @@ impl Context {
 
         // Persist the new table to the metadata database.
         self.metadata_manager
-            .save_table_metadata(&table_name, sql)
+            .save_table_metadata(table_name, sql)
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -223,7 +220,6 @@ impl Context {
         &self,
         model_table_metadata: ModelTableMetadata,
         sql: &str,
-        context: &Arc<Context>,
     ) -> Result<(), Status> {
         // Save the model table in the Apache Arrow DataFusion catalog.
         let model_table_metadata = Arc::new(model_table_metadata);
@@ -231,7 +227,7 @@ impl Context {
         self.session
             .register_table(
                 model_table_metadata.name.as_str(),
-                ModelTable::new(context.clone(), model_table_metadata.clone()),
+                ModelTable::new(Arc::new(self.clone()), model_table_metadata.clone()),
             )
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 

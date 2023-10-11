@@ -295,12 +295,13 @@ impl FlightServiceHandler {
     /// request is valid, return [`Ok`], otherwise return [`Status`].
     async fn validate_action_request(
         &self,
-        action_type: String,
+        action_type: &str,
         metadata: MetadataMap,
     ) -> Result<(), Status> {
         let configuration_manager = self.context.configuration_manager.read().await;
 
         if let ClusterMode::MultiNode(_manager_url, key) = configuration_manager.cluster_mode() {
+            // If the server is started with a manager, these actions require a manager key.
             let restricted_actions = [
                 "CommandStatementUpdate",
                 "UpdateRemoteObjectStore",
@@ -310,14 +311,10 @@ impl FlightServiceHandler {
             if restricted_actions.iter().any(|&a| a == action_type) {
                 let request_key = metadata
                     .get("x-manager-key")
-                    .ok_or(Status::unauthenticated(
-                        "Missing manager key.",
-                    ))?;
+                    .ok_or(Status::unauthenticated("Missing manager key."))?;
 
                 if key != request_key {
-                    return Err(Status::unauthenticated(
-                        "Manager key is invalid.",
-                    ));
+                    return Err(Status::unauthenticated("Manager key is invalid."));
                 }
             }
         }
@@ -527,7 +524,7 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        self.validate_action_request(action.r#type.clone(), metadata)
+        self.validate_action_request(&action.r#type, metadata)
             .await?;
 
         if action.r#type == "CommandStatementUpdate" {
@@ -536,9 +533,7 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
             info!("Received request to execute '{}'.", sql);
 
-            self.context
-                .parse_and_create_table(sql, &self.context)
-                .await?;
+            self.context.parse_and_create_table(sql).await?;
 
             // Confirm the table was created.
             Ok(Response::new(Box::pin(stream::empty())))

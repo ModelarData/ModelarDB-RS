@@ -159,7 +159,7 @@ impl TestContext {
         // Despite waiting for the expected output, the client may not able to connect the first
         // time. This rarely happens on a local machine but happens more often in GitHub Actions.
         let mut attempts = ATTEMPTS;
-        let client = loop {
+        loop {
             if let Ok(client) = Self::create_apache_arrow_flight_service_client(runtime, HOST, port)
             {
                 break client;
@@ -170,9 +170,7 @@ impl TestContext {
                 thread::sleep(ATTEMPT_SLEEP_IN_SECONDS);
                 attempts -= 1;
             }
-        };
-
-        client
+        }
     }
 
     /// Kill a `child` process.

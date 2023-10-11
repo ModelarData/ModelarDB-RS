@@ -25,8 +25,7 @@ use crate::types::{
     MetricSchema, QuerySchema, UncompressedSchema,
 };
 
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`](arrow::datatypes::Schema) used for
-/// uncompressed data buffers.
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for uncompressed data buffers.
 pub static UNCOMPRESSED_SCHEMA: Lazy<UncompressedSchema> = Lazy::new(|| {
     UncompressedSchema(Arc::new(Schema::new(vec![
         Field::new("timestamps", ArrowTimestamp::DATA_TYPE, false),
@@ -34,8 +33,7 @@ pub static UNCOMPRESSED_SCHEMA: Lazy<UncompressedSchema> = Lazy::new(|| {
     ])))
 });
 
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`](arrow::datatypes::Schema) used for
-/// compressed data buffers.
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed data buffers.
 pub static COMPRESSED_SCHEMA: Lazy<CompressedSchema> = Lazy::new(|| {
     CompressedSchema(Arc::new(Schema::new(vec![
         Field::new("univariate_id", DataType::UInt64, false),
@@ -63,8 +61,7 @@ pub static COMPRESSED_METADATA_SIZE_IN_BYTES: Lazy<usize> = Lazy::new(|| {
         .sum()
 });
 
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`](arrow::datatypes::Schema) used for
-/// internally collected metrics.
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for internally collected metrics.
 pub static METRIC_SCHEMA: Lazy<MetricSchema> = Lazy::new(|| {
     MetricSchema(Arc::new(Schema::new(vec![
         Field::new("metric", DataType::Utf8, false),
@@ -85,8 +82,7 @@ pub static METRIC_SCHEMA: Lazy<MetricSchema> = Lazy::new(|| {
     ])))
 });
 
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`](arrow::datatypes::Schema) used
-/// internally during query processing.
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used internally during query processing.
 pub static QUERY_SCHEMA: Lazy<QuerySchema> = Lazy::new(|| {
     QuerySchema(Arc::new(Schema::new(vec![
         Field::new("univariate_id", ArrowUnivariateId::DATA_TYPE, false),
@@ -95,8 +91,7 @@ pub static QUERY_SCHEMA: Lazy<QuerySchema> = Lazy::new(|| {
     ])))
 });
 
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`](arrow::datatypes::Schema) used for
-/// the configuration.
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for the configuration.
 pub static CONFIGURATION_SCHEMA: Lazy<ConfigurationSchema> = Lazy::new(|| {
     ConfigurationSchema(Arc::new(Schema::new(vec![
         Field::new("setting", DataType::Utf8, false),

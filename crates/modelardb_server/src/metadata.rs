@@ -479,7 +479,7 @@ impl MetadataManager {
         if compressed_files_to_delete.is_empty() {
             return Err(Error::Configuration(Box::new(
                 ModelarDbError::DataRetrievalError(
-                    "At least one file to delete must be provided.".to_string(),
+                    "At least one file to delete must be provided.".to_owned(),
                 ),
             )));
         }
@@ -521,7 +521,7 @@ impl MetadataManager {
         if compressed_files_to_delete.len() != delete_from_result.rows_affected() as usize {
             return Err(Error::Configuration(Box::new(
                 ModelarDbError::ImplementationError(
-                    "Less than the expected number of files where deleted from the metadata database.".to_string(),
+                    "Less than the expected number of files where deleted from the metadata database.".to_owned(),
                 ),
             )));
         }

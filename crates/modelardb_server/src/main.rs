@@ -153,7 +153,7 @@ fn main() -> Result<(), String> {
 
     if let ClusterMode::MultiNode(manager_url, _key) = &cluster_mode {
         runtime
-            .block_on(context.register_and_save_manager_tables(manager_url, &context))
+            .block_on(context.register_and_save_manager_tables(manager_url))
             .map_err(|error| format!("Unable to register manager tables: {error}"))?;
     }
 
@@ -207,7 +207,7 @@ async fn parse_command_line_arguments(
 
             Ok((
                 ServerMode::Cloud,
-                ClusterMode::MultiNode(manager_url.to_string(), key),
+                ClusterMode::MultiNode(manager_url.to_owned(), key),
                 DataFolders {
                     local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                     remote_data_folder: Some(remote_object_store.clone()),
@@ -221,7 +221,7 @@ async fn parse_command_line_arguments(
 
             Ok((
                 ServerMode::Edge,
-                ClusterMode::MultiNode(manager_url.to_string(), key),
+                ClusterMode::MultiNode(manager_url.to_owned(), key),
                 DataFolders {
                     local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                     remote_data_folder: Some(remote_object_store),
@@ -274,7 +274,7 @@ async fn register_node(
     manager_url: &str,
     server_mode: ServerMode,
 ) -> Result<(String, Arc<dyn ObjectStore>), String> {
-    let mut flight_client = FlightServiceClient::connect(manager_url.to_string())
+    let mut flight_client = FlightServiceClient::connect(manager_url.to_owned())
         .await
         .map_err(|error| format!("Could not connect to manager: {error}"))?;
 
@@ -303,7 +303,7 @@ async fn register_node(
             decode_argument(&response.body).map_err(|error| error.to_string())?;
 
         Ok((
-            key.to_string(),
+            key.to_owned(),
             parse_object_store_arguments(offset_data)
                 .await
                 .map_err(|error| error.to_string())?,

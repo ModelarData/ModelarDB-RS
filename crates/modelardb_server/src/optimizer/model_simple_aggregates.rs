@@ -287,7 +287,7 @@ impl AggregateExpr for ModelAggregateExpr {
         })
     }
 
-    /// Return the [`PhysicalExpr`] that is passed to the [`Accumulator`](Accumulator).
+    /// Return the [`PhysicalExpr`] that is passed to the [`Accumulator`].
     fn expressions(&self) -> Vec<Arc<dyn PhysicalExpr>> {
         vec![match &self.aggregate_type {
             ModelAggregateType::Count => Arc::new(ModelCountPhysicalExpr {}),

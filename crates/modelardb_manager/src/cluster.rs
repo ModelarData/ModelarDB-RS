@@ -23,8 +23,8 @@ use log::info;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
 use tonic::codegen::Bytes;
+use tonic::metadata::{Ascii, MetadataValue};
 use tonic::Request;
-use uuid::Uuid;
 
 /// A single ModelarDB server that is controlled by the manager. The node can either be an edge node
 /// or a cloud node. A node cannot be another manager.
@@ -71,7 +71,11 @@ impl Cluster {
     /// Remove the node with an url matching `url` from the current nodes, flush the node, and
     /// finally kill the process running on the node. If no node with `url` exists,
     /// [`ConfigurationError`](ModelarDbError::ConfigurationError) is returned.
-    pub async fn remove_node(&mut self, url: &str, key: Uuid) -> Result<(), ModelarDbError> {
+    pub async fn remove_node(
+        &mut self,
+        url: &str,
+        key: &MetadataValue<Ascii>,
+    ) -> Result<(), ModelarDbError> {
         if self.nodes.iter().any(|n| n.url == url) {
             self.nodes.retain(|n| n.url != url);
 
@@ -87,11 +91,7 @@ impl Cluster {
 
             // Add the key to the request metadata to indicate that the request is from the manager.
             let mut request = Request::new(action);
-
-            // unwrap() is safe since a UUID cannot contain invalid characters.
-            request
-                .metadata_mut()
-                .insert("x-manager-key", key.to_string().parse().unwrap());
+            request.metadata_mut().insert("x-manager-key", key.clone());
 
             // TODO: Retry the request if the wrong error was returned.
             // Since the process is killed, the error from the request is ignored.
@@ -111,7 +111,7 @@ impl Cluster {
     pub async fn update_remote_object_stores(
         &self,
         connection_info: Bytes,
-        key: Uuid,
+        key: &MetadataValue<Ascii>,
     ) -> Result<(), ModelarDbError> {
         let action = Action {
             r#type: "UpdateRemoteObjectStore".to_owned(),
@@ -144,11 +144,11 @@ impl Cluster {
         &self,
         table_name: &str,
         sql: &str,
-        key: Uuid,
+        key: &MetadataValue<Ascii>,
     ) -> Result<(), ModelarDbError> {
         let action = Action {
             r#type: "CommandStatementUpdate".to_owned(),
-            body: sql.to_string().into(),
+            body: sql.to_owned().into(),
         };
 
         let mut create_table_futures: FuturesUnordered<_> = self
@@ -177,7 +177,7 @@ impl Cluster {
         &self,
         url: &str,
         action: Action,
-        key: Uuid,
+        key: &MetadataValue<Ascii>,
     ) -> Result<String, ModelarDbError> {
         let mut flight_client = FlightServiceClient::connect(url.to_owned())
             .await
@@ -185,11 +185,7 @@ impl Cluster {
 
         // Add the key to the request metadata to indicate that the request is from the manager.
         let mut request = Request::new(action);
-
-        // unwrap() is safe since a UUID cannot contain invalid characters.
-        request
-            .metadata_mut()
-            .insert("x-manager-key", key.to_string().parse().unwrap());
+        request.metadata_mut().insert("x-manager-key", key.clone());
 
         flight_client
             .do_action(request)
@@ -210,10 +206,12 @@ impl Default for Cluster {
 mod test {
     use super::*;
 
+    use uuid::Uuid;
+
     // Tests for Cluster.
     #[test]
     fn test_register_node() {
-        let node = Node::new("localhost".to_string(), ServerMode::Edge);
+        let node = Node::new("localhost".to_owned(), ServerMode::Edge);
         let mut cluster = Cluster::new();
 
         assert!(cluster.register_node(node.clone()).is_ok());
@@ -222,7 +220,7 @@ mod test {
 
     #[test]
     fn test_register_already_registered_node() {
-        let node = Node::new("localhost".to_string(), ServerMode::Edge);
+        let node = Node::new("localhost".to_owned(), ServerMode::Edge);
         let mut cluster = Cluster::new();
 
         assert!(cluster.register_node(node.clone()).is_ok());
@@ -233,7 +231,7 @@ mod test {
     async fn test_remove_node_invalid_url() {
         let mut cluster = Cluster::new();
         assert!(cluster
-            .remove_node("invalid_url", Uuid::new_v4())
+            .remove_node("invalid_url", &Uuid::new_v4().to_string().parse().unwrap())
             .await
             .is_err());
     }

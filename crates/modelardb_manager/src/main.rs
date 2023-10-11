@@ -31,8 +31,9 @@ use once_cell::sync::Lazy;
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
+use tonic::metadata::errors::InvalidMetadataValue;
+use tonic::metadata::{Ascii, MetadataValue};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use uuid::Uuid;
 
 use crate::cluster::Cluster;
 use crate::data_folder::RemoteDataFolder;
@@ -57,7 +58,7 @@ pub struct Context {
     /// Cluster of nodes currently controlled by the manager.
     pub cluster: RwLock<Cluster>,
     /// Key used to identify requests coming from the manager.
-    pub key: Uuid,
+    pub key: MetadataValue<Ascii>,
 }
 
 /// Parse the command line arguments to extract the metadata database and the remote object store
@@ -97,10 +98,14 @@ fn main() -> Result<(), String> {
                 .map_err(|error| error.to_string())?;
         }
 
+        // Retrieve and parse the key to a tonic metadata value since it is used in tonic requests.
         let key = metadata_manager
             .manager_key()
             .await
-            .map_err(|error| error.to_string())?;
+            .map_err(|error| error.to_string())?
+            .to_string()
+            .parse()
+            .map_err(|error: InvalidMetadataValue| error.to_string())?;
 
         // Create the Context.
         Ok::<Arc<Context>, String>(Arc::new(Context {
