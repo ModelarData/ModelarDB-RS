@@ -329,12 +329,12 @@ fn create_session_context(query_data_folder: Arc<dyn ObjectStore>) -> SessionCon
 
     // Use the add* methods instead of the with* methods as the with* methods replace the built-ins.
     // See: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionState.html
-    let mut session_state = SessionState::with_config_rt(session_config, session_runtime);
+    let mut session_state = SessionState::new_with_config_rt(session_config, session_runtime);
     for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
         session_state = session_state.add_physical_optimizer_rule(physical_optimizer_rule);
     }
 
-    SessionContext::with_state(session_state)
+    SessionContext::new_with_state(session_state)
 }
 
 /// Register a handler to execute when CTRL+C is pressed. The handler takes an
