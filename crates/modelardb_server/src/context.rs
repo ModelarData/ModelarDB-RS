@@ -38,7 +38,6 @@ use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 
 /// Provides access to the system's configuration and components.
-#[derive(Clone)]
 pub struct Context {
     /// Metadata for the tables and model tables in the data folder.
     pub metadata_manager: Arc<MetadataManager>,
@@ -95,11 +94,13 @@ impl Context {
     }
 
     /// Initialize the local database schema with the tables and model tables from the managers
-    /// database schema. If the tables to create could not be retrieved from the manager, or the
-    /// tables could not be created, return [`Status`].
+    /// database schema. `context` is needed as an argument instead of using `self` to avoid having
+    /// to copy the context when registering model tables. If the tables to create could not be
+    /// retrieved from the manager, or the tables could not be created, return [`Status`].
     pub(crate) async fn register_and_save_manager_tables(
         &self,
         manager_url: &str,
+        context: &Arc<Context>,
     ) -> Result<(), Status> {
         let existing_tables = self.default_database_schema()?.table_names();
 
@@ -130,7 +131,7 @@ impl Context {
 
             // For each table to create, register and save the table in the metadata database.
             for sql in table_sql_queries {
-                self.parse_and_create_table(sql).await?;
+                self.parse_and_create_table(sql, context).await?;
             }
 
             Ok(())
@@ -141,9 +142,14 @@ impl Context {
         }
     }
 
-    /// Parse `sql` and create a normal table or a model table based on the SQL. If `sql` is not
-    /// valid or the table could not be created, return [`Status`].
-    pub(crate) async fn parse_and_create_table(&self, sql: &str) -> Result<(), Status> {
+    /// Parse `sql` and create a normal table or a model table based on the SQL. `context` is needed
+    /// as an argument instead of using `self` to avoid having to copy the context when registering
+    /// model tables. If `sql` is not valid or the table could not be created, return [`Status`].
+    pub(crate) async fn parse_and_create_table(
+        &self,
+        sql: &str,
+        context: &Arc<Context>,
+    ) -> Result<(), Status> {
         // Parse the SQL.
         let statement = parser::tokenize_and_parse_sql(sql)
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
@@ -161,7 +167,7 @@ impl Context {
             ValidStatement::CreateModelTable(model_table_metadata) => {
                 self.check_if_table_exists(&model_table_metadata.name)
                     .await?;
-                self.register_and_save_model_table(model_table_metadata, sql)
+                self.register_and_save_model_table(model_table_metadata, sql, context)
                     .await?;
             }
         };
@@ -214,12 +220,14 @@ impl Context {
     }
 
     /// Create a model table, register it with Apache Arrow DataFusion's catalog, and save it to
-    /// the [`MetadataManager`]. If the table exists or if the table cannot be saved to the
-    /// [`MetadataManager`], return [`Status`] error.
+    /// the [`MetadataManager`]. `context` is needed as an argument instead of using `self` to avoid
+    /// having to copy the context when registering model tables. If the table exists or if the
+    /// table cannot be saved to the [`MetadataManager`], return [`Status`] error.
     async fn register_and_save_model_table(
         &self,
         model_table_metadata: ModelTableMetadata,
         sql: &str,
+        context: &Arc<Context>,
     ) -> Result<(), Status> {
         // Save the model table in the Apache Arrow DataFusion catalog.
         let model_table_metadata = Arc::new(model_table_metadata);
@@ -227,7 +235,7 @@ impl Context {
         self.session
             .register_table(
                 model_table_metadata.name.as_str(),
-                ModelTable::new(Arc::new(self.clone()), model_table_metadata.clone()),
+                ModelTable::new(context.clone(), model_table_metadata.clone()),
             )
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 

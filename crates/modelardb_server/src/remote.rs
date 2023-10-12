@@ -533,7 +533,9 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
             info!("Received request to execute '{}'.", sql);
 
-            self.context.parse_and_create_table(sql).await?;
+            self.context
+                .parse_and_create_table(sql, &self.context)
+                .await?;
 
             // Confirm the table was created.
             Ok(Response::new(Box::pin(stream::empty())))
