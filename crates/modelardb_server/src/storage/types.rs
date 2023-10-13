@@ -168,12 +168,12 @@ pub(super) struct Channels {
     /// Sender of [`UncompressedDataMultivariates`](UncompressedDataMultivariate) with parts of a
     /// multivariate time series from the [`StorageEngine`](super::StorageEngine) to the
     /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are split into
-    /// fixed-length univariate time series.
+    /// univariate time series of bounded length.
     pub(super) multivariate_data_sender: Sender<Message<UncompressedDataMultivariate>>,
     /// Receiver of [`UncompressedDataMultivariates`](UncompressedDataMultivariate) with parts of a
     /// multivariate time series from the [`StorageEngine`](super::StorageEngine) in the
     /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are split into
-    /// fixed-length univariate time series.
+    /// univariate time series of bounded length.
     pub(super) multivariate_data_receiver: Receiver<Message<UncompressedDataMultivariate>>,
     /// Sender of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
     /// time series from the [`UncompressedDataManager`](super::UncompressedDataManager) to the

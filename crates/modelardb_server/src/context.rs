@@ -91,7 +91,8 @@ impl Context {
         let database_schema = self.default_database_schema()?;
 
         let table = database_schema.table(table_name).await.ok_or_else(|| {
-            ModelarDbError::DataRetrievalError("Table does not exist.".to_owned())
+            let message = format!("Table with name '{table_name}' does not exist.");
+            ModelarDbError::DataRetrievalError(message)
         })?;
 
         if let Some(model_table) = table.as_any().downcast_ref::<ModelTable>() {
