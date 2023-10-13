@@ -29,11 +29,18 @@ use crate::storage::StorageEngine;
 pub struct ConfigurationManager {
     /// The mode of the server used to determine the behaviour when modifying the remote object
     /// store and querying.
-    server_mode: ServerMode,
+    pub(crate) server_mode: ServerMode,
     /// Amount of memory to reserve for storing uncompressed data buffers.
     uncompressed_reserved_memory_in_bytes: usize,
     /// Amount of memory to reserve for storing compressed data buffers.
     compressed_reserved_memory_in_bytes: usize,
+    /// Number of threads to allocate for converting multivariate time series to univariate time
+    /// series.
+    pub(crate) ingestion_threads: usize,
+    /// Number of threads to allocate for compressing univariate time series to segments.
+    pub(crate) compression_threads: usize,
+    /// Number of threads to allocate for writing segments to a local and/or remote data folder.
+    pub(crate) writer_threads: usize,
 }
 
 impl ConfigurationManager {
@@ -42,11 +49,14 @@ impl ConfigurationManager {
             server_mode,
             uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
             compressed_reserved_memory_in_bytes: 512 * 1024 * 1024,   // 512 MiB
+            // TODO: Add support for running multiple threads per component. The individual
+            // components in the storage engine have not been validated with multiple threads, e.g.,
+            // UncompressedDataManager may have race conditions finishing buffers if multiple
+            // different data points are added by multiple different clients in parallel.
+            ingestion_threads: 1,
+            compression_threads: 1,
+            writer_threads: 1,
         }
-    }
-
-    pub(crate) fn server_mode(&self) -> &ServerMode {
-        &self.server_mode
     }
 
     pub(crate) fn uncompressed_reserved_memory_in_bytes(&self) -> usize {
@@ -119,7 +129,7 @@ mod tests {
             configuration_manager
                 .read()
                 .await
-                .uncompressed_reserved_memory_in_bytes(),
+                .uncompressed_reserved_memory_in_bytes,
             common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
         );
 
@@ -133,7 +143,7 @@ mod tests {
             configuration_manager
                 .read()
                 .await
-                .uncompressed_reserved_memory_in_bytes(),
+                .uncompressed_reserved_memory_in_bytes,
             1024
         );
     }

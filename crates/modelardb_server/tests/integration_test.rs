@@ -159,10 +159,10 @@ impl TestContext {
         // Despite waiting for the expected output, the client may not able to connect the first
         // time. This rarely happens on a local machine but happens more often in GitHub Actions.
         let mut attempts = ATTEMPTS;
-        let client = loop {
+        loop {
             if let Ok(client) = Self::create_apache_arrow_flight_service_client(runtime, HOST, port)
             {
-                break client;
+                return client;
             } else if attempts == 0 {
                 Self::kill_child(server);
                 panic!("The Apache Arrow Flight client could not connect to modelardbd.");
@@ -170,9 +170,7 @@ impl TestContext {
                 thread::sleep(ATTEMPT_SLEEP_IN_SECONDS);
                 attempts -= 1;
             }
-        };
-
-        client
+        }
     }
 
     /// Kill a `child` process.
@@ -638,7 +636,7 @@ fn test_can_collect_metrics() {
             .downcast_ref::<UInt32Array>()
             .unwrap()
             .values(),
-        &[786432, 0]
+        &[786432, 0] // 786432 is common_test::UNCOMPRESSED_BUFFER_SIZE
     );
 
     // The amount of bytes used for compressed memory changes depending on the compression so we
