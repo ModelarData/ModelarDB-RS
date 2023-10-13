@@ -116,11 +116,11 @@ pub async fn test_context(path: &Path) -> Arc<Context> {
 pub fn test_session_context() -> SessionContext {
     let config = SessionConfig::new();
     let runtime = Arc::new(RuntimeEnv::default());
-    let mut state = SessionState::with_config_rt(config, runtime);
+    let mut state = SessionState::new_with_config_rt(config, runtime);
     for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
         state = state.add_physical_optimizer_rule(physical_optimizer_rule);
     }
-    SessionContext::with_state(state)
+    SessionContext::new_with_state(state)
 }
 
 /// Return [`ModelTableMetadata`] for a model table with a schema containing a tag column, a
