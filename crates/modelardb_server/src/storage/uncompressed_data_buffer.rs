@@ -27,7 +27,7 @@ use std::{fmt, fs, mem};
 
 use async_trait::async_trait;
 use datafusion::arrow::array::{Array, ArrayBuilder};
-use datafusion::arrow::compute::{self, SortColumn};
+use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
@@ -201,24 +201,14 @@ impl fmt::Debug for UncompressedInMemoryDataBuffer {
 impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
     /// Finish the array builders and return the data in a [`RecordBatch`] sorted by time.
     async fn record_batch(&mut self) -> Result<RecordBatch, ParquetError> {
-        // SortColumn requires that the values are in an Arc but this is not needed for take().
-        let timestamps = Arc::new(self.timestamps.finish());
+        let timestamps = self.timestamps.finish();
         let values = self.values.finish();
 
-        // lexsort_to_indices() is used instead of lexsort() as it is unclear how lexsort() sorts
-        // multiple arrays, instead the same combination of lexsort_to_indices() and take() used in
-        // lexsort() is used. unwrap() is safe as only supported types are sorted and the indices
-        // cannot be out of bounds.
-        let sorted_indices = compute::lexsort_to_indices(
-            &[SortColumn {
-                values: timestamps.clone(),
-                options: None,
-            }],
-            None,
-        )
-        .unwrap();
-
-        let sorted_timestamps = compute::take(&*timestamps, &sorted_indices, None).unwrap();
+        // lexsort() is not used as it is unclear in what order it sorts multiple arrays, instead a
+        // combination of sort_to_indices() and take(), like how lexsort() is implemented, is used.
+        // unwrap() is safe as timestamps has a supported type and sorted_indices are within bounds.
+        let sorted_indices = compute::sort_to_indices(&timestamps, None, None).unwrap();
+        let sorted_timestamps = compute::take(&timestamps, &sorted_indices, None).unwrap();
         let sorted_values = compute::take(&values, &sorted_indices, None).unwrap();
 
         // unwrap() is safe as UNCOMPRESSED_SCHEMA contains timestamps and values.
