@@ -83,7 +83,8 @@ pub(super) const COMPRESSED_DATA_FOLDER: &str = "compressed";
 pub(super) const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
 
 /// A static UUID for use in tests. It is not in a test utilities module so it can be used both
-/// inside the if cfg(test) block of [`create_time_and_value_range_file_name`] and in test modules.
+/// inside the if cfg(test) block of [`StorageEngine::create_time_and_value_range_file_name`] and in
+/// test modules.
 const TEST_UUID: Uuid = uuid!("44c57d06-333c-4935-8ae3-ed7bc53a08c4");
 
 /// The expected [first four bytes of any Apache Parquet file].
@@ -383,7 +384,7 @@ impl StorageEngine {
         // Retrieve object_metas that represent the relevant files for table_name and column_index.
         let relevant_apache_parquet_files = self
             .compressed_data_manager
-            .get_saved_compressed_files(
+            .compressed_files(
                 table_name,
                 column_index,
                 start_time,

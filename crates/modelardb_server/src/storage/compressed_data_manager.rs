@@ -235,7 +235,7 @@ impl CompressedDataManager {
     /// * A column with `column_index` does not exist.
     /// * The end time is before the start time.
     /// * The max value is smaller than the min value.
-    pub(super) async fn get_saved_compressed_files(
+    pub(super) async fn compressed_files(
         &self,
         table_name: &str,
         column_index: u16,
@@ -729,7 +729,7 @@ mod tests {
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
-            .get_saved_compressed_files(
+            .compressed_files(
                 TABLE_NAME,
                 COLUMN_INDEX,
                 None,
@@ -750,7 +750,7 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.get_saved_compressed_files(
+        let result = data_manager.compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             None,
@@ -775,7 +775,7 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.get_saved_compressed_files(
+        let result = data_manager.compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             start_time,
@@ -805,7 +805,7 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.get_saved_compressed_files(
+        let result = data_manager.compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             None,
@@ -835,7 +835,7 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.get_saved_compressed_files(
+        let result = data_manager.compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             None,
@@ -865,7 +865,7 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.get_saved_compressed_files(
+        let result = data_manager.compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             None,
@@ -901,7 +901,7 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.get_saved_compressed_files(
+        let result = data_manager.compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             start_time,
@@ -944,7 +944,7 @@ mod tests {
 
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.get_saved_compressed_files(
+        let result = data_manager.compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             None,
@@ -1014,7 +1014,7 @@ mod tests {
             .unwrap();
 
         let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
-        let result = data_manager.get_saved_compressed_files(
+        let result = data_manager.compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             Some(10),
@@ -1042,7 +1042,7 @@ mod tests {
             .unwrap();
 
         let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
-        let result = data_manager.get_saved_compressed_files(
+        let result = data_manager.compressed_files(
             TABLE_NAME,
             COLUMN_INDEX,
             None,
@@ -1076,7 +1076,7 @@ mod tests {
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
-            .get_saved_compressed_files(
+            .compressed_files(
                 TABLE_NAME,
                 COLUMN_INDEX,
                 None,
@@ -1121,7 +1121,7 @@ mod tests {
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
-            .get_saved_compressed_files(
+            .compressed_files(
                 "NO_TABLE",
                 COLUMN_INDEX,
                 None,
