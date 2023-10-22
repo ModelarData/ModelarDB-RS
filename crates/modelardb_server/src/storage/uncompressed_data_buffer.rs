@@ -201,14 +201,15 @@ impl fmt::Debug for UncompressedInMemoryDataBuffer {
 impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
     /// Finish the array builders and return the data in a [`RecordBatch`] sorted by time.
     async fn record_batch(&mut self) -> Result<RecordBatch, ParquetError> {
-        // SortColumn requires that the values are in an Arc but this is not needed for take.
+        // SortColumn requires that the values are in an Arc but this is not needed for take().
         let timestamps = Arc::new(self.timestamps.finish());
         let values = self.values.finish();
 
-        // sort_to_indices is used instead of lexsort as it is unclear how lexsort sorts multiple
-        // arrays, instead the same combination of sort_to_indices and take used in lexsort is used.
-        // unwrap() is safe as only supported types are sorted and indices cannot be out of bounds.
-        let sort_indices = compute::lexsort_to_indices(
+        // lexsort_to_indices() is used instead of lexsort() as it is unclear how lexsort() sorts
+        // multiple arrays, instead the same combination of lexsort_to_indices() and take() used in
+        // lexsort() is used. unwrap() is safe as only supported types are sorted and the indices
+        // cannot be out of bounds.
+        let sorted_indices = compute::lexsort_to_indices(
             &[SortColumn {
                 values: timestamps.clone(),
                 options: None,
@@ -217,8 +218,8 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
         )
         .unwrap();
 
-        let sorted_timestamps = compute::take(&*timestamps, &sort_indices, None).unwrap();
-        let sorted_values = compute::take(&values, &sort_indices, None).unwrap();
+        let sorted_timestamps = compute::take(&*timestamps, &sorted_indices, None).unwrap();
+        let sorted_values = compute::take(&values, &sorted_indices, None).unwrap();
 
         // unwrap() is safe as UNCOMPRESSED_SCHEMA contains timestamps and values.
         Ok(RecordBatch::try_new(
