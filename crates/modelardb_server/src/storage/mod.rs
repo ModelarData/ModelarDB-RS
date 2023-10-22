@@ -396,7 +396,7 @@ impl StorageEngine {
 
         // Merge the compressed Apache Parquet files if multiple are returned to ensure order.
         if relevant_apache_parquet_files.len() > 1 {
-            let object_meta = StorageEngine::merge_compressed_apache_parquet_files(
+            let object_meta = Self::merge_compressed_apache_parquet_files(
                 query_data_folder,
                 &relevant_apache_parquet_files,
                 query_data_folder,
@@ -417,7 +417,9 @@ impl StorageEngine {
 
     /// Collect and return the metrics of used uncompressed/compressed memory, used disk space, and ingested
     /// data points over time. The metrics are returned in tuples with the format (metric_type, (timestamps, values)).
-    pub(super) async fn collect_metrics(&mut self) -> Vec<(MetricType, (TimestampArray, UInt32Array))> {
+    pub(super) async fn collect_metrics(
+        &mut self,
+    ) -> Vec<(MetricType, (TimestampArray, UInt32Array))> {
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         vec![
             (
@@ -516,7 +518,8 @@ impl StorageEngine {
         // Check if the extension of the given path is correct.
         if file_path.extension().and_then(OsStr::to_str) == Some("parquet") {
             let file = File::create(file_path).map_err(|_e| error)?;
-            let mut writer = create_apache_arrow_writer(file, batch.schema(), sorting_columns)?;
+            let mut writer =
+                Self::create_apache_arrow_writer(file, batch.schema(), sorting_columns)?;
             writer.write(&batch)?;
             writer.close()?;
 
@@ -582,7 +585,7 @@ impl StorageEngine {
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
         // Compute the name of the output file based on data in merged.
-        let file_name = create_time_and_value_range_file_name(&merged);
+        let file_name = Self::create_time_and_value_range_file_name(&merged);
         let output_file_path = format!("{output_folder}/{file_name}").into();
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
@@ -594,7 +597,7 @@ impl StorageEngine {
         // Write the concatenated and merged record batch to the output location.
         let mut buf = vec![].writer();
         let mut apache_arrow_writer =
-            create_apache_arrow_writer(&mut buf, schema, sorting_columns)?;
+            Self::create_apache_arrow_writer(&mut buf, schema, sorting_columns)?;
         apache_arrow_writer.write(&merged)?;
         apache_arrow_writer.close()?;
 
@@ -624,6 +627,60 @@ impl StorageEngine {
             .map_err(|error| ParquetError::General(error.to_string()))
     }
 
+    /// Create a file name that includes the start timestamp of the first segment in `batch`, the
+    /// end timestamp of the last segment in `batch`, the minimum value stored in `batch`, the
+    /// maximum value stored in `batch`, an UUID to make it unique across edge and cloud in
+    /// practice, and an ID that uniquely identifies the edge.
+    fn create_time_and_value_range_file_name(batch: &RecordBatch) -> String {
+        // unwrap() is safe as None is only returned if all of the values are None.
+        let start_time =
+            aggregate::min(modelardb_common::array!(batch, 2, TimestampArray)).unwrap();
+        let end_time = aggregate::max(modelardb_common::array!(batch, 3, TimestampArray)).unwrap();
+
+        // unwrap() is safe as None is only returned if all of the values are None.
+        // Both aggregate::min() and aggregate::max() consider NaN to be greater than other non-null
+        // values. So since min_values and max_values cannot contain null, min_value will be NaN if all
+        // values in min_values are NaN while max_value will be NaN if any value in max_values is NaN.
+        let min_value = aggregate::min(modelardb_common::array!(batch, 5, ValueArray)).unwrap();
+        let max_value = aggregate::max(modelardb_common::array!(batch, 6, ValueArray)).unwrap();
+
+        // An UUID is added to the file name to ensure it, in practice, is unique across edge and cloud.
+        // A static UUID is set when tests are executed to allow the tests to check that files exists.
+        let uuid = if cfg!(test) {
+            TEST_UUID
+        } else {
+            Uuid::new_v4()
+        };
+
+        // TODO: Use part of the UUID or the entire Apache Arrow Flight URL to identify the edge.
+        let edge_id = PORT.to_string();
+
+        format!(
+            "{}_{}_{}_{}_{}_{}.parquet",
+            start_time, end_time, min_value, max_value, uuid, edge_id
+        )
+    }
+
+    /// Create an Apache ArrowWriter that writes to `writer`. If the writer could not be created
+    /// return [`ParquetError`].
+    fn create_apache_arrow_writer<W: Write + Send>(
+        writer: W,
+        schema: SchemaRef,
+        sorting_columns: Option<Vec<SortingColumn>>,
+    ) -> Result<ArrowWriter<W>, ParquetError> {
+        let props = WriterProperties::builder()
+            .set_encoding(Encoding::PLAIN)
+            .set_compression(Compression::ZSTD(ZstdLevel::default()))
+            .set_dictionary_enabled(false)
+            .set_statistics_enabled(EnabledStatistics::None)
+            .set_bloom_filter_enabled(false)
+            .set_sorting_columns(sorting_columns)
+            .build();
+
+        let writer = ArrowWriter::try_new(writer, schema, Some(props))?;
+        Ok(writer)
+    }
+
     /// Return [`true`] if `file_path` is a readable Apache Parquet file, otherwise [`false`].
     async fn is_path_an_apache_parquet_file(
         object_store: &Arc<dyn ObjectStore>,
@@ -635,59 +692,6 @@ impl StorageEngine {
             false
         }
     }
-}
-
-/// Create an Apache ArrowWriter that writes to `writer`. If the writer could not be created return
-/// [`ParquetError`].
-fn create_apache_arrow_writer<W: Write + Send>(
-    writer: W,
-    schema: SchemaRef,
-    sorting_columns: Option<Vec<SortingColumn>>,
-) -> Result<ArrowWriter<W>, ParquetError> {
-    let props = WriterProperties::builder()
-        .set_encoding(Encoding::PLAIN)
-        .set_compression(Compression::ZSTD(ZstdLevel::default()))
-        .set_dictionary_enabled(false)
-        .set_statistics_enabled(EnabledStatistics::None)
-        .set_bloom_filter_enabled(false)
-        .set_sorting_columns(sorting_columns)
-        .build();
-
-    let writer = ArrowWriter::try_new(writer, schema, Some(props))?;
-    Ok(writer)
-}
-
-/// Create a file name that includes the start timestamp of the first segment in `batch`, the end
-/// timestamp of the last segment in `batch`, the minimum value stored in `batch`, the maximum value
-/// stored in `batch`, an UUID to make it unique across edge and cloud in practice, and an ID that
-/// uniquely identifies the edge.
-fn create_time_and_value_range_file_name(batch: &RecordBatch) -> String {
-    // unwrap() is safe as None is only returned if all of the values are None.
-    let start_time = aggregate::min(modelardb_common::array!(batch, 2, TimestampArray)).unwrap();
-    let end_time = aggregate::max(modelardb_common::array!(batch, 3, TimestampArray)).unwrap();
-
-    // unwrap() is safe as None is only returned if all of the values are None.
-    // Both aggregate::min() and aggregate::max() consider NaN to be greater than other non-null
-    // values. So since min_values and max_values cannot contain null, min_value will be NaN if all
-    // values in min_values are NaN while max_value will be NaN if any value in max_values is NaN.
-    let min_value = aggregate::min(modelardb_common::array!(batch, 5, ValueArray)).unwrap();
-    let max_value = aggregate::max(modelardb_common::array!(batch, 6, ValueArray)).unwrap();
-
-    // An UUID is added to the file name to ensure it, in practice, is unique across edge and cloud.
-    // A static UUID is set when tests are executed to allow the tests to check that files exists.
-    let uuid = if cfg!(test) {
-        TEST_UUID
-    } else {
-        Uuid::new_v4()
-    };
-
-    // TODO: Use part of the UUID or the entire Apache Arrow Flight URL to identify the edge.
-    let edge_id = PORT.to_string();
-
-    format!(
-        "{}_{}_{}_{}_{}_{}.parquet",
-        start_time, end_time, min_value, max_value, uuid, edge_id
-    )
 }
 
 #[cfg(test)]

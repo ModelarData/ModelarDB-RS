@@ -1092,8 +1092,9 @@ mod tests {
         assert_eq!(files.len(), 1);
 
         // The file should have the first start time and the last end time as the file name.
-        let file_name =
-            storage::create_time_and_value_range_file_name(&segments.compressed_segments);
+        let file_name = storage::StorageEngine::create_time_and_value_range_file_name(
+            &segments.compressed_segments,
+        );
         let expected_file_path =
             format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/{file_name}");
 

@@ -119,7 +119,7 @@ impl CompressedDataBuffer {
         // end timestamp of the last segment in batch, the minimum value stored in batch, and the
         // maximum value stored in batch as the file name to support efficiently pruning files that
         // only contains data points with timestamps and values that are not relevant for a query.
-        let file_name = storage::create_time_and_value_range_file_name(&batch);
+        let file_name = storage::StorageEngine::create_time_and_value_range_file_name(&batch);
         let file_path = folder_path.join(file_name);
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
@@ -192,7 +192,7 @@ mod tests {
 
         // Data should be saved to a file with the start time, end time, min value, and max value of
         // the compressed segments the file contains as the file name.
-        let file_path = storage::create_time_and_value_range_file_name(&segment);
+        let file_path = storage::StorageEngine::create_time_and_value_range_file_name(&segment);
         assert!(temp_dir.path().join(file_path).exists());
     }
 
