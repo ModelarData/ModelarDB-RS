@@ -62,7 +62,7 @@ pub(super) struct CompressedDataManager {
     pub(super) used_compressed_memory_metric: Mutex<Metric>,
     /// Metric for the total used disk space in bytes, updated every time a new compressed file is
     /// saved to disk.
-    pub used_disk_space_metric: Arc<Mutex<Metric>>,
+    pub(super) used_disk_space_metric: Arc<Mutex<Metric>>,
 }
 
 impl CompressedDataManager {

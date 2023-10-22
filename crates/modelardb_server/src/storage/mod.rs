@@ -74,17 +74,17 @@ use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::PORT;
 
 /// The folder storing uncompressed data in the data folders.
-pub const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
+const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
 
 /// The folder storing compressed data in the data folders.
-pub const COMPRESSED_DATA_FOLDER: &str = "compressed";
+pub(super) const COMPRESSED_DATA_FOLDER: &str = "compressed";
 
 /// The scheme with host at which the query data folder is stored.
-pub const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
+pub(super) const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
 
 /// A static UUID for use in tests. It is not in a test utilities module so it can be used both
 /// inside the if cfg(test) block of [`create_time_and_value_range_file_name`] and in test modules.
-pub const TEST_UUID: Uuid = uuid!("44c57d06-333c-4935-8ae3-ed7bc53a08c4");
+const TEST_UUID: Uuid = uuid!("44c57d06-333c-4935-8ae3-ed7bc53a08c4");
 
 /// The expected [first four bytes of any Apache Parquet file].
 ///
@@ -119,7 +119,7 @@ impl StorageEngine {
     /// Return [`StorageEngine`] that writes ingested data to `local_data_folder` and optionally
     /// transfers compressed data to `remote_data_folder` if it is given. Returns [`String`] if
     /// `remote_data_folder` is given but [`DataTransfer`] cannot not be created.
-    pub async fn try_new(
+    pub(super) async fn try_new(
         runtime: Arc<Runtime>,
         local_data_folder: PathBuf,
         remote_data_folder: Option<Arc<dyn ObjectStore>>,
@@ -287,7 +287,7 @@ impl StorageEngine {
 
     /// Pass `data_points` to [`UncompressedDataManager`]. Return [`Ok`] if all of the data points
     /// were successfully inserted, otherwise return [`String`].
-    pub async fn insert_data_points(
+    pub(super) async fn insert_data_points(
         &mut self,
         model_table_metadata: Arc<ModelTableMetadata>,
         multivariate_data_points: RecordBatch,
@@ -307,7 +307,7 @@ impl StorageEngine {
 
     /// Flush all of the data the [`StorageEngine`] is currently storing in memory to disk. If all
     /// of the data is successfully flushed to disk, return [`Ok`], otherwise return [`String`].
-    pub async fn flush(&self) -> Result<(), String> {
+    pub(super) async fn flush(&self) -> Result<(), String> {
         self.channels
             .multivariate_data_sender
             .send(Message::Flush)
@@ -323,7 +323,7 @@ impl StorageEngine {
 
     /// Transfer all of the compressed data the [`StorageEngine`] is managing to the remote object
     /// store.
-    pub async fn transfer(&mut self) -> Result<(), Status> {
+    pub(super) async fn transfer(&mut self) -> Result<(), Status> {
         if let Some(data_transfer) = &*self.compressed_data_manager.data_transfer.read().await {
             data_transfer
                 .flush()
@@ -338,7 +338,7 @@ impl StorageEngine {
     /// all of the threads. If all of the data is successfully flushed to disk and all of the
     /// threads stopped, return [`Ok`], otherwise return [`String`]. This method is purposely `&mut
     /// self` instead of `self` so it can be called through an Arc.
-    pub fn close(&mut self) -> Result<(), String> {
+    pub(super) fn close(&mut self) -> Result<(), String> {
         self.channels
             .multivariate_data_sender
             .send(Message::Stop)
@@ -370,7 +370,7 @@ impl StorageEngine {
     /// * The compressed files could not be listed.
     /// * The end time is before the start time.
     /// * The max value is smaller than the min value.
-    pub async fn compressed_files(
+    pub(super) async fn compressed_files(
         &mut self,
         table_name: &str,
         column_index: u16,
@@ -417,7 +417,7 @@ impl StorageEngine {
 
     /// Collect and return the metrics of used uncompressed/compressed memory, used disk space, and ingested
     /// data points over time. The metrics are returned in tuples with the format (metric_type, (timestamps, values)).
-    pub async fn collect_metrics(&mut self) -> Vec<(MetricType, (TimestampArray, UInt32Array))> {
+    pub(super) async fn collect_metrics(&mut self) -> Vec<(MetricType, (TimestampArray, UInt32Array))> {
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         vec![
             (
@@ -458,7 +458,7 @@ impl StorageEngine {
     /// Update the remote data folder, used to transfer data to in the data transfer component.
     /// If one does not already exists, create a new data transfer component. If the remote
     /// data folder was successfully updated, return [`Ok`], otherwise return [`IOError`].
-    pub async fn update_remote_data_folder(
+    pub(super) async fn update_remote_data_folder(
         &mut self,
         remote_data_folder: Arc<dyn ObjectStore>,
     ) -> Result<(), IOError> {
@@ -483,7 +483,7 @@ impl StorageEngine {
     }
 
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.
-    pub async fn adjust_uncompressed_remaining_memory_in_bytes(&self, value_change: isize) {
+    pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(&self, value_change: isize) {
         self.uncompressed_data_manager
             .adjust_uncompressed_remaining_memory_in_bytes(value_change)
             .await;
@@ -491,7 +491,7 @@ impl StorageEngine {
 
     /// Change the amount of memory for compressed data in bytes according to `value_change`. If
     /// the value is changed successfully return [`Ok`], otherwise return [`IOError`].
-    pub async fn adjust_compressed_remaining_memory_in_bytes(
+    pub(super) async fn adjust_compressed_remaining_memory_in_bytes(
         &self,
         value_change: isize,
     ) -> Result<(), IOError> {
@@ -503,7 +503,7 @@ impl StorageEngine {
     /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`
     /// must use the extension '.parquet'. Return [`Ok`] if the file was written successfully,
     /// otherwise [`ParquetError`].
-    pub fn write_batch_to_apache_parquet_file(
+    pub(super) fn write_batch_to_apache_parquet_file(
         batch: RecordBatch,
         file_path: &Path,
         sorting_columns: Option<Vec<SortingColumn>>,
@@ -529,7 +529,7 @@ impl StorageEngine {
     /// Read all rows from the Apache Parquet file at the location given by `file_path` and return
     /// them as a [`RecordBatch`]. If the file could not be read successfully, [`ParquetError`] is
     /// returned.
-    pub async fn read_batch_from_apache_parquet_file(
+    async fn read_batch_from_apache_parquet_file(
         file_path: &Path,
     ) -> Result<RecordBatch, ParquetError> {
         // Create a stream that can be used to read an Apache Parquet file.
@@ -552,7 +552,7 @@ impl StorageEngine {
     /// single Apache Parquet file in `output_data_folder`/`output_folder`. Return an [`ObjectMeta`]
     /// that represent the merged file if it is written successfully, otherwise [`ParquetError`] is
     /// returned.
-    pub async fn merge_compressed_apache_parquet_files(
+    async fn merge_compressed_apache_parquet_files(
         input_data_folder: &Arc<dyn ObjectStore>,
         input_files: &[ObjectMeta],
         output_data_folder: &Arc<dyn ObjectStore>,
@@ -625,7 +625,7 @@ impl StorageEngine {
     }
 
     /// Return [`true`] if `file_path` is a readable Apache Parquet file, otherwise [`false`].
-    pub async fn is_path_an_apache_parquet_file(
+    async fn is_path_an_apache_parquet_file(
         object_store: &Arc<dyn ObjectStore>,
         file_path: &ObjectStorePath,
     ) -> bool {

@@ -66,7 +66,7 @@ pub(super) struct UncompressedDataManager {
     /// Metric for the amount of ingested data points, updated every time a new batch of data is ingested.
     pub(super) ingested_data_points_metric: Mutex<Metric>,
     /// Metric for the total used disk space in bytes, updated every time uncompressed data is spilled.
-    pub used_disk_space_metric: Arc<Mutex<Metric>>,
+    pub(super) used_disk_space_metric: Arc<Mutex<Metric>>,
 }
 
 impl UncompressedDataManager {
