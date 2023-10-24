@@ -34,6 +34,7 @@ use modelardb_common::types::{
     ArrowTimestamp, ArrowValue, ClusterMode, ErrorBound, TimestampArray, ValueArray,
 };
 use object_store::local::LocalFileSystem;
+use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 
 use crate::configuration::ConfigurationManager;
@@ -41,6 +42,9 @@ use crate::metadata::MetadataManager;
 use crate::query::ModelTable;
 use crate::storage::{self, StorageEngine};
 use crate::{optimizer, Context, ServerMode};
+
+/// Expected size of the compressed data buffers produced in the tests.
+pub const UNCOMPRESSED_BUFFER_SIZE: usize = 786432;
 
 /// Expected size of the compressed segments produced in the tests.
 pub const COMPRESSED_SEGMENTS_SIZE: usize = 1335;
@@ -59,6 +63,7 @@ pub const MODEL_TABLE_SQL: &str =
 /// data and 5 MiBs reserved for compressed data. Reducing the amount of reserved memory makes it
 /// faster to run unit tests.
 pub async fn test_context(path: &Path) -> Arc<Context> {
+    let runtime = Arc::new(Runtime::new().unwrap());
     let metadata_manager = Arc::new(MetadataManager::try_new(path).await.unwrap());
     let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
         ClusterMode::SingleNode,
@@ -76,11 +81,11 @@ pub async fn test_context(path: &Path) -> Arc<Context> {
 
     let storage_engine = Arc::new(RwLock::new(
         StorageEngine::try_new(
+            runtime,
             path.to_owned(),
             None,
             &configuration_manager,
             metadata_manager.clone(),
-            true,
         )
         .await
         .unwrap(),
@@ -117,11 +122,11 @@ pub async fn test_context(path: &Path) -> Arc<Context> {
 pub fn test_session_context() -> SessionContext {
     let config = SessionConfig::new();
     let runtime = Arc::new(RuntimeEnv::default());
-    let mut state = SessionState::with_config_rt(config, runtime);
+    let mut state = SessionState::new_with_config_rt(config, runtime);
     for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
         state = state.add_physical_optimizer_rule(physical_optimizer_rule);
     }
-    SessionContext::with_state(state)
+    SessionContext::new_with_state(state)
 }
 
 /// Return [`ModelTableMetadata`] for a model table with a schema containing a tag column, a
@@ -152,21 +157,31 @@ pub fn model_table_metadata() -> ModelTableMetadata {
     .unwrap()
 }
 
-/// Return a [`RecordBatch`] containing three compressed segments.
-pub fn compressed_segments_record_batch() -> RecordBatch {
-    compressed_segments_record_batch_with_time(0, 0.0)
+/// Return [`ModelTableMetadata`] in an [`Arc`] for a model table with a schema containing a tag
+/// column, a timestamp column, and two field columns.
+pub fn model_table_metadata_arc() -> Arc<ModelTableMetadata> {
+    Arc::new(model_table_metadata())
 }
 
-/// Return a [`RecordBatch`] containing three compressed segments. The compressed segments time
-/// range is from `time_ms` to `time_ms` + 3, while the value range is from `offset` + 5.2 to
-/// `offset` + 34.2.
-pub fn compressed_segments_record_batch_with_time(time_ms: i64, offset: f32) -> RecordBatch {
+/// Return a [`RecordBatch`] containing three compressed segments.
+pub fn compressed_segments_record_batch() -> RecordBatch {
+    compressed_segments_record_batch_with_time(1, 0, 0.0)
+}
+
+/// Return a [`RecordBatch`] containing three compressed segments from `univariate_id`. The
+/// compressed segments time range is from `time_ms` to `time_ms` + 3, while the value range is from
+/// `offset` + 5.2 to `offset` + 34.2.
+pub fn compressed_segments_record_batch_with_time(
+    univariate_id: u64,
+    time_ms: i64,
+    offset: f32,
+) -> RecordBatch {
     let start_times = vec![time_ms, time_ms + 2, time_ms + 4];
     let end_times = vec![time_ms + 1, time_ms + 3, time_ms + 5];
     let min_values = vec![offset + 5.2, offset + 10.3, offset + 30.2];
     let max_values = vec![offset + 20.2, offset + 12.2, offset + 34.2];
 
-    let univariate_id = UInt64Array::from(vec![1, 2, 3]);
+    let univariate_id = UInt64Array::from(vec![univariate_id, univariate_id, univariate_id]);
     let model_type_id = UInt8Array::from(vec![1, 1, 2]);
     let start_time = TimestampArray::from(start_times);
     let end_time = TimestampArray::from(end_times);
@@ -203,13 +218,13 @@ pub async fn query_optimized_physical_query_plan(
     query: &str,
 ) -> Arc<dyn ExecutionPlan> {
     let context = test_context(path).await;
-    let model_table_metadata = model_table_metadata();
+    let model_table_metadata = model_table_metadata_arc();
 
     context
         .session
         .register_table(
             "model_table",
-            ModelTable::new(context.clone(), Arc::new(model_table_metadata)),
+            ModelTable::new(context.clone(), model_table_metadata),
         )
         .unwrap();
 

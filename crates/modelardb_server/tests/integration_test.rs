@@ -162,7 +162,7 @@ impl TestContext {
         loop {
             if let Ok(client) = Self::create_apache_arrow_flight_service_client(runtime, HOST, port)
             {
-                break client;
+                return client;
             } else if attempts == 0 {
                 Self::kill_child(server);
                 panic!("The Apache Arrow Flight client could not connect to modelardbd.");
@@ -636,7 +636,7 @@ fn test_can_collect_metrics() {
             .downcast_ref::<UInt32Array>()
             .unwrap()
             .values(),
-        &[786432, 0]
+        &[786432, 0] // 786432 is common_test::UNCOMPRESSED_BUFFER_SIZE
     );
 
     // The amount of bytes used for compressed memory changes depending on the compression so we

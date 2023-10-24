@@ -57,7 +57,10 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
 use crate::context::Context;
+use crate::metadata::MetadataManager;
+use crate::parser::{self, ValidStatement};
 use crate::query::ModelTable;
+use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through [`FlightServiceHandler`].
@@ -186,45 +189,6 @@ impl FlightServiceHandler {
         }
     }
 
-    /// Return the table stored as the first element in
-    /// [`FlightDescriptor.path`], otherwise a [`Status`] that specifies that
-    /// the table name is missing.
-    fn table_name_from_flight_descriptor<'a>(
-        &'a self,
-        flight_descriptor: &'a FlightDescriptor,
-    ) -> Result<&String, Status> {
-        flight_descriptor
-            .path
-            .get(0)
-            .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
-    }
-
-    /// Lookup the [`ModelTableMetadata`] of the model table with name
-    /// `table_name` if it exists. Specifically, the method returns:
-    /// * [`ModelTableMetadata`] if a model table with the name `table_name`
-    /// exists.
-    /// * [`None`] if a table with the name `table_name` exists.
-    /// * [`Status`] if the default catalog, the default schema, a table with
-    /// the name `table_name`, or a model table with the name `table_name` does
-    /// not exists.
-    async fn model_table_metadata_from_default_database_schema(
-        &self,
-        table_name: &str,
-    ) -> Result<Option<Arc<ModelTableMetadata>>, Status> {
-        let database_schema = self.context.default_database_schema()?;
-
-        let table = database_schema
-            .table(table_name)
-            .await
-            .ok_or_else(|| Status::not_found("Table does not exist."))?;
-
-        if let Some(model_table) = table.as_any().downcast_ref::<ModelTable>() {
-            Ok(Some(model_table.model_table_metadata()))
-        } else {
-            Ok(None)
-        }
-    }
-
     /// While there is still more data to receive, ingest the data into the
     /// table.
     async fn ingest_into_table(
@@ -256,7 +220,7 @@ impl FlightServiceHandler {
     /// storage engine.
     async fn ingest_into_model_table(
         &self,
-        model_table_metadata: &ModelTableMetadata,
+        model_table_metadata: Arc<ModelTableMetadata>,
         flight_data_stream: &mut Streaming<FlightData>,
     ) -> Result<(), Status> {
         // Retrieve the data until the request does not contain any more data.
@@ -268,7 +232,7 @@ impl FlightServiceHandler {
             // Note that the storage engine returns when the data is stored in memory, which means
             // the data could be lost if the system crashes right after ingesting the data.
             storage_engine
-                .insert_data_points(model_table_metadata, &data_points)
+                .insert_data_points(model_table_metadata.clone(), data_points)
                 .await
                 .map_err(|error| {
                     Status::internal(format!("Data could not be ingested: {error}"))
@@ -276,6 +240,19 @@ impl FlightServiceHandler {
         }
 
         Ok(())
+    }
+
+    /// Return the table stored as the first element in
+    /// [`FlightDescriptor.path`], otherwise a [`Status`] that specifies that
+    /// the table name is missing.
+    fn table_name_from_flight_descriptor<'a>(
+        &'a self,
+        flight_descriptor: &'a FlightDescriptor,
+    ) -> Result<&String, Status> {
+        flight_descriptor
+            .path
+            .get(0)
+            .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
     }
 
     /// Convert `flight_data` to a [`RecordBatch`].
@@ -346,7 +323,11 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Criteria>,
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
-        let table_names = self.context.default_database_schema()?.table_names();
+        let table_names = self
+            .context
+            .default_database_schema()
+            .map_err(|error| Status::internal(error.to_string()))?
+            .table_names();
         let flight_descriptor = FlightDescriptor::new_path(table_names);
         let flight_info = FlightInfo::new().with_descriptor(flight_descriptor);
 
@@ -373,7 +354,8 @@ impl FlightService for FlightServiceHandler {
         let schema = self
             .context
             .schema_of_table_in_default_database_schema(table_name)
-            .await?;
+            .await
+            .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
         let options = IpcWriteOptions::default();
         let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
@@ -456,18 +438,21 @@ impl FlightService for FlightServiceHandler {
 
         // Handle the data based on whether it is a normal table or a model table.
         if let Some(model_table_metadata) = self
+            .context
             .model_table_metadata_from_default_database_schema(&normalized_table_name)
-            .await?
+            .await
+            .map_err(|error| Status::invalid_argument(error.to_string()))?
         {
             debug!("Writing data to model table '{}'.", normalized_table_name);
-            self.ingest_into_model_table(&model_table_metadata, &mut flight_data_stream)
+            self.ingest_into_model_table(model_table_metadata, &mut flight_data_stream)
                 .await?;
         } else {
             debug!("Writing data to table '{}'.", normalized_table_name);
             let schema = self
                 .context
                 .schema_of_table_in_default_database_schema(&normalized_table_name)
-                .await?;
+                .await
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
             self.ingest_into_table(&normalized_table_name, &schema, &mut flight_data_stream)
                 .await?;
         }
@@ -604,7 +589,7 @@ impl FlightService for FlightServiceHandler {
             let configuration_manager = self.context.configuration_manager.read().await;
 
             // If on a cloud node, both the remote data folder and the query data folder should be updated.
-            if configuration_manager.server_mode() == &ServerMode::Cloud {
+            if configuration_manager.server_mode == ServerMode::Cloud {
                 // TODO: The query data folder should be updated in the session context.
                 return Err(Status::unimplemented(
                     "Currently not possible to update remote object store on cloud nodes.",

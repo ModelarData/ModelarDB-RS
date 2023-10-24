@@ -19,17 +19,58 @@ use std::fs;
 use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::format::SortingColumn;
+use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 
+use crate::metadata::MetadataManager;
 use crate::storage;
 use crate::storage::StorageEngine;
 
-/// A single compressed buffer, containing one or more compressed segments and providing
-/// functionality for appending segments and saving all segments to a single Apache Parquet file.
+/// Compressed segments representing data points from a column in a model table as one
+/// [`RecordBatch`].
+#[derive(Clone, Debug)]
+pub(super) struct CompressedSegmentBatch {
+    /// Univariate id that uniquely identifies the univariate time series the compressed segments
+    /// represents data points for.
+    univariate_id: u64,
+    /// Metadata of the model table to insert the data points into.
+    model_table_metadata: Arc<ModelTableMetadata>,
+    /// Compressed segments representing the data points to insert.
+    pub(super) compressed_segments: RecordBatch,
+}
+
+impl CompressedSegmentBatch {
+    pub(super) fn new(
+        univariate_id: u64,
+        model_table_metadata: Arc<ModelTableMetadata>,
+        compressed_segments: RecordBatch,
+    ) -> Self {
+        Self {
+            univariate_id,
+            model_table_metadata,
+            compressed_segments,
+        }
+    }
+
+    /// Return the name of the table the buffer stores data for.
+    pub(super) fn model_table_name(&self) -> String {
+        self.model_table_metadata.name.clone()
+    }
+
+    /// Return the index of the column the buffer stores data for.
+    pub(super) fn column_index(&self) -> u16 {
+        MetadataManager::univariate_id_to_column_index(self.univariate_id)
+    }
+}
+
+/// A single compressed buffer, containing one or more compressed segments for a column in a model
+/// table as one or more [RecordBatches](RecordBatch) and providing functionality for appending
+/// segments and saving all segments to a single Apache Parquet file.
 pub(super) struct CompressedDataBuffer {
     /// Compressed segments that make up the compressed data in the [`CompressedDataBuffer`].
     compressed_segments: Vec<RecordBatch>,

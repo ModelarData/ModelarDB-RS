@@ -46,6 +46,7 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::context::Context;
+use crate::parser;
 use crate::query::ModelTable;
 use crate::storage::COMPRESSED_DATA_FOLDER;
 
@@ -238,27 +239,6 @@ impl MetadataManager {
         }
     }
 
-    /// Return the error bound for `univariate_id`. Returns an [`Error`] if the necessary data
-    /// cannot be retrieved from the metadata database.
-    pub async fn error_bound(&self, univariate_id: u64) -> Result<ErrorBound> {
-        let mut connection = self.metadata_database_pool.acquire().await?;
-
-        // SQLite use signed integers https://www.sqlite.org/datatype3.html.
-        let tag_hash = MetadataManager::univariate_id_to_tag_hash(univariate_id);
-        let column_index = MetadataManager::univariate_id_to_column_index(univariate_id);
-        let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
-        let select_statement = format!(
-            "SELECT error_bound FROM model_table_field_columns, model_table_hash_table_name
-             WHERE model_table_field_columns.table_name = model_table_hash_table_name.table_name
-             AND hash = {signed_tag_hash} AND column_index = {column_index}",
-        );
-        let mut rows = sqlx::query(&select_statement).fetch(&mut *connection);
-
-        // unwrap() is safe as the error bound is checked before it is written to the metadata database.
-        let percentage: f32 = rows.try_next().await?.unwrap().try_get(0)?;
-        Ok(ErrorBound::try_new(percentage).unwrap())
-    }
-
     /// Extract the first 54-bits from `univariate_id` which is a hash computed from tags.
     pub fn univariate_id_to_tag_hash(univariate_id: u64) -> u64 {
         univariate_id & 18446744073709550592
@@ -269,23 +249,23 @@ impl MetadataManager {
         (univariate_id & 1023) as u16
     }
 
-    /// Return a mapping from tag hash to table names. Returns an [`Error`] if the necessary data
-    /// cannot be retrieved from the metadata database.
-    pub async fn mapping_from_hash_to_table_name(&self) -> Result<HashMap<u64, String>> {
+    /// Return the name of the table that contains the time series with `univariate_id`. Returns an
+    /// [`Error`] if the necessary data cannot be retrieved from the metadata database.
+    pub async fn univariate_id_to_table_name(&self, univariate_id: u64) -> Result<String> {
         let mut connection = self.metadata_database_pool.acquire().await?;
 
-        let mut rows = sqlx::query("SELECT hash, table_name FROM model_table_hash_table_name")
-            .fetch(&mut *connection);
+        // SQLite use signed integers https://www.sqlite.org/datatype3.html.
+        let tag_hash = Self::univariate_id_to_tag_hash(univariate_id);
+        let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
-        let mut hash_to_table_name = HashMap::new();
-        while let Some(row) = rows.try_next().await? {
-            // SQLite use signed integers https://www.sqlite.org/datatype3.html.
-            let signed_tag_hash: i64 = row.try_get(0)?;
-            let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
-            hash_to_table_name.insert(tag_hash, row.try_get(1)?);
-        }
+        let select_statement = format!(
+            "SELECT table_name FROM model_table_hash_table_name WHERE hash = {signed_tag_hash}",
+        );
 
-        Ok(hash_to_table_name)
+        sqlx::query(&select_statement)
+            .fetch_one(&mut *connection)
+            .await?
+            .try_get(0)
     }
 
     /// Return a mapping from tag hashes to the tags in the columns with the names in
@@ -569,6 +549,7 @@ impl MetadataManager {
 
     /// Create a [`Query`] that, when executed, stores `compressed_file` in the metadata database
     /// for the column at `query_schema_index` using `insert_statement`.
+    #[allow(dead_code)]
     fn create_insert_compressed_file_query<'a>(
         insert_statement: &'a str,
         query_schema_index: usize,

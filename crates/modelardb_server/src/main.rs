@@ -33,6 +33,7 @@ use std::{env, fs};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::Action;
+use context::Context;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
 use modelardb_common::arguments::{
@@ -123,11 +124,11 @@ fn main() -> Result<(), String> {
         runtime
             .block_on(async {
                 StorageEngine::try_new(
-                    data_folders.local_data_folder,
+                    runtime.clone(),
+                    data_folders.local_data_folder.clone(),
                     data_folders.remote_data_folder,
                     &configuration_manager,
                     metadata_manager.clone(),
-                    true,
                 )
                 .await
             })
@@ -159,6 +160,18 @@ fn main() -> Result<(), String> {
 
     // Setup CTRL+C handler.
     setup_ctrl_c_handler(&context, &runtime);
+
+    // Initialize storage engine with spilled buffers.
+    runtime
+        .block_on(async {
+            context
+                .storage_engine
+                .read()
+                .await
+                .initialize(data_folders.local_data_folder, &context)
+                .await
+        })
+        .map_err(|error| error.to_string())?;
 
     // Start the Apache Arrow Flight interface.
     remote::start_apache_arrow_flight_server(context, &runtime, *PORT)
@@ -332,12 +345,12 @@ fn create_session_context(query_data_folder: Arc<dyn ObjectStore>) -> SessionCon
 
     // Use the add* methods instead of the with* methods as the with* methods replace the built-ins.
     // See: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionState.html
-    let mut session_state = SessionState::with_config_rt(session_config, session_runtime);
+    let mut session_state = SessionState::new_with_config_rt(session_config, session_runtime);
     for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
         session_state = session_state.add_physical_optimizer_rule(physical_optimizer_rule);
     }
 
-    SessionContext::with_state(session_state)
+    SessionContext::new_with_state(session_state)
 }
 
 /// Register a handler to execute when CTRL+C is pressed. The handler takes an
@@ -349,13 +362,10 @@ fn setup_ctrl_c_handler(context: &Arc<Context>, runtime: &Arc<Runtime>) {
         // Errors are consciously ignored as the program should terminate if the
         // handler cannot be registered as buffers otherwise cannot be flushed.
         tokio::signal::ctrl_c().await.unwrap();
-        ctrl_c_context
-            .storage_engine
-            .write()
-            .await
-            .flush()
-            .await
-            .unwrap();
+
+        // Stop the threads in the storage engine and close it.
+        ctrl_c_context.storage_engine.write().await.close().unwrap();
+
         std::process::exit(0)
     });
 }

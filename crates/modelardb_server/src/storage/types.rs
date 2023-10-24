@@ -15,14 +15,22 @@
 
 //! The minor types used throughout the [`StorageEngine`](crate::storage::StorageEngine).
 
+use std::error::Error;
 use std::fmt;
 use std::mem;
-use std::sync::RwLock;
+use std::sync::Condvar;
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crossbeam_channel::{Receiver, Sender};
 use datafusion::arrow::array::UInt32Array;
 use modelardb_common::types::{Timestamp, TimestampArray};
 use ringbuf::{HeapRb, Rb};
+
+use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
+use crate::storage::uncompressed_data_buffer::{
+    UncompressedDataBuffer, UncompressedDataMultivariate,
+};
 
 /// Resizeable pool of memory for tracking and limiting the amount of memory used by the
 /// [`StorageEngine`](crate::storage::StorageEngine). Signed integers are used to simplify updating
@@ -31,15 +39,17 @@ use ringbuf::{HeapRb, Rb};
 /// additional memory will be rejected while the amount of available memory is negative. Thus,
 /// [`StorageEngine`](crate::storage::StorageEngine) will decrease its memory usage.
 pub(super) struct MemoryPool {
+    /// Condition variable that allow threads to wait for more uncompressed memory to be released.
+    wait_for_uncompressed_memory: Condvar,
     /// How many bytes of memory that are left for storing
     /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) containing multivariate time
     /// series with metadata and
     /// [`UncompressedDataBuffers`](crate::storage::uncompressed_data_buffer::UncompressedDataBuffer)
     /// containing univariate time series without metadata.
-    remaining_uncompressed_memory_in_bytes: RwLock<isize>,
+    remaining_uncompressed_memory_in_bytes: Mutex<isize>,
     /// How many bytes of memory that are left for storing
     /// [`CompressedDataBuffers`](crate::storage::compressed_data_buffer::CompressedDataBuffer).
-    remaining_compressed_memory_in_bytes: RwLock<isize>,
+    remaining_compressed_memory_in_bytes: Mutex<isize>,
 }
 
 /// The pool of memory the
@@ -55,10 +65,11 @@ impl MemoryPool {
     ) -> Self {
         // unwrap() is safe as i64::MAX is 8192 PiB and the value is from ConfigurationManager.
         Self {
-            remaining_uncompressed_memory_in_bytes: RwLock::new(
+            wait_for_uncompressed_memory: Condvar::new(),
+            remaining_uncompressed_memory_in_bytes: Mutex::new(
                 uncompressed_memory_in_bytes.try_into().unwrap(),
             ),
-            remaining_compressed_memory_in_bytes: RwLock::new(
+            remaining_compressed_memory_in_bytes: Mutex::new(
                 compressed_memory_in_bytes.try_into().unwrap(),
             ),
         }
@@ -66,59 +77,67 @@ impl MemoryPool {
 
     /// Change the amount of memory available for uncompressed data by `size_in_bytes`.
     pub(super) fn adjust_uncompressed_memory(&self, size_in_bytes: isize) {
-        // unwrap() is safe as write() only returns an error if the lock is poisoned.
-        *self.remaining_uncompressed_memory_in_bytes.write().unwrap() += size_in_bytes
+        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
+        *self.remaining_uncompressed_memory_in_bytes.lock().unwrap() += size_in_bytes;
+        self.wait_for_uncompressed_memory.notify_all();
     }
 
     /// Return the amount of memory available for uncompressed data in bytes.
     pub(super) fn remaining_uncompressed_memory_in_bytes(&self) -> isize {
-        // unwrap() is safe as write() only returns an error if the lock is poisoned.
-        *self.remaining_uncompressed_memory_in_bytes.read().unwrap()
+        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
+        *self.remaining_uncompressed_memory_in_bytes.lock().unwrap()
     }
 
-    /// Try to reserve `size_in_bytes` bytes of memory for uncompressed data. Returns [`true`] if
-    /// the reservation succeeds and [`false`] otherwise.
-    #[must_use]
-    pub(super) fn try_reserve_uncompressed_memory(&self, size_in_bytes: usize) -> bool {
-        // unwrap() is safe as write() only returns an error if the lock is poisoned.
-        let mut remaining_uncompressed_memory_in_bytes =
-            self.remaining_uncompressed_memory_in_bytes.write().unwrap();
+    /// Reserve `size_in_bytes` bytes of memory for uncompressed data. This is a soft limit, thus
+    /// there may temporarily be an over allocation of memory for uncompressed data.
+    pub(super) fn reserve_uncompressed_memory(&self, size_in_bytes: usize) {
+        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
+        *self.remaining_uncompressed_memory_in_bytes.lock().unwrap() -= size_in_bytes as isize;
+    }
 
-        let size_in_bytes = size_in_bytes as isize;
+    /// Wait until `size_in_bytes` bytes of memory is available for uncompressed data and then
+    /// reserve it. Thus, this method never over allocates memory for uncompressed data.
+    pub(super) fn wait_for_uncompressed_memory(&self, size_in_bytes: usize) {
+        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
+        let mut memory_in_bytes = self.remaining_uncompressed_memory_in_bytes.lock().unwrap();
 
-        if size_in_bytes <= *remaining_uncompressed_memory_in_bytes {
-            *remaining_uncompressed_memory_in_bytes -= size_in_bytes;
-            true
-        } else {
-            false
+        while *memory_in_bytes < size_in_bytes as isize {
+            // unwrap() is safe as wait() only returns an error if the mutex is poisoned.
+            memory_in_bytes = self
+                .wait_for_uncompressed_memory
+                .wait(memory_in_bytes)
+                .unwrap();
         }
+
+        *memory_in_bytes -= size_in_bytes as isize;
     }
 
     /// Free `size_in_bytes` bytes of memory for storing uncompressed data.
     pub(super) fn free_uncompressed_memory(&self, size_in_bytes: usize) {
-        // unwrap() is safe as write() only returns an error if the lock is poisoned.
-        *self.remaining_uncompressed_memory_in_bytes.write().unwrap() += size_in_bytes as isize;
+        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
+        *self.remaining_uncompressed_memory_in_bytes.lock().unwrap() += size_in_bytes as isize;
+        self.wait_for_uncompressed_memory.notify_all();
     }
 
     /// Change the amount of memory available for storing compressed data by `size_in_bytes`.
     pub(super) fn adjust_compressed_memory(&self, size_in_bytes: isize) {
-        // unwrap() is safe as write() only returns an error if the lock is poisoned.
-        *self.remaining_compressed_memory_in_bytes.write().unwrap() += size_in_bytes;
+        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
+        *self.remaining_compressed_memory_in_bytes.lock().unwrap() += size_in_bytes;
     }
 
     /// Return the amount of memory available for storing compressed data in bytes.
     pub(super) fn remaining_compressed_memory_in_bytes(&self) -> isize {
-        // unwrap() is safe as write() only returns an error if the lock is poisoned.
-        *self.remaining_compressed_memory_in_bytes.read().unwrap()
+        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
+        *self.remaining_compressed_memory_in_bytes.lock().unwrap()
     }
 
     /// Try to reserve `size_in_bytes` bytes of memory for storing compressed data. Returns [`true`]
     /// if the reservation succeeds and [`false`] otherwise.
     #[must_use]
     pub(super) fn try_reserve_compressed_memory(&self, size_in_bytes: usize) -> bool {
-        // unwrap() is safe as write() only returns an error if the lock is poisoned.
+        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         let mut remaining_compressed_memory_in_bytes =
-            self.remaining_compressed_memory_in_bytes.write().unwrap();
+            self.remaining_compressed_memory_in_bytes.lock().unwrap();
 
         let size_in_bytes = size_in_bytes as isize;
 
@@ -132,8 +151,79 @@ impl MemoryPool {
 
     /// Free `size_in_bytes` bytes of memory for storing compressed data.
     pub(super) fn free_compressed_memory(&self, size_in_bytes: usize) {
-        // unwrap() is safe as write() only returns an error if the lock is poisoned.
-        *self.remaining_compressed_memory_in_bytes.write().unwrap() += size_in_bytes as isize;
+        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
+        *self.remaining_compressed_memory_in_bytes.lock().unwrap() += size_in_bytes as isize;
+    }
+}
+
+/// Messages that can be sent between the components of [`StorageEngine`](super::StorageEngine).
+pub(super) enum Message<T> {
+    Data(T),
+    Flush,
+    Stop,
+}
+
+/// Channels used by the threads in the storage engine to communicate.
+pub(super) struct Channels {
+    /// Sender of [`UncompressedDataMultivariates`](UncompressedDataMultivariate) with parts of a
+    /// multivariate time series from the [`StorageEngine`](super::StorageEngine) to the
+    /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are split into
+    /// univariate time series of bounded length.
+    pub(super) multivariate_data_sender: Sender<Message<UncompressedDataMultivariate>>,
+    /// Receiver of [`UncompressedDataMultivariates`](UncompressedDataMultivariate) with parts of a
+    /// multivariate time series from the [`StorageEngine`](super::StorageEngine) in the
+    /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are split into
+    /// univariate time series of bounded length.
+    pub(super) multivariate_data_receiver: Receiver<Message<UncompressedDataMultivariate>>,
+    /// Sender of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
+    /// time series from the [`UncompressedDataManager`](super::UncompressedDataManager) to the
+    /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are compressed into
+    /// compressed segments.
+    pub(super) univariate_data_sender: Sender<Message<Box<dyn UncompressedDataBuffer>>>,
+    /// Receiver of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
+    /// time series from the [`UncompressedDataManager`](super::UncompressedDataManager) in the
+    /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are compressed into
+    /// compressed segments.
+    pub(super) univariate_data_receiver: Receiver<Message<Box<dyn UncompressedDataBuffer>>>,
+    /// Sender of [`CompressedSegmentBatches`](CompressedSegmentBatch) with compressed segments from
+    /// the [`UncompressedDataManager`](super::UncompressedDataManager) to the
+    /// [`CompressedDataManager`](super::CompressedDataManager) where they are written to a local
+    /// data folder and later, possibly, a remote data folder.
+    pub(super) compressed_data_sender: Sender<Message<CompressedSegmentBatch>>,
+    /// Receiver of [`CompressedSegmentBatches`](CompressedSegmentBatch) with compressed segments
+    /// from the [`UncompressedDataManager`](super::UncompressedDataManager) in the
+    /// [`CompressedDataManager`](super::CompressedDataManager) where they are written to a local
+    /// data folder and later, possibly, a remote data folder.
+    pub(super) compressed_data_receiver: Receiver<Message<CompressedSegmentBatch>>,
+    /// Sender of [`Results`](Result) from
+    /// [`UncompressedDataManager`](super::UncompressedDataManager) or
+    /// [`CompressedDataManager`](super::CompressedDataManager) to indicate that an asynchronous
+    /// process has succeeded or failed to [`StorageEngine`](super::StorageEngine).
+    pub(super) result_sender: Sender<Result<(), Box<dyn Error + Send + Sync>>>,
+    /// Receiver of [`Results`](Result) from
+    /// [`UncompressedDataManager`](super::UncompressedDataManager) or
+    /// [`CompressedDataManager`](super::CompressedDataManager) to indicate that an asynchronous
+    /// process has succeeded or failed to [`StorageEngine`](super::StorageEngine).
+    pub(super) result_receiver: Receiver<Result<(), Box<dyn Error + Send + Sync>>>,
+}
+
+impl Channels {
+    pub(super) fn new() -> Self {
+        let (multivariate_data_sender, multivariate_data_receiver) = crossbeam_channel::unbounded();
+        let (univariate_data_sender, univariate_data_receiver) = crossbeam_channel::unbounded();
+        let (compressed_data_sender, compressed_data_receiver) = crossbeam_channel::unbounded();
+        let (result_sender, result_receiver) = crossbeam_channel::unbounded();
+
+        Self {
+            multivariate_data_sender,
+            multivariate_data_receiver,
+            univariate_data_sender,
+            univariate_data_receiver,
+            compressed_data_sender,
+            compressed_data_receiver,
+            result_sender,
+            result_receiver,
+        }
     }
 }
 
@@ -202,7 +292,7 @@ impl Metric {
 
     /// Return a reference to the metric's values for testing.
     #[cfg(test)]
-    pub(super) fn values(&self) -> &HeapRb<u32> {
+    pub(super) fn values(&mut self) -> &HeapRb<u32> {
         &self.values
     }
 
@@ -274,34 +364,32 @@ mod tests {
     }
 
     #[test]
-    fn test_try_reserve_available_uncompressed_memory() {
+    fn test_reserve_uncompressed_memory_to_zero() {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
             common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        assert!(memory_pool
-            .try_reserve_uncompressed_memory(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES));
+        memory_pool.reserve_uncompressed_memory(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES);
 
         assert_eq!(memory_pool.remaining_uncompressed_memory_in_bytes(), 0);
     }
 
     #[test]
-    fn test_try_reserve_unavailable_uncompressed_memory() {
+    fn test_reserve_uncompressed_memory_decrease_below_zero() {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
             common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        assert!(!memory_pool.try_reserve_uncompressed_memory(
-            2 * common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
-        ));
+        memory_pool
+            .reserve_uncompressed_memory(2 * common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES);
 
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            -(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize)
         );
     }
 

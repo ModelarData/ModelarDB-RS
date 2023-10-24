@@ -29,9 +29,10 @@ mod uncompressed_data_manager;
 
 use std::ffi::OsStr;
 use std::fs::File;
-use std::io::{Error as IOError, Write};
+use std::io::{Error as IOError, ErrorKind, Write};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
 
 use bytes::buf::BufMut;
 use datafusion::arrow::array::UInt32Array;
@@ -55,18 +56,20 @@ use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
 use tokio::fs::File as TokioFile;
+use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::codegen::Bytes;
 use tonic::Status;
-use tracing::debug;
+use tracing::{debug, error};
 use uuid::{uuid, Uuid};
 
 use crate::configuration::ConfigurationManager;
+use crate::context::Context;
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
-use crate::storage::types::{MemoryPool, Metric, MetricType};
-use crate::storage::uncompressed_data_buffer::UncompressedDataBuffer;
+use crate::storage::types::{Channels, MemoryPool, Message, Metric, MetricType};
+use crate::storage::uncompressed_data_buffer::UncompressedDataMultivariate;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::PORT;
 
@@ -100,12 +103,16 @@ const TRANSFER_BATCH_SIZE_IN_BYTES: usize = 64 * 1024 * 1024; // 64 MiB;
 /// Manages all uncompressed and compressed data, both while being stored in memory during ingestion
 /// and when persisted to disk afterwards.
 pub struct StorageEngine {
-    /// Manager that contains and controls all metadata for both uncompressed and compressed data.
-    metadata_manager: Arc<MetadataManager>,
     /// Manager that contains and controls all uncompressed data.
-    uncompressed_data_manager: UncompressedDataManager,
+    uncompressed_data_manager: Arc<UncompressedDataManager>,
     /// Manager that contains and controls all compressed data.
-    compressed_data_manager: CompressedDataManager,
+    compressed_data_manager: Arc<CompressedDataManager>,
+    /// Track how much memory is left for storing uncompressed and compressed data.
+    memory_pool: Arc<MemoryPool>,
+    /// Threads used for ingestion, compression, and writing.
+    join_handles: Vec<JoinHandle<()>>,
+    /// Unbounded channels used by the threads to communicate.
+    channels: Arc<Channels>,
 }
 
 impl StorageEngine {
@@ -113,32 +120,73 @@ impl StorageEngine {
     /// transfers compressed data to `remote_data_folder` if it is given. Returns [`String`] if
     /// `remote_data_folder` is given but [`DataTransfer`] cannot not be created.
     pub async fn try_new(
+        runtime: Arc<Runtime>,
         local_data_folder: PathBuf,
         remote_data_folder: Option<Arc<dyn ObjectStore>>,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
         metadata_manager: Arc<MetadataManager>,
-        compress_directly: bool,
     ) -> Result<Self, IOError> {
-        // Create a metric for used disk space. The metric is wrapped in an Arc and a read/write lock
-        // since it is appended to by multiple components, potentially at the same time.
-        let used_disk_space_metric = Arc::new(RwLock::new(Metric::new()));
-
+        // Create shared memory pool.
         let configuration_manager = configuration_manager.read().await;
-
         let memory_pool = Arc::new(MemoryPool::new(
             configuration_manager.uncompressed_reserved_memory_in_bytes(),
             configuration_manager.compressed_reserved_memory_in_bytes(),
         ));
 
+        // Create shared metrics.
+        let used_disk_space_metric = Arc::new(Mutex::new(Metric::new()));
+
+        // Create threads and shared channels.
+        let mut join_handles = vec![];
+        let channels = Arc::new(Channels::new());
+
         // Create the uncompressed data manager.
-        let uncompressed_data_manager = UncompressedDataManager::try_new(
-            local_data_folder.clone(),
-            memory_pool.clone(),
-            &metadata_manager,
-            compress_directly,
-            used_disk_space_metric.clone(),
-        )
-        .await?;
+        let uncompressed_data_manager = Arc::new(
+            UncompressedDataManager::try_new(
+                local_data_folder.clone(),
+                memory_pool.clone(),
+                channels.clone(),
+                metadata_manager,
+                used_disk_space_metric.clone(),
+            )
+            .await?,
+        );
+
+        {
+            let runtime = runtime.clone();
+            let uncompressed_data_manager = uncompressed_data_manager.clone();
+
+            Self::start_threads(
+                configuration_manager.ingestion_threads,
+                "Ingestion",
+                move || {
+                    if let Err(error) =
+                        uncompressed_data_manager.process_uncompressed_messages(runtime)
+                    {
+                        error!("Failed to receive uncompressed message due to: {}", error);
+                    };
+                },
+                &mut join_handles,
+            )?;
+        }
+
+        {
+            let runtime = runtime.clone();
+            let uncompressed_data_manager = uncompressed_data_manager.clone();
+
+            Self::start_threads(
+                configuration_manager.compression_threads,
+                "Compression",
+                move || {
+                    if let Err(error) =
+                        uncompressed_data_manager.process_compressor_messages(runtime)
+                    {
+                        error!("Failed to receive compressor message due to: {}", error);
+                    };
+                },
+                &mut join_handles,
+            )?;
+        }
 
         // Create the compressed data manager.
         let data_transfer = if let Some(remote_data_folder) = remote_data_folder {
@@ -155,18 +203,74 @@ impl StorageEngine {
             None
         };
 
-        let compressed_data_manager = CompressedDataManager::try_new(
-            data_transfer,
+        let compressed_data_manager = Arc::new(CompressedDataManager::try_new(
+            RwLock::new(data_transfer),
             local_data_folder,
-            memory_pool,
+            channels.clone(),
+            memory_pool.clone(),
             used_disk_space_metric,
-        )?;
+        )?);
+
+        {
+            let runtime = runtime.clone();
+            let compressed_data_manager = compressed_data_manager.clone();
+
+            Self::start_threads(
+                configuration_manager.writer_threads,
+                "Writer",
+                move || {
+                    if let Err(error) = compressed_data_manager.process_compressed_messages(runtime)
+                    {
+                        error!("Failed to receive compressed message due to: {}", error);
+                    };
+                },
+                &mut join_handles,
+            )?;
+        }
 
         Ok(Self {
-            metadata_manager,
             uncompressed_data_manager,
             compressed_data_manager,
+            memory_pool,
+            join_handles,
+            channels,
         })
+    }
+
+    /// Start `num_threads` threads with `name` that executes `function` and whose [`JoinHandle`] is
+    /// added to `join_handles.
+    fn start_threads<F>(
+        num_threads: usize,
+        name: &str,
+        function: F,
+        join_handles: &mut Vec<JoinHandle<()>>,
+    ) -> Result<(), IOError>
+    where
+        F: FnOnce() + Send + Clone + 'static,
+    {
+        for thread_number in 0..num_threads {
+            let join_handle = thread::Builder::new()
+                .name(format!("{} {}", name, thread_number))
+                .spawn(function.clone())
+                .map_err(|error| IOError::new(ErrorKind::Other, error))?;
+
+            join_handles.push(join_handle);
+        }
+
+        Ok(())
+    }
+
+    /// Add references to the
+    /// [`UncompressedDataBuffers`](uncompressed_data_buffer::UncompressedDataBuffer) currently on
+    /// disk to [`UncompressedDataManager`] which immediately will start compressing them.
+    pub(super) async fn initialize(
+        &self,
+        local_data_folder: PathBuf,
+        context: &Context,
+    ) -> Result<(), IOError> {
+        self.uncompressed_data_manager
+            .initialize(local_data_folder, context)
+            .await
     }
 
     /// Pass `record_batch` to [`CompressedDataManager`]. Return [`Ok`] if `record_batch` was
@@ -185,81 +289,42 @@ impl StorageEngine {
     /// were successfully inserted, otherwise return [`String`].
     pub async fn insert_data_points(
         &mut self,
-        model_table_metadata: &ModelTableMetadata,
-        data_points: &RecordBatch,
+        model_table_metadata: Arc<ModelTableMetadata>,
+        multivariate_data_points: RecordBatch,
     ) -> Result<(), String> {
-        // TODO: When the compression component is changed, just insert the data points.
-        let compressed_segments = self
-            .uncompressed_data_manager
-            .insert_data_points(&self.metadata_manager, model_table_metadata, data_points)
-            .await?;
+        // TODO: write to a WAL and use it to ensure termination never duplicates or loses data.
+        self.memory_pool
+            .wait_for_uncompressed_memory(multivariate_data_points.get_array_memory_size());
 
-        for (univariate_id, compressed_segments) in compressed_segments {
-            let column_index = MetadataManager::univariate_id_to_column_index(univariate_id);
-            self.compressed_data_manager
-                .insert_compressed_segments(
-                    &model_table_metadata.name,
-                    column_index,
-                    compressed_segments,
-                )
-                .await
-                .map_err(|error| error.to_string())?;
-        }
-
-        Ok(())
-    }
-
-    /// Retrieve the oldest finished [`UncompressedDataBuffer`] from [`UncompressedDataManager`] and
-    /// return it. Return [`None`] if there are no finished
-    /// [`UncompressedDataBuffers`](UncompressedDataBuffer).
-    #[allow(dead_code)]
-    pub async fn finished_uncompressed_data_buffer(
-        &mut self,
-    ) -> Option<Box<dyn UncompressedDataBuffer>> {
-        self.uncompressed_data_manager.finished_data_buffer().await
+        self.channels
+            .multivariate_data_sender
+            .send(Message::Data(UncompressedDataMultivariate::new(
+                model_table_metadata,
+                multivariate_data_points,
+            )))
+            .map_err(|error| error.to_string())
     }
 
     /// Flush all of the data the [`StorageEngine`] is currently storing in memory to disk. If all
     /// of the data is successfully flushed to disk, return [`Ok`], otherwise return [`String`].
-    pub async fn flush(&mut self) -> Result<(), String> {
-        // TODO: When the compression component is changed, just flush before managers.
-        // Flush UncompressedDataManager.
-        let compressed_segments = self
-            .uncompressed_data_manager
-            .flush()
-            .await
-            .map_err(|error| error.to_string())?;
-        let hash_to_table_name = self
-            .metadata_manager
-            .mapping_from_hash_to_table_name()
-            .await
-            .map_err(|error| error.to_string())?;
+    pub async fn flush(&self) -> Result<(), String> {
+        self.channels
+            .multivariate_data_sender
+            .send(Message::Flush)
+            .map_err(|error| format!("Unable to flush data in storage engine due to: {}", error))?;
 
-        for (univariate_id, compressed_segments) in compressed_segments {
-            let tag_hash = MetadataManager::univariate_id_to_tag_hash(univariate_id);
-            let column_index = MetadataManager::univariate_id_to_column_index(univariate_id);
-
-            // unwrap() is safe as new univariate ids have been added to the metadata database.
-            let table_name = hash_to_table_name.get(&tag_hash).unwrap();
-            self.compressed_data_manager
-                .insert_compressed_segments(table_name, column_index, compressed_segments)
-                .await
-                .map_err(|error| error.to_string())?;
-        }
-
-        // Flush CompressedDataManager.
-        self.compressed_data_manager
-            .flush()
-            .await
-            .map_err(|error| error.to_string())?;
-
-        Ok(())
+        // Wait until all of the data in the storage engine have been flushed.
+        self.channels
+            .result_receiver
+            .recv()
+            .map_err(|error| format!("Failed to receive result message due to: {}", error))?
+            .map_err(|error| format!("Failed to flush data in storage engine due to: {}", error))
     }
 
     /// Transfer all of the compressed data the [`StorageEngine`] is managing to the remote object
     /// store.
     pub async fn transfer(&mut self) -> Result<(), Status> {
-        if let Some(data_transfer) = self.compressed_data_manager.data_transfer.as_mut() {
+        if let Some(data_transfer) = &*self.compressed_data_manager.data_transfer.read().await {
             data_transfer
                 .flush()
                 .await
@@ -267,6 +332,31 @@ impl StorageEngine {
         } else {
             Err(Status::internal("No remote object store available."))
         }
+    }
+
+    /// Flush all of the data the [`StorageEngine`] is currently storing in memory to disk and stop
+    /// all of the threads. If all of the data is successfully flushed to disk and all of the
+    /// threads stopped, return [`Ok`], otherwise return [`String`]. This method is purposely `&mut
+    /// self` instead of `self` so it can be called through an Arc.
+    pub fn close(&mut self) -> Result<(), String> {
+        self.channels
+            .multivariate_data_sender
+            .send(Message::Stop)
+            .map_err(|error| format!("Unable to stop the storage engine due to: {}", error))?;
+
+        // Wait until all of the data in the storage engine have been flushed.
+        self.channels
+            .result_receiver
+            .recv()
+            .map_err(|error| format!("Failed to receive result message due to: {}", error))?
+            .map_err(|error| format!("Failed to flush data in storage engine due to: {}", error))?;
+
+        // unwrap() is safe as join() only returns an error if the thread panicked.
+        self.join_handles
+            .drain(..)
+            .for_each(|join_handle: JoinHandle<()>| join_handle.join().unwrap());
+
+        Ok(())
     }
 
     /// Retrieve the compressed sorted files that correspond to the column at `column_index` in the
@@ -293,7 +383,7 @@ impl StorageEngine {
         // Retrieve object_metas that represent the relevant files for table_name and column_index.
         let relevant_apache_parquet_files = self
             .compressed_data_manager
-            .save_and_get_saved_compressed_files(
+            .get_saved_compressed_files(
                 table_name,
                 column_index,
                 start_time,
@@ -328,31 +418,38 @@ impl StorageEngine {
     /// Collect and return the metrics of used uncompressed/compressed memory, used disk space, and ingested
     /// data points over time. The metrics are returned in tuples with the format (metric_type, (timestamps, values)).
     pub async fn collect_metrics(&mut self) -> Vec<(MetricType, (TimestampArray, UInt32Array))> {
+        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         vec![
             (
                 MetricType::UsedUncompressedMemory,
                 self.uncompressed_data_manager
                     .used_uncompressed_memory_metric
+                    .lock()
+                    .unwrap()
                     .finish(),
             ),
             (
                 MetricType::UsedCompressedMemory,
                 self.compressed_data_manager
                     .used_compressed_memory_metric
+                    .lock()
+                    .unwrap()
                     .finish(),
             ),
             (
                 MetricType::IngestedDataPoints,
                 self.uncompressed_data_manager
                     .ingested_data_points_metric
+                    .lock()
+                    .unwrap()
                     .finish(),
             ),
             (
                 MetricType::UsedDiskSpace,
                 self.compressed_data_manager
                     .used_disk_space_metric
-                    .write()
-                    .await
+                    .lock()
+                    .unwrap()
                     .finish(),
             ),
         ]
@@ -365,7 +462,10 @@ impl StorageEngine {
         &mut self,
         remote_data_folder: Arc<dyn ObjectStore>,
     ) -> Result<(), IOError> {
-        if let Some(data_transfer) = &mut self.compressed_data_manager.data_transfer {
+        let maybe_current_data_transfer =
+            &mut *self.compressed_data_manager.data_transfer.write().await;
+
+        if let Some(data_transfer) = maybe_current_data_transfer {
             data_transfer.remote_data_folder = remote_data_folder;
         } else {
             let data_transfer = DataTransfer::try_new(
@@ -376,14 +476,14 @@ impl StorageEngine {
             )
             .await?;
 
-            self.compressed_data_manager.data_transfer = Some(data_transfer);
+            *maybe_current_data_transfer = Some(data_transfer);
         }
 
         Ok(())
     }
 
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.
-    pub async fn adjust_uncompressed_remaining_memory_in_bytes(&mut self, value_change: isize) {
+    pub async fn adjust_uncompressed_remaining_memory_in_bytes(&self, value_change: isize) {
         self.uncompressed_data_manager
             .adjust_uncompressed_remaining_memory_in_bytes(value_change)
             .await;
@@ -392,7 +492,7 @@ impl StorageEngine {
     /// Change the amount of memory for compressed data in bytes according to `value_change`. If
     /// the value is changed successfully return [`Ok`], otherwise return [`IOError`].
     pub async fn adjust_compressed_remaining_memory_in_bytes(
-        &mut self,
+        &self,
         value_change: isize,
     ) -> Result<(), IOError> {
         self.compressed_data_manager
@@ -458,7 +558,6 @@ impl StorageEngine {
         output_data_folder: &Arc<dyn ObjectStore>,
         output_folder: &str,
     ) -> Result<ObjectMeta, ParquetError> {
-        // TODO: ensure termination at any place does not duplicate or loss data.
         // Read input files, for_each is not used so errors can be returned with ?.
         let mut record_batches = Vec::with_capacity(input_files.len());
         for input_file in input_files {
@@ -519,7 +618,6 @@ impl StorageEngine {
         );
 
         // Return an ObjectMeta that represent the successfully merged and written file.
-        // unwrap() is safe as the file have just been written successfully to output_file_path.
         output_data_folder
             .head(&output_file_path)
             .await
