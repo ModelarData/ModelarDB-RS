@@ -503,6 +503,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "Cannot insert data into full UncompressedInMemoryDataBuffer.")]
     fn test_in_memory_data_buffer_panic_if_inserting_data_point_when_full() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
