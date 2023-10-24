@@ -157,7 +157,7 @@ fn compute_mergeable_segments(
 }
 
 /// Return [`true`] if the segments are from the same time series, the time intervals the segments
-/// represent data for does not overlap due to out of order data points, the segment at
+/// represent data for do not overlap due to out of order data points, the segment at
 /// `previous_index` does not store any residuals, their models are of the same type, and their
 /// models can be merged, otherwise [`false`]. Assumes the arrays are the same length and that
 /// `previous_index` and `current_index` both access values in the arrays.
