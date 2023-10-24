@@ -30,12 +30,16 @@ use std::str;
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use datafusion::arrow::compute::kernels::aggregate;
+use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::execution::options::ParquetReadOptions;
 use futures::TryStreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
-use modelardb_common::types::{ErrorBound, Timestamp, UnivariateId, Value};
+use modelardb_common::types::{
+    ErrorBound, Timestamp, TimestampArray, UnivariateId, Value, ValueArray,
+};
 use modelardb_common::{metadata, parser};
 use sqlx::database::HasArguments;
 use sqlx::error::Error;
@@ -77,6 +81,29 @@ impl CompressedFile {
         min_value: Value,
         max_value: Value,
     ) -> Self {
+        Self {
+            name,
+            start_time,
+            end_time,
+            min_value,
+            max_value,
+        }
+    }
+
+    /// Convert the given [`Uuid`] and [`RecordBatch`] to a [`CompressedFile`].
+    pub fn from_record_batch(name: Uuid, batch: RecordBatch) -> Self {
+        // unwrap() is safe as None is only returned if all of the values are None.
+        let start_time =
+            aggregate::min(modelardb_common::array!(batch, 2, TimestampArray)).unwrap();
+        let end_time = aggregate::max(modelardb_common::array!(batch, 3, TimestampArray)).unwrap();
+
+        // unwrap() is safe as None is only returned if all of the values are None.
+        // Both aggregate::min() and aggregate::max() consider NaN to be greater than other non-null
+        // values. So since min_values and max_values cannot contain null, min_value will be NaN if all
+        // values in min_values are NaN while max_value will be NaN if any value in max_values is NaN.
+        let min_value = aggregate::min(modelardb_common::array!(batch, 5, ValueArray)).unwrap();
+        let max_value = aggregate::max(modelardb_common::array!(batch, 6, ValueArray)).unwrap();
+
         Self {
             name,
             start_time,
@@ -414,7 +441,6 @@ impl MetadataManager {
     /// * The max value is smaller than the min value in `compressed_file`.
     /// * The metadata database could not be modified.
     /// * A model table with `model_table_name` does not exist.
-    #[allow(dead_code)]
     pub async fn save_compressed_file(
         &self,
         model_table_name: &str,

@@ -34,6 +34,7 @@ use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
 
+use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
@@ -56,6 +57,8 @@ pub(super) struct CompressedDataManager {
     compressed_queue: SegQueue<(String, u16)>,
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
+    /// Management of metadata for saving compressed file metadata.
+    metadata_manager: Arc<MetadataManager>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used compressed memory in bytes, updated every time the used memory changes.
@@ -73,6 +76,7 @@ impl CompressedDataManager {
         local_data_folder: PathBuf,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
+        metadata_manager: Arc<MetadataManager>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the compressed data manager exists.
@@ -84,6 +88,7 @@ impl CompressedDataManager {
             compressed_data_buffers: DashMap::new(),
             compressed_queue: SegQueue::new(),
             channels,
+            metadata_manager,
             memory_pool,
             used_compressed_memory_metric: Mutex::new(Metric::new()),
             used_disk_space_metric,
@@ -349,9 +354,9 @@ impl CompressedDataManager {
     }
 
     /// Save the compressed data that belongs to the column at `column_index` in the table with
-    /// `table_name` to disk. The size of the saved compressed data is added back to the remaining
-    /// reserved memory. If the data is saved successfully, return [`Ok`], otherwise return
-    /// [`IOError`].
+    /// `table_name` to disk and save the metadata to the metadata database. The size of the saved
+    /// compressed data is added back to the remaining reserved memory. If the data is saved
+    /// successfully, return [`Ok`], otherwise return [`IOError`].
     async fn save_compressed_data(
         &self,
         table_name: &str,
@@ -371,7 +376,14 @@ impl CompressedDataManager {
             .join(table_name)
             .join(column_index.to_string());
 
-        let file_path = compressed_data_buffer.save_to_apache_parquet(folder_path.as_path())?;
+        let (compressed_file, file_path) =
+            compressed_data_buffer.save_to_apache_parquet(folder_path.as_path())?;
+
+        // Save the metadata of the compressed file to the metadata database.
+        self.metadata_manager
+            .save_compressed_file(table_name, column_index as usize, &compressed_file)
+            .await
+            .unwrap();
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         let freed_memory = compressed_data_buffer.size_in_bytes;

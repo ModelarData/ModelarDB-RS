@@ -140,7 +140,7 @@ impl StorageEngine {
                 local_data_folder.clone(),
                 memory_pool.clone(),
                 channels.clone(),
-                metadata_manager,
+                metadata_manager.clone(),
                 used_disk_space_metric.clone(),
             )
             .await?,
@@ -202,6 +202,7 @@ impl StorageEngine {
             local_data_folder,
             channels.clone(),
             memory_pool.clone(),
+            metadata_manager,
             used_disk_space_metric,
         )?);
 

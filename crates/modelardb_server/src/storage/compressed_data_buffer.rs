@@ -28,7 +28,7 @@ use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use uuid::Uuid;
 
-use crate::metadata::MetadataManager;
+use crate::metadata::{CompressedFile, MetadataManager};
 use crate::storage::StorageEngine;
 
 /// Compressed segments representing data points from a column in a model table as one
@@ -97,12 +97,12 @@ impl CompressedDataBuffer {
         segment_size
     }
 
-    /// If the compressed segments are successfully saved to an Apache Parquet file return the
-    /// path to the saved file, otherwise return [`IOError`].
+    /// If the compressed segments are successfully saved to an Apache Parquet file return a
+    /// [`CompressedFile`] and the path to the saved file, otherwise return [`IOError`].
     pub(super) fn save_to_apache_parquet(
         &mut self,
         folder_path: &Path,
-    ) -> Result<PathBuf, IOError> {
+    ) -> Result<(CompressedFile, PathBuf), IOError> {
         debug_assert!(
             !self.compressed_segments.is_empty(),
             "Cannot save CompressedDataBuffer with no data."
@@ -116,7 +116,8 @@ impl CompressedDataBuffer {
         fs::create_dir_all(folder_path)?;
 
         // Use an UUID for the file name to ensure the name is unique.
-        let file_path = folder_path.join(format!("{}.parquet", Uuid::new_v4()));
+        let uuid = Uuid::new_v4();
+        let file_path = folder_path.join(format!("{uuid}.parquet"));
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
         let sorting_columns = Some(vec![
@@ -125,13 +126,13 @@ impl CompressedDataBuffer {
         ]);
 
         StorageEngine::write_batch_to_apache_parquet_file(
-            batch,
+            batch.clone(),
             file_path.as_path(),
             sorting_columns,
         )
         .map_err(|error| IOError::new(Other, error.to_string()))?;
 
-        Ok(file_path)
+        Ok((CompressedFile::from_record_batch(uuid, batch), file_path))
     }
 
     /// Return the size in bytes of `compressed_segments`.
