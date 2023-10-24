@@ -57,10 +57,6 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
 use crate::context::Context;
-use crate::metadata::MetadataManager;
-use crate::parser::{self, ValidStatement};
-use crate::query::ModelTable;
-use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through [`FlightServiceHandler`].
@@ -277,7 +273,7 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         let configuration_manager = self.context.configuration_manager.read().await;
 
-        if let ClusterMode::MultiNode(_manager_url, key) = configuration_manager.cluster_mode() {
+        if let ClusterMode::MultiNode(_manager_url, key) = &configuration_manager.cluster_mode {
             // If the server is started with a manager, these actions require a manager key.
             let restricted_actions = [
                 "CommandStatementUpdate",
@@ -520,7 +516,8 @@ impl FlightService for FlightServiceHandler {
 
             self.context
                 .parse_and_create_table(sql, &self.context)
-                .await?;
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
 
             // Confirm the table was created.
             Ok(Response::new(Box::pin(stream::empty())))

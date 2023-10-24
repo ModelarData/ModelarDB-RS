@@ -33,7 +33,6 @@ use std::{env, fs};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::Action;
-use context::Context;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
 use modelardb_common::arguments::{

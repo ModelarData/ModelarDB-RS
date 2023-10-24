@@ -25,11 +25,12 @@ use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::schema::SchemaProvider;
 use datafusion::prelude::{ParquetReadOptions, SessionContext};
+use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
 use tokio::sync::RwLock;
-use tonic::{Request, Status};
+use tonic::Request;
 use tracing::info;
 
 use crate::configuration::ConfigurationManager;
@@ -84,18 +85,18 @@ impl Context {
     /// Initialize the local database schema with the tables and model tables from the managers
     /// database schema. `context` is needed as an argument instead of using `self` to avoid having
     /// to copy the context when registering model tables. If the tables to create could not be
-    /// retrieved from the manager, or the tables could not be created, return [`Status`].
+    /// retrieved from the manager, or the tables could not be created, return [`ModelarDbError`].
     pub(crate) async fn register_and_save_manager_tables(
         &self,
         manager_url: &str,
         context: &Arc<Context>,
-    ) -> Result<(), Status> {
+    ) -> Result<(), ModelarDbError> {
         let existing_tables = self.default_database_schema()?.table_names();
 
         // Retrieve the tables to create from the manager.
         let mut flight_client = FlightServiceClient::connect(manager_url.to_owned())
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
 
         // Add the already existing tables to the action request.
         let action = Action {
@@ -106,14 +107,16 @@ impl Context {
         // Extract the SQL for the tables that need to be created from the response.
         let maybe_response = flight_client
             .do_action(Request::new(action))
-            .await?
+            .await
+            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?
             .into_inner()
             .message()
-            .await?;
+            .await
+            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
 
         if let Some(response) = maybe_response {
             let table_sql_queries = std::str::from_utf8(&response.body)
-                .map_err(|error| Status::internal(error.to_string()))?
+                .map_err(|error| ModelarDbError::TableError(error.to_string()))?
                 .split(';')
                 .filter(|sql| !sql.is_empty());
 
@@ -124,7 +127,7 @@ impl Context {
 
             Ok(())
         } else {
-            Err(Status::internal(
+            Err(ModelarDbError::ImplementationError(
                 "Response for request to initialize database is empty.".to_owned(),
             ))
         }
@@ -132,19 +135,19 @@ impl Context {
 
     /// Parse `sql` and create a normal table or a model table based on the SQL. `context` is needed
     /// as an argument instead of using `self` to avoid having to copy the context when registering
-    /// model tables. If `sql` is not valid or the table could not be created, return [`Status`].
+    /// model tables. If `sql` is not valid or the table could not be created, return [`ModelarDbError`].
     pub(crate) async fn parse_and_create_table(
         &self,
         sql: &str,
         context: &Arc<Context>,
-    ) -> Result<(), Status> {
+    ) -> Result<(), ModelarDbError> {
         // Parse the SQL.
         let statement = parser::tokenize_and_parse_sql(sql)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Perform semantic checks to ensure the parsed SQL is supported.
         let valid_statement = parser::semantic_checks_for_create_table(statement)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Create the table or model table if it does not already exists.
         match valid_statement {
@@ -165,26 +168,28 @@ impl Context {
 
     /// Create a normal table, register it with Apache Arrow DataFusion's catalog, and save it to
     /// the [`MetadataManager`]. If the table exists, the Apache Parquet file cannot be created,
-    /// or if the table cannot be saved to the [`MetadataManager`], return [`Status`] error.
+    /// or if the table cannot be saved to the [`MetadataManager`], return [`ModelarDbError`] error.
     async fn register_and_save_table(
         &self,
         table_name: &str,
         sql: &str,
         schema: Schema,
-    ) -> Result<(), Status> {
+    ) -> Result<(), ModelarDbError> {
         // Ensure the folder for storing the table data exists.
         let metadata_manager = &self.metadata_manager;
         let folder_path = metadata_manager
             .local_data_folder()
             .join(COMPRESSED_DATA_FOLDER)
             .join(table_name);
-        fs::create_dir_all(&folder_path)?;
+
+        fs::create_dir_all(&folder_path)
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Create an empty Apache Parquet file to save the schema.
         let file_path = folder_path.join("empty_for_schema.parquet");
         let empty_batch = RecordBatch::new_empty(Arc::new(schema));
         StorageEngine::write_batch_to_apache_parquet_file(empty_batch, &file_path, None)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Save the table in the Apache Arrow Datafusion catalog.
         self.session
@@ -194,13 +199,13 @@ impl Context {
                 ParquetReadOptions::default(),
             )
             .await
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Persist the new table to the metadata database.
         self.metadata_manager
             .save_table_metadata(table_name, sql)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         info!("Created table '{}'.", table_name);
 
@@ -216,7 +221,7 @@ impl Context {
         model_table_metadata: ModelTableMetadata,
         sql: &str,
         context: &Arc<Context>,
-    ) -> Result<(), Status> {
+    ) -> Result<(), ModelarDbError> {
         // Save the model table in the Apache Arrow DataFusion catalog.
         let model_table_metadata = Arc::new(model_table_metadata);
 
@@ -225,18 +230,18 @@ impl Context {
                 model_table_metadata.name.as_str(),
                 ModelTable::new(context.clone(), model_table_metadata.clone()),
             )
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Persist the new model table to the metadata database.
         self.metadata_manager
             .save_model_table_metadata(&model_table_metadata, sql)
             .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         info!("Created model table '{}'.", model_table_metadata.name);
         Ok(())
     }
-	
+
     /// Lookup the [`ModelTableMetadata`] of the model table with name `table_name` if it exists.
     /// Specifically, the method returns:
     /// * [`ModelTableMetadata`] if a model table with the name `table_name` exists.

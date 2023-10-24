@@ -46,7 +46,6 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::context::Context;
-use crate::parser;
 use crate::query::ModelTable;
 use crate::storage::COMPRESSED_DATA_FOLDER;
 

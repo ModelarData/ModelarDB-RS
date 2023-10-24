@@ -29,7 +29,7 @@ use crate::storage::StorageEngine;
 pub struct ConfigurationManager {
     /// The mode of the cluster used to determine the behaviour when starting the server,
     /// creating tables, updating the remote object store, and querying.
-    cluster_mode: ClusterMode,
+    pub(crate) cluster_mode: ClusterMode,
     /// The mode of the server used to determine the behaviour when modifying the remote object
     /// store and querying.
     pub(crate) server_mode: ServerMode,
