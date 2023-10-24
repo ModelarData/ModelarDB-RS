@@ -74,17 +74,18 @@ use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::PORT;
 
 /// The folder storing uncompressed data in the data folders.
-pub const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
+const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
 
 /// The folder storing compressed data in the data folders.
-pub const COMPRESSED_DATA_FOLDER: &str = "compressed";
+pub(super) const COMPRESSED_DATA_FOLDER: &str = "compressed";
 
 /// The scheme with host at which the query data folder is stored.
-pub const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
+pub(super) const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
 
 /// A static UUID for use in tests. It is not in a test utilities module so it can be used both
-/// inside the if cfg(test) block of [`create_time_and_value_range_file_name`] and in test modules.
-pub const TEST_UUID: Uuid = uuid!("44c57d06-333c-4935-8ae3-ed7bc53a08c4");
+/// inside the if cfg(test) block of [`StorageEngine::create_time_and_value_range_file_name()`] and
+/// in test modules.
+const TEST_UUID: Uuid = uuid!("44c57d06-333c-4935-8ae3-ed7bc53a08c4");
 
 /// The expected [first four bytes of any Apache Parquet file].
 ///
@@ -119,7 +120,7 @@ impl StorageEngine {
     /// Return [`StorageEngine`] that writes ingested data to `local_data_folder` and optionally
     /// transfers compressed data to `remote_data_folder` if it is given. Returns [`String`] if
     /// `remote_data_folder` is given but [`DataTransfer`] cannot not be created.
-    pub async fn try_new(
+    pub(super) async fn try_new(
         runtime: Arc<Runtime>,
         local_data_folder: PathBuf,
         remote_data_folder: Option<Arc<dyn ObjectStore>>,
@@ -287,7 +288,7 @@ impl StorageEngine {
 
     /// Pass `data_points` to [`UncompressedDataManager`]. Return [`Ok`] if all of the data points
     /// were successfully inserted, otherwise return [`String`].
-    pub async fn insert_data_points(
+    pub(super) async fn insert_data_points(
         &mut self,
         model_table_metadata: Arc<ModelTableMetadata>,
         multivariate_data_points: RecordBatch,
@@ -307,7 +308,7 @@ impl StorageEngine {
 
     /// Flush all of the data the [`StorageEngine`] is currently storing in memory to disk. If all
     /// of the data is successfully flushed to disk, return [`Ok`], otherwise return [`String`].
-    pub async fn flush(&self) -> Result<(), String> {
+    pub(super) async fn flush(&self) -> Result<(), String> {
         self.channels
             .multivariate_data_sender
             .send(Message::Flush)
@@ -323,7 +324,7 @@ impl StorageEngine {
 
     /// Transfer all of the compressed data the [`StorageEngine`] is managing to the remote object
     /// store.
-    pub async fn transfer(&mut self) -> Result<(), Status> {
+    pub(super) async fn transfer(&mut self) -> Result<(), Status> {
         if let Some(data_transfer) = &*self.compressed_data_manager.data_transfer.read().await {
             data_transfer
                 .flush()
@@ -338,7 +339,7 @@ impl StorageEngine {
     /// all of the threads. If all of the data is successfully flushed to disk and all of the
     /// threads stopped, return [`Ok`], otherwise return [`String`]. This method is purposely `&mut
     /// self` instead of `self` so it can be called through an Arc.
-    pub fn close(&mut self) -> Result<(), String> {
+    pub(super) fn close(&mut self) -> Result<(), String> {
         self.channels
             .multivariate_data_sender
             .send(Message::Stop)
@@ -370,7 +371,7 @@ impl StorageEngine {
     /// * The compressed files could not be listed.
     /// * The end time is before the start time.
     /// * The max value is smaller than the min value.
-    pub async fn compressed_files(
+    pub(super) async fn compressed_files(
         &mut self,
         table_name: &str,
         column_index: u16,
@@ -383,7 +384,7 @@ impl StorageEngine {
         // Retrieve object_metas that represent the relevant files for table_name and column_index.
         let relevant_apache_parquet_files = self
             .compressed_data_manager
-            .get_saved_compressed_files(
+            .compressed_files(
                 table_name,
                 column_index,
                 start_time,
@@ -396,7 +397,7 @@ impl StorageEngine {
 
         // Merge the compressed Apache Parquet files if multiple are returned to ensure order.
         if relevant_apache_parquet_files.len() > 1 {
-            let object_meta = StorageEngine::merge_compressed_apache_parquet_files(
+            let object_meta = Self::merge_compressed_apache_parquet_files(
                 query_data_folder,
                 &relevant_apache_parquet_files,
                 query_data_folder,
@@ -417,7 +418,9 @@ impl StorageEngine {
 
     /// Collect and return the metrics of used uncompressed/compressed memory, used disk space, and ingested
     /// data points over time. The metrics are returned in tuples with the format (metric_type, (timestamps, values)).
-    pub async fn collect_metrics(&mut self) -> Vec<(MetricType, (TimestampArray, UInt32Array))> {
+    pub(super) async fn collect_metrics(
+        &mut self,
+    ) -> Vec<(MetricType, (TimestampArray, UInt32Array))> {
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         vec![
             (
@@ -458,7 +461,7 @@ impl StorageEngine {
     /// Update the remote data folder, used to transfer data to in the data transfer component.
     /// If one does not already exists, create a new data transfer component. If the remote
     /// data folder was successfully updated, return [`Ok`], otherwise return [`IOError`].
-    pub async fn update_remote_data_folder(
+    pub(super) async fn update_remote_data_folder(
         &mut self,
         remote_data_folder: Arc<dyn ObjectStore>,
     ) -> Result<(), IOError> {
@@ -483,7 +486,7 @@ impl StorageEngine {
     }
 
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.
-    pub async fn adjust_uncompressed_remaining_memory_in_bytes(&self, value_change: isize) {
+    pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(&self, value_change: isize) {
         self.uncompressed_data_manager
             .adjust_uncompressed_remaining_memory_in_bytes(value_change)
             .await;
@@ -491,7 +494,7 @@ impl StorageEngine {
 
     /// Change the amount of memory for compressed data in bytes according to `value_change`. If
     /// the value is changed successfully return [`Ok`], otherwise return [`IOError`].
-    pub async fn adjust_compressed_remaining_memory_in_bytes(
+    pub(super) async fn adjust_compressed_remaining_memory_in_bytes(
         &self,
         value_change: isize,
     ) -> Result<(), IOError> {
@@ -503,7 +506,7 @@ impl StorageEngine {
     /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`
     /// must use the extension '.parquet'. Return [`Ok`] if the file was written successfully,
     /// otherwise [`ParquetError`].
-    pub fn write_batch_to_apache_parquet_file(
+    pub(super) fn write_batch_to_apache_parquet_file(
         batch: RecordBatch,
         file_path: &Path,
         sorting_columns: Option<Vec<SortingColumn>>,
@@ -516,7 +519,8 @@ impl StorageEngine {
         // Check if the extension of the given path is correct.
         if file_path.extension().and_then(OsStr::to_str) == Some("parquet") {
             let file = File::create(file_path).map_err(|_e| error)?;
-            let mut writer = create_apache_arrow_writer(file, batch.schema(), sorting_columns)?;
+            let mut writer =
+                Self::create_apache_arrow_writer(file, batch.schema(), sorting_columns)?;
             writer.write(&batch)?;
             writer.close()?;
 
@@ -529,7 +533,7 @@ impl StorageEngine {
     /// Read all rows from the Apache Parquet file at the location given by `file_path` and return
     /// them as a [`RecordBatch`]. If the file could not be read successfully, [`ParquetError`] is
     /// returned.
-    pub async fn read_batch_from_apache_parquet_file(
+    async fn read_batch_from_apache_parquet_file(
         file_path: &Path,
     ) -> Result<RecordBatch, ParquetError> {
         // Create a stream that can be used to read an Apache Parquet file.
@@ -552,7 +556,7 @@ impl StorageEngine {
     /// single Apache Parquet file in `output_data_folder`/`output_folder`. Return an [`ObjectMeta`]
     /// that represent the merged file if it is written successfully, otherwise [`ParquetError`] is
     /// returned.
-    pub async fn merge_compressed_apache_parquet_files(
+    async fn merge_compressed_apache_parquet_files(
         input_data_folder: &Arc<dyn ObjectStore>,
         input_files: &[ObjectMeta],
         output_data_folder: &Arc<dyn ObjectStore>,
@@ -582,7 +586,7 @@ impl StorageEngine {
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
         // Compute the name of the output file based on data in merged.
-        let file_name = create_time_and_value_range_file_name(&merged);
+        let file_name = Self::create_time_and_value_range_file_name(&merged);
         let output_file_path = format!("{output_folder}/{file_name}").into();
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
@@ -594,7 +598,7 @@ impl StorageEngine {
         // Write the concatenated and merged record batch to the output location.
         let mut buf = vec![].writer();
         let mut apache_arrow_writer =
-            create_apache_arrow_writer(&mut buf, schema, sorting_columns)?;
+            Self::create_apache_arrow_writer(&mut buf, schema, sorting_columns)?;
         apache_arrow_writer.write(&merged)?;
         apache_arrow_writer.close()?;
 
@@ -624,8 +628,62 @@ impl StorageEngine {
             .map_err(|error| ParquetError::General(error.to_string()))
     }
 
+    /// Create a file name that includes the start timestamp of the first segment in `batch`, the
+    /// end timestamp of the last segment in `batch`, the minimum value stored in `batch`, the
+    /// maximum value stored in `batch`, an UUID to make it unique across edge and cloud in
+    /// practice, and an ID that uniquely identifies the edge.
+    fn create_time_and_value_range_file_name(batch: &RecordBatch) -> String {
+        // unwrap() is safe as None is only returned if all of the values are None.
+        let start_time =
+            aggregate::min(modelardb_common::array!(batch, 2, TimestampArray)).unwrap();
+        let end_time = aggregate::max(modelardb_common::array!(batch, 3, TimestampArray)).unwrap();
+
+        // unwrap() is safe as None is only returned if all of the values are None.
+        // Both aggregate::min() and aggregate::max() consider NaN to be greater than other non-null
+        // values. So since min_values and max_values cannot contain null, min_value will be NaN if all
+        // values in min_values are NaN while max_value will be NaN if any value in max_values is NaN.
+        let min_value = aggregate::min(modelardb_common::array!(batch, 5, ValueArray)).unwrap();
+        let max_value = aggregate::max(modelardb_common::array!(batch, 6, ValueArray)).unwrap();
+
+        // An UUID is added to the file name to ensure it, in practice, is unique across edge and cloud.
+        // A static UUID is set when tests are executed to allow the tests to check that files exists.
+        let uuid = if cfg!(test) {
+            TEST_UUID
+        } else {
+            Uuid::new_v4()
+        };
+
+        // TODO: Use part of the UUID or the entire Apache Arrow Flight URL to identify the edge.
+        let edge_id = PORT.to_string();
+
+        format!(
+            "{}_{}_{}_{}_{}_{}.parquet",
+            start_time, end_time, min_value, max_value, uuid, edge_id
+        )
+    }
+
+    /// Create an Apache ArrowWriter that writes to `writer`. If the writer could not be created
+    /// return [`ParquetError`].
+    fn create_apache_arrow_writer<W: Write + Send>(
+        writer: W,
+        schema: SchemaRef,
+        sorting_columns: Option<Vec<SortingColumn>>,
+    ) -> Result<ArrowWriter<W>, ParquetError> {
+        let props = WriterProperties::builder()
+            .set_encoding(Encoding::PLAIN)
+            .set_compression(Compression::ZSTD(ZstdLevel::default()))
+            .set_dictionary_enabled(false)
+            .set_statistics_enabled(EnabledStatistics::None)
+            .set_bloom_filter_enabled(false)
+            .set_sorting_columns(sorting_columns)
+            .build();
+
+        let writer = ArrowWriter::try_new(writer, schema, Some(props))?;
+        Ok(writer)
+    }
+
     /// Return [`true`] if `file_path` is a readable Apache Parquet file, otherwise [`false`].
-    pub async fn is_path_an_apache_parquet_file(
+    async fn is_path_an_apache_parquet_file(
         object_store: &Arc<dyn ObjectStore>,
         file_path: &ObjectStorePath,
     ) -> bool {
@@ -635,59 +693,6 @@ impl StorageEngine {
             false
         }
     }
-}
-
-/// Create an Apache ArrowWriter that writes to `writer`. If the writer could not be created return
-/// [`ParquetError`].
-fn create_apache_arrow_writer<W: Write + Send>(
-    writer: W,
-    schema: SchemaRef,
-    sorting_columns: Option<Vec<SortingColumn>>,
-) -> Result<ArrowWriter<W>, ParquetError> {
-    let props = WriterProperties::builder()
-        .set_encoding(Encoding::PLAIN)
-        .set_compression(Compression::ZSTD(ZstdLevel::default()))
-        .set_dictionary_enabled(false)
-        .set_statistics_enabled(EnabledStatistics::None)
-        .set_bloom_filter_enabled(false)
-        .set_sorting_columns(sorting_columns)
-        .build();
-
-    let writer = ArrowWriter::try_new(writer, schema, Some(props))?;
-    Ok(writer)
-}
-
-/// Create a file name that includes the start timestamp of the first segment in `batch`, the end
-/// timestamp of the last segment in `batch`, the minimum value stored in `batch`, the maximum value
-/// stored in `batch`, an UUID to make it unique across edge and cloud in practice, and an ID that
-/// uniquely identifies the edge.
-fn create_time_and_value_range_file_name(batch: &RecordBatch) -> String {
-    // unwrap() is safe as None is only returned if all of the values are None.
-    let start_time = aggregate::min(modelardb_common::array!(batch, 2, TimestampArray)).unwrap();
-    let end_time = aggregate::max(modelardb_common::array!(batch, 3, TimestampArray)).unwrap();
-
-    // unwrap() is safe as None is only returned if all of the values are None.
-    // Both aggregate::min() and aggregate::max() consider NaN to be greater than other non-null
-    // values. So since min_values and max_values cannot contain null, min_value will be NaN if all
-    // values in min_values are NaN while max_value will be NaN if any value in max_values is NaN.
-    let min_value = aggregate::min(modelardb_common::array!(batch, 5, ValueArray)).unwrap();
-    let max_value = aggregate::max(modelardb_common::array!(batch, 6, ValueArray)).unwrap();
-
-    // An UUID is added to the file name to ensure it, in practice, is unique across edge and cloud.
-    // A static UUID is set when tests are executed to allow the tests to check that files exists.
-    let uuid = if cfg!(test) {
-        TEST_UUID
-    } else {
-        Uuid::new_v4()
-    };
-
-    // TODO: Use part of the UUID or the entire Apache Arrow Flight URL to identify the edge.
-    let edge_id = PORT.to_string();
-
-    format!(
-        "{}_{}_{}_{}_{}_{}.parquet",
-        start_time, end_time, min_value, max_value, uuid, edge_id
-    )
 }
 
 #[cfg(test)]

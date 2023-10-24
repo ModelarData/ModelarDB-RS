@@ -156,10 +156,11 @@ fn compute_mergeable_segments(
     }
 }
 
-/// Return [`true`] if the segment at `previous_index` does not store any residuals and the models
-/// at `previous_index` and `current_index` represent values from the same time series, are of the
-/// same type, and can be merged, otherwise [`false`]. Assumes the arrays are the same length and
-/// that `previous_index` and `current_index` both access values in the arrays.
+/// Return [`true`] if the segments are from the same time series, the time intervals the segments
+/// represent data for do not overlap due to out of order data points, the segment at
+/// `previous_index` does not store any residuals, their models are of the same type, and their
+/// models can be merged, otherwise [`false`]. Assumes the arrays are the same length and that
+/// `previous_index` and `current_index` both access values in the arrays.
 fn segments_can_be_merged(
     previous_index: usize,
     current_index: usize,
@@ -179,6 +180,14 @@ fn segments_can_be_merged(
 
     // Only segments from the same time series can be merged
     if univariate_ids.value(previous_index) != univariate_ids.value(current_index) {
+        return false;
+    }
+
+    // Segments with overlapping time intervals occurs when data points are being ingested
+    // out-of-order across different batches. Such segments cannot be merged as the query engine
+    // assumes all columns in a model table has the same sort order and it would change the order
+    // for a single column in the table if segments with out-of-order data points are merged.
+    if  end_times.value(previous_index) >= start_times.value(current_index) {
         return false;
     }
 
@@ -504,6 +513,22 @@ mod tests {
             &UInt8Array::from_iter_values([models::PMC_MEAN_ID, models::PMC_MEAN_ID]),
             &TimestampArray::from_iter_values([100, 300]),
             &TimestampArray::from_iter_values([200, 400]),
+            &ValueArray::from_iter_values([1.0, 1.0]),
+            &ValueArray::from_iter_values([2.0, 2.0]),
+            &BinaryArray::from_iter_values([[], []]),
+            &BinaryArray::from_iter_values([[], []])
+        ))
+    }
+
+    #[test]
+    fn test_models_with_overlapping_timestamps_cannot_be_merged() {
+        assert!(!segments_can_be_merged(
+            0,
+            1,
+            &UInt64Array::from_iter_values([1, 1]),
+            &UInt8Array::from_iter_values([models::PMC_MEAN_ID, models::PMC_MEAN_ID]),
+            &TimestampArray::from_iter_values([100, 200]),
+            &TimestampArray::from_iter_values([300, 400]),
             &ValueArray::from_iter_values([1.0, 1.0]),
             &ValueArray::from_iter_values([2.0, 2.0]),
             &BinaryArray::from_iter_values([[], []]),

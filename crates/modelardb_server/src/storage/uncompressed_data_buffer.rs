@@ -27,6 +27,7 @@ use std::{fmt, fs, mem};
 
 use async_trait::async_trait;
 use datafusion::arrow::array::{Array, ArrayBuilder};
+use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
@@ -198,14 +199,22 @@ impl fmt::Debug for UncompressedInMemoryDataBuffer {
 
 #[async_trait]
 impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
-    /// Finish the array builders and return the data in a structured [`RecordBatch`].
+    /// Finish the array builders and return the data in a [`RecordBatch`] sorted by time.
     async fn record_batch(&mut self) -> Result<RecordBatch, ParquetError> {
         let timestamps = self.timestamps.finish();
         let values = self.values.finish();
 
+        // lexsort() is not used as it is unclear in what order it sorts multiple arrays, instead a
+        // combination of sort_to_indices() and take(), like how lexsort() is implemented, is used.
+        // unwrap() is safe as timestamps has a supported type and sorted_indices are within bounds.
+        let sorted_indices = compute::sort_to_indices(&timestamps, None, None).unwrap();
+        let sorted_timestamps = compute::take(&timestamps, &sorted_indices, None).unwrap();
+        let sorted_values = compute::take(&values, &sorted_indices, None).unwrap();
+
+        // unwrap() is safe as UNCOMPRESSED_SCHEMA contains timestamps and values.
         Ok(RecordBatch::try_new(
             UNCOMPRESSED_SCHEMA.0.clone(),
-            vec![Arc::new(timestamps), Arc::new(values)],
+            vec![Arc::new(sorted_timestamps), Arc::new(sorted_values)],
         )
         .unwrap())
     }
@@ -330,8 +339,8 @@ impl fmt::Debug for UncompressedOnDiskDataBuffer {
 #[async_trait]
 impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
     /// Read the data from the Apache Parquet file, delete the Apache Parquet file, and return the
-    /// data as a [`RecordBatch`]. Return [`ParquetError`] if the Apache Parquet file cannot be read
-    /// or deleted.
+    /// data as a [`RecordBatch`] sorted by time. Return [`ParquetError`] if the Apache Parquet file
+    /// cannot be read or deleted.
     async fn record_batch(&mut self) -> Result<RecordBatch, ParquetError> {
         let record_batch =
             StorageEngine::read_batch_from_apache_parquet_file(self.file_path.as_path()).await?;
@@ -389,6 +398,10 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use proptest::num::u64 as ProptestTimestamp;
+    use proptest::{collection, proptest};
+    use tokio::runtime::Runtime;
 
     use crate::common_test;
 
@@ -516,6 +529,30 @@ mod tests {
         assert_eq!(data.num_rows(), capacity);
     }
 
+    proptest! {
+    #[test]
+    fn test_record_batch_from_in_memory_data_buffer_is_sorted(timestamps in collection::vec(ProptestTimestamp::ANY, 1..50)) {
+        // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179
+        let runtime = Runtime::new().unwrap();
+
+        let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            common_test::model_table_metadata_arc(),
+            CURRENT_BATCH_INDEX,
+        );
+
+        // u64 is generated and then cast to i64 to ensure only positive values are generated.
+        for timestamp in timestamps {
+            uncompressed_buffer.insert_data(CURRENT_BATCH_INDEX, timestamp as i64, 0.0);
+        }
+
+        let data = runtime.block_on(uncompressed_buffer.record_batch()).unwrap();
+        assert_eq!(data.num_columns(), 2);
+        let timestamps = modelardb_common::array!(data, 0, TimestampArray);
+        assert!(timestamps.values().windows(2).all(|pair| pair[0] <= pair[1]));
+    }
+    }
+
     #[tokio::test]
     async fn test_in_memory_data_buffer_can_spill_not_full_buffer() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
@@ -607,6 +644,13 @@ mod tests {
             .await
             .unwrap();
 
+        let spilled_buffer_path = temp_dir
+            .path()
+            .join(UNCOMPRESSED_DATA_FOLDER)
+            .join("1")
+            .join("1234567890123.parquet");
+        assert!(spilled_buffer_path.exists());
+
         let data = uncompressed_on_disk_buffer.record_batch().await.unwrap();
 
         assert_eq!(data.num_columns(), 2);
@@ -618,6 +662,43 @@ mod tests {
             .join("1")
             .join("1234567890123.parquet");
         assert!(!spilled_buffer_path.exists());
+    }
+
+    proptest! {
+    #[test] fn test_record_batch_from_on_disk_data_buffer_is_sorted(timestamps in collection::vec(ProptestTimestamp::ANY, 1..50)) {
+        // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179
+        let runtime = Runtime::new().unwrap();
+
+        let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            common_test::model_table_metadata_arc(),
+            CURRENT_BATCH_INDEX,
+        );
+
+        // u64 is generated and then cast to i64 to ensure only positive values are generated.
+        for timestamp in timestamps {
+            uncompressed_in_memory_buffer.insert_data(CURRENT_BATCH_INDEX, timestamp as i64, 0.0);
+        }
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut uncompressed_on_disk_buffer = runtime.block_on(uncompressed_in_memory_buffer
+            .spill_to_apache_parquet(temp_dir.path()))
+            .unwrap();
+
+        let spilled_buffer_folder = temp_dir
+            .path()
+            .join(UNCOMPRESSED_DATA_FOLDER)
+            .join("1");
+
+        assert_eq!(fs::read_dir(&spilled_buffer_folder).unwrap().count(), 1);
+
+        let data = runtime.block_on(uncompressed_on_disk_buffer.record_batch()).unwrap();
+        assert_eq!(data.num_columns(), 2);
+        let timestamps = modelardb_common::array!(data, 0, TimestampArray);
+        assert!(timestamps.values().windows(2).all(|pair| pair[0] <= pair[1]));
+
+        assert_eq!(fs::read_dir(&spilled_buffer_folder).unwrap().count(), 0);
+    }
     }
 
     /// Insert `count` generated data points into `uncompressed_buffer`.
