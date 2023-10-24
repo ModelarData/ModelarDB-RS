@@ -22,7 +22,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  RUSTFLAGS: -C instrument-coverage -D warnings
+  RUSTFLAGS: -C instrument-coverage -C strip=symbols -D warnings
   RUSTDOCFLAGS: -D warnings
   LLVM_PROFILE_FILE: modelardb-%p-%m.profraw
 
