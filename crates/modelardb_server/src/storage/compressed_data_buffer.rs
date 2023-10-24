@@ -197,6 +197,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "Cannot save CompressedDataBuffer with no data.")]
     fn test_panic_if_saving_empty_compressed_data_buffer_to_apache_parquet() {
         let mut empty_compressed_data_buffer = CompressedDataBuffer::new();
