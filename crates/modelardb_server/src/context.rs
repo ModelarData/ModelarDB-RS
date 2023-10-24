@@ -215,7 +215,7 @@ impl Context {
     /// Create a model table, register it with Apache Arrow DataFusion's catalog, and save it to
     /// the [`MetadataManager`]. `context` is needed as an argument instead of using `self` to avoid
     /// having to copy the context when registering model tables. If the table exists or if the
-    /// table cannot be saved to the [`MetadataManager`], return [`Status`] error.
+    /// table cannot be saved to the [`MetadataManager`], return [`ModelarDbError`] error.
     async fn register_and_save_model_table(
         &self,
         model_table_metadata: ModelTableMetadata,

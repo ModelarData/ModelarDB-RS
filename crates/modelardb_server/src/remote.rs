@@ -185,8 +185,7 @@ impl FlightServiceHandler {
         }
     }
 
-    /// While there is still more data to receive, ingest the data into the
-    /// table.
+    /// While there is still more data to receive, ingest the data into the table.
     async fn ingest_into_table(
         &self,
         table_name: &str,
@@ -212,8 +211,7 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// While there is still more data to receive, ingest the data into the
-    /// storage engine.
+    /// While there is still more data to receive, ingest the data into the storage engine.
     async fn ingest_into_model_table(
         &self,
         model_table_metadata: Arc<ModelTableMetadata>,
@@ -238,9 +236,8 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// Return the table stored as the first element in
-    /// [`FlightDescriptor.path`], otherwise a [`Status`] that specifies that
-    /// the table name is missing.
+    /// Return the table stored as the first element in [`FlightDescriptor.path`], otherwise a
+    /// [`Status`] that specifies that the table name is missing.
     fn table_name_from_flight_descriptor<'a>(
         &'a self,
         flight_descriptor: &'a FlightDescriptor,
@@ -339,8 +336,8 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// Provide the schema of a table in the catalog. The name of the table must
-    /// be provided as the first element in `FlightDescriptor.path`.
+    /// Provide the schema of a table in the catalog. The name of the table must be provided as the
+    /// first element in `FlightDescriptor.path`.
     async fn get_schema(
         &self,
         request: Request<FlightDescriptor>,
@@ -361,8 +358,8 @@ impl FlightService for FlightServiceHandler {
         Ok(Response::new(schema_result))
     }
 
-    /// Execute a SQL query provided in UTF-8 and return the schema of the query
-    /// result followed by the query result.
+    /// Execute a SQL query provided in UTF-8 and return the schema of the query result followed by
+    /// the query result.
     async fn do_get(
         &self,
         request: Request<Ticket>,
@@ -409,11 +406,10 @@ impl FlightService for FlightServiceHandler {
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
     }
 
-    /// Insert data points into a table. The name of the table must be provided
-    /// as the first element of `FlightDescriptor.path` and the schema of the
-    /// data points must match the schema of the table. If the data points are
-    /// all inserted an empty stream is returned as confirmation, otherwise, a
-    /// `Status` specifying what error occurred is returned.
+    /// Insert data points into a table. The name of the table must be provided as the first element
+    /// of `FlightDescriptor.path` and the schema of the data points must match the schema of the
+    /// table. If the data points are all inserted an empty stream is returned as confirmation,
+    /// otherwise, a `Status` specifying what error occurred is returned.
     async fn do_put(
         &self,
         request: Request<Streaming<FlightData>>,
