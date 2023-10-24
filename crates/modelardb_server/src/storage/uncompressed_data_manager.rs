@@ -617,16 +617,15 @@ impl UncompressedDataManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::path::Path;
     use std::sync::Arc;
 
-    use datafusion::arrow::array::{ArrowPrimitiveType, StringBuilder};
-    use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::arrow::array::StringBuilder;
+    use datafusion::arrow::datatypes::SchemaRef;
     use datafusion::arrow::record_batch::RecordBatch;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
-    use modelardb_common::types::{
-        ArrowTimestamp, ArrowValue, ErrorBound, TimestampBuilder, ValueBuilder,
-    };
+    use modelardb_common::types::{TimestampBuilder, ValueBuilder};
     use ringbuf::Rb;
 
     use crate::common_test;
@@ -634,14 +633,14 @@ mod tests {
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
 
     const CURRENT_BATCH_INDEX: u64 = 0;
-    const UNIVARIATE_ID: u64 = 17854860594986067969;
+    const UNIVARIATE_ID: u64 = 9674644176454356993;
 
     // Tests for UncompressedDataManager.
     #[tokio::test]
     async fn test_can_find_existing_on_disk_data_buffers() {
         // Spill an uncompressed buffer to disk.
         let temp_dir = tempfile::tempdir().unwrap();
-        let model_table_metadata = create_model_table_metadata();
+        let model_table_metadata = Arc::new(common_test::model_table_metadata());
         let mut buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
             model_table_metadata,
@@ -671,16 +670,13 @@ mod tests {
     #[tokio::test]
     async fn test_can_insert_record_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (metadata_manager, data_manager, _model_table_metadata) =
+        let (_metadata_manager, data_manager, model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
-        let (model_table_metadata, data) = uncompressed_data(1);
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
-            .await
-            .unwrap();
+        let data = uncompressed_data(1, model_table_metadata.schema.clone());
         let uncompressed_data_multivariate =
             UncompressedDataMultivariate::new(model_table_metadata, data);
+
         data_manager
             .insert_data_points(uncompressed_data_multivariate)
             .await
@@ -702,16 +698,13 @@ mod tests {
     #[tokio::test]
     async fn test_can_insert_record_batch_with_multiple_data_points() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (metadata_manager, data_manager, _model_table_metadata) =
+        let (_metadata_manager, data_manager, model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
-        let (model_table_metadata, data) = uncompressed_data(2);
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
-            .await
-            .unwrap();
+        let data = uncompressed_data(2, model_table_metadata.schema.clone());
         let uncompressed_data_multivariate =
             UncompressedDataMultivariate::new(model_table_metadata, data);
+
         data_manager
             .insert_data_points(uncompressed_data_multivariate)
             .await
@@ -733,49 +726,21 @@ mod tests {
     /// Create a record batch with data that resembles uncompressed data with a single tag and two
     /// field columns. The returned data has `row_count` rows, with a different tag for each row.
     /// Also create model table metadata for a model table that matches the created data.
-    fn uncompressed_data(row_count: usize) -> (Arc<ModelTableMetadata>, RecordBatch) {
+    fn uncompressed_data(row_count: usize, schema: SchemaRef) -> RecordBatch {
         let tags: Vec<String> = (0..row_count).map(|tag| tag.to_string()).collect();
         let timestamps: Vec<Timestamp> = (0..row_count).map(|ts| ts as Timestamp).collect();
         let values: Vec<Value> = (0..row_count).map(|value| value as Value).collect();
 
-        let query_schema = Arc::new(Schema::new(vec![
-            Field::new("tag", DataType::Utf8, false),
-            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("value_1", ArrowValue::DATA_TYPE, false),
-            Field::new("value_2", ArrowValue::DATA_TYPE, false),
-        ]));
-
-        let data = RecordBatch::try_new(
-            query_schema.clone(),
+        RecordBatch::try_new(
+            schema,
             vec![
-                Arc::new(StringArray::from(tags)),
                 Arc::new(TimestampArray::from(timestamps)),
                 Arc::new(ValueArray::from(values.clone())),
                 Arc::new(ValueArray::from(values)),
+                Arc::new(StringArray::from(tags)),
             ],
         )
-        .unwrap();
-
-        let error_bounds = vec![
-            ErrorBound::try_new(0.0).unwrap(),
-            ErrorBound::try_new(0.0).unwrap(),
-            ErrorBound::try_new(0.0).unwrap(),
-            ErrorBound::try_new(0.0).unwrap(),
-        ];
-
-        let generated_columns = vec![None, None, None, None];
-
-        let model_table_metadata = Arc::new(
-            ModelTableMetadata::try_new(
-                "model_table".to_owned(),
-                query_schema,
-                error_bounds,
-                generated_columns,
-            )
-            .unwrap(),
-        );
-
-        (model_table_metadata, data)
+        .unwrap()
     }
 
     #[tokio::test]
@@ -830,8 +795,11 @@ mod tests {
         let mut timestamp = TimestampBuilder::new();
         timestamp.append_slice(&[100, 200, 300]);
 
-        let mut field = ValueBuilder::new();
-        field.append_slice(&[100.0, 200.0, 300.0]);
+        let mut field_1 = ValueBuilder::new();
+        field_1.append_slice(&[100.0, 200.0, 300.0]);
+
+        let mut field_2 = ValueBuilder::new();
+        field_2.append_slice(&[50.0, 100.0, 150.0]);
 
         let mut tag = StringBuilder::new();
         tag.append_value("A");
@@ -842,7 +810,8 @@ mod tests {
             model_table_metadata.schema.clone(),
             vec![
                 Arc::new(timestamp.finish()),
-                Arc::new(field.finish()),
+                Arc::new(field_1.finish()),
+                Arc::new(field_2.finish()),
                 Arc::new(tag.finish()),
             ],
         )
@@ -855,12 +824,12 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(data_manager.active_uncompressed_data_buffers.len(), 1);
+        assert_eq!(data_manager.active_uncompressed_data_buffers.len(), 2);
         assert_eq!(data_manager.channels.univariate_data_receiver.len(), 0);
         assert_eq!(
             data_manager
                 .active_uncompressed_data_buffers
-                .get(&8346922066998771713)
+                .get(&11395701956291516418)
                 .unwrap()
                 .len(),
             3
@@ -877,7 +846,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(data_manager.active_uncompressed_data_buffers.len(), 0);
-        assert_eq!(data_manager.channels.univariate_data_receiver.len(), 1);
+        assert_eq!(data_manager.channels.univariate_data_receiver.len(), 2);
     }
 
     #[tokio::test]
@@ -1187,7 +1156,8 @@ mod tests {
         }
     }
 
-    /// Create an [`UncompressedDataManager`] with a folder that is deleted once the test is finished.
+    /// Create a [`MetadataManager`] with a model table saved to it and an [`UncompressedDataManager`]
+    /// with a folder that is deleted once the test is finished.
     async fn create_managers(
         path: &Path,
     ) -> (
@@ -1198,10 +1168,10 @@ mod tests {
         let metadata_manager = Arc::new(MetadataManager::try_new(path).await.unwrap());
 
         // Ensure the expected metadata is available through the metadata manager.
-        let model_table_metadata = create_model_table_metadata();
+        let model_table_metadata = common_test::model_table_metadata();
 
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1231,34 +1201,7 @@ mod tests {
         (
             metadata_manager,
             uncompressed_data_manager,
-            model_table_metadata,
-        )
-    }
-
-    /// Create a [`ModelTableMetadata`].
-    fn create_model_table_metadata() -> Arc<ModelTableMetadata> {
-        let query_schema = Arc::new(Schema::new(vec![
-            Field::new("timestamp", ArrowTimestamp::DATA_TYPE, false),
-            Field::new("field", ArrowValue::DATA_TYPE, false),
-            Field::new("tag", DataType::Utf8, false),
-        ]));
-
-        let error_bounds = vec![
-            ErrorBound::try_new(0.0).unwrap(),
-            ErrorBound::try_new(0.0).unwrap(),
-            ErrorBound::try_new(0.0).unwrap(),
-        ];
-
-        let generated_columns = vec![None, None, None];
-
-        Arc::new(
-            ModelTableMetadata::try_new(
-                "Table".to_owned(),
-                query_schema,
-                error_bounds,
-                generated_columns,
-            )
-            .unwrap(),
+            Arc::new(model_table_metadata),
         )
     }
 

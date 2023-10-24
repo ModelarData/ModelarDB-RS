@@ -20,16 +20,23 @@
 use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
+use std::str;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use arrow::error::ArrowError;
+use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
-    HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaResult, Ticket,
+    HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaAsIpc,
+    SchemaResult, Ticket,
 };
 use futures::{stream, Stream};
-use modelardb_common::arguments::decode_argument;
+use modelardb_common::arguments::{decode_argument, encode_argument, parse_object_store_arguments};
+use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::parser;
+use modelardb_common::parser::ValidStatement;
 use modelardb_common::types::ServerMode;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
@@ -37,6 +44,7 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
 
 use crate::cluster::Node;
+use crate::data_folder::RemoteDataFolder;
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
@@ -76,6 +84,85 @@ impl FlightServiceHandler {
     pub fn new(context: Arc<Context>) -> FlightServiceHandler {
         Self { context }
     }
+
+    /// Return [`Ok`] if a table named `table_name` does not exist already in the metadata
+    /// database, otherwise return [`Status`].
+    async fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
+        let existing_tables = self
+            .context
+            .metadata_manager
+            .table_metadata_column("table_name")
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        if existing_tables
+            .iter()
+            .any(|existing_table| existing_table == table_name)
+        {
+            let message = format!("Table with name '{table_name}' already exists.");
+            Err(Status::already_exists(message))
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Create a normal table, save it to the metadata database and create it for each node
+    /// controlled by the manager. If the table cannot be saved to the metadata database or
+    /// created for each node, return [`Status`].
+    async fn save_and_create_cluster_tables(
+        &self,
+        table_name: String,
+        sql: &str,
+    ) -> Result<(), Status> {
+        // Persist the new table to the metadata database.
+        self.context
+            .metadata_manager
+            .save_table_metadata(&table_name, sql)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        // Register and save the table to each node in the cluster.
+        self.context
+            .cluster
+            .read()
+            .await
+            .create_tables(&table_name, sql, &self.context.key)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        info!("Created table '{}'.", table_name);
+
+        Ok(())
+    }
+
+    /// Create a model table, save it to the metadata database and create it for each node
+    /// controlled by the manager. If the table cannot be saved to the metadata database or
+    /// created for each node, return [`Status`].
+    async fn save_and_create_cluster_model_tables(
+        &self,
+        model_table_metadata: ModelTableMetadata,
+        sql: &str,
+    ) -> Result<(), Status> {
+        // Persist the new model table to the metadata database.
+        self.context
+            .metadata_manager
+            .save_model_table_metadata(&model_table_metadata, sql)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        // Register and save the model table to each node in the cluster.
+        self.context
+            .cluster
+            .read()
+            .await
+            .create_tables(&model_table_metadata.name, sql, &self.context.key)
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        info!("Created model table '{}'.", model_table_metadata.name);
+
+        Ok(())
+    }
 }
 
 #[tonic::async_trait]
@@ -103,12 +190,24 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// TODO: Provide the name of all tables in the catalog.
+    /// Provide the name of all tables in the catalog.
     async fn list_flights(
         &self,
         _request: Request<Criteria>,
     ) -> Result<Response<Self::ListFlightsStream>, Status> {
-        Err(Status::unimplemented("Not implemented."))
+        // Retrieve the table names from the metadata database.
+        let table_names = self
+            .context
+            .metadata_manager
+            .table_metadata_column("table_name")
+            .await
+            .map_err(|error| Status::internal(error.to_string()))?;
+
+        let flight_descriptor = FlightDescriptor::new_path(table_names);
+        let flight_info = FlightInfo::new().with_descriptor(flight_descriptor);
+
+        let output = stream::once(async { Ok(flight_info) });
+        Ok(Response::new(Box::pin(output)))
     }
 
     /// Not implemented.
@@ -119,13 +218,46 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// TODO: Provide the schema of a table in the catalog. The name of the table must
-    ///       be provided as the first element in `FlightDescriptor.path`.
+    /// Provide the schema of a table in the catalog. The name of the table must be provided as the
+    /// first element in `FlightDescriptor.path`.
     async fn get_schema(
         &self,
-        _request: Request<FlightDescriptor>,
+        request: Request<FlightDescriptor>,
     ) -> Result<Response<SchemaResult>, Status> {
-        Err(Status::unimplemented("Not implemented."))
+        let flight_descriptor = request.into_inner();
+        let table_name = flight_descriptor
+            .path
+            .get(0)
+            .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))?;
+
+        let table_sql = self
+            .context
+            .metadata_manager
+            .table_sql(table_name)
+            .await
+            .map_err(|error| {
+                Status::not_found(format!(
+                    "Table with name '{table_name}' does not exist: {error}",
+                ))
+            })?;
+
+        // Parse the SQL and perform semantic checks to extract the schema from the statement.
+        // unwrap() is safe since the SQL was parsed and checked when the table was created.
+        let statement = parser::tokenize_and_parse_sql(table_sql.as_str()).unwrap();
+        let valid_statement = parser::semantic_checks_for_create_table(statement).unwrap();
+
+        let schema = match valid_statement {
+            ValidStatement::CreateTable { schema, .. } => Arc::new(schema),
+            ValidStatement::CreateModelTable(model_table_metadata) => model_table_metadata.schema,
+        };
+
+        let options = IpcWriteOptions::default();
+        let schema_as_ipc = SchemaAsIpc::new(&schema, &options);
+        let schema_result = schema_as_ipc
+            .try_into()
+            .map_err(|error: ArrowError| Status::internal(error.to_string()))?;
+
+        Ok(Response::new(schema_result))
     }
 
     /// TODO: Execute a SQL query provided in UTF-8 and return the schema of the query
@@ -155,9 +287,22 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently the
     /// following actions are supported:
+    /// * `InitializeDatabase`: Given a list of existing table names, respond with the SQL required
+    /// to create the tables and model tables that are missing in the list. The list of table names
+    /// is also checked to make sure all given tables actually exist.
+    /// * `UpdateRemoteObjectStore`: Update the remote object store, overriding the current
+    /// remote object store. Each argument in the body should start with the size of the argument,
+    /// immediately followed by the argument value. The first argument should be the object store
+    /// type, specifically either 's3' or 'azureblobstorage'. The remaining arguments should be
+    /// the arguments required to connect to the object store. The remote object store is updated
+    /// for all nodes controlled by the manager.
+    /// * `CommandStatementUpdate`: Execute a SQL query containing a command that does not
+    /// return a result. These commands can be `CREATE TABLE table_name(...` which creates a
+    /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a model table.
+    /// The table is created for all nodes controlled by the manager.
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
-    /// to the cluster of nodes controlled by the manager and the object store and current database
-    /// schema used in the cluster is returned.
+    /// to the cluster of nodes controlled by the manager and the object store used in the cluster
+    /// is returned.
     /// * `RemoveNode`: Remove a node from the cluster of nodes controlled by the manager and
     /// kill the process running on the node. The specific node to remove is given through the
     /// uniquely identifying URL of the node.
@@ -168,7 +313,111 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        if action.r#type == "RegisterNode" {
+        if action.r#type == "InitializeDatabase" {
+            // Extract the list of comma seperated tables that already exist in the node.
+            let node_tables: Vec<&str> = str::from_utf8(&action.body)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?
+                .split(',')
+                .filter(|table| !table.is_empty())
+                .collect();
+
+            // Get the table names in the clusters current database schema.
+            let cluster_tables = self
+                .context
+                .metadata_manager
+                .table_metadata_column("table_name")
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            // Check that all of the nodes tables exist in the clusters database schema already.
+            let invalid_node_tables: Vec<&str> = node_tables
+                .iter()
+                .filter(|table| !cluster_tables.contains(&table.to_string()))
+                .cloned()
+                .collect();
+
+            if invalid_node_tables.is_empty() {
+                // For each table that does not already exist in the node, retrieve the SQL
+                // required to create it.
+                let missing_cluster_tables = cluster_tables
+                    .iter()
+                    .filter(|table| !node_tables.contains(&table.as_str()));
+
+                let mut table_sql_queries: Vec<String> = vec![];
+
+                for table in missing_cluster_tables {
+                    table_sql_queries.push(
+                        self.context
+                            .metadata_manager
+                            .table_sql(table)
+                            .await
+                            .map_err(|error| Status::internal(error.to_string()))?,
+                    )
+                }
+
+                let response_body = table_sql_queries.join(";").as_bytes().to_vec();
+
+                // Return the SQL for the tables that need to be created in the requesting node.
+                Ok(Response::new(Box::pin(stream::once(async {
+                    Ok(FlightResult {
+                        body: response_body.into(),
+                    })
+                }))))
+            } else {
+                Err(Status::invalid_argument(format!(
+                    "The table(s) '{}' do not exist in the cluster database schema.",
+                    invalid_node_tables.join(", ")
+                )))
+            }
+        } else if action.r#type == "UpdateRemoteObjectStore" {
+            let object_store = parse_object_store_arguments(&action.body).await?;
+
+            // Create a new remote data folder and update it in the context.
+            let mut remote_data_folder = self.context.remote_data_folder.write().await;
+            *remote_data_folder = RemoteDataFolder::new(action.body.clone().into(), object_store);
+
+            // For each node in the cluster, update the remote object store.
+            self.context
+                .cluster
+                .read()
+                .await
+                .update_remote_object_stores(action.body, &self.context.key)
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
+
+            // Confirm the remote object store was updated.
+            Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "CommandStatementUpdate" {
+            // Read the SQL from the action.
+            let sql = str::from_utf8(&action.body)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            info!("Received request to execute '{}'.", sql);
+
+            // Parse the SQL.
+            let statement = parser::tokenize_and_parse_sql(sql)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+            // Perform semantic checks to ensure the parsed SQL is supported.
+            let valid_statement = parser::semantic_checks_for_create_table(statement)
+                .map_err(|error| Status::invalid_argument(error.to_string()))?;
+
+            // Create the table or model table if it does not already exists.
+            match valid_statement {
+                ValidStatement::CreateTable { name, .. } => {
+                    self.check_if_table_exists(&name).await?;
+                    self.save_and_create_cluster_tables(name, sql).await?;
+                }
+                ValidStatement::CreateModelTable(model_table_metadata) => {
+                    self.check_if_table_exists(&model_table_metadata.name)
+                        .await?;
+                    self.save_and_create_cluster_model_tables(model_table_metadata, sql)
+                        .await?;
+                }
+            };
+
+            // Confirm the table was created.
+            Ok(Response::new(Box::pin(stream::empty())))
+        } else if action.r#type == "RegisterNode" {
             // Extract the node from the action body.
             let (url, offset_data) = decode_argument(&action.body)?;
             let (mode, _offset_data) = decode_argument(offset_data)?;
@@ -192,12 +441,16 @@ impl FlightService for FlightServiceHandler {
                 .register_node(node)
                 .map_err(|error| Status::internal(error.to_string()))?;
 
-            // TODO: Return the current database schema as well.
-            let connection_info = self.context.remote_data_folder.connection_info().clone();
+            // Return the key for the manager and connection info for the remote object store.
+            // unwrap() is safe since the key cannot contain invalid characters.
+            let mut response_body = encode_argument(self.context.key.to_str().unwrap());
+
+            let remote_data_folder = self.context.remote_data_folder.read().await;
+            response_body.append(&mut remote_data_folder.connection_info().clone());
 
             Ok(Response::new(Box::pin(stream::once(async {
                 Ok(FlightResult {
-                    body: connection_info.into(),
+                    body: response_body.into(),
                 })
             }))))
         } else if action.r#type == "RemoveNode" {
@@ -216,7 +469,7 @@ impl FlightService for FlightServiceHandler {
                 .cluster
                 .write()
                 .await
-                .remove_node(url)
+                .remove_node(url, &self.context.key)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 
@@ -232,6 +485,26 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::ListActionsStream>, Status> {
+        let initialize_database_action = ActionType {
+            r#type: "InitializeDatabase".to_owned(),
+            description: "Return the SQL required to create all tables and models tables \
+            currently in the manager's database schema."
+                .to_owned(),
+        };
+
+        let update_remote_object_store_action = ActionType {
+            r#type: "UpdateRemoteObjectStore".to_owned(),
+            description:
+                "Update the remote object store, overriding the current remote object store."
+                    .to_owned(),
+        };
+
+        let command_statement_update_action = ActionType {
+            r#type: "CommandStatementUpdate".to_owned(),
+            description: "Execute a SQL query containing a single command that produces no results."
+                .to_owned(),
+        };
+
         let register_node_action = ActionType {
             r#type: "RegisterNode".to_owned(),
             description: "Register either an edge or cloud node with the manager.".to_owned(),
@@ -243,7 +516,13 @@ impl FlightService for FlightServiceHandler {
                 .to_owned(),
         };
 
-        let output = stream::iter(vec![Ok(register_node_action), Ok(remove_node_action)]);
+        let output = stream::iter(vec![
+            Ok(initialize_database_action),
+            Ok(update_remote_object_store_action),
+            Ok(command_statement_update_action),
+            Ok(register_node_action),
+            Ok(remove_node_action),
+        ]);
 
         Ok(Response::new(Box::pin(output)))
     }

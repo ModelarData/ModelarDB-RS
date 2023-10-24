@@ -19,7 +19,6 @@
 
 use std::collections::HashMap;
 use std::error::Error;
-use std::fs;
 use std::net::SocketAddr;
 use std::str;
 use std::sync::Arc;
@@ -33,7 +32,7 @@ use arrow_flight::{
 use datafusion::arrow::array::{
     ArrayRef, ListBuilder, StringArray, StringBuilder, UInt32Builder, UInt64Array,
 };
-use datafusion::arrow::datatypes::{Schema, SchemaRef};
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::error::ArrowError;
 use datafusion::arrow::ipc::writer::{
     DictionaryTracker, IpcDataGenerator, IpcWriteOptions, StreamWriter,
@@ -41,26 +40,23 @@ use datafusion::arrow::ipc::writer::{
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::DFSchema;
 use datafusion::physical_plan::SendableRecordBatchStream;
-use datafusion::prelude::ParquetReadOptions;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
 use modelardb_common::arguments::{decode_argument, parse_object_store_arguments};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::metadata::normalize_name;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
-use modelardb_common::types::{ServerMode, TimestampBuilder};
+use modelardb_common::types::{ClusterMode, ServerMode, TimestampBuilder};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
+use tonic::metadata::MetadataMap;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
 use crate::context::Context;
-use crate::metadata::MetadataManager;
-use crate::parser::{self, ValidStatement};
-use crate::query::ModelTable;
-use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through [`FlightServiceHandler`].
@@ -189,8 +185,7 @@ impl FlightServiceHandler {
         }
     }
 
-    /// While there is still more data to receive, ingest the data into the
-    /// table.
+    /// While there is still more data to receive, ingest the data into the table.
     async fn ingest_into_table(
         &self,
         table_name: &str,
@@ -216,8 +211,7 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// While there is still more data to receive, ingest the data into the
-    /// storage engine.
+    /// While there is still more data to receive, ingest the data into the storage engine.
     async fn ingest_into_model_table(
         &self,
         model_table_metadata: Arc<ModelTableMetadata>,
@@ -242,9 +236,8 @@ impl FlightServiceHandler {
         Ok(())
     }
 
-    /// Return the table stored as the first element in
-    /// [`FlightDescriptor.path`], otherwise a [`Status`] that specifies that
-    /// the table name is missing.
+    /// Return the table stored as the first element in [`FlightDescriptor.path`], otherwise a
+    /// [`Status`] that specifies that the table name is missing.
     fn table_name_from_flight_descriptor<'a>(
         &'a self,
         flight_descriptor: &'a FlightDescriptor,
@@ -267,79 +260,35 @@ impl FlightServiceHandler {
             .map_err(|error| Status::invalid_argument(error.to_string()))
     }
 
-    /// Create a normal table, register it with Apache Arrow DataFusion's
-    /// catalog, and save it to the [`MetadataManager`]. If the table exists,
-    /// the Apache Parquet file cannot be created, or if the table cannot be
-    /// saved to the [`MetadataManager`], return [`Status`] error.
-    async fn register_and_save_table(
+    /// If the server was started with a manager, and the requested action is restricted to only
+    /// be called by the manager, check that the request actually came from the manager. If the
+    /// request is valid, return [`Ok`], otherwise return [`Status`].
+    async fn validate_action_request(
         &self,
-        table_name: String,
-        schema: Schema,
+        action_type: &str,
+        metadata: MetadataMap,
     ) -> Result<(), Status> {
-        // Ensure the folder for storing the table data exists.
-        let metadata_manager = &self.context.metadata_manager;
-        let folder_path = metadata_manager
-            .local_data_folder()
-            .join(COMPRESSED_DATA_FOLDER)
-            .join(&table_name);
-        fs::create_dir_all(&folder_path)?;
+        let configuration_manager = self.context.configuration_manager.read().await;
 
-        // Create an empty Apache Parquet file to save the schema.
-        let file_path = folder_path.join("empty_for_schema.parquet");
-        let empty_batch = RecordBatch::new_empty(Arc::new(schema));
-        StorageEngine::write_batch_to_apache_parquet_file(empty_batch, &file_path, None)
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+        if let ClusterMode::MultiNode(_manager_url, key) = &configuration_manager.cluster_mode {
+            // If the server is started with a manager, these actions require a manager key.
+            let restricted_actions = [
+                "CommandStatementUpdate",
+                "UpdateRemoteObjectStore",
+                "KillEdge",
+            ];
 
-        // Save the table in the Apache Arrow Datafusion catalog.
-        self.context
-            .session
-            .register_parquet(
-                &table_name,
-                folder_path.to_str().unwrap(),
-                ParquetReadOptions::default(),
-            )
-            .await
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            if restricted_actions.iter().any(|&a| a == action_type) {
+                let request_key = metadata
+                    .get("x-manager-key")
+                    .ok_or(Status::unauthenticated("Missing manager key."))?;
 
-        // Persist the new table to the metadata database.
-        self.context
-            .metadata_manager
-            .save_table_metadata(&table_name)
-            .await
-            .map_err(|error| Status::internal(error.to_string()))?;
+                if key != request_key {
+                    return Err(Status::unauthenticated("Manager key is invalid."));
+                }
+            }
+        }
 
-        info!("Created table '{}'.", table_name);
-
-        Ok(())
-    }
-
-    /// Create a model table, register it with Apache Arrow DataFusion's
-    /// catalog, and save it to the [`MetadataManager`]. If the table exists or
-    /// if the table cannot be saved to the [`MetadataManager`], return
-    /// [`Status`] error.
-    async fn register_and_save_model_table(
-        &self,
-        model_table_metadata: ModelTableMetadata,
-    ) -> Result<(), Status> {
-        // Save the model table in the Apache Arrow DataFusion catalog.
-        let model_table_metadata = Arc::new(model_table_metadata);
-
-        self.context
-            .session
-            .register_table(
-                model_table_metadata.name.as_str(),
-                ModelTable::new(self.context.clone(), model_table_metadata.clone()),
-            )
-            .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-        // Persist the new model table to the metadata database.
-        self.context
-            .metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
-            .await
-            .map_err(|error| Status::internal(error.to_string()))?;
-
-        info!("Created model table '{}'.", model_table_metadata.name);
         Ok(())
     }
 }
@@ -387,8 +336,8 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// Provide the schema of a table in the catalog. The name of the table must
-    /// be provided as the first element in `FlightDescriptor.path`.
+    /// Provide the schema of a table in the catalog. The name of the table must be provided as the
+    /// first element in `FlightDescriptor.path`.
     async fn get_schema(
         &self,
         request: Request<FlightDescriptor>,
@@ -409,8 +358,8 @@ impl FlightService for FlightServiceHandler {
         Ok(Response::new(schema_result))
     }
 
-    /// Execute a SQL query provided in UTF-8 and return the schema of the query
-    /// result followed by the query result.
+    /// Execute a SQL query provided in UTF-8 and return the schema of the query result followed by
+    /// the query result.
     async fn do_get(
         &self,
         request: Request<Ticket>,
@@ -457,11 +406,10 @@ impl FlightService for FlightServiceHandler {
         Ok(Response::new(Box::pin(ReceiverStream::new(receiver))))
     }
 
-    /// Insert data points into a table. The name of the table must be provided
-    /// as the first element of `FlightDescriptor.path` and the schema of the
-    /// data points must match the schema of the table. If the data points are
-    /// all inserted an empty stream is returned as confirmation, otherwise, a
-    /// `Status` specifying what error occurred is returned.
+    /// Insert data points into a table. The name of the table must be provided as the first element
+    /// of `FlightDescriptor.path` and the schema of the data points must match the schema of the
+    /// table. If the data points are all inserted an empty stream is returned as confirmation,
+    /// otherwise, a `Status` specifying what error occurred is returned.
     async fn do_put(
         &self,
         request: Request<Streaming<FlightData>>,
@@ -478,7 +426,7 @@ impl FlightService for FlightServiceHandler {
             .flight_descriptor
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
         let table_name = self.table_name_from_flight_descriptor(&flight_descriptor)?;
-        let normalized_table_name = MetadataManager::normalize_name(table_name);
+        let normalized_table_name = normalize_name(table_name);
 
         // Handle the data based on whether it is a normal table or a model table.
         if let Some(model_table_metadata) = self
@@ -549,8 +497,12 @@ impl FlightService for FlightServiceHandler {
         &self,
         request: Request<Action>,
     ) -> Result<Response<Self::DoActionStream>, Status> {
+        let metadata = request.metadata().clone();
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
+
+        self.validate_action_request(&action.r#type, metadata)
+            .await?;
 
         if action.r#type == "CommandStatementUpdate" {
             // Read the SQL from the action.
@@ -558,33 +510,10 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
             info!("Received request to execute '{}'.", sql);
 
-            // Parse the SQL.
-            let statement = parser::tokenize_and_parse_sql(sql)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-            // Perform semantic checks to ensure the parsed SQL is supported.
-            let valid_statement = parser::semantic_checks_for_create_table(statement)
-                .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-            // Create the table or model table if it does not already exists.
-            match valid_statement {
-                ValidStatement::CreateTable { name, schema } => {
-                    self.context
-                        .check_if_table_exists(&name)
-                        .await
-                        .map_err(|error| Status::invalid_argument(error.to_string()))?;
-                    self.register_and_save_table(name, schema).await?;
-                }
-                ValidStatement::CreateModelTable(model_table_metadata) => {
-                    self.context
-                        .check_if_table_exists(&model_table_metadata.name)
-                        .await
-                        .map_err(|error| Status::invalid_argument(error.to_string()))?;
-                    self.register_and_save_model_table(model_table_metadata)
-                        .await
-                        .map_err(|error| Status::invalid_argument(error.to_string()))?;
-                }
-            };
+            self.context
+                .parse_and_create_table(sql, &self.context)
+                .await
+                .map_err(|error| Status::internal(error.to_string()))?;
 
             // Confirm the table was created.
             Ok(Response::new(Box::pin(stream::empty())))
@@ -737,9 +666,9 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::ListActionsStream>, Status> {
-        let create_command_statement_update_action = ActionType {
+        let command_statement_update_action = ActionType {
             r#type: "CommandStatementUpdate".to_owned(),
-            description: "Execute a SQL query containing a single command that produce no results."
+            description: "Execute a SQL query containing a single command that produces no results."
                 .to_owned(),
         };
 
@@ -791,7 +720,7 @@ impl FlightService for FlightServiceHandler {
         };
 
         let output = stream::iter(vec![
-            Ok(create_command_statement_update_action),
+            Ok(command_statement_update_action),
             Ok(flush_memory_action),
             Ok(flush_edge_action),
             Ok(kill_edge_action),

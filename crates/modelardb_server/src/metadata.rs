@@ -34,9 +34,9 @@ use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::execution::options::ParquetReadOptions;
 use futures::TryStreamExt;
 use modelardb_common::errors::ModelarDbError;
-use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use modelardb_common::types::{ErrorBound, Timestamp, UnivariateId, Value};
+use modelardb_common::{metadata, parser};
 use sqlx::database::HasArguments;
 use sqlx::error::Error;
 use sqlx::query::Query;
@@ -46,7 +46,6 @@ use tracing::{error, info, warn};
 use uuid::Uuid;
 
 use crate::context::Context;
-use crate::parser;
 use crate::query::ModelTable;
 use crate::storage::COMPRESSED_DATA_FOLDER;
 
@@ -459,7 +458,7 @@ impl MetadataManager {
         if compressed_files_to_delete.is_empty() {
             return Err(Error::Configuration(Box::new(
                 ModelarDbError::DataRetrievalError(
-                    "At least one file to delete must be provided.".to_string(),
+                    "At least one file to delete must be provided.".to_owned(),
                 ),
             )));
         }
@@ -501,7 +500,7 @@ impl MetadataManager {
         if compressed_files_to_delete.len() != delete_from_result.rows_affected() as usize {
             return Err(Error::Configuration(Box::new(
                 ModelarDbError::ImplementationError(
-                    "Less than the expected number of files where deleted from the metadata database.".to_string(),
+                    "Less than the expected number of files were deleted from the metadata database.".to_owned(),
                 ),
             )));
         }
@@ -651,15 +650,10 @@ impl MetadataManager {
         }
     }
 
-    /// Normalize `name` to allow direct comparisons between names.
-    pub fn normalize_name(name: &str) -> String {
-        name.to_lowercase()
-    }
-
     /// Save the created table to the metadata database. This consists of adding a row to the
-    /// table_metadata table with the `name` of the created table.
-    pub async fn save_table_metadata(&self, name: &str) -> Result<()> {
-        metadata::save_table_metadata(&self.metadata_database_pool, name.to_string()).await
+    /// table_metadata table with the `name` of the table and the `sql` used to create the table.
+    pub async fn save_table_metadata(&self, name: &str, sql: &str) -> Result<()> {
+        metadata::save_table_metadata(&self.metadata_database_pool, name, sql).await
     }
 
     /// Read the rows in the table_metadata table and use these to register tables in Apache Arrow
@@ -714,6 +708,7 @@ impl MetadataManager {
     pub async fn save_model_table_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
+        sql: &str,
     ) -> Result<()> {
         // Convert the query schema to bytes so it can be saved as a BLOB in the metadata database.
         let query_schema_bytes =
@@ -761,10 +756,11 @@ impl MetadataManager {
         transaction
             .execute(
                 sqlx::query(
-                    "INSERT INTO model_table_metadata (table_name, query_schema) VALUES (?1, ?2)",
+                    "INSERT INTO model_table_metadata (table_name, query_schema, sql) VALUES (?1, ?2, ?3)",
                 )
                 .bind(&model_table_metadata.name)
-                .bind(query_schema_bytes),
+                .bind(query_schema_bytes)
+                .bind(sql),
             )
             .await?;
 
@@ -1020,7 +1016,7 @@ mod tests {
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1055,7 +1051,7 @@ mod tests {
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1114,7 +1110,7 @@ mod tests {
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1220,7 +1216,7 @@ mod tests {
     ) {
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1347,7 +1343,7 @@ mod tests {
         let model_table_metadata = common_test::model_table_metadata();
 
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1423,7 +1419,7 @@ mod tests {
         let model_table_metadata = common_test::model_table_metadata();
 
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1698,16 +1694,6 @@ mod tests {
         Ok(metadata_manager)
     }
 
-    #[test]
-    fn test_normalize_table_name_lowercase_no_effect() {
-        assert_eq!("table_name", MetadataManager::normalize_name("table_name"));
-    }
-
-    #[test]
-    fn test_normalize_table_name_uppercase() {
-        assert_eq!("table_name", MetadataManager::normalize_name("TABLE_NAME"));
-    }
-
     #[tokio::test]
     async fn test_register_tables() {
         // The test succeeds if none of the unwrap()s fails.
@@ -1718,7 +1704,10 @@ mod tests {
 
         context
             .metadata_manager
-            .save_table_metadata("table_name")
+            .save_table_metadata(
+                "table_name",
+                "CREATE TABLE table_name(timestamp TIMESTAMP, values REAL, metadata REAL)",
+            )
             .await
             .unwrap();
 
@@ -1738,7 +1727,7 @@ mod tests {
 
         let model_table_metadata = common_test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1804,7 +1793,7 @@ mod tests {
         let model_table_metadata = common_test::model_table_metadata();
         context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1824,7 +1813,7 @@ mod tests {
         let model_table_metadata = common_test::model_table_metadata();
         context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1849,7 +1838,7 @@ mod tests {
         let model_table_metadata = common_test::model_table_metadata();
         context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata)
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 

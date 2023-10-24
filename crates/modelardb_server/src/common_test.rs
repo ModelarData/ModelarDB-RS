@@ -55,13 +55,20 @@ pub const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 M
 /// Number of bytes reserved for compressed data in tests.
 pub const COMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
 
+/// SQL to create a model table with a timestamp column, two field columns, and a tag column.
+pub const MODEL_TABLE_SQL: &str =
+    "CREATE MODEL TABLE model_table(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD, tag TAG)";
+
 /// Return a [`Context`] with a [`ConfigurationManager`] with 5 MiBs reserved for uncompressed
 /// data and 5 MiBs reserved for compressed data. Reducing the amount of reserved memory makes it
 /// faster to run unit tests.
 pub async fn test_context(path: &Path) -> Arc<Context> {
     let runtime = Arc::new(Runtime::new().unwrap());
     let metadata_manager = Arc::new(MetadataManager::try_new(path).await.unwrap());
-    let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(ServerMode::Edge)));
+    let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
+        ClusterMode::SingleNode,
+        ServerMode::Edge,
+    )));
 
     let session = test_session_context();
     let object_store_url = storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST
@@ -104,7 +111,6 @@ pub async fn test_context(path: &Path) -> Arc<Context> {
         .unwrap();
 
     Arc::new(Context {
-        cluster_mode: ClusterMode::SingleNode,
         metadata_manager,
         configuration_manager,
         session,

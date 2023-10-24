@@ -52,12 +52,12 @@ use object_store::ObjectStore;
 use once_cell::sync::Lazy;
 use tokio::sync::RwLockWriteGuard;
 
+use crate::context::Context;
 use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
 use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
 use crate::storage;
 use crate::storage::StorageEngine;
-use crate::context::Context;
 
 /// The global sort order [`ParquetExec`] guarantees for the segments it produces and that
 /// [`GridExec`] requires for the segments its receives as its input. It is guaranteed by

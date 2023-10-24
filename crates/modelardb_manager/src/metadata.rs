@@ -24,6 +24,7 @@ use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::types::ServerMode;
 use sqlx::{Executor, PgPool, Row};
+use uuid::Uuid;
 
 use crate::cluster::Node;
 
@@ -55,11 +56,18 @@ impl MetadataManager {
 
     /// If they do not already exist, create the tables that are specific to the manager metadata
     /// database.
+    /// * The manager_metadata table contains metadata for the manager itself. It is assumed that
+    /// this table will only have a single row since there can only be a single manager.
     /// * The nodes table contains metadata for each node that is controlled by the manager.
     /// If the tables exist or were created, return [`Ok`], otherwise return [`sqlx::Error`].
     async fn create_manager_metadata_database_tables(
         metadata_database_pool: &PgPool,
     ) -> Result<(), sqlx::Error> {
+        // Create the manager_metadata table if it does not exist.
+        metadata_database_pool
+            .execute("CREATE TABLE IF NOT EXISTS manager_metadata (key TEXT PRIMARY KEY)")
+            .await?;
+
         // Create the nodes table if it does not exist.
         metadata_database_pool
             .execute(
@@ -73,10 +81,39 @@ impl MetadataManager {
         Ok(())
     }
 
+    /// Retrieve the key for the manager from the manager_metadata table. If a key does not already
+    /// exist, create one and save it to the database.
+    pub async fn manager_key(&self) -> Result<Uuid, sqlx::Error> {
+        let maybe_row = sqlx::query("SELECT key FROM manager_metadata")
+            .fetch_optional(&self.metadata_database_pool)
+            .await?;
+
+        if let Some(row) = maybe_row {
+            let manager_key: String = row.try_get("key")?;
+
+            Ok(manager_key
+                .parse()
+                .map_err(|error| sqlx::Error::ColumnDecode {
+                    index: "key".to_owned(),
+                    source: Box::new(error),
+                })?)
+        } else {
+            let manager_key = Uuid::new_v4();
+
+            // Add a new row to the manager_metadata table to persist the key.
+            sqlx::query("INSERT INTO manager_metadata (key) VALUES ($1)")
+                .bind(manager_key.to_string())
+                .execute(&self.metadata_database_pool)
+                .await?;
+
+            Ok(manager_key)
+        }
+    }
+
     /// Save the created table to the metadata database. This consists of adding a row to the
-    /// table_metadata table with the `name` of the created table.
-    pub async fn save_table_metadata(&self, name: &str) -> Result<(), sqlx::Error> {
-        metadata::save_table_metadata(&self.metadata_database_pool, name.to_string()).await
+    /// table_metadata table with the `name` of the table and the `sql` used to create the table.
+    pub async fn save_table_metadata(&self, name: &str, sql: &str) -> Result<(), sqlx::Error> {
+        metadata::save_table_metadata(&self.metadata_database_pool, name, sql).await
     }
 
     // TODO: Move to common metadata manager to avoid duplicated code when the issue with generic
@@ -88,6 +125,7 @@ impl MetadataManager {
     pub async fn save_model_table_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
+        sql: &str,
     ) -> Result<(), sqlx::Error> {
         // Convert the query schema to bytes so it can be saved as a BYTEA in the metadata database.
         let query_schema_bytes =
@@ -135,10 +173,11 @@ impl MetadataManager {
         transaction
             .execute(
                 sqlx::query(
-                    "INSERT INTO model_table_metadata (table_name, query_schema) VALUES ($1, $2)",
+                    "INSERT INTO model_table_metadata (table_name, query_schema, sql) VALUES ($1, $2, $3)",
                 )
                 .bind(model_table_metadata.name.as_str())
-                .bind(query_schema_bytes),
+                .bind(query_schema_bytes)
+                .bind(sql),
             )
             .await?;
 
@@ -232,16 +271,51 @@ impl MetadataManager {
             sqlx::query("SELECT url, mode FROM nodes").fetch(&self.metadata_database_pool);
 
         while let Some(row) = rows.try_next().await? {
-            let server_mode = ServerMode::from_str(row.get("mode")).map_err(|error| {
+            let server_mode = ServerMode::from_str(row.try_get("mode")?).map_err(|error| {
                 sqlx::Error::ColumnDecode {
-                    index: "mode".to_string(),
+                    index: "mode".to_owned(),
                     source: Box::new(ModelarDbError::DataRetrievalError(error.to_string())),
                 }
             })?;
 
-            nodes.push(Node::new(row.get("url"), server_mode))
+            nodes.push(Node::new(row.try_get("url")?, server_mode))
         }
 
         Ok(nodes)
+    }
+
+    /// Return the SQL query used to create the table with the name `table_name`. If a table with
+    /// that name does not exists, return [`sqlx::Error`].
+    pub async fn table_sql(&self, table_name: &str) -> Result<String, sqlx::Error> {
+        let select_statement = format!(
+            "SELECT sql FROM table_metadata WHERE table_name = '{table_name}'
+             UNION
+             SELECT sql FROM model_table_metadata WHERE table_name = '{table_name}'",
+        );
+
+        let row = sqlx::query(&select_statement)
+            .fetch_one(&self.metadata_database_pool)
+            .await?;
+
+        row.try_get("sql")
+    }
+
+    /// Retrieve all rows of `column` from both the table_metadata and model_table_metadata tables.
+    /// If the column could not be retrieved, either because it does not exist or because it could
+    /// not be converted to a string, return [`sqlx::Error`].
+    pub async fn table_metadata_column(&self, column: &str) -> Result<Vec<String>, sqlx::Error> {
+        let mut values: Vec<String> = vec![];
+
+        // Retrieve the column from both tables containing table metadata.
+        let select_statement = format!(
+            "SELECT {column} FROM table_metadata UNION SELECT {column} FROM model_table_metadata",
+        );
+
+        let mut rows = sqlx::query(&select_statement).fetch(&self.metadata_database_pool);
+        while let Some(row) = rows.try_next().await? {
+            values.push(row.try_get(column)?)
+        }
+
+        Ok(values)
     }
 }

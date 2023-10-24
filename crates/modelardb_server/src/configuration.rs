@@ -19,7 +19,7 @@
 use std::sync::Arc;
 
 use modelardb_common::errors::ModelarDbError;
-use modelardb_common::types::ServerMode;
+use modelardb_common::types::{ClusterMode, ServerMode};
 use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;
@@ -27,6 +27,9 @@ use crate::storage::StorageEngine;
 /// Manages the system's configuration and provides functionality for updating the configuration.
 #[derive(Clone)]
 pub struct ConfigurationManager {
+    /// The mode of the cluster used to determine the behaviour when starting the server,
+    /// creating tables, updating the remote object store, and querying.
+    pub(crate) cluster_mode: ClusterMode,
     /// The mode of the server used to determine the behaviour when modifying the remote object
     /// store and querying.
     pub(crate) server_mode: ServerMode,
@@ -44,8 +47,9 @@ pub struct ConfigurationManager {
 }
 
 impl ConfigurationManager {
-    pub fn new(server_mode: ServerMode) -> Self {
+    pub fn new(cluster_mode: ClusterMode, server_mode: ServerMode) -> Self {
         Self {
+            cluster_mode,
             server_mode,
             uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
             compressed_reserved_memory_in_bytes: 512 * 1024 * 1024,   // 512 MiB

@@ -23,8 +23,7 @@ use std::mem;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
-use sqlx::database::HasArguments;
-use sqlx::{Database, Error, Executor, IntoArguments};
+use sqlx::{Database, Error, Executor};
 
 use crate::errors::ModelarDbError;
 
@@ -61,8 +60,9 @@ where
         .execute(
             format!(
                 "CREATE TABLE IF NOT EXISTS table_metadata (
-            table_name TEXT PRIMARY KEY
-            ) {strict}"
+                table_name TEXT PRIMARY KEY,
+                sql TEXT NOT NULL
+                ) {strict}"
             )
             .as_str(),
         )
@@ -73,9 +73,10 @@ where
         .execute(
             format!(
                 "CREATE TABLE IF NOT EXISTS model_table_metadata (
-            table_name TEXT PRIMARY KEY,
-            query_schema {binary_type} NOT NULL
-            ) {strict}"
+                table_name TEXT PRIMARY KEY,
+                query_schema {binary_type} NOT NULL,
+                sql TEXT NOT NULL
+                ) {strict}"
             )
             .as_str(),
         )
@@ -86,9 +87,9 @@ where
         .execute(
             format!(
                 "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
-            hash INTEGER PRIMARY KEY,
-            table_name TEXT
-            ) {strict}"
+                hash INTEGER PRIMARY KEY,
+                table_name TEXT
+                ) {strict}"
             )
             .as_str(),
         )
@@ -100,14 +101,14 @@ where
         .execute(
             format!(
                 "CREATE TABLE IF NOT EXISTS model_table_field_columns (
-            table_name TEXT NOT NULL,
-            column_name TEXT NOT NULL,
-            column_index INTEGER NOT NULL,
-            error_bound REAL NOT NULL,
-            generated_column_expr TEXT,
-            generated_column_sources {binary_type},
-            PRIMARY KEY (table_name, column_name)
-            ) {strict}"
+                table_name TEXT NOT NULL,
+                column_name TEXT NOT NULL,
+                column_index INTEGER NOT NULL,
+                error_bound REAL NOT NULL,
+                generated_column_expr TEXT,
+                generated_column_sources {binary_type},
+                PRIMARY KEY (table_name, column_name)
+                ) {strict}"
             )
             .as_str(),
         )
@@ -117,22 +118,22 @@ where
 }
 
 /// Save the created table to the metadata database. This consists of adding a row to the
-/// table_metadata table with the `name` of the created table.
+/// table_metadata table with the `name` of the table and the `sql` used to create the table.
 pub async fn save_table_metadata<'a, DB, E>(
     metadata_database_pool: E,
-    name: String,
+    name: &str,
+    sql: &str,
 ) -> Result<(), Error>
 where
     DB: Database,
     E: Executor<'a, Database = DB> + Copy,
-    String: sqlx::Encode<'a, DB>,
-    String: sqlx::Type<DB>,
-    <DB as HasArguments<'a>>::Arguments: IntoArguments<'a, DB>,
 {
     // Add a new row in the table_metadata table to persist the table.
-    sqlx::query("INSERT INTO table_metadata (table_name) VALUES (?1)")
-        .bind(name)
-        .execute(metadata_database_pool)
+    metadata_database_pool
+        .execute(
+            format!("INSERT INTO table_metadata (table_name, sql) VALUES ('{name}', '{sql}')")
+                .as_str(),
+        )
         .await?;
 
     Ok(())
@@ -185,6 +186,11 @@ pub fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>, Err
             .map(|byte_slice| usize::from_le_bytes(byte_slice.try_into().unwrap()))
             .collect())
     }
+}
+
+/// Normalize `name` to allow direct comparisons between names.
+pub fn normalize_name(name: &str) -> String {
+    name.to_lowercase()
 }
 
 #[cfg(test)]
@@ -248,16 +254,21 @@ mod tests {
             .unwrap();
 
         let table_name = "table_name";
-        save_table_metadata(&metadata_database_pool, table_name.to_string())
+        let sql = "CREATE TABLE table_name(timestamp TIMESTAMP, values REAL, metadata REAL)";
+
+        save_table_metadata(&metadata_database_pool, table_name, sql)
             .await
             .unwrap();
 
         // Retrieve the table from the metadata database.
-        let mut rows = metadata_database_pool.fetch("SELECT table_name FROM table_metadata");
+        let mut rows = metadata_database_pool.fetch("SELECT table_name, sql FROM table_metadata");
 
         let row = rows.try_next().await.unwrap().unwrap();
         let retrieved_table_name = row.try_get::<&str, _>(0).unwrap();
         assert_eq!(table_name, retrieved_table_name);
+
+        let retrieved_sql = row.try_get::<&str, _>(1).unwrap();
+        assert_eq!(sql, retrieved_sql);
 
         assert!(rows.try_next().await.unwrap().is_none());
     }
@@ -298,5 +309,21 @@ mod tests {
             let usizes = try_convert_slice_u8_to_vec_usize(&bytes).unwrap();
             prop_assert_eq!(values, usizes);
         }
+    }
+
+    // Tests for normalize_name().
+    #[test]
+    fn test_normalize_table_name_lowercase_no_effect() {
+        assert_eq!("table_name", normalize_name("table_name"));
+    }
+
+    #[test]
+    fn test_normalize_table_name_uppercase() {
+        assert_eq!("table_name", normalize_name("TABLE_NAME"));
+    }
+
+    #[test]
+    fn test_normalize_table_name_mixed_case() {
+        assert_eq!("table_name", normalize_name("Table_Name"));
     }
 }

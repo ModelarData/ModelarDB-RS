@@ -61,8 +61,7 @@ pub static COMPRESSED_METADATA_SIZE_IN_BYTES: Lazy<usize> = Lazy::new(|| {
         .sum()
 });
 
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for internally collected
-/// metrics.
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for internally collected metrics.
 pub static METRIC_SCHEMA: Lazy<MetricSchema> = Lazy::new(|| {
     MetricSchema(Arc::new(Schema::new(vec![
         Field::new("metric", DataType::Utf8, false),
@@ -83,8 +82,7 @@ pub static METRIC_SCHEMA: Lazy<MetricSchema> = Lazy::new(|| {
     ])))
 });
 
-/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used internally during query
-/// processing.
+/// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used internally during query processing.
 pub static QUERY_SCHEMA: Lazy<QuerySchema> = Lazy::new(|| {
     QuerySchema(Arc::new(Schema::new(vec![
         Field::new("univariate_id", ArrowUnivariateId::DATA_TYPE, false),

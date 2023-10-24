@@ -39,7 +39,6 @@ once_cell.workspace = true
 parquet = { workspace = true, features = ["object_store"] }
 ringbuf.workspace = true
 snmalloc-rs = { workspace = true, features = ["build_cc"] }
-sqlparser.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio-rustls", "sqlite", "uuid"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tokio-stream.workspace = true

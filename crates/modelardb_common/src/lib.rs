@@ -19,5 +19,6 @@ pub mod arguments;
 pub mod errors;
 pub mod macros;
 pub mod metadata;
+pub mod parser;
 pub mod schemas;
 pub mod types;

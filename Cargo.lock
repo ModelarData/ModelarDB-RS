@@ -1966,6 +1966,7 @@ dependencies = [
  "object_store",
  "once_cell",
  "proptest",
+ "sqlparser",
  "sqlx",
  "tempfile",
  "tokio",
@@ -2007,6 +2008,7 @@ dependencies = [
 name = "modelardb_manager"
 version = "0.1.0"
 dependencies = [
+ "arrow",
  "arrow-flight",
  "futures",
  "log",
@@ -2018,6 +2020,7 @@ dependencies = [
  "tonic",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]
@@ -2042,7 +2045,6 @@ dependencies = [
  "proptest",
  "ringbuf",
  "snmalloc-rs",
- "sqlparser",
  "sqlx",
  "sysinfo",
  "tempfile",
