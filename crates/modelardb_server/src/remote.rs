@@ -668,7 +668,7 @@ impl FlightService for FlightServiceHandler {
     ) -> Result<Response<Self::ListActionsStream>, Status> {
         let command_statement_update_action = ActionType {
             r#type: "CommandStatementUpdate".to_owned(),
-            description: "Execute a SQL query containing a single command that produce no results."
+            description: "Execute a SQL query containing a single command that produces no results."
                 .to_owned(),
         };
 

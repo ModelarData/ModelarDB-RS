@@ -365,7 +365,7 @@ impl FlightService for FlightServiceHandler {
                 }))))
             } else {
                 Err(Status::invalid_argument(format!(
-                    "The tables '{}' do not exist in the cluster database schema.",
+                    "The table(s) '{}' do not exist in the cluster database schema.",
                     invalid_node_tables.join(", ")
                 )))
             }
@@ -488,7 +488,7 @@ impl FlightService for FlightServiceHandler {
         let initialize_database_action = ActionType {
             r#type: "InitializeDatabase".to_owned(),
             description: "Return the SQL required to create all tables and models tables \
-            currently in the managers database schema."
+            currently in the manager's database schema."
                 .to_owned(),
         };
 
@@ -501,7 +501,7 @@ impl FlightService for FlightServiceHandler {
 
         let command_statement_update_action = ActionType {
             r#type: "CommandStatementUpdate".to_owned(),
-            description: "Execute a SQL query containing a single command that produce no results."
+            description: "Execute a SQL query containing a single command that produces no results."
                 .to_owned(),
         };
 

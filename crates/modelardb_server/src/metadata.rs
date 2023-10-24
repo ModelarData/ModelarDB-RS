@@ -500,7 +500,7 @@ impl MetadataManager {
         if compressed_files_to_delete.len() != delete_from_result.rows_affected() as usize {
             return Err(Error::Configuration(Box::new(
                 ModelarDbError::ImplementationError(
-                    "Less than the expected number of files where deleted from the metadata database.".to_owned(),
+                    "Less than the expected number of files were deleted from the metadata database.".to_owned(),
                 ),
             )));
         }
