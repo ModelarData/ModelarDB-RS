@@ -37,7 +37,6 @@ use std::thread::{self, JoinHandle};
 use bytes::buf::BufMut;
 use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::compute;
-use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::async_reader::{
@@ -52,7 +51,7 @@ use datafusion::parquet::format::SortingColumn;
 use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
+use modelardb_common::types::{Timestamp, TimestampArray, Value};
 use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
 use tokio::fs::File as TokioFile;
@@ -71,7 +70,6 @@ use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::{Channels, MemoryPool, Message, Metric, MetricType};
 use crate::storage::uncompressed_data_buffer::UncompressedDataMultivariate;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
-use crate::PORT;
 
 /// The folder storing uncompressed data in the data folders.
 const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
@@ -585,9 +583,8 @@ impl StorageEngine {
         let merged = modelardb_compression::try_merge_segments(concatenated)
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
-        // Compute the name of the output file based on data in merged.
-        let file_name = Self::create_time_and_value_range_file_name(&merged);
-        let output_file_path = format!("{output_folder}/{file_name}").into();
+        // Use an UUID for the file name to ensure the name is unique.
+        let output_file_path = format!("{output_folder}/{}.parquet", Uuid::new_v4()).into();
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
         let sorting_columns = Some(vec![
@@ -626,40 +623,6 @@ impl StorageEngine {
             .head(&output_file_path)
             .await
             .map_err(|error| ParquetError::General(error.to_string()))
-    }
-
-    /// Create a file name that includes the start timestamp of the first segment in `batch`, the
-    /// end timestamp of the last segment in `batch`, the minimum value stored in `batch`, the
-    /// maximum value stored in `batch`, an UUID to make it unique across edge and cloud in
-    /// practice, and an ID that uniquely identifies the edge.
-    fn create_time_and_value_range_file_name(batch: &RecordBatch) -> String {
-        // unwrap() is safe as None is only returned if all of the values are None.
-        let start_time =
-            aggregate::min(modelardb_common::array!(batch, 2, TimestampArray)).unwrap();
-        let end_time = aggregate::max(modelardb_common::array!(batch, 3, TimestampArray)).unwrap();
-
-        // unwrap() is safe as None is only returned if all of the values are None.
-        // Both aggregate::min() and aggregate::max() consider NaN to be greater than other non-null
-        // values. So since min_values and max_values cannot contain null, min_value will be NaN if all
-        // values in min_values are NaN while max_value will be NaN if any value in max_values is NaN.
-        let min_value = aggregate::min(modelardb_common::array!(batch, 5, ValueArray)).unwrap();
-        let max_value = aggregate::max(modelardb_common::array!(batch, 6, ValueArray)).unwrap();
-
-        // An UUID is added to the file name to ensure it, in practice, is unique across edge and cloud.
-        // A static UUID is set when tests are executed to allow the tests to check that files exists.
-        let uuid = if cfg!(test) {
-            TEST_UUID
-        } else {
-            Uuid::new_v4()
-        };
-
-        // TODO: Use part of the UUID or the entire Apache Arrow Flight URL to identify the edge.
-        let edge_id = PORT.to_string();
-
-        format!(
-            "{}_{}_{}_{}_{}_{}.parquet",
-            start_time, end_time, min_value, max_value, uuid, edge_id
-        )
     }
 
     /// Create an Apache ArrowWriter that writes to `writer`. If the writer could not be created

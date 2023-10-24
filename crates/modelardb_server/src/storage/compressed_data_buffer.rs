@@ -26,6 +26,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::format::SortingColumn;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
+use uuid::Uuid;
 
 use crate::metadata::MetadataManager;
 use crate::storage;
@@ -115,12 +116,8 @@ impl CompressedDataBuffer {
         // Create the folder structure if it does not already exist.
         fs::create_dir_all(folder_path)?;
 
-        // Create a new file that includes the start timestamp of the first segment in batch, the
-        // end timestamp of the last segment in batch, the minimum value stored in batch, and the
-        // maximum value stored in batch as the file name to support efficiently pruning files that
-        // only contains data points with timestamps and values that are not relevant for a query.
-        let file_name = storage::StorageEngine::create_time_and_value_range_file_name(&batch);
-        let file_path = folder_path.join(file_name);
+        // Use an UUID for the file name to ensure the name is unique.
+        let file_path = folder_path.join(format!("{}.parquet", Uuid::new_v4()));
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
         let sorting_columns = Some(vec![
