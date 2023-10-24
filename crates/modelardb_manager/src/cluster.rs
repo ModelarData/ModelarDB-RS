@@ -57,7 +57,11 @@ impl Cluster {
     /// Checks if the node is already registered and adds it to the current nodes if not. If it
     /// already exists, [`ConfigurationError`](ModelarDbError::ConfigurationError) is returned.
     pub fn register_node(&mut self, node: Node) -> Result<(), ModelarDbError> {
-        if self.nodes.iter().any(|n| n.url.to_lowercase() == node.url.to_lowercase()) {
+        if self
+            .nodes
+            .iter()
+            .any(|n| n.url.to_lowercase() == node.url.to_lowercase())
+        {
             Err(ModelarDbError::ConfigurationError(format!(
                 "A node with the url `{}` is already registered.",
                 node.url
@@ -76,7 +80,11 @@ impl Cluster {
         url: &str,
         key: &MetadataValue<Ascii>,
     ) -> Result<(), ModelarDbError> {
-        if self.nodes.iter().any(|n| n.url.to_lowercase() == url.to_lowercase()) {
+        if self
+            .nodes
+            .iter()
+            .any(|n| n.url.to_lowercase() == url.to_lowercase())
+        {
             self.nodes.retain(|n| n.url != url);
 
             // Flush the node and kill the process running on the node.

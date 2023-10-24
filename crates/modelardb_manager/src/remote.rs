@@ -501,8 +501,9 @@ impl FlightService for FlightServiceHandler {
 
         let command_statement_update_action = ActionType {
             r#type: "CommandStatementUpdate".to_owned(),
-            description: "Execute a SQL query containing a single command that produces no results."
-                .to_owned(),
+            description:
+                "Execute a SQL query containing a single command that produces no results."
+                    .to_owned(),
         };
 
         let register_node_action = ActionType {

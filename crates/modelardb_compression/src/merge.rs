@@ -187,7 +187,7 @@ fn segments_can_be_merged(
     // out-of-order across different batches. Such segments cannot be merged as the query engine
     // assumes all columns in a model table has the same sort order and it would change the order
     // for a single column in the table if segments with out-of-order data points are merged.
-    if  end_times.value(previous_index) >= start_times.value(current_index) {
+    if end_times.value(previous_index) >= start_times.value(current_index) {
         return false;
     }
 
