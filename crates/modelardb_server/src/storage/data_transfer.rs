@@ -252,8 +252,6 @@ mod tests {
     use tempfile::{self, TempDir};
 
     use crate::common_test;
-    use crate::storage::TEST_UUID;
-    use crate::PORT;
 
     const TABLE_NAME: &str = "table";
     const COLUMN_INDEX: u16 = 5;
@@ -483,15 +481,18 @@ mod tests {
             assert!(!path.exists());
         }
 
-        // The transferred file should have a time range file name that matches the compressed data.
-        let target_path = target.path().join(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/0_5_5.2_34.2_{TEST_UUID}_{}.parquet",
-            *PORT
+        // The transferred file should be in a sub-folder under the table name and column index.
+        let target_folder = target.path().join(format!(
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}",
         ));
-        assert!(target_path.exists());
+
+        assert!(target_folder.exists());
+        assert_eq!(target_folder.read_dir().unwrap().count(), 1);
+
+        let target_path = target_folder.read_dir().unwrap().last().unwrap().unwrap();
 
         // The file should have three rows since the rows in the compressed files are merged.
-        let batch = StorageEngine::read_batch_from_apache_parquet_file(target_path.as_path())
+        let batch = StorageEngine::read_batch_from_apache_parquet_file(&target_path.path())
             .await
             .unwrap();
         assert_eq!(batch.num_rows(), expected_num_rows);

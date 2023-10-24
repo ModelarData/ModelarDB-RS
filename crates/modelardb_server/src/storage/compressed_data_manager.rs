@@ -514,7 +514,6 @@ mod tests {
     use tempfile::{self, TempDir};
 
     use crate::common_test;
-    use crate::storage::{self, TEST_UUID};
     use crate::PORT;
 
     const TABLE_NAME: &str = "table";
@@ -971,7 +970,7 @@ mod tests {
     /// Return a full path to the file with `file_name`.
     fn format_path(file_name: &str) -> String {
         format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/{file_name}_{TEST_UUID}_{}.parquet",
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/{file_name}_{}.parquet",
             *PORT
         )
     }
@@ -1090,18 +1089,6 @@ mod tests {
 
         let files = result.unwrap();
         assert_eq!(files.len(), 1);
-
-        // The file should have the first start time and the last end time as the file name.
-        let file_name = storage::StorageEngine::create_time_and_value_range_file_name(
-            &segments.compressed_segments,
-        );
-        let expected_file_path =
-            format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/{file_name}");
-
-        assert_eq!(
-            files.get(0).unwrap().location,
-            ObjectStorePath::parse(expected_file_path).unwrap()
-        )
     }
 
     #[tokio::test]

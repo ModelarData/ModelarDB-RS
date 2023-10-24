@@ -29,7 +29,6 @@ use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use uuid::Uuid;
 
 use crate::metadata::MetadataManager;
-use crate::storage;
 use crate::storage::StorageEngine;
 
 /// Compressed segments representing data points from a column in a model table as one
@@ -187,10 +186,7 @@ mod tests {
             .save_to_apache_parquet(temp_dir.path())
             .unwrap();
 
-        // Data should be saved to a file with the start time, end time, min value, and max value of
-        // the compressed segments the file contains as the file name.
-        let file_path = storage::StorageEngine::create_time_and_value_range_file_name(&segment);
-        assert!(temp_dir.path().join(file_path).exists());
+        assert_eq!(temp_dir.path().read_dir().unwrap().count(), 1);
     }
 
     #[test]
