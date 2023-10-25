@@ -21,6 +21,7 @@
 //! corresponding model table's field column indices to uniquely identify each univariate time series
 //! stored in the storage engine by a univariate id.
 
+use chrono::{TimeZone, Utc};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::fs;
@@ -29,7 +30,6 @@ use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
-use chrono::{TimeZone, Utc};
 
 use dashmap::DashMap;
 use datafusion::arrow::compute::kernels::aggregate;
@@ -146,11 +146,33 @@ impl CompressedFile {
     }
 }
 
+impl TryFrom<SqliteRow> for CompressedFile {
+    type Error = Error;
+
+    fn try_from(row: SqliteRow) -> Result<Self, Self::Error> {
+        let size: i64 = row.try_get("size")?;
+        let folder_path: String = row.try_get("folder_path")?;
+
+        Ok(Self::new(
+            row.try_get("file_name")?,
+            folder_path.into(),
+            size as usize,
+            row.try_get("created_at")?,
+            row.try_get("start_time")?,
+            row.try_get("end_time")?,
+            row.try_get("min_value")?,
+            row.try_get("max_value")?,
+        ))
+    }
+}
+
 impl Into<ObjectMeta> for CompressedFile {
     fn into(self) -> ObjectMeta {
         // unwrap() is safe as the folder path is generated from the table name which is valid UTF-8.
         let file_path = ObjectStorePath::from(format!(
-            "{}/{}.parquet", self.folder_path.to_str().unwrap(), self.name
+            "{}/{}.parquet",
+            self.folder_path.to_str().unwrap(),
+            self.name
         ));
 
         // unwrap() is safe as the created_at timestamp cannot be out of range.
