@@ -24,11 +24,11 @@
 use chrono::{TimeZone, Utc};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::{fs, str};
 use std::hash::Hasher;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use std::{fs, str};
 
 use dashmap::DashMap;
 use datafusion::arrow::compute::kernels::aggregate;
@@ -60,7 +60,6 @@ use crate::storage::COMPRESSED_DATA_FOLDER;
 pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
 
 /// Metadata about a file tracked by [`MetadataManager`] which contains compressed segments.
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CompressedFile {
     /// Name of the file.
@@ -81,7 +80,6 @@ pub struct CompressedFile {
     max_value: Value,
 }
 
-#[allow(dead_code)]
 impl CompressedFile {
     pub fn new(
         name: Uuid,
@@ -103,6 +101,10 @@ impl CompressedFile {
             min_value,
             max_value,
         }
+    }
+
+    pub(crate) fn size(&self) -> usize {
+        self.size
     }
 
     /// Convert the given file information and [`RecordBatch`] to a [`CompressedFile`].
@@ -140,8 +142,26 @@ impl CompressedFile {
         }
     }
 
-    pub(crate) fn size(&self) -> usize {
-        self.size
+    /// Extract the file name from each [`ObjectMeta`] in `object_metas` and convert it to an UUID,
+    /// if possible. If any [`ObjectMeta`] is not an Apache Parquet file with an UUID file name,
+    /// return [`String`].
+    pub(crate) fn object_metas_to_compressed_file_names(
+        object_metas: Vec<ObjectMeta>,
+    ) -> Result<Vec<Uuid>, String> {
+        object_metas
+            .iter()
+            .map(|object_meta| {
+                Uuid::try_parse(
+                    object_meta
+                        .location
+                        .filename()
+                        .ok_or_else(|| "Object meta does not have a file name.")?
+                        .strip_suffix(".parquet")
+                        .ok_or_else(|| "Object meta is not an Apache Parquet file.")?,
+                )
+                .map_err(|error| error.to_string())
+            })
+            .collect()
     }
 }
 
@@ -643,7 +663,6 @@ impl MetadataManager {
 
     /// Create a [`Query`] that, when executed, stores `compressed_file` in the metadata database
     /// for the column at `query_schema_index` using `insert_statement`.
-    #[allow(dead_code)]
     fn create_insert_compressed_file_query<'a>(
         insert_statement: &'a str,
         query_schema_index: usize,
@@ -713,7 +732,7 @@ impl MetadataManager {
         let max_value = Self::rewrite_special_value_to_normal_value(max_value);
 
         let select_statement = format!(
-            "SELECT file_name FROM {model_table_name}_compressed_files
+            "SELECT * FROM {model_table_name}_compressed_files
              WHERE field_column = (?1)
              AND (?2) <= end_time AND start_time <= (?3)
              AND (?4) <= max_value AND min_value <= (?5)
