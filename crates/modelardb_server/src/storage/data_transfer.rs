@@ -28,8 +28,9 @@ use object_store::local::LocalFileSystem;
 use object_store::path::{Path as ObjectStorePath, PathPart};
 use object_store::{ObjectMeta, ObjectStore};
 use tracing::debug;
+use uuid::Uuid;
 
-use crate::metadata::CompressedFile;
+use crate::metadata::{CompressedFile, MetadataManager};
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::Metric;
 use crate::storage::COMPRESSED_DATA_FOLDER;
@@ -47,6 +48,8 @@ pub struct DataTransfer {
     local_data_folder: Arc<dyn ObjectStore>,
     /// The object store that the data should be transferred to.
     pub remote_data_folder: Arc<dyn ObjectStore>,
+    /// Management of metadata for deleting file metadata after transferring.
+    metadata_manager: Arc<MetadataManager>,
     /// Map from table names and column indices to the combined size in bytes of the compressed
     /// files currently saved for the column in that table.
     compressed_files: DashMap<(String, u16), usize>,
@@ -64,6 +67,7 @@ impl DataTransfer {
     pub async fn try_new(
         local_data_folder: PathBuf,
         remote_data_folder: Arc<dyn ObjectStore>,
+        metadata_manager: Arc<MetadataManager>,
         transfer_batch_size_in_bytes: usize,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
@@ -88,6 +92,7 @@ impl DataTransfer {
         let data_transfer = Self {
             local_data_folder,
             remote_data_folder,
+            metadata_manager,
             compressed_files: compressed_files.clone(),
             transfer_batch_size_in_bytes,
             used_disk_space_metric,
@@ -198,6 +203,21 @@ impl DataTransfer {
             &format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"),
         )
         .await?;
+
+        // Delete the metadata for the transferred files from the metadata database.
+        let compressed_files_to_delete: Vec<Uuid> =
+            CompressedFile::object_metas_to_compressed_file_names(object_metas.clone())
+                .map_err(|error| ParquetError::General(error.to_string()))?;
+
+        self.metadata_manager
+            .replace_compressed_files(
+                table_name,
+                column_index as usize,
+                &compressed_files_to_delete,
+                None,
+            )
+            .await
+            .map_err(|error| ParquetError::General(error.to_string()))?;
 
         // Remove the transferred files from the in-memory tracking of compressed files.
         let transferred_bytes: usize = object_metas.iter().map(|meta| meta.size).sum();

@@ -293,21 +293,9 @@ impl CompressedDataManager {
                 })?;
 
             // Replace the files that were merged with the merged file in the metadata database.
-            // unwrap() is safe since the location always has a file name that is an UUID.
-            let compressed_files_to_delete: Vec<Uuid> = relevant_object_metas
-                .iter()
-                .map(|object_meta| {
-                    Uuid::try_parse(
-                        object_meta
-                            .location
-                            .filename()
-                            .unwrap()
-                            .strip_suffix(".parquet")
-                            .unwrap(),
-                    )
-                    .unwrap()
-                })
-                .collect();
+            let compressed_files_to_delete: Vec<Uuid> =
+                CompressedFile::object_metas_to_compressed_file_names(relevant_object_metas)
+                    .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
             self.metadata_manager
                 .replace_compressed_files(
@@ -504,7 +492,10 @@ impl CompressedDataManager {
         apache_arrow_writer.close()?;
 
         output_data_folder
-            .put(&output_file_path.clone().into(), Bytes::from(buf.into_inner()))
+            .put(
+                &output_file_path.clone().into(),
+                Bytes::from(buf.into_inner()),
+            )
             .await
             .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
 

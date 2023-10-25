@@ -176,6 +176,7 @@ impl StorageEngine {
                 DataTransfer::try_new(
                     local_data_folder.clone(),
                     remote_data_folder,
+                    metadata_manager.clone(),
                     TRANSFER_BATCH_SIZE_IN_BYTES,
                     used_disk_space_metric.clone(),
                 )
@@ -424,6 +425,7 @@ impl StorageEngine {
     pub(super) async fn update_remote_data_folder(
         &mut self,
         remote_data_folder: Arc<dyn ObjectStore>,
+        metadata_manager: Arc<MetadataManager>,
     ) -> Result<(), IOError> {
         let maybe_current_data_transfer =
             &mut *self.compressed_data_manager.data_transfer.write().await;
@@ -434,6 +436,7 @@ impl StorageEngine {
             let data_transfer = DataTransfer::try_new(
                 self.compressed_data_manager.local_data_folder.clone(),
                 remote_data_folder,
+                metadata_manager,
                 TRANSFER_BATCH_SIZE_IN_BYTES,
                 self.compressed_data_manager.used_disk_space_metric.clone(),
             )
