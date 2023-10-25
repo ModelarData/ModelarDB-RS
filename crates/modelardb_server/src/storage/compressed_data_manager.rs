@@ -422,19 +422,16 @@ mod tests {
 
     use std::path::Path;
 
-    use datafusion::arrow::compute;
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
+    use futures::StreamExt;
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-    use modelardb_common::types::{
-        ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray,
-    };
+    use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
     use object_store::local::LocalFileSystem;
     use object_store::ObjectStore;
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
 
     use crate::common_test;
-    use crate::PORT;
 
     const TABLE_NAME: &str = "table";
     const COLUMN_INDEX: u16 = 5;
@@ -628,10 +625,10 @@ mod tests {
         );
     }
 
-    // Tests for save_and_get_saved_compressed_files().
+    // Tests for compressed_files().
     #[tokio::test]
     async fn test_can_get_compressed_file_for_table() {
-        let (temp_dir, data_manager) = create_compressed_data_manager().await;
+        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
 
         // Insert compressed segments into the same table.
         let segments = compressed_segments_record_batch();
@@ -645,18 +642,8 @@ mod tests {
             .unwrap();
         data_manager.flush().await.unwrap();
 
-        let object_store: Arc<dyn ObjectStore> =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
-            .compressed_files(
-                TABLE_NAME,
-                COLUMN_INDEX,
-                None,
-                None,
-                None,
-                None,
-                &object_store,
-            )
+            .compressed_files(TABLE_NAME, COLUMN_INDEX, None, None, None, None)
             .await;
 
         assert!(result.is_ok());
@@ -665,382 +652,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_no_compressed_files_for_non_existent_table() {
-        let (temp_dir, data_manager) = create_compressed_data_manager().await;
+        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
 
-        let object_store: Arc<dyn ObjectStore> =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.compressed_files(
-            TABLE_NAME,
-            COLUMN_INDEX,
-            None,
-            None,
-            None,
-            None,
-            &object_store,
-        );
+        let result =
+            data_manager.compressed_files(TABLE_NAME, COLUMN_INDEX, None, None, None, None);
 
         assert!(result.await.unwrap().is_empty());
     }
 
-    #[tokio::test]
-    async fn test_can_get_compressed_file_with_start_time() {
-        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
-        let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
-
-        // If we have a start time after the first segments ends, only the file containing the
-        // second segment should be retrieved.
-        let end_times = modelardb_common::array!(segment_1, 3, TimestampArray);
-        let start_time = Some(end_times.value(end_times.len() - 1) + 100);
-
-        let object_store: Arc<dyn ObjectStore> =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.compressed_files(
-            TABLE_NAME,
-            COLUMN_INDEX,
-            start_time,
-            None,
-            None,
-            None,
-            &object_store,
-        );
-        let files = result.await.unwrap();
-        assert_eq!(files.len(), 1);
-
-        // The path to the returned compressed file should contain the table name, the start time,
-        // end time, min value, and max value of the second segment.
-        let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(file_path, format_path("2000_2005_15.2_44.2"));
-    }
-
-    #[tokio::test]
-    async fn test_can_get_compressed_file_with_min_value() {
-        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
-        let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
-
-        // If we have a min value higher then the max value in the first segment, only the file
-        // containing the second segment should be retrieved.
-        let max_values = modelardb_common::array!(segment_1, 6, ValueArray);
-        let min_value = Some(compute::max(max_values).unwrap() + 1.0);
-
-        let object_store: Arc<dyn ObjectStore> =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.compressed_files(
-            TABLE_NAME,
-            COLUMN_INDEX,
-            None,
-            None,
-            min_value,
-            None,
-            &object_store,
-        );
-        let files = result.await.unwrap();
-        assert_eq!(files.len(), 1);
-
-        // The path to the returned compressed file should contain the table name, the start time,
-        // end time, min value, and max value of the second segment.
-        let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(file_path, format_path("2000_2005_15.2_44.2"));
-    }
-
-    #[tokio::test]
-    async fn test_can_get_compressed_file_with_end_time() {
-        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
-        let (_segment_1, segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
-
-        // If we have an end time before the second segment starts, only the file containing the
-        // first segment should be retrieved.
-        let start_times = modelardb_common::array!(segment_2, 2, TimestampArray);
-        let end_time = Some(start_times.value(1) - 100);
-
-        let object_store: Arc<dyn ObjectStore> =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.compressed_files(
-            TABLE_NAME,
-            COLUMN_INDEX,
-            None,
-            end_time,
-            None,
-            None,
-            &object_store,
-        );
-        let files = result.await.unwrap();
-        assert_eq!(files.len(), 1);
-
-        // The path to the returned compressed file should contain the table name, the start time,
-        // end time, min value, and max value of the first segment.
-        let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(file_path, format_path("1000_1005_5.2_34.2"));
-    }
-
-    #[tokio::test]
-    async fn test_can_get_compressed_file_with_max_value() {
-        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
-        let (_segment_1, segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
-
-        // If we have a max value lower then the min value in the second segment, only the file
-        // containing the first segment should be retrieved.
-        let min_values = modelardb_common::array!(segment_2, 5, ValueArray);
-        let max_value = Some(compute::min(min_values).unwrap() - 1.0);
-
-        let object_store: Arc<dyn ObjectStore> =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.compressed_files(
-            TABLE_NAME,
-            COLUMN_INDEX,
-            None,
-            None,
-            None,
-            max_value,
-            &object_store,
-        );
-        let files = result.await.unwrap();
-        assert_eq!(files.len(), 1);
-
-        // The path to the returned compressed file should contain the table name, the start time,
-        // end time, min value, and max value of the first segment.
-        let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(file_path, format_path("1000_1005_5.2_34.2"));
-    }
-
-    #[tokio::test]
-    async fn test_can_get_compressed_files_with_start_time_and_end_time() {
-        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
-
-        // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
-        let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
-        let (_segment_3, segment_4) = insert_separated_segments(&mut data_manager, 1000, 0.0).await;
-
-        // If we have a start time after the first segment and an end time before the fourth
-        // segment, only the files containing the second and third segment should be retrieved.
-        let end_times = modelardb_common::array!(segment_1, 3, TimestampArray);
-        let start_times = modelardb_common::array!(segment_4, 2, TimestampArray);
-
-        let start_time = Some(end_times.value(end_times.len() - 1) + 100);
-        let end_time = Some(start_times.value(1) - 100);
-
-        let object_store: Arc<dyn ObjectStore> =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.compressed_files(
-            TABLE_NAME,
-            COLUMN_INDEX,
-            start_time,
-            end_time,
-            None,
-            None,
-            &object_store,
-        );
-        let mut files = result.await.unwrap();
-        assert_eq!(files.len(), 2);
-
-        // Sort files as save_and_get_saved_compressed_files() does not guarantee an ordering.a
-        files.sort_unstable_by(|a, b| a.location.cmp(&b.location));
-
-        // The files containing the second and third segment should be returned and their path
-        // should contain the table name, the start time, end time, min value, and max value of the
-        // segment in each file.
-        let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(file_path, format_path("2000_2005_15.2_44.2"));
-        let file_path = files.get(1).unwrap().location.to_string();
-        assert_eq!(file_path, format_path("2000_2005_5.2_34.2"));
-    }
-
-    #[tokio::test]
-    async fn test_can_get_compressed_files_with_min_value_and_max_value() {
-        let (temp_dir, mut data_manager) = create_compressed_data_manager().await;
-
-        // Insert 4 segments with a ~1 second time difference between segment 1 and 2 and segment 3 and 4.
-        let (segment_1, _segment_2) = insert_separated_segments(&mut data_manager, 0, 0.0).await;
-        let (_segment_3, segment_4) =
-            insert_separated_segments(&mut data_manager, 1000, 100.0).await;
-
-        // If we have a min value higher the first segment and a max value lower than the fourth
-        // segment, only the files containing the second and third segment should be retrieved.
-        let max_values = modelardb_common::array!(segment_1, 6, ValueArray);
-        let min_values = modelardb_common::array!(segment_4, 5, ValueArray);
-
-        let min_value = Some(compute::max(max_values).unwrap() + 1.0);
-        let max_value = Some(compute::min(min_values).unwrap() - 1.0);
-
-        let object_store: Arc<dyn ObjectStore> =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.compressed_files(
-            TABLE_NAME,
-            COLUMN_INDEX,
-            None,
-            None,
-            min_value,
-            max_value,
-            &object_store,
-        );
-        let mut files = result.await.unwrap();
-        assert_eq!(files.len(), 2);
-
-        // Sort files as save_and_get_saved_compressed_files() does not guarantee an ordering.
-        files.sort_unstable_by(|a, b| a.location.cmp(&b.location));
-
-        // The files containing the second and third segment should be returned and their path
-        // should contain the table name, the start time, end time, min value, and max value of the
-        // segment in each file.
-        let file_path = files.get(0).unwrap().location.to_string();
-        assert_eq!(file_path, format_path("2000_2005_105.2_134.2"));
-        let file_path = files.get(1).unwrap().location.to_string();
-        assert_eq!(file_path, format_path("2000_2005_15.2_44.2"));
-    }
-
-    /// Return a full path to the file with `file_name`.
-    fn format_path(file_name: &str) -> String {
-        format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/{file_name}_{}.parquet",
-            *PORT
-        )
-    }
-
-    /// Create and insert two compressed segments with univariate_id 1, a 1 second time difference
-    /// offset by `start_time` and values with difference of 10 offset by `value_offset`.
-    async fn insert_separated_segments(
-        data_manager: &mut CompressedDataManager,
-        start_time: i64,
-        value_offset: f32,
-    ) -> (RecordBatch, RecordBatch) {
-        let segment_batch_1 = compressed_segment_batch_with_time(1000 + start_time, value_offset);
-        let segment_1 = segment_batch_1.compressed_segments.clone();
-        data_manager
-            .insert_compressed_segments(segment_batch_1)
-            .await
-            .unwrap();
-        data_manager.flush().await.unwrap();
-
-        let segment_batch_2 =
-            compressed_segment_batch_with_time(2000 + start_time, 10.0 + value_offset);
-        let segment_2 = segment_batch_2.compressed_segments.clone();
-        data_manager
-            .insert_compressed_segments(segment_batch_2)
-            .await
-            .unwrap();
-        data_manager.flush().await.unwrap();
-
-        (segment_1, segment_2)
-    }
-
-    #[tokio::test]
-    async fn test_cannot_get_compressed_files_where_end_time_is_before_start_time() {
-        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
-
-        let segments = compressed_segments_record_batch();
-        data_manager
-            .insert_compressed_segments(segments)
-            .await
-            .unwrap();
-
-        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
-        let result = data_manager.compressed_files(
-            TABLE_NAME,
-            COLUMN_INDEX,
-            Some(10),
-            Some(1),
-            None,
-            None,
-            &object_store,
-        );
-
-        assert!(result
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("cannot be after end time"));
-    }
-
-    #[tokio::test]
-    async fn test_cannot_get_compressed_files_where_max_value_is_smaller_than_min_value() {
-        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
-
-        let segments = compressed_segments_record_batch();
-        data_manager
-            .insert_compressed_segments(segments)
-            .await
-            .unwrap();
-
-        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
-        let result = data_manager.compressed_files(
-            TABLE_NAME,
-            COLUMN_INDEX,
-            None,
-            None,
-            Some(10.0),
-            Some(1.0),
-            &object_store,
-        );
-
-        assert!(result
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("cannot be larger than max value"));
-    }
-
-    #[tokio::test]
-    async fn test_can_get_saved_compressed_files() {
-        let segments = compressed_segments_record_batch();
-        let (temp_dir, data_manager) = create_compressed_data_manager().await;
-
-        data_manager
-            .insert_compressed_segments(segments.clone())
-            .await
-            .unwrap();
-        data_manager
-            .save_compressed_data(TABLE_NAME, COLUMN_INDEX)
-            .await
-            .unwrap();
-
-        let object_store: Arc<dyn ObjectStore> =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager
-            .compressed_files(
-                TABLE_NAME,
-                COLUMN_INDEX,
-                None,
-                None,
-                None,
-                None,
-                &object_store,
-            )
-            .await;
-        assert!(result.is_ok());
-
-        let files = result.unwrap();
-        assert_eq!(files.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_get_no_saved_compressed_files_from_non_existent_table() {
-        let segments = compressed_segments_record_batch();
-        let (temp_dir, data_manager) = create_compressed_data_manager().await;
-
-        data_manager
-            .insert_compressed_segments(segments)
-            .await
-            .unwrap();
-        data_manager
-            .save_compressed_data(TABLE_NAME, COLUMN_INDEX)
-            .await
-            .unwrap();
-
-        let object_store: Arc<dyn ObjectStore> =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager
-            .compressed_files(
-                "NO_TABLE",
-                COLUMN_INDEX,
-                None,
-                None,
-                None,
-                None,
-                &object_store,
-            )
-            .await;
-        assert!(result.unwrap().is_empty());
-    }
-
+    // Tests for adjust_compressed_remaining_memory_in_bytes().
     #[tokio::test]
     async fn test_increase_compressed_remaining_memory_in_bytes() {
         let (_temp_dir, data_manager) = create_compressed_data_manager().await;
@@ -1113,6 +733,8 @@ mod tests {
             common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         ));
 
+        let metadata_manager = Arc::new(MetadataManager::try_new(temp_dir.path()).await.unwrap());
+
         (
             temp_dir,
             CompressedDataManager::try_new(
@@ -1120,6 +742,7 @@ mod tests {
                 local_data_folder,
                 channels,
                 memory_pool,
+                metadata_manager,
                 Arc::new(Mutex::new(Metric::new())),
             )
             .unwrap(),
@@ -1156,171 +779,5 @@ mod tests {
             common_test::compressed_segments_record_batch_with_time(univariate_id, time_ms, offset);
 
         CompressedSegmentBatch::new(univariate_id, model_table_metadata, compressed_segments)
-    }
-
-    // Tests for is_compressed_file_within_time_and_value_range().
-    #[test]
-    fn test_compressed_file_ends_within_time_range() {
-        assert!(is_compressed_file_within_time_and_value_range(
-            "1_10_0.0_-10.0.parquet",
-            5,
-            15,
-            -10.0,
-            0.0,
-        ))
-    }
-
-    #[test]
-    fn test_compressed_file_starts_within_time_range() {
-        assert!(is_compressed_file_within_time_and_value_range(
-            "10_20_0_-10.0.parquet",
-            5,
-            15,
-            -10.0,
-            0.0,
-        ))
-    }
-
-    #[test]
-    fn test_compressed_file_is_within_time_range() {
-        assert!(is_compressed_file_within_time_and_value_range(
-            "10_20_0.0_-10.0.parquet",
-            1,
-            30,
-            -10.0,
-            0.0,
-        ))
-    }
-
-    #[test]
-    fn test_compressed_file_is_before_time_range() {
-        assert!(!is_compressed_file_within_time_and_value_range(
-            "1_10_0.0_-10.0.parquet",
-            20,
-            30,
-            -10.0,
-            0.0,
-        ))
-    }
-
-    #[test]
-    fn test_compressed_file_is_after_time_range() {
-        assert!(!is_compressed_file_within_time_and_value_range(
-            "20_30_0.0_-10.0.parquet",
-            1,
-            10,
-            -10.0,
-            0.0,
-        ))
-    }
-
-    #[test]
-    fn test_compressed_file_max_within_value_range() {
-        assert!(is_compressed_file_within_time_and_value_range(
-            "1_10_5.0_10.0.parquet",
-            1,
-            10,
-            7.5,
-            15.0,
-        ))
-    }
-
-    #[test]
-    fn test_compressed_file_max_within_nan_value_range() {
-        assert!(is_compressed_file_within_time_and_value_range(
-            "1_10_5.0_10.0.parquet",
-            1,
-            10,
-            7.5,
-            f32::NAN,
-        ))
-    }
-
-    #[test]
-    fn test_compressed_file_max_is_nan_and_within_value_range() {
-        assert!(is_compressed_file_within_time_and_value_range(
-            "1_10_5.0_NaN.parquet",
-            1,
-            10,
-            7.5,
-            15.0,
-        ))
-    }
-
-    #[test]
-    fn test_compressed_file_min_within_value_range() {
-        assert!(is_compressed_file_within_time_and_value_range(
-            "1_10_5.0_10.0.parquet",
-            1,
-            10,
-            0.0,
-            7.5,
-        ))
-    }
-
-    #[test]
-    fn test_compressed_file_is_within_value_range() {
-        assert!(is_compressed_file_within_time_and_value_range(
-            "1_10_5.0_7.5.parquet",
-            1,
-            10,
-            0.0,
-            10.0,
-        ))
-    }
-
-    #[test]
-    fn test_compressed_file_with_only_nan_is_within_nan_value_range() {
-        assert!(is_compressed_file_within_time_and_value_range(
-            "1_10_NaN_NaN.parquet",
-            1,
-            10,
-            f32::NAN,
-            f32::NAN,
-        ))
-    }
-
-    #[test]
-    fn test_compressed_file_is_less_than_value_range() {
-        assert!(!is_compressed_file_within_time_and_value_range(
-            "1_10_0.0_10.0.parquet",
-            1,
-            10,
-            20.0,
-            30.0,
-        ))
-    }
-
-    #[test]
-    fn test_compressed_file_is_greater_than_value_range() {
-        assert!(!is_compressed_file_within_time_and_value_range(
-            "1_10_20.0_30.0.parquet",
-            1,
-            10,
-            0.0,
-            10.0,
-        ))
-    }
-
-    #[test]
-    fn test_compressed_file_is_outside_nan_value_range() {
-        assert!(!is_compressed_file_within_time_and_value_range(
-            "1_10_5.0_7.5.parquet",
-            1,
-            10,
-            Value::NAN,
-            Value::NAN,
-        ))
-    }
-
-    #[test]
-    fn test_compressed_file_with_only_nan_is_outside_value_range() {
-        assert!(!is_compressed_file_within_time_and_value_range(
-            "1_10_NaN_NaN.parquet",
-            1,
-            10,
-            0.0,
-            10.0,
-        ))
     }
 }

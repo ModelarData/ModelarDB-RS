@@ -350,11 +350,9 @@ impl StorageEngine {
 
     // TODO: Pass the metadata manager that the files should be retrieved from as an argument.
     /// Retrieve the compressed sorted files that correspond to the column at `column_index` in the
-    /// table with `table_name` within the given range of time and value. If some compressed data
-    /// that belongs to `column_index` in `table_name` is still in memory, save it to disk first. If
-    /// no files belong to the column at `column_index` for the table with `table_name` an empty
-    /// [`Vec`] is returned, while a [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is
-    /// returned if:
+    /// table with `table_name` within the given range of time and value. If no files belong to the
+    /// column at `column_index` for the table with `table_name` an empty [`Vec`] is returned,
+    /// while a [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
     /// * A table with `table_name` does not exist.
     /// * A column with `column_index` does not exist.
     /// * The compressed files could not be listed.
