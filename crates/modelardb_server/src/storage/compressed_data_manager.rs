@@ -15,6 +15,7 @@
 
 //! Support for managing all compressed data that is inserted into the [`StorageEngine`].
 
+use bytes::BufMut;
 use std::fs;
 use std::io::{Error as IOError, ErrorKind};
 use std::path::PathBuf;
@@ -23,15 +24,22 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
+use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
+use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::{Timestamp, Value};
 use object_store::path::Path as ObjectStorePath;
-use object_store::ObjectMeta;
+use object_store::{ObjectMeta, ObjectStore};
+use parquet::arrow::async_reader::ParquetObjectReader;
+use parquet::arrow::ParquetRecordBatchStreamBuilder;
+use parquet::format::SortingColumn;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
+use tonic::codegen::Bytes;
 use tracing::{debug, error, info};
+use uuid::Uuid;
 
 use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
@@ -248,6 +256,7 @@ impl CompressedDataManager {
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
         max_value: Option<Value>,
+        query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
         // Retrieve the file name of all files that fit the given arguments.
         let relevant_file_names = self
@@ -264,7 +273,7 @@ impl CompressedDataManager {
             .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
         // Create the object metadata for each file.
-        let relevant_files = relevant_file_names
+        let relevant_files: Vec<ObjectMeta> = relevant_file_names
             .iter()
             .map(|file_name| {
                 let file_path = ObjectStorePath::from(format!(
@@ -272,6 +281,7 @@ impl CompressedDataManager {
                 ));
 
                 // TODO: Add last modified and size to file metadata and use them here.
+                // TODO: Maybe move this to method on compressed file instead (better for future).
                 ObjectMeta {
                     location: file_path,
                     last_modified: Default::default(),
@@ -281,7 +291,25 @@ impl CompressedDataManager {
             })
             .collect();
 
-        Ok(relevant_files)
+        // Merge the compressed Apache Parquet files if multiple are retrieved to ensure order.
+        if relevant_files.len() > 1 {
+            let object_meta = Self::merge_compressed_apache_parquet_files(
+                query_data_folder,
+                &relevant_files,
+                query_data_folder,
+                &format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"),
+            )
+                .await
+                .map_err(|error| {
+                    ModelarDbError::DataRetrievalError(format!(
+                        "Compressed data could not be merged for column '{column_index}' in table '{table_name}': {error}"
+                    ))
+                })?;
+
+            Ok(vec![object_meta])
+        } else {
+            Ok(relevant_files)
+        }
     }
 
     /// Save [`CompressedDataBuffers`](CompressedDataBuffer) to disk until at least `size_in_bytes`
@@ -413,6 +441,81 @@ impl CompressedDataManager {
         self.save_compressed_data_to_free_memory(0).await?;
 
         Ok(())
+    }
+
+    /// Merge the Apache Parquet files in `input_data_folder`/`input_files` and write them to a
+    /// single Apache Parquet file in `output_data_folder`/`output_folder`. Return an [`ObjectMeta`]
+    /// that represent the merged file if it is written successfully, otherwise [`ParquetError`] is
+    /// returned.
+    pub(super) async fn merge_compressed_apache_parquet_files(
+        input_data_folder: &Arc<dyn ObjectStore>,
+        input_files: &[ObjectMeta],
+        output_data_folder: &Arc<dyn ObjectStore>,
+        output_folder: &str,
+    ) -> Result<ObjectMeta, ParquetError> {
+        // Read input files, for_each is not used so errors can be returned with ?.
+        let mut record_batches = Vec::with_capacity(input_files.len());
+        for input_file in input_files {
+            let reader = ParquetObjectReader::new(input_data_folder.clone(), input_file.clone());
+            let builder = ParquetRecordBatchStreamBuilder::new(reader).await?;
+            let mut stream = builder.with_batch_size(usize::MAX).build()?;
+
+            let record_batch = stream.next().await.ok_or_else(|| {
+                ParquetError::General(format!(
+                    "Apache Parquet file at path '{}' could not be read.",
+                    input_file.location
+                ))
+            })??;
+
+            record_batches.push(record_batch);
+        }
+
+        // Merge the record batches into a single concatenated and merged record batch.
+        let schema = record_batches[0].schema();
+        let concatenated = compute::concat_batches(&schema, &record_batches)?;
+        let merged = modelardb_compression::try_merge_segments(concatenated)
+            .map_err(|error| ParquetError::General(error.to_string()))?;
+
+        // Use an UUID for the file name to ensure the name is unique.
+        let output_file_path = format!("{output_folder}/{}.parquet", Uuid::new_v4()).into();
+
+        // Specify that the file must be sorted by univariate_id and then by start_time.
+        let sorting_columns = Some(vec![
+            SortingColumn::new(0, false, false),
+            SortingColumn::new(2, false, false),
+        ]);
+
+        // Write the concatenated and merged record batch to the output location.
+        let mut buf = vec![].writer();
+        let mut apache_arrow_writer =
+            StorageEngine::create_apache_arrow_writer(&mut buf, schema, sorting_columns)?;
+        apache_arrow_writer.write(&merged)?;
+        apache_arrow_writer.close()?;
+
+        output_data_folder
+            .put(&output_file_path, Bytes::from(buf.into_inner()))
+            .await
+            .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
+
+        // Delete the input files as the output file has been written.
+        for input_file in input_files {
+            input_data_folder
+                .delete(&input_file.location)
+                .await
+                .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
+        }
+
+        debug!(
+            "Merged {} compressed files into single Apache Parquet file with {} rows.",
+            input_files.len(),
+            merged.num_rows()
+        );
+
+        // Return an ObjectMeta that represent the successfully merged and written file.
+        output_data_folder
+            .head(&output_file_path)
+            .await
+            .map_err(|error| ParquetError::General(error.to_string()))
     }
 }
 

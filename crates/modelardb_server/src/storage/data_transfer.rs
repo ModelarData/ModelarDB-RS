@@ -29,8 +29,9 @@ use object_store::path::{Path as ObjectStorePath, PathPart};
 use object_store::{ObjectMeta, ObjectStore};
 use tracing::debug;
 
+use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::Metric;
-use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
+use crate::storage::COMPRESSED_DATA_FOLDER;
 
 // TODO: Make the transfer batch size in bytes part of the user-configurable settings.
 // TODO: When the storage engine is changed to use object store for everything, receive
@@ -190,7 +191,7 @@ impl DataTransfer {
         );
 
         // Merge the files and transfer them to the remote object store.
-        StorageEngine::merge_compressed_apache_parquet_files(
+        CompressedDataManager::merge_compressed_apache_parquet_files(
             &self.local_data_folder,
             &object_metas,
             &self.remote_data_folder,
@@ -252,6 +253,7 @@ mod tests {
     use tempfile::{self, TempDir};
 
     use crate::common_test;
+    use crate::storage::StorageEngine;
 
     const TABLE_NAME: &str = "table";
     const COLUMN_INDEX: u16 = 5;

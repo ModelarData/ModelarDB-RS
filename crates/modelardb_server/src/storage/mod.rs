@@ -34,14 +34,10 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
-use bytes::buf::BufMut;
 use datafusion::arrow::array::UInt32Array;
-use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::async_reader::{
-    ParquetObjectReader, ParquetRecordBatchStreamBuilder,
-};
+use datafusion::parquet::arrow::async_reader::ParquetRecordBatchStreamBuilder;
 use datafusion::parquet::arrow::ArrowWriter;
 use datafusion::parquet::basic::ZstdLevel;
 use datafusion::parquet::basic::{Compression, Encoding};
@@ -56,10 +52,8 @@ use object_store::{ObjectMeta, ObjectStore};
 use tokio::fs::File as TokioFile;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
-use tonic::codegen::Bytes;
 use tonic::Status;
-use tracing::{debug, error};
-use uuid::Uuid;
+use tracing::error;
 
 use crate::configuration::ConfigurationManager;
 use crate::context::Context;
@@ -349,13 +343,14 @@ impl StorageEngine {
     }
 
     // TODO: Pass the metadata manager that the files should be retrieved from as an argument.
-    /// Retrieve the compressed sorted files that correspond to the column at `column_index` in the
-    /// table with `table_name` within the given range of time and value. If no files belong to the
-    /// column at `column_index` for the table with `table_name` an empty [`Vec`] is returned,
-    /// while a [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
+    /// Return an [`ObjectMeta`] for each compressed file that belongs to the column at `column_index`
+    /// in the table with `table_name` and contains compressed segments within the given range of
+    /// time and value. If no files belong to the column at `column_index` for the table with
+    /// `table_name` an empty [`Vec`] is returned, while a
+    /// [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
     /// * A table with `table_name` does not exist.
-    /// * A column with `column_index` does not exist.
     /// * The compressed files could not be listed.
+    /// * A column with `column_index` does not exist.
     /// * The end time is before the start time.
     /// * The max value is smaller than the min value.
     pub(super) async fn compressed_files(
@@ -368,9 +363,7 @@ impl StorageEngine {
         max_value: Option<Value>,
         query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
-        // Retrieve object_metas that represent the relevant files for table_name and column_index.
-        let relevant_apache_parquet_files = self
-            .compressed_data_manager
+        self.compressed_data_manager
             .compressed_files(
                 table_name,
                 column_index,
@@ -378,28 +371,9 @@ impl StorageEngine {
                 end_time,
                 min_value,
                 max_value,
-            )
-            .await?;
-
-        // Merge the compressed Apache Parquet files if multiple are returned to ensure order.
-        if relevant_apache_parquet_files.len() > 1 {
-            let object_meta = Self::merge_compressed_apache_parquet_files(
                 query_data_folder,
-                &relevant_apache_parquet_files,
-                query_data_folder,
-                &format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"),
             )
             .await
-            .map_err(|error| {
-                ModelarDbError::DataRetrievalError(format!(
-                    "Compressed data could not be merged for column '{column_index}' in table '{table_name}': {error}"
-                ))
-            })?;
-
-            Ok(vec![object_meta])
-        } else {
-            Ok(relevant_apache_parquet_files)
-        }
     }
 
     /// Collect and return the metrics of used uncompressed/compressed memory, used disk space, and ingested
@@ -536,81 +510,6 @@ impl StorageEngine {
             ))
         })??;
         Ok(record_batch)
-    }
-
-    /// Merge the Apache Parquet files in `input_data_folder`/`input_files` and write them to a
-    /// single Apache Parquet file in `output_data_folder`/`output_folder`. Return an [`ObjectMeta`]
-    /// that represent the merged file if it is written successfully, otherwise [`ParquetError`] is
-    /// returned.
-    async fn merge_compressed_apache_parquet_files(
-        input_data_folder: &Arc<dyn ObjectStore>,
-        input_files: &[ObjectMeta],
-        output_data_folder: &Arc<dyn ObjectStore>,
-        output_folder: &str,
-    ) -> Result<ObjectMeta, ParquetError> {
-        // Read input files, for_each is not used so errors can be returned with ?.
-        let mut record_batches = Vec::with_capacity(input_files.len());
-        for input_file in input_files {
-            let reader = ParquetObjectReader::new(input_data_folder.clone(), input_file.clone());
-            let builder = ParquetRecordBatchStreamBuilder::new(reader).await?;
-            let mut stream = builder.with_batch_size(usize::MAX).build()?;
-
-            let record_batch = stream.next().await.ok_or_else(|| {
-                ParquetError::General(format!(
-                    "Apache Parquet file at path '{}' could not be read.",
-                    input_file.location
-                ))
-            })??;
-
-            record_batches.push(record_batch);
-        }
-
-        // Merge the record batches into a single concatenated and merged record batch.
-        let schema = record_batches[0].schema();
-        let concatenated = compute::concat_batches(&schema, &record_batches)?;
-        let merged = modelardb_compression::try_merge_segments(concatenated)
-            .map_err(|error| ParquetError::General(error.to_string()))?;
-
-        // Use an UUID for the file name to ensure the name is unique.
-        let output_file_path = format!("{output_folder}/{}.parquet", Uuid::new_v4()).into();
-
-        // Specify that the file must be sorted by univariate_id and then by start_time.
-        let sorting_columns = Some(vec![
-            SortingColumn::new(0, false, false),
-            SortingColumn::new(2, false, false),
-        ]);
-
-        // Write the concatenated and merged record batch to the output location.
-        let mut buf = vec![].writer();
-        let mut apache_arrow_writer =
-            Self::create_apache_arrow_writer(&mut buf, schema, sorting_columns)?;
-        apache_arrow_writer.write(&merged)?;
-        apache_arrow_writer.close()?;
-
-        output_data_folder
-            .put(&output_file_path, Bytes::from(buf.into_inner()))
-            .await
-            .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
-
-        // Delete the input files as the output file has been written.
-        for input_file in input_files {
-            input_data_folder
-                .delete(&input_file.location)
-                .await
-                .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
-        }
-
-        debug!(
-            "Merged {} compressed files into single Apache Parquet file with {} rows.",
-            input_files.len(),
-            merged.num_rows()
-        );
-
-        // Return an ObjectMeta that represent the successfully merged and written file.
-        output_data_folder
-            .head(&output_file_path)
-            .await
-            .map_err(|error| ParquetError::General(error.to_string()))
     }
 
     /// Create an Apache ArrowWriter that writes to `writer`. If the writer could not be created
