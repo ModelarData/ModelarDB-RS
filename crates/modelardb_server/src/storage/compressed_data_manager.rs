@@ -40,7 +40,8 @@ use tonic::codegen::Bytes;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use crate::metadata::{CompressedFile, MetadataManager};
+use crate::metadata::compressed_file::CompressedFile;
+use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
@@ -404,7 +405,7 @@ impl CompressedDataManager {
         self.used_disk_space_metric
             .lock()
             .unwrap()
-            .append(compressed_file.size() as isize, true);
+            .append(compressed_file.size as isize, true);
 
         // Pass the saved compressed file to the data transfer component if a remote data folder
         // was provided. If the total size of the files related to table_name have reached the

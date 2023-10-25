@@ -30,7 +30,8 @@ use object_store::{ObjectMeta, ObjectStore};
 use tracing::debug;
 use uuid::Uuid;
 
-use crate::metadata::{CompressedFile, MetadataManager};
+use crate::metadata::compressed_file::CompressedFile;
+use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::Metric;
 use crate::storage::COMPRESSED_DATA_FOLDER;
@@ -140,7 +141,7 @@ impl DataTransfer {
         if !self.compressed_files.contains_key(&key) {
             self.compressed_files.insert(key.clone(), 0);
         }
-        *self.compressed_files.get_mut(&key).unwrap() += compressed_file.size();
+        *self.compressed_files.get_mut(&key).unwrap() += compressed_file.size;
 
         // If the combined size of the files is larger than the batch size, transfer the data to the
         // remote object store. unwrap() is safe as key has just been added to the map.

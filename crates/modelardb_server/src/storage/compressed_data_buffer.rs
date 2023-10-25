@@ -28,7 +28,8 @@ use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use uuid::Uuid;
 
-use crate::metadata::{CompressedFile, MetadataManager};
+use crate::metadata::compressed_file::CompressedFile;
+use crate::metadata::MetadataManager;
 use crate::storage::StorageEngine;
 
 /// Compressed segments representing data points from a column in a model table as one
