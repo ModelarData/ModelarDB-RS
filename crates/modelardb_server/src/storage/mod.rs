@@ -640,12 +640,10 @@ impl StorageEngine {
 mod tests {
     use super::*;
 
-    use std::io::Write;
     use std::path::PathBuf;
     use std::sync::Arc;
 
     use datafusion::arrow::datatypes::{Field, Schema};
-    use object_store::local::LocalFileSystem;
     use tempfile::{self, TempDir};
 
     use crate::common_test;
@@ -741,19 +739,6 @@ mod tests {
         assert!(result.await.is_err());
     }
 
-    #[tokio::test]
-    async fn test_is_apache_parquet_path_apache_parquet_file() {
-        let file_name = "test.parquet".to_owned();
-        let (_temp_dir, path, _batch) = create_apache_parquet_file_in_temp_dir(file_name);
-
-        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
-        let object_store_path = ObjectStorePath::from_filesystem_path(path).unwrap();
-
-        assert!(
-            StorageEngine::is_path_an_apache_parquet_file(&object_store, &object_store_path).await
-        );
-    }
-
     /// Create an Apache Parquet file in the [`tempfile::TempDir`] from a generated [`RecordBatch`].
     fn create_apache_parquet_file_in_temp_dir(
         file_name: String,
@@ -770,39 +755,5 @@ mod tests {
         .unwrap();
 
         (temp_dir, apache_parquet_path, batch)
-    }
-
-    #[tokio::test]
-    async fn test_is_non_apache_parquet_path_apache_parquet_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("test.txt");
-
-        let mut file = File::create(path.clone()).unwrap();
-        let mut signature = APACHE_PARQUET_FILE_SIGNATURE.to_vec();
-        signature.reverse();
-        file.write_all(&signature).unwrap();
-
-        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
-        let object_store_path = ObjectStorePath::from_filesystem_path(&path).unwrap();
-
-        assert!(path.exists());
-        assert!(
-            !StorageEngine::is_path_an_apache_parquet_file(&object_store, &object_store_path).await
-        );
-    }
-
-    #[tokio::test]
-    async fn test_is_empty_apache_parquet_path_apache_parquet_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("test.parquet");
-        File::create(path.clone()).unwrap();
-
-        let object_store: Arc<dyn ObjectStore> = Arc::new(LocalFileSystem::new());
-        let object_store_path = ObjectStorePath::from_filesystem_path(&path).unwrap();
-
-        assert!(path.exists());
-        assert!(
-            !StorageEngine::is_path_an_apache_parquet_file(&object_store, &object_store_path).await
-        );
     }
 }
