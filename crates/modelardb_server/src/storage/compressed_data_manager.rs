@@ -25,7 +25,6 @@ use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
-use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::{Timestamp, Value};
 use object_store::path::Path as ObjectStorePath;
@@ -230,10 +229,11 @@ impl CompressedDataManager {
         Ok(())
     }
 
-    /// Return an [`ObjectMeta`] for each compressed file in `query_data_folder` that belongs to the
-    /// column at `column_index` in the table with `table_name` and contains compressed segments
-    /// within the given range of time and value. If no files belong to the column at `column_index`
-    /// for the table with `table_name` an empty [`Vec`] is returned, while a
+    // TODO: Pass the metadata manager that the files should be retrieved from as an argument.
+    /// Return an [`ObjectMeta`] for each compressed file that belongs to the column at `column_index`
+    /// in the table with `table_name` and contains compressed segments within the given range of
+    /// time and value. If no files belong to the column at `column_index` for the table with
+    /// `table_name` an empty [`Vec`] is returned, while a
     /// [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
     /// * A table with `table_name` does not exist.
     /// * The compressed files could not be listed.
@@ -248,61 +248,40 @@ impl CompressedDataManager {
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
         max_value: Option<Value>,
-        query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
-        // Set default values for the parts of the time and value range that is not defined.
-        let start_time = start_time.unwrap_or(0);
-        let end_time = end_time.unwrap_or(Timestamp::MAX);
-
-        if start_time > end_time {
-            return Err(ModelarDbError::DataRetrievalError(format!(
-                "Start time '{start_time}' cannot be after end time '{end_time}'."
-            )));
-        };
-
-        let min_value = min_value.unwrap_or(Value::NEG_INFINITY);
-        let max_value = max_value.unwrap_or(Value::INFINITY);
-
-        if min_value > max_value {
-            return Err(ModelarDbError::DataRetrievalError(format!(
-                "Min value '{min_value}' cannot be larger than max value '{max_value}'."
-            )));
-        };
-
-        // List all files in query_data_folder for the table named table_name.
-        let table_path = ObjectStorePath::from(format!(
-            "{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"
-        ));
-        let table_files = query_data_folder
-            .list(Some(&table_path))
+        // Retrieve the file name of all files that fit the given arguments.
+        let relevant_file_names = self
+            .metadata_manager
+            .compressed_files(
+                table_name,
+                column_index as usize,
+                start_time,
+                end_time,
+                min_value,
+                max_value,
+            )
             .await
-            .map_err(|error| {
-                ModelarDbError::DataRetrievalError(format!(
-                    "Compressed data could not be listed for column '{column_index}' in table '{table_name}': {error}"
-                ))
-            })?;
+            .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
-        // Return all relevant Apache Parquet files stored for the table named table_name.
-        let table_relevant_apache_parquet_files = table_files
-            .filter_map(|maybe_meta| async {
-                if let Ok(object_meta) = maybe_meta {
-                    is_object_meta_relevant(
-                        object_meta,
-                        start_time,
-                        end_time,
-                        min_value,
-                        max_value,
-                        query_data_folder,
-                    )
-                    .await
-                } else {
-                    None
+        // Create the object metadata for each file.
+        let relevant_files = relevant_file_names
+            .iter()
+            .map(|file_name| {
+                let file_path = ObjectStorePath::from(format!(
+                    "{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}/{file_name}.parquet"
+                ));
+
+                // TODO: Add last modified and size to file metadata and use them here.
+                ObjectMeta {
+                    location: file_path,
+                    last_modified: Default::default(),
+                    size: 0,
+                    e_tag: None,
                 }
             })
-            .collect::<Vec<ObjectMeta>>()
-            .await;
+            .collect();
 
-        Ok(table_relevant_apache_parquet_files)
+        Ok(relevant_files)
     }
 
     /// Save [`CompressedDataBuffers`](CompressedDataBuffer) to disk until at least `size_in_bytes`

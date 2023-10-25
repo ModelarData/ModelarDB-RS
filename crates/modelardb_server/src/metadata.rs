@@ -593,7 +593,7 @@ impl MetadataManager {
             .bind(max_value)
     }
 
-    /// Retrieve the names of the compressed files that correspond to the column at `column_index`
+    /// Retrieve the names of the compressed files that correspond to the column at `query_schema_index`
     /// in the model table with `model_table_name` within the given range of time and value. The
     /// files are returned in sorted order by their start time. If no files belong to the column at
     /// `query_schema_index` for the table with `model_table_name` an empty [`Vec`] is returned,
@@ -602,7 +602,6 @@ impl MetadataManager {
     /// * The max value is smaller than the min value.
     /// * The metadata database could not be accessed.
     /// * A model table with `model_table_name` does not exist.
-    #[allow(dead_code)]
     pub async fn compressed_files(
         &self,
         model_table_name: &str,
