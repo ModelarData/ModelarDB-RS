@@ -670,7 +670,7 @@ impl MetadataManager {
             .bind(max_value)
     }
 
-    /// Retrieve the names of the compressed files that correspond to the column at `query_schema_index`
+    /// Retrieve the compressed files that correspond to the column at `query_schema_index`
     /// in the model table with `model_table_name` within the given range of time and value. The
     /// files are returned in sorted order by their start time. If no files belong to the column at
     /// `query_schema_index` for the table with `model_table_name` an empty [`Vec`] is returned,
@@ -687,7 +687,7 @@ impl MetadataManager {
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
         max_value: Option<Value>,
-    ) -> Result<Vec<Uuid>> {
+    ) -> Result<Vec<CompressedFile>> {
         // Set default values for the parts of the time and value range that are not defined.
         let start_time = start_time.unwrap_or(0);
         let end_time = end_time.unwrap_or(Timestamp::MAX);
@@ -731,12 +731,12 @@ impl MetadataManager {
             .bind(max_value)
             .fetch(&self.metadata_database_pool);
 
-        let mut file_names = vec![];
+        let mut files = vec![];
         while let Some(row) = rows.try_next().await? {
-            file_names.push(row.try_get(0)?);
+            files.push(CompressedFile::try_from(row)?);
         }
 
-        Ok(file_names)
+        Ok(files)
     }
 
     /// Rewrite the special values in [`Value`] (Negative Infinity, Infinity, and NaN) to the closet

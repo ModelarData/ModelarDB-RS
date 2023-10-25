@@ -30,7 +30,6 @@ use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::{Timestamp, Value};
-use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
 use parquet::arrow::async_reader::ParquetObjectReader;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
@@ -41,7 +40,7 @@ use tonic::codegen::Bytes;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use crate::metadata::MetadataManager;
+use crate::metadata::{CompressedFile, MetadataManager};
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
@@ -259,7 +258,7 @@ impl CompressedDataManager {
         query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
         // Retrieve the file name of all files that fit the given arguments.
-        let relevant_file_names = self
+        let relevant_files = self
             .metadata_manager
             .compressed_files(
                 table_name,
@@ -273,28 +272,16 @@ impl CompressedDataManager {
             .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
         // Create the object metadata for each file.
-        let relevant_files: Vec<ObjectMeta> = relevant_file_names
-            .iter()
-            .map(|file_name| {
-                let file_path = ObjectStorePath::from(format!(
-                    "{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}/{file_name}.parquet"
-                ));
-
-                // TODO: Maybe move this to method on compressed file instead (better for future).
-                ObjectMeta {
-                    location: file_path,
-                    last_modified: Default::default(),
-                    size: 0,
-                    e_tag: None,
-                }
-            })
+        let relevant_object_metas: Vec<ObjectMeta> = relevant_files
+            .into_iter()
+            .map(CompressedFile::into)
             .collect();
 
         // Merge the compressed Apache Parquet files if multiple are retrieved to ensure order.
-        if relevant_files.len() > 1 {
+        if relevant_object_metas.len() > 1 {
             let object_meta = Self::merge_compressed_apache_parquet_files(
                 query_data_folder,
-                &relevant_files,
+                &relevant_object_metas,
                 query_data_folder,
                 &format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"),
             )
@@ -307,7 +294,7 @@ impl CompressedDataManager {
 
             Ok(vec![object_meta])
         } else {
-            Ok(relevant_files)
+            Ok(relevant_object_metas)
         }
     }
 
