@@ -731,7 +731,7 @@ mod tests {
     // Tests for compressed_files().
     #[tokio::test]
     async fn test_can_get_compressed_file_for_table() {
-        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
+        let (temp_dir, data_manager) = create_compressed_data_manager().await;
 
         // Insert compressed segments into the same table.
         let segments = compressed_segments_record_batch();
@@ -745,8 +745,18 @@ mod tests {
             .unwrap();
         data_manager.flush().await.unwrap();
 
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
-            .compressed_files(TABLE_NAME, COLUMN_INDEX, None, None, None, None)
+            .compressed_files(
+                TABLE_NAME,
+                COLUMN_INDEX,
+                None,
+                None,
+                None,
+                None,
+                &object_store,
+            )
             .await;
 
         assert!(result.is_ok());
@@ -755,10 +765,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_no_compressed_files_for_non_existent_table() {
-        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
+        let (temp_dir, data_manager) = create_compressed_data_manager().await;
 
-        let result =
-            data_manager.compressed_files(TABLE_NAME, COLUMN_INDEX, None, None, None, None);
+        let object_store: Arc<dyn ObjectStore> =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let result = data_manager.compressed_files(
+            TABLE_NAME,
+            COLUMN_INDEX,
+            None,
+            None,
+            None,
+            None,
+            &object_store,
+        );
 
         assert!(result.await.unwrap().is_empty());
     }
