@@ -29,6 +29,7 @@ use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use chrono::{TimeZone, Utc};
 
 use dashmap::DashMap;
 use datafusion::arrow::compute::kernels::aggregate;
@@ -42,6 +43,8 @@ use modelardb_common::types::{
     ErrorBound, Timestamp, TimestampArray, UnivariateId, Value, ValueArray,
 };
 use modelardb_common::{metadata, parser};
+use object_store::path::Path as ObjectStorePath;
+use object_store::ObjectMeta;
 use sqlx::database::HasArguments;
 use sqlx::error::Error;
 use sqlx::query::Query;
@@ -140,6 +143,23 @@ impl CompressedFile {
 
     pub(crate) fn size(&self) -> usize {
         self.size
+    }
+}
+
+impl Into<ObjectMeta> for CompressedFile {
+    fn into(self) -> ObjectMeta {
+        // unwrap() is safe as the folder path is generated from the table name which is valid UTF-8.
+        let file_path = ObjectStorePath::from(format!(
+            "{}/{}.parquet", self.folder_path.to_str().unwrap(), self.name
+        ));
+
+        // unwrap() is safe as the created_at timestamp cannot be out of range.
+        ObjectMeta {
+            location: file_path,
+            last_modified: Utc.timestamp_millis_opt(self.created_at).unwrap(),
+            size: self.size,
+            e_tag: None,
+        }
     }
 }
 
@@ -613,6 +633,9 @@ impl MetadataManager {
         let max_value = Self::rewrite_special_value_to_normal_value(compressed_file.max_value);
 
         // query_schema_index is simply cast as a model table contains at most 1024 columns.
+        // unwrap() is safe as the folder path is generated from the table name which is valid UTF-8.
+        // size is simply cast as it is unrealistic for a file to use more bytes than the max value
+        // of a signed 64-bit integer.
         sqlx::query(insert_statement)
             .bind(compressed_file.name)
             .bind(query_schema_index as i64)

@@ -280,7 +280,6 @@ impl CompressedDataManager {
                     "{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}/{file_name}.parquet"
                 ));
 
-                // TODO: Add last modified and size to file metadata and use them here.
                 // TODO: Maybe move this to method on compressed file instead (better for future).
                 ObjectMeta {
                     location: file_path,
