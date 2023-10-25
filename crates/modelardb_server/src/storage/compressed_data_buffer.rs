@@ -18,7 +18,7 @@
 use std::fs;
 use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use datafusion::arrow::compute;
@@ -98,11 +98,11 @@ impl CompressedDataBuffer {
     }
 
     /// If the compressed segments are successfully saved to an Apache Parquet file return a
-    /// [`CompressedFile`] and the path to the saved file, otherwise return [`IOError`].
+    /// [`CompressedFile`] representing the saved file, otherwise return [`IOError`].
     pub(super) fn save_to_apache_parquet(
         &mut self,
         folder_path: &Path,
-    ) -> Result<(CompressedFile, PathBuf), IOError> {
+    ) -> Result<CompressedFile, IOError> {
         debug_assert!(
             !self.compressed_segments.is_empty(),
             "Cannot save CompressedDataBuffer with no data."
@@ -133,14 +133,10 @@ impl CompressedDataBuffer {
         .map_err(|error| IOError::new(Other, error.to_string()))?;
 
         let file_size = file_path.metadata()?.len() as usize;
-        let compressed_file = CompressedFile::from_record_batch(
-            uuid,
-            folder_path.to_path_buf(),
-            file_size,
-            batch,
-        );
+        let compressed_file =
+            CompressedFile::from_record_batch(uuid, folder_path.to_path_buf(), file_size, batch);
 
-        Ok((compressed_file, file_path))
+        Ok(compressed_file)
     }
 
     /// Return the size in bytes of `compressed_segments`.

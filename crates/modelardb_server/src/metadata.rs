@@ -104,7 +104,7 @@ impl CompressedFile {
     }
 
     /// Convert the given file information and [`RecordBatch`] to a [`CompressedFile`].
-    pub fn from_record_batch(
+    pub(crate) fn from_record_batch(
         name: Uuid,
         folder_path: PathBuf,
         size: usize,
@@ -136,6 +136,10 @@ impl CompressedFile {
             min_value,
             max_value,
         }
+    }
+
+    pub(crate) fn size(&self) -> usize {
+        self.size
     }
 }
 

@@ -18,7 +18,7 @@
 
 use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
@@ -29,6 +29,7 @@ use object_store::path::{Path as ObjectStorePath, PathPart};
 use object_store::{ObjectMeta, ObjectStore};
 use tracing::debug;
 
+use crate::metadata::CompressedFile;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::Metric;
 use crate::storage::COMPRESSED_DATA_FOLDER;
@@ -125,17 +126,16 @@ impl DataTransfer {
         &self,
         table_name: &str,
         column_index: u16,
-        file_path: &Path,
+        compressed_file: &CompressedFile,
     ) -> Result<(), ParquetError> {
         let key = (table_name.to_owned(), column_index);
-        let file_size = file_path.metadata()?.len() as usize;
 
         // entry() is not used as it would require the allocation of a new String for each lookup as
         // it must be given as a K, while get_mut() accepts the key as a &K so one K can be used.
         if !self.compressed_files.contains_key(&key) {
             self.compressed_files.insert(key.clone(), 0);
         }
-        *self.compressed_files.get_mut(&key).unwrap() += file_size;
+        *self.compressed_files.get_mut(&key).unwrap() += compressed_file.size();
 
         // If the combined size of the files is larger than the batch size, transfer the data to the
         // remote object store. unwrap() is safe as key has just been added to the map.

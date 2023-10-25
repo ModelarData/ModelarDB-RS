@@ -383,7 +383,7 @@ impl CompressedDataManager {
             .join(table_name)
             .join(column_index.to_string());
 
-        let (compressed_file, file_path) =
+        let compressed_file =
             compressed_data_buffer.save_to_apache_parquet(folder_path.as_path())?;
 
         // Save the metadata of the compressed file to the metadata database.
@@ -399,21 +399,18 @@ impl CompressedDataManager {
             .unwrap()
             .append(-(freed_memory as isize), true);
 
-        // Record the change to the used disk space.
-        let file_size = file_path.metadata()?.len() as isize;
-
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         self.used_disk_space_metric
             .lock()
             .unwrap()
-            .append(file_size, true);
+            .append(compressed_file.size() as isize, true);
 
         // Pass the saved compressed file to the data transfer component if a remote data folder
         // was provided. If the total size of the files related to table_name have reached the
         // transfer threshold, the files are transferred to the remote object store.
         if let Some(data_transfer) = &*self.data_transfer.read().await {
             data_transfer
-                .add_compressed_file(table_name, column_index, file_path.as_path())
+                .add_compressed_file(table_name, column_index, &compressed_file)
                 .await
                 .map_err(|error| IOError::new(ErrorKind::Other, error.to_string()))?;
         }
