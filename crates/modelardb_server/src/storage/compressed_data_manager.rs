@@ -279,7 +279,7 @@ impl CompressedDataManager {
 
         // Merge the compressed Apache Parquet files if multiple are retrieved to ensure order.
         if relevant_object_metas.len() > 1 {
-            let object_meta = Self::merge_compressed_apache_parquet_files(
+            let compressed_file = Self::merge_compressed_apache_parquet_files(
                 query_data_folder,
                 &relevant_object_metas,
                 query_data_folder,
@@ -292,7 +292,34 @@ impl CompressedDataManager {
                     ))
                 })?;
 
-            Ok(vec![object_meta])
+            // Replace the files that were merged with the merged file in the metadata database.
+            // unwrap() is safe since the location always has a file name that is an UUID.
+            let compressed_files_to_delete: Vec<Uuid> = relevant_object_metas
+                .iter()
+                .map(|object_meta| {
+                    Uuid::try_parse(
+                        object_meta
+                            .location
+                            .filename()
+                            .unwrap()
+                            .strip_suffix(".parquet")
+                            .unwrap(),
+                    )
+                    .unwrap()
+                })
+                .collect();
+
+            self.metadata_manager
+                .replace_compressed_files(
+                    table_name,
+                    column_index as usize,
+                    &compressed_files_to_delete,
+                    Some(&compressed_file),
+                )
+                .await
+                .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
+
+            Ok(vec![compressed_file.into()])
         } else {
             Ok(relevant_object_metas)
         }
@@ -427,15 +454,15 @@ impl CompressedDataManager {
     }
 
     /// Merge the Apache Parquet files in `input_data_folder`/`input_files` and write them to a
-    /// single Apache Parquet file in `output_data_folder`/`output_folder`. Return an [`ObjectMeta`]
-    /// that represent the merged file if it is written successfully, otherwise [`ParquetError`] is
+    /// single Apache Parquet file in `output_data_folder`/`output_folder`. Return a [`CompressedFile`]
+    /// that represents the merged file if it is written successfully, otherwise [`ParquetError`] is
     /// returned.
     pub(super) async fn merge_compressed_apache_parquet_files(
         input_data_folder: &Arc<dyn ObjectStore>,
         input_files: &[ObjectMeta],
         output_data_folder: &Arc<dyn ObjectStore>,
         output_folder: &str,
-    ) -> Result<ObjectMeta, ParquetError> {
+    ) -> Result<CompressedFile, ParquetError> {
         // Read input files, for_each is not used so errors can be returned with ?.
         let mut record_batches = Vec::with_capacity(input_files.len());
         for input_file in input_files {
@@ -460,7 +487,8 @@ impl CompressedDataManager {
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
         // Use an UUID for the file name to ensure the name is unique.
-        let output_file_path = format!("{output_folder}/{}.parquet", Uuid::new_v4()).into();
+        let uuid = Uuid::new_v4();
+        let output_file_path = format!("{output_folder}/{uuid}.parquet");
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
         let sorting_columns = Some(vec![
@@ -476,7 +504,7 @@ impl CompressedDataManager {
         apache_arrow_writer.close()?;
 
         output_data_folder
-            .put(&output_file_path, Bytes::from(buf.into_inner()))
+            .put(&output_file_path.clone().into(), Bytes::from(buf.into_inner()))
             .await
             .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
 
@@ -494,11 +522,18 @@ impl CompressedDataManager {
             merged.num_rows()
         );
 
-        // Return an ObjectMeta that represent the successfully merged and written file.
-        output_data_folder
-            .head(&output_file_path)
+        // Return a CompressedFile that represents the successfully merged and written file.
+        let object_meta = output_data_folder
+            .head(&output_file_path.into())
             .await
-            .map_err(|error| ParquetError::General(error.to_string()))
+            .map_err(|error| ParquetError::General(error.to_string()))?;
+
+        Ok(CompressedFile::from_record_batch(
+            uuid,
+            output_folder.into(),
+            object_meta.size,
+            merged,
+        ))
     }
 }
 

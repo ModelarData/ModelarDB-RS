@@ -24,10 +24,9 @@
 use chrono::{TimeZone, Utc};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::fs;
+use std::{fs, str};
 use std::hash::Hasher;
 use std::path::{Path, PathBuf};
-use std::str;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -544,7 +543,6 @@ impl MetadataManager {
     /// * Less than the number of files in `compressed_files_to_delete` was deleted.
     /// * The metadata database could not be modified.
     /// * A model table with `model_table_name` does not exist.
-    #[allow(dead_code)]
     pub async fn replace_compressed_files(
         &self,
         model_table_name: &str,
