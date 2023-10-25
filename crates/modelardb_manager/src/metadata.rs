@@ -162,7 +162,8 @@ impl MetadataManager {
             .execute(
                 format!(
                     "CREATE TABLE {}_compressed_files (file_name BYTEA PRIMARY KEY, field_column INTEGER,
-                     start_time INTEGER, end_time INTEGER, min_value REAL, max_value REAL)",
+                     folder_path TEXT, size INTEGER, created_at INTEGER, start_time INTEGER,
+                     end_time INTEGER, min_value REAL, max_value REAL)",
                     model_table_metadata.name
                 )
                     .as_str(),

@@ -28,6 +28,7 @@ use std::hash::Hasher;
 use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use dashmap::DashMap;
 use datafusion::arrow::compute::kernels::aggregate;
@@ -62,6 +63,12 @@ pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
 pub struct CompressedFile {
     /// Name of the file.
     name: Uuid,
+    /// Path to the folder containing the file.
+    folder_path: PathBuf,
+    /// Size of the file in bytes.
+    size: usize,
+    /// Timestamp that the file was created at.
+    created_at: Timestamp,
     /// Timestamp of the first data point in the file.
     start_time: Timestamp,
     /// Timestamp of the last data point in the file.
@@ -76,6 +83,9 @@ pub struct CompressedFile {
 impl CompressedFile {
     pub fn new(
         name: Uuid,
+        folder_path: PathBuf,
+        size: usize,
+        created_at: Timestamp,
         start_time: Timestamp,
         end_time: Timestamp,
         min_value: Value,
@@ -83,6 +93,9 @@ impl CompressedFile {
     ) -> Self {
         Self {
             name,
+            folder_path,
+            size,
+            created_at,
             start_time,
             end_time,
             min_value,
@@ -90,8 +103,17 @@ impl CompressedFile {
         }
     }
 
-    /// Convert the given [`Uuid`] and [`RecordBatch`] to a [`CompressedFile`].
-    pub fn from_record_batch(name: Uuid, batch: RecordBatch) -> Self {
+    /// Convert the given file information and [`RecordBatch`] to a [`CompressedFile`].
+    pub fn from_record_batch(
+        name: Uuid,
+        folder_path: PathBuf,
+        size: usize,
+        batch: RecordBatch,
+    ) -> Self {
+        // unwrap() is safe since UNIX_EPOCH is always earlier than now.
+        let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let created_at = since_the_epoch.as_millis() as Timestamp;
+
         // unwrap() is safe as None is only returned if all of the values are None.
         let start_time =
             aggregate::min(modelardb_common::array!(batch, 2, TimestampArray)).unwrap();
@@ -106,6 +128,9 @@ impl CompressedFile {
 
         Self {
             name,
+            folder_path,
+            size,
+            created_at,
             start_time,
             end_time,
             min_value,
@@ -450,7 +475,7 @@ impl MetadataManager {
         Self::validate_compressed_file(compressed_file)?;
 
         let insert_statement = format!(
-            "INSERT INTO {model_table_name}_compressed_files VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+            "INSERT INTO {model_table_name}_compressed_files VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
         );
 
         Self::create_insert_compressed_file_query(
@@ -533,7 +558,7 @@ impl MetadataManager {
 
         if let Some(compressed_file) = replacement_compressed_file {
             let insert_statement = format!(
-                "INSERT INTO {model_table_name}_compressed_files VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+                "INSERT INTO {model_table_name}_compressed_files VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
             );
 
             Self::create_insert_compressed_file_query(
@@ -587,6 +612,9 @@ impl MetadataManager {
         sqlx::query(insert_statement)
             .bind(compressed_file.name)
             .bind(query_schema_index as i64)
+            .bind(compressed_file.folder_path.to_str().unwrap())
+            .bind(compressed_file.size as i64)
+            .bind(compressed_file.created_at)
             .bind(compressed_file.start_time)
             .bind(compressed_file.end_time)
             .bind(min_value)
@@ -770,7 +798,8 @@ impl MetadataManager {
             .execute(
                 format!(
                     "CREATE TABLE {}_compressed_files (file_name BLOB PRIMARY KEY, field_column INTEGER,
-                     start_time INTEGER, end_time INTEGER, min_value REAL, max_value REAL) STRICT",
+                     folder_path TEXT, size INTEGER, created_at INTEGER, start_time INTEGER,
+                     end_time INTEGER, min_value REAL, max_value REAL) STRICT",
                     model_table_metadata.name
                 )
                 .as_str(),

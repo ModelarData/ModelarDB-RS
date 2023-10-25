@@ -132,7 +132,15 @@ impl CompressedDataBuffer {
         )
         .map_err(|error| IOError::new(Other, error.to_string()))?;
 
-        Ok((CompressedFile::from_record_batch(uuid, batch), file_path))
+        let file_size = file_path.metadata()?.len() as usize;
+        let compressed_file = CompressedFile::from_record_batch(
+            uuid,
+            folder_path.to_path_buf(),
+            file_size,
+            batch,
+        );
+
+        Ok((compressed_file, file_path))
     }
 
     /// Return the size in bytes of `compressed_segments`.
