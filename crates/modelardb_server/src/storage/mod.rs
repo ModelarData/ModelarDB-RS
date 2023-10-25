@@ -52,7 +52,6 @@ use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::types::{Timestamp, TimestampArray, Value};
-use object_store::path::Path as ObjectStorePath;
 use object_store::{ObjectMeta, ObjectStore};
 use tokio::fs::File as TokioFile;
 use tokio::runtime::Runtime;
@@ -79,11 +78,6 @@ pub(super) const COMPRESSED_DATA_FOLDER: &str = "compressed";
 
 /// The scheme with host at which the query data folder is stored.
 pub(super) const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
-
-/// The expected [first four bytes of any Apache Parquet file].
-///
-/// [first four bytes of any Apache Parquet file]: https://en.wikipedia.org/wiki/List_of_file_signatures
-const APACHE_PARQUET_FILE_SIGNATURE: &[u8] = &[80, 65, 82, 49]; // PAR1.
 
 /// The capacity of each uncompressed data buffer as the number of elements in the buffer where each
 /// element is a [`Timestamp`] and a [`Value`](use crate::types::Value). Note that the resulting
@@ -639,18 +633,6 @@ impl StorageEngine {
 
         let writer = ArrowWriter::try_new(writer, schema, Some(props))?;
         Ok(writer)
-    }
-
-    /// Return [`true`] if `file_path` is a readable Apache Parquet file, otherwise [`false`].
-    async fn is_path_an_apache_parquet_file(
-        object_store: &Arc<dyn ObjectStore>,
-        file_path: &ObjectStorePath,
-    ) -> bool {
-        if let Ok(bytes) = object_store.get_range(file_path, 0..4).await {
-            bytes == APACHE_PARQUET_FILE_SIGNATURE
-        } else {
-            false
-        }
     }
 }
 
