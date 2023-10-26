@@ -15,13 +15,13 @@
 
 //! Support for managing all compressed data that is inserted into the [`StorageEngine`].
 
-use bytes::BufMut;
 use std::fs;
 use std::io::{Error as IOError, ErrorKind};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use bytes::BufMut;
 use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::compute;
@@ -258,7 +258,7 @@ impl CompressedDataManager {
         max_value: Option<Value>,
         query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
-        // Retrieve the file name of all files that fit the given arguments.
+        // Retrieve the metadata of all files that fit the given arguments.
         let relevant_files = self
             .metadata_manager
             .compressed_files(
@@ -273,10 +273,8 @@ impl CompressedDataManager {
             .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
         // Create the object metadata for each file.
-        let relevant_object_metas: Vec<ObjectMeta> = relevant_files
-            .into_iter()
-            .map(ObjectMeta::from)
-            .collect();
+        let relevant_object_metas: Vec<ObjectMeta> =
+            relevant_files.into_iter().map(ObjectMeta::from).collect();
 
         // Merge the compressed Apache Parquet files if multiple are retrieved to ensure order.
         if relevant_object_metas.len() > 1 {
