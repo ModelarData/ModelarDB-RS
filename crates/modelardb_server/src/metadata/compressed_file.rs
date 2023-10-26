@@ -174,6 +174,8 @@ impl Into<ObjectMeta> for CompressedFile {
 mod tests {
     use super::*;
 
+    use chrono::SubsecRound;
+
     use crate::common_test;
     use crate::metadata::MetadataManager;
 
@@ -289,5 +291,21 @@ mod tests {
             .unwrap();
 
         assert_eq!(compressed_file, CompressedFile::try_from(row).unwrap())
+    }
+
+    #[test]
+    fn test_compressed_file_into_object_meta() {
+        let uuid = Uuid::new_v4();
+        let compressed_file = CompressedFile::from_record_batch(
+            uuid,
+            "test".into(),
+            0,
+            common_test::compressed_segments_record_batch(),
+        );
+
+        let object_meta: ObjectMeta = CompressedFile::into(compressed_file);
+        assert_eq!(object_meta.location, ObjectStorePath::from(format!("test/{uuid}.parquet")));
+        assert_eq!(object_meta.last_modified.round_subsecs(0), Utc::now().round_subsecs(0));
+        assert_eq!(object_meta.size, 0);
     }
 }
