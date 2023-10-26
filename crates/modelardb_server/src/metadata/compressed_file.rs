@@ -30,7 +30,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 /// Metadata about a file tracked by [`MetadataManager`] which contains compressed segments.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct CompressedFile {
     /// Name of the file.
     pub(super) name: Uuid,
@@ -174,6 +174,11 @@ impl Into<ObjectMeta> for CompressedFile {
 mod tests {
     use super::*;
 
+    use crate::common_test;
+    use crate::metadata::MetadataManager;
+
+    const TABLE_NAME: &str = "model_table";
+
     // Tests for object_metas_to_compressed_file_names().
     #[test]
     fn test_object_metas_to_compressed_file_names() {
@@ -250,4 +255,39 @@ mod tests {
         assert_eq!(compressed_file.max_value, 34.2);
     }
 
+    #[tokio::test]
+    async fn test_compressed_file_from_sqlite_row() {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // Create a metadata manager and save a model table to the metadata database.
+        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
+        let model_table_metadata = common_test::model_table_metadata();
+
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        // Create a compressed file and save the file metadata to the metadata database.
+        let compressed_file = CompressedFile::from_record_batch(
+            Uuid::new_v4(),
+            "".into(),
+            0,
+            common_test::compressed_segments_record_batch(),
+        );
+
+        metadata_manager
+            .save_compressed_file(TABLE_NAME, 1, &compressed_file)
+            .await
+            .unwrap();
+
+        // Retrieve the row from the metadata database.
+        let select_statement = format!("SELECT * FROM {TABLE_NAME}_compressed_files");
+        let row = sqlx::query(select_statement.as_str())
+            .fetch_one(&metadata_manager.metadata_database_pool)
+            .await
+            .unwrap();
+
+        assert_eq!(compressed_file, CompressedFile::try_from(row).unwrap())
+    }
 }
