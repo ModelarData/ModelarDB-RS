@@ -155,16 +155,20 @@ impl TryFrom<SqliteRow> for CompressedFile {
 impl From<CompressedFile> for ObjectMeta {
     fn from(compressed_file: CompressedFile) -> Self {
         // unwrap() is safe as the folder path is generated from the table name which is valid UTF-8.
-        let file_path = ObjectStorePath::from(format!(
+        let location = ObjectStorePath::from(format!(
             "{}/{}.parquet",
             compressed_file.folder_path.to_str().unwrap(),
             compressed_file.name
         ));
 
         // unwrap() is safe as the created_at timestamp cannot be out of range.
+        let last_modified = Utc
+            .timestamp_millis_opt(compressed_file.created_at)
+            .unwrap();
+
         ObjectMeta {
-            location: file_path,
-            last_modified: Utc.timestamp_millis_opt(compressed_file.created_at).unwrap(),
+            location,
+            last_modified,
             size: compressed_file.size,
             e_tag: None,
         }
@@ -305,8 +309,14 @@ mod tests {
         );
 
         let object_meta: ObjectMeta = ObjectMeta::from(compressed_file);
-        assert_eq!(object_meta.location, ObjectStorePath::from(format!("test/{uuid}.parquet")));
-        assert_eq!(object_meta.last_modified.round_subsecs(0), Utc::now().round_subsecs(0));
+        assert_eq!(
+            object_meta.location,
+            ObjectStorePath::from(format!("test/{uuid}.parquet"))
+        );
+        assert_eq!(
+            object_meta.last_modified.round_subsecs(0),
+            Utc::now().round_subsecs(0)
+        );
         assert_eq!(object_meta.size, 0);
     }
 }
