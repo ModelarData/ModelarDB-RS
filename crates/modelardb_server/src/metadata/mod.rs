@@ -933,13 +933,58 @@ mod tests {
 
     static SEVEN_COMPRESSED_FILES: Lazy<Vec<CompressedFile>> = Lazy::new(|| {
         vec![
-            CompressedFile::new(Uuid::new_v4(), 0, 0, 37.0, 73.0),
-            CompressedFile::new(Uuid::new_v4(), 0, Timestamp::MAX, 37.0, 73.0),
-            CompressedFile::new(Uuid::new_v4(), 100, 200, 37.0, 73.0),
-            CompressedFile::new(Uuid::new_v4(), 300, 400, Value::NAN, Value::NAN),
-            CompressedFile::new(Uuid::new_v4(), 500, 600, Value::NEG_INFINITY, 73.0),
-            CompressedFile::new(Uuid::new_v4(), 700, 800, 37.0, Value::INFINITY),
-            CompressedFile::new(Uuid::new_v4(), Timestamp::MAX, Timestamp::MAX, 37.0, 73.0),
+            CompressedFile::new(Uuid::new_v4(), "".into(), 0, 0, 0, 0, 37.0, 73.0),
+            CompressedFile::new(
+                Uuid::new_v4(),
+                "".into(),
+                0,
+                0,
+                0,
+                Timestamp::MAX,
+                37.0,
+                73.0,
+            ),
+            CompressedFile::new(Uuid::new_v4(), "".into(), 0, 0, 100, 200, 37.0, 73.0),
+            CompressedFile::new(
+                Uuid::new_v4(),
+                "".into(),
+                0,
+                0,
+                300,
+                400,
+                Value::NAN,
+                Value::NAN,
+            ),
+            CompressedFile::new(
+                Uuid::new_v4(),
+                "".into(),
+                0,
+                0,
+                500,
+                600,
+                Value::NEG_INFINITY,
+                73.0,
+            ),
+            CompressedFile::new(
+                Uuid::new_v4(),
+                "".into(),
+                0,
+                0,
+                700,
+                800,
+                37.0,
+                Value::INFINITY,
+            ),
+            CompressedFile::new(
+                Uuid::new_v4(),
+                "".into(),
+                0,
+                0,
+                Timestamp::MAX,
+                Timestamp::MAX,
+                37.0,
+                73.0,
+            ),
         ]
     });
 
@@ -1201,7 +1246,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_compressed_file_for_column_in_existing_model_table() {
-        let compressed_file = CompressedFile::new(Uuid::new_v4(), 100, 200, 37.0, 73.0);
+        let compressed_file =
+            CompressedFile::new(Uuid::new_v4(), "".into(), 0, 0, 100, 200, 37.0, 73.0);
 
         // An assert is purposely not used so the test fails with information about why it failed.
         create_metadata_manager_with_named_model_table_and_save_files(
@@ -1214,7 +1260,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_compressed_file_for_column_in_missing_model_table() {
-        let compressed_file = CompressedFile::new(Uuid::new_v4(), 100, 200, 37.0, 73.0);
+        let compressed_file =
+            CompressedFile::new(Uuid::new_v4(), "".into(), 0, 0, 100, 200, 37.0, 73.0);
         assert!(
             create_metadata_manager_with_named_model_table_and_save_files(
                 "table_model",
@@ -1228,7 +1275,8 @@ mod tests {
     #[tokio::test]
     async fn test_save_compressed_file_with_invalid_timestamps_for_column_in_existing_model_table()
     {
-        let compressed_file = CompressedFile::new(Uuid::new_v4(), 200, 100, 37.0, 73.0);
+        let compressed_file =
+            CompressedFile::new(Uuid::new_v4(), "".into(), 0, 0, 200, 100, 37.0, 73.0);
         assert!(
             create_metadata_manager_with_named_model_table_and_save_files(
                 "model_table",
@@ -1241,7 +1289,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_compressed_file_with_invalid_values_for_column_in_existing_model_table() {
-        let compressed_file = CompressedFile::new(Uuid::new_v4(), 100, 200, 73.0, 37.0);
+        let compressed_file =
+            CompressedFile::new(Uuid::new_v4(), "".into(), 0, 0, 100, 200, 73.0, 37.0);
         assert!(
             create_metadata_manager_with_named_model_table_and_save_files(
                 "model_table",
@@ -1269,10 +1318,10 @@ mod tests {
             .await;
 
         assert_eq!(4, returned_files.len());
-        assert_eq!(compressed_files[3].name, returned_files[0]);
-        assert_eq!(compressed_files[4].name, returned_files[1]);
-        assert_eq!(compressed_files[5].name, returned_files[2]);
-        assert_eq!(compressed_files[6].name, returned_files[3]);
+        assert_eq!(compressed_files[3], returned_files[0]);
+        assert_eq!(compressed_files[4], returned_files[1]);
+        assert_eq!(compressed_files[5], returned_files[2]);
+        assert_eq!(compressed_files[6], returned_files[3]);
     }
 
     #[tokio::test]
@@ -1283,7 +1332,8 @@ mod tests {
             compressed_files[1].name,
             compressed_files[2].name,
         ];
-        let replacement_file = CompressedFile::new(Uuid::new_v4(), 100, 200, 37.0, 73.0);
+        let replacement_file =
+            CompressedFile::new(Uuid::new_v4(), "".into(), 0, 0, 100, 200, 37.0, 73.0);
         let returned_files =
             create_metadata_manager_with_named_model_table_save_files_delete_and_get(
                 &compressed_files,
@@ -1293,18 +1343,18 @@ mod tests {
             .await;
 
         assert_eq!(5, returned_files.len());
-        assert_eq!(replacement_file.name, returned_files[0]);
-        assert_eq!(compressed_files[3].name, returned_files[1]);
-        assert_eq!(compressed_files[4].name, returned_files[2]);
-        assert_eq!(compressed_files[5].name, returned_files[3]);
-        assert_eq!(compressed_files[6].name, returned_files[4]);
+        assert_eq!(replacement_file, returned_files[0]);
+        assert_eq!(compressed_files[3], returned_files[1]);
+        assert_eq!(compressed_files[4], returned_files[2]);
+        assert_eq!(compressed_files[5], returned_files[3]);
+        assert_eq!(compressed_files[6], returned_files[4]);
     }
 
     async fn create_metadata_manager_with_named_model_table_save_files_delete_and_get(
         compressed_files: &[CompressedFile],
         uuids_of_files_to_delete: &[Uuid],
         replacement_file: Option<&CompressedFile>,
-    ) -> Vec<Uuid> {
+    ) -> Vec<CompressedFile> {
         // create_metadata_manager_with_named_model_table_and_save_files() is not reused as dropping
         // the TempDir which created the folder containing the database leaves it in read-only mode.
         let temp_dir = tempfile::tempdir().unwrap();
@@ -1342,13 +1392,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_replace_compressed_files_with_invalid_timestamps() {
-        let replacement_file = CompressedFile::new(Uuid::new_v4(), 200, 100, 37.0, 73.0);
+        let replacement_file =
+            CompressedFile::new(Uuid::new_v4(), "".into(), 0, 0, 200, 100, 37.0, 73.0);
         assert_that_replace_compressed_files_fails(None, Some(&replacement_file)).await;
     }
 
     #[tokio::test]
     async fn test_replace_compressed_files_with_invalid_values() {
-        let replacement_file = CompressedFile::new(Uuid::new_v4(), 100, 200, 73.0, 37.0);
+        let replacement_file =
+            CompressedFile::new(Uuid::new_v4(), "".into(), 0, 0, 100, 200, 73.0, 37.0);
         assert_that_replace_compressed_files_fails(None, Some(&replacement_file)).await;
     }
 
@@ -1441,7 +1493,7 @@ mod tests {
 
         assert_eq!(compressed_files.len(), returned_files.len());
         for (compressed_file, returned_file) in compressed_files.iter().zip(returned_files) {
-            assert_eq!(compressed_file.name, returned_file);
+            assert_eq!(compressed_file, &returned_file);
         }
     }
 
@@ -1457,11 +1509,11 @@ mod tests {
             .await;
 
         assert_eq!(5, returned_files.len());
-        assert_eq!(compressed_files[1].name, returned_files[0]);
-        assert_eq!(compressed_files[3].name, returned_files[1]);
-        assert_eq!(compressed_files[4].name, returned_files[2]);
-        assert_eq!(compressed_files[5].name, returned_files[3]);
-        assert_eq!(compressed_files[6].name, returned_files[4]);
+        assert_eq!(compressed_files[1], returned_files[0]);
+        assert_eq!(compressed_files[3], returned_files[1]);
+        assert_eq!(compressed_files[4], returned_files[2]);
+        assert_eq!(compressed_files[5], returned_files[3]);
+        assert_eq!(compressed_files[6], returned_files[4]);
     }
 
     #[tokio::test]
@@ -1476,10 +1528,10 @@ mod tests {
             .await;
 
         assert_eq!(4, returned_files.len());
-        assert_eq!(compressed_files[0].name, returned_files[0]);
-        assert_eq!(compressed_files[1].name, returned_files[1]);
-        assert_eq!(compressed_files[2].name, returned_files[2]);
-        assert_eq!(compressed_files[3].name, returned_files[3]);
+        assert_eq!(compressed_files[0], returned_files[0]);
+        assert_eq!(compressed_files[1], returned_files[1]);
+        assert_eq!(compressed_files[2], returned_files[2]);
+        assert_eq!(compressed_files[3], returned_files[3]);
     }
 
     #[tokio::test]
@@ -1494,8 +1546,8 @@ mod tests {
             .await;
 
         assert_eq!(2, returned_files.len());
-        assert_eq!(compressed_files[1].name, returned_files[0]);
-        assert_eq!(compressed_files[3].name, returned_files[1]);
+        assert_eq!(compressed_files[1], returned_files[0]);
+        assert_eq!(compressed_files[3], returned_files[1]);
     }
 
     #[tokio::test]
@@ -1543,7 +1595,16 @@ mod tests {
         min_value: Option<Value>,
         max_value: Option<Value>,
     ) -> bool {
-        let compressed_files = vec![CompressedFile::new(Uuid::new_v4(), 100, 200, 37.0, 73.0)];
+        let compressed_files = vec![CompressedFile::new(
+            Uuid::new_v4(),
+            "".into(),
+            0,
+            0,
+            100,
+            200,
+            37.0,
+            73.0,
+        )];
 
         let returned_files = create_metadata_manager_with_model_table_save_files_and_get_files(
             &compressed_files,
@@ -1569,8 +1630,8 @@ mod tests {
             .await;
 
         assert_eq!(2, returned_files.len());
-        assert_eq!(compressed_files[3].name, returned_files[0]);
-        assert_eq!(compressed_files[5].name, returned_files[1]);
+        assert_eq!(compressed_files[3], returned_files[0]);
+        assert_eq!(compressed_files[5], returned_files[1]);
     }
 
     #[tokio::test]
@@ -1585,12 +1646,12 @@ mod tests {
             .await;
 
         assert_eq!(6, returned_files.len());
-        assert_eq!(compressed_files[0].name, returned_files[0]);
-        assert_eq!(compressed_files[1].name, returned_files[1]);
-        assert_eq!(compressed_files[2].name, returned_files[2]);
-        assert_eq!(compressed_files[4].name, returned_files[3]);
-        assert_eq!(compressed_files[5].name, returned_files[4]);
-        assert_eq!(compressed_files[6].name, returned_files[5]);
+        assert_eq!(compressed_files[0], returned_files[0]);
+        assert_eq!(compressed_files[1], returned_files[1]);
+        assert_eq!(compressed_files[2], returned_files[2]);
+        assert_eq!(compressed_files[4], returned_files[3]);
+        assert_eq!(compressed_files[5], returned_files[4]);
+        assert_eq!(compressed_files[6], returned_files[5]);
     }
 
     #[tokio::test]
@@ -1605,7 +1666,7 @@ mod tests {
             .await;
 
         assert_eq!(1, returned_files.len());
-        assert_eq!(compressed_files[5].name, returned_files[0]);
+        assert_eq!(compressed_files[5], returned_files[0]);
     }
 
     async fn create_metadata_manager_with_model_table_save_seven_files_and_get_files(
@@ -1613,7 +1674,7 @@ mod tests {
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
         max_value: Option<Value>,
-    ) -> (Vec<CompressedFile>, Vec<Uuid>) {
+    ) -> (Vec<CompressedFile>, Vec<CompressedFile>) {
         let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
 
         let returned_files = create_metadata_manager_with_model_table_save_files_and_get_files(
@@ -1634,7 +1695,7 @@ mod tests {
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
         max_value: Option<Value>,
-    ) -> Vec<Uuid> {
+    ) -> Vec<CompressedFile> {
         let metadata_manager = create_metadata_manager_with_named_model_table_and_save_files(
             "model_table",
             compressed_files,

@@ -192,7 +192,7 @@ mod tests {
 
         let temp_dir = tempfile::tempdir().unwrap();
         compressed_data_buffer
-            .save_to_apache_parquet(temp_dir.path())
+            .save_to_apache_parquet(temp_dir.path(), "")
             .unwrap();
 
         assert_eq!(temp_dir.path().read_dir().unwrap().count(), 1);
@@ -205,7 +205,7 @@ mod tests {
         let mut empty_compressed_data_buffer = CompressedDataBuffer::new();
 
         empty_compressed_data_buffer
-            .save_to_apache_parquet(Path::new("table"))
+            .save_to_apache_parquet(Path::new("table"), "")
             .unwrap();
     }
 

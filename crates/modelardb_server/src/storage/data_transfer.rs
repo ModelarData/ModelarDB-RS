@@ -535,7 +535,7 @@ mod tests {
         file_name: &str,
     ) -> (CompressedFile, PathBuf) {
         let folder_path = format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}");
-        let path = local_data_folder_path.join(folder_path);
+        let path = local_data_folder_path.join(folder_path.clone());
         fs::create_dir_all(path.clone()).unwrap();
 
         let batch = common_test::compressed_segments_record_batch();
