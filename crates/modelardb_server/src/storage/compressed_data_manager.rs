@@ -655,6 +655,15 @@ mod tests {
         let compressed_path =
             local_data_folder.join(format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}"));
         assert_eq!(compressed_path.read_dir().unwrap().count(), 1);
+
+        // The metadata of the compressed data should be saved to the metadata database.
+        let compressed_files = data_manager
+            .metadata_manager
+            .compressed_files(TABLE_NAME, COLUMN_INDEX as usize, None, None, None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(compressed_files.len(), 1);
     }
 
     #[tokio::test]

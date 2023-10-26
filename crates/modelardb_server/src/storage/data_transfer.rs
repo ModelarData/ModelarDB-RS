@@ -508,7 +508,8 @@ mod tests {
     }
 
     /// Assert that the files in `paths` are all removed, a file has been created in `target_dir`,
-    /// and that the hashmap containing the compressed files size is set to 0.
+    /// the file metadata has been removed from the metadata database, and that the hashmap
+    /// containing the compressed files size is set to 0.
     async fn assert_data_transferred(
         paths: Vec<PathBuf>,
         target: TempDir,
@@ -534,6 +535,15 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(batch.num_rows(), expected_num_rows);
+
+        // The metadata for the files should be deleted from the metadata database.
+        let compressed_files = data_transfer
+            .metadata_manager
+            .compressed_files(TABLE_NAME, COLUMN_INDEX as usize, None, None, None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(compressed_files.len(), 0);
 
         assert_eq!(
             *data_transfer
