@@ -543,7 +543,7 @@ mod tests {
 
     use crate::common_test;
 
-    const TABLE_NAME: &str = "table";
+    const TABLE_NAME: &str = "model_table";
     const COLUMN_INDEX: u16 = 5;
 
     // Tests for insert_record_batch().
@@ -849,7 +849,8 @@ mod tests {
             .unwrap();
     }
 
-    /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished.
+    /// Create a [`CompressedDataManager`] with a folder that is deleted once the test is finished
+    /// and a metadata manager with a single model table.
     async fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
 
@@ -862,7 +863,14 @@ mod tests {
             common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         ));
 
+        // Create a metadata manager and save a single model table to the metadata database.
         let metadata_manager = Arc::new(MetadataManager::try_new(temp_dir.path()).await.unwrap());
+
+        let model_table_metadata = common_test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
 
         (
             temp_dir,
