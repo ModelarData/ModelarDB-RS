@@ -379,9 +379,7 @@ impl CompressedDataManager {
             .remove(&(table_name.to_owned(), column_index))
             .unwrap();
 
-        let folder_path = format!(
-            "{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"
-        );
+        let folder_path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}");
 
         let compressed_file =
             compressed_data_buffer.save_to_apache_parquet(&self.local_data_folder, &folder_path)?;
@@ -538,6 +536,7 @@ mod tests {
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
     use object_store::local::LocalFileSystem;
+    use object_store::path::Path as ObjectStorePath;
     use object_store::ObjectStore;
     use ringbuf::Rb;
     use tempfile::{self, TempDir};

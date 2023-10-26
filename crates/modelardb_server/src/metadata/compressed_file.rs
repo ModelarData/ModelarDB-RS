@@ -22,12 +22,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use chrono::{TimeZone, Utc};
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::record_batch::RecordBatch;
-use object_store::ObjectMeta;
-use object_store::path::Path as ObjectStorePath;
-use sqlx::Row;
-use sqlx::sqlite::SqliteRow;
-use uuid::Uuid;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
+use object_store::path::Path as ObjectStorePath;
+use object_store::ObjectMeta;
+use sqlx::sqlite::SqliteRow;
+use sqlx::Row;
+use uuid::Uuid;
 
 /// Metadata about a file tracked by [`MetadataManager`] which contains compressed segments.
 #[derive(Debug, Clone)]
@@ -125,7 +125,7 @@ impl CompressedFile {
                         .strip_suffix(".parquet")
                         .ok_or_else(|| "Object meta is not an Apache Parquet file.")?,
                 )
-                    .map_err(|error| error.to_string())
+                .map_err(|error| error.to_string())
             })
             .collect()
     }
