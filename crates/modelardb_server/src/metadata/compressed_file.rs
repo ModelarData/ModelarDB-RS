@@ -169,3 +169,68 @@ impl Into<ObjectMeta> for CompressedFile {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for object_metas_to_compressed_file_names().
+    #[test]
+    fn test_object_metas_to_compressed_file_names() {
+        let uuid_1 = Uuid::new_v4();
+        let uuid_2 = Uuid::new_v4();
+
+        let object_metas = vec![
+            create_object_meta(format!("test/{}.parquet", uuid_1)),
+            create_object_meta(format!("test/{}.parquet", uuid_2)),
+        ];
+
+        let compressed_files =
+            CompressedFile::object_metas_to_compressed_file_names(object_metas).unwrap();
+
+        assert_eq!(compressed_files.get(0), Some(&uuid_1));
+        assert_eq!(compressed_files.get(1), Some(&uuid_2));
+    }
+
+    #[test]
+    fn test_folder_object_metas_to_compressed_file_names() {
+        let object_metas = vec![
+            create_object_meta(format!("test/{}.parquet", Uuid::new_v4())),
+            create_object_meta("test/folder".to_owned()),
+        ];
+
+        let compressed_files = CompressedFile::object_metas_to_compressed_file_names(object_metas);
+        assert!(compressed_files.is_err());
+    }
+
+    #[test]
+    fn test_non_apache_parquet_object_metas_to_compressed_file_names() {
+        let object_metas = vec![
+            create_object_meta(format!("test/{}.parquet", Uuid::new_v4())),
+            create_object_meta(format!("test/{}.csv", Uuid::new_v4())),
+        ];
+
+        let compressed_files = CompressedFile::object_metas_to_compressed_file_names(object_metas);
+        assert!(compressed_files.is_err());
+    }
+
+    #[test]
+    fn test_non_uuid_object_metas_to_compressed_file_names() {
+        let object_metas = vec![
+            create_object_meta(format!("test/{}.parquet", Uuid::new_v4())),
+            create_object_meta("test/test.parquet".to_owned()),
+        ];
+
+        let compressed_files = CompressedFile::object_metas_to_compressed_file_names(object_metas);
+        assert!(compressed_files.is_err());
+    }
+
+    fn create_object_meta(path: String) -> ObjectMeta {
+        ObjectMeta {
+            location: ObjectStorePath::from(path),
+            last_modified: Utc::now(),
+            size: 0,
+            e_tag: None,
+        }
+    }
+}
