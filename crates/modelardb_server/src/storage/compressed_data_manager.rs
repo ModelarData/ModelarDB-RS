@@ -379,14 +379,12 @@ impl CompressedDataManager {
             .remove(&(table_name.to_owned(), column_index))
             .unwrap();
 
-        let folder_path = self
-            .local_data_folder
-            .join(COMPRESSED_DATA_FOLDER)
-            .join(table_name)
-            .join(column_index.to_string());
+        let folder_path = format!(
+            "{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"
+        );
 
         let compressed_file =
-            compressed_data_buffer.save_to_apache_parquet(folder_path.as_path())?;
+            compressed_data_buffer.save_to_apache_parquet(&self.local_data_folder, &folder_path)?;
 
         // Save the metadata of the compressed file to the metadata database.
         self.metadata_manager

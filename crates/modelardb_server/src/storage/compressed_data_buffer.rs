@@ -102,7 +102,8 @@ impl CompressedDataBuffer {
     /// [`CompressedFile`] representing the saved file, otherwise return [`IOError`].
     pub(super) fn save_to_apache_parquet(
         &mut self,
-        folder_path: &Path,
+        local_data_folder: &Path,
+        folder_path: &str,
     ) -> Result<CompressedFile, IOError> {
         debug_assert!(
             !self.compressed_segments.is_empty(),
@@ -113,12 +114,14 @@ impl CompressedDataBuffer {
         let batch =
             compute::concat_batches(&COMPRESSED_SCHEMA.0, &self.compressed_segments).unwrap();
 
+        let full_folder_path = local_data_folder.join(folder_path);
+
         // Create the folder structure if it does not already exist.
-        fs::create_dir_all(folder_path)?;
+        fs::create_dir_all(full_folder_path.clone())?;
 
         // Use an UUID for the file name to ensure the name is unique.
         let uuid = Uuid::new_v4();
-        let file_path = folder_path.join(format!("{uuid}.parquet"));
+        let file_path = full_folder_path.join(format!("{uuid}.parquet"));
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
         let sorting_columns = Some(vec![
@@ -135,7 +138,7 @@ impl CompressedDataBuffer {
 
         let file_size = file_path.metadata()?.len() as usize;
         let compressed_file =
-            CompressedFile::from_record_batch(uuid, folder_path.to_path_buf(), file_size, batch);
+            CompressedFile::from_record_batch(uuid, folder_path.into(), file_size, batch);
 
         Ok(compressed_file)
     }
