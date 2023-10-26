@@ -233,4 +233,21 @@ mod tests {
             e_tag: None,
         }
     }
+
+    // Tests for conversion methods.
+    #[test]
+    fn test_compressed_file_from_record_batch() {
+        let uuid = Uuid::new_v4();
+        let compressed_data = common_test::compressed_segments_record_batch();
+
+        let compressed_file =
+            CompressedFile::from_record_batch(uuid, "".into(), 0, compressed_data);
+
+        assert_eq!(compressed_file.name, uuid);
+        assert_eq!(compressed_file.start_time, 0);
+        assert_eq!(compressed_file.end_time, 5);
+        assert_eq!(compressed_file.min_value, 5.2);
+        assert_eq!(compressed_file.max_value, 34.2);
+    }
+
 }
