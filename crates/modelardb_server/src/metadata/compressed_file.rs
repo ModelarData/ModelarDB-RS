@@ -30,7 +30,7 @@ use sqlx::Row;
 use uuid::Uuid;
 
 /// Metadata about a file tracked by [`MetadataManager`] which contains compressed segments.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct CompressedFile {
     /// Name of the file.
     pub(super) name: Uuid,

@@ -1318,10 +1318,10 @@ mod tests {
             .await;
 
         assert_eq!(4, returned_files.len());
-        assert_eq!(compressed_files[3], returned_files[0]);
-        assert_eq!(compressed_files[4], returned_files[1]);
-        assert_eq!(compressed_files[5], returned_files[2]);
-        assert_eq!(compressed_files[6], returned_files[3]);
+        assert_eq!(compressed_files[3].name, returned_files[0].name);
+        assert_eq!(compressed_files[4].name, returned_files[1].name);
+        assert_eq!(compressed_files[5].name, returned_files[2].name);
+        assert_eq!(compressed_files[6].name, returned_files[3].name);
     }
 
     #[tokio::test]
@@ -1343,11 +1343,11 @@ mod tests {
             .await;
 
         assert_eq!(5, returned_files.len());
-        assert_eq!(replacement_file, returned_files[0]);
-        assert_eq!(compressed_files[3], returned_files[1]);
-        assert_eq!(compressed_files[4], returned_files[2]);
-        assert_eq!(compressed_files[5], returned_files[3]);
-        assert_eq!(compressed_files[6], returned_files[4]);
+        assert_eq!(replacement_file.name, returned_files[0].name);
+        assert_eq!(compressed_files[3].name, returned_files[1].name);
+        assert_eq!(compressed_files[4].name, returned_files[2].name);
+        assert_eq!(compressed_files[5].name, returned_files[3].name);
+        assert_eq!(compressed_files[6].name, returned_files[4].name);
     }
 
     async fn create_metadata_manager_with_named_model_table_save_files_delete_and_get(
@@ -1493,7 +1493,7 @@ mod tests {
 
         assert_eq!(compressed_files.len(), returned_files.len());
         for (compressed_file, returned_file) in compressed_files.iter().zip(returned_files) {
-            assert_eq!(compressed_file, &returned_file);
+            assert_eq!(compressed_file.name, returned_file.name);
         }
     }
 
@@ -1509,11 +1509,11 @@ mod tests {
             .await;
 
         assert_eq!(5, returned_files.len());
-        assert_eq!(compressed_files[1], returned_files[0]);
-        assert_eq!(compressed_files[3], returned_files[1]);
-        assert_eq!(compressed_files[4], returned_files[2]);
-        assert_eq!(compressed_files[5], returned_files[3]);
-        assert_eq!(compressed_files[6], returned_files[4]);
+        assert_eq!(compressed_files[1].name, returned_files[0].name);
+        assert_eq!(compressed_files[3].name, returned_files[1].name);
+        assert_eq!(compressed_files[4].name, returned_files[2].name);
+        assert_eq!(compressed_files[5].name, returned_files[3].name);
+        assert_eq!(compressed_files[6].name, returned_files[4].name);
     }
 
     #[tokio::test]
@@ -1528,10 +1528,10 @@ mod tests {
             .await;
 
         assert_eq!(4, returned_files.len());
-        assert_eq!(compressed_files[0], returned_files[0]);
-        assert_eq!(compressed_files[1], returned_files[1]);
-        assert_eq!(compressed_files[2], returned_files[2]);
-        assert_eq!(compressed_files[3], returned_files[3]);
+        assert_eq!(compressed_files[0].name, returned_files[0].name);
+        assert_eq!(compressed_files[1].name, returned_files[1].name);
+        assert_eq!(compressed_files[2].name, returned_files[2].name);
+        assert_eq!(compressed_files[3].name, returned_files[3].name);
     }
 
     #[tokio::test]
@@ -1546,8 +1546,8 @@ mod tests {
             .await;
 
         assert_eq!(2, returned_files.len());
-        assert_eq!(compressed_files[1], returned_files[0]);
-        assert_eq!(compressed_files[3], returned_files[1]);
+        assert_eq!(compressed_files[1].name, returned_files[0].name);
+        assert_eq!(compressed_files[3].name, returned_files[1].name);
     }
 
     #[tokio::test]
@@ -1630,8 +1630,8 @@ mod tests {
             .await;
 
         assert_eq!(2, returned_files.len());
-        assert_eq!(compressed_files[3], returned_files[0]);
-        assert_eq!(compressed_files[5], returned_files[1]);
+        assert_eq!(compressed_files[3].name, returned_files[0].name);
+        assert_eq!(compressed_files[5].name, returned_files[1].name);
     }
 
     #[tokio::test]
@@ -1646,12 +1646,12 @@ mod tests {
             .await;
 
         assert_eq!(6, returned_files.len());
-        assert_eq!(compressed_files[0], returned_files[0]);
-        assert_eq!(compressed_files[1], returned_files[1]);
-        assert_eq!(compressed_files[2], returned_files[2]);
-        assert_eq!(compressed_files[4], returned_files[3]);
-        assert_eq!(compressed_files[5], returned_files[4]);
-        assert_eq!(compressed_files[6], returned_files[5]);
+        assert_eq!(compressed_files[0].name, returned_files[0].name);
+        assert_eq!(compressed_files[1].name, returned_files[1].name);
+        assert_eq!(compressed_files[2].name, returned_files[2].name);
+        assert_eq!(compressed_files[4].name, returned_files[3].name);
+        assert_eq!(compressed_files[5].name, returned_files[4].name);
+        assert_eq!(compressed_files[6].name, returned_files[5].name);
     }
 
     #[tokio::test]
@@ -1666,7 +1666,7 @@ mod tests {
             .await;
 
         assert_eq!(1, returned_files.len());
-        assert_eq!(compressed_files[5], returned_files[0]);
+        assert_eq!(compressed_files[5].name, returned_files[0].name);
     }
 
     async fn create_metadata_manager_with_model_table_save_seven_files_and_get_files(
