@@ -45,7 +45,8 @@ use crate::storage::COMPRESSED_DATA_FOLDER;
 //       elsewhere.
 
 pub struct DataTransfer {
-    /// The object store containing all compressed data managed by the [`StorageEngine`].
+    /// The object store containing all compressed data managed by the
+    /// [`StorageEngine`](crate::storage::StorageEngine).
     local_data_folder: Arc<dyn ObjectStore>,
     /// The object store that the data should be transferred to.
     pub remote_data_folder: Arc<dyn ObjectStore>,

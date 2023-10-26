@@ -275,7 +275,7 @@ impl CompressedDataManager {
         // Create the object metadata for each file.
         let relevant_object_metas: Vec<ObjectMeta> = relevant_files
             .into_iter()
-            .map(CompressedFile::into)
+            .map(ObjectMeta::from)
             .collect();
 
         // Merge the compressed Apache Parquet files if multiple are retrieved to ensure order.

@@ -29,7 +29,8 @@ use sqlx::sqlite::SqliteRow;
 use sqlx::Row;
 use uuid::Uuid;
 
-/// Metadata about a file tracked by [`MetadataManager`] which contains compressed segments.
+/// Metadata about a file tracked by [`MetadataManager`](crate::metadata::MetadataManager) which
+/// contains compressed segments.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompressedFile {
     /// Name of the file.
@@ -121,9 +122,9 @@ impl CompressedFile {
                     object_meta
                         .location
                         .filename()
-                        .ok_or_else(|| "Object meta does not have a file name.")?
+                        .ok_or("Object meta does not have a file name.")?
                         .strip_suffix(".parquet")
-                        .ok_or_else(|| "Object meta is not an Apache Parquet file.")?,
+                        .ok_or("Object meta is not an Apache Parquet file.")?,
                 )
                 .map_err(|error| error.to_string())
             })
@@ -151,20 +152,20 @@ impl TryFrom<SqliteRow> for CompressedFile {
     }
 }
 
-impl Into<ObjectMeta> for CompressedFile {
-    fn into(self) -> ObjectMeta {
+impl From<CompressedFile> for ObjectMeta {
+    fn from(compressed_file: CompressedFile) -> Self {
         // unwrap() is safe as the folder path is generated from the table name which is valid UTF-8.
         let file_path = ObjectStorePath::from(format!(
             "{}/{}.parquet",
-            self.folder_path.to_str().unwrap(),
-            self.name
+            compressed_file.folder_path.to_str().unwrap(),
+            compressed_file.name
         ));
 
         // unwrap() is safe as the created_at timestamp cannot be out of range.
         ObjectMeta {
             location: file_path,
-            last_modified: Utc.timestamp_millis_opt(self.created_at).unwrap(),
-            size: self.size,
+            last_modified: Utc.timestamp_millis_opt(compressed_file.created_at).unwrap(),
+            size: compressed_file.size,
             e_tag: None,
         }
     }
@@ -294,7 +295,7 @@ mod tests {
     }
 
     #[test]
-    fn test_compressed_file_into_object_meta() {
+    fn test_object_meta_from_compressed_file() {
         let uuid = Uuid::new_v4();
         let compressed_file = CompressedFile::from_record_batch(
             uuid,
@@ -303,7 +304,7 @@ mod tests {
             common_test::compressed_segments_record_batch(),
         );
 
-        let object_meta: ObjectMeta = CompressedFile::into(compressed_file);
+        let object_meta: ObjectMeta = ObjectMeta::from(compressed_file);
         assert_eq!(object_meta.location, ObjectStorePath::from(format!("test/{uuid}.parquet")));
         assert_eq!(object_meta.last_modified.round_subsecs(0), Utc::now().round_subsecs(0));
         assert_eq!(object_meta.size, 0);
