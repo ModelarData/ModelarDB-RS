@@ -128,7 +128,7 @@ impl CompressedDataManager {
         let file_name = format!("{}.parquet", since_the_epoch.as_millis());
         let file_path = local_file_path.join(file_name);
 
-        StorageEngine::write_batch_to_apache_parquet_file(record_batch, file_path.as_path(), None)
+        StorageEngine::write_batch_to_apache_parquet_file(&record_batch, file_path.as_path(), None)
     }
 
     /// Read and process messages received from the
@@ -237,7 +237,6 @@ impl CompressedDataManager {
         Ok(())
     }
 
-    // TODO: Pass the metadata manager that the files should be retrieved from as an argument.
     /// Return an [`ObjectMeta`] for each compressed file that belongs to the column at `column_index`
     /// in the table with `table_name` and contains compressed segments within the given range of
     /// time and value. If no files belong to the column at `column_index` for the table with
@@ -263,7 +262,7 @@ impl CompressedDataManager {
             .metadata_manager
             .compressed_files(
                 table_name,
-                column_index as usize,
+                column_index.into(),
                 start_time,
                 end_time,
                 min_value,
@@ -293,13 +292,13 @@ impl CompressedDataManager {
 
             // Replace the files that were merged with the merged file in the metadata database.
             let compressed_files_to_delete: Vec<Uuid> =
-                CompressedFile::object_metas_to_compressed_file_names(relevant_object_metas)
+                CompressedFile::object_metas_to_compressed_file_names(&relevant_object_metas)
                     .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
             self.metadata_manager
                 .replace_compressed_files(
                     table_name,
-                    column_index as usize,
+                    column_index.into(),
                     &compressed_files_to_delete,
                     Some(&compressed_file),
                 )
@@ -384,7 +383,7 @@ impl CompressedDataManager {
 
         // Save the metadata of the compressed file to the metadata database.
         self.metadata_manager
-            .save_compressed_file(table_name, column_index as usize, &compressed_file)
+            .save_compressed_file(table_name, column_index.into(), &compressed_file)
             .await
             .unwrap();
 
@@ -518,7 +517,7 @@ impl CompressedDataManager {
             uuid,
             output_folder.into(),
             object_meta.size,
-            merged,
+            &merged,
         ))
     }
 }
@@ -657,7 +656,7 @@ mod tests {
         // The metadata of the compressed data should be saved to the metadata database.
         let compressed_files = data_manager
             .metadata_manager
-            .compressed_files(TABLE_NAME, COLUMN_INDEX as usize, None, None, None, None)
+            .compressed_files(TABLE_NAME, COLUMN_INDEX.into(), None, None, None, None)
             .await
             .unwrap();
 

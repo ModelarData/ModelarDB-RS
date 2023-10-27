@@ -220,11 +220,11 @@ pub async fn query_optimized_physical_query_plan(
     let context = test_context(path).await;
     let model_table_metadata = model_table_metadata_arc();
 
-    // Purposely ignore errors to allow the function to be called multiple times in the same test.
-    let _ = context
+    context
         .metadata_manager
         .save_model_table_metadata(&model_table_metadata, MODEL_TABLE_SQL)
-        .await;
+        .await
+        .unwrap();
 
     context
         .session

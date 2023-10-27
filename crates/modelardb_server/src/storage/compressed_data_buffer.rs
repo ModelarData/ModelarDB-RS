@@ -117,7 +117,7 @@ impl CompressedDataBuffer {
         let full_folder_path = local_data_folder.join(folder_path);
 
         // Create the folder structure if it does not already exist.
-        fs::create_dir_all(full_folder_path.clone())?;
+        fs::create_dir_all(&full_folder_path)?;
 
         // Use an UUID for the file name to ensure the name is unique.
         let uuid = Uuid::new_v4();
@@ -130,7 +130,7 @@ impl CompressedDataBuffer {
         ]);
 
         StorageEngine::write_batch_to_apache_parquet_file(
-            batch.clone(),
+            &batch,
             file_path.as_path(),
             sorting_columns,
         )
@@ -140,7 +140,7 @@ impl CompressedDataBuffer {
             uuid,
             folder_path.into(),
             file_path.metadata()?.len() as usize,
-            batch,
+            &batch,
         ))
     }
 

@@ -524,7 +524,7 @@ impl MetadataManager {
         // query_schema_index is simply cast as a model table contains at most 1024 columns.
         // unwrap() is safe as the folder path is generated from the table name which is valid UTF-8.
         // size is simply cast as it is unrealistic for a file to use more bytes than the max value
-        // of a signed 64-bit integer.
+        // of a signed 64-bit integer as it can represent a file with a size up to ~9000 PB.
         sqlx::query(insert_statement)
             .bind(compressed_file.name)
             .bind(query_schema_index as i64)

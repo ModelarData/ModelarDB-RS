@@ -343,7 +343,6 @@ impl StorageEngine {
         Ok(())
     }
 
-    // TODO: Pass the metadata manager that the files should be retrieved from as an argument.
     /// Return an [`ObjectMeta`] for each compressed file that belongs to the column at `column_index`
     /// in the table with `table_name` and contains compressed segments within the given range of
     /// time and value. If no files belong to the column at `column_index` for the table with
@@ -425,7 +424,7 @@ impl StorageEngine {
     pub(super) async fn update_remote_data_folder(
         &mut self,
         remote_data_folder: Arc<dyn ObjectStore>,
-        metadata_manager: Arc<MetadataManager>,
+        metadata_manager: &Arc<MetadataManager>,
     ) -> Result<(), IOError> {
         let maybe_current_data_transfer =
             &mut *self.compressed_data_manager.data_transfer.write().await;
@@ -436,7 +435,7 @@ impl StorageEngine {
             let data_transfer = DataTransfer::try_new(
                 self.compressed_data_manager.local_data_folder.clone(),
                 remote_data_folder,
-                metadata_manager,
+                metadata_manager.clone(),
                 TRANSFER_BATCH_SIZE_IN_BYTES,
                 self.compressed_data_manager.used_disk_space_metric.clone(),
             )
@@ -470,7 +469,7 @@ impl StorageEngine {
     /// must use the extension '.parquet'. Return [`Ok`] if the file was written successfully,
     /// otherwise [`ParquetError`].
     pub(super) fn write_batch_to_apache_parquet_file(
-        batch: RecordBatch,
+        batch: &RecordBatch,
         file_path: &Path,
         sorting_columns: Option<Vec<SortingColumn>>,
     ) -> Result<(), ParquetError> {
@@ -484,7 +483,7 @@ impl StorageEngine {
             let file = File::create(file_path).map_err(|_e| error)?;
             let mut writer =
                 Self::create_apache_arrow_writer(file, batch.schema(), sorting_columns)?;
-            writer.write(&batch)?;
+            writer.write(batch)?;
             writer.close()?;
 
             Ok(())
@@ -556,7 +555,7 @@ mod tests {
 
         let apache_parquet_path = temp_dir.path().join("test.parquet");
         StorageEngine::write_batch_to_apache_parquet_file(
-            batch,
+            &batch,
             apache_parquet_path.as_path(),
             None,
         )
@@ -574,7 +573,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let apache_parquet_path = temp_dir.path().join("empty.parquet");
         StorageEngine::write_batch_to_apache_parquet_file(
-            batch,
+            &batch,
             apache_parquet_path.as_path(),
             None,
         )
@@ -599,7 +598,7 @@ mod tests {
 
         let apache_parquet_path = temp_dir.path().join(file_name);
         let result = StorageEngine::write_batch_to_apache_parquet_file(
-            batch,
+            &batch,
             apache_parquet_path.as_path(),
             None,
         );
@@ -648,7 +647,7 @@ mod tests {
 
         let apache_parquet_path = temp_dir.path().join(file_name);
         StorageEngine::write_batch_to_apache_parquet_file(
-            batch.clone(),
+            &batch,
             apache_parquet_path.as_path(),
             None,
         )

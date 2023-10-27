@@ -79,7 +79,7 @@ impl CompressedFile {
         name: Uuid,
         folder_path: PathBuf,
         size: usize,
-        batch: RecordBatch,
+        batch: &RecordBatch,
     ) -> Self {
         // unwrap() is safe since UNIX_EPOCH is always earlier than now.
         let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
@@ -113,7 +113,7 @@ impl CompressedFile {
     /// if possible. If any [`ObjectMeta`] is not an Apache Parquet file with an UUID file name,
     /// return [`String`].
     pub(crate) fn object_metas_to_compressed_file_names(
-        object_metas: Vec<ObjectMeta>,
+        object_metas: &[ObjectMeta],
     ) -> Result<Vec<Uuid>, String> {
         object_metas
             .iter()
@@ -198,7 +198,7 @@ mod tests {
         ];
 
         let compressed_files =
-            CompressedFile::object_metas_to_compressed_file_names(object_metas).unwrap();
+            CompressedFile::object_metas_to_compressed_file_names(&object_metas).unwrap();
 
         assert_eq!(compressed_files.get(0), Some(&uuid_1));
         assert_eq!(compressed_files.get(1), Some(&uuid_2));
@@ -211,7 +211,7 @@ mod tests {
             create_object_meta("test/folder".to_owned()),
         ];
 
-        let compressed_files = CompressedFile::object_metas_to_compressed_file_names(object_metas);
+        let compressed_files = CompressedFile::object_metas_to_compressed_file_names(&object_metas);
         assert!(compressed_files.is_err());
     }
 
@@ -222,7 +222,7 @@ mod tests {
             create_object_meta(format!("test/{}.csv", Uuid::new_v4())),
         ];
 
-        let compressed_files = CompressedFile::object_metas_to_compressed_file_names(object_metas);
+        let compressed_files = CompressedFile::object_metas_to_compressed_file_names(&object_metas);
         assert!(compressed_files.is_err());
     }
 
@@ -233,7 +233,7 @@ mod tests {
             create_object_meta("test/test.parquet".to_owned()),
         ];
 
-        let compressed_files = CompressedFile::object_metas_to_compressed_file_names(object_metas);
+        let compressed_files = CompressedFile::object_metas_to_compressed_file_names(&object_metas);
         assert!(compressed_files.is_err());
     }
 
@@ -250,10 +250,12 @@ mod tests {
     #[test]
     fn test_compressed_file_from_record_batch() {
         let uuid = Uuid::new_v4();
-        let compressed_data = common_test::compressed_segments_record_batch();
-
-        let compressed_file =
-            CompressedFile::from_record_batch(uuid, "".into(), 0, compressed_data);
+        let compressed_file = CompressedFile::from_record_batch(
+            uuid,
+            "".into(),
+            0,
+            &common_test::compressed_segments_record_batch(),
+        );
 
         assert_eq!(compressed_file.name, uuid);
         assert_eq!(compressed_file.start_time, 0);
@@ -280,7 +282,7 @@ mod tests {
             Uuid::new_v4(),
             "".into(),
             0,
-            common_test::compressed_segments_record_batch(),
+            &common_test::compressed_segments_record_batch(),
         );
 
         metadata_manager
@@ -295,7 +297,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(compressed_file, CompressedFile::try_from(row).unwrap())
+        assert_eq!(compressed_file, row.try_into().unwrap());
     }
 
     #[test]
@@ -305,10 +307,10 @@ mod tests {
             uuid,
             "test".into(),
             0,
-            common_test::compressed_segments_record_batch(),
+            &common_test::compressed_segments_record_batch(),
         );
 
-        let object_meta: ObjectMeta = ObjectMeta::from(compressed_file);
+        let object_meta: ObjectMeta = compressed_file.into();
         assert_eq!(
             object_meta.location,
             ObjectStorePath::from(format!("test/{uuid}.parquet"))

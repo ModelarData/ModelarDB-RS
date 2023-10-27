@@ -208,13 +208,13 @@ impl DataTransfer {
 
         // Delete the metadata for the transferred files from the metadata database.
         let compressed_files_to_delete: Vec<Uuid> =
-            CompressedFile::object_metas_to_compressed_file_names(object_metas.clone())
+            CompressedFile::object_metas_to_compressed_file_names(&object_metas)
                 .map_err(|error| ParquetError::General(error.to_string()))?;
 
         self.metadata_manager
             .replace_compressed_files(
                 table_name,
-                column_index as usize,
+                column_index.into(),
                 &compressed_files_to_delete,
                 None,
             )
@@ -540,7 +540,7 @@ mod tests {
         // The metadata for the files should be deleted from the metadata database.
         let compressed_files = data_transfer
             .metadata_manager
-            .compressed_files(TABLE_NAME, COLUMN_INDEX as usize, None, None, None, None)
+            .compressed_files(TABLE_NAME, COLUMN_INDEX.into(), None, None, None, None)
             .await
             .unwrap();
 
@@ -581,7 +581,7 @@ mod tests {
         let batch = common_test::compressed_segments_record_batch();
         let apache_parquet_path = path.join(format!("{uuid}.parquet"));
         StorageEngine::write_batch_to_apache_parquet_file(
-            batch.clone(),
+            &batch,
             apache_parquet_path.as_path(),
             None,
         )
@@ -591,12 +591,12 @@ mod tests {
             uuid,
             folder_path.into(),
             COMPRESSED_FILE_SIZE,
-            batch,
+            &batch,
         );
 
         // Save the metadata of the compressed file to the metadata database.
         metadata_manager
-            .save_compressed_file(TABLE_NAME, COLUMN_INDEX as usize, &compressed_file)
+            .save_compressed_file(TABLE_NAME, COLUMN_INDEX.into(), &compressed_file)
             .await
             .unwrap();
 
