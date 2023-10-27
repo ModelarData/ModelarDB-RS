@@ -258,7 +258,7 @@ impl CompressedDataManager {
         query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
         // Retrieve the metadata of all files that fit the given arguments.
-        let relevant_files = self
+        let relevant_object_metas = self
             .metadata_manager
             .compressed_files(
                 table_name,
@@ -270,10 +270,6 @@ impl CompressedDataManager {
             )
             .await
             .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
-
-        // Create the object metadata for each file.
-        let relevant_object_metas: Vec<ObjectMeta> =
-            relevant_files.into_iter().map(ObjectMeta::from).collect();
 
         // Merge the compressed Apache Parquet files if multiple are retrieved to ensure order.
         if relevant_object_metas.len() > 1 {

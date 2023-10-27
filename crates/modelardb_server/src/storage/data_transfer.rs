@@ -197,7 +197,8 @@ impl DataTransfer {
             table_name
         );
 
-        // Merge the files and transfer them to the remote object store.
+        // Merge the files and transfer them to the remote object store by setting the remote data
+        // folder as the output data folder for the merged file.
         CompressedDataManager::merge_compressed_apache_parquet_files(
             &self.local_data_folder,
             &object_metas,

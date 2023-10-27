@@ -23,6 +23,7 @@
 
 pub(crate) mod compressed_file;
 
+use chrono::{TimeZone, Utc};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::Hasher;
@@ -38,6 +39,8 @@ use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use modelardb_common::types::{ErrorBound, Timestamp, UnivariateId, Value};
 use modelardb_common::{metadata, parser};
+use object_store::path::Path as ObjectStorePath;
+use object_store::ObjectMeta;
 use sqlx::database::HasArguments;
 use sqlx::error::Error;
 use sqlx::query::Query;
@@ -537,7 +540,7 @@ impl MetadataManager {
             .bind(max_value)
     }
 
-    /// Retrieve the compressed files that correspond to the column at `query_schema_index`
+    /// Return an [`ObjectMeta`] for each compressed file that belongs to the column at `query_schema_index`
     /// in the model table with `model_table_name` within the given range of time and value. The
     /// files are returned in sorted order by their start time. If no files belong to the column at
     /// `query_schema_index` for the table with `model_table_name` an empty [`Vec`] is returned,
@@ -554,7 +557,7 @@ impl MetadataManager {
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
         max_value: Option<Value>,
-    ) -> Result<Vec<CompressedFile>> {
+    ) -> Result<Vec<ObjectMeta>> {
         // Set default values for the parts of the time and value range that are not defined.
         let start_time = start_time.unwrap_or(0);
         let end_time = end_time.unwrap_or(Timestamp::MAX);
@@ -600,7 +603,7 @@ impl MetadataManager {
 
         let mut files = vec![];
         while let Some(row) = rows.try_next().await? {
-            files.push(CompressedFile::try_from(row)?);
+            files.push(Self::convert_compressed_file_row_to_object_meta(row)?);
         }
 
         Ok(files)
@@ -617,6 +620,28 @@ impl MetadataManager {
         } else {
             value
         }
+    }
+
+    /// Convert a row in the model_table_compressed_files table to an [`ObjectMeta`]. If the
+    /// necessary column values could not be extracted from the row, return [`Error`].
+    fn convert_compressed_file_row_to_object_meta(row: SqliteRow) -> Result<ObjectMeta> {
+        let folder_path: String = row.try_get("folder_path")?;
+        let file_name: String = row.try_get("file_name")?;
+        let location = ObjectStorePath::from(format!("{folder_path}/{file_name}.parquet"));
+
+        // unwrap() is safe as the created_at timestamp cannot be out of range.
+        let last_modified = Utc
+            .timestamp_millis_opt(row.try_get("created_at")?)
+            .unwrap();
+
+        let size: i64 = row.try_get("size")?;
+
+        Ok(ObjectMeta {
+            location,
+            last_modified,
+            size: size as usize,
+            e_tag: None,
+        })
     }
 
     /// Save the created table to the metadata database. This consists of adding a row to the
