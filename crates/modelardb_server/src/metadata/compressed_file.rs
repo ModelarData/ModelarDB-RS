@@ -25,8 +25,6 @@ use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
-use sqlx::sqlite::SqliteRow;
-use sqlx::Row;
 use uuid::Uuid;
 
 /// Metadata about a file tracked by [`MetadataManager`](crate::metadata::MetadataManager) which
@@ -132,26 +130,6 @@ impl CompressedFile {
     }
 }
 
-impl TryFrom<SqliteRow> for CompressedFile {
-    type Error = sqlx::Error;
-
-    fn try_from(row: SqliteRow) -> Result<Self, Self::Error> {
-        let size: i64 = row.try_get("size")?;
-        let folder_path: String = row.try_get("folder_path")?;
-
-        Ok(Self::new(
-            row.try_get("file_name")?,
-            folder_path.into(),
-            size as usize,
-            row.try_get("created_at")?,
-            row.try_get("start_time")?,
-            row.try_get("end_time")?,
-            row.try_get("min_value")?,
-            row.try_get("max_value")?,
-        ))
-    }
-}
-
 impl From<CompressedFile> for ObjectMeta {
     fn from(compressed_file: CompressedFile) -> Self {
         // unwrap() is safe as the folder path is generated from the table name which is valid UTF-8.
@@ -182,7 +160,6 @@ mod tests {
     use chrono::SubsecRound;
 
     use crate::common_test;
-    use crate::metadata::MetadataManager;
 
     const TABLE_NAME: &str = "model_table";
 
@@ -262,42 +239,6 @@ mod tests {
         assert_eq!(compressed_file.end_time, 5);
         assert_eq!(compressed_file.min_value, 5.2);
         assert_eq!(compressed_file.max_value, 34.2);
-    }
-
-    #[tokio::test]
-    async fn test_compressed_file_from_sqlite_row() {
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        // Create a metadata manager and save a model table to the metadata database.
-        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
-        let model_table_metadata = common_test::model_table_metadata();
-
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
-
-        // Create a compressed file and save the file metadata to the metadata database.
-        let compressed_file = CompressedFile::from_record_batch(
-            Uuid::new_v4(),
-            "".into(),
-            0,
-            &common_test::compressed_segments_record_batch(),
-        );
-
-        metadata_manager
-            .save_compressed_file(TABLE_NAME, 1, &compressed_file)
-            .await
-            .unwrap();
-
-        // Retrieve the row from the metadata database.
-        let select_statement = format!("SELECT * FROM {TABLE_NAME}_compressed_files");
-        let row = sqlx::query(select_statement.as_str())
-            .fetch_one(&metadata_manager.metadata_database_pool)
-            .await
-            .unwrap();
-
-        assert_eq!(compressed_file, row.try_into().unwrap());
     }
 
     #[test]
