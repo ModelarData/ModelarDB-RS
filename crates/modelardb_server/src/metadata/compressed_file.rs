@@ -22,7 +22,6 @@ use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
-use uuid::Uuid;
 
 /// Metadata about a file tracked by [`MetadataManager`](crate::metadata::MetadataManager) which
 /// contains compressed segments.
@@ -94,28 +93,6 @@ impl CompressedFile {
             max_value,
         }
     }
-
-    /// Extract the file name from each [`ObjectMeta`] in `object_metas` and convert it to an UUID,
-    /// if possible. If any [`ObjectMeta`] is not an Apache Parquet file with an UUID file name,
-    /// return [`String`].
-    pub(crate) fn object_metas_to_compressed_file_names(
-        object_metas: &[ObjectMeta],
-    ) -> Result<Vec<Uuid>, String> {
-        object_metas
-            .iter()
-            .map(|object_meta| {
-                Uuid::try_parse(
-                    object_meta
-                        .location
-                        .filename()
-                        .ok_or("Object meta does not have a file name.")?
-                        .strip_suffix(".parquet")
-                        .ok_or("Object meta is not an Apache Parquet file.")?,
-                )
-                .map_err(|error| error.to_string())
-            })
-            .collect()
-    }
 }
 
 impl From<CompressedFile> for ObjectMeta {
@@ -139,84 +116,23 @@ mod tests {
     use super::*;
 
     use chrono::SubsecRound;
+    use uuid::Uuid;
 
     use crate::common_test;
 
     const TABLE_NAME: &str = "model_table";
-
-    // Tests for object_metas_to_compressed_file_names().
-    #[test]
-    fn test_object_metas_to_compressed_file_names() {
-        let uuid_1 = Uuid::new_v4();
-        let uuid_2 = Uuid::new_v4();
-
-        let object_metas = vec![
-            create_object_meta(format!("test/{}.parquet", uuid_1)),
-            create_object_meta(format!("test/{}.parquet", uuid_2)),
-        ];
-
-        let compressed_files =
-            CompressedFile::object_metas_to_compressed_file_names(&object_metas).unwrap();
-
-        assert_eq!(compressed_files.get(0), Some(&uuid_1));
-        assert_eq!(compressed_files.get(1), Some(&uuid_2));
-    }
-
-    #[test]
-    fn test_folder_object_metas_to_compressed_file_names() {
-        let object_metas = vec![
-            create_object_meta(format!("test/{}.parquet", Uuid::new_v4())),
-            create_object_meta("test/folder".to_owned()),
-        ];
-
-        let compressed_files = CompressedFile::object_metas_to_compressed_file_names(&object_metas);
-        assert!(compressed_files.is_err());
-    }
-
-    #[test]
-    fn test_non_apache_parquet_object_metas_to_compressed_file_names() {
-        let object_metas = vec![
-            create_object_meta(format!("test/{}.parquet", Uuid::new_v4())),
-            create_object_meta(format!("test/{}.csv", Uuid::new_v4())),
-        ];
-
-        let compressed_files = CompressedFile::object_metas_to_compressed_file_names(&object_metas);
-        assert!(compressed_files.is_err());
-    }
-
-    #[test]
-    fn test_non_uuid_object_metas_to_compressed_file_names() {
-        let object_metas = vec![
-            create_object_meta(format!("test/{}.parquet", Uuid::new_v4())),
-            create_object_meta("test/test.parquet".to_owned()),
-        ];
-
-        let compressed_files = CompressedFile::object_metas_to_compressed_file_names(&object_metas);
-        assert!(compressed_files.is_err());
-    }
-
-    fn create_object_meta(path: String) -> ObjectMeta {
-        ObjectMeta {
-            location: ObjectStorePath::from(path),
-            last_modified: Utc::now(),
-            size: 0,
-            e_tag: None,
-        }
-    }
 
     // Tests for conversion methods.
     #[test]
     fn test_compressed_file_from_record_batch() {
         let uuid = Uuid::new_v4();
         let compressed_file = CompressedFile::from_record_batch(
-            uuid,
-            "".into(),
+            &format!("test/{uuid}.parquet"),
             0,
             0,
             &common_test::compressed_segments_record_batch(),
         );
 
-        assert_eq!(compressed_file.name, uuid);
         assert_eq!(compressed_file.start_time, 0);
         assert_eq!(compressed_file.end_time, 5);
         assert_eq!(compressed_file.min_value, 5.2);
@@ -227,8 +143,7 @@ mod tests {
     fn test_object_meta_from_compressed_file() {
         let uuid = Uuid::new_v4();
         let compressed_file = CompressedFile::from_record_batch(
-            uuid,
-            "test".into(),
+            &format!("test/{uuid}.parquet"),
             0,
             0,
             &common_test::compressed_segments_record_batch(),
