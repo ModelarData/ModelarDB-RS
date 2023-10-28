@@ -141,7 +141,7 @@ impl DataTransfer {
         if !self.compressed_files.contains_key(&key) {
             self.compressed_files.insert(key.clone(), 0);
         }
-        *self.compressed_files.get_mut(&key).unwrap() += compressed_file.size;
+        *self.compressed_files.get_mut(&key).unwrap() += compressed_file.file_metadata.size;
 
         // If the combined size of the files is larger than the batch size, transfer the data to the
         // remote object store. unwrap() is safe as key has just been added to the map.

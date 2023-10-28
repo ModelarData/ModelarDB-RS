@@ -520,10 +520,10 @@ impl MetadataManager {
         // size is simply cast as it is unrealistic for a file to use more bytes than the max value
         // of a signed 64-bit integer as it can represent a file with a size up to ~9000 PB.
         sqlx::query(insert_statement)
-            .bind(&compressed_file.file_path)
+            .bind(compressed_file.file_metadata.location.as_ref())
             .bind(query_schema_index as i64)
-            .bind(compressed_file.size as i64)
-            .bind(compressed_file.created_at)
+            .bind(compressed_file.file_metadata.size as i64)
+            .bind(compressed_file.file_metadata.last_modified.timestamp_millis())
             .bind(compressed_file.start_time)
             .bind(compressed_file.end_time)
             .bind(min_value)

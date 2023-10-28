@@ -296,7 +296,7 @@ impl CompressedDataManager {
                 .await
                 .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
-            Ok(vec![compressed_file.into()])
+            Ok(vec![compressed_file.file_metadata])
         } else {
             Ok(relevant_object_metas)
         }
@@ -389,7 +389,7 @@ impl CompressedDataManager {
         self.used_disk_space_metric
             .lock()
             .unwrap()
-            .append(compressed_file.size as isize, true);
+            .append(compressed_file.file_metadata.size as isize, true);
 
         // Pass the saved compressed file to the data transfer component if a remote data folder
         // was provided. If the total size of the files related to table_name have reached the
@@ -504,12 +504,7 @@ impl CompressedDataManager {
             .await
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
-        Ok(CompressedFile::from_record_batch(
-            &output_file_path,
-            object_meta.size,
-            object_meta.last_modified.timestamp_millis(),
-            &merged,
-        ))
+        Ok(CompressedFile::from_record_batch(object_meta, &merged))
     }
 }
 

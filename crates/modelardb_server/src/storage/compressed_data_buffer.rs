@@ -20,14 +20,14 @@ use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
 use std::path::Path;
 use std::sync::Arc;
-use std::time::UNIX_EPOCH;
 
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::format::SortingColumn;
+use object_store::ObjectMeta;
+use object_store::path::Path as ObjectStorePath;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
-use modelardb_common::types::Timestamp;
 use uuid::Uuid;
 
 use crate::metadata::compressed_file::CompressedFile;
@@ -140,18 +140,14 @@ impl CompressedDataBuffer {
 
         let file_metadata = file_path.metadata()?;
 
-        // unwrap() is safe since UNIX_EPOCH is always earlier than now.
-        let since_unix_epoch = file_metadata
-            .modified()?
-            .duration_since(UNIX_EPOCH)
-            .unwrap();
+        let object_meta = ObjectMeta {
+            location: ObjectStorePath::from(format!("{folder_path}/{uuid}.parquet")),
+            last_modified: file_metadata.modified()?.into(),
+            size: file_metadata.len() as usize,
+            e_tag: None,
+        };
 
-        Ok(CompressedFile::from_record_batch(
-            &format!("{folder_path}/{uuid}.parquet"),
-            file_metadata.len() as usize,
-            since_unix_epoch.as_millis() as Timestamp,
-            &batch,
-        ))
+        Ok(CompressedFile::from_record_batch(object_meta, &batch))
     }
 
     /// Return the size in bytes of `compressed_segments`.
