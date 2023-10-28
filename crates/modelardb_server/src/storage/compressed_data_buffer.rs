@@ -24,10 +24,10 @@ use std::sync::Arc;
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::format::SortingColumn;
-use object_store::ObjectMeta;
-use object_store::path::Path as ObjectStorePath;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
+use object_store::path::Path as ObjectStorePath;
+use object_store::ObjectMeta;
 use uuid::Uuid;
 
 use crate::metadata::compressed_file::CompressedFile;

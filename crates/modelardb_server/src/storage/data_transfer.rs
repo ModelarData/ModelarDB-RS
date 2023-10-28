@@ -207,12 +207,7 @@ impl DataTransfer {
         .await?;
 
         self.metadata_manager
-            .replace_compressed_files(
-                table_name,
-                column_index.into(),
-                &object_metas,
-                None,
-            )
+            .replace_compressed_files(table_name, column_index.into(), &object_metas, None)
             .await
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
@@ -265,11 +260,13 @@ impl DataTransfer {
 mod tests {
     use super::*;
 
+    use chrono::Utc;
     use std::fs;
     use std::path::Path;
 
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
+    use uuid::Uuid;
 
     use crate::common_test;
     use crate::storage::StorageEngine;
@@ -582,12 +579,14 @@ mod tests {
         )
         .unwrap();
 
-        let compressed_file = CompressedFile::from_record_batch(
-            uuid,
-            folder_path.into(),
-            COMPRESSED_FILE_SIZE,
-            &batch,
-        );
+        let object_meta = ObjectMeta {
+            location: ObjectStorePath::from(format!("{folder_path}/{uuid}.parquet")),
+            last_modified: Utc::now(),
+            size: COMPRESSED_FILE_SIZE,
+            e_tag: None,
+        };
+
+        let compressed_file = CompressedFile::from_record_batch(object_meta, &batch);
 
         // Save the metadata of the compressed file to the metadata database.
         metadata_manager

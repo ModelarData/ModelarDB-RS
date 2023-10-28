@@ -13,8 +13,7 @@
  * limitations under the License.
  */
 
-//! Support for handling file metadata for files that contain compressed segments and conversion
-//! methods to convert between multiple related data structures.
+//! Support for handling file metadata for files that contain compressed segments.
 
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -67,8 +66,8 @@ mod tests {
     use super::*;
 
     use chrono::Utc;
-    use uuid::Uuid;
     use object_store::path::Path as ObjectStorePath;
+    use uuid::Uuid;
 
     use crate::common_test;
 
