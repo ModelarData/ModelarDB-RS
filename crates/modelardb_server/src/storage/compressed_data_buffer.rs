@@ -20,12 +20,14 @@ use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::format::SortingColumn;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
+use modelardb_common::types::Timestamp;
 use uuid::Uuid;
 
 use crate::metadata::compressed_file::CompressedFile;
@@ -136,10 +138,18 @@ impl CompressedDataBuffer {
         )
         .map_err(|error| IOError::new(Other, error.to_string()))?;
 
+        let file_metadata = file_path.metadata()?;
+
+        // unwrap() is safe since UNIX_EPOCH is always earlier than now.
+        let since_unix_epoch = file_metadata
+            .modified()?
+            .duration_since(UNIX_EPOCH)
+            .unwrap();
+
         Ok(CompressedFile::from_record_batch(
-            uuid,
-            folder_path.into(),
-            file_path.metadata()?.len() as usize,
+            &format!("{folder_path}/{uuid}.parquet"),
+            file_metadata.len() as usize,
+            since_unix_epoch.as_millis() as Timestamp,
             &batch,
         ))
     }

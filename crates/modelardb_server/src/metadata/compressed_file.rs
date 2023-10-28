@@ -16,9 +16,6 @@
 //! Support for handling file metadata for files that contain compressed segments and conversion
 //! methods to convert between multiple related data structures.
 
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
-
 use chrono::{TimeZone, Utc};
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -31,10 +28,8 @@ use uuid::Uuid;
 /// contains compressed segments.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompressedFile {
-    /// Name of the file.
-    pub(super) name: Uuid,
-    /// Path to the folder containing the file.
-    pub(super) folder_path: PathBuf,
+    /// Path to the file.
+    pub(super) file_path: String,
     /// Size of the file in bytes.
     pub(crate) size: usize,
     /// Timestamp that the file was created at.
@@ -51,8 +46,7 @@ pub struct CompressedFile {
 
 impl CompressedFile {
     pub fn new(
-        name: Uuid,
-        folder_path: PathBuf,
+        file_path: &str,
         size: usize,
         created_at: Timestamp,
         start_time: Timestamp,
@@ -61,8 +55,7 @@ impl CompressedFile {
         max_value: Value,
     ) -> Self {
         Self {
-            name,
-            folder_path,
+            file_path: file_path.to_owned(),
             size,
             created_at,
             start_time,
@@ -74,15 +67,11 @@ impl CompressedFile {
 
     /// Convert the given file information and [`RecordBatch`] to a [`CompressedFile`].
     pub(crate) fn from_record_batch(
-        name: Uuid,
-        folder_path: PathBuf,
+        file_path: &str,
         size: usize,
+        created_at: Timestamp,
         batch: &RecordBatch,
     ) -> Self {
-        // unwrap() is safe since UNIX_EPOCH is always earlier than now.
-        let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let created_at = since_the_epoch.as_millis() as Timestamp;
-
         // unwrap() is safe as None is only returned if all of the values are None.
         let start_time =
             aggregate::min(modelardb_common::array!(batch, 2, TimestampArray)).unwrap();
@@ -96,8 +85,7 @@ impl CompressedFile {
         let max_value = aggregate::max(modelardb_common::array!(batch, 6, ValueArray)).unwrap();
 
         Self {
-            name,
-            folder_path,
+            file_path: file_path.to_owned(),
             size,
             created_at,
             start_time,
@@ -132,20 +120,13 @@ impl CompressedFile {
 
 impl From<CompressedFile> for ObjectMeta {
     fn from(compressed_file: CompressedFile) -> Self {
-        // unwrap() is safe as the folder path is generated from the table name which is valid UTF-8.
-        let location = ObjectStorePath::from(format!(
-            "{}/{}.parquet",
-            compressed_file.folder_path.to_str().unwrap(),
-            compressed_file.name
-        ));
-
         // unwrap() is safe as the created_at timestamp cannot be out of range.
         let last_modified = Utc
             .timestamp_millis_opt(compressed_file.created_at)
             .unwrap();
 
         ObjectMeta {
-            location,
+            location: ObjectStorePath::from(compressed_file.file_path),
             last_modified,
             size: compressed_file.size,
             e_tag: None,
@@ -231,6 +212,7 @@ mod tests {
             uuid,
             "".into(),
             0,
+            0,
             &common_test::compressed_segments_record_batch(),
         );
 
@@ -247,6 +229,7 @@ mod tests {
         let compressed_file = CompressedFile::from_record_batch(
             uuid,
             "test".into(),
+            0,
             0,
             &common_test::compressed_segments_record_batch(),
         );

@@ -28,7 +28,6 @@ use object_store::local::LocalFileSystem;
 use object_store::path::{Path as ObjectStorePath, PathPart};
 use object_store::{ObjectMeta, ObjectStore};
 use tracing::debug;
-use uuid::Uuid;
 
 use crate::metadata::compressed_file::CompressedFile;
 use crate::metadata::MetadataManager;
@@ -207,16 +206,11 @@ impl DataTransfer {
         )
         .await?;
 
-        // Delete the metadata for the transferred files from the metadata database.
-        let compressed_files_to_delete: Vec<Uuid> =
-            CompressedFile::object_metas_to_compressed_file_names(&object_metas)
-                .map_err(|error| ParquetError::General(error.to_string()))?;
-
         self.metadata_manager
             .replace_compressed_files(
                 table_name,
                 column_index.into(),
-                &compressed_files_to_delete,
+                &object_metas,
                 None,
             )
             .await

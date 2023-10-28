@@ -286,16 +286,11 @@ impl CompressedDataManager {
                     ))
                 })?;
 
-            // Replace the files that were merged with the merged file in the metadata database.
-            let compressed_files_to_delete: Vec<Uuid> =
-                CompressedFile::object_metas_to_compressed_file_names(&relevant_object_metas)
-                    .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
-
             self.metadata_manager
                 .replace_compressed_files(
                     table_name,
                     column_index.into(),
-                    &compressed_files_to_delete,
+                    &relevant_object_metas,
                     Some(&compressed_file),
                 )
                 .await
@@ -505,14 +500,14 @@ impl CompressedDataManager {
 
         // Return a CompressedFile that represents the successfully merged and written file.
         let object_meta = output_data_folder
-            .head(&output_file_path.into())
+            .head(&output_file_path.clone().into())
             .await
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
         Ok(CompressedFile::from_record_batch(
-            uuid,
-            output_folder.into(),
+            &output_file_path,
             object_meta.size,
+            object_meta.last_modified.timestamp_millis(),
             &merged,
         ))
     }

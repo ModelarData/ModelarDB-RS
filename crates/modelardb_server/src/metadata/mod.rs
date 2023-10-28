@@ -47,7 +47,6 @@ use sqlx::query::Query;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
 use sqlx::{Executor, Result, Row, Sqlite, SqlitePool};
 use tracing::{error, info, warn};
-use uuid::Uuid;
 
 use crate::context::Context;
 use crate::metadata::compressed_file::CompressedFile;
@@ -393,7 +392,7 @@ impl MetadataManager {
         Self::validate_compressed_file(compressed_file)?;
 
         let insert_statement = format!(
-            "INSERT INTO {model_table_name}_compressed_files VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+            "INSERT INTO {model_table_name}_compressed_files VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
         );
 
         Self::create_insert_compressed_file_query(
@@ -420,7 +419,7 @@ impl MetadataManager {
         &self,
         model_table_name: &str,
         query_schema_index: usize,
-        compressed_files_to_delete: &[Uuid],
+        compressed_files_to_delete: &[ObjectMeta],
         replacement_compressed_file: Option<&CompressedFile>,
     ) -> Result<()> {
         if compressed_files_to_delete.is_empty() {
@@ -437,19 +436,12 @@ impl MetadataManager {
 
         let mut transaction = self.metadata_database_pool.begin().await?;
 
-        // Formats the UUIDs in hex so they can be used in the IN statement for file_name, 32
-        // characters are allocated for each hex value and one character for separating comma.
-        let mut compress_files_to_delete_in =
-            String::with_capacity(32 * compressed_files_to_delete.len());
+        let file_paths_to_delete: Vec<String> = compressed_files_to_delete
+            .iter()
+            .map(|object_meta| format!("'{}'", object_meta.location))
+            .collect();
 
-        for compressed_file_to_delete in compressed_files_to_delete {
-            compress_files_to_delete_in
-                .push_str(&format!("x'{:032X}'", compressed_file_to_delete.as_u128()));
-            compress_files_to_delete_in.push(',');
-        }
-
-        // Remove the last comma, unwrap() is safe as compressed_files_to_delete cannot be empty.
-        compress_files_to_delete_in.pop().unwrap();
+        let compressed_files_to_delete_in = file_paths_to_delete.join(",");
 
         // sqlx does not yet support binding arrays to IN (...) and recommends generating them.
         // https://github.com/launchbadge/sqlx/blob/main/FAQ.md#how-can-i-do-a-select--where-foo-in--query
@@ -457,7 +449,7 @@ impl MetadataManager {
             format!(
                 "DELETE FROM {model_table_name}_compressed_files
                  WHERE field_column = {query_schema_index}
-                 AND file_name IN ({compress_files_to_delete_in})",
+                 AND file_path IN ({compressed_files_to_delete_in})",
             )
             .as_str(),
         )
@@ -475,7 +467,7 @@ impl MetadataManager {
 
         if let Some(compressed_file) = replacement_compressed_file {
             let insert_statement = format!(
-                "INSERT INTO {model_table_name}_compressed_files VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)"
+                "INSERT INTO {model_table_name}_compressed_files VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
             );
 
             Self::create_insert_compressed_file_query(
@@ -525,13 +517,11 @@ impl MetadataManager {
         let max_value = Self::rewrite_special_value_to_normal_value(compressed_file.max_value);
 
         // query_schema_index is simply cast as a model table contains at most 1024 columns.
-        // unwrap() is safe as the folder path is generated from the table name which is valid UTF-8.
         // size is simply cast as it is unrealistic for a file to use more bytes than the max value
         // of a signed 64-bit integer as it can represent a file with a size up to ~9000 PB.
         sqlx::query(insert_statement)
-            .bind(compressed_file.name)
+            .bind(&compressed_file.file_path)
             .bind(query_schema_index as i64)
-            .bind(compressed_file.folder_path.to_str().unwrap())
             .bind(compressed_file.size as i64)
             .bind(compressed_file.created_at)
             .bind(compressed_file.start_time)
@@ -625,9 +615,7 @@ impl MetadataManager {
     /// Convert a row in the model_table_compressed_files table to an [`ObjectMeta`]. If the
     /// necessary column values could not be extracted from the row, return [`Error`].
     fn convert_compressed_file_row_to_object_meta(row: SqliteRow) -> Result<ObjectMeta> {
-        let folder_path: String = row.try_get("folder_path")?;
-        let file_name: String = row.try_get("file_name")?;
-        let location = ObjectStorePath::from(format!("{folder_path}/{file_name}.parquet"));
+        let file_path: String = row.try_get("file_path")?;
 
         // unwrap() is safe as the created_at timestamp cannot be out of range.
         let last_modified = Utc
@@ -637,7 +625,7 @@ impl MetadataManager {
         let size: i64 = row.try_get("size")?;
 
         Ok(ObjectMeta {
-            location,
+            location: ObjectStorePath::from(file_path),
             last_modified,
             size: size as usize,
             e_tag: None,
@@ -734,12 +722,12 @@ impl MetadataManager {
             )
             .await?;
 
-        // Create a table_name_compressed_files SQLite table to save the name of the table's files.
+        // Create a table_name_compressed_files SQLite table to save the metadata of the table's files.
         transaction
             .execute(
                 format!(
-                    "CREATE TABLE {}_compressed_files (file_name BLOB PRIMARY KEY, field_column INTEGER,
-                     folder_path TEXT, size INTEGER, created_at INTEGER, start_time INTEGER,
+                    "CREATE TABLE {}_compressed_files (file_path TEXT PRIMARY KEY,
+                     field_column INTEGER, size INTEGER, created_at INTEGER, start_time INTEGER,
                      end_time INTEGER, min_value REAL, max_value REAL) STRICT",
                     model_table_metadata.name
                 )
