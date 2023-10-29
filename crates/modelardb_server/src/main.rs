@@ -36,8 +36,8 @@ use arrow_flight::Action;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
 use modelardb_common::arguments::{
-    argument_to_remote_object_store, collect_command_line_arguments, decode_argument,
-    encode_argument, parse_object_store_arguments, validate_remote_data_folder,
+    collect_command_line_arguments, decode_argument, encode_argument, parse_object_store_arguments,
+    validate_remote_data_folder,
 };
 use modelardb_common::types::{ClusterMode, ServerMode};
 use object_store::{local::LocalFileSystem, ObjectStore};
@@ -187,25 +187,10 @@ async fn parse_command_line_arguments(
 ) -> Result<(ServerMode, ClusterMode, DataFolders), String> {
     // Match the provided command line arguments to the supported inputs.
     match arguments {
-        &["cloud", local_data_folder, remote_data_folder] => Ok((
-            ServerMode::Cloud,
-            ClusterMode::SingleNode,
-            DataFolders {
-                local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
-                remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
-                query_data_folder: argument_to_remote_object_store(remote_data_folder)?,
-            },
-        )),
-        &["edge", local_data_folder, remote_data_folder] => Ok((
-            ServerMode::Edge,
-            ClusterMode::SingleNode,
-            DataFolders {
-                local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
-                remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
-                query_data_folder: argument_to_local_object_store(local_data_folder)?,
-            },
-        )),
-        &["edge", local_data_folder] | &[local_data_folder] => Ok((
+        &["single", "edge", local_data_folder]
+        | &["single", local_data_folder]
+        | &["edge", local_data_folder]
+        | &[local_data_folder] => Ok((
             ServerMode::Edge,
             ClusterMode::SingleNode,
             DataFolders {
@@ -248,7 +233,7 @@ async fn parse_command_line_arguments(
             let binary_path = std::env::current_exe().unwrap();
             let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
             Err(format!(
-                "Usage: {binary_name} [cluster_mode] [server_mode] [manager_url] local_data_folder [remote_data_folder]."
+                "Usage: {binary_name} [cluster_mode] [server_mode] [manager_url] local_data_folder."
             ))
         }
     }
