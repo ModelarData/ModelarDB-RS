@@ -17,6 +17,7 @@
 //! An Apache Arrow Flight server that process requests using [`FlightServiceHandler`] can be started
 //! with [`start_apache_arrow_flight_server()`].
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -24,17 +25,21 @@ use std::str;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use arrow::array::ArrayRef;
+use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow::ipc::writer::IpcWriteOptions;
+use arrow::record_batch::RecordBatch;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
-    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
+    utils, Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
 use futures::{stream, Stream, StreamExt};
 use modelardb_common::arguments::{decode_argument, encode_argument, parse_object_store_arguments};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::metadata::normalize_name;
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::types::ServerMode;
@@ -42,7 +47,6 @@ use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
-use modelardb_common::metadata::normalize_name;
 
 use crate::cluster::Node;
 use crate::data_folder::RemoteDataFolder;
@@ -79,11 +83,20 @@ pub fn start_apache_arrow_flight_server(
 struct FlightServiceHandler {
     /// Singleton that provides access to the system's components.
     context: Arc<Context>,
+    /// Pre-allocated static argument for [`utils::flight_data_to_arrow_batch`].
+    /// For more information about the use of dictionaries in Apache Arrow see
+    /// the [Arrow Columnar Format].
+    ///
+    /// [Arrow Columnar Format]: https://arrow.apache.org/docs/format/Columnar.html
+    dictionaries_by_id: HashMap<i64, ArrayRef>,
 }
 
 impl FlightServiceHandler {
     pub fn new(context: Arc<Context>) -> FlightServiceHandler {
-        Self { context }
+        Self {
+            context,
+            dictionaries_by_id: HashMap::new(),
+        }
     }
 
     /// Return [`Ok`] if a table named `table_name` does not exist already in the metadata
@@ -164,6 +177,30 @@ impl FlightServiceHandler {
 
         Ok(())
     }
+
+    /// Return the table stored as the first element in [`FlightDescriptor.path`], otherwise a
+    /// [`Status`] that specifies that the table name is missing.
+    fn table_name_from_flight_descriptor<'a>(
+        &'a self,
+        flight_descriptor: &'a FlightDescriptor,
+    ) -> Result<&String, Status> {
+        flight_descriptor
+            .path
+            .get(0)
+            .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
+    }
+
+    /// Convert `flight_data` to a [`RecordBatch`].
+    fn flight_data_to_record_batch(
+        &self,
+        flight_data: &FlightData,
+        schema: &SchemaRef,
+    ) -> Result<RecordBatch, Status> {
+        debug_assert_eq!(flight_data.flight_descriptor, None);
+
+        utils::flight_data_to_arrow_batch(flight_data, schema.clone(), &self.dictionaries_by_id)
+            .map_err(|error| Status::invalid_argument(error.to_string()))
+    }
 }
 
 #[tonic::async_trait]
@@ -226,10 +263,7 @@ impl FlightService for FlightServiceHandler {
         request: Request<FlightDescriptor>,
     ) -> Result<Response<SchemaResult>, Status> {
         let flight_descriptor = request.into_inner();
-        let table_name = flight_descriptor
-            .path
-            .get(0)
-            .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))?;
+        let table_name = self.table_name_from_flight_descriptor(&flight_descriptor)?;
 
         let table_sql = self
             .context
@@ -270,6 +304,7 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
+    // TODO: Maybe add common functions to avoid duplicated code here and in util methods.
     /// Insert metadata about tags into a table_name_tags table or metadata about compressed files
     /// into a table_name_compressed_files table in the metadata database. The name of the table
     /// must be provided as the first element of `FlightDescriptor.path` and the schema of the
@@ -280,7 +315,6 @@ impl FlightService for FlightServiceHandler {
         &self,
         request: Request<Streaming<FlightData>>,
     ) -> Result<Response<Self::DoPutStream>, Status> {
-        // TODO: Maybe add a common function to avoid duplicated code.
         // Extract the table name to insert metadata into.
         let mut flight_data_stream = request.into_inner();
 
@@ -295,10 +329,18 @@ impl FlightService for FlightServiceHandler {
         let table_name = self.table_name_from_flight_descriptor(&flight_descriptor)?;
         let normalized_table_name = normalize_name(table_name);
 
-        // TODO: Check that the table name matches a table_name_tags or table_name_compressed_files table.
-        // TODO: Handle the data based on whether it is tag metadata or compressed files metadata.
-        // TODO: If tag metadata, insert the metadata into the table_name_tags table and the model_table_hash_table_name table.
-        // TODO: If compressed files metadata, insert the metadata into the table_name_compressed_files table.
+        // Check that the table name matches a table_name_tags or table_name_compressed_files table.
+        if normalized_table_name.ends_with("_tags") {
+            // If tag metadata, insert the metadata into the table_name_tags table and the
+            // model_table_hash_table_name table.
+        } else if normalized_table_name.ends_with("_compressed_files") {
+            // If compressed files metadata, insert the metadata into the
+            // table_name_compressed_files table.
+        } else {
+            return Err(Status::invalid_argument(format!(
+                "Table '{normalized_table_name}' is not a valid metadata database table."
+            )));
+        }
 
         // Confirm the metadata was received.
         Ok(Response::new(Box::pin(stream::empty())))
