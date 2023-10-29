@@ -32,7 +32,7 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
-use futures::{stream, Stream};
+use futures::{stream, Stream, StreamExt};
 use modelardb_common::arguments::{decode_argument, encode_argument, parse_object_store_arguments};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::parser;
@@ -42,6 +42,7 @@ use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::info;
+use modelardb_common::metadata::normalize_name;
 
 use crate::cluster::Node;
 use crate::data_folder::RemoteDataFolder;
@@ -269,12 +270,38 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// TODO: Insert metadata such as tags into the metadata database.
+    /// Insert metadata about tags into a table_name_tags table or metadata about compressed files
+    /// into a table_name_compressed_files table in the metadata database. The name of the table
+    /// must be provided as the first element of `FlightDescriptor.path` and the schema of the
+    /// metadata must match TODO or TODO for either tag metadata or compressed files metadata.
+    /// If the metadata is successfully inserted, an empty stream is returned as confirmation.
+    /// Otherwise, [`Status`] specifying what error occurred is returned.
     async fn do_put(
         &self,
-        _request: Request<Streaming<FlightData>>,
+        request: Request<Streaming<FlightData>>,
     ) -> Result<Response<Self::DoPutStream>, Status> {
-        Err(Status::unimplemented("Not implemented."))
+        // TODO: Maybe add a common function to avoid duplicated code.
+        // Extract the table name to insert metadata into.
+        let mut flight_data_stream = request.into_inner();
+
+        let flight_data = flight_data_stream
+            .next()
+            .await
+            .ok_or_else(|| Status::invalid_argument("Missing FlightData."))??;
+
+        let flight_descriptor = flight_data
+            .flight_descriptor
+            .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
+        let table_name = self.table_name_from_flight_descriptor(&flight_descriptor)?;
+        let normalized_table_name = normalize_name(table_name);
+
+        // TODO: Check that the table name matches a table_name_tags or table_name_compressed_files table.
+        // TODO: Handle the data based on whether it is tag metadata or compressed files metadata.
+        // TODO: If tag metadata, insert the metadata into the table_name_tags table and the model_table_hash_table_name table.
+        // TODO: If compressed files metadata, insert the metadata into the table_name_compressed_files table.
+
+        // Confirm the metadata was received.
+        Ok(Response::new(Box::pin(stream::empty())))
     }
 
     /// Not implemented.
