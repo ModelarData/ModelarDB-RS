@@ -308,9 +308,10 @@ impl FlightService for FlightServiceHandler {
     /// Insert metadata about tags into a table_name_tags table or metadata about compressed files
     /// into a table_name_compressed_files table in the metadata database. The name of the table
     /// must be provided as the first element of `FlightDescriptor.path` and the schema of the
-    /// metadata must match TODO or TODO for either tag metadata or compressed files metadata.
-    /// If the metadata is successfully inserted, an empty stream is returned as confirmation.
-    /// Otherwise, [`Status`] specifying what error occurred is returned.
+    /// metadata must match [`TAG_METADATA_SCHEMA`](modelardb_common::schemas::TAG_METADATA_SCHEMA)
+    /// or [`COMPRESSED_FILE_METADATA_SCHEMA`](modelardb_common::schemas::COMPRESSED_FILE_METADATA_SCHEMA)
+    /// for either tag metadata or compressed file metadata. If the metadata is successfully
+    /// inserted, an empty stream is returned as confirmation, otherwise [`Status`] is returned.
     async fn do_put(
         &self,
         request: Request<Streaming<FlightData>>,
