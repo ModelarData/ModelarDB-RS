@@ -206,6 +206,7 @@ impl DataTransfer {
         )
         .await?;
 
+        // Delete the metadata for the transferred files from the metadata database.
         self.metadata_manager
             .replace_compressed_files(table_name, column_index.into(), &object_metas, None)
             .await
@@ -260,10 +261,10 @@ impl DataTransfer {
 mod tests {
     use super::*;
 
-    use chrono::Utc;
     use std::fs;
     use std::path::Path;
 
+    use chrono::Utc;
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
     use uuid::Uuid;

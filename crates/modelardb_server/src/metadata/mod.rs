@@ -23,7 +23,6 @@
 
 pub(crate) mod compressed_file;
 
-use chrono::{TimeZone, Utc};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::Hasher;
@@ -31,6 +30,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::{fs, str};
 
+use chrono::{TimeZone, Utc};
 use dashmap::DashMap;
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::execution::options::ParquetReadOptions;
@@ -617,7 +617,7 @@ impl MetadataManager {
         }
     }
 
-    /// Convert a row in the model_table_compressed_files table to an [`ObjectMeta`]. If the
+    /// Convert a row in the table_name_compressed_files table to an [`ObjectMeta`]. If the
     /// necessary column values could not be extracted from the row, return [`Error`].
     fn convert_compressed_file_row_to_object_meta(row: SqliteRow) -> Result<ObjectMeta> {
         let file_path: String = row.try_get("file_path")?;
@@ -1760,7 +1760,7 @@ mod tests {
 
         let mut rows = metadata_manager.metadata_database_pool.fetch(
             "SELECT file_path, field_column, size, created_at, start_time, end_time,
-                   min_value, max_value FROM model_table_compressed_files",
+             min_value, max_value FROM model_table_compressed_files",
         );
         assert!(rows.try_next().await.unwrap().is_none());
 
