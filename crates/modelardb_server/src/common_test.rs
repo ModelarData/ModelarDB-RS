@@ -221,6 +221,12 @@ pub async fn query_optimized_physical_query_plan(
     let model_table_metadata = model_table_metadata_arc();
 
     context
+        .metadata_manager
+        .save_model_table_metadata(&model_table_metadata, MODEL_TABLE_SQL)
+        .await
+        .unwrap();
+
+    context
         .session
         .register_table(
             "model_table",

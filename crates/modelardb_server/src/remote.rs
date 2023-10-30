@@ -594,7 +594,7 @@ impl FlightService for FlightServiceHandler {
             // Update the object store used for data transfers.
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine
-                .update_remote_data_folder(object_store)
+                .update_remote_data_folder(object_store, &self.context.metadata_manager)
                 .await
                 .map_err(|error| {
                     Status::internal(format!("Could not update remote data folder: {error}"))
@@ -668,8 +668,9 @@ impl FlightService for FlightServiceHandler {
     ) -> Result<Response<Self::ListActionsStream>, Status> {
         let command_statement_update_action = ActionType {
             r#type: "CommandStatementUpdate".to_owned(),
-            description: "Execute a SQL query containing a single command that produces no results."
-                .to_owned(),
+            description:
+                "Execute a SQL query containing a single command that produces no results."
+                    .to_owned(),
         };
 
         let flush_memory_action = ActionType {

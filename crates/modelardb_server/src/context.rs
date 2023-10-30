@@ -188,7 +188,7 @@ impl Context {
         // Create an empty Apache Parquet file to save the schema.
         let file_path = folder_path.join("empty_for_schema.parquet");
         let empty_batch = RecordBatch::new_empty(Arc::new(schema));
-        StorageEngine::write_batch_to_apache_parquet_file(empty_batch, &file_path, None)
+        StorageEngine::write_batch_to_apache_parquet_file(&empty_batch, &file_path, None)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Save the table in the Apache Arrow Datafusion catalog.

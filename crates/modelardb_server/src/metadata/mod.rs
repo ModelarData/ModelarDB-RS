@@ -21,14 +21,16 @@
 //! corresponding model table's field column indices to uniquely identify each univariate time series
 //! stored in the storage engine by a univariate id.
 
+pub(crate) mod compressed_file;
+
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::fs;
 use std::hash::Hasher;
 use std::path::{Path, PathBuf};
-use std::str;
 use std::sync::Arc;
+use std::{fs, str};
 
+use chrono::{TimeZone, Utc};
 use dashmap::DashMap;
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::execution::options::ParquetReadOptions;
@@ -37,55 +39,22 @@ use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use modelardb_common::types::{ErrorBound, Timestamp, UnivariateId, Value};
 use modelardb_common::{metadata, parser};
+use object_store::path::Path as ObjectStorePath;
+use object_store::ObjectMeta;
 use sqlx::database::HasArguments;
 use sqlx::error::Error;
 use sqlx::query::Query;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteRow};
 use sqlx::{Executor, Result, Row, Sqlite, SqlitePool};
 use tracing::{error, info, warn};
-use uuid::Uuid;
 
 use crate::context::Context;
+use crate::metadata::compressed_file::CompressedFile;
 use crate::query::ModelTable;
 use crate::storage::COMPRESSED_DATA_FOLDER;
 
 /// Name used for the file containing the SQLite database storing the metadata.
 pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
-
-/// Metadata about a file tracked by [`MetadataManager`] which contains compressed segments.
-#[allow(dead_code)]
-#[derive(Debug, Clone)]
-pub struct CompressedFile {
-    /// Name of the file.
-    name: Uuid,
-    /// Timestamp of the first data point in the file.
-    start_time: Timestamp,
-    /// Timestamp of the last data point in the file.
-    end_time: Timestamp,
-    /// Value of the data point with the smallest value in the file.
-    min_value: Value,
-    /// Value of the data point with the largest value in the file.
-    max_value: Value,
-}
-
-#[allow(dead_code)]
-impl CompressedFile {
-    pub fn new(
-        name: Uuid,
-        start_time: Timestamp,
-        end_time: Timestamp,
-        min_value: Value,
-        max_value: Value,
-    ) -> Self {
-        Self {
-            name,
-            start_time,
-            end_time,
-            min_value,
-            max_value,
-        }
-    }
-}
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata database.
@@ -414,7 +383,6 @@ impl MetadataManager {
     /// * The max value is smaller than the min value in `compressed_file`.
     /// * The metadata database could not be modified.
     /// * A model table with `model_table_name` does not exist.
-    #[allow(dead_code)]
     pub async fn save_compressed_file(
         &self,
         model_table_name: &str,
@@ -424,7 +392,7 @@ impl MetadataManager {
         Self::validate_compressed_file(compressed_file)?;
 
         let insert_statement = format!(
-            "INSERT INTO {model_table_name}_compressed_files VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+            "INSERT INTO {model_table_name}_compressed_files VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
         );
 
         Self::create_insert_compressed_file_query(
@@ -447,12 +415,11 @@ impl MetadataManager {
     /// * Less than the number of files in `compressed_files_to_delete` was deleted.
     /// * The metadata database could not be modified.
     /// * A model table with `model_table_name` does not exist.
-    #[allow(dead_code)]
     pub async fn replace_compressed_files(
         &self,
         model_table_name: &str,
         query_schema_index: usize,
-        compressed_files_to_delete: &[Uuid],
+        compressed_files_to_delete: &[ObjectMeta],
         replacement_compressed_file: Option<&CompressedFile>,
     ) -> Result<()> {
         if compressed_files_to_delete.is_empty() {
@@ -469,19 +436,12 @@ impl MetadataManager {
 
         let mut transaction = self.metadata_database_pool.begin().await?;
 
-        // Formats the UUIDs in hex so they can be used in the IN statement for file_name, 32
-        // characters are allocated for each hex value and one character for separating comma.
-        let mut compress_files_to_delete_in =
-            String::with_capacity(32 * compressed_files_to_delete.len());
+        let file_paths_to_delete: Vec<String> = compressed_files_to_delete
+            .iter()
+            .map(|object_meta| format!("'{}'", object_meta.location))
+            .collect();
 
-        for compressed_file_to_delete in compressed_files_to_delete {
-            compress_files_to_delete_in
-                .push_str(&format!("x'{:032X}'", compressed_file_to_delete.as_u128()));
-            compress_files_to_delete_in.push(',');
-        }
-
-        // Remove the last comma, unwrap() is safe as compressed_files_to_delete cannot be empty.
-        compress_files_to_delete_in.pop().unwrap();
+        let compressed_files_to_delete_in = file_paths_to_delete.join(",");
 
         // sqlx does not yet support binding arrays to IN (...) and recommends generating them.
         // https://github.com/launchbadge/sqlx/blob/main/FAQ.md#how-can-i-do-a-select--where-foo-in--query
@@ -489,7 +449,7 @@ impl MetadataManager {
             format!(
                 "DELETE FROM {model_table_name}_compressed_files
                  WHERE field_column = {query_schema_index}
-                 AND file_name IN ({compress_files_to_delete_in})",
+                 AND file_path IN ({compressed_files_to_delete_in})",
             )
             .as_str(),
         )
@@ -507,7 +467,7 @@ impl MetadataManager {
 
         if let Some(compressed_file) = replacement_compressed_file {
             let insert_statement = format!(
-                "INSERT INTO {model_table_name}_compressed_files VALUES (?1, ?2, ?3, ?4, ?5, ?6)"
+                "INSERT INTO {model_table_name}_compressed_files VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)"
             );
 
             Self::create_insert_compressed_file_query(
@@ -548,7 +508,6 @@ impl MetadataManager {
 
     /// Create a [`Query`] that, when executed, stores `compressed_file` in the metadata database
     /// for the column at `query_schema_index` using `insert_statement`.
-    #[allow(dead_code)]
     fn create_insert_compressed_file_query<'a>(
         insert_statement: &'a str,
         query_schema_index: usize,
@@ -557,17 +516,26 @@ impl MetadataManager {
         let min_value = Self::rewrite_special_value_to_normal_value(compressed_file.min_value);
         let max_value = Self::rewrite_special_value_to_normal_value(compressed_file.max_value);
 
+        let created_at = compressed_file
+            .file_metadata
+            .last_modified
+            .timestamp_millis();
+
         // query_schema_index is simply cast as a model table contains at most 1024 columns.
+        // size is simply cast as it is unrealistic for a file to use more bytes than the max value
+        // of a signed 64-bit integer as it can represent a file with a size up to ~9000 PB.
         sqlx::query(insert_statement)
-            .bind(compressed_file.name)
+            .bind(compressed_file.file_metadata.location.as_ref())
             .bind(query_schema_index as i64)
+            .bind(compressed_file.file_metadata.size as i64)
+            .bind(created_at)
             .bind(compressed_file.start_time)
             .bind(compressed_file.end_time)
             .bind(min_value)
             .bind(max_value)
     }
 
-    /// Retrieve the names of the compressed files that correspond to the column at `column_index`
+    /// Return an [`ObjectMeta`] for each compressed file that belongs to the column at `query_schema_index`
     /// in the model table with `model_table_name` within the given range of time and value. The
     /// files are returned in sorted order by their start time. If no files belong to the column at
     /// `query_schema_index` for the table with `model_table_name` an empty [`Vec`] is returned,
@@ -576,7 +544,6 @@ impl MetadataManager {
     /// * The max value is smaller than the min value.
     /// * The metadata database could not be accessed.
     /// * A model table with `model_table_name` does not exist.
-    #[allow(dead_code)]
     pub async fn compressed_files(
         &self,
         model_table_name: &str,
@@ -585,7 +552,7 @@ impl MetadataManager {
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
         max_value: Option<Value>,
-    ) -> Result<Vec<Uuid>> {
+    ) -> Result<Vec<ObjectMeta>> {
         // Set default values for the parts of the time and value range that are not defined.
         let start_time = start_time.unwrap_or(0);
         let end_time = end_time.unwrap_or(Timestamp::MAX);
@@ -613,7 +580,7 @@ impl MetadataManager {
         let max_value = Self::rewrite_special_value_to_normal_value(max_value);
 
         let select_statement = format!(
-            "SELECT file_name FROM {model_table_name}_compressed_files
+            "SELECT * FROM {model_table_name}_compressed_files
              WHERE field_column = (?1)
              AND (?2) <= end_time AND start_time <= (?3)
              AND (?4) <= max_value AND min_value <= (?5)
@@ -629,12 +596,12 @@ impl MetadataManager {
             .bind(max_value)
             .fetch(&self.metadata_database_pool);
 
-        let mut file_names = vec![];
+        let mut files = vec![];
         while let Some(row) = rows.try_next().await? {
-            file_names.push(row.try_get(0)?);
+            files.push(Self::convert_compressed_file_row_to_object_meta(row)?);
         }
 
-        Ok(file_names)
+        Ok(files)
     }
 
     /// Rewrite the special values in [`Value`] (Negative Infinity, Infinity, and NaN) to the closet
@@ -648,6 +615,26 @@ impl MetadataManager {
         } else {
             value
         }
+    }
+
+    /// Convert a row in the table_name_compressed_files table to an [`ObjectMeta`]. If the
+    /// necessary column values could not be extracted from the row, return [`Error`].
+    fn convert_compressed_file_row_to_object_meta(row: SqliteRow) -> Result<ObjectMeta> {
+        let file_path: String = row.try_get("file_path")?;
+
+        // unwrap() is safe as the created_at timestamp cannot be out of range.
+        let last_modified = Utc
+            .timestamp_millis_opt(row.try_get("created_at")?)
+            .unwrap();
+
+        let size: i64 = row.try_get("size")?;
+
+        Ok(ObjectMeta {
+            location: ObjectStorePath::from(file_path),
+            last_modified,
+            size: size as usize,
+            e_tag: None,
+        })
     }
 
     /// Save the created table to the metadata database. This consists of adding a row to the
@@ -740,12 +727,13 @@ impl MetadataManager {
             )
             .await?;
 
-        // Create a table_name_compressed_files SQLite table to save the name of the table's files.
+        // Create a table_name_compressed_files SQLite table to save the metadata of the table's files.
         transaction
             .execute(
                 format!(
-                    "CREATE TABLE {}_compressed_files (file_name BLOB PRIMARY KEY, field_column INTEGER,
-                     start_time INTEGER, end_time INTEGER, min_value REAL, max_value REAL) STRICT",
+                    "CREATE TABLE {}_compressed_files (file_path TEXT PRIMARY KEY,
+                     field_column INTEGER, size INTEGER, created_at INTEGER, start_time INTEGER,
+                     end_time INTEGER, min_value REAL, max_value REAL) STRICT",
                     model_table_metadata.name
                 )
                 .as_str(),
@@ -956,20 +944,22 @@ mod tests {
 
     use std::fs;
 
+    use chrono::SubsecRound;
     use once_cell::sync::Lazy;
     use proptest::{num, prop_assert_eq, proptest};
+    use uuid::Uuid;
 
     use crate::common_test;
 
     static SEVEN_COMPRESSED_FILES: Lazy<Vec<CompressedFile>> = Lazy::new(|| {
         vec![
-            CompressedFile::new(Uuid::new_v4(), 0, 0, 37.0, 73.0),
-            CompressedFile::new(Uuid::new_v4(), 0, Timestamp::MAX, 37.0, 73.0),
-            CompressedFile::new(Uuid::new_v4(), 100, 200, 37.0, 73.0),
-            CompressedFile::new(Uuid::new_v4(), 300, 400, Value::NAN, Value::NAN),
-            CompressedFile::new(Uuid::new_v4(), 500, 600, Value::NEG_INFINITY, 73.0),
-            CompressedFile::new(Uuid::new_v4(), 700, 800, 37.0, Value::INFINITY),
-            CompressedFile::new(Uuid::new_v4(), Timestamp::MAX, Timestamp::MAX, 37.0, 73.0),
+            create_compressed_file(0, 0, 37.0, 73.0),
+            create_compressed_file(0, Timestamp::MAX, 37.0, 73.0),
+            create_compressed_file(100, 200, 37.0, 73.0),
+            create_compressed_file(300, 400, Value::NAN, Value::NAN),
+            create_compressed_file(500, 600, Value::NEG_INFINITY, 73.0),
+            create_compressed_file(700, 800, 37.0, Value::INFINITY),
+            create_compressed_file(Timestamp::MAX, Timestamp::MAX, 37.0, 73.0),
         ]
     });
 
@@ -1231,7 +1221,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_compressed_file_for_column_in_existing_model_table() {
-        let compressed_file = CompressedFile::new(Uuid::new_v4(), 100, 200, 37.0, 73.0);
+        let compressed_file = create_compressed_file(100, 200, 37.0, 73.0);
 
         // An assert is purposely not used so the test fails with information about why it failed.
         create_metadata_manager_with_named_model_table_and_save_files(
@@ -1244,7 +1234,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_compressed_file_for_column_in_missing_model_table() {
-        let compressed_file = CompressedFile::new(Uuid::new_v4(), 100, 200, 37.0, 73.0);
+        let compressed_file = create_compressed_file(100, 200, 37.0, 73.0);
         assert!(
             create_metadata_manager_with_named_model_table_and_save_files(
                 "table_model",
@@ -1258,7 +1248,7 @@ mod tests {
     #[tokio::test]
     async fn test_save_compressed_file_with_invalid_timestamps_for_column_in_existing_model_table()
     {
-        let compressed_file = CompressedFile::new(Uuid::new_v4(), 200, 100, 37.0, 73.0);
+        let compressed_file = create_compressed_file(200, 100, 37.0, 73.0);
         assert!(
             create_metadata_manager_with_named_model_table_and_save_files(
                 "model_table",
@@ -1271,7 +1261,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_compressed_file_with_invalid_values_for_column_in_existing_model_table() {
-        let compressed_file = CompressedFile::new(Uuid::new_v4(), 100, 200, 73.0, 37.0);
+        let compressed_file = create_compressed_file(100, 200, 73.0, 37.0);
         assert!(
             create_metadata_manager_with_named_model_table_and_save_files(
                 "model_table",
@@ -1285,56 +1275,57 @@ mod tests {
     #[tokio::test]
     async fn test_replace_compressed_files_with_nothing() {
         let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
-        let uuids_of_files_to_delete = &[
-            compressed_files[0].name,
-            compressed_files[1].name,
-            compressed_files[2].name,
+        let compressed_files_to_delete = &[
+            compressed_files[0].file_metadata.clone(),
+            compressed_files[1].file_metadata.clone(),
+            compressed_files[2].file_metadata.clone(),
         ];
-        let returned_files =
+        let returned_object_metas =
             create_metadata_manager_with_named_model_table_save_files_delete_and_get(
                 &compressed_files,
-                uuids_of_files_to_delete,
+                compressed_files_to_delete,
                 None,
             )
             .await;
 
-        assert_eq!(4, returned_files.len());
-        assert_eq!(compressed_files[3].name, returned_files[0]);
-        assert_eq!(compressed_files[4].name, returned_files[1]);
-        assert_eq!(compressed_files[5].name, returned_files[2]);
-        assert_eq!(compressed_files[6].name, returned_files[3]);
+        assert_eq!(4, returned_object_metas.len());
+        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[0]);
+        assert_eq!(compressed_files[4].file_metadata, returned_object_metas[1]);
+        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[2]);
+        assert_eq!(compressed_files[6].file_metadata, returned_object_metas[3]);
     }
 
     #[tokio::test]
     async fn test_replace_compressed_files_with_replacement_file() {
         let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
-        let uuids_of_files_to_delete = &[
-            compressed_files[0].name,
-            compressed_files[1].name,
-            compressed_files[2].name,
+        let compressed_files_to_delete = &[
+            compressed_files[0].file_metadata.clone(),
+            compressed_files[1].file_metadata.clone(),
+            compressed_files[2].file_metadata.clone(),
         ];
-        let replacement_file = CompressedFile::new(Uuid::new_v4(), 100, 200, 37.0, 73.0);
-        let returned_files =
+        let replacement_file = create_compressed_file(100, 200, 37.0, 73.0);
+
+        let returned_object_metas =
             create_metadata_manager_with_named_model_table_save_files_delete_and_get(
                 &compressed_files,
-                uuids_of_files_to_delete,
+                compressed_files_to_delete,
                 Some(&replacement_file),
             )
             .await;
 
-        assert_eq!(5, returned_files.len());
-        assert_eq!(replacement_file.name, returned_files[0]);
-        assert_eq!(compressed_files[3].name, returned_files[1]);
-        assert_eq!(compressed_files[4].name, returned_files[2]);
-        assert_eq!(compressed_files[5].name, returned_files[3]);
-        assert_eq!(compressed_files[6].name, returned_files[4]);
+        assert_eq!(5, returned_object_metas.len());
+        assert_eq!(replacement_file.file_metadata, returned_object_metas[0]);
+        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[1]);
+        assert_eq!(compressed_files[4].file_metadata, returned_object_metas[2]);
+        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[3]);
+        assert_eq!(compressed_files[6].file_metadata, returned_object_metas[4]);
     }
 
     async fn create_metadata_manager_with_named_model_table_save_files_delete_and_get(
         compressed_files: &[CompressedFile],
-        uuids_of_files_to_delete: &[Uuid],
+        compressed_files_to_delete: &[ObjectMeta],
         replacement_file: Option<&CompressedFile>,
-    ) -> Vec<Uuid> {
+    ) -> Vec<ObjectMeta> {
         // create_metadata_manager_with_named_model_table_and_save_files() is not reused as dropping
         // the TempDir which created the folder containing the database leaves it in read-only mode.
         let temp_dir = tempfile::tempdir().unwrap();
@@ -1355,7 +1346,12 @@ mod tests {
         }
 
         metadata_manager
-            .replace_compressed_files("model_table", 1, uuids_of_files_to_delete, replacement_file)
+            .replace_compressed_files(
+                "model_table",
+                1,
+                compressed_files_to_delete,
+                replacement_file,
+            )
             .await
             .unwrap();
 
@@ -1372,18 +1368,18 @@ mod tests {
 
     #[tokio::test]
     async fn test_replace_compressed_files_with_invalid_timestamps() {
-        let replacement_file = CompressedFile::new(Uuid::new_v4(), 200, 100, 37.0, 73.0);
+        let replacement_file = create_compressed_file(200, 100, 37.0, 73.0);
         assert_that_replace_compressed_files_fails(None, Some(&replacement_file)).await;
     }
 
     #[tokio::test]
     async fn test_replace_compressed_files_with_invalid_values() {
-        let replacement_file = CompressedFile::new(Uuid::new_v4(), 100, 200, 73.0, 37.0);
+        let replacement_file = create_compressed_file(100, 200, 73.0, 37.0);
         assert_that_replace_compressed_files_fails(None, Some(&replacement_file)).await;
     }
 
     async fn assert_that_replace_compressed_files_fails(
-        compressed_files_to_delete: Option<&[Uuid]>,
+        compressed_files_to_delete: Option<&[ObjectMeta]>,
         replacement_compressed_file: Option<&CompressedFile>,
     ) {
         // create_metadata_manager_with_named_model_table_and_save_files() is not reused as dropping
@@ -1399,9 +1395,9 @@ mod tests {
                 .unwrap();
         }
 
-        let compressed_files_first_uuid = &[compressed_files[0].name];
+        let compressed_files_first_object_meta = &[compressed_files[0].file_metadata.clone()];
         let compressed_files_to_delete =
-            compressed_files_to_delete.unwrap_or(compressed_files_first_uuid);
+            compressed_files_to_delete.unwrap_or(compressed_files_first_object_meta);
 
         assert!(metadata_manager
             .replace_compressed_files(
@@ -1463,21 +1459,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_compressed_files_without_filtering() {
-        let (compressed_files, returned_files) =
+        let (compressed_files, returned_object_metas) =
             create_metadata_manager_with_model_table_save_seven_files_and_get_files(
                 None, None, None, None,
             )
             .await;
 
-        assert_eq!(compressed_files.len(), returned_files.len());
-        for (compressed_file, returned_file) in compressed_files.iter().zip(returned_files) {
-            assert_eq!(compressed_file.name, returned_file);
+        assert_eq!(compressed_files.len(), returned_object_metas.len());
+        for (compressed_file, returned_object_meta) in
+            compressed_files.iter().zip(returned_object_metas)
+        {
+            assert_eq!(compressed_file.file_metadata, returned_object_meta);
         }
     }
 
     #[tokio::test]
     async fn test_compressed_files_with_minimum_timestamp() {
-        let (compressed_files, returned_files) =
+        let (compressed_files, returned_object_metas) =
             create_metadata_manager_with_model_table_save_seven_files_and_get_files(
                 Some(400),
                 None,
@@ -1486,17 +1484,17 @@ mod tests {
             )
             .await;
 
-        assert_eq!(5, returned_files.len());
-        assert_eq!(compressed_files[1].name, returned_files[0]);
-        assert_eq!(compressed_files[3].name, returned_files[1]);
-        assert_eq!(compressed_files[4].name, returned_files[2]);
-        assert_eq!(compressed_files[5].name, returned_files[3]);
-        assert_eq!(compressed_files[6].name, returned_files[4]);
+        assert_eq!(5, returned_object_metas.len());
+        assert_eq!(compressed_files[1].file_metadata, returned_object_metas[0]);
+        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[1]);
+        assert_eq!(compressed_files[4].file_metadata, returned_object_metas[2]);
+        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[3]);
+        assert_eq!(compressed_files[6].file_metadata, returned_object_metas[4]);
     }
 
     #[tokio::test]
     async fn test_compressed_files_with_maximum_timestamp() {
-        let (compressed_files, returned_files) =
+        let (compressed_files, returned_object_metas) =
             create_metadata_manager_with_model_table_save_seven_files_and_get_files(
                 None,
                 Some(400),
@@ -1505,16 +1503,16 @@ mod tests {
             )
             .await;
 
-        assert_eq!(4, returned_files.len());
-        assert_eq!(compressed_files[0].name, returned_files[0]);
-        assert_eq!(compressed_files[1].name, returned_files[1]);
-        assert_eq!(compressed_files[2].name, returned_files[2]);
-        assert_eq!(compressed_files[3].name, returned_files[3]);
+        assert_eq!(4, returned_object_metas.len());
+        assert_eq!(compressed_files[0].file_metadata, returned_object_metas[0]);
+        assert_eq!(compressed_files[1].file_metadata, returned_object_metas[1]);
+        assert_eq!(compressed_files[2].file_metadata, returned_object_metas[2]);
+        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[3]);
     }
 
     #[tokio::test]
     async fn test_compressed_files_with_minimum_and_maximum_timestamp() {
-        let (compressed_files, returned_files) =
+        let (compressed_files, returned_object_metas) =
             create_metadata_manager_with_model_table_save_seven_files_and_get_files(
                 Some(400),
                 Some(400),
@@ -1523,9 +1521,9 @@ mod tests {
             )
             .await;
 
-        assert_eq!(2, returned_files.len());
-        assert_eq!(compressed_files[1].name, returned_files[0]);
-        assert_eq!(compressed_files[3].name, returned_files[1]);
+        assert_eq!(2, returned_object_metas.len());
+        assert_eq!(compressed_files[1].file_metadata, returned_object_metas[0]);
+        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[1]);
     }
 
     #[tokio::test]
@@ -1573,23 +1571,46 @@ mod tests {
         min_value: Option<Value>,
         max_value: Option<Value>,
     ) -> bool {
-        let compressed_files = vec![CompressedFile::new(Uuid::new_v4(), 100, 200, 37.0, 73.0)];
+        let compressed_files = vec![create_compressed_file(100, 200, 37.0, 73.0)];
 
-        let returned_files = create_metadata_manager_with_model_table_save_files_and_get_files(
-            &compressed_files,
+        let returned_object_metas =
+            create_metadata_manager_with_model_table_save_files_and_get_files(
+                &compressed_files,
+                start_time,
+                end_time,
+                min_value,
+                max_value,
+            )
+            .await;
+
+        compressed_files.len() == returned_object_metas.len()
+    }
+
+    fn create_compressed_file(
+        start_time: Timestamp,
+        end_time: Timestamp,
+        min_value: Value,
+        max_value: Value,
+    ) -> CompressedFile {
+        let file_metadata = ObjectMeta {
+            location: ObjectStorePath::from(format!("test/{}.parquet", Uuid::new_v4())),
+            last_modified: Utc::now().round_subsecs(3),
+            size: 0,
+            e_tag: None,
+        };
+
+        CompressedFile {
+            file_metadata,
             start_time,
             end_time,
             min_value,
             max_value,
-        )
-        .await;
-
-        compressed_files.len() == returned_files.len()
+        }
     }
 
     #[tokio::test]
     async fn test_compressed_files_with_minimum_value() {
-        let (compressed_files, returned_files) =
+        let (compressed_files, returned_object_metas) =
             create_metadata_manager_with_model_table_save_seven_files_and_get_files(
                 None,
                 None,
@@ -1598,14 +1619,14 @@ mod tests {
             )
             .await;
 
-        assert_eq!(2, returned_files.len());
-        assert_eq!(compressed_files[3].name, returned_files[0]);
-        assert_eq!(compressed_files[5].name, returned_files[1]);
+        assert_eq!(2, returned_object_metas.len());
+        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[0]);
+        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[1]);
     }
 
     #[tokio::test]
     async fn test_compressed_files_with_maximum_value() {
-        let (compressed_files, returned_files) =
+        let (compressed_files, returned_object_metas) =
             create_metadata_manager_with_model_table_save_seven_files_and_get_files(
                 None,
                 None,
@@ -1614,18 +1635,18 @@ mod tests {
             )
             .await;
 
-        assert_eq!(6, returned_files.len());
-        assert_eq!(compressed_files[0].name, returned_files[0]);
-        assert_eq!(compressed_files[1].name, returned_files[1]);
-        assert_eq!(compressed_files[2].name, returned_files[2]);
-        assert_eq!(compressed_files[4].name, returned_files[3]);
-        assert_eq!(compressed_files[5].name, returned_files[4]);
-        assert_eq!(compressed_files[6].name, returned_files[5]);
+        assert_eq!(6, returned_object_metas.len());
+        assert_eq!(compressed_files[0].file_metadata, returned_object_metas[0]);
+        assert_eq!(compressed_files[1].file_metadata, returned_object_metas[1]);
+        assert_eq!(compressed_files[2].file_metadata, returned_object_metas[2]);
+        assert_eq!(compressed_files[4].file_metadata, returned_object_metas[3]);
+        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[4]);
+        assert_eq!(compressed_files[6].file_metadata, returned_object_metas[5]);
     }
 
     #[tokio::test]
     async fn test_compressed_files_with_minimum_and_maximum_value() {
-        let (compressed_files, returned_files) =
+        let (compressed_files, returned_object_metas) =
             create_metadata_manager_with_model_table_save_seven_files_and_get_files(
                 None,
                 None,
@@ -1634,8 +1655,8 @@ mod tests {
             )
             .await;
 
-        assert_eq!(1, returned_files.len());
-        assert_eq!(compressed_files[5].name, returned_files[0]);
+        assert_eq!(1, returned_object_metas.len());
+        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[0]);
     }
 
     async fn create_metadata_manager_with_model_table_save_seven_files_and_get_files(
@@ -1643,7 +1664,7 @@ mod tests {
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
         max_value: Option<Value>,
-    ) -> (Vec<CompressedFile>, Vec<Uuid>) {
+    ) -> (Vec<CompressedFile>, Vec<ObjectMeta>) {
         let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
 
         let returned_files = create_metadata_manager_with_model_table_save_files_and_get_files(
@@ -1664,7 +1685,7 @@ mod tests {
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
         max_value: Option<Value>,
-    ) -> Vec<Uuid> {
+    ) -> Vec<ObjectMeta> {
         let metadata_manager = create_metadata_manager_with_named_model_table_and_save_files(
             "model_table",
             compressed_files,
@@ -1738,8 +1759,8 @@ mod tests {
         assert!(rows.try_next().await.unwrap().is_none());
 
         let mut rows = metadata_manager.metadata_database_pool.fetch(
-            "SELECT file_name, field_column, start_time, end_time,
-                    min_value, max_value FROM model_table_compressed_files",
+            "SELECT file_path, field_column, size, created_at, start_time, end_time,
+             min_value, max_value FROM model_table_compressed_files",
         );
         assert!(rows.try_next().await.unwrap().is_none());
 

@@ -27,6 +27,7 @@ path = "src/main.rs"
 arrow-flight.workspace = true
 async-trait.workspace = true
 bytes.workspace = true
+chrono.workspace = true
 crossbeam-channel.workspace = true
 crossbeam-queue.workspace = true
 dashmap.workspace = true

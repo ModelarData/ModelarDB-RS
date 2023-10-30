@@ -56,7 +56,7 @@ description of the public functions, structs, enums, or other central elements o
 All public and private functions must be appropriately covered by unit tests. Full coverage is intended, which means all
 branches of computation within each function should be thoroughly tested.
 
-In addition, the following commands must not return any warnings or errors for the code currently in master:
+In addition, the following commands must not return any warnings or errors for the code currently in main:
 - [cargo build --all-targets](https://doc.rust-lang.org/cargo/commands/cargo-build.html)
 - [cargo clippy --all-targets](https://github.com/rust-lang/rust-clippy)
 - [cargo doc](https://doc.rust-lang.org/cargo/commands/cargo-doc.html)

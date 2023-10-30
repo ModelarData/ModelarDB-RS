@@ -16,9 +16,9 @@ name: Cargo Build, Lint, and Test
 
 on:
   pull_request:
-    branches: [ "master" ]
+    branches: [ "main" ]
   push:
-    branches: [ "master" ]
+    branches: [ "main" ]
 
 env:
   CARGO_TERM_COLOR: always

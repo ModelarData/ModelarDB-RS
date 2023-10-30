@@ -18,7 +18,7 @@
 
 use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use dashmap::DashMap;
@@ -29,8 +29,11 @@ use object_store::path::{Path as ObjectStorePath, PathPart};
 use object_store::{ObjectMeta, ObjectStore};
 use tracing::debug;
 
+use crate::metadata::compressed_file::CompressedFile;
+use crate::metadata::MetadataManager;
+use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::Metric;
-use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
+use crate::storage::COMPRESSED_DATA_FOLDER;
 
 // TODO: Make the transfer batch size in bytes part of the user-configurable settings.
 // TODO: When the storage engine is changed to use object store for everything, receive
@@ -41,10 +44,13 @@ use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 //       elsewhere.
 
 pub struct DataTransfer {
-    /// The object store containing all compressed data managed by the [`StorageEngine`].
+    /// The object store containing all compressed data managed by the
+    /// [`StorageEngine`](crate::storage::StorageEngine).
     local_data_folder: Arc<dyn ObjectStore>,
     /// The object store that the data should be transferred to.
     pub remote_data_folder: Arc<dyn ObjectStore>,
+    /// Management of metadata for deleting file metadata after transferring.
+    metadata_manager: Arc<MetadataManager>,
     /// Map from table names and column indices to the combined size in bytes of the compressed
     /// files currently saved for the column in that table.
     compressed_files: DashMap<(String, u16), usize>,
@@ -62,6 +68,7 @@ impl DataTransfer {
     pub async fn try_new(
         local_data_folder: PathBuf,
         remote_data_folder: Arc<dyn ObjectStore>,
+        metadata_manager: Arc<MetadataManager>,
         transfer_batch_size_in_bytes: usize,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
@@ -86,6 +93,7 @@ impl DataTransfer {
         let data_transfer = Self {
             local_data_folder,
             remote_data_folder,
+            metadata_manager,
             compressed_files: compressed_files.clone(),
             transfer_batch_size_in_bytes,
             used_disk_space_metric,
@@ -124,17 +132,16 @@ impl DataTransfer {
         &self,
         table_name: &str,
         column_index: u16,
-        file_path: &Path,
+        compressed_file: &CompressedFile,
     ) -> Result<(), ParquetError> {
         let key = (table_name.to_owned(), column_index);
-        let file_size = file_path.metadata()?.len() as usize;
 
         // entry() is not used as it would require the allocation of a new String for each lookup as
         // it must be given as a K, while get_mut() accepts the key as a &K so one K can be used.
         if !self.compressed_files.contains_key(&key) {
             self.compressed_files.insert(key.clone(), 0);
         }
-        *self.compressed_files.get_mut(&key).unwrap() += file_size;
+        *self.compressed_files.get_mut(&key).unwrap() += compressed_file.file_metadata.size;
 
         // If the combined size of the files is larger than the batch size, transfer the data to the
         // remote object store. unwrap() is safe as key has just been added to the map.
@@ -189,14 +196,21 @@ impl DataTransfer {
             table_name
         );
 
-        // Merge the files and transfer them to the remote object store.
-        StorageEngine::merge_compressed_apache_parquet_files(
+        // Merge the files and transfer them to the remote object store by setting the remote data
+        // folder as the output data folder for the merged file.
+        CompressedDataManager::merge_compressed_apache_parquet_files(
             &self.local_data_folder,
             &object_metas,
             &self.remote_data_folder,
             &format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"),
         )
         .await?;
+
+        // Delete the metadata for the transferred files from the metadata database.
+        self.metadata_manager
+            .replace_compressed_files(table_name, column_index.into(), &object_metas, None)
+            .await
+            .map_err(|error| ParquetError::General(error.to_string()))?;
 
         // Remove the transferred files from the in-memory tracking of compressed files.
         let transferred_bytes: usize = object_metas.iter().map(|meta| meta.size).sum();
@@ -246,16 +260,19 @@ impl DataTransfer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
 
+    use std::fs;
+    use std::path::Path;
+
+    use chrono::Utc;
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
+    use uuid::Uuid;
 
     use crate::common_test;
-    use crate::storage::TEST_UUID;
-    use crate::PORT;
+    use crate::storage::StorageEngine;
 
-    const TABLE_NAME: &str = "table";
+    const TABLE_NAME: &str = "model_table";
     const COLUMN_INDEX: u16 = 5;
     const COMPRESSED_FILE_SIZE: usize = 2429;
 
@@ -303,9 +320,13 @@ mod tests {
     #[tokio::test]
     async fn test_include_existing_files_on_start_up() {
         let temp_dir = tempfile::tempdir().unwrap();
-        create_compressed_file(temp_dir.path(), "test_1");
-        create_compressed_file(temp_dir.path(), "test_2");
-        let (_target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
+        let metadata_manager = create_metadata_manager(temp_dir.path()).await;
+
+        create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+        create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+
+        let (_target_dir, data_transfer) =
+            create_data_transfer_component(metadata_manager, temp_dir.path()).await;
 
         assert_eq!(
             *data_transfer
@@ -329,11 +350,14 @@ mod tests {
     #[tokio::test]
     async fn test_add_compressed_file_for_new_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
-        let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
+        let metadata_manager = create_metadata_manager(temp_dir.path()).await;
+
+        let (_target_dir, data_transfer) =
+            create_data_transfer_component(metadata_manager.clone(), temp_dir.path()).await;
+        let (compressed_file, _) = create_compressed_file(metadata_manager, temp_dir.path()).await;
 
         assert!(data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .is_ok());
 
@@ -350,15 +374,18 @@ mod tests {
     #[tokio::test]
     async fn test_add_compressed_file_for_existing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (_target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
-        let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
+        let metadata_manager = create_metadata_manager(temp_dir.path()).await;
+
+        let (_target_dir, data_transfer) =
+            create_data_transfer_component(metadata_manager.clone(), temp_dir.path()).await;
+        let (compressed_file, _) = create_compressed_file(metadata_manager, temp_dir.path()).await;
 
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .unwrap();
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .unwrap();
 
@@ -373,30 +400,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_add_non_existent_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir
-            .path()
-            .join(format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}"));
-        fs::create_dir_all(path.clone()).unwrap();
-
-        let (_target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
-
-        let apache_parquet_path = path.join("test_apache_parquet.parquet");
-        assert!(data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, apache_parquet_path.as_path())
-            .await
-            .is_err());
-    }
-
-    #[tokio::test]
     async fn test_transfer_single_file() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
-        let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
+        let metadata_manager = create_metadata_manager(temp_dir.path()).await;
+
+        let (target_dir, data_transfer) =
+            create_data_transfer_component(metadata_manager.clone(), temp_dir.path()).await;
+        let (compressed_file, apache_parquet_path) =
+            create_compressed_file(metadata_manager, temp_dir.path()).await;
 
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .unwrap();
         data_transfer
@@ -410,16 +424,21 @@ mod tests {
     #[tokio::test]
     async fn test_transfer_multiple_files() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
-        let path_1 = create_compressed_file(temp_dir.path(), "test_1");
-        let path_2 = create_compressed_file(temp_dir.path(), "test_2");
+        let metadata_manager = create_metadata_manager(temp_dir.path()).await;
+
+        let (target_dir, data_transfer) =
+            create_data_transfer_component(metadata_manager.clone(), temp_dir.path()).await;
+        let (compressed_file_1, path_1) =
+            create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+        let (compressed_file_2, path_2) =
+            create_compressed_file(metadata_manager, temp_dir.path()).await;
 
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, path_1.as_path())
+            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file_1)
             .await
             .unwrap();
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, path_2.as_path())
+            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file_2)
             .await
             .unwrap();
         data_transfer
@@ -433,13 +452,17 @@ mod tests {
     #[tokio::test]
     async fn test_transfer_if_reaching_batch_size_when_adding() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (target_dir, mut data_transfer) = create_data_transfer_component(temp_dir.path()).await;
-        let apache_parquet_path = create_compressed_file(temp_dir.path(), "test");
+        let metadata_manager = create_metadata_manager(temp_dir.path()).await;
+
+        let (target_dir, mut data_transfer) =
+            create_data_transfer_component(metadata_manager.clone(), temp_dir.path()).await;
+        let (compressed_file, apache_parquet_path) =
+            create_compressed_file(metadata_manager, temp_dir.path()).await;
 
         // Set the max batch size to ensure that the file is transferred immediately.
         data_transfer.transfer_batch_size_in_bytes = COMPRESSED_FILE_SIZE - 1;
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, apache_parquet_path.as_path())
+            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .unwrap();
 
@@ -449,12 +472,15 @@ mod tests {
     #[tokio::test]
     async fn test_transfer_if_reaching_batch_size_on_start_up() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let path_1 = create_compressed_file(temp_dir.path(), "test_1");
-        let path_2 = create_compressed_file(temp_dir.path(), "test_2");
-        let path_3 = create_compressed_file(temp_dir.path(), "test_3");
+        let metadata_manager = create_metadata_manager(temp_dir.path()).await;
+
+        let (_, path_1) = create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+        let (_, path_2) = create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+        let (_, path_3) = create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
 
         // Since the max batch size is 1 byte smaller than 3 compressed files, the data should be transferred immediately.
-        let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
+        let (target_dir, data_transfer) =
+            create_data_transfer_component(metadata_manager, temp_dir.path()).await;
 
         assert_data_transferred(vec![path_1, path_2, path_3], target_dir, data_transfer, 9).await;
     }
@@ -462,9 +488,13 @@ mod tests {
     #[tokio::test]
     async fn test_flush_compressed_files() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let path_1 = create_compressed_file(temp_dir.path(), "test_1");
-        let path_2 = create_compressed_file(temp_dir.path(), "test_2");
-        let (target_dir, data_transfer) = create_data_transfer_component(temp_dir.path()).await;
+        let metadata_manager = create_metadata_manager(temp_dir.path()).await;
+
+        let (_, path_1) = create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+        let (_, path_2) = create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+
+        let (target_dir, data_transfer) =
+            create_data_transfer_component(metadata_manager, temp_dir.path()).await;
 
         data_transfer.flush().await.unwrap();
 
@@ -472,7 +502,8 @@ mod tests {
     }
 
     /// Assert that the files in `paths` are all removed, a file has been created in `target_dir`,
-    /// and that the hashmap containing the compressed files size is set to 0.
+    /// the file metadata has been removed from the metadata database, and that the hashmap
+    /// containing the compressed files size is set to 0.
     async fn assert_data_transferred(
         paths: Vec<PathBuf>,
         target: TempDir,
@@ -483,18 +514,30 @@ mod tests {
             assert!(!path.exists());
         }
 
-        // The transferred file should have a time range file name that matches the compressed data.
-        let target_path = target.path().join(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/0_5_5.2_34.2_{TEST_UUID}_{}.parquet",
-            *PORT
+        // The transferred file should be in a sub-folder under the table name and column index.
+        let target_folder = target.path().join(format!(
+            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}",
         ));
-        assert!(target_path.exists());
+
+        assert!(target_folder.exists());
+        assert_eq!(target_folder.read_dir().unwrap().count(), 1);
+
+        let target_path = target_folder.read_dir().unwrap().last().unwrap().unwrap();
 
         // The file should have three rows since the rows in the compressed files are merged.
-        let batch = StorageEngine::read_batch_from_apache_parquet_file(target_path.as_path())
+        let batch = StorageEngine::read_batch_from_apache_parquet_file(&target_path.path())
             .await
             .unwrap();
         assert_eq!(batch.num_rows(), expected_num_rows);
+
+        // The metadata for the files should be deleted from the metadata database.
+        let compressed_files = data_transfer
+            .metadata_manager
+            .compressed_files(TABLE_NAME, COLUMN_INDEX.into(), None, None, None, None)
+            .await
+            .unwrap();
+
+        assert_eq!(compressed_files.len(), 0);
 
         assert_eq!(
             *data_transfer
@@ -518,27 +561,46 @@ mod tests {
     }
 
     /// Set up a data folder with a table folder that has a single compressed file in it. Return the
-    /// path to the created Apache Parquet file.
-    fn create_compressed_file(local_data_folder_path: &Path, file_name: &str) -> PathBuf {
-        let path = local_data_folder_path.join(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}"
-        ));
+    /// [`CompressedFile`] representing the created Apache Parquet file and the path to the file.
+    async fn create_compressed_file(
+        metadata_manager: Arc<MetadataManager>,
+        local_data_folder_path: &Path,
+    ) -> (CompressedFile, PathBuf) {
+        let folder_path = format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}");
+        let path = local_data_folder_path.join(folder_path.clone());
         fs::create_dir_all(path.clone()).unwrap();
 
+        let uuid = Uuid::new_v4();
         let batch = common_test::compressed_segments_record_batch();
-        let apache_parquet_path = path.join(format!("{file_name}.parquet"));
+        let apache_parquet_path = path.join(format!("{uuid}.parquet"));
         StorageEngine::write_batch_to_apache_parquet_file(
-            batch,
+            &batch,
             apache_parquet_path.as_path(),
             None,
         )
         .unwrap();
 
-        apache_parquet_path
+        let object_meta = ObjectMeta {
+            location: ObjectStorePath::from(format!("{folder_path}/{uuid}.parquet")),
+            last_modified: Utc::now(),
+            size: COMPRESSED_FILE_SIZE,
+            e_tag: None,
+        };
+
+        let compressed_file = CompressedFile::from_record_batch(object_meta, &batch);
+
+        // Save the metadata of the compressed file to the metadata database.
+        metadata_manager
+            .save_compressed_file(TABLE_NAME, COLUMN_INDEX.into(), &compressed_file)
+            .await
+            .unwrap();
+
+        (compressed_file, apache_parquet_path)
     }
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
     async fn create_data_transfer_component(
+        metadata_manager: Arc<MetadataManager>,
         local_data_folder_path: &Path,
     ) -> (TempDir, DataTransfer) {
         let target_dir = tempfile::tempdir().unwrap();
@@ -550,6 +612,7 @@ mod tests {
         let data_transfer = DataTransfer::try_new(
             local_data_folder_path.to_path_buf(),
             remote_data_folder_object_store,
+            metadata_manager,
             COMPRESSED_FILE_SIZE * 3 - 1,
             Arc::new(Mutex::new(Metric::new())),
         )
@@ -557,5 +620,22 @@ mod tests {
         .unwrap();
 
         (target_dir, data_transfer)
+    }
+
+    /// Create a metadata manager and save a single model table to the metadata database.
+    async fn create_metadata_manager(local_data_folder_path: &Path) -> Arc<MetadataManager> {
+        let metadata_manager = Arc::new(
+            MetadataManager::try_new(local_data_folder_path)
+                .await
+                .unwrap(),
+        );
+
+        let model_table_metadata = common_test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        metadata_manager
     }
 }
