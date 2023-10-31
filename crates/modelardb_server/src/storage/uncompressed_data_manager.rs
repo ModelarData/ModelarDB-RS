@@ -625,6 +625,7 @@ mod tests {
     use datafusion::arrow::datatypes::SchemaRef;
     use datafusion::arrow::record_batch::RecordBatch;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
+    use modelardb_common::test;
     use modelardb_common::types::{TimestampBuilder, ValueBuilder};
     use ringbuf::Rb;
 
@@ -640,7 +641,7 @@ mod tests {
     async fn test_can_find_existing_on_disk_data_buffers() {
         // Spill an uncompressed buffer to disk.
         let temp_dir = tempfile::tempdir().unwrap();
-        let model_table_metadata = Arc::new(common_test::model_table_metadata());
+        let model_table_metadata = Arc::new(test::model_table_metadata());
         let mut buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
             model_table_metadata,
@@ -1168,7 +1169,7 @@ mod tests {
         let metadata_manager = Arc::new(MetadataManager::try_new(path).await.unwrap());
 
         // Ensure the expected metadata is available through the metadata manager.
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
 
         metadata_manager
             .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)

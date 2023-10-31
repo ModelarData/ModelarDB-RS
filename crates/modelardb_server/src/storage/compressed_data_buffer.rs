@@ -171,13 +171,14 @@ impl CompressedDataBuffer {
 mod tests {
     use super::*;
 
+    use modelardb_common::test;
+
     use crate::common_test;
 
     #[test]
     fn test_can_append_valid_compressed_segments() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
-        compressed_data_buffer
-            .append_compressed_segments(common_test::compressed_segments_record_batch());
+        compressed_data_buffer.append_compressed_segments(test::compressed_segments_record_batch());
 
         assert_eq!(compressed_data_buffer.compressed_segments.len(), 1)
     }
@@ -185,8 +186,7 @@ mod tests {
     #[test]
     fn test_compressed_data_buffer_size_updated_when_appending() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
-        compressed_data_buffer
-            .append_compressed_segments(common_test::compressed_segments_record_batch());
+        compressed_data_buffer.append_compressed_segments(test::compressed_segments_record_batch());
 
         assert!(compressed_data_buffer.size_in_bytes > 0);
     }
@@ -194,7 +194,7 @@ mod tests {
     #[test]
     fn test_can_save_compressed_data_buffer_to_apache_parquet() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
-        let segment = common_test::compressed_segments_record_batch();
+        let segment = test::compressed_segments_record_batch();
         compressed_data_buffer.append_compressed_segments(segment.clone());
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -218,7 +218,7 @@ mod tests {
 
     #[test]
     fn test_get_size_of_compressed_data_buffer() {
-        let compressed_data_buffer = common_test::compressed_segments_record_batch();
+        let compressed_data_buffer = test::compressed_segments_record_batch();
 
         assert_eq!(
             CompressedDataBuffer::size_of_compressed_segments(&compressed_data_buffer),

@@ -517,6 +517,7 @@ mod tests {
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
     use futures::StreamExt;
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+    use modelardb_common::test;
     use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
     use object_store::local::LocalFileSystem;
     use object_store::path::Path as ObjectStorePath;
@@ -532,7 +533,7 @@ mod tests {
     // Tests for insert_record_batch().
     #[tokio::test]
     async fn test_insert_record_batch() {
-        let record_batch = common_test::compressed_segments_record_batch();
+        let record_batch = test::compressed_segments_record_batch();
         let (temp_dir, data_manager) = create_compressed_data_manager().await;
 
         let local_data_folder = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
@@ -858,7 +859,7 @@ mod tests {
         // Create a metadata manager and save a single model table to the metadata database.
         let metadata_manager = Arc::new(MetadataManager::try_new(temp_dir.path()).await.unwrap());
 
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
@@ -905,7 +906,7 @@ mod tests {
             .unwrap(),
         );
         let compressed_segments =
-            common_test::compressed_segments_record_batch_with_time(univariate_id, time_ms, offset);
+            test::compressed_segments_record_batch_with_time(univariate_id, time_ms, offset);
 
         CompressedSegmentBatch::new(univariate_id, model_table_metadata, compressed_segments)
     }

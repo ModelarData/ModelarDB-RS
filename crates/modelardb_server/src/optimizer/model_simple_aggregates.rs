@@ -981,8 +981,9 @@ mod tests {
     use datafusion::physical_plan::coalesce_batches::CoalesceBatchesExec;
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion::physical_plan::filter::FilterExec;
+    use modelardb_common::test;
 
-    use crate::common_test::{model_table_metadata_arc, MODEL_TABLE_SQL, test_context};
+    use crate::common_test::{test_context, MODEL_TABLE_SQL};
     use crate::query::grid_exec::GridExec;
     use crate::query::ModelTable;
 
@@ -1072,7 +1073,7 @@ mod tests {
         query: &str,
     ) -> Arc<dyn ExecutionPlan> {
         let context = test_context(path).await;
-        let model_table_metadata = model_table_metadata_arc();
+        let model_table_metadata = test::model_table_metadata_arc();
 
         context
             .metadata_manager

@@ -21,5 +21,5 @@ pub mod macros;
 pub mod metadata;
 pub mod parser;
 pub mod schemas;
-pub mod types;
 pub mod test;
+pub mod types;

@@ -543,15 +543,14 @@ mod tests {
     use std::sync::Arc;
 
     use datafusion::arrow::datatypes::{Field, Schema};
+    use modelardb_common::test;
     use tempfile::{self, TempDir};
-
-    use crate::common_test;
 
     // Tests for writing and reading Apache Parquet files.
     #[test]
     fn test_write_batch_to_apache_parquet_file() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let batch = common_test::compressed_segments_record_batch();
+        let batch = test::compressed_segments_record_batch();
 
         let apache_parquet_path = temp_dir.path().join("test.parquet");
         StorageEngine::write_batch_to_apache_parquet_file(
@@ -594,7 +593,7 @@ mod tests {
 
     fn write_to_file_and_assert_failed(file_name: String) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let batch = common_test::compressed_segments_record_batch();
+        let batch = test::compressed_segments_record_batch();
 
         let apache_parquet_path = temp_dir.path().join(file_name);
         let result = StorageEngine::write_batch_to_apache_parquet_file(
@@ -643,7 +642,7 @@ mod tests {
         file_name: String,
     ) -> (TempDir, PathBuf, RecordBatch) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let batch = common_test::compressed_segments_record_batch();
+        let batch = test::compressed_segments_record_batch();
 
         let apache_parquet_path = temp_dir.path().join(file_name);
         StorageEngine::write_batch_to_apache_parquet_file(

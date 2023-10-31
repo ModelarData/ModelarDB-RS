@@ -265,6 +265,7 @@ mod tests {
     use std::path::Path;
 
     use chrono::Utc;
+    use modelardb_common::test;
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
     use uuid::Uuid;
@@ -571,7 +572,7 @@ mod tests {
         fs::create_dir_all(path.clone()).unwrap();
 
         let uuid = Uuid::new_v4();
-        let batch = common_test::compressed_segments_record_batch();
+        let batch = test::compressed_segments_record_batch();
         let apache_parquet_path = path.join(format!("{uuid}.parquet"));
         StorageEngine::write_batch_to_apache_parquet_file(
             &batch,
@@ -630,7 +631,7 @@ mod tests {
                 .unwrap(),
         );
 
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await

@@ -945,6 +945,7 @@ mod tests {
     use std::fs;
 
     use chrono::SubsecRound;
+    use modelardb_common::test;
     use once_cell::sync::Lazy;
     use proptest::{num, prop_assert_eq, proptest};
     use uuid::Uuid;
@@ -1004,7 +1005,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
@@ -1039,7 +1040,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
@@ -1098,7 +1099,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
@@ -1204,7 +1205,7 @@ mod tests {
         metadata_manager: &mut MetadataManager,
         tag_values: &[&str],
     ) {
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
@@ -1331,7 +1332,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
 
         let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
 
         metadata_manager
             .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
@@ -1412,7 +1413,7 @@ mod tests {
 
     async fn create_metadata_manager_and_save_model_table(temp_dir: &Path) -> MetadataManager {
         let metadata_manager = MetadataManager::try_new(temp_dir).await.unwrap();
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
 
         metadata_manager
             .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
@@ -1746,7 +1747,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
             .await
@@ -1811,7 +1812,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = common_test::test_context(temp_dir.path()).await;
 
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         context
             .metadata_manager
             .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
@@ -1831,7 +1832,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = common_test::test_context(temp_dir.path()).await;
 
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         context
             .metadata_manager
             .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
@@ -1856,7 +1857,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = common_test::test_context(temp_dir.path()).await;
 
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         context
             .metadata_manager
             .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
