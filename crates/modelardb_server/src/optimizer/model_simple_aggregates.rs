@@ -971,7 +971,10 @@ impl Accumulator for ModelAvgAccumulator {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use std::any::TypeId;
+    use std::path::Path;
 
     use datafusion::datasource::physical_plan::parquet::ParquetExec;
     use datafusion::physical_plan::aggregates::AggregateExec;
@@ -979,18 +982,16 @@ mod tests {
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion::physical_plan::filter::FilterExec;
 
-    use crate::common_test;
+    use crate::common_test::{model_table_metadata_arc, MODEL_TABLE_SQL, test_context};
     use crate::query::grid_exec::GridExec;
-
-    use super::*;
+    use crate::query::ModelTable;
 
     // Tests for ModelSimpleAggregatesPhysicalOptimizerRule.
     #[tokio::test]
     async fn test_rewrite_aggregate_on_one_column_without_predicates() {
         let temp_dir = tempfile::tempdir().unwrap();
         let query = "SELECT COUNT(field_1) FROM model_table";
-        let physical_plan =
-            common_test::query_optimized_physical_query_plan(temp_dir.path(), query).await;
+        let physical_plan = query_optimized_physical_query_plan(temp_dir.path(), query).await;
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -999,7 +1000,7 @@ mod tests {
             vec![TypeId::of::<ParquetExec>()],
         ];
 
-        common_test::assert_eq_physical_plan_expected(physical_plan, &expected_plan);
+        assert_eq_physical_plan_expected(physical_plan, &expected_plan);
     }
 
     #[tokio::test]
@@ -1020,9 +1021,8 @@ mod tests {
         for query in [query_no_avg, query_only_avg] {
             let temp_dir = tempfile::tempdir().unwrap();
 
-            let physical_plan =
-                common_test::query_optimized_physical_query_plan(temp_dir.path(), query).await;
-            common_test::assert_eq_physical_plan_expected(physical_plan, &expected_plan);
+            let physical_plan = query_optimized_physical_query_plan(temp_dir.path(), query).await;
+            assert_eq_physical_plan_expected(physical_plan, &expected_plan);
         }
     }
 
@@ -1030,8 +1030,7 @@ mod tests {
     async fn test_do_not_rewrite_aggregate_on_one_column_with_predicates() {
         let temp_dir = tempfile::tempdir().unwrap();
         let query = "SELECT COUNT(field_1) FROM model_table WHERE field_1 = 37.0";
-        let physical_plan =
-            common_test::query_optimized_physical_query_plan(temp_dir.path(), query).await;
+        let physical_plan = query_optimized_physical_query_plan(temp_dir.path(), query).await;
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -1045,15 +1044,14 @@ mod tests {
             vec![TypeId::of::<ParquetExec>()],
         ];
 
-        common_test::assert_eq_physical_plan_expected(physical_plan, &expected_plan);
+        assert_eq_physical_plan_expected(physical_plan, &expected_plan);
     }
 
     #[tokio::test]
     async fn test_do_not_rewrite_aggregate_on_multiple_columns_without_predicates() {
         let temp_dir = tempfile::tempdir().unwrap();
         let query = "SELECT COUNT(field_1), COUNT(field_2) FROM model_table";
-        let physical_plan =
-            common_test::query_optimized_physical_query_plan(temp_dir.path(), query).await;
+        let physical_plan = query_optimized_physical_query_plan(temp_dir.path(), query).await;
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -1065,6 +1063,63 @@ mod tests {
             vec![TypeId::of::<ParquetExec>(), TypeId::of::<ParquetExec>()],
         ];
 
-        common_test::assert_eq_physical_plan_expected(physical_plan, &expected_plan);
+        assert_eq_physical_plan_expected(physical_plan, &expected_plan);
+    }
+
+    /// Parse, plan, and optimize the `query` for execution on data in `path`.
+    pub async fn query_optimized_physical_query_plan(
+        path: &Path,
+        query: &str,
+    ) -> Arc<dyn ExecutionPlan> {
+        let context = test_context(path).await;
+        let model_table_metadata = model_table_metadata_arc();
+
+        context
+            .metadata_manager
+            .save_model_table_metadata(&model_table_metadata, MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        context
+            .session
+            .register_table(
+                "model_table",
+                ModelTable::new(context.clone(), model_table_metadata),
+            )
+            .unwrap();
+
+        context
+            .session
+            .sql(query)
+            .await
+            .unwrap()
+            .create_physical_plan()
+            .await
+            .unwrap()
+    }
+
+    /// Assert that `physical_plan` and `expected_plan` contain the same operators. `expected_plan`
+    /// only contains the type ids so the tests do not have to construct the actual operators.
+    pub fn assert_eq_physical_plan_expected(
+        physical_plan: Arc<dyn ExecutionPlan>,
+        expected_plan: &[Vec<TypeId>],
+    ) {
+        let mut level = 0;
+        let mut current_execs = vec![physical_plan];
+        let mut next_execs = vec![];
+
+        while !current_execs.is_empty() {
+            let expected_execs = &expected_plan[level];
+            assert_eq!(current_execs.len(), expected_execs.len());
+
+            for (current, expected) in current_execs.iter().zip(expected_execs) {
+                assert_eq!(current.as_any().type_id(), *expected);
+                next_execs.extend(current.children());
+            }
+
+            level += 1;
+            current_execs = next_execs;
+            next_execs = vec![];
+        }
     }
 }

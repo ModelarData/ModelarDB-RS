@@ -17,7 +17,6 @@
 
 #![cfg(test)]
 
-use std::any::TypeId;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -27,7 +26,6 @@ use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
-use datafusion::physical_plan::ExecutionPlan;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use modelardb_common::types::{
@@ -39,7 +37,6 @@ use tokio::sync::RwLock;
 
 use crate::configuration::ConfigurationManager;
 use crate::metadata::MetadataManager;
-use crate::query::ModelTable;
 use crate::storage::{self, StorageEngine};
 use crate::{optimizer, Context, ServerMode};
 
@@ -210,61 +207,4 @@ pub fn compressed_segments_record_batch_with_time(
         ],
     )
     .unwrap()
-}
-
-/// Parse, plan, and optimize the `query` for execution on data in `path`.
-pub async fn query_optimized_physical_query_plan(
-    path: &Path,
-    query: &str,
-) -> Arc<dyn ExecutionPlan> {
-    let context = test_context(path).await;
-    let model_table_metadata = model_table_metadata_arc();
-
-    context
-        .metadata_manager
-        .save_model_table_metadata(&model_table_metadata, MODEL_TABLE_SQL)
-        .await
-        .unwrap();
-
-    context
-        .session
-        .register_table(
-            "model_table",
-            ModelTable::new(context.clone(), model_table_metadata),
-        )
-        .unwrap();
-
-    context
-        .session
-        .sql(query)
-        .await
-        .unwrap()
-        .create_physical_plan()
-        .await
-        .unwrap()
-}
-
-/// Assert that `physical_plan` and `expected_plan` contain the same operators. `expected_plan`
-/// only contains the type ids so the tests do not have to construct the actual operators.
-pub fn assert_eq_physical_plan_expected(
-    physical_plan: Arc<dyn ExecutionPlan>,
-    expected_plan: &[Vec<TypeId>],
-) {
-    let mut level = 0;
-    let mut current_execs = vec![physical_plan];
-    let mut next_execs = vec![];
-
-    while !current_execs.is_empty() {
-        let expected_execs = &expected_plan[level];
-        assert_eq!(current_execs.len(), expected_execs.len());
-
-        for (current, expected) in current_execs.iter().zip(expected_execs) {
-            assert_eq!(current.as_any().type_id(), *expected);
-            next_execs.extend(current.children());
-        }
-
-        level += 1;
-        current_execs = next_execs;
-        next_execs = vec![];
-    }
 }
