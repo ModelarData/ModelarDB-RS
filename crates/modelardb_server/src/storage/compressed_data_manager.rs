@@ -525,8 +525,6 @@ mod tests {
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
 
-    use crate::common_test;
-
     const TABLE_NAME: &str = "model_table";
     const COLUMN_INDEX: u16 = 5;
 
@@ -626,7 +624,7 @@ mod tests {
             .remaining_compressed_memory_in_bytes() as usize;
 
         // Insert compressed data into the storage engine until data is saved to Apache Parquet.
-        let max_compressed_segments = reserved_memory / common_test::COMPRESSED_SEGMENTS_SIZE;
+        let max_compressed_segments = reserved_memory / test::COMPRESSED_SEGMENTS_SIZE;
         for _ in 0..max_compressed_segments + 1 {
             data_manager
                 .insert_compressed_segments(segments.clone())
@@ -796,7 +794,7 @@ mod tests {
             data_manager
                 .memory_pool
                 .remaining_compressed_memory_in_bytes(),
-            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize + 10000
+            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize + 10000
         )
     }
 
@@ -813,7 +811,7 @@ mod tests {
 
         data_manager
             .adjust_compressed_remaining_memory_in_bytes(
-                -(common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize),
+                -(test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize),
             )
             .await
             .unwrap();
@@ -836,7 +834,7 @@ mod tests {
 
         data_manager
             .adjust_compressed_remaining_memory_in_bytes(
-                -((common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES + 1) as isize),
+                -((test::COMPRESSED_RESERVED_MEMORY_IN_BYTES + 1) as isize),
             )
             .await
             .unwrap();
@@ -852,8 +850,8 @@ mod tests {
         let channels = Arc::new(Channels::new());
 
         let memory_pool = Arc::new(MemoryPool::new(
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
-            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         ));
 
         // Create a metadata manager and save a single model table to the metadata database.
@@ -861,7 +859,7 @@ mod tests {
 
         let model_table_metadata = test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 

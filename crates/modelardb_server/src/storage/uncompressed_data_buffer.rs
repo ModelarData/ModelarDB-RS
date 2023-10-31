@@ -404,8 +404,6 @@ mod tests {
     use proptest::{collection, proptest};
     use tokio::runtime::Runtime;
 
-    use crate::common_test;
-
     const CURRENT_BATCH_INDEX: u64 = 1;
     const UNIVARIATE_ID: u64 = 1;
 
@@ -424,7 +422,7 @@ mod tests {
         assert_eq!(UncompressedInMemoryDataBuffer::memory_size(), expected);
         assert_eq!(
             UncompressedInMemoryDataBuffer::memory_size(),
-            common_test::UNCOMPRESSED_BUFFER_SIZE
+            test::UNCOMPRESSED_BUFFER_SIZE
         );
     }
 

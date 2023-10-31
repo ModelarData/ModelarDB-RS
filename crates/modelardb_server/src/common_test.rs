@@ -22,6 +22,7 @@ use std::sync::Arc;
 
 use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
 use datafusion::execution::runtime_env::RuntimeEnv;
+use modelardb_common::test;
 use modelardb_common::types::ClusterMode;
 use object_store::local::LocalFileSystem;
 use tokio::runtime::Runtime;
@@ -31,22 +32,6 @@ use crate::configuration::ConfigurationManager;
 use crate::metadata::MetadataManager;
 use crate::storage::{self, StorageEngine};
 use crate::{optimizer, Context, ServerMode};
-
-/// Expected size of the compressed data buffers produced in the tests.
-pub const UNCOMPRESSED_BUFFER_SIZE: usize = 786432;
-
-/// Expected size of the compressed segments produced in the tests.
-pub const COMPRESSED_SEGMENTS_SIZE: usize = 1335;
-
-/// Number of bytes reserved for uncompressed data in tests.
-pub const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
-
-/// Number of bytes reserved for compressed data in tests.
-pub const COMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
-
-/// SQL to create a model table with a timestamp column, two field columns, and a tag column.
-pub const MODEL_TABLE_SQL: &str =
-    "CREATE MODEL TABLE model_table(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD, tag TAG)";
 
 /// Return a [`Context`] with a [`ConfigurationManager`] with 5 MiBs reserved for uncompressed
 /// data and 5 MiBs reserved for compressed data. Reducing the amount of reserved memory makes it
@@ -84,7 +69,7 @@ pub async fn test_context(path: &Path) -> Arc<Context> {
         .write()
         .await
         .set_uncompressed_reserved_memory_in_bytes(
-            UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
             storage_engine.clone(),
         )
         .await;
@@ -93,7 +78,7 @@ pub async fn test_context(path: &Path) -> Arc<Context> {
         .write()
         .await
         .set_compressed_reserved_memory_in_bytes(
-            COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
             storage_engine.clone(),
         )
         .await

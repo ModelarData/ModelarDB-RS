@@ -28,6 +28,22 @@ use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::schemas::COMPRESSED_SCHEMA;
 use crate::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray};
 
+/// Expected size of the compressed data buffers produced in the tests.
+pub const UNCOMPRESSED_BUFFER_SIZE: usize = 786432;
+
+/// Expected size of the compressed segments produced in the tests.
+pub const COMPRESSED_SEGMENTS_SIZE: usize = 1335;
+
+/// Number of bytes reserved for uncompressed data in tests.
+pub const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
+
+/// Number of bytes reserved for compressed data in tests.
+pub const COMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
+
+/// SQL to create a model table with a timestamp column, two field columns, and a tag column.
+pub const MODEL_TABLE_SQL: &str =
+    "CREATE MODEL TABLE model_table(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD, tag TAG)";
+
 /// Return [`ModelTableMetadata`] for a model table with a schema containing a tag column, a
 /// timestamp column, and two field columns.
 pub fn model_table_metadata() -> ModelTableMetadata {

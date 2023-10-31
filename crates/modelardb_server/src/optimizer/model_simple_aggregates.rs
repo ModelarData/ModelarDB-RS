@@ -983,7 +983,7 @@ mod tests {
     use datafusion::physical_plan::filter::FilterExec;
     use modelardb_common::test;
 
-    use crate::common_test::{test_context, MODEL_TABLE_SQL};
+    use crate::common_test::test_context;
     use crate::query::grid_exec::GridExec;
     use crate::query::ModelTable;
 
@@ -1077,7 +1077,7 @@ mod tests {
 
         context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 

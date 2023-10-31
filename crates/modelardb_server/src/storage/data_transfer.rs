@@ -270,7 +270,6 @@ mod tests {
     use tempfile::{self, TempDir};
     use uuid::Uuid;
 
-    use crate::common_test;
     use crate::storage::StorageEngine;
 
     const TABLE_NAME: &str = "model_table";
@@ -633,7 +632,7 @@ mod tests {
 
         let model_table_metadata = test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 

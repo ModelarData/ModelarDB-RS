@@ -173,8 +173,6 @@ mod tests {
 
     use modelardb_common::test;
 
-    use crate::common_test;
-
     #[test]
     fn test_can_append_valid_compressed_segments() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
@@ -222,7 +220,7 @@ mod tests {
 
         assert_eq!(
             CompressedDataBuffer::size_of_compressed_segments(&compressed_data_buffer),
-            common_test::COMPRESSED_SEGMENTS_SIZE,
+            test::COMPRESSED_SEGMENTS_SIZE,
         );
     }
 }

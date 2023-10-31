@@ -118,6 +118,8 @@ impl ConfigurationManager {
 
 #[cfg(test)]
 mod tests {
+    use modelardb_common::test;
+
     use crate::common_test;
 
     // Tests for ConfigurationManager.
@@ -134,7 +136,7 @@ mod tests {
                 .read()
                 .await
                 .uncompressed_reserved_memory_in_bytes,
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
         );
 
         configuration_manager
@@ -165,7 +167,7 @@ mod tests {
                 .read()
                 .await
                 .compressed_reserved_memory_in_bytes(),
-            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES
+            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES
         );
 
         configuration_manager
