@@ -496,7 +496,7 @@ mod tests {
 
     use arrow::array::BinaryArray;
     use modelardb_common::types::{TimestampArray, ValueArray};
-    use modelardb_common_test::data_generation::{self, ValuesStructure};
+    use modelardb_common::test::data_generation::{self, ValuesStructure};
 
     use crate::compression;
 

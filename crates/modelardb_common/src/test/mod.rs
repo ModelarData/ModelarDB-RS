@@ -15,4 +15,4 @@
 
 //! Implementation of functions, macros, and types used throughout ModelarDB's tests.
 
-mod data_generation;
+pub mod data_generation;

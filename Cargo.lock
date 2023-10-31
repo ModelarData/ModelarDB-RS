@@ -1968,6 +1968,7 @@ dependencies = [
  "object_store",
  "once_cell",
  "proptest",
+ "rand",
  "sqlparser",
  "sqlx",
  "tempfile",

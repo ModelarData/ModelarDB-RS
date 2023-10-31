@@ -29,6 +29,7 @@ sqlparser.workspace = true
 sqlx = { workspace = true, features = ["runtime-tokio-rustls"] }
 tonic.workspace = true
 uuid.workspace = true
+rand.workspace = true
 
 [dev-dependencies]
 futures.workspace = true

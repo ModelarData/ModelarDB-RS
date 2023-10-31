@@ -263,6 +263,7 @@ mod tests {
 
     use arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt64Builder, UInt8Array};
     use modelardb_common::array;
+    use modelardb_common::test::data_generation::{self, ValuesStructure};
     use modelardb_common::types::{TimestampBuilder, ValueBuilder};
 
     use crate::models;
