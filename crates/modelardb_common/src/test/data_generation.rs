@@ -20,14 +20,14 @@ use std::iter;
 use std::num::ParseIntError;
 use std::ops::Range;
 
-use modelardb_common::types::{
-    Timestamp, TimestampArray, TimestampBuilder, ValueArray, ValueBuilder,
-};
-
 use once_cell::sync::Lazy;
 use rand::distributions::Uniform;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
+
+use crate::types::{
+    Timestamp, TimestampArray, TimestampBuilder, ValueArray, ValueBuilder,
+};
 
 /// Randomly generated static seed for the random number generators used for all data generation.
 /// One randomly generated seed is used to ensure new data is generated each time the tests are

@@ -13,13 +13,6 @@
  * limitations under the License.
  */
 
-//! Implementation of functions, macros, and types used throughout ModelarDB.
+//! Implementation of functions, macros, and types used throughout ModelarDB's tests.
 
-pub mod arguments;
-pub mod errors;
-pub mod macros;
-pub mod metadata;
-pub mod parser;
-pub mod schemas;
-pub mod types;
-pub mod test;
+mod data_generation;
