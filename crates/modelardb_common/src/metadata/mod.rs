@@ -13,10 +13,11 @@
  * limitations under the License.
  */
 
-//! Common metadata functionality shared between the server metadata manager and the manager
-//! metadata manager.
+//! Common metadata manager including functionality shared between the server metadata database and
+//! the manager metadata database.
 
 pub mod model_table_metadata;
+mod compressed_file;
 
 use std::mem;
 

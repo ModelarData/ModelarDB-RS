@@ -23,6 +23,7 @@ authors = ["Soeren Kejser Jensen <devel@kejserjensen.dk>"]
 arrow.workspace = true
 arrow-flight.workspace = true
 datafusion.workspace = true
+chrono.workspace = true
 object_store = { workspace = true, features = ["aws", "azure"] }
 once_cell.workspace = true
 rand.workspace = true
