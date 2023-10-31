@@ -1977,21 +1977,11 @@ dependencies = [
 ]
 
 [[package]]
-name = "modelardb_common_test"
-version = "0.1.0"
-dependencies = [
- "modelardb_common",
- "once_cell",
- "rand",
-]
-
-[[package]]
 name = "modelardb_compression"
 version = "0.1.0"
 dependencies = [
  "arrow",
  "modelardb_common",
- "modelardb_common_test",
  "proptest",
 ]
 
@@ -2040,7 +2030,6 @@ dependencies = [
  "futures",
  "log",
  "modelardb_common",
- "modelardb_common_test",
  "modelardb_compression",
  "object_store",
  "once_cell",

@@ -25,4 +25,3 @@ modelardb_common = { path = "../modelardb_common" }
 
 [dev-dependencies]
 proptest.workspace = true
-modelardb_common_test = { path = "../modelardb_common_test" }
