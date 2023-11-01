@@ -24,11 +24,16 @@ use arrow_flight::Action;
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::schema::SchemaProvider;
-use datafusion::prelude::{ParquetReadOptions, SessionContext};
+use datafusion::execution::context::SessionState;
+use datafusion::execution::runtime_env::RuntimeEnv;
+use datafusion::prelude::{ParquetReadOptions, SessionConfig, SessionContext};
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
+use modelardb_common::types::{ClusterMode, ServerMode};
+use object_store::ObjectStore;
+use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::Request;
 use tracing::info;
@@ -37,6 +42,7 @@ use crate::configuration::ConfigurationManager;
 use crate::metadata::MetadataManager;
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
+use crate::{optimizer, storage, DataFolders};
 
 /// Provides access to the system's configuration and components.
 pub struct Context {
@@ -51,6 +57,81 @@ pub struct Context {
 }
 
 impl Context {
+    pub async fn try_new(
+        runtime: Arc<Runtime>,
+        data_folders: &DataFolders,
+        cluster_mode: ClusterMode,
+        server_mode: ServerMode,
+    ) -> Result<Self, ModelarDbError> {
+        // Create the components for the context.
+        let metadata_manager = Arc::new(
+            MetadataManager::try_new(&data_folders.local_data_folder)
+                .await
+                .map_err(|error| {
+                    ModelarDbError::ConfigurationError(format!(
+                        "Unable to create a metadata manager: {error}"
+                    ))
+                })?,
+        );
+
+        let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
+            cluster_mode.clone(),
+            server_mode,
+        )));
+
+        let session = Self::create_session_context(data_folders.query_data_folder.clone());
+
+        let storage_engine = Arc::new(RwLock::new(
+            StorageEngine::try_new(
+                runtime.clone(),
+                data_folders.local_data_folder.clone(),
+                data_folders.remote_data_folder.clone(),
+                &configuration_manager,
+                metadata_manager.clone(),
+            )
+            .await
+            .map_err(|error| {
+                ModelarDbError::ConfigurationError(format!(
+                    "Unable to create a storage engine: {error}"
+                ))
+            })?,
+        ));
+
+        Ok(Context {
+            metadata_manager,
+            configuration_manager,
+            session,
+            storage_engine,
+        })
+    }
+
+    /// Create a new [`SessionContext`] for interacting with Apache Arrow
+    /// DataFusion. The [`SessionContext`] is constructed with the default
+    /// configuration, default resource managers, the local file system and if
+    /// provided the remote object store as [`ObjectStores`](ObjectStore), and
+    /// additional optimizer rules that rewrite simple aggregate queries to be
+    /// executed directly on the segments containing metadata and models instead of
+    /// on reconstructed data points created from the segments for model tables.
+    fn create_session_context(query_data_folder: Arc<dyn ObjectStore>) -> SessionContext {
+        let session_config = SessionConfig::new();
+        let session_runtime = Arc::new(RuntimeEnv::default());
+
+        // unwrap() is safe as storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST is a const containing an URL.
+        let object_store_url = storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST
+            .try_into()
+            .unwrap();
+        session_runtime.register_object_store(&object_store_url, query_data_folder);
+
+        // Use the add* methods instead of the with* methods as the with* methods replace the built-ins.
+        // See: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionState.html
+        let mut session_state = SessionState::new_with_config_rt(session_config, session_runtime);
+        for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
+            session_state = session_state.add_physical_optimizer_rule(physical_optimizer_rule);
+        }
+
+        SessionContext::new_with_state(session_state)
+    }
+
     /// Return the schema of `table_name` if the table exists in the default database schema,
     /// otherwise a [`ModelarDbError`] indicating at what level the lookup failed is returned.
     pub async fn schema_of_table_in_default_database_schema(
