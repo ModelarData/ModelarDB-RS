@@ -982,10 +982,14 @@ mod tests {
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion::physical_plan::filter::FilterExec;
     use modelardb_common::test;
+    use modelardb_common::types::{ClusterMode, ServerMode};
+    use object_store::local::LocalFileSystem;
+    use tokio::runtime::Runtime;
 
-    use crate::common_test::test_context;
+    use crate::context::Context;
     use crate::query::grid_exec::GridExec;
     use crate::query::ModelTable;
+    use crate::DataFolders;
 
     // Tests for ModelSimpleAggregatesPhysicalOptimizerRule.
     #[tokio::test]
@@ -1072,7 +1076,23 @@ mod tests {
         path: &Path,
         query: &str,
     ) -> Arc<dyn ExecutionPlan> {
-        let context = test_context(path).await;
+        let data_folders = DataFolders {
+            local_data_folder: path.to_path_buf(),
+            remote_data_folder: None,
+            query_data_folder: Arc::new(LocalFileSystem::new_with_prefix(path).unwrap()),
+        };
+
+        let context = Arc::new(
+            Context::try_new(
+                Arc::new(Runtime::new().unwrap()),
+                &data_folders,
+                ClusterMode::SingleNode,
+                ServerMode::Edge,
+            )
+            .await
+            .unwrap(),
+        );
+
         let model_table_metadata = test::model_table_metadata_arc();
 
         context
