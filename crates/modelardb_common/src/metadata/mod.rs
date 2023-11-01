@@ -68,7 +68,80 @@ impl TableMetadataManager {
         Ok(metadata_manager)
     }
 
+    /// If they do not already exist, create the tables in the metadata database used for table and
+    /// model table metadata.
+    /// * The table_metadata table contains the metadata for tables.
+    /// * The model_table_metadata table contains the main metadata for model tables.
+    /// * The model_table_hash_table_name contains a mapping from each tag hash to the name of the
+    /// model table that contains the time series with that tag hash.
+    /// * The model_table_field_columns table contains the name, index, error bound, and generation
+    /// expression of the field columns in each model table.
+    /// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
     pub async fn create_metadata_database_tables(&self) -> Result<(), Error> {
+        let (strict, binary_type) = match self.metadata_database_type {
+            MetadataDatabaseType::SQLite => ("STRICT", "BLOB"),
+            MetadataDatabaseType::PostgreSQL => ("", "BYTEA"),
+        };
+
+        // Create the table_metadata table if it does not exist.
+        self.metadata_database_pool
+            .execute(
+                format!(
+                    "CREATE TABLE IF NOT EXISTS table_metadata (
+                         table_name TEXT PRIMARY KEY,
+                         sql TEXT NOT NULL
+                     ) {strict}"
+                )
+                .as_str(),
+            )
+            .await?;
+
+        // Create the model_table_metadata table if it does not exist.
+        self.metadata_database_pool
+            .execute(
+                format!(
+                    "CREATE TABLE IF NOT EXISTS model_table_metadata (
+                         table_name TEXT PRIMARY KEY,
+                         query_schema {binary_type} NOT NULL,
+                         sql TEXT NOT NULL
+                     ) {strict}"
+                )
+                .as_str(),
+            )
+            .await?;
+
+        // Create the model_table_hash_name table if it does not exist.
+        self.metadata_database_pool
+            .execute(
+                format!(
+                    "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
+                         hash INTEGER PRIMARY KEY,
+                         table_name TEXT
+                     ) {strict}"
+                )
+                .as_str(),
+            )
+            .await?;
+
+        // Create the model_table_field_columns table if it does not exist. Note that column_index will
+        // only use a maximum of 10 bits. generated_column_* is NULL if the fields are stored as segments.
+        self.metadata_database_pool
+            .execute(
+                format!(
+                    "CREATE TABLE IF NOT EXISTS model_table_field_columns (
+                         table_name TEXT NOT NULL,
+                         column_name TEXT NOT NULL,
+                         column_index INTEGER NOT NULL,
+                         error_bound REAL NOT NULL,
+                         generated_column_expr TEXT,
+                         generated_column_sources {binary_type},
+                         PRIMARY KEY (table_name, column_name)
+                     ) {strict}"
+                )
+                .as_str(),
+            )
+            .await?;
+
         Ok(())
     }
 }
