@@ -147,7 +147,7 @@ mod tests {
                 .read()
                 .await
                 .uncompressed_reserved_memory_in_bytes,
-            DEFAULT_COMPRESSED_RESERVED_MEMORY_IN_BYTES
+            DEFAULT_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
         );
 
         configuration_manager

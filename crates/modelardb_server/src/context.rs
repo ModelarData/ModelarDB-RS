@@ -85,7 +85,7 @@ impl Context {
 
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(
-                runtime.clone(),
+                runtime,
                 data_folders.local_data_folder.clone(),
                 data_folders.remote_data_folder.clone(),
                 &configuration_manager,
@@ -107,13 +107,12 @@ impl Context {
         })
     }
 
-    /// Create a new [`SessionContext`] for interacting with Apache Arrow
-    /// DataFusion. The [`SessionContext`] is constructed with the default
-    /// configuration, default resource managers, the local file system and if
-    /// provided the remote object store as [`ObjectStores`](ObjectStore), and
-    /// additional optimizer rules that rewrite simple aggregate queries to be
-    /// executed directly on the segments containing metadata and models instead of
-    /// on reconstructed data points created from the segments for model tables.
+    /// Create a new [`SessionContext`] for interacting with Apache Arrow DataFusion. The
+    /// [`SessionContext`] is constructed with the default configuration, default resource managers,
+    /// the local file system and if provided the remote object store as [`ObjectStores`](ObjectStore),
+    /// and additional optimizer rules that rewrite simple aggregate queries to be executed directly
+    /// on the segments containing metadata and models instead of on reconstructed data points
+    /// created from the segments for model tables.
     fn create_session_context(query_data_folder: Arc<dyn ObjectStore>) -> SessionContext {
         let session_config = SessionConfig::new();
         let session_runtime = Arc::new(RuntimeEnv::default());
