@@ -18,7 +18,6 @@
 
 #![allow(clippy::too_many_arguments)]
 
-mod common_test;
 mod configuration;
 mod context;
 mod metadata;
