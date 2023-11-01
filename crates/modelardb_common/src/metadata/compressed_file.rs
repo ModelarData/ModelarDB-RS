@@ -41,8 +41,7 @@ impl CompressedFile {
     /// Convert the given [`ObjectMeta`] and [`RecordBatch`] to a [`CompressedFile`].
     pub(crate) fn from_record_batch(file_metadata: ObjectMeta, batch: &RecordBatch) -> Self {
         // unwrap() is safe as None is only returned if all of the values are None.
-        let start_time =
-            aggregate::min(array!(batch, 2, TimestampArray)).unwrap();
+        let start_time = aggregate::min(array!(batch, 2, TimestampArray)).unwrap();
         let end_time = aggregate::max(array!(batch, 3, TimestampArray)).unwrap();
 
         // unwrap() is safe as None is only returned if all of the values are None.

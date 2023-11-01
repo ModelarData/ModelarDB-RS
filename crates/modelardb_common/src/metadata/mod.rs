@@ -20,6 +20,8 @@
 mod compressed_file;
 pub mod model_table_metadata;
 
+use std::collections::hash_map::DefaultHasher;
+use std::hash::Hasher;
 use std::mem;
 
 use arrow_flight::{IpcMessage, SchemaAsIpc};
@@ -29,6 +31,7 @@ use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use sqlx::{AnyPool, Database, Error, Executor};
 
 use crate::errors::ModelarDbError;
+use crate::metadata::model_table_metadata::ModelTableMetadata;
 
 /// The database providers that are currently supported by the metadata database.
 #[derive(Clone)]
@@ -143,6 +146,110 @@ impl TableMetadataManager {
             .await?;
 
         Ok(())
+    }
+
+    /// Return the tag hash for the given list of tag values either by retrieving it from a cache
+    /// or, if the combination of tag values is not in the cache, by computing a new hash. If the
+    /// hash is not in the cache, it is both saved to the cache, persisted to the model_table_tags
+    /// table if it does not already contain it, and persisted to the model_table_hash_table_name if
+    /// it does not already contain it. If the model_table_tags or the model_table_hash_table_name
+    /// table cannot be accessed, [`Error`] is returned.
+    pub async fn lookup_or_compute_tag_hash(
+        &self,
+        model_table_metadata: &ModelTableMetadata,
+        tag_values: &[String],
+    ) -> Result<u64, Error> {
+        let cache_key = {
+            let mut cache_key_list = tag_values.to_vec();
+            cache_key_list.push(model_table_metadata.name.clone());
+
+            cache_key_list.join(";")
+        };
+
+        // Check if the tag hash is in the cache. If it is, retrieve it. If it is not, create a new
+        // one and save it both in the cache and in the model_table_tags table. There is a minor
+        // race condition because the check if a tag hash is in the cache and the addition of the
+        // hash is done without taking a lock on the tag_value_hashes. However, by allowing a hash
+        // to possible be computed more than once, the cache can be used without an explicit lock.
+        if let Some(tag_hash) = self.tag_value_hashes.get(&cache_key) {
+            Ok(*tag_hash)
+        } else {
+            // Generate the 54-bit tag hash based on the tag values of the record batch and model
+            // table name.
+            let tag_hash = {
+                let mut hasher = DefaultHasher::new();
+                hasher.write(cache_key.as_bytes());
+
+                // The 64-bit hash is shifted to make the 10 least significant bits 0.
+                hasher.finish() << 10
+            };
+
+            // Save the tag hash in the cache and in the metadata database model_table_tags table.
+            self.tag_value_hashes.insert(cache_key, tag_hash);
+
+            // tag_column_indices are computed with from the schema so they can be used with input.
+            let tag_columns: String = model_table_metadata
+                .tag_column_indices
+                .iter()
+                .map(|index| model_table_metadata.schema.field(*index).name().clone())
+                .collect::<Vec<String>>()
+                .join(",");
+
+            let values = tag_values
+                .iter()
+                .map(|value| format!("'{value}'"))
+                .collect::<Vec<String>>()
+                .join(",");
+
+            // Create a transaction to ensure the database state is consistent across tables.
+            let mut transaction = self.metadata_database_pool.begin().await?;
+
+            // SQLite use signed integers https://www.sqlite.org/datatype3.html.
+            let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
+
+            // ON CONFLICT DO NOTHING is used to silently fail when trying to insert an already
+            // existing hash. This purposely occurs if the hash has already been written to the
+            // metadata database but is no longer stored in the cache, e.g., if the system has
+            // been restarted.
+            let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
+            transaction
+                .execute(
+                    format!(
+                        "INSERT INTO {}_tags (hash{}{}) VALUES ({}{}{}) ON CONFLICT DO NOTHING",
+                        model_table_metadata.name,
+                        maybe_separator,
+                        tag_columns,
+                        signed_tag_hash,
+                        maybe_separator,
+                        values,
+                    )
+                    .as_str(),
+                )
+                .await?;
+
+            transaction.execute(
+                format!(
+                    "INSERT INTO model_table_hash_table_name (hash, table_name) VALUES ({}, '{}')
+                     ON CONFLICT DO NOTHING",
+                    signed_tag_hash, model_table_metadata.name
+                )
+                    .as_str(),
+            ).await?;
+
+            transaction.commit().await?;
+
+            Ok(tag_hash)
+        }
+    }
+
+    /// Extract the first 54-bits from `univariate_id` which is a hash computed from tags.
+    pub fn univariate_id_to_tag_hash(univariate_id: u64) -> u64 {
+        univariate_id & 18446744073709550592
+    }
+
+    /// Extract the last 10-bits from `univariate_id` which is the index of the time series column.
+    pub fn univariate_id_to_column_index(univariate_id: u64) -> u16 {
+        (univariate_id & 1023) as u16
     }
 }
 
