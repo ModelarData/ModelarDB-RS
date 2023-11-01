@@ -13,25 +13,64 @@
  * limitations under the License.
  */
 
-//! Common metadata manager including functionality shared between the server metadata database and
-//! the manager metadata database.
+//! Table metadata manager that includes functionality shared between the server metadata database
+//! and the manager metadata database. Note that the entire server metadata database can be accessed
+//! through this metadata manager, while it only supports a subset of the manager metadata database.
 
-pub mod model_table_metadata;
 mod compressed_file;
+pub mod model_table_metadata;
 
 use std::mem;
 
 use arrow_flight::{IpcMessage, SchemaAsIpc};
+use dashmap::DashMap;
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
-use sqlx::{Database, Error, Executor};
+use sqlx::{AnyPool, Database, Error, Executor};
 
 use crate::errors::ModelarDbError;
 
 /// The database providers that are currently supported by the metadata database.
+#[derive(Clone)]
 pub enum MetadataDatabaseType {
     SQLite,
     PostgreSQL,
+}
+
+/// Stores the metadata required for reading from and writing to the tables and model tables.
+/// The data that needs to be persisted is stored in the metadata database.
+#[derive(Clone)]
+pub struct TableMetadataManager {
+    /// The type of the database, used to handle small differences in SQL syntax between providers.
+    metadata_database_type: MetadataDatabaseType,
+    /// Pool of connections to the metadata database.
+    metadata_database_pool: AnyPool,
+    /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
+    tag_value_hashes: DashMap<String, u64>,
+}
+
+impl TableMetadataManager {
+    /// Create a [`TableMetadataManager`] and initialize the metadata database with the tables used for
+    /// table and model table metadata. If the tables could not be created, [`Error`] is returned.
+    pub async fn try_new(
+        metadata_database_type: MetadataDatabaseType,
+        metadata_database_pool: AnyPool,
+    ) -> Result<Self, Error> {
+        let metadata_manager = Self {
+            metadata_database_type,
+            metadata_database_pool,
+            tag_value_hashes: DashMap::new(),
+        };
+
+        // Create the necessary tables in the metadata database.
+        metadata_manager.create_metadata_database_tables().await?;
+
+        Ok(metadata_manager)
+    }
+
+    pub async fn create_metadata_database_tables(&self) -> Result<(), Error> {
+        Ok(())
+    }
 }
 
 /// If they do not already exist, create the tables in the metadata database used for table and

@@ -1964,6 +1964,7 @@ dependencies = [
  "arrow",
  "arrow-flight",
  "chrono",
+ "dashmap",
  "datafusion",
  "futures",
  "object_store",
