@@ -90,61 +90,49 @@ impl TableMetadataManager {
 
         // Create the table_metadata table if it does not exist.
         self.metadata_database_pool
-            .execute(
-                format!(
-                    "CREATE TABLE IF NOT EXISTS table_metadata (
-                         table_name TEXT PRIMARY KEY,
-                         sql TEXT NOT NULL
-                     ) {strict}"
-                )
-                .as_str(),
-            )
+            .execute(&*format!(
+                "CREATE TABLE IF NOT EXISTS table_metadata (
+                     table_name TEXT PRIMARY KEY,
+                     sql TEXT NOT NULL
+                 ) {strict}"
+            ))
             .await?;
 
         // Create the model_table_metadata table if it does not exist.
         self.metadata_database_pool
-            .execute(
-                format!(
-                    "CREATE TABLE IF NOT EXISTS model_table_metadata (
-                         table_name TEXT PRIMARY KEY,
-                         query_schema {binary_type} NOT NULL,
-                         sql TEXT NOT NULL
-                     ) {strict}"
-                )
-                .as_str(),
-            )
+            .execute(&*format!(
+                "CREATE TABLE IF NOT EXISTS model_table_metadata (
+                     table_name TEXT PRIMARY KEY,
+                     query_schema {binary_type} NOT NULL,
+                     sql TEXT NOT NULL
+                 ) {strict}"
+            ))
             .await?;
 
         // Create the model_table_hash_name table if it does not exist.
         self.metadata_database_pool
-            .execute(
-                format!(
-                    "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
-                         hash INTEGER PRIMARY KEY,
-                         table_name TEXT
-                     ) {strict}"
-                )
-                .as_str(),
-            )
+            .execute(&*format!(
+                "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
+                     hash INTEGER PRIMARY KEY,
+                     table_name TEXT
+                 ) {strict}"
+            ))
             .await?;
 
         // Create the model_table_field_columns table if it does not exist. Note that column_index will
         // only use a maximum of 10 bits. generated_column_* is NULL if the fields are stored as segments.
         self.metadata_database_pool
-            .execute(
-                format!(
-                    "CREATE TABLE IF NOT EXISTS model_table_field_columns (
-                         table_name TEXT NOT NULL,
-                         column_name TEXT NOT NULL,
-                         column_index INTEGER NOT NULL,
-                         error_bound REAL NOT NULL,
-                         generated_column_expr TEXT,
-                         generated_column_sources {binary_type},
-                         PRIMARY KEY (table_name, column_name)
-                     ) {strict}"
-                )
-                .as_str(),
-            )
+            .execute(&*format!(
+                "CREATE TABLE IF NOT EXISTS model_table_field_columns (
+                     table_name TEXT NOT NULL,
+                     column_name TEXT NOT NULL,
+                     column_index INTEGER NOT NULL,
+                     error_bound REAL NOT NULL,
+                     generated_column_expr TEXT,
+                     generated_column_sources {binary_type},
+                     PRIMARY KEY (table_name, column_name)
+                 ) {strict}"
+            ))
             .await?;
 
         Ok(())
@@ -216,29 +204,23 @@ impl TableMetadataManager {
             // been restarted.
             let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
             transaction
-                .execute(
-                    format!(
-                        "INSERT INTO {}_tags (hash{}{}) VALUES ({}{}{}) ON CONFLICT DO NOTHING",
-                        model_table_metadata.name,
-                        maybe_separator,
-                        tag_columns,
-                        signed_tag_hash,
-                        maybe_separator,
-                        values,
-                    )
-                    .as_str(),
-                )
+                .execute(&*format!(
+                    "INSERT INTO {}_tags (hash{}{}) VALUES ({}{}{}) ON CONFLICT DO NOTHING",
+                    model_table_metadata.name,
+                    maybe_separator,
+                    tag_columns,
+                    signed_tag_hash,
+                    maybe_separator,
+                    values,
+                ))
                 .await?;
 
             transaction
-                .execute(
-                    format!(
+                .execute(&*format!(
                     "INSERT INTO model_table_hash_table_name (hash, table_name) VALUES ({}, '{}')
                      ON CONFLICT DO NOTHING",
                     signed_tag_hash, model_table_metadata.name
-                )
-                    .as_str(),
-                )
+                ))
                 .await?;
 
             transaction.commit().await?;
