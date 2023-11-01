@@ -57,6 +57,8 @@ pub struct Context {
 }
 
 impl Context {
+    /// Create the components needed in the [`Context`] and use them to create the [`Context`]. If
+    /// a metadata manager or storage engine could not be created, [`ModelarDbError`] is returned.
     pub async fn try_new(
         runtime: Arc<Runtime>,
         data_folders: &DataFolders,
@@ -69,13 +71,13 @@ impl Context {
                 .await
                 .map_err(|error| {
                     ModelarDbError::ConfigurationError(format!(
-                        "Unable to create a metadata manager: {error}"
+                        "Unable to create a MetadataManager: {error}"
                     ))
                 })?,
         );
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            cluster_mode.clone(),
+            cluster_mode,
             server_mode,
         )));
 
@@ -92,7 +94,7 @@ impl Context {
             .await
             .map_err(|error| {
                 ModelarDbError::ConfigurationError(format!(
-                    "Unable to create a storage engine: {error}"
+                    "Unable to create a StorageEngine: {error}"
                 ))
             })?,
         ));
