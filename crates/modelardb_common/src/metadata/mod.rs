@@ -34,6 +34,7 @@ use sqlx::{AnyPool, Database, Error, Executor, Row};
 
 use crate::errors::ModelarDbError;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::types::UnivariateId;
 
 /// The database providers that are currently supported by the metadata database.
 #[derive(Clone)]
@@ -289,10 +290,116 @@ impl TableMetadataManager {
             for tag_column_index in 1..=tag_column_names.len() {
                 tags.push(row.try_get(tag_column_index)?);
             }
+
             hash_to_tags.insert(tag_hash, tags);
         }
 
         Ok(hash_to_tags)
+    }
+
+    /// Compute the 64-bit univariate ids of the univariate time series to retrieve from the storage
+    /// engine using the field columns, tag names, and tag values in the query. Returns a [`Error`]
+    /// if the necessary data cannot be retrieved from the metadata database.
+    #[allow(dead_code)]
+    pub async fn compute_univariate_ids_using_fields_and_tags(
+        &self,
+        table_name: &str,
+        columns: Option<&Vec<usize>>,
+        fallback_field_column: u64,
+        tag_predicates: &[(&str, &str)],
+    ) -> Result<Vec<UnivariateId>, Error> {
+        // Construct a query that extracts the field columns in the table being queried which
+        // overlaps with the columns being requested by the query.
+        let query_field_columns = if let Some(columns) = columns {
+            let column_predicates: Vec<String> = columns
+                .iter()
+                .map(|column| format!("column_index = {column}"))
+                .collect();
+
+            format!(
+                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}' AND {}",
+                table_name,
+                column_predicates.join(" OR ")
+            )
+        } else {
+            format!(
+                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{table_name}'"
+            )
+        };
+
+        // Construct a query that extracts the hashes of the multivariate time series in the table
+        // with tag values that match those in the query.
+        let query_hashes = {
+            if tag_predicates.is_empty() {
+                format!("SELECT hash FROM {}_tags", table_name)
+            } else {
+                let predicates: Vec<String> = tag_predicates
+                    .iter()
+                    .map(|(tag, tag_value)| format!("{tag} = '{tag_value}'"))
+                    .collect();
+
+                format!(
+                    "SELECT hash FROM {}_tags WHERE {}",
+                    table_name,
+                    predicates.join(" AND ")
+                )
+            }
+        };
+
+        // Retrieve the hashes using the queries and reconstruct the univariate ids.
+        self.compute_univariate_ids_using_metadata_database(
+            &query_field_columns,
+            fallback_field_column,
+            &query_hashes,
+        )
+        .await
+    }
+
+    /// Compute the 64-bit univariate ids of the univariate time series to retrieve from the storage
+    /// engine using the two queries constructed from the fields, tag names, and tag values in the
+    /// user's query. Returns the univariate ids if successful, otherwise, if the data cannot be
+    /// retrieved from the metadata database, [`Error`] is returned.
+    async fn compute_univariate_ids_using_metadata_database(
+        &self,
+        query_field_columns: &str,
+        fallback_field_column: u64,
+        query_hashes: &str,
+    ) -> Result<Vec<u64>, Error> {
+        // Retrieve the field columns.
+        let mut rows = self.metadata_database_pool.fetch(query_field_columns);
+
+        let mut field_columns = vec![];
+        while let Some(row) = rows.try_next().await? {
+            // SQLite (https://www.sqlite.org/datatype3.html) and PostgreSQL
+            // (https://www.postgresql.org/docs/current/datatype.html) both use signed integers.
+            let signed_field_column: i64 = row.try_get(0)?;
+            let field_column = u64::from_ne_bytes(signed_field_column.to_ne_bytes());
+
+            field_columns.push(field_column);
+        }
+
+        // Add the fallback field column if the query did not request data for
+        // any fields as the storage engine otherwise does not return any data.
+        if field_columns.is_empty() {
+            field_columns.push(fallback_field_column);
+        }
+
+        // Retrieve the hashes and compute the univariate ids;
+        let mut rows = self.metadata_database_pool.fetch(query_hashes);
+
+        let mut univariate_ids = vec![];
+        while let Some(row) = rows.try_next().await? {
+            // SQLite (https://www.sqlite.org/datatype3.html) and PostgreSQL
+            // (https://www.postgresql.org/docs/current/datatype.html) both use signed integers.
+            let signed_tag_hash: i64 = row.try_get(0)?;
+            let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
+
+            for field_column in &field_columns {
+                univariate_ids.push(tag_hash | field_column);
+            }
+        }
+
+        Ok(univariate_ids)
     }
 }
 
