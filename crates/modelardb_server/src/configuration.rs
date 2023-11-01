@@ -129,7 +129,6 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
-    use modelardb_common::test;
     use modelardb_common::types::{ClusterMode, ServerMode};
     use tokio::runtime::Runtime;
     use tokio::sync::RwLock;
@@ -195,6 +194,7 @@ mod tests {
         );
     }
 
+    /// Create a [`StorageEngine`] and a [`ConfigurationManager`].
     async fn create_components(
         path: &Path,
     ) -> (
