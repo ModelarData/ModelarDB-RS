@@ -21,6 +21,7 @@ mod compressed_file;
 pub mod model_table_metadata;
 
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::hash::Hasher;
 use std::mem;
 
@@ -28,7 +29,8 @@ use arrow_flight::{IpcMessage, SchemaAsIpc};
 use dashmap::DashMap;
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
-use sqlx::{AnyPool, Database, Error, Executor};
+use futures::TryStreamExt;
+use sqlx::{AnyPool, Database, Error, Executor, Row};
 
 use crate::errors::ModelarDbError;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
@@ -204,7 +206,8 @@ impl TableMetadataManager {
             // Create a transaction to ensure the database state is consistent across tables.
             let mut transaction = self.metadata_database_pool.begin().await?;
 
-            // SQLite use signed integers https://www.sqlite.org/datatype3.html.
+            // SQLite (https://www.sqlite.org/datatype3.html) and PostgreSQL
+            // (https://www.postgresql.org/docs/current/datatype.html) both use signed integers.
             let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
             // ON CONFLICT DO NOTHING is used to silently fail when trying to insert an already
@@ -227,14 +230,16 @@ impl TableMetadataManager {
                 )
                 .await?;
 
-            transaction.execute(
-                format!(
+            transaction
+                .execute(
+                    format!(
                     "INSERT INTO model_table_hash_table_name (hash, table_name) VALUES ({}, '{}')
                      ON CONFLICT DO NOTHING",
                     signed_tag_hash, model_table_metadata.name
                 )
                     .as_str(),
-            ).await?;
+                )
+                .await?;
 
             transaction.commit().await?;
 
@@ -250,6 +255,62 @@ impl TableMetadataManager {
     /// Extract the last 10-bits from `univariate_id` which is the index of the time series column.
     pub fn univariate_id_to_column_index(univariate_id: u64) -> u16 {
         (univariate_id & 1023) as u16
+    }
+
+    /// Return the name of the table that contains the time series with `univariate_id`. Returns an
+    /// [`Error`] if the necessary data cannot be retrieved from the metadata database.
+    pub async fn univariate_id_to_table_name(&self, univariate_id: u64) -> Result<String, Error> {
+        // SQLite (https://www.sqlite.org/datatype3.html) and PostgreSQL
+        // (https://www.postgresql.org/docs/current/datatype.html) both use signed integers.
+        let tag_hash = Self::univariate_id_to_tag_hash(univariate_id);
+        let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
+
+        let select_statement = format!(
+            "SELECT table_name FROM model_table_hash_table_name WHERE hash = {signed_tag_hash}",
+        );
+
+        self.metadata_database_pool
+            .fetch_one(&*select_statement)
+            .await?
+            .try_get(0)
+    }
+
+    /// Return a mapping from tag hashes to the tags in the columns with the names in
+    /// `tag_column_names` for the time series in the model table with the name `model_table_name`.
+    /// Returns an [`Error`] if the necessary data cannot be retrieved from the metadata database.
+    pub async fn mapping_from_hash_to_tags(
+        &self,
+        model_table_name: &str,
+        tag_column_names: &Vec<&str>,
+    ) -> Result<HashMap<u64, Vec<String>>, Error> {
+        // Return an empty HashMap if no tag column names are passed to keep the signature simple.
+        if tag_column_names.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let select_statement = format!(
+            "SELECT hash,{} FROM {model_table_name}_tags",
+            tag_column_names.join(","),
+        );
+
+        let mut rows = self.metadata_database_pool.fetch(&*select_statement);
+
+        let mut hash_to_tags = HashMap::new();
+        while let Some(row) = rows.try_next().await? {
+            // SQLite (https://www.sqlite.org/datatype3.html) and PostgreSQL
+            // (https://www.postgresql.org/docs/current/datatype.html) both use signed integers.
+            let signed_tag_hash: i64 = row.try_get(0)?;
+            let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
+
+            // Add all of the tags in order so they can be directly appended to each row.
+            let mut tags = Vec::with_capacity(tag_column_names.len());
+            for tag_column_index in 1..=tag_column_names.len() {
+                tags.push(row.try_get(tag_column_index)?);
+            }
+            hash_to_tags.insert(tag_hash, tags);
+        }
+
+        Ok(hash_to_tags)
     }
 }
 
