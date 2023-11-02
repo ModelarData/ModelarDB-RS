@@ -65,7 +65,6 @@ impl Context {
         cluster_mode: ClusterMode,
         server_mode: ServerMode,
     ) -> Result<Self, ModelarDbError> {
-        // Create the components for the context.
         let metadata_manager = Arc::new(
             MetadataManager::try_new(&data_folders.local_data_folder)
                 .await
