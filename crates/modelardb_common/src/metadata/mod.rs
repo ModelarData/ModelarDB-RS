@@ -649,6 +649,155 @@ impl TableMetadataManager {
             e_tag: None,
         })
     }
+
+    /// Save the created table to the metadata database. This consists of adding a row to the
+    /// table_metadata table with the `name` of the table and the `sql` used to create the table.
+    pub async fn save_table_metadata(&self, name: &str, sql: &str) -> Result<(), Error> {
+        // Add a new row in the table_metadata table to persist the table.
+        self.metadata_database_pool
+            .execute(&*format!(
+                "INSERT INTO table_metadata (table_name, sql) VALUES ('{name}', '{sql}')"
+            ))
+            .await?;
+
+        Ok(())
+    }
+
+    /// Save the created model table to the metadata database. This includes creating a tags table
+    /// for the model table, creating a compressed files table for the model table, adding a row to
+    /// the model_table_metadata table, and adding a row to the model_table_field_columns table for
+    /// each field column.
+    pub async fn save_model_table_metadata(
+        &self,
+        model_table_metadata: &ModelTableMetadata,
+        sql: &str,
+    ) -> Result<(), Error> {
+        // Convert the query schema to bytes so it can be saved as a BLOB in the metadata database.
+        let query_schema_bytes =
+            Self::try_convert_schema_to_blob(&model_table_metadata.query_schema)?;
+
+        // Create a transaction to ensure the database state is consistent across tables.
+        let mut transaction = self.metadata_database_pool.begin().await?;
+
+        // Add a column definition for each tag column in the query schema.
+        let tag_columns: String = model_table_metadata
+            .tag_column_indices
+            .iter()
+            .map(|index| {
+                let field = model_table_metadata.query_schema.field(*index);
+                format!("{} TEXT NOT NULL", field.name())
+            })
+            .collect::<Vec<String>>()
+            .join(",");
+
+        // Create a table_name_tags table to save the 54-bit tag hashes when ingesting data.
+        let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
+        transaction
+            .execute(&*format!(
+                "CREATE TABLE {}_tags (
+                     hash INTEGER PRIMARY KEY{maybe_separator}
+                     {tag_columns}
+                 ) STRICT",
+                model_table_metadata.name
+            ))
+            .await?;
+
+        // Create a table_name_compressed_files table to save the metadata of the table's files.
+        transaction
+            .execute(&*format!(
+                "CREATE TABLE {}_compressed_files (
+                     file_path TEXT PRIMARY KEY,
+                     field_column INTEGER,
+                     size INTEGER,
+                     created_at INTEGER,
+                     start_time INTEGER,
+                     end_time INTEGER,
+                     min_value REAL,
+                     max_value REAL
+                 ) STRICT",
+                model_table_metadata.name
+            ))
+            .await?;
+
+        // Add a new row in the model_table_metadata table to persist the model table.
+        transaction
+            .execute(&*format!(
+                "INSERT INTO model_table_metadata (table_name, query_schema, sql)
+                 VALUES ({}, {query_schema_bytes}, {sql})",
+                model_table_metadata.name
+            ))
+            .await?;
+
+        // Add a row for each field column to the model_table_field_columns table.
+        for (query_schema_index, field) in model_table_metadata
+            .query_schema
+            .fields()
+            .iter()
+            .enumerate()
+        {
+            // Only add a row for the field if it is not the timestamp or a tag.
+            let is_timestamp = query_schema_index == model_table_metadata.timestamp_column_index;
+            let in_tag_indices = model_table_metadata
+                .tag_column_indices
+                .contains(&query_schema_index);
+
+            if !is_timestamp && !in_tag_indices {
+                let (generated_column_expr, generated_column_sources) =
+                    if let Some(generated_column) =
+                        &model_table_metadata.generated_columns[query_schema_index]
+                    {
+                        (
+                            Some(generated_column.original_expr.clone()),
+                            Some(Self::convert_slice_usize_to_vec_u8(
+                                &generated_column.source_columns,
+                            )),
+                        )
+                    } else {
+                        (None, None)
+                    };
+
+                // error_bounds matches schema and not query_schema to simplify looking up the error
+                // bound during ingestion as it occurs far more often than creation of model tables.
+                let error_bound =
+                    if let Ok(schema_index) = model_table_metadata.schema.index_of(field.name()) {
+                        model_table_metadata.error_bounds[schema_index].into_inner()
+                    } else {
+                        0.0
+                    };
+
+                // query_schema_index is simply cast as a model table contains at most 1024 columns.
+                transaction.execute(&*format!(
+                    "INSERT INTO model_table_field_columns (table_name, column_name, column_index,
+                     error_bound, generated_column_expr, generated_column_sources)
+                     VALUES ({}, {}, {}, {error_bound}, {generated_column_expr}, {generated_column_sources})",
+                    model_table_metadata.name, field.name(), query_schema_index as i64)
+                ).await?;
+            }
+        }
+
+        transaction.commit().await
+    }
+
+    /// Convert a [`Schema`] to [`Vec<u8>`].
+    pub fn try_convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
+        let options = IpcWriteOptions::default();
+        let schema_as_ipc = SchemaAsIpc::new(schema, &options);
+
+        let ipc_message: IpcMessage =
+            schema_as_ipc
+                .try_into()
+                .map_err(|error: ArrowError| Error::ColumnDecode {
+                    index: "query_schema".to_owned(),
+                    source: Box::new(error),
+                })?;
+
+        Ok(ipc_message.0.to_vec())
+    }
+
+    /// Convert a [`&[usize]`] to a [`Vec<u8>`].
+    pub fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
+        usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
 }
 
 /// If they do not already exist, create the tables in the metadata database used for table and
