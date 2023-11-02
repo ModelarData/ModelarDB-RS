@@ -26,15 +26,20 @@ use std::hash::Hasher;
 use std::mem;
 
 use arrow_flight::{IpcMessage, SchemaAsIpc};
+use chrono::{TimeZone, Utc};
 use dashmap::DashMap;
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use futures::TryStreamExt;
+use object_store::path::Path as ObjectStorePath;
+use object_store::ObjectMeta;
+use sqlx::any::AnyRow;
 use sqlx::{AnyPool, Database, Error, Executor, Row};
 
 use crate::errors::ModelarDbError;
+use crate::metadata::compressed_file::CompressedFile;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
-use crate::types::UnivariateId;
+use crate::types::{Timestamp, UnivariateId, Value};
 
 /// The database providers that are currently supported by the metadata database.
 #[derive(Clone)]
@@ -400,6 +405,256 @@ impl TableMetadataManager {
         }
 
         Ok(univariate_ids)
+    }
+
+    /// Store information about `compressed_file` which contains compressed segments for the column
+    /// at `query_schema_index` in the model table with `model_table_name`. An [`Error`] is returned
+    /// if:
+    /// * The end time is before the start time in `compressed_file`.
+    /// * The max value is smaller than the min value in `compressed_file`.
+    /// * The metadata database could not be modified.
+    /// * A model table with `model_table_name` does not exist.
+    pub async fn save_compressed_file(
+        &self,
+        model_table_name: &str,
+        query_schema_index: usize,
+        compressed_file: &CompressedFile,
+    ) -> Result<(), Error> {
+        Self::validate_compressed_file(compressed_file)?;
+
+        let insert_statement = Self::create_insert_compressed_file_statement(
+            model_table_name,
+            query_schema_index,
+            compressed_file,
+        );
+
+        self.metadata_database_pool
+            .execute(&*insert_statement)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Replace the `compressed_files_to_delete` with `replacement_compressed_file` (or nothing if
+    /// [`None`] is passed) in the column at `query_schema_index` for the model table with
+    /// `model_table_name`. Returns [`Error`] if:
+    /// * `compressed_files_to_delete` is empty.
+    /// * The end time is before the start time in `replacement_compressed_file`.
+    /// * The max value is smaller than the min value in `replacement_compressed_file`.
+    /// * Less than the number of files in `compressed_files_to_delete` was deleted.
+    /// * The metadata database could not be modified.
+    /// * A model table with `model_table_name` does not exist.
+    pub async fn replace_compressed_files(
+        &self,
+        model_table_name: &str,
+        query_schema_index: usize,
+        compressed_files_to_delete: &[ObjectMeta],
+        replacement_compressed_file: Option<&CompressedFile>,
+    ) -> Result<(), Error> {
+        if compressed_files_to_delete.is_empty() {
+            return Err(Error::Configuration(Box::new(
+                ModelarDbError::DataRetrievalError(
+                    "At least one file to delete must be provided.".to_owned(),
+                ),
+            )));
+        }
+
+        if let Some(compressed_file) = replacement_compressed_file {
+            Self::validate_compressed_file(compressed_file)?;
+        }
+
+        let mut transaction = self.metadata_database_pool.begin().await?;
+
+        let file_paths_to_delete: Vec<String> = compressed_files_to_delete
+            .iter()
+            .map(|object_meta| format!("'{}'", object_meta.location))
+            .collect();
+
+        let compressed_files_to_delete_in = file_paths_to_delete.join(",");
+
+        // sqlx does not yet support binding arrays to IN (...) and recommends generating them.
+        // https://github.com/launchbadge/sqlx/blob/main/FAQ.md#how-can-i-do-a-select--where-foo-in--query
+        let delete_from_result = transaction
+            .execute(&*format!(
+                "DELETE FROM {model_table_name}_compressed_files
+                 WHERE field_column = {query_schema_index}
+                 AND file_path IN ({compressed_files_to_delete_in})",
+            ))
+            .await?;
+
+        // The cast to usize is safe as only compressed_files_to_delete.len() can be deleted.
+        if compressed_files_to_delete.len() != delete_from_result.rows_affected() as usize {
+            return Err(Error::Configuration(Box::new(
+                ModelarDbError::ImplementationError(
+                    "Less than the expected number of files were deleted from the metadata database.".to_owned(),
+                ),
+            )));
+        }
+
+        if let Some(compressed_file) = replacement_compressed_file {
+            let insert_statement = Self::create_insert_compressed_file_statement(
+                model_table_name,
+                query_schema_index,
+                compressed_file,
+            );
+
+            transaction.execute(&*insert_statement).await?;
+        }
+
+        transaction.commit().await
+    }
+
+    /// Check that the start time is before the end time and the minimum value is smaller than the
+    /// maximum value in `compressed_file`.
+    fn validate_compressed_file(compressed_file: &CompressedFile) -> Result<(), Error> {
+        if compressed_file.start_time > compressed_file.end_time {
+            return Err(Error::Configuration(Box::new(
+                ModelarDbError::DataRetrievalError(format!(
+                    "Start time '{}' cannot be after end time '{}'.",
+                    compressed_file.start_time, compressed_file.end_time
+                )),
+            )));
+        };
+
+        if compressed_file.min_value > compressed_file.max_value {
+            return Err(Error::Configuration(Box::new(
+                ModelarDbError::DataRetrievalError(format!(
+                    "Min value '{}' cannot be larger than max value '{}'.",
+                    compressed_file.min_value, compressed_file.max_value
+                )),
+            )));
+        };
+
+        Ok(())
+    }
+
+    /// Create an SQL statement that, when executed, stores `compressed_file` in the metadata
+    /// database for the column at `query_schema_index` in the model table with `model_table_name`.
+    fn create_insert_compressed_file_statement(
+        model_table_name: &str,
+        query_schema_index: usize,
+        compressed_file: &CompressedFile,
+    ) -> String {
+        let min_value = Self::rewrite_special_value_to_normal_value(compressed_file.min_value);
+        let max_value = Self::rewrite_special_value_to_normal_value(compressed_file.max_value);
+
+        let created_at = compressed_file
+            .file_metadata
+            .last_modified
+            .timestamp_millis();
+
+        // query_schema_index is simply cast as a model table contains at most 1024 columns.
+        // size is simply cast as it is unrealistic for a file to use more bytes than the max value
+        // of a signed 64-bit integer as it can represent a file with a size up to ~9000 PB.
+        format!(
+            "INSERT INTO {}_compressed_files VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
+            model_table_name,
+            compressed_file.file_metadata.location,
+            query_schema_index as i64,
+            compressed_file.file_metadata.size as i64,
+            created_at,
+            compressed_file.start_time,
+            compressed_file.end_time,
+            min_value,
+            max_value,
+        )
+    }
+
+    /// Return an [`ObjectMeta`] for each compressed file that belongs to the column at `query_schema_index`
+    /// in the model table with `model_table_name` within the given range of time and value. The
+    /// files are returned in sorted order by their start time. If no files belong to the column at
+    /// `query_schema_index` for the table with `model_table_name` an empty [`Vec`] is returned,
+    /// while an [`Error`] is returned if:
+    /// * The end time is before the start time.
+    /// * The max value is smaller than the min value.
+    /// * The metadata database could not be accessed.
+    /// * A model table with `model_table_name` does not exist.
+    pub async fn compressed_files(
+        &self,
+        model_table_name: &str,
+        query_schema_index: usize,
+        start_time: Option<Timestamp>,
+        end_time: Option<Timestamp>,
+        min_value: Option<Value>,
+        max_value: Option<Value>,
+    ) -> Result<Vec<ObjectMeta>, Error> {
+        // Set default values for the parts of the time and value range that are not defined.
+        let start_time = start_time.unwrap_or(0);
+        let end_time = end_time.unwrap_or(Timestamp::MAX);
+
+        if start_time > end_time {
+            return Err(Error::Configuration(Box::new(
+                ModelarDbError::DataRetrievalError(format!(
+                    "Start time '{start_time}' cannot be after end time '{end_time}'."
+                )),
+            )));
+        };
+
+        let min_value = min_value.unwrap_or(Value::NEG_INFINITY);
+        let max_value = max_value.unwrap_or(Value::INFINITY);
+
+        if min_value > max_value {
+            return Err(Error::Configuration(Box::new(
+                ModelarDbError::DataRetrievalError(format!(
+                    "Min value '{min_value}' cannot be larger than max value '{max_value}'."
+                )),
+            )));
+        };
+
+        let min_value = Self::rewrite_special_value_to_normal_value(min_value);
+        let max_value = Self::rewrite_special_value_to_normal_value(max_value);
+
+        // query_schema_index is simply cast as a model table contains at most 1024 columns.
+        let select_statement = format!(
+            "SELECT * FROM {}_compressed_files
+             WHERE field_column = ({})
+             AND ({}) <= end_time AND start_time <= ({})
+             AND ({}) <= max_value AND min_value <= ({})
+             ORDER BY start_time",
+            model_table_name, query_schema_index as i64, start_time, end_time, min_value, max_value,
+        );
+
+        let mut rows = self.metadata_database_pool.fetch(&*select_statement);
+
+        let mut files = vec![];
+        while let Some(row) = rows.try_next().await? {
+            files.push(Self::convert_compressed_file_row_to_object_meta(row)?);
+        }
+
+        Ok(files)
+    }
+
+    /// Rewrite the special values in [`Value`] (Negative Infinity, Infinity, and NaN) to the closet
+    /// normal values in [`Value`] to simplify storing and querying them through the metadata database.
+    fn rewrite_special_value_to_normal_value(value: Value) -> Value {
+        // Pattern matching on float values is not supported in Rust.
+        if value == Value::NEG_INFINITY {
+            Value::MIN
+        } else if value == Value::INFINITY || value.is_nan() {
+            Value::MAX
+        } else {
+            value
+        }
+    }
+
+    /// Convert a row in the table_name_compressed_files table to an [`ObjectMeta`]. If the
+    /// necessary column values could not be extracted from the row, return [`Error`].
+    fn convert_compressed_file_row_to_object_meta(row: AnyRow) -> Result<ObjectMeta, Error> {
+        let file_path: String = row.try_get("file_path")?;
+
+        // unwrap() is safe as the created_at timestamp cannot be out of range.
+        let last_modified = Utc
+            .timestamp_millis_opt(row.try_get("created_at")?)
+            .unwrap();
+
+        let size: i64 = row.try_get("size")?;
+
+        Ok(ObjectMeta {
+            location: ObjectStorePath::from(file_path),
+            last_modified,
+            size: size as usize,
+            e_tag: None,
+        })
     }
 }
 
