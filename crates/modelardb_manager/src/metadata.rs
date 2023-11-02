@@ -63,20 +63,24 @@ impl MetadataManager {
     async fn create_manager_metadata_database_tables(
         metadata_database_pool: &PgPool,
     ) -> Result<(), sqlx::Error> {
+        let mut transaction = metadata_database_pool.begin().await?;
+
         // Create the manager_metadata table if it does not exist.
-        metadata_database_pool
-            .execute("CREATE TABLE IF NOT EXISTS manager_metadata (key TEXT PRIMARY KEY)")
+        sqlx::query("CREATE TABLE IF NOT EXISTS manager_metadata (key TEXT PRIMARY KEY)")
+            .execute(&mut *transaction)
             .await?;
 
         // Create the nodes table if it does not exist.
-        metadata_database_pool
-            .execute(
-                "CREATE TABLE IF NOT EXISTS nodes (
-                url TEXT PRIMARY KEY,
-                mode TEXT NOT NULL
-                )",
-            )
-            .await?;
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS nodes (
+                 url TEXT PRIMARY KEY,
+                 mode TEXT NOT NULL
+             )",
+        )
+        .execute(&mut *transaction)
+        .await?;
+
+        transaction.commit().await?;
 
         Ok(())
     }

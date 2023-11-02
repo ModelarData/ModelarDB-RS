@@ -96,6 +96,8 @@ impl TableMetadataManager {
             MetadataDatabaseType::PostgreSQL => ("", "BYTEA"),
         };
 
+        let mut transaction = self.metadata_database_pool.begin().await?;
+
         // Create the table_metadata table if it does not exist.
         sqlx::query(&format!(
             "CREATE TABLE IF NOT EXISTS table_metadata (
@@ -103,7 +105,7 @@ impl TableMetadataManager {
                  sql TEXT NOT NULL
              ) {strict}"
         ))
-        .execute(&self.metadata_database_pool)
+        .execute(&mut *transaction)
         .await?;
 
         // Create the model_table_metadata table if it does not exist.
@@ -114,7 +116,7 @@ impl TableMetadataManager {
                  sql TEXT NOT NULL
              ) {strict}"
         ))
-        .execute(&self.metadata_database_pool)
+        .execute(&mut *transaction)
         .await?;
 
         // Create the model_table_hash_name table if it does not exist.
@@ -124,7 +126,7 @@ impl TableMetadataManager {
                  table_name TEXT
              ) {strict}"
         ))
-        .execute(&self.metadata_database_pool)
+        .execute(&mut *transaction)
         .await?;
 
         // Create the model_table_field_columns table if it does not exist. Note that column_index will
@@ -140,8 +142,10 @@ impl TableMetadataManager {
                  PRIMARY KEY (table_name, column_name)
              ) {strict}"
         ))
-        .execute(&self.metadata_database_pool)
+        .execute(&mut *transaction)
         .await?;
+
+        transaction.commit().await?;
 
         Ok(())
     }
