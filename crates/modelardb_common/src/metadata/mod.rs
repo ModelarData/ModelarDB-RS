@@ -208,8 +208,8 @@ impl TableMetadataManager {
             // Create a transaction to ensure the database state is consistent across tables.
             let mut transaction = self.metadata_database_pool.begin().await?;
 
-            // SQLite (https://www.sqlite.org/datatype3.html) and PostgreSQL
-            // (https://www.postgresql.org/docs/current/datatype.html) both use signed integers.
+            // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
+            // (https://www.sqlite.org/datatype3.html) both use signed integers.
             let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
             let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
@@ -257,8 +257,8 @@ impl TableMetadataManager {
     /// Return the name of the table that contains the time series with `univariate_id`. Returns an
     /// [`Error`] if the necessary data cannot be retrieved from the metadata database.
     pub async fn univariate_id_to_table_name(&self, univariate_id: u64) -> Result<String, Error> {
-        // SQLite (https://www.sqlite.org/datatype3.html) and PostgreSQL
-        // (https://www.postgresql.org/docs/current/datatype.html) both use signed integers.
+        // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
+        // (https://www.sqlite.org/datatype3.html) both use signed integers.
         let tag_hash = Self::univariate_id_to_tag_hash(univariate_id);
         let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
@@ -291,8 +291,8 @@ impl TableMetadataManager {
 
         let mut hash_to_tags = HashMap::new();
         while let Some(row) = rows.try_next().await? {
-            // SQLite (https://www.sqlite.org/datatype3.html) and PostgreSQL
-            // (https://www.postgresql.org/docs/current/datatype.html) both use signed integers.
+            // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
+            // (https://www.sqlite.org/datatype3.html) both use signed integers.
             let signed_tag_hash: i64 = row.try_get(0)?;
             let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
 
@@ -379,8 +379,8 @@ impl TableMetadataManager {
 
         let mut field_columns = vec![];
         while let Some(row) = rows.try_next().await? {
-            // SQLite (https://www.sqlite.org/datatype3.html) and PostgreSQL
-            // (https://www.postgresql.org/docs/current/datatype.html) both use signed integers.
+            // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
+            // (https://www.sqlite.org/datatype3.html) both use signed integers.
             let signed_field_column: i64 = row.try_get(0)?;
             let field_column = u64::from_ne_bytes(signed_field_column.to_ne_bytes());
 
@@ -398,8 +398,8 @@ impl TableMetadataManager {
 
         let mut univariate_ids = vec![];
         while let Some(row) = rows.try_next().await? {
-            // SQLite (https://www.sqlite.org/datatype3.html) and PostgreSQL
-            // (https://www.postgresql.org/docs/current/datatype.html) both use signed integers.
+            // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
+            // (https://www.sqlite.org/datatype3.html) both use signed integers.
             let signed_tag_hash: i64 = row.try_get(0)?;
             let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
 
@@ -859,9 +859,9 @@ impl TableMetadataManager {
             vec![ErrorBound::try_new(0.0).unwrap(); query_schema_columns];
 
         while let Some(row) = rows.try_next().await? {
-            // SQLite (https://www.sqlite.org/datatype3.html) and PostgreSQL
-            // (https://www.postgresql.org/docs/current/datatype.html) both use signed integers and
-            // column_index is stored as an i64 instead of an u64 as a model table has at most 1024 columns.
+            // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
+            // (https://www.sqlite.org/datatype3.html) both use signed integers and column_index
+            // is stored as an i64 instead of an u64 as a model table has at most 1024 columns.
             let error_bound_index: i64 = row.try_get(0)?;
 
             // unwrap() is safe as the error bounds are checked before they are stored.
@@ -903,9 +903,9 @@ impl TableMetadataManager {
                     original_expr: None,
                 };
 
-                // SQLite (https://www.sqlite.org/datatype3.html) and PostgreSQL
-                // (https://www.postgresql.org/docs/current/datatype.html) both use signed integers and
-                // column_index is stored as an i64 instead of an u64 as a model table has at most 1024 columns.
+                // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
+                // (https://www.sqlite.org/datatype3.html) both use signed integers and column_index
+                // is stored as an i64 instead of an u64 as a model table has at most 1024 columns.
                 let generated_columns_index: i64 = row.try_get(0)?;
                 generated_columns[generated_columns_index as usize] = Some(generated_column);
             }
