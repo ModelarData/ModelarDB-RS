@@ -209,23 +209,21 @@ impl TableMetadataManager {
             // metadata database but is no longer stored in the cache, e.g., if the system has
             // been restarted.
             let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
+            let model_table_name = &model_table_metadata.name;
+
             transaction
                 .execute(&*format!(
-                    "INSERT INTO {}_tags (hash{}{}) VALUES ({}{}{}) ON CONFLICT DO NOTHING",
-                    model_table_metadata.name,
-                    maybe_separator,
-                    tag_columns,
-                    signed_tag_hash,
-                    maybe_separator,
-                    values,
+                    "INSERT INTO {model_table_name}_tags (hash{maybe_separator}{tag_columns})
+                     VALUES ({signed_tag_hash}{maybe_separator}{values})
+                     ON CONFLICT DO NOTHING",
                 ))
                 .await?;
 
             transaction
                 .execute(&*format!(
-                    "INSERT INTO model_table_hash_table_name (hash, table_name) VALUES ({}, '{}')
+                    "INSERT INTO model_table_hash_table_name (hash, table_name)
+                     VALUES ({signed_tag_hash}, '{model_table_name}')
                      ON CONFLICT DO NOTHING",
-                    signed_tag_hash, model_table_metadata.name
                 ))
                 .await?;
 
@@ -322,8 +320,7 @@ impl TableMetadataManager {
                 .collect();
 
             format!(
-                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{}' AND {}",
-                table_name,
+                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{table_name}' AND {}",
                 column_predicates.join(" OR ")
             )
         } else {
@@ -336,7 +333,7 @@ impl TableMetadataManager {
         // with tag values that match those in the query.
         let query_hashes = {
             if tag_predicates.is_empty() {
-                format!("SELECT hash FROM {}_tags", table_name)
+                format!("SELECT hash FROM {table_name}_tags")
             } else {
                 let predicates: Vec<String> = tag_predicates
                     .iter()
@@ -344,8 +341,7 @@ impl TableMetadataManager {
                     .collect();
 
                 format!(
-                    "SELECT hash FROM {}_tags WHERE {}",
-                    table_name,
+                    "SELECT hash FROM {table_name}_tags WHERE {}",
                     predicates.join(" AND ")
                 )
             }
@@ -547,16 +543,13 @@ impl TableMetadataManager {
         // size is simply cast as it is unrealistic for a file to use more bytes than the max value
         // of a signed 64-bit integer as it can represent a file with a size up to ~9000 PB.
         format!(
-            "INSERT INTO {}_compressed_files VALUES ({}, {}, {}, {}, {}, {}, {}, {})",
-            model_table_name,
+            "INSERT INTO {model_table_name}_compressed_files
+             VALUES ({}, {}, {}, {created_at}, {}, {}, {min_value}, {max_value})",
             compressed_file.file_metadata.location,
             query_schema_index as i64,
             compressed_file.file_metadata.size as i64,
-            created_at,
             compressed_file.start_time,
             compressed_file.end_time,
-            min_value,
-            max_value,
         )
     }
 
@@ -606,12 +599,12 @@ impl TableMetadataManager {
 
         // query_schema_index is simply cast as a model table contains at most 1024 columns.
         let select_statement = format!(
-            "SELECT * FROM {}_compressed_files
+            "SELECT * FROM {model_table_name}_compressed_files
              WHERE field_column = ({})
-             AND ({}) <= end_time AND start_time <= ({})
-             AND ({}) <= max_value AND min_value <= ({})
+             AND ({start_time}) <= end_time AND start_time <= ({end_time})
+             AND ({min_value}) <= max_value AND min_value <= ({max_value})
              ORDER BY start_time",
-            model_table_name, query_schema_index as i64, start_time, end_time, min_value, max_value,
+            query_schema_index as i64,
         );
 
         let mut rows = self.metadata_database_pool.fetch(&*select_statement);
