@@ -30,6 +30,7 @@ use chrono::{TimeZone, Utc};
 use dashmap::DashMap;
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
+use datafusion::common::DFSchema;
 use futures::TryStreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
@@ -40,8 +41,9 @@ use sqlx::{AnyPool, Database, Error, Executor, Row};
 
 use crate::errors::ModelarDbError;
 use crate::metadata::compressed_file::CompressedFile;
-use crate::metadata::model_table_metadata::ModelTableMetadata;
-use crate::types::{Timestamp, UnivariateId, Value};
+use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
+use crate::parser;
+use crate::types::{ErrorBound, Timestamp, UnivariateId, Value};
 
 /// The database providers that are currently supported by the metadata database.
 #[derive(Clone)]
@@ -835,6 +837,100 @@ impl TableMetadataManager {
     /// Convert a [`&[usize]`] to a [`Vec<u8>`].
     pub fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
         usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
+    }
+
+    /// Return the error bounds for the columns in the model table with `table_name`. If a model
+    /// table with `table_name` does not exist, [`Error`] is returned.
+    async fn error_bounds(
+        &self,
+        table_name: &str,
+        query_schema_columns: usize,
+    ) -> Result<Vec<ErrorBound>, Error> {
+        let select_statement = format!(
+            "SELECT column_index, error_bound FROM model_table_field_columns
+             WHERE table_name = $1 ORDER BY column_index"
+        );
+
+        let mut rows = sqlx::query(&select_statement)
+            .bind(table_name)
+            .fetch(&self.metadata_database_pool);
+
+        let mut column_to_error_bound =
+            vec![ErrorBound::try_new(0.0).unwrap(); query_schema_columns];
+
+        while let Some(row) = rows.try_next().await? {
+            // SQLite (https://www.sqlite.org/datatype3.html) and PostgreSQL
+            // (https://www.postgresql.org/docs/current/datatype.html) both use signed integers and
+            // column_index is stored as an i64 instead of an u64 as a model table has at most 1024 columns.
+            let error_bound_index: i64 = row.try_get(0)?;
+
+            // unwrap() is safe as the error bounds are checked before they are stored.
+            column_to_error_bound[error_bound_index as usize] =
+                ErrorBound::try_new(row.try_get(1)?).unwrap();
+        }
+
+        Ok(column_to_error_bound)
+    }
+
+    /// Return the generated columns for the model table with `table_name` and `df_schema`.
+    /// If a model table with `table_name` does not exist, [`Error`] is returned.
+    async fn generated_columns(
+        &self,
+        table_name: &str,
+        df_schema: &DFSchema,
+    ) -> Result<Vec<Option<GeneratedColumn>>, Error> {
+        let select_statement = format!(
+            "SELECT column_index, generated_column_expr, generated_column_sources
+             FROM model_table_field_columns WHERE table_name = $1 ORDER BY column_index"
+        );
+
+        let mut rows = sqlx::query(&select_statement)
+            .bind(table_name)
+            .fetch(&self.metadata_database_pool);
+
+        let mut generated_columns = vec![None; df_schema.fields().len()];
+
+        while let Some(row) = rows.try_next().await? {
+            if let Some(original_expr) = row.try_get::<Option<&str>, _>(1)? {
+                // unwrap() is safe as the expression is checked before it is written to the database.
+                let expr = parser::parse_sql_expression(df_schema, original_expr).unwrap();
+                let source_columns = row.try_get::<Option<&[u8]>, _>(2)?.unwrap();
+
+                let generated_column = GeneratedColumn {
+                    expr,
+                    source_columns: Self::try_convert_slice_u8_to_vec_usize(source_columns)
+                        .unwrap(),
+                    original_expr: None,
+                };
+
+                // SQLite (https://www.sqlite.org/datatype3.html) and PostgreSQL
+                // (https://www.postgresql.org/docs/current/datatype.html) both use signed integers and
+                // column_index is stored as an i64 instead of an u64 as a model table has at most 1024 columns.
+                let generated_columns_index: i64 = row.try_get(0)?;
+                generated_columns[generated_columns_index as usize] = Some(generated_column);
+            }
+        }
+
+        Ok(generated_columns)
+    }
+
+    /// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides evenly by
+    /// [`mem::size_of::<usize>()`], otherwise [`Error`] is returned.
+    pub fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>, Error> {
+        if bytes.len() % mem::size_of::<usize>() != 0 {
+            Err(Error::ColumnDecode {
+                index: "generated_column_sources".to_owned(),
+                source: Box::new(ModelarDbError::ImplementationError(
+                    "Blob is not a vector of usizes".to_owned(),
+                )),
+            })
+        } else {
+            // unwrap() is safe as bytes divides evenly by mem::size_of::<usize>().
+            Ok(bytes
+                .chunks(mem::size_of::<usize>())
+                .map(|byte_slice| usize::from_le_bytes(byte_slice.try_into().unwrap()))
+                .collect())
+        }
     }
 }
 
