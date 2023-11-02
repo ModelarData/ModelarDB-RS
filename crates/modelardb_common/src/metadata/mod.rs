@@ -34,6 +34,8 @@ use futures::TryStreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
 use sqlx::any::AnyRow;
+use sqlx::database::HasArguments;
+use sqlx::query::Query;
 use sqlx::{AnyPool, Database, Error, Executor, Row};
 
 use crate::errors::ModelarDbError;
@@ -95,51 +97,51 @@ impl TableMetadataManager {
         };
 
         // Create the table_metadata table if it does not exist.
-        self.metadata_database_pool
-            .execute(&*format!(
-                "CREATE TABLE IF NOT EXISTS table_metadata (
-                     table_name TEXT PRIMARY KEY,
-                     sql TEXT NOT NULL
-                 ) {strict}"
-            ))
-            .await?;
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS table_metadata (
+                 table_name TEXT PRIMARY KEY,
+                 sql TEXT NOT NULL
+             ) {strict}"
+        ))
+        .execute(&self.metadata_database_pool)
+        .await?;
 
         // Create the model_table_metadata table if it does not exist.
-        self.metadata_database_pool
-            .execute(&*format!(
-                "CREATE TABLE IF NOT EXISTS model_table_metadata (
-                     table_name TEXT PRIMARY KEY,
-                     query_schema {binary_type} NOT NULL,
-                     sql TEXT NOT NULL
-                 ) {strict}"
-            ))
-            .await?;
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS model_table_metadata (
+                 table_name TEXT PRIMARY KEY,
+                 query_schema {binary_type} NOT NULL,
+                 sql TEXT NOT NULL
+             ) {strict}"
+        ))
+        .execute(&self.metadata_database_pool)
+        .await?;
 
         // Create the model_table_hash_name table if it does not exist.
-        self.metadata_database_pool
-            .execute(&*format!(
-                "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
-                     hash INTEGER PRIMARY KEY,
-                     table_name TEXT
-                 ) {strict}"
-            ))
-            .await?;
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
+                 hash INTEGER PRIMARY KEY,
+                 table_name TEXT
+             ) {strict}"
+        ))
+        .execute(&self.metadata_database_pool)
+        .await?;
 
         // Create the model_table_field_columns table if it does not exist. Note that column_index will
         // only use a maximum of 10 bits. generated_column_* is NULL if the fields are stored as segments.
-        self.metadata_database_pool
-            .execute(&*format!(
-                "CREATE TABLE IF NOT EXISTS model_table_field_columns (
-                     table_name TEXT NOT NULL,
-                     column_name TEXT NOT NULL,
-                     column_index INTEGER NOT NULL,
-                     error_bound REAL NOT NULL,
-                     generated_column_expr TEXT,
-                     generated_column_sources {binary_type},
-                     PRIMARY KEY (table_name, column_name)
-                 ) {strict}"
-            ))
-            .await?;
+        sqlx::query(&format!(
+            "CREATE TABLE IF NOT EXISTS model_table_field_columns (
+                 table_name TEXT NOT NULL,
+                 column_name TEXT NOT NULL,
+                 column_index INTEGER NOT NULL,
+                 error_bound REAL NOT NULL,
+                 generated_column_expr TEXT,
+                 generated_column_sources {binary_type},
+                 PRIMARY KEY (table_name, column_name)
+             ) {strict}"
+        ))
+        .execute(&self.metadata_database_pool)
+        .await?;
 
         Ok(())
     }
@@ -204,28 +206,31 @@ impl TableMetadataManager {
             // (https://www.postgresql.org/docs/current/datatype.html) both use signed integers.
             let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
+            let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
+            let model_table_name = &model_table_metadata.name;
+
             // ON CONFLICT DO NOTHING is used to silently fail when trying to insert an already
             // existing hash. This purposely occurs if the hash has already been written to the
             // metadata database but is no longer stored in the cache, e.g., if the system has
             // been restarted.
-            let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
-            let model_table_name = &model_table_metadata.name;
+            sqlx::query(&format!(
+                "INSERT INTO {model_table_name}_tags (hash{maybe_separator}{tag_columns})
+                 VALUES ($1{maybe_separator}{values})
+                 ON CONFLICT DO NOTHING",
+            ))
+            .bind(signed_tag_hash)
+            .execute(&mut *transaction)
+            .await?;
 
-            transaction
-                .execute(&*format!(
-                    "INSERT INTO {model_table_name}_tags (hash{maybe_separator}{tag_columns})
-                     VALUES ({signed_tag_hash}{maybe_separator}{values})
-                     ON CONFLICT DO NOTHING",
-                ))
-                .await?;
-
-            transaction
-                .execute(&*format!(
-                    "INSERT INTO model_table_hash_table_name (hash, table_name)
-                     VALUES ({signed_tag_hash}, '{model_table_name}')
-                     ON CONFLICT DO NOTHING",
-                ))
-                .await?;
+            sqlx::query(&format!(
+                "INSERT INTO model_table_hash_table_name (hash, table_name)
+                 VALUES ($1, $2)
+                 ON CONFLICT DO NOTHING",
+            ))
+            .bind(signed_tag_hash)
+            .bind(model_table_name)
+            .execute(&mut *transaction)
+            .await?;
 
             transaction.commit().await?;
 
@@ -251,12 +256,9 @@ impl TableMetadataManager {
         let tag_hash = Self::univariate_id_to_tag_hash(univariate_id);
         let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
-        let select_statement = format!(
-            "SELECT table_name FROM model_table_hash_table_name WHERE hash = {signed_tag_hash}",
-        );
-
-        self.metadata_database_pool
-            .fetch_one(&*select_statement)
+        sqlx::query("SELECT table_name FROM model_table_hash_table_name WHERE hash = $1")
+            .bind(signed_tag_hash)
+            .fetch_one(&self.metadata_database_pool)
             .await?
             .try_get(0)
     }
@@ -279,7 +281,7 @@ impl TableMetadataManager {
             tag_column_names.join(","),
         );
 
-        let mut rows = self.metadata_database_pool.fetch(&*select_statement);
+        let mut rows = sqlx::query(&select_statement).fetch(&self.metadata_database_pool);
 
         let mut hash_to_tags = HashMap::new();
         while let Some(row) = rows.try_next().await? {
@@ -367,7 +369,7 @@ impl TableMetadataManager {
         query_hashes: &str,
     ) -> Result<Vec<u64>, Error> {
         // Retrieve the field columns.
-        let mut rows = self.metadata_database_pool.fetch(query_field_columns);
+        let mut rows = sqlx::query(query_field_columns).fetch(&self.metadata_database_pool);
 
         let mut field_columns = vec![];
         while let Some(row) = rows.try_next().await? {
@@ -386,7 +388,7 @@ impl TableMetadataManager {
         }
 
         // Retrieve the hashes and compute the univariate ids;
-        let mut rows = self.metadata_database_pool.fetch(query_hashes);
+        let mut rows = sqlx::query(query_hashes).fetch(&self.metadata_database_pool);
 
         let mut univariate_ids = vec![];
         while let Some(row) = rows.try_next().await? {
@@ -418,15 +420,17 @@ impl TableMetadataManager {
     ) -> Result<(), Error> {
         Self::validate_compressed_file(compressed_file)?;
 
-        let insert_statement = Self::create_insert_compressed_file_statement(
-            model_table_name,
-            query_schema_index,
-            compressed_file,
+        let insert_statement = format!(
+            "INSERT INTO {model_table_name}_compressed_files VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
         );
 
-        self.metadata_database_pool
-            .execute(&*insert_statement)
-            .await?;
+        Self::create_insert_compressed_file_query(
+            &insert_statement,
+            query_schema_index,
+            compressed_file,
+        )
+        .execute(&self.metadata_database_pool)
+        .await?;
 
         Ok(())
     }
@@ -470,13 +474,15 @@ impl TableMetadataManager {
 
         // sqlx does not yet support binding arrays to IN (...) and recommends generating them.
         // https://github.com/launchbadge/sqlx/blob/main/FAQ.md#how-can-i-do-a-select--where-foo-in--query
-        let delete_from_result = transaction
-            .execute(&*format!(
-                "DELETE FROM {model_table_name}_compressed_files
-                 WHERE field_column = {query_schema_index}
-                 AND file_path IN ({compressed_files_to_delete_in})",
-            ))
-            .await?;
+        // query_schema_index is simply cast as a model table contains at most 1024 columns.
+        let delete_from_result = sqlx::query(&format!(
+            "DELETE FROM {model_table_name}_compressed_files
+             WHERE field_column = $1
+             AND file_path IN ({compressed_files_to_delete_in})",
+        ))
+        .bind(query_schema_index as i64)
+        .execute(&mut *transaction)
+        .await?;
 
         // The cast to usize is safe as only compressed_files_to_delete.len() can be deleted.
         if compressed_files_to_delete.len() != delete_from_result.rows_affected() as usize {
@@ -488,13 +494,17 @@ impl TableMetadataManager {
         }
 
         if let Some(compressed_file) = replacement_compressed_file {
-            let insert_statement = Self::create_insert_compressed_file_statement(
-                model_table_name,
-                query_schema_index,
-                compressed_file,
+            let insert_statement = format!(
+                "INSERT INTO {model_table_name}_compressed_files VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
             );
 
-            transaction.execute(&*insert_statement).await?;
+            Self::create_insert_compressed_file_query(
+                &insert_statement,
+                query_schema_index,
+                compressed_file,
+            )
+            .execute(&mut *transaction)
+            .await?;
         }
 
         transaction.commit().await
@@ -524,13 +534,21 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Create an SQL statement that, when executed, stores `compressed_file` in the metadata
-    /// database for the column at `query_schema_index` in the model table with `model_table_name`.
-    fn create_insert_compressed_file_statement(
-        model_table_name: &str,
+    /// Create a [`Query`] that, when executed, stores `compressed_file` in the metadata database
+    /// for the column at `query_schema_index` using `insert_statement`.
+    fn create_insert_compressed_file_query<'a, DB: Database>(
+        insert_statement: &'a str,
         query_schema_index: usize,
-        compressed_file: &CompressedFile,
-    ) -> String {
+        compressed_file: &'a CompressedFile,
+    ) -> Query<'a, DB, <DB as HasArguments<'a>>::Arguments>
+    where
+        i64: sqlx::Encode<'a, DB>,
+        i64: sqlx::Type<DB>,
+        f32: sqlx::Encode<'a, DB>,
+        f32: sqlx::Type<DB>,
+        String: sqlx::Encode<'a, DB>,
+        String: sqlx::Type<DB>,
+    {
         let min_value = Self::rewrite_special_value_to_normal_value(compressed_file.min_value);
         let max_value = Self::rewrite_special_value_to_normal_value(compressed_file.max_value);
 
@@ -542,15 +560,15 @@ impl TableMetadataManager {
         // query_schema_index is simply cast as a model table contains at most 1024 columns.
         // size is simply cast as it is unrealistic for a file to use more bytes than the max value
         // of a signed 64-bit integer as it can represent a file with a size up to ~9000 PB.
-        format!(
-            "INSERT INTO {model_table_name}_compressed_files
-             VALUES ({}, {}, {}, {created_at}, {}, {}, {min_value}, {max_value})",
-            compressed_file.file_metadata.location,
-            query_schema_index as i64,
-            compressed_file.file_metadata.size as i64,
-            compressed_file.start_time,
-            compressed_file.end_time,
-        )
+        sqlx::query(insert_statement)
+            .bind(compressed_file.file_metadata.location.to_string())
+            .bind(query_schema_index as i64)
+            .bind(compressed_file.file_metadata.size as i64)
+            .bind(created_at)
+            .bind(compressed_file.start_time)
+            .bind(compressed_file.end_time)
+            .bind(min_value)
+            .bind(max_value)
     }
 
     /// Return an [`ObjectMeta`] for each compressed file that belongs to the column at `query_schema_index`
@@ -597,17 +615,22 @@ impl TableMetadataManager {
         let min_value = Self::rewrite_special_value_to_normal_value(min_value);
         let max_value = Self::rewrite_special_value_to_normal_value(max_value);
 
-        // query_schema_index is simply cast as a model table contains at most 1024 columns.
         let select_statement = format!(
             "SELECT * FROM {model_table_name}_compressed_files
-             WHERE field_column = ({})
-             AND ({start_time}) <= end_time AND start_time <= ({end_time})
-             AND ({min_value}) <= max_value AND min_value <= ({max_value})
+             WHERE field_column = ($1)
+             AND ($2) <= end_time AND start_time <= ($3)
+             AND ($4) <= max_value AND min_value <= ($5)
              ORDER BY start_time",
-            query_schema_index as i64,
         );
 
-        let mut rows = self.metadata_database_pool.fetch(&*select_statement);
+        // query_schema_index is simply cast as a model table contains at most 1024 columns.
+        let mut rows = sqlx::query(&select_statement)
+            .bind(query_schema_index as i64)
+            .bind(start_time)
+            .bind(end_time)
+            .bind(min_value)
+            .bind(max_value)
+            .fetch(&self.metadata_database_pool);
 
         let mut files = vec![];
         while let Some(row) = rows.try_next().await? {
@@ -653,12 +676,13 @@ impl TableMetadataManager {
     /// Save the created table to the metadata database. This consists of adding a row to the
     /// table_metadata table with the `name` of the table and the `sql` used to create the table.
     pub async fn save_table_metadata(&self, name: &str, sql: &str) -> Result<(), Error> {
-        // Add a new row in the table_metadata table to persist the table.
-        self.metadata_database_pool
-            .execute(&*format!(
-                "INSERT INTO table_metadata (table_name, sql) VALUES ('{name}', '{sql}')"
-            ))
-            .await?;
+        sqlx::query(&format!(
+            "INSERT INTO table_metadata (table_name, sql) VALUES ($1, $2)"
+        ))
+        .bind(name)
+        .bind(sql)
+        .execute(&self.metadata_database_pool)
+        .await?;
 
         Ok(())
     }
@@ -690,45 +714,52 @@ impl TableMetadataManager {
             .collect::<Vec<String>>()
             .join(",");
 
-        // Create a table_name_tags table to save the 54-bit tag hashes when ingesting data.
         let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
-        transaction
-            .execute(&*format!(
-                "CREATE TABLE {}_tags (
-                     hash INTEGER PRIMARY KEY{maybe_separator}
-                     {tag_columns}
-                 ) STRICT",
-                model_table_metadata.name
-            ))
-            .await?;
+
+        // Create a table_name_tags table to save the 54-bit tag hashes when ingesting data.
+        sqlx::query(&format!(
+            "CREATE TABLE {}_tags (
+                 hash INTEGER PRIMARY KEY{maybe_separator}
+                 {tag_columns}
+             ) STRICT",
+            model_table_metadata.name
+        ))
+        .execute(&mut *transaction)
+        .await?;
 
         // Create a table_name_compressed_files table to save the metadata of the table's files.
-        transaction
-            .execute(&*format!(
-                "CREATE TABLE {}_compressed_files (
-                     file_path TEXT PRIMARY KEY,
-                     field_column INTEGER,
-                     size INTEGER,
-                     created_at INTEGER,
-                     start_time INTEGER,
-                     end_time INTEGER,
-                     min_value REAL,
-                     max_value REAL
-                 ) STRICT",
-                model_table_metadata.name
-            ))
-            .await?;
+        sqlx::query(&format!(
+            "CREATE TABLE {}_compressed_files (
+                 file_path TEXT PRIMARY KEY,
+                 field_column INTEGER,
+                 size INTEGER,
+                 created_at INTEGER,
+                 start_time INTEGER,
+                 end_time INTEGER,
+                 min_value REAL,
+                 max_value REAL
+             ) STRICT",
+            model_table_metadata.name
+        ))
+        .execute(&mut *transaction)
+        .await?;
 
         // Add a new row in the model_table_metadata table to persist the model table.
-        transaction
-            .execute(&*format!(
-                "INSERT INTO model_table_metadata (table_name, query_schema, sql)
-                 VALUES ({}, {query_schema_bytes}, {sql})",
-                model_table_metadata.name
-            ))
-            .await?;
+        sqlx::query(
+            "INSERT INTO model_table_metadata (table_name, query_schema, sql) VALUES ($1, $2, $3)",
+        )
+        .bind(&model_table_metadata.name)
+        .bind(query_schema_bytes)
+        .bind(sql)
+        .execute(&mut *transaction)
+        .await?;
 
         // Add a row for each field column to the model_table_field_columns table.
+        let insert_statement =
+            "INSERT INTO model_table_field_columns (table_name, column_name, column_index,
+             error_bound, generated_column_expr, generated_column_sources)
+             VALUES ($1, $2, $3, $4, $5, $6)";
+
         for (query_schema_index, field) in model_table_metadata
             .query_schema
             .fields()
@@ -766,12 +797,15 @@ impl TableMetadataManager {
                     };
 
                 // query_schema_index is simply cast as a model table contains at most 1024 columns.
-                transaction.execute(&*format!(
-                    "INSERT INTO model_table_field_columns (table_name, column_name, column_index,
-                     error_bound, generated_column_expr, generated_column_sources)
-                     VALUES ({}, {}, {}, {error_bound}, {generated_column_expr}, {generated_column_sources})",
-                    model_table_metadata.name, field.name(), query_schema_index as i64)
-                ).await?;
+                sqlx::query(insert_statement)
+                    .bind(&model_table_metadata.name)
+                    .bind(field.name())
+                    .bind(query_schema_index as i64)
+                    .bind(error_bound)
+                    .bind(generated_column_expr)
+                    .bind(generated_column_sources)
+                    .execute(&mut *transaction)
+                    .await?;
             }
         }
 
