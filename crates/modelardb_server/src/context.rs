@@ -323,6 +323,55 @@ impl Context {
         Ok(())
     }
 
+    // TODO: Move test for this.
+    /// For each table saved in the metadata database, register the table in Apache Arrow
+    /// DataFusion. If the tables could not be retrieved from the metadata database or a table
+    /// could not be registered, return [`ModelarDbError`].
+    pub async fn register_tables(&self) -> Result<(), ModelarDbError> {
+        // TODO: Add method and test for new method.
+        let tables = self.metadata_manager.tables().await.map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
+
+        for table in tables {
+            // Compute the path to the folder containing data for the table.
+            let table_folder_path = self
+                .local_data_folder()
+                .join(COMPRESSED_DATA_FOLDER)
+                .join(table);
+
+            // unwrap() is safe since the path is created from the table name which is valid UTF-8.
+            self.session
+                .register_parquet(table, table_folder_path.to_str().unwrap(), ParquetReadOptions::default())
+                .await
+                .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+            info!("Registered table '{table_name}'.");
+        };
+
+        Ok(())
+    }
+
+    // TODO: Move test for this.
+    /// For each model table saved in the metadata database, register the model table in Apache
+    /// Arrow DataFusion. If the model tables could not be retrieved from the metadata database or
+    /// a model table could not be registered, return [`ModelarDbError`].
+    pub async fn register_model_tables(&self, context: &Arc<Context>) -> Result<(), ModelarDbError> {
+        // TODO: Add method and test for new method.
+        let model_tables = self.metadata_manager.model_tables().await.map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
+
+        for model_table in model_tables {
+            self.session
+                .register_table(
+                    model_table.name,
+                    ModelTable::new(context.clone(), model_table),
+                )
+                .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+            info!("Registered model table '{}'.", model_table.name);
+        }
+
+        Ok(())
+    }
+
     /// Lookup the [`ModelTableMetadata`] of the model table with name `table_name` if it exists.
     /// Specifically, the method returns:
     /// * [`ModelTableMetadata`] if a model table with the name `table_name` exists.
