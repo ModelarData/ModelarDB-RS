@@ -23,7 +23,7 @@ use futures::TryStreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::ServerMode;
-use sqlx::{AnyPool, Executor, Row};
+use sqlx::{AnyPool, Row};
 use uuid::Uuid;
 
 use crate::cluster::Node;
@@ -36,7 +36,7 @@ pub struct MetadataManager {
     metadata_database_pool: Arc<AnyPool>,
     /// Metadata manager used to interface with the subset of the manager metadata database related
     /// to tables and model tables.
-    table_metadata_manager: TableMetadataManager,
+    pub(crate) table_metadata_manager: TableMetadataManager,
 }
 
 impl MetadataManager {

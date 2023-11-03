@@ -17,7 +17,7 @@
 //! and the manager metadata database. Note that the entire server metadata database can be accessed
 //! through this metadata manager, while it only supports a subset of the manager metadata database.
 
-mod compressed_file;
+pub mod compressed_file;
 pub mod model_table_metadata;
 
 use std::collections::hash_map::DefaultHasher;
@@ -781,8 +781,8 @@ impl TableMetadataManager {
     // TODO: Add a test for this.
     /// Return the [`ModelTableMetadata`] of each model table currently in the metadata database.
     /// If the [`ModelTableMetadata`] cannot be retrieved, [`Error`] is returned.
-    pub async fn model_tables(&self) -> Result<Vec<Arc<ModelTableMetadata>>, Error> {
-        let mut model_tables: Vec<Arc<ModelTableMetadata>> = vec![];
+    pub async fn model_table_metadata(&self) -> Result<Vec<Arc<ModelTableMetadata>>, Error> {
+        let mut model_table_metadata: Vec<Arc<ModelTableMetadata>> = vec![];
 
         let mut rows =
             sqlx::query("SELECT * FROM model_table_metadata").fetch(&*self.metadata_database_pool);
@@ -803,7 +803,7 @@ impl TableMetadataManager {
             let generated_columns = self.generated_columns(table_name, &df_query_schema).await?;
 
             // Create model table metadata.
-            let model_table_metadata = Arc::new(
+            let metadata = Arc::new(
                 ModelTableMetadata::try_new(
                     table_name.to_owned(),
                     Arc::new(query_schema),
@@ -813,10 +813,10 @@ impl TableMetadataManager {
                 .map_err(|error| Error::Configuration(Box::new(error)))?,
             );
 
-            model_tables.push(model_table_metadata)
+            model_table_metadata.push(metadata)
         }
 
-        Ok(model_tables)
+        Ok(model_table_metadata)
     }
 
     /// Return the error bounds for the columns in the model table with `table_name`. If a model

@@ -29,6 +29,8 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
+use modelardb_common::metadata::compressed_file::CompressedFile;
+use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::{Timestamp, Value};
 use object_store::{ObjectMeta, ObjectStore};
 use parquet::arrow::async_reader::ParquetObjectReader;
@@ -40,8 +42,6 @@ use tonic::codegen::Bytes;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use crate::metadata::compressed_file::CompressedFile;
-use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
@@ -65,7 +65,7 @@ pub(super) struct CompressedDataManager {
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
     /// Management of metadata for saving compressed file metadata.
-    metadata_manager: Arc<MetadataManager>,
+    metadata_manager: Arc<TableMetadataManager>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used compressed memory in bytes, updated every time the used memory changes.
@@ -83,7 +83,7 @@ impl CompressedDataManager {
         local_data_folder: PathBuf,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
-        metadata_manager: Arc<MetadataManager>,
+        metadata_manager: Arc<TableMetadataManager>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the compressed data manager exists.

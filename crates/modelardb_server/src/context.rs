@@ -29,6 +29,7 @@ use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::{ParquetReadOptions, SessionConfig, SessionContext};
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::types::{ClusterMode, ServerMode};
@@ -39,7 +40,6 @@ use tonic::Request;
 use tracing::info;
 
 use crate::configuration::ConfigurationManager;
-use crate::metadata::MetadataManager;
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
 use crate::{optimizer, storage, DataFolders};
@@ -47,7 +47,7 @@ use crate::{optimizer, storage, DataFolders};
 /// Provides access to the system's configuration and components.
 pub struct Context {
     /// Metadata for the tables and model tables in the data folder.
-    pub metadata_manager: Arc<MetadataManager>,
+    pub metadata_manager: Arc<TableMetadataManager>,
     /// Updatable configuration of the server.
     pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
     /// Main interface for Apache Arrow DataFusion.
@@ -66,7 +66,7 @@ impl Context {
         server_mode: ServerMode,
     ) -> Result<Self, ModelarDbError> {
         let metadata_manager = Arc::new(
-            MetadataManager::try_new(&data_folders.local_data_folder)
+            TableMetadataManager::try_new_sqlite(&data_folders.local_data_folder)
                 .await
                 .map_err(|error| {
                     ModelarDbError::ConfigurationError(format!(
@@ -361,8 +361,10 @@ impl Context {
 
     // TODO: Move test for this.
     /// For each model table saved in the metadata database, register the model table in Apache
-    /// Arrow DataFusion. If the model tables could not be retrieved from the metadata database or
-    /// a model table could not be registered, return [`ModelarDbError`].
+    /// Arrow DataFusion. `context` is needed as an argument instead of using `self` to avoid
+    /// having to copy the context when registering model tables. If the model tables could not be
+    /// retrieved from the metadata database or a model table could not be registered,
+    /// return [`ModelarDbError`].
     pub async fn register_model_tables(
         &self,
         context: &Arc<Context>,

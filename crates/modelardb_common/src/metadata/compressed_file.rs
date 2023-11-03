@@ -26,7 +26,7 @@ use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompressedFile {
     /// The metadata that describes the file.
-    pub(crate) file_metadata: ObjectMeta,
+    pub file_metadata: ObjectMeta,
     /// Timestamp of the first data point in the file.
     pub(super) start_time: Timestamp,
     /// Timestamp of the last data point in the file.
@@ -39,7 +39,7 @@ pub struct CompressedFile {
 
 impl CompressedFile {
     /// Convert the given [`ObjectMeta`] and [`RecordBatch`] to a [`CompressedFile`].
-    pub(crate) fn from_record_batch(file_metadata: ObjectMeta, batch: &RecordBatch) -> Self {
+    pub fn from_record_batch(file_metadata: ObjectMeta, batch: &RecordBatch) -> Self {
         // unwrap() is safe as None is only returned if all of the values are None.
         let start_time = aggregate::min(array!(batch, 2, TimestampArray)).unwrap();
         let end_time = aggregate::max(array!(batch, 3, TimestampArray)).unwrap();
@@ -69,7 +69,7 @@ mod tests {
     use object_store::path::Path as ObjectStorePath;
     use uuid::Uuid;
 
-    use crate::common_test;
+    use crate::test::compressed_segments_record_batch;
 
     #[test]
     fn test_compressed_file_from_record_batch() {
@@ -81,10 +81,8 @@ mod tests {
             e_tag: None,
         };
 
-        let compressed_file = CompressedFile::from_record_batch(
-            object_meta,
-            &common_test::compressed_segments_record_batch(),
-        );
+        let compressed_file =
+            CompressedFile::from_record_batch(object_meta, &compressed_segments_record_batch());
 
         assert_eq!(compressed_file.start_time, 0);
         assert_eq!(compressed_file.end_time, 5);

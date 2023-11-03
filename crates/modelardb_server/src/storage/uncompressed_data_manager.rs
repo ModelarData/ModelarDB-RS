@@ -26,12 +26,12 @@ use crossbeam_channel::SendError;
 use dashmap::DashMap;
 use datafusion::arrow::array::{Array, StringArray};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
 use tokio::runtime::Runtime;
 use tracing::{debug, error};
 
 use crate::context::Context;
-use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
 use crate::storage::types::Channels;
 use crate::storage::types::MemoryPool;
@@ -58,7 +58,7 @@ pub(super) struct UncompressedDataManager {
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
     /// Management of metadata for ingesting and compressing time series.
-    metadata_manager: Arc<MetadataManager>,
+    metadata_manager: Arc<TableMetadataManager>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used uncompressed memory in bytes, updated every time the used memory changes.
@@ -78,7 +78,7 @@ impl UncompressedDataManager {
         local_data_folder: PathBuf,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
-        metadata_manager: Arc<MetadataManager>,
+        metadata_manager: Arc<TableMetadataManager>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the uncompressed data manager exists.
@@ -629,7 +629,6 @@ mod tests {
     use modelardb_common::types::{TimestampBuilder, ValueBuilder};
     use ringbuf::Rb;
 
-    use crate::metadata::MetadataManager;
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
 
     const CURRENT_BATCH_INDEX: u64 = 0;
