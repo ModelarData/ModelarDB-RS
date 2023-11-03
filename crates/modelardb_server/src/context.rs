@@ -328,24 +328,32 @@ impl Context {
     /// DataFusion. If the tables could not be retrieved from the metadata database or a table
     /// could not be registered, return [`ModelarDbError`].
     pub async fn register_tables(&self) -> Result<(), ModelarDbError> {
-        // TODO: Add method and test for new method.
-        let tables = self.metadata_manager.tables().await.map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
+        let table_names = self
+            .metadata_manager
+            .table_names()
+            .await
+            .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
-        for table in tables {
+        for table_name in table_names {
             // Compute the path to the folder containing data for the table.
             let table_folder_path = self
+                .metadata_manager
                 .local_data_folder()
                 .join(COMPRESSED_DATA_FOLDER)
-                .join(table);
+                .join(&table_name);
 
             // unwrap() is safe since the path is created from the table name which is valid UTF-8.
             self.session
-                .register_parquet(table, table_folder_path.to_str().unwrap(), ParquetReadOptions::default())
+                .register_parquet(
+                    &table_name,
+                    table_folder_path.to_str().unwrap(),
+                    ParquetReadOptions::default(),
+                )
                 .await
                 .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
             info!("Registered table '{table_name}'.");
-        };
+        }
 
         Ok(())
     }
@@ -354,19 +362,25 @@ impl Context {
     /// For each model table saved in the metadata database, register the model table in Apache
     /// Arrow DataFusion. If the model tables could not be retrieved from the metadata database or
     /// a model table could not be registered, return [`ModelarDbError`].
-    pub async fn register_model_tables(&self, context: &Arc<Context>) -> Result<(), ModelarDbError> {
-        // TODO: Add method and test for new method.
-        let model_tables = self.metadata_manager.model_tables().await.map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
+    pub async fn register_model_tables(
+        &self,
+        context: &Arc<Context>,
+    ) -> Result<(), ModelarDbError> {
+        let model_table_metadata = self
+            .metadata_manager
+            .model_table_metadata()
+            .await
+            .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
-        for model_table in model_tables {
+        for metadata in model_table_metadata {
             self.session
                 .register_table(
-                    model_table.name,
-                    ModelTable::new(context.clone(), model_table),
+                    &metadata.name,
+                    ModelTable::new(context.clone(), metadata.clone()),
                 )
                 .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-            info!("Registered model table '{}'.", model_table.name);
+            info!("Registered model table '{}'.", &metadata.name);
         }
 
         Ok(())

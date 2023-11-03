@@ -24,13 +24,14 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::Hasher;
 use std::mem;
+use std::sync::Arc;
 
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use chrono::{TimeZone, Utc};
 use dashmap::DashMap;
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
-use datafusion::common::DFSchema;
+use datafusion::common::{DFSchema, ToDFSchema};
 use futures::TryStreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
@@ -818,25 +819,61 @@ impl TableMetadataManager {
         transaction.commit().await
     }
 
-    /// Convert a [`Schema`] to [`Vec<u8>`].
-    pub fn try_convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
-        let options = IpcWriteOptions::default();
-        let schema_as_ipc = SchemaAsIpc::new(schema, &options);
+    // TODO: Add a test for this.
+    /// Return the table name of each table currently in the metadata database. If the table names
+    /// cannot be retrieved, [`Error`] is returned.
+    pub async fn table_names(&self) -> Result<Vec<String>, Error> {
+        let mut table_names: Vec<String> = vec![];
 
-        let ipc_message: IpcMessage =
-            schema_as_ipc
-                .try_into()
-                .map_err(|error: ArrowError| Error::ColumnDecode {
-                    index: "query_schema".to_owned(),
-                    source: Box::new(error),
-                })?;
+        let mut rows = sqlx::query("SELECT table_name FROM table_metadata")
+            .fetch(&self.metadata_database_pool);
 
-        Ok(ipc_message.0.to_vec())
+        while let Some(row) = rows.try_next().await? {
+            table_names.push(row.try_get("table_name")?)
+        }
+
+        Ok(table_names)
     }
 
-    /// Convert a [`&[usize]`] to a [`Vec<u8>`].
-    pub fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
-        usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
+    // TODO: Add a test for this.
+    /// Return the [`ModelTableMetadata`] of each model table currently in the metadata database.
+    /// If the [`ModelTableMetadata`] cannot be retrieved, [`Error`] is returned.
+    pub async fn model_tables(&self) -> Result<Vec<Arc<ModelTableMetadata>>, Error> {
+        let mut model_tables: Vec<Arc<ModelTableMetadata>> = vec![];
+
+        let mut rows =
+            sqlx::query("SELECT * FROM model_table_metadata").fetch(&self.metadata_database_pool);
+
+        while let Some(row) = rows.try_next().await? {
+            let table_name: &str = row.try_get("table_name")?;
+
+            // Convert the BLOBs to the concrete types.
+            let query_schema_bytes = row.try_get("query_schema")?;
+            let query_schema = Self::try_convert_blob_to_schema(query_schema_bytes)?;
+
+            let error_bounds = self
+                .error_bounds(table_name, query_schema.fields().len())
+                .await?;
+
+            // unwrap() is safe as the schema is checked before it is written to the metadata database.
+            let df_query_schema = query_schema.clone().to_dfschema().unwrap();
+            let generated_columns = self.generated_columns(table_name, &df_query_schema).await?;
+
+            // Create model table metadata.
+            let model_table_metadata = Arc::new(
+                ModelTableMetadata::try_new(
+                    table_name.to_owned(),
+                    Arc::new(query_schema),
+                    error_bounds,
+                    generated_columns,
+                )
+                .map_err(|error| Error::Configuration(Box::new(error)))?,
+            );
+
+            model_tables.push(model_table_metadata)
+        }
+
+        Ok(model_tables)
     }
 
     /// Return the error bounds for the columns in the model table with `table_name`. If a model
@@ -912,6 +949,37 @@ impl TableMetadataManager {
         }
 
         Ok(generated_columns)
+    }
+
+    /// Convert a [`Schema`] to [`Vec<u8>`].
+    pub fn try_convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
+        let options = IpcWriteOptions::default();
+        let schema_as_ipc = SchemaAsIpc::new(schema, &options);
+
+        let ipc_message: IpcMessage =
+            schema_as_ipc
+                .try_into()
+                .map_err(|error: ArrowError| Error::ColumnDecode {
+                    index: "query_schema".to_owned(),
+                    source: Box::new(error),
+                })?;
+
+        Ok(ipc_message.0.to_vec())
+    }
+
+    /// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
+    /// [`Error`].
+    pub fn try_convert_blob_to_schema(schema_bytes: Vec<u8>) -> Result<Schema, Error> {
+        let ipc_message = IpcMessage(schema_bytes.into());
+        Schema::try_from(ipc_message).map_err(|error| Error::ColumnDecode {
+            index: "query_schema".to_owned(),
+            source: Box::new(error),
+        })
+    }
+
+    /// Convert a [`&[usize]`] to a [`Vec<u8>`].
+    pub fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
+        usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
     }
 
     /// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides evenly by

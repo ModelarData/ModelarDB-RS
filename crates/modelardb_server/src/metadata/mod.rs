@@ -643,6 +643,61 @@ impl MetadataManager {
         metadata::save_table_metadata(&self.metadata_database_pool, name, sql).await
     }
 
+    /// Return the table name of each table currently in the metadata database. If the table names
+    /// cannot be retrieved, [`Error`] is returned.
+    pub async fn table_names(&self) -> Result<Vec<String>, Error> {
+        let mut table_names: Vec<String> = vec![];
+
+        let mut rows = sqlx::query("SELECT table_name FROM table_metadata")
+            .fetch(&self.metadata_database_pool);
+
+        while let Some(row) = rows.try_next().await? {
+            table_names.push(row.try_get("table_name")?)
+        }
+
+        Ok(table_names)
+    }
+
+    /// Return the [`ModelTableMetadata`] of each model table currently in the metadata database.
+    /// If the [`ModelTableMetadata`] cannot be retrieved, [`Error`] is returned.
+    pub async fn model_table_metadata(&self) -> Result<Vec<Arc<ModelTableMetadata>>, Error> {
+        let mut model_table_metadata: Vec<Arc<ModelTableMetadata>> = vec![];
+
+        let mut rows =
+            sqlx::query("SELECT * FROM model_table_metadata").fetch(&self.metadata_database_pool);
+
+        while let Some(row) = rows.try_next().await? {
+            let table_name: &str = row.try_get("table_name")?;
+
+            // Convert the BLOBs to the concrete types.
+            let query_schema_bytes = row.try_get("query_schema")?;
+            let query_schema = metadata::try_convert_blob_to_schema(query_schema_bytes)?;
+
+            let error_bounds = self
+                .error_bounds(table_name, query_schema.fields().len())
+                .await?;
+
+            // unwrap() is safe as the schema is checked before it is written to the metadata database.
+            let df_query_schema = query_schema.clone().to_dfschema().unwrap();
+            let generated_columns = self.generated_columns(table_name, &df_query_schema).await?;
+
+            // Create model table metadata.
+            let metadata = Arc::new(
+                ModelTableMetadata::try_new(
+                    table_name.to_owned(),
+                    Arc::new(query_schema),
+                    error_bounds,
+                    generated_columns,
+                )
+                .map_err(|error| Error::Configuration(Box::new(error)))?,
+            );
+
+            model_table_metadata.push(metadata)
+        }
+
+        Ok(model_table_metadata)
+    }
+
     /// Read the rows in the table_metadata table and use these to register tables in Apache Arrow
     /// DataFusion. If the metadata database could not be opened or the table could not be queried,
     /// return [`Error`].
