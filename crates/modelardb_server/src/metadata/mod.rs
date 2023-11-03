@@ -110,11 +110,6 @@ impl MetadataManager {
         }
     }
 
-    /// Return the path of the local data folder.
-    pub fn local_data_folder(&self) -> &Path {
-        &self.local_data_folder
-    }
-
     /// Return the tag hash for the given list of tag values either by retrieving it from a cache
     /// or, if the combination of tag values is not in the cache, by computing a new hash. If the
     /// hash is not in the cache, it is both saved to the cache, persisted to the model_table_tags
@@ -721,8 +716,9 @@ impl MetadataManager {
         let name: &str = row.try_get(0)?;
 
         // Compute the path to the folder containing data for the table.
-        let table_folder_path = self
-            .local_data_folder()
+        let configuration_manager = context.configuration_manager.read().await;
+        let table_folder_path = configuration_manager
+            .local_data_folder
             .join(COMPRESSED_DATA_FOLDER)
             .join(name);
 
@@ -1048,14 +1044,6 @@ mod tests {
         let path_buf = path.join(name);
         fs::create_dir(&path_buf).unwrap();
         path_buf
-    }
-
-    #[tokio::test]
-    async fn test_get_data_folder_path() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_dir_path = temp_dir.path();
-        let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
-        assert_eq!(temp_dir_path, metadata_manager.local_data_folder());
     }
 
     #[tokio::test]

@@ -16,6 +16,7 @@
 //! Management of the system's configuration. The configuration consists of the server mode and
 //! the amount of reserved memory for uncompressed and compressed data.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use modelardb_common::errors::ModelarDbError;
@@ -33,6 +34,8 @@ const DEFAULT_COMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 512 * 1024 * 1024;
 /// Manages the system's configuration and provides functionality for updating the configuration.
 #[derive(Clone)]
 pub struct ConfigurationManager {
+    /// Folder for storing metadata and Apache Parquet files on the local file system.
+    pub(crate) local_data_folder: PathBuf,
     /// The mode of the cluster used to determine the behaviour when starting the server,
     /// creating tables, updating the remote object store, and querying.
     pub(crate) cluster_mode: ClusterMode,
@@ -53,8 +56,13 @@ pub struct ConfigurationManager {
 }
 
 impl ConfigurationManager {
-    pub fn new(cluster_mode: ClusterMode, server_mode: ServerMode) -> Self {
+    pub fn new(
+        local_data_folder: &Path,
+        cluster_mode: ClusterMode,
+        server_mode: ServerMode,
+    ) -> Self {
         Self {
+            local_data_folder: local_data_folder.to_path_buf(),
             cluster_mode,
             server_mode,
             uncompressed_reserved_memory_in_bytes: DEFAULT_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
@@ -203,6 +211,7 @@ mod tests {
     ) {
         let metadata_manager = Arc::new(MetadataManager::try_new(path).await.unwrap());
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
+            path,
             ClusterMode::SingleNode,
             ServerMode::Edge,
         )));

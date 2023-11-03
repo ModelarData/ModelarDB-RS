@@ -76,6 +76,7 @@ impl Context {
         );
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
+            &data_folders.local_data_folder,
             cluster_mode,
             server_mode,
         )));
@@ -257,9 +258,9 @@ impl Context {
         schema: Schema,
     ) -> Result<(), ModelarDbError> {
         // Ensure the folder for storing the table data exists.
-        let metadata_manager = &self.metadata_manager;
-        let folder_path = metadata_manager
-            .local_data_folder()
+        let configuration_manager = self.configuration_manager.read().await;
+        let folder_path = configuration_manager
+            .local_data_folder
             .join(COMPRESSED_DATA_FOLDER)
             .join(table_name);
 
@@ -336,9 +337,9 @@ impl Context {
 
         for table_name in table_names {
             // Compute the path to the folder containing data for the table.
-            let table_folder_path = self
-                .metadata_manager
-                .local_data_folder()
+            let configuration_manager = self.configuration_manager.read().await;
+            let table_folder_path = configuration_manager
+                .local_data_folder
                 .join(COMPRESSED_DATA_FOLDER)
                 .join(&table_name);
 

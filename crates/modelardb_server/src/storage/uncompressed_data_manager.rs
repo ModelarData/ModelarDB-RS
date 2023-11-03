@@ -1189,7 +1189,7 @@ mod tests {
 
         // UncompressedDataManager::try_new() lookup the error bounds for each univariate_id.
         let uncompressed_data_manager = UncompressedDataManager::try_new(
-            metadata_manager.local_data_folder().to_owned(),
+            path.to_path_buf(),
             memory_pool,
             channels,
             metadata_manager.clone(),
