@@ -211,20 +211,20 @@ impl TestContext {
     fn create_table(&mut self, table_name: &str, table_type: TableType) {
         let cmd = match table_type {
             TableType::NormalTable => {
-                format!("CREATE TABLE {table_name}(timestamp TIMESTAMP, value REAL, metadata REAL)")
+                format!("CREATE TABLE {table_name}(timestamp TIMESTAMP, field_one REAL, field_two REAL, metadata TEXT)")
             }
             TableType::ModelTable => {
                 format!(
-                "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD(0.0), tag TAG)"
+                "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, field_one FIELD, field_two FIELD, tag TAG)"
             )
             }
             TableType::ModelTableNoTag => {
-                format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD)")
+                format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, field_one FIELD, field_two FIELD)")
             }
             TableType::ModelTableAsField => {
                 format!(
                     "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
-                 generated FIELD AS (value + CAST(37.0 AS REAL)), value FIELD(0.0))"
+                 generated FIELD AS (field_one + CAST(37.0 AS REAL)), field_one FIELD, field_two FIELD)"
                 )
             }
         };
@@ -259,12 +259,17 @@ impl TestContext {
 
         let mut fields = vec![
             Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
-            Field::new("value", DataType::Float32, false),
+            Field::new("field_one", DataType::Float32, false),
+            Field::new("field_two", DataType::Float32, false),
         ];
 
+        // TODO: Update data generator after pull request 141 is merged to cleanup code and support
+        // generating multivariate time series with different field.
+        let field = Arc::new(uncompressed_values);
         let mut columns: Vec<Arc<dyn Array>> = vec![
             Arc::new(uncompressed_timestamps),
-            Arc::new(uncompressed_values),
+            field.clone(),
+            field
         ];
 
         if let Some(tag) = maybe_tag {
@@ -565,7 +570,8 @@ fn test_can_get_schema() {
         schema,
         Schema::new(vec![
             Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
-            Field::new("value", DataType::Float32, false),
+            Field::new("field_one", DataType::Float32, false),
+            Field::new("field_two", DataType::Float32, false),
             Field::new("tag", DataType::Utf8, false)
         ])
     );
@@ -636,12 +642,12 @@ fn test_can_collect_metrics() {
             .downcast_ref::<UInt32Array>()
             .unwrap()
             .values(),
-        &[786432, 0] // 786432 is common_test::UNCOMPRESSED_BUFFER_SIZE
+        &[786432, 1572864, 786432, 0] // 786432 is common_test::UNCOMPRESSED_BUFFER_SIZE
     );
 
     // The amount of bytes used for compressed memory changes depending on the compression so we
     // can only check that the metric is populated when compressing and when flushing.
-    assert_eq!(values_array.value(1).len(), 2);
+    assert_eq!(values_array.value(1).len(), 4);
 
     // The ingested_data_points metric should record the single request to ingest data points.
     assert_eq!(
@@ -656,7 +662,7 @@ fn test_can_collect_metrics() {
 
     // The amount of bytes used for disk space changes depending on the compression so we
     // can only check that the metric is populated when initializing and when flushing.
-    assert_eq!(values_array.value(3).len(), 2);
+    assert_eq!(values_array.value(3).len(), 3);
 }
 
 #[test]
@@ -691,6 +697,8 @@ fn test_can_ingest_time_series_without_tags() {
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
         .unwrap();
+    dbg!(time_series.schema());
+    dbg!(query_result.schema());
 
     assert_eq!(time_series, query_result);
 }
@@ -712,8 +720,8 @@ fn test_can_ingest_time_series_with_generated_field() {
         .unwrap();
 
     // Column two in the query is the generated column which does not exist in data point.
-    assert_eq!(time_series.num_columns(), 2);
-    assert_eq!(query_result.num_columns(), 3);
+    assert_eq!(time_series.num_columns(), 3);
+    assert_eq!(query_result.num_columns(), 4);
     assert_eq!(time_series.column(0), query_result.column(0));
     assert_eq!(time_series.column(1), query_result.column(2));
 }
@@ -769,12 +777,12 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
     ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
 
     let optimized_query = test_context
-        .execute_query(format!("SELECT MIN(value) FROM {TABLE_NAME}"))
+        .execute_query(format!("SELECT MIN(field_one) FROM {TABLE_NAME}"))
         .unwrap();
 
-    // The trivial filter ensures the query is rewritten by the optimizer.
+    // The trivial filter ensures the query is rewritten by the optimizer. TODO: verify as part of test
     let non_optimized_query = test_context
-        .execute_query(format!("SELECT MIN(value) FROM {TABLE_NAME} WHERE 1=1"))
+        .execute_query(format!("SELECT MIN(field_one) FROM {TABLE_NAME} WHERE 1=1"))
         .unwrap();
 
     assert_eq!(optimized_query, non_optimized_query);
