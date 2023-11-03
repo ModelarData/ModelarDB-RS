@@ -38,6 +38,7 @@ use modelardb_common::arguments::{
 use modelardb_common::types::{ClusterMode, ServerMode};
 use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
+use sqlx::any::install_default_drivers;
 use tokio::runtime::Runtime;
 use tonic::Request;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -77,6 +78,9 @@ pub struct DataFolders {
 /// line arguments cannot be parsed, if the metadata cannot be read from the
 /// database, or if the Apache Arrow Flight interface cannot be started.
 fn main() -> Result<(), String> {
+    // Install the SQLite driver so it can be used by the metadata database.
+    install_default_drivers();
+
     // Initialize a tracing layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();
     tracing_subscriber::registry().with(stdout_log).init();

@@ -29,7 +29,7 @@ use modelardb_common::arguments::{
     validate_remote_data_folder,
 };
 use once_cell::sync::Lazy;
-use sqlx::any::{AnyConnectOptions, AnyPoolOptions};
+use sqlx::any::{install_default_drivers, AnyConnectOptions, AnyPoolOptions};
 use sqlx::AnyPool;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -68,6 +68,9 @@ pub struct Context {
 /// cannot be parsed, if the metadata cannot be read from the database, or if the Apache Arrow
 /// Flight server cannot be started.
 fn main() -> Result<(), String> {
+    // Install the Postgres driver so it can be used by the metadata database.
+    install_default_drivers();
+
     // Initialize a tracing layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();
     tracing_subscriber::registry().with(stdout_log).init();

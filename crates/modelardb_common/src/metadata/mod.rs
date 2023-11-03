@@ -79,19 +79,20 @@ impl TableMetadataManager {
             warn!("The data folder is not empty and does not contain data from ModelarDB");
         }
 
+        // TODO: Find a more consistent and less custom way to specify the file path.
         // Use a connection string to connect to the file. Note that the file is created if it does
-        // not already exist.
-        let database_path = local_data_folder.join(METADATA_DATABASE_NAME);
+        // not already exist using "mode=rwc". unwrap() is safe since local data folder is
+        // created when starting.
         let options = AnyConnectOptions::from_str(&format!(
-            "sqlite://{}",
-            database_path
-                .to_str()
-                .ok_or_else(|| Error::Configuration(Box::new(
-                    ModelarDbError::ConfigurationError(format!(
-                        "Path for metadata database is not valid UTF-8: '{}'",
-                        database_path.to_string_lossy()
-                    ))
-                )))?
+            "sqlite://{}?mode=rwc",
+            local_data_folder
+                .canonicalize()
+                .unwrap()
+                .join(METADATA_DATABASE_NAME)
+                .to_string_lossy()
+                .to_string()
+                .replace("\\", "/")
+                .replace("//?", "")
         ))?;
 
         // Return the metadata manager.
