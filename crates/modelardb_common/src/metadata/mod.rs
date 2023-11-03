@@ -23,8 +23,10 @@ pub mod model_table_metadata;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::Hasher;
-use std::mem;
+use std::path::Path;
+use std::str::FromStr;
 use std::sync::Arc;
+use std::{fs, mem};
 
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use chrono::{TimeZone, Utc};
@@ -35,16 +37,20 @@ use datafusion::common::{DFSchema, ToDFSchema};
 use futures::TryStreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
-use sqlx::any::AnyRow;
+use sqlx::any::{AnyConnectOptions, AnyRow};
 use sqlx::database::HasArguments;
 use sqlx::query::Query;
 use sqlx::{AnyPool, Database, Error, Executor, Row};
+use tracing::warn;
 
 use crate::errors::ModelarDbError;
 use crate::metadata::compressed_file::CompressedFile;
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::parser;
 use crate::types::{ErrorBound, Timestamp, UnivariateId, Value};
+
+/// Name used for the file containing the SQLite database storing the metadata.
+pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
 
 /// The database providers that are currently supported by the metadata database.
 #[derive(Clone)]
@@ -82,6 +88,44 @@ impl TableMetadataManager {
         metadata_manager.create_metadata_database_tables().await?;
 
         Ok(metadata_manager)
+    }
+
+    /// Create a [`TableMetadataManager`] with an SQLite metadata database.  [`Error`] is returned.
+    pub async fn try_new_sqlite(local_data_folder: &Path) -> Result<Self, Error> {
+        if !Self::is_path_a_data_folder(local_data_folder) {
+            warn!("The data folder is not empty and does not contain data from ModelarDB");
+        }
+
+        // Use a connection string to connect to the file. Note that the file is created if it does
+        // not already exist.
+        let database_path = local_data_folder.join(METADATA_DATABASE_NAME);
+        let options = AnyConnectOptions::from_str(&format!(
+            "sqlite://{}",
+            database_path
+                .to_str()
+                .ok_or_else(|| Error::Configuration(Box::new(
+                    ModelarDbError::ConfigurationError(format!(
+                        "Path for metadata database is not valid UTF-8: '{}'",
+                        database_path.to_string_lossy()
+                    ))
+                )))?
+        ))?;
+
+        // Return the metadata manager.
+        Self::try_new(
+            MetadataDatabaseType::SQLite,
+            AnyPool::connect_with(options).await?,
+        ).await
+    }
+
+    // TODO: Add test for this.
+    /// Return [`true`] if `path` is a data folder, otherwise [`false`].
+    fn is_path_a_data_folder(path: &Path) -> bool {
+        if let Ok(files_and_folders) = fs::read_dir(path) {
+            files_and_folders.count() == 0 || path.join(METADATA_DATABASE_NAME).exists()
+        } else {
+            false
+        }
     }
 
     /// If they do not already exist, create the tables in the metadata database used for table and
