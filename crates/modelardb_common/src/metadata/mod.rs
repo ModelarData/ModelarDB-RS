@@ -37,7 +37,7 @@ use datafusion::common::{DFSchema, ToDFSchema};
 use futures::TryStreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
-use sqlx::any::{AnyConnectOptions, AnyRow};
+use sqlx::any::{AnyConnectOptions, AnyPoolOptions, AnyRow};
 use sqlx::database::HasArguments;
 use sqlx::query::Query;
 use sqlx::{AnyPool, Database, Error, Executor, Row};
@@ -54,7 +54,7 @@ pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
 
 /// The database providers that are currently supported by the metadata database.
 #[derive(Clone)]
-pub enum MetadataDatabaseType {
+enum MetadataDatabaseType {
     SQLite,
     PostgreSQL,
 }
@@ -72,25 +72,8 @@ pub struct TableMetadataManager {
 }
 
 impl TableMetadataManager {
-    /// Create a [`TableMetadataManager`] and initialize the metadata database with the tables used for
-    /// table and model table metadata. If the tables could not be created, [`Error`] is returned.
-    pub async fn try_new(
-        metadata_database_type: MetadataDatabaseType,
-        metadata_database_pool: AnyPool,
-    ) -> Result<Self, Error> {
-        let metadata_manager = Self {
-            metadata_database_type,
-            metadata_database_pool,
-            tag_value_hashes: DashMap::new(),
-        };
-
-        // Create the necessary tables in the metadata database.
-        metadata_manager.create_metadata_database_tables().await?;
-
-        Ok(metadata_manager)
-    }
-
-    /// Create a [`TableMetadataManager`] with an SQLite metadata database.  [`Error`] is returned.
+    /// Create a [`TableMetadataManager`] with an SQLite metadata database. If the path to the
+    /// database is not valid or the database schema could not be initialized, [`Error`] is returned.
     pub async fn try_new_sqlite(local_data_folder: &Path) -> Result<Self, Error> {
         if !Self::is_path_a_data_folder(local_data_folder) {
             warn!("The data folder is not empty and does not contain data from ModelarDB");
@@ -114,8 +97,12 @@ impl TableMetadataManager {
         // Return the metadata manager.
         Self::try_new(
             MetadataDatabaseType::SQLite,
-            AnyPool::connect_with(options).await?,
-        ).await
+            AnyPoolOptions::new()
+                .max_connections(10)
+                .connect_with(options)
+                .await?,
+        )
+        .await
     }
 
     // TODO: Add test for this.
@@ -126,6 +113,30 @@ impl TableMetadataManager {
         } else {
             false
         }
+    }
+
+    /// Create a [`TableMetadataManager`] with a PostgreSQL metadata database. If the database
+    /// schema could not be initialized, [`Error`] is returned.
+    pub async fn try_new_postgres(metadata_database_pool: AnyPool) -> Result<Self, Error> {
+        Self::try_new(MetadataDatabaseType::PostgreSQL, metadata_database_pool).await
+    }
+
+    /// Create a [`TableMetadataManager`] and initialize the metadata database with the tables used for
+    /// table and model table metadata. If the tables could not be created, [`Error`] is returned.
+    async fn try_new(
+        metadata_database_type: MetadataDatabaseType,
+        metadata_database_pool: AnyPool,
+    ) -> Result<Self, Error> {
+        let metadata_manager = Self {
+            metadata_database_type,
+            metadata_database_pool,
+            tag_value_hashes: DashMap::new(),
+        };
+
+        // Create the necessary tables in the metadata database.
+        metadata_manager.create_metadata_database_tables().await?;
+
+        Ok(metadata_manager)
     }
 
     /// If they do not already exist, create the tables in the metadata database used for table and
