@@ -211,21 +211,21 @@ impl TestContext {
     fn create_table(&mut self, table_name: &str, table_type: TableType) {
         let cmd = match table_type {
             TableType::NormalTable => {
-                format!("CREATE TABLE {table_name}(timestamp TIMESTAMP, field_one REAL, field_two REAL, metadata TEXT)")
+                format!("CREATE TABLE {table_name}(timestamp TIMESTAMP,
+                         field_one REAL, field_two REAL, metadata TEXT)")
             }
             TableType::ModelTable => {
-                format!(
-                "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, field_one FIELD, field_two FIELD, tag TAG)"
-            )
+                format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
+                         field_one FIELD, field_two FIELD, tag TAG)")
             }
             TableType::ModelTableNoTag => {
-                format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, field_one FIELD, field_two FIELD)")
+                format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
+                         field_one FIELD, field_two FIELD)")
             }
             TableType::ModelTableAsField => {
-                format!(
-                    "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
-                 generated FIELD AS (field_one + CAST(37.0 AS REAL)), field_one FIELD, field_two FIELD)"
-                )
+                format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
+                         generated FIELD AS (field_one + CAST(37.0 AS REAL)),
+                         field_one FIELD, field_two FIELD)")
             }
         };
 
