@@ -18,7 +18,6 @@
 
 #![allow(clippy::too_many_arguments)]
 
-mod common_test;
 mod configuration;
 mod context;
 mod metadata;
@@ -33,8 +32,6 @@ use std::{env, fs};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::Action;
-use datafusion::execution::context::{SessionConfig, SessionContext, SessionState};
-use datafusion::execution::runtime_env::RuntimeEnv;
 use modelardb_common::arguments::{
     argument_to_remote_object_store, collect_command_line_arguments, decode_argument,
     encode_argument, parse_object_store_arguments, validate_remote_data_folder,
@@ -43,14 +40,10 @@ use modelardb_common::types::{ClusterMode, ServerMode};
 use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
-use tokio::sync::RwLock;
 use tonic::Request;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-use crate::configuration::ConfigurationManager;
 use crate::context::Context;
-use crate::metadata::MetadataManager;
-use crate::storage::StorageEngine;
 
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
@@ -102,45 +95,19 @@ fn main() -> Result<(), String> {
 
     // If a remote data folder was provided, check that it can be accessed.
     if let Some(remote_data_folder) = &data_folders.remote_data_folder {
-        runtime.block_on(async { validate_remote_data_folder(remote_data_folder).await })?;
+        runtime.block_on(validate_remote_data_folder(remote_data_folder))?;
     }
 
-    // Create the components for the Context.
-    let metadata_manager = Arc::new(
+    let context = Arc::new(
         runtime
-            .block_on(MetadataManager::try_new(&data_folders.local_data_folder))
-            .map_err(|error| format!("Unable to create a MetadataManager: {error}"))?,
+            .block_on(Context::try_new(
+                runtime.clone(),
+                &data_folders,
+                cluster_mode.clone(),
+                server_mode,
+            ))
+            .map_err(|error| format!("Unable to create a Context: {error}"))?,
     );
-
-    let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-        cluster_mode.clone(),
-        server_mode,
-    )));
-
-    let session = create_session_context(data_folders.query_data_folder);
-
-    let storage_engine = Arc::new(RwLock::new(
-        runtime
-            .block_on(async {
-                StorageEngine::try_new(
-                    runtime.clone(),
-                    data_folders.local_data_folder.clone(),
-                    data_folders.remote_data_folder,
-                    &configuration_manager,
-                    metadata_manager.clone(),
-                )
-                .await
-            })
-            .map_err(|error| error.to_string())?,
-    ));
-
-    // Create the Context.
-    let context = Arc::new(Context {
-        metadata_manager,
-        configuration_manager,
-        session,
-        storage_engine,
-    });
 
     // Register tables and model tables.
     runtime
@@ -323,33 +290,6 @@ async fn register_node(
     } else {
         Err("Response for request to register the node is empty.".to_owned())
     }
-}
-
-/// Create a new [`SessionContext`] for interacting with Apache Arrow
-/// DataFusion. The [`SessionContext`] is constructed with the default
-/// configuration, default resource managers, the local file system and if
-/// provided the remote object store as [`ObjectStores`](ObjectStore), and
-/// additional optimizer rules that rewrite simple aggregate queries to be
-/// executed directly on the segments containing metadata and models instead of
-/// on reconstructed data points created from the segments for model tables.
-fn create_session_context(query_data_folder: Arc<dyn ObjectStore>) -> SessionContext {
-    let session_config = SessionConfig::new();
-    let session_runtime = Arc::new(RuntimeEnv::default());
-
-    // unwrap() is safe as storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST is a const containing an URL.
-    let object_store_url = storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST
-        .try_into()
-        .unwrap();
-    session_runtime.register_object_store(&object_store_url, query_data_folder);
-
-    // Use the add* methods instead of the with* methods as the with* methods replace the built-ins.
-    // See: https://docs.rs/datafusion/latest/datafusion/execution/context/struct.SessionState.html
-    let mut session_state = SessionState::new_with_config_rt(session_config, session_runtime);
-    for physical_optimizer_rule in optimizer::physical_optimizer_rules() {
-        session_state = session_state.add_physical_optimizer_rule(physical_optimizer_rule);
-    }
-
-    SessionContext::new_with_state(session_state)
 }
 
 /// Register a handler to execute when CTRL+C is pressed. The handler takes an

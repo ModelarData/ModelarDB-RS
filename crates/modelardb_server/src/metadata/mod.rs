@@ -945,11 +945,15 @@ mod tests {
     use std::fs;
 
     use chrono::SubsecRound;
+    use modelardb_common::test;
+    use modelardb_common::types::{ClusterMode, ServerMode};
+    use object_store::local::LocalFileSystem;
     use once_cell::sync::Lazy;
     use proptest::{num, prop_assert_eq, proptest};
+    use tokio::runtime::Runtime;
     use uuid::Uuid;
 
-    use crate::common_test;
+    use crate::DataFolders;
 
     static SEVEN_COMPRESSED_FILES: Lazy<Vec<CompressedFile>> = Lazy::new(|| {
         vec![
@@ -1004,9 +1008,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1039,9 +1043,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1098,9 +1102,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1204,9 +1208,9 @@ mod tests {
         metadata_manager: &mut MetadataManager,
         tag_values: &[&str],
     ) {
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1331,10 +1335,10 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
 
         let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
 
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1412,10 +1416,10 @@ mod tests {
 
     async fn create_metadata_manager_and_save_model_table(temp_dir: &Path) -> MetadataManager {
         let metadata_manager = MetadataManager::try_new(temp_dir).await.unwrap();
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
 
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1721,7 +1725,7 @@ mod tests {
 
         // Save a table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = common_test::test_context(temp_dir.path()).await;
+        let context = create_context(temp_dir.path()).await;
 
         context
             .metadata_manager
@@ -1746,9 +1750,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = MetadataManager::try_new(temp_dir.path()).await.unwrap();
 
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1809,12 +1813,12 @@ mod tests {
 
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = common_test::test_context(temp_dir.path()).await;
+        let context = create_context(temp_dir.path()).await;
 
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
         context
             .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1826,20 +1830,36 @@ mod tests {
             .unwrap();
     }
 
+    /// Create a simple [`Context`] that uses `path` as the local data folder and query data folder.
+    async fn create_context(path: &Path) -> Arc<Context> {
+        Arc::new(
+            Context::try_new(
+                Arc::new(Runtime::new().unwrap()),
+                &DataFolders {
+                    local_data_folder: path.to_path_buf(),
+                    remote_data_folder: None,
+                    query_data_folder: Arc::new(LocalFileSystem::new_with_prefix(path).unwrap()),
+                },
+                ClusterMode::SingleNode,
+                ServerMode::Edge,
+            )
+            .await
+            .unwrap(),
+        )
+    }
+
     #[tokio::test]
     async fn test_error_bound() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = common_test::test_context(temp_dir.path()).await;
+        let metadata_manager = Arc::new(MetadataManager::try_new(temp_dir.path()).await.unwrap());
 
-        let model_table_metadata = common_test::model_table_metadata();
-        context
-            .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
-        let error_bounds = context
-            .metadata_manager
+        let error_bounds = metadata_manager
             .error_bounds("model_table", 4)
             .await
             .unwrap();
@@ -1854,18 +1874,16 @@ mod tests {
     #[tokio::test]
     async fn test_generated_columns() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = common_test::test_context(temp_dir.path()).await;
+        let metadata_manager = Arc::new(MetadataManager::try_new(temp_dir.path()).await.unwrap());
 
-        let model_table_metadata = common_test::model_table_metadata();
-        context
-            .metadata_manager
-            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
         let df_schema = model_table_metadata.query_schema.to_dfschema().unwrap();
-        let generated_columns = context
-            .metadata_manager
+        let generated_columns = metadata_manager
             .generated_columns("model_table", &df_schema)
             .await
             .unwrap();

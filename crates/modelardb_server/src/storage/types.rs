@@ -308,7 +308,8 @@ impl Metric {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::common_test;
+
+    use modelardb_common::test;
 
     // Tests for MemoryPool.
     #[test]
@@ -316,15 +317,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool.adjust_uncompressed_memory(common_test::COMPRESSED_SEGMENTS_SIZE as isize);
+        memory_pool.adjust_uncompressed_memory(test::COMPRESSED_SEGMENTS_SIZE as isize);
 
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            (common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
-                + common_test::COMPRESSED_SEGMENTS_SIZE) as isize
+            (test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
         );
     }
 
@@ -333,15 +333,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool.adjust_uncompressed_memory(-(common_test::COMPRESSED_SEGMENTS_SIZE as isize));
+        memory_pool.adjust_uncompressed_memory(-(test::COMPRESSED_SEGMENTS_SIZE as isize));
 
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            (common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
-                - common_test::COMPRESSED_SEGMENTS_SIZE) as isize
+            (test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES - test::COMPRESSED_SEGMENTS_SIZE) as isize
         );
     }
 
@@ -350,16 +349,15 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool.adjust_uncompressed_memory(
-            -2 * common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize,
-        );
+        memory_pool
+            .adjust_uncompressed_memory(-2 * test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize);
 
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            -(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize)
+            -(test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize)
         );
     }
 
@@ -368,10 +366,10 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool.reserve_uncompressed_memory(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES);
+        memory_pool.reserve_uncompressed_memory(test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES);
 
         assert_eq!(memory_pool.remaining_uncompressed_memory_in_bytes(), 0);
     }
@@ -381,15 +379,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool
-            .reserve_uncompressed_memory(2 * common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES);
+        memory_pool.reserve_uncompressed_memory(2 * test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES);
 
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            -(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize)
+            -(test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize)
         );
     }
 
@@ -398,15 +395,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool.free_uncompressed_memory(common_test::COMPRESSED_SEGMENTS_SIZE);
+        memory_pool.free_uncompressed_memory(test::COMPRESSED_SEGMENTS_SIZE);
 
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            (common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
-                + common_test::COMPRESSED_SEGMENTS_SIZE) as isize
+            (test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
         );
     }
 
@@ -415,15 +411,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool.adjust_compressed_memory(common_test::COMPRESSED_SEGMENTS_SIZE as isize);
+        memory_pool.adjust_compressed_memory(test::COMPRESSED_SEGMENTS_SIZE as isize);
 
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            (common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES
-                + common_test::COMPRESSED_SEGMENTS_SIZE) as isize
+            (test::COMPRESSED_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
         );
     }
 
@@ -432,15 +427,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool.adjust_compressed_memory(-(common_test::COMPRESSED_SEGMENTS_SIZE as isize));
+        memory_pool.adjust_compressed_memory(-(test::COMPRESSED_SEGMENTS_SIZE as isize));
 
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            (common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES
-                - common_test::COMPRESSED_SEGMENTS_SIZE) as isize
+            (test::COMPRESSED_RESERVED_MEMORY_IN_BYTES - test::COMPRESSED_SEGMENTS_SIZE) as isize
         );
     }
 
@@ -449,16 +443,15 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool.adjust_compressed_memory(
-            -2 * common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize,
-        );
+        memory_pool
+            .adjust_compressed_memory(-2 * test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize);
 
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            -(common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize)
+            -(test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize)
         );
     }
 
@@ -467,11 +460,12 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        assert!(memory_pool
-            .try_reserve_compressed_memory(common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES));
+        assert!(
+            memory_pool.try_reserve_compressed_memory(test::COMPRESSED_RESERVED_MEMORY_IN_BYTES)
+        );
 
         assert_eq!(memory_pool.remaining_compressed_memory_in_bytes(), 0);
     }
@@ -481,15 +475,15 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
         assert!(!memory_pool
-            .try_reserve_compressed_memory(2 * common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES));
+            .try_reserve_compressed_memory(2 * test::COMPRESSED_RESERVED_MEMORY_IN_BYTES));
 
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
     }
 
@@ -498,22 +492,21 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool.free_compressed_memory(common_test::COMPRESSED_SEGMENTS_SIZE);
+        memory_pool.free_compressed_memory(test::COMPRESSED_SEGMENTS_SIZE);
 
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
-            (common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES
-                + common_test::COMPRESSED_SEGMENTS_SIZE) as isize
+            (test::COMPRESSED_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
         );
     }
 
     fn create_memory_pool() -> MemoryPool {
         MemoryPool::new(
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
-            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         )
     }
 

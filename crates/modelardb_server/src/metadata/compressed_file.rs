@@ -66,10 +66,9 @@ mod tests {
     use super::*;
 
     use chrono::Utc;
+    use modelardb_common::test;
     use object_store::path::Path as ObjectStorePath;
     use uuid::Uuid;
-
-    use crate::common_test;
 
     #[test]
     fn test_compressed_file_from_record_batch() {
@@ -83,7 +82,7 @@ mod tests {
 
         let compressed_file = CompressedFile::from_record_batch(
             object_meta,
-            &common_test::compressed_segments_record_batch(),
+            &test::compressed_segments_record_batch(),
         );
 
         assert_eq!(compressed_file.start_time, 0);

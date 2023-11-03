@@ -40,7 +40,7 @@ use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, StreamExt};
-use modelardb_common_test::data_generation;
+use modelardb_common::test::data_generation;
 use sysinfo::{Pid, PidExt, System, SystemExt};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
