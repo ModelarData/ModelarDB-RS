@@ -640,6 +640,11 @@ impl TableMetadataManager {
         model_table_metadata: &ModelTableMetadata,
         sql: &str,
     ) -> Result<(), Error> {
+        let strict = match self.metadata_database_type {
+            MetadataDatabaseType::SQLite => "STRICT",
+            MetadataDatabaseType::PostgreSQL => "",
+        };
+
         // Convert the query schema to bytes so it can be saved as a BLOB in the metadata database.
         let query_schema_bytes = try_convert_schema_to_blob(&model_table_metadata.query_schema)?;
 
@@ -664,7 +669,7 @@ impl TableMetadataManager {
             "CREATE TABLE {}_tags (
                  hash INTEGER PRIMARY KEY{maybe_separator}
                  {tag_columns}
-             ) STRICT",
+             ) {strict}",
             model_table_metadata.name
         ))
         .execute(&mut *transaction)
@@ -681,7 +686,7 @@ impl TableMetadataManager {
                  end_time INTEGER,
                  min_value REAL,
                  max_value REAL
-             ) STRICT",
+             ) {strict}",
             model_table_metadata.name
         ))
         .execute(&mut *transaction)
