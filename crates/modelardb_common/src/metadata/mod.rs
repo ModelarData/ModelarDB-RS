@@ -75,7 +75,7 @@ impl TableMetadataManager {
     /// Create a [`TableMetadataManager`] with an SQLite metadata database. If the path to the
     /// database is not valid or the database schema could not be initialized, [`Error`] is returned.
     pub async fn try_new_sqlite(local_data_folder: &Path) -> Result<Self, Error> {
-        if !Self::is_path_a_data_folder(local_data_folder) {
+        if !is_path_a_data_folder(local_data_folder) {
             warn!("The data folder is not empty and does not contain data from ModelarDB");
         }
 
@@ -103,16 +103,6 @@ impl TableMetadataManager {
                 .await?,
         )
         .await
-    }
-
-    // TODO: Add test for this.
-    /// Return [`true`] if `path` is a data folder, otherwise [`false`].
-    fn is_path_a_data_folder(path: &Path) -> bool {
-        if let Ok(files_and_folders) = fs::read_dir(path) {
-            files_and_folders.count() == 0 || path.join(METADATA_DATABASE_NAME).exists()
-        } else {
-            false
-        }
     }
 
     /// Create a [`TableMetadataManager`] with a PostgreSQL metadata database. If the database
@@ -300,22 +290,12 @@ impl TableMetadataManager {
         }
     }
 
-    /// Extract the first 54-bits from `univariate_id` which is a hash computed from tags.
-    pub fn univariate_id_to_tag_hash(univariate_id: u64) -> u64 {
-        univariate_id & 18446744073709550592
-    }
-
-    /// Extract the last 10-bits from `univariate_id` which is the index of the time series column.
-    pub fn univariate_id_to_column_index(univariate_id: u64) -> u16 {
-        (univariate_id & 1023) as u16
-    }
-
     /// Return the name of the table that contains the time series with `univariate_id`. Returns an
     /// [`Error`] if the necessary data cannot be retrieved from the metadata database.
     pub async fn univariate_id_to_table_name(&self, univariate_id: u64) -> Result<String, Error> {
         // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
         // (https://www.sqlite.org/datatype3.html) both use signed integers.
-        let tag_hash = Self::univariate_id_to_tag_hash(univariate_id);
+        let tag_hash = univariate_id_to_tag_hash(univariate_id);
         let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
         sqlx::query("SELECT table_name FROM model_table_hash_table_name WHERE hash = $1")
@@ -480,19 +460,15 @@ impl TableMetadataManager {
         query_schema_index: usize,
         compressed_file: &CompressedFile,
     ) -> Result<(), Error> {
-        Self::validate_compressed_file(compressed_file)?;
+        validate_compressed_file(compressed_file)?;
 
         let insert_statement = format!(
             "INSERT INTO {model_table_name}_compressed_files VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
         );
 
-        Self::create_insert_compressed_file_query(
-            &insert_statement,
-            query_schema_index,
-            compressed_file,
-        )
-        .execute(&self.metadata_database_pool)
-        .await?;
+        create_insert_compressed_file_query(&insert_statement, query_schema_index, compressed_file)
+            .execute(&self.metadata_database_pool)
+            .await?;
 
         Ok(())
     }
@@ -522,7 +498,7 @@ impl TableMetadataManager {
         }
 
         if let Some(compressed_file) = replacement_compressed_file {
-            Self::validate_compressed_file(compressed_file)?;
+            validate_compressed_file(compressed_file)?;
         }
 
         let mut transaction = self.metadata_database_pool.begin().await?;
@@ -560,7 +536,7 @@ impl TableMetadataManager {
                 "INSERT INTO {model_table_name}_compressed_files VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
             );
 
-            Self::create_insert_compressed_file_query(
+            create_insert_compressed_file_query(
                 &insert_statement,
                 query_schema_index,
                 compressed_file,
@@ -570,67 +546,6 @@ impl TableMetadataManager {
         }
 
         transaction.commit().await
-    }
-
-    /// Check that the start time is before the end time and the minimum value is smaller than the
-    /// maximum value in `compressed_file`.
-    fn validate_compressed_file(compressed_file: &CompressedFile) -> Result<(), Error> {
-        if compressed_file.start_time > compressed_file.end_time {
-            return Err(Error::Configuration(Box::new(
-                ModelarDbError::DataRetrievalError(format!(
-                    "Start time '{}' cannot be after end time '{}'.",
-                    compressed_file.start_time, compressed_file.end_time
-                )),
-            )));
-        };
-
-        if compressed_file.min_value > compressed_file.max_value {
-            return Err(Error::Configuration(Box::new(
-                ModelarDbError::DataRetrievalError(format!(
-                    "Min value '{}' cannot be larger than max value '{}'.",
-                    compressed_file.min_value, compressed_file.max_value
-                )),
-            )));
-        };
-
-        Ok(())
-    }
-
-    /// Create a [`Query`] that, when executed, stores `compressed_file` in the metadata database
-    /// for the column at `query_schema_index` using `insert_statement`.
-    fn create_insert_compressed_file_query<'a, DB: Database>(
-        insert_statement: &'a str,
-        query_schema_index: usize,
-        compressed_file: &'a CompressedFile,
-    ) -> Query<'a, DB, <DB as HasArguments<'a>>::Arguments>
-    where
-        i64: sqlx::Encode<'a, DB>,
-        i64: sqlx::Type<DB>,
-        f32: sqlx::Encode<'a, DB>,
-        f32: sqlx::Type<DB>,
-        String: sqlx::Encode<'a, DB>,
-        String: sqlx::Type<DB>,
-    {
-        let min_value = Self::rewrite_special_value_to_normal_value(compressed_file.min_value);
-        let max_value = Self::rewrite_special_value_to_normal_value(compressed_file.max_value);
-
-        let created_at = compressed_file
-            .file_metadata
-            .last_modified
-            .timestamp_millis();
-
-        // query_schema_index is simply cast as a model table contains at most 1024 columns.
-        // size is simply cast as it is unrealistic for a file to use more bytes than the max value
-        // of a signed 64-bit integer as it can represent a file with a size up to ~9000 PB.
-        sqlx::query(insert_statement)
-            .bind(compressed_file.file_metadata.location.to_string())
-            .bind(query_schema_index as i64)
-            .bind(compressed_file.file_metadata.size as i64)
-            .bind(created_at)
-            .bind(compressed_file.start_time)
-            .bind(compressed_file.end_time)
-            .bind(min_value)
-            .bind(max_value)
     }
 
     /// Return an [`ObjectMeta`] for each compressed file that belongs to the column at `query_schema_index`
@@ -674,8 +589,8 @@ impl TableMetadataManager {
             )));
         };
 
-        let min_value = Self::rewrite_special_value_to_normal_value(min_value);
-        let max_value = Self::rewrite_special_value_to_normal_value(max_value);
+        let min_value = rewrite_special_value_to_normal_value(min_value);
+        let max_value = rewrite_special_value_to_normal_value(max_value);
 
         let select_statement = format!(
             "SELECT * FROM {model_table_name}_compressed_files
@@ -696,43 +611,10 @@ impl TableMetadataManager {
 
         let mut files = vec![];
         while let Some(row) = rows.try_next().await? {
-            files.push(Self::convert_compressed_file_row_to_object_meta(row)?);
+            files.push(convert_compressed_file_row_to_object_meta(row)?);
         }
 
         Ok(files)
-    }
-
-    /// Rewrite the special values in [`Value`] (Negative Infinity, Infinity, and NaN) to the closet
-    /// normal values in [`Value`] to simplify storing and querying them through the metadata database.
-    fn rewrite_special_value_to_normal_value(value: Value) -> Value {
-        // Pattern matching on float values is not supported in Rust.
-        if value == Value::NEG_INFINITY {
-            Value::MIN
-        } else if value == Value::INFINITY || value.is_nan() {
-            Value::MAX
-        } else {
-            value
-        }
-    }
-
-    /// Convert a row in the table_name_compressed_files table to an [`ObjectMeta`]. If the
-    /// necessary column values could not be extracted from the row, return [`Error`].
-    fn convert_compressed_file_row_to_object_meta(row: AnyRow) -> Result<ObjectMeta, Error> {
-        let file_path: String = row.try_get("file_path")?;
-
-        // unwrap() is safe as the created_at timestamp cannot be out of range.
-        let last_modified = Utc
-            .timestamp_millis_opt(row.try_get("created_at")?)
-            .unwrap();
-
-        let size: i64 = row.try_get("size")?;
-
-        Ok(ObjectMeta {
-            location: ObjectStorePath::from(file_path),
-            last_modified,
-            size: size as usize,
-            e_tag: None,
-        })
     }
 
     /// Save the created table to the metadata database. This consists of adding a row to the
@@ -759,8 +641,7 @@ impl TableMetadataManager {
         sql: &str,
     ) -> Result<(), Error> {
         // Convert the query schema to bytes so it can be saved as a BLOB in the metadata database.
-        let query_schema_bytes =
-            Self::try_convert_schema_to_blob(&model_table_metadata.query_schema)?;
+        let query_schema_bytes = try_convert_schema_to_blob(&model_table_metadata.query_schema)?;
 
         // Create a transaction to ensure the database state is consistent across tables.
         let mut transaction = self.metadata_database_pool.begin().await?;
@@ -841,7 +722,7 @@ impl TableMetadataManager {
                     {
                         (
                             Some(generated_column.original_expr.clone()),
-                            Some(Self::convert_slice_usize_to_vec_u8(
+                            Some(convert_slice_usize_to_vec_u8(
                                 &generated_column.source_columns,
                             )),
                         )
@@ -904,7 +785,7 @@ impl TableMetadataManager {
 
             // Convert the BLOBs to the concrete types.
             let query_schema_bytes = row.try_get("query_schema")?;
-            let query_schema = Self::try_convert_blob_to_schema(query_schema_bytes)?;
+            let query_schema = try_convert_blob_to_schema(query_schema_bytes)?;
 
             let error_bounds = self
                 .error_bounds(table_name, query_schema.fields().len())
@@ -990,8 +871,7 @@ impl TableMetadataManager {
 
                 let generated_column = GeneratedColumn {
                     expr,
-                    source_columns: Self::try_convert_slice_u8_to_vec_usize(source_columns)
-                        .unwrap(),
+                    source_columns: try_convert_slice_u8_to_vec_usize(source_columns).unwrap(),
                     original_expr: None,
                 };
 
@@ -1005,168 +885,127 @@ impl TableMetadataManager {
 
         Ok(generated_columns)
     }
+}
 
-    /// Convert a [`Schema`] to [`Vec<u8>`].
-    pub fn try_convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
-        let options = IpcWriteOptions::default();
-        let schema_as_ipc = SchemaAsIpc::new(schema, &options);
-
-        let ipc_message: IpcMessage =
-            schema_as_ipc
-                .try_into()
-                .map_err(|error: ArrowError| Error::ColumnDecode {
-                    index: "query_schema".to_owned(),
-                    source: Box::new(error),
-                })?;
-
-        Ok(ipc_message.0.to_vec())
-    }
-
-    /// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
-    /// [`Error`].
-    pub fn try_convert_blob_to_schema(schema_bytes: Vec<u8>) -> Result<Schema, Error> {
-        let ipc_message = IpcMessage(schema_bytes.into());
-        Schema::try_from(ipc_message).map_err(|error| Error::ColumnDecode {
-            index: "query_schema".to_owned(),
-            source: Box::new(error),
-        })
-    }
-
-    /// Convert a [`&[usize]`] to a [`Vec<u8>`].
-    pub fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
-        usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
-    }
-
-    /// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides evenly by
-    /// [`mem::size_of::<usize>()`], otherwise [`Error`] is returned.
-    pub fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>, Error> {
-        if bytes.len() % mem::size_of::<usize>() != 0 {
-            Err(Error::ColumnDecode {
-                index: "generated_column_sources".to_owned(),
-                source: Box::new(ModelarDbError::ImplementationError(
-                    "Blob is not a vector of usizes".to_owned(),
-                )),
-            })
-        } else {
-            // unwrap() is safe as bytes divides evenly by mem::size_of::<usize>().
-            Ok(bytes
-                .chunks(mem::size_of::<usize>())
-                .map(|byte_slice| usize::from_le_bytes(byte_slice.try_into().unwrap()))
-                .collect())
-        }
+// TODO: Add test for this.
+/// Return [`true`] if `path` is a data folder, otherwise [`false`].
+fn is_path_a_data_folder(path: &Path) -> bool {
+    if let Ok(files_and_folders) = fs::read_dir(path) {
+        files_and_folders.count() == 0 || path.join(METADATA_DATABASE_NAME).exists()
+    } else {
+        false
     }
 }
 
-/// If they do not already exist, create the tables in the metadata database used for table and
-/// model table metadata.
-/// * The table_metadata table contains the metadata for tables.
-/// * The model_table_metadata table contains the main metadata for model tables.
-/// * The model_table_hash_table_name contains a mapping from each tag hash to the name of the
-/// model table that contains the time series with that tag hash.
-/// * The model_table_field_columns table contains the name, index, error bound, and generation
-/// expression of the field columns in each model table.
-/// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
-pub async fn create_metadata_database_tables<'a, DB, E>(
-    metadata_database_pool: E,
-    database_type: MetadataDatabaseType,
-) -> Result<(), Error>
-where
-    DB: Database,
-    E: Executor<'a, Database = DB> + Copy,
-{
-    let (strict, binary_type) = match database_type {
-        MetadataDatabaseType::SQLite => ("STRICT", "BLOB"),
-        MetadataDatabaseType::PostgreSQL => ("", "BYTEA"),
+/// Extract the first 54-bits from `univariate_id` which is a hash computed from tags.
+pub fn univariate_id_to_tag_hash(univariate_id: u64) -> u64 {
+    univariate_id & 18446744073709550592
+}
+
+/// Extract the last 10-bits from `univariate_id` which is the index of the time series column.
+pub fn univariate_id_to_column_index(univariate_id: u64) -> u16 {
+    (univariate_id & 1023) as u16
+}
+
+/// Check that the start time is before the end time and the minimum value is smaller than the
+/// maximum value in `compressed_file`.
+fn validate_compressed_file(compressed_file: &CompressedFile) -> Result<(), Error> {
+    if compressed_file.start_time > compressed_file.end_time {
+        return Err(Error::Configuration(Box::new(
+            ModelarDbError::DataRetrievalError(format!(
+                "Start time '{}' cannot be after end time '{}'.",
+                compressed_file.start_time, compressed_file.end_time
+            )),
+        )));
     };
 
-    // Create the table_metadata table if it does not exist.
-    metadata_database_pool
-        .execute(
-            format!(
-                "CREATE TABLE IF NOT EXISTS table_metadata (
-                table_name TEXT PRIMARY KEY,
-                sql TEXT NOT NULL
-                ) {strict}"
-            )
-            .as_str(),
-        )
-        .await?;
-
-    // Create the model_table_metadata table if it does not exist.
-    metadata_database_pool
-        .execute(
-            format!(
-                "CREATE TABLE IF NOT EXISTS model_table_metadata (
-                table_name TEXT PRIMARY KEY,
-                query_schema {binary_type} NOT NULL,
-                sql TEXT NOT NULL
-                ) {strict}"
-            )
-            .as_str(),
-        )
-        .await?;
-
-    // Create the model_table_hash_name table if it does not exist.
-    metadata_database_pool
-        .execute(
-            format!(
-                "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
-                hash INTEGER PRIMARY KEY,
-                table_name TEXT
-                ) {strict}"
-            )
-            .as_str(),
-        )
-        .await?;
-
-    // Create the model_table_field_columns table if it does not exist. Note that column_index will
-    // only use a maximum of 10 bits. generated_column_* is NULL if the fields are stored as segments.
-    metadata_database_pool
-        .execute(
-            format!(
-                "CREATE TABLE IF NOT EXISTS model_table_field_columns (
-                table_name TEXT NOT NULL,
-                column_name TEXT NOT NULL,
-                column_index INTEGER NOT NULL,
-                error_bound REAL NOT NULL,
-                generated_column_expr TEXT,
-                generated_column_sources {binary_type},
-                PRIMARY KEY (table_name, column_name)
-                ) {strict}"
-            )
-            .as_str(),
-        )
-        .await?;
+    if compressed_file.min_value > compressed_file.max_value {
+        return Err(Error::Configuration(Box::new(
+            ModelarDbError::DataRetrievalError(format!(
+                "Min value '{}' cannot be larger than max value '{}'.",
+                compressed_file.min_value, compressed_file.max_value
+            )),
+        )));
+    };
 
     Ok(())
 }
 
-/// Save the created table to the metadata database. This consists of adding a row to the
-/// table_metadata table with the `name` of the table and the `sql` used to create the table.
-pub async fn save_table_metadata<'a, DB, E>(
-    metadata_database_pool: E,
-    name: &str,
-    sql: &str,
-) -> Result<(), Error>
+/// Create a [`Query`] that, when executed, stores `compressed_file` in the metadata database
+/// for the column at `query_schema_index` using `insert_statement`.
+fn create_insert_compressed_file_query<'a, DB: Database>(
+    insert_statement: &'a str,
+    query_schema_index: usize,
+    compressed_file: &'a CompressedFile,
+) -> Query<'a, DB, <DB as HasArguments<'a>>::Arguments>
 where
-    DB: Database,
-    E: Executor<'a, Database = DB> + Copy,
+    i64: sqlx::Encode<'a, DB>,
+    i64: sqlx::Type<DB>,
+    f32: sqlx::Encode<'a, DB>,
+    f32: sqlx::Type<DB>,
+    String: sqlx::Encode<'a, DB>,
+    String: sqlx::Type<DB>,
 {
-    // Add a new row in the table_metadata table to persist the table.
-    metadata_database_pool
-        .execute(
-            format!("INSERT INTO table_metadata (table_name, sql) VALUES ('{name}', '{sql}')")
-                .as_str(),
-        )
-        .await?;
+    let min_value = rewrite_special_value_to_normal_value(compressed_file.min_value);
+    let max_value = rewrite_special_value_to_normal_value(compressed_file.max_value);
 
-    Ok(())
+    let created_at = compressed_file
+        .file_metadata
+        .last_modified
+        .timestamp_millis();
+
+    // query_schema_index is simply cast as a model table contains at most 1024 columns.
+    // size is simply cast as it is unrealistic for a file to use more bytes than the max value
+    // of a signed 64-bit integer as it can represent a file with a size up to ~9000 PB.
+    sqlx::query(insert_statement)
+        .bind(compressed_file.file_metadata.location.to_string())
+        .bind(query_schema_index as i64)
+        .bind(compressed_file.file_metadata.size as i64)
+        .bind(created_at)
+        .bind(compressed_file.start_time)
+        .bind(compressed_file.end_time)
+        .bind(min_value)
+        .bind(max_value)
+}
+
+/// Rewrite the special values in [`Value`] (Negative Infinity, Infinity, and NaN) to the closet
+/// normal values in [`Value`] to simplify storing and querying them through the metadata database.
+fn rewrite_special_value_to_normal_value(value: Value) -> Value {
+    // Pattern matching on float values is not supported in Rust.
+    if value == Value::NEG_INFINITY {
+        Value::MIN
+    } else if value == Value::INFINITY || value.is_nan() {
+        Value::MAX
+    } else {
+        value
+    }
+}
+
+/// Convert a row in the table_name_compressed_files table to an [`ObjectMeta`]. If the
+/// necessary column values could not be extracted from the row, return [`Error`].
+fn convert_compressed_file_row_to_object_meta(row: AnyRow) -> Result<ObjectMeta, Error> {
+    let file_path: String = row.try_get("file_path")?;
+
+    // unwrap() is safe as the created_at timestamp cannot be out of range.
+    let last_modified = Utc
+        .timestamp_millis_opt(row.try_get("created_at")?)
+        .unwrap();
+
+    let size: i64 = row.try_get("size")?;
+
+    Ok(ObjectMeta {
+        location: ObjectStorePath::from(file_path),
+        last_modified,
+        size: size as usize,
+        e_tag: None,
+    })
 }
 
 /// Convert a [`Schema`] to [`Vec<u8>`].
 pub fn try_convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
     let options = IpcWriteOptions::default();
     let schema_as_ipc = SchemaAsIpc::new(schema, &options);
+
     let ipc_message: IpcMessage =
         schema_as_ipc
             .try_into()
