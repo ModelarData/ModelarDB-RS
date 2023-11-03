@@ -40,7 +40,7 @@ use object_store::ObjectMeta;
 use sqlx::any::{AnyConnectOptions, AnyPoolOptions, AnyRow};
 use sqlx::database::HasArguments;
 use sqlx::query::Query;
-use sqlx::{AnyPool, Database, Error, Executor, Row};
+use sqlx::{AnyPool, Database, Error, Row};
 use tracing::warn;
 
 use crate::errors::ModelarDbError;
@@ -66,7 +66,7 @@ pub struct TableMetadataManager {
     /// The type of the database, used to handle small differences in SQL syntax between providers.
     metadata_database_type: MetadataDatabaseType,
     /// Pool of connections to the metadata database.
-    metadata_database_pool: AnyPool,
+    metadata_database_pool: Arc<AnyPool>,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
     tag_value_hashes: DashMap<String, u64>,
 }
@@ -97,17 +97,19 @@ impl TableMetadataManager {
         // Return the metadata manager.
         Self::try_new(
             MetadataDatabaseType::SQLite,
-            AnyPoolOptions::new()
-                .max_connections(10)
-                .connect_with(options)
-                .await?,
+            Arc::new(
+                AnyPoolOptions::new()
+                    .max_connections(10)
+                    .connect_with(options)
+                    .await?,
+            ),
         )
         .await
     }
 
     /// Create a [`TableMetadataManager`] with a PostgreSQL metadata database. If the database
     /// schema could not be initialized, [`Error`] is returned.
-    pub async fn try_new_postgres(metadata_database_pool: AnyPool) -> Result<Self, Error> {
+    pub async fn try_new_postgres(metadata_database_pool: Arc<AnyPool>) -> Result<Self, Error> {
         Self::try_new(MetadataDatabaseType::PostgreSQL, metadata_database_pool).await
     }
 
@@ -115,7 +117,7 @@ impl TableMetadataManager {
     /// table and model table metadata. If the tables could not be created, [`Error`] is returned.
     async fn try_new(
         metadata_database_type: MetadataDatabaseType,
-        metadata_database_pool: AnyPool,
+        metadata_database_pool: Arc<AnyPool>,
     ) -> Result<Self, Error> {
         let metadata_manager = Self {
             metadata_database_type,
@@ -138,7 +140,7 @@ impl TableMetadataManager {
     /// * The model_table_field_columns table contains the name, index, error bound, and generation
     /// expression of the field columns in each model table.
     /// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
-    pub async fn create_metadata_database_tables(&self) -> Result<(), Error> {
+    async fn create_metadata_database_tables(&self) -> Result<(), Error> {
         let (strict, binary_type) = match self.metadata_database_type {
             MetadataDatabaseType::SQLite => ("STRICT", "BLOB"),
             MetadataDatabaseType::PostgreSQL => ("", "BYTEA"),
@@ -300,7 +302,7 @@ impl TableMetadataManager {
 
         sqlx::query("SELECT table_name FROM model_table_hash_table_name WHERE hash = $1")
             .bind(signed_tag_hash)
-            .fetch_one(&self.metadata_database_pool)
+            .fetch_one(&*self.metadata_database_pool)
             .await?
             .try_get(0)
     }
@@ -323,7 +325,7 @@ impl TableMetadataManager {
             tag_column_names.join(","),
         );
 
-        let mut rows = sqlx::query(&select_statement).fetch(&self.metadata_database_pool);
+        let mut rows = sqlx::query(&select_statement).fetch(&*self.metadata_database_pool);
 
         let mut hash_to_tags = HashMap::new();
         while let Some(row) = rows.try_next().await? {
@@ -411,7 +413,7 @@ impl TableMetadataManager {
         query_hashes: &str,
     ) -> Result<Vec<u64>, Error> {
         // Retrieve the field columns.
-        let mut rows = sqlx::query(query_field_columns).fetch(&self.metadata_database_pool);
+        let mut rows = sqlx::query(query_field_columns).fetch(&*self.metadata_database_pool);
 
         let mut field_columns = vec![];
         while let Some(row) = rows.try_next().await? {
@@ -430,7 +432,7 @@ impl TableMetadataManager {
         }
 
         // Retrieve the hashes and compute the univariate ids;
-        let mut rows = sqlx::query(query_hashes).fetch(&self.metadata_database_pool);
+        let mut rows = sqlx::query(query_hashes).fetch(&*self.metadata_database_pool);
 
         let mut univariate_ids = vec![];
         while let Some(row) = rows.try_next().await? {
@@ -467,7 +469,7 @@ impl TableMetadataManager {
         );
 
         create_insert_compressed_file_query(&insert_statement, query_schema_index, compressed_file)
-            .execute(&self.metadata_database_pool)
+            .execute(&*self.metadata_database_pool)
             .await?;
 
         Ok(())
@@ -607,7 +609,7 @@ impl TableMetadataManager {
             .bind(end_time)
             .bind(min_value)
             .bind(max_value)
-            .fetch(&self.metadata_database_pool);
+            .fetch(&*self.metadata_database_pool);
 
         let mut files = vec![];
         while let Some(row) = rows.try_next().await? {
@@ -625,7 +627,7 @@ impl TableMetadataManager {
         ))
         .bind(name)
         .bind(sql)
-        .execute(&self.metadata_database_pool)
+        .execute(&*self.metadata_database_pool)
         .await?;
 
         Ok(())
@@ -767,7 +769,7 @@ impl TableMetadataManager {
         let mut table_names: Vec<String> = vec![];
 
         let mut rows = sqlx::query("SELECT table_name FROM table_metadata")
-            .fetch(&self.metadata_database_pool);
+            .fetch(&*self.metadata_database_pool);
 
         while let Some(row) = rows.try_next().await? {
             table_names.push(row.try_get("table_name")?)
@@ -783,7 +785,7 @@ impl TableMetadataManager {
         let mut model_tables: Vec<Arc<ModelTableMetadata>> = vec![];
 
         let mut rows =
-            sqlx::query("SELECT * FROM model_table_metadata").fetch(&self.metadata_database_pool);
+            sqlx::query("SELECT * FROM model_table_metadata").fetch(&*self.metadata_database_pool);
 
         while let Some(row) = rows.try_next().await? {
             let table_name: &str = row.try_get("table_name")?;
@@ -831,7 +833,7 @@ impl TableMetadataManager {
 
         let mut rows = sqlx::query(&select_statement)
             .bind(table_name)
-            .fetch(&self.metadata_database_pool);
+            .fetch(&*self.metadata_database_pool);
 
         let mut column_to_error_bound =
             vec![ErrorBound::try_new(0.0).unwrap(); query_schema_columns];
@@ -864,7 +866,7 @@ impl TableMetadataManager {
 
         let mut rows = sqlx::query(&select_statement)
             .bind(table_name)
-            .fetch(&self.metadata_database_pool);
+            .fetch(&*self.metadata_database_pool);
 
         let mut generated_columns = vec![None; df_schema.fields().len()];
 
