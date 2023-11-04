@@ -128,7 +128,7 @@ fn main() -> Result<(), String> {
 /// arguments are provided, or if the arguments are malformed, [`String`] is returned.
 async fn parse_command_line_arguments(
     arguments: &[&str],
-) -> Result<(Arc<PgPool>, RemoteDataFolder), String> {
+) -> Result<(PgPool, RemoteDataFolder), String> {
     match arguments {
         &[metadata_database, remote_data_folder] => {
             let username = env::var("METADATA_DB_USER").map_err(|error| error.to_string())?;
@@ -146,15 +146,11 @@ async fn parse_command_line_arguments(
 
             // TODO: Look into what an ideal number of max connections would be.
             Ok((
-                Arc::new(
-                    PgPoolOptions::new()
-                        .max_connections(10)
-                        .connect_with(connection_options)
-                        .await
-                        .map_err(|error| {
-                            format!("Unable to connect to metadata database: {error}")
-                        })?,
-                ),
+                PgPoolOptions::new()
+                    .max_connections(10)
+                    .connect_with(connection_options)
+                    .await
+                    .map_err(|error| format!("Unable to connect to metadata database: {error}"))?,
                 RemoteDataFolder::new(connection_info, object_store),
             ))
         }

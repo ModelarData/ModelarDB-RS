@@ -17,7 +17,6 @@
 //! such as metadata about registered edges, is handled here.
 
 use std::str::FromStr;
-use std::sync::Arc;
 
 use futures::TryStreamExt;
 use modelardb_common::errors::ModelarDbError;
@@ -32,7 +31,7 @@ use crate::cluster::Node;
 /// persisting edges. The data that needs to be persisted is stored in the metadata database.
 pub struct MetadataManager {
     /// Pool of connections to the metadata database.
-    metadata_database_pool: Arc<PgPool>,
+    metadata_database_pool: PgPool,
     /// Metadata manager used to interface with the subset of the manager metadata database related
     /// to tables and model tables.
     pub(crate) table_metadata_manager: TableMetadataManager<Postgres>,
@@ -41,7 +40,8 @@ pub struct MetadataManager {
 impl MetadataManager {
     /// Return [`MetadataManager`] if the necessary tables could be created in the metadata database,
     /// otherwise return [`sqlx::Error`].
-    pub async fn try_new(metadata_database_pool: Arc<PgPool>) -> Result<Self, sqlx::Error> {
+    pub async fn try_new(metadata_database_pool: PgPool) -> Result<Self, sqlx::Error> {
+        // Cloning the pool simply increments the reference count to the inner pool state.
         let table_metadata_manager =
             try_new_postgres_table_metadata_manager(metadata_database_pool.clone()).await?;
 
@@ -91,7 +91,7 @@ impl MetadataManager {
     /// exist, create one and save it to the database.
     pub async fn manager_key(&self) -> Result<Uuid, sqlx::Error> {
         let maybe_row = sqlx::query("SELECT key FROM manager_metadata")
-            .fetch_optional(&*self.metadata_database_pool)
+            .fetch_optional(&self.metadata_database_pool)
             .await?;
 
         if let Some(row) = maybe_row {
@@ -109,7 +109,7 @@ impl MetadataManager {
             // Add a new row to the manager_metadata table to persist the key.
             sqlx::query("INSERT INTO manager_metadata (key) VALUES ($1)")
                 .bind(manager_key.to_string())
-                .execute(&*self.metadata_database_pool)
+                .execute(&self.metadata_database_pool)
                 .await?;
 
             Ok(manager_key)
@@ -122,7 +122,7 @@ impl MetadataManager {
         sqlx::query("INSERT INTO nodes (url, mode) VALUES ($1, $2)")
             .bind(&node.url)
             .bind(node.mode.to_string())
-            .execute(&*self.metadata_database_pool)
+            .execute(&self.metadata_database_pool)
             .await?;
 
         Ok(())
@@ -133,7 +133,7 @@ impl MetadataManager {
     pub async fn remove_node(&self, url: &str) -> Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM nodes WHERE url = $1")
             .bind(url)
-            .execute(&*self.metadata_database_pool)
+            .execute(&self.metadata_database_pool)
             .await?;
 
         Ok(())
@@ -145,7 +145,7 @@ impl MetadataManager {
         let mut nodes: Vec<Node> = vec![];
 
         let mut rows =
-            sqlx::query("SELECT url, mode FROM nodes").fetch(&*self.metadata_database_pool);
+            sqlx::query("SELECT url, mode FROM nodes").fetch(&self.metadata_database_pool);
 
         while let Some(row) = rows.try_next().await? {
             let server_mode = ServerMode::from_str(row.try_get("mode")?).map_err(|error| {
@@ -173,7 +173,7 @@ impl MetadataManager {
         let row = sqlx::query(&select_statement)
             .bind(table_name)
             .bind(table_name)
-            .fetch_one(&*self.metadata_database_pool)
+            .fetch_one(&self.metadata_database_pool)
             .await?;
 
         row.try_get("sql")
@@ -190,7 +190,7 @@ impl MetadataManager {
             "SELECT {column} FROM table_metadata UNION SELECT {column} FROM model_table_metadata",
         );
 
-        let mut rows = sqlx::query(&select_statement).fetch(&*self.metadata_database_pool);
+        let mut rows = sqlx::query(&select_statement).fetch(&self.metadata_database_pool);
         while let Some(row) = rows.try_next().await? {
             values.push(row.try_get(column)?)
         }
