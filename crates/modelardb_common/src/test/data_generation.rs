@@ -179,9 +179,10 @@ pub fn generate_multivariate_time_series(
             }
         }
 
-        // Finished builders are deleted after the loop to not conflict with the loop.
+        // Builders are deleted after the loop and in reverse order to not change the indices.
         uncompressed_values_builders_to_delete
             .iter()
+            .rev()
             .for_each(|index| {
                 uncompressed_values_builders.swap_remove(*index);
             });
