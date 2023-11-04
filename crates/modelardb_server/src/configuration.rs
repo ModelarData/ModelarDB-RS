@@ -137,11 +137,11 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
+    use modelardb_common::metadata::try_new_sqlite_table_metadata_manager;
     use modelardb_common::types::{ClusterMode, ServerMode};
     use tokio::runtime::Runtime;
     use tokio::sync::RwLock;
 
-    use crate::metadata::MetadataManager;
     use crate::storage::StorageEngine;
 
     // Tests for ConfigurationManager.
@@ -209,7 +209,7 @@ mod tests {
         Arc<RwLock<StorageEngine>>,
         Arc<RwLock<ConfigurationManager>>,
     ) {
-        let metadata_manager = Arc::new(MetadataManager::try_new(path).await.unwrap());
+        let metadata_manager = try_new_sqlite_table_metadata_manager(path).await.unwrap();
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
             path,
             ClusterMode::SingleNode,
@@ -222,7 +222,7 @@ mod tests {
                 path.to_owned(),
                 None,
                 &configuration_manager,
-                metadata_manager.clone(),
+                Arc::new(metadata_manager),
             )
             .await
             .unwrap(),

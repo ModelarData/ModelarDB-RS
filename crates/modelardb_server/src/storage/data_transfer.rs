@@ -266,6 +266,7 @@ mod tests {
     use std::path::Path;
 
     use chrono::Utc;
+    use modelardb_common::metadata::try_new_sqlite_table_metadata_manager;
     use modelardb_common::test;
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
@@ -564,7 +565,7 @@ mod tests {
     /// Set up a data folder with a table folder that has a single compressed file in it. Return the
     /// [`CompressedFile`] representing the created Apache Parquet file and the path to the file.
     async fn create_compressed_file(
-        metadata_manager: Arc<MetadataManager>,
+        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         local_data_folder_path: &Path,
     ) -> (CompressedFile, PathBuf) {
         let folder_path = format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}");
@@ -601,7 +602,7 @@ mod tests {
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
     async fn create_data_transfer_component(
-        metadata_manager: Arc<MetadataManager>,
+        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         local_data_folder_path: &Path,
     ) -> (TempDir, DataTransfer) {
         let target_dir = tempfile::tempdir().unwrap();
@@ -624,12 +625,12 @@ mod tests {
     }
 
     /// Create a metadata manager and save a single model table to the metadata database.
-    async fn create_metadata_manager(local_data_folder_path: &Path) -> Arc<MetadataManager> {
-        let metadata_manager = Arc::new(
-            MetadataManager::try_new(local_data_folder_path)
-                .await
-                .unwrap(),
-        );
+    async fn create_metadata_manager(
+        local_data_folder_path: &Path,
+    ) -> Arc<TableMetadataManager<Sqlite>> {
+        let metadata_manager = try_new_sqlite_table_metadata_manager(local_data_folder_path)
+            .await
+            .unwrap();
 
         let model_table_metadata = test::model_table_metadata();
         metadata_manager
@@ -637,6 +638,6 @@ mod tests {
             .await
             .unwrap();
 
-        metadata_manager
+        Arc::new(metadata_manager)
     }
 }

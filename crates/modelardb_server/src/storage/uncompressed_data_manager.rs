@@ -319,7 +319,7 @@ impl UncompressedDataManager {
     /// Insert a single data point into the in-memory buffer for `univariate_id` if one exists. If
     /// no in-memory buffer exist for `univariate_id`, allocate a new buffer that will be compressed
     /// within `error_bound`. Returns [`IOError`] if the error bound cannot be retrieved from the
-    /// [`MetadataManager`].
+    /// [`TableMetadataManager`].
     async fn insert_data_point(
         &self,
         univariate_id: u64,
@@ -625,6 +625,7 @@ mod tests {
     use datafusion::arrow::array::StringBuilder;
     use datafusion::arrow::datatypes::SchemaRef;
     use datafusion::arrow::record_batch::RecordBatch;
+    use modelardb_common::metadata::try_new_sqlite_table_metadata_manager;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_common::test;
     use modelardb_common::types::{TimestampBuilder, ValueBuilder};
@@ -1161,11 +1162,11 @@ mod tests {
     async fn create_managers(
         path: &Path,
     ) -> (
-        Arc<MetadataManager>,
+        Arc<TableMetadataManager<Sqlite>>,
         UncompressedDataManager,
         Arc<ModelTableMetadata>,
     ) {
-        let metadata_manager = Arc::new(MetadataManager::try_new(path).await.unwrap());
+        let metadata_manager = Arc::new(try_new_sqlite_table_metadata_manager(path).await.unwrap());
 
         // Ensure the expected metadata is available through the metadata manager.
         let model_table_metadata = test::model_table_metadata();

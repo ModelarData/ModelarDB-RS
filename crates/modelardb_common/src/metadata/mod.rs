@@ -253,11 +253,11 @@ where
             .execute(&mut *transaction)
             .await?;
 
-            sqlx::query(&format!(
+            sqlx::query(
                 "INSERT INTO model_table_hash_table_name (hash, table_name)
                  VALUES ($1, $2)
                  ON CONFLICT DO NOTHING",
-            ))
+            )
             .bind(signed_tag_hash)
             .bind(model_table_name)
             .execute(&mut *transaction)
@@ -581,7 +581,7 @@ where
         let mut files = vec![];
         while let Some(row) = rows.try_next().await? {
             let object_meta =
-                convert_compressed_file_row_to_object_meta::<DB, <DB as Database>::Row>(row)?;
+                convert_compressed_file_row_to_object_meta::<<DB as Database>::Row>(row)?;
             files.push(object_meta);
         }
 
@@ -591,13 +591,11 @@ where
     /// Save the created table to the metadata database. This consists of adding a row to the
     /// table_metadata table with the `name` of the table and the `sql` used to create the table.
     pub async fn save_table_metadata(&self, name: &str, sql: &str) -> Result<(), Error> {
-        sqlx::query(&format!(
-            "INSERT INTO table_metadata (table_name, sql) VALUES ($1, $2)"
-        ))
-        .bind(name)
-        .bind(sql)
-        .execute(&self.metadata_database_pool)
-        .await?;
+        sqlx::query("INSERT INTO table_metadata (table_name, sql) VALUES ($1, $2)")
+            .bind(name)
+            .bind(sql)
+            .execute(&self.metadata_database_pool)
+            .await?;
 
         Ok(())
     }
@@ -792,14 +790,12 @@ where
         table_name: &str,
         query_schema_columns: usize,
     ) -> Result<Vec<ErrorBound>, Error> {
-        let select_statement = format!(
+        let mut rows = sqlx::query(
             "SELECT column_index, error_bound FROM model_table_field_columns
-             WHERE table_name = $1 ORDER BY column_index"
-        );
-
-        let mut rows = sqlx::query(&select_statement)
-            .bind(table_name)
-            .fetch(&self.metadata_database_pool);
+             WHERE table_name = $1 ORDER BY column_index",
+        )
+        .bind(table_name)
+        .fetch(&self.metadata_database_pool);
 
         let mut column_to_error_bound =
             vec![ErrorBound::try_new(0.0).unwrap(); query_schema_columns];
@@ -825,14 +821,12 @@ where
         table_name: &str,
         df_schema: &DFSchema,
     ) -> Result<Vec<Option<GeneratedColumn>>, Error> {
-        let select_statement = format!(
+        let mut rows = sqlx::query(
             "SELECT column_index, generated_column_expr, generated_column_sources
-             FROM model_table_field_columns WHERE table_name = $1 ORDER BY column_index"
-        );
-
-        let mut rows = sqlx::query(&select_statement)
-            .bind(table_name)
-            .fetch(&self.metadata_database_pool);
+             FROM model_table_field_columns WHERE table_name = $1 ORDER BY column_index",
+        )
+        .bind(table_name)
+        .fetch(&self.metadata_database_pool);
 
         let mut generated_columns = vec![None; df_schema.fields().len()];
 
@@ -1003,9 +997,8 @@ fn rewrite_special_value_to_normal_value(value: Value) -> Value {
 
 /// Convert a row in the table_name_compressed_files table to an [`ObjectMeta`]. If the
 /// necessary column values could not be extracted from the row, return [`Error`].
-fn convert_compressed_file_row_to_object_meta<DB, R>(row: R) -> Result<ObjectMeta, Error>
+fn convert_compressed_file_row_to_object_meta<R>(row: R) -> Result<ObjectMeta, Error>
 where
-    DB: Database,
     R: Row,
     for<'a> &'a str: sqlx::ColumnIndex<R>,
     for<'a> i64: sqlx::Type<<R as Row>::Database> + sqlx::Decode<'a, <R as Row>::Database>,
@@ -1229,8 +1222,8 @@ mod tests {
             let univariate_id = tag_hash | column_index as u64;
 
             // Split the univariate_id into the tag hash and column index.
-            let computed_tag_hash = MetadataManager::univariate_id_to_tag_hash(univariate_id);
-            let computed_column_index = MetadataManager::univariate_id_to_column_index(univariate_id);
+            let computed_tag_hash = univariate_id_to_tag_hash(univariate_id);
+            let computed_column_index = univariate_id_to_column_index(univariate_id);
 
             // Original and split should match.
             prop_assert_eq!(tag_hash, computed_tag_hash);
@@ -1883,7 +1876,9 @@ mod tests {
         Ok(metadata_manager)
     }
 
-    async fn create_metadata_manager_and_save_model_table(temp_dir: &Path) -> TableMetadataManager<Sqlite> {
+    async fn create_metadata_manager_and_save_model_table(
+        temp_dir: &Path,
+    ) -> TableMetadataManager<Sqlite> {
         let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir)
             .await
             .unwrap();

@@ -16,8 +16,9 @@
 //! Implementation of the Apache Arrow DataFusion execution plan [`SortedJoinExec`] and its
 //! corresponding stream [`SortedJoinStream`] which joins multiple sorted array produced by
 //! [`GridExecs`](crate::query::grid_exec::GridExec) streams and combines them with the time series
-//! tags retrieved from the [`MetadataManager`] to create the complete results containing a
-//! timestamp column, one or more field columns, and zero or more tag columns.
+//! tags retrieved from the [`TableMetadataManager`](modelardb_common::metadata::TableMetadataManager)
+//! to create the complete results containing a timestamp column, one or more field columns, and zero
+//! or more tag columns.
 
 use std::any::Any;
 use std::collections::HashMap;

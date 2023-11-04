@@ -164,17 +164,15 @@ impl MetadataManager {
     /// Return the SQL query used to create the table with the name `table_name`. If a table with
     /// that name does not exists, return [`sqlx::Error`].
     pub async fn table_sql(&self, table_name: &str) -> Result<String, sqlx::Error> {
-        let select_statement = format!(
+        let row = sqlx::query(
             "SELECT sql FROM table_metadata WHERE table_name = $1
              UNION
              SELECT sql FROM model_table_metadata WHERE table_name = $2",
-        );
-
-        let row = sqlx::query(&select_statement)
-            .bind(table_name)
-            .bind(table_name)
-            .fetch_one(&self.metadata_database_pool)
-            .await?;
+        )
+        .bind(table_name)
+        .bind(table_name)
+        .fetch_one(&self.metadata_database_pool)
+        .await?;
 
         row.try_get("sql")
     }

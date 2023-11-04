@@ -22,7 +22,8 @@ use object_store::ObjectMeta;
 use crate::array;
 use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
 
-/// Metadata about a file tracked by [`MetadataManager`] which contains compressed segments.
+/// Metadata about a file tracked by [`TableMetadataManager`](crate::metadata::TableMetadataManager)
+/// which contains compressed segments.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompressedFile {
     /// The metadata that describes the file.
