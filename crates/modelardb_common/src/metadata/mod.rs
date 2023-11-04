@@ -23,10 +23,9 @@ pub mod model_table_metadata;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::Hasher;
-use std::path::Path;
-use std::str::FromStr;
+use std::marker::PhantomData;
+use std::mem;
 use std::sync::Arc;
-use std::{fs, mem};
 
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use chrono::{TimeZone, Utc};
@@ -37,11 +36,9 @@ use datafusion::common::{DFSchema, ToDFSchema};
 use futures::TryStreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
-use sqlx::any::{AnyConnectOptions, AnyPoolOptions, AnyRow};
 use sqlx::database::HasArguments;
 use sqlx::query::Query;
-use sqlx::{AnyPool, Database, Error, Row};
-use tracing::warn;
+use sqlx::{Acquire, Database, Error, Executor, IntoArguments, Row};
 
 use crate::errors::ModelarDbError;
 use crate::metadata::compressed_file::CompressedFile;
@@ -54,7 +51,7 @@ pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
 
 /// The database providers that are currently supported by the metadata database.
 #[derive(Clone)]
-enum MetadataDatabaseType {
+pub enum MetadataDatabaseType {
     SQLite,
     PostgreSQL,
 }
@@ -62,68 +59,47 @@ enum MetadataDatabaseType {
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata database.
 #[derive(Clone)]
-pub struct TableMetadataManager {
+pub struct TableMetadataManager<DB, E> {
     /// The type of the database, used to handle small differences in SQL syntax between providers.
     metadata_database_type: MetadataDatabaseType,
     /// Pool of connections to the metadata database.
-    metadata_database_pool: Arc<AnyPool>,
+    pub metadata_database_pool: E,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
     tag_value_hashes: DashMap<String, u64>,
+    // TODO: Try to remove this with a trait.
+    phantom: PhantomData<DB>,
 }
 
-impl TableMetadataManager {
-    /// Create a [`TableMetadataManager`] with an SQLite metadata database. If the path to the
-    /// database is not valid or the database schema could not be initialized, [`Error`] is returned.
-    pub async fn try_new_sqlite(local_data_folder: &Path) -> Result<Self, Error> {
-        if !is_path_a_data_folder(local_data_folder) {
-            warn!("The data folder is not empty and does not contain data from ModelarDB");
-        }
-
-        // TODO: Find a more consistent and less custom way to specify the file path.
-        // Use a connection string to connect to the file. Note that the file is created if it does
-        // not already exist using "mode=rwc". unwrap() is safe since local data folder is
-        // created when starting.
-        let options = AnyConnectOptions::from_str(&format!(
-            "sqlite://{}?mode=rwc",
-            local_data_folder
-                .canonicalize()
-                .unwrap()
-                .join(METADATA_DATABASE_NAME)
-                .to_string_lossy()
-                .to_string()
-                .replace("\\", "/")
-                .replace("//?", "")
-        ))?;
-
-        // Return the metadata manager.
-        Self::try_new(
-            MetadataDatabaseType::SQLite,
-            Arc::new(
-                AnyPoolOptions::new()
-                    .max_connections(10)
-                    .connect_with(options)
-                    .await?,
-            ),
-        )
-        .await
-    }
-
-    /// Create a [`TableMetadataManager`] with a PostgreSQL metadata database. If the database
-    /// schema could not be initialized, [`Error`] is returned.
-    pub async fn try_new_postgres(metadata_database_pool: Arc<AnyPool>) -> Result<Self, Error> {
-        Self::try_new(MetadataDatabaseType::PostgreSQL, metadata_database_pool).await
-    }
-
+impl<DB, E> TableMetadataManager<DB, E>
+where
+    DB: Database,
+    for<'a> <DB as HasArguments<'a>>::Arguments: IntoArguments<'a, DB>,
+    for<'a> E: Acquire<'a, Database = DB> + Executor<'a, Database = DB> + Copy,
+    for<'a> &'a mut <DB as Database>::Connection: Executor<'a, Database = DB>,
+    for<'a> &'a str: sqlx::ColumnIndex<<DB as Database>::Row>
+        + sqlx::Decode<'a, DB>
+        + sqlx::Type<DB>
+        + sqlx::Encode<'a, DB>,
+    for<'a> String: sqlx::Encode<'a, DB> + sqlx::Type<DB> + sqlx::Decode<'a, DB>,
+    for<'a> Vec<u8>: sqlx::Encode<'a, DB> + sqlx::Type<DB> + sqlx::Decode<'a, DB>,
+    for<'a> &'a [u8]: sqlx::Decode<'a, DB> + sqlx::Type<DB>,
+    for<'a> f32: sqlx::Encode<'a, DB> + sqlx::Decode<'a, DB> + sqlx::Type<DB>,
+    for<'a> i64: sqlx::Encode<'a, DB> + sqlx::Decode<'a, DB> + sqlx::Type<DB>,
+    usize: sqlx::ColumnIndex<<DB as Database>::Row>,
+    for<'a> Option<Option<String>>: sqlx::Encode<'a, DB>,
+    for<'a> Option<Vec<u8>>: sqlx::Encode<'a, DB>,
+{
     /// Create a [`TableMetadataManager`] and initialize the metadata database with the tables used for
     /// table and model table metadata. If the tables could not be created, [`Error`] is returned.
-    async fn try_new(
+    pub async fn try_new(
         metadata_database_type: MetadataDatabaseType,
-        metadata_database_pool: Arc<AnyPool>,
+        metadata_database_pool: E,
     ) -> Result<Self, Error> {
         let metadata_manager = Self {
             metadata_database_type,
             metadata_database_pool,
             tag_value_hashes: DashMap::new(),
+            phantom: PhantomData,
         };
 
         // Create the necessary tables in the metadata database.
@@ -303,9 +279,9 @@ impl TableMetadataManager {
 
         sqlx::query("SELECT table_name FROM model_table_hash_table_name WHERE hash = $1")
             .bind(signed_tag_hash)
-            .fetch_one(&*self.metadata_database_pool)
+            .fetch_one(self.metadata_database_pool)
             .await?
-            .try_get(0)
+            .try_get("table_name")
     }
 
     /// Return a mapping from tag hashes to the tags in the columns with the names in
@@ -326,13 +302,13 @@ impl TableMetadataManager {
             tag_column_names.join(","),
         );
 
-        let mut rows = sqlx::query(&select_statement).fetch(&*self.metadata_database_pool);
+        let mut rows = sqlx::query(&select_statement).fetch(self.metadata_database_pool);
 
         let mut hash_to_tags = HashMap::new();
         while let Some(row) = rows.try_next().await? {
             // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
             // (https://www.sqlite.org/datatype3.html) both use signed integers.
-            let signed_tag_hash: i64 = row.try_get(0)?;
+            let signed_tag_hash: i64 = row.try_get("hash")?;
             let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
 
             // Add all of the tags in order so they can be directly appended to each row.
@@ -414,13 +390,13 @@ impl TableMetadataManager {
         query_hashes: &str,
     ) -> Result<Vec<u64>, Error> {
         // Retrieve the field columns.
-        let mut rows = sqlx::query(query_field_columns).fetch(&*self.metadata_database_pool);
+        let mut rows = sqlx::query(query_field_columns).fetch(self.metadata_database_pool);
 
         let mut field_columns = vec![];
         while let Some(row) = rows.try_next().await? {
             // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
             // (https://www.sqlite.org/datatype3.html) both use signed integers.
-            let signed_field_column: i64 = row.try_get(0)?;
+            let signed_field_column: i64 = row.try_get("column_index")?;
             let field_column = u64::from_ne_bytes(signed_field_column.to_ne_bytes());
 
             field_columns.push(field_column);
@@ -433,13 +409,13 @@ impl TableMetadataManager {
         }
 
         // Retrieve the hashes and compute the univariate ids;
-        let mut rows = sqlx::query(query_hashes).fetch(&*self.metadata_database_pool);
+        let mut rows = sqlx::query(query_hashes).fetch(self.metadata_database_pool);
 
         let mut univariate_ids = vec![];
         while let Some(row) = rows.try_next().await? {
             // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
             // (https://www.sqlite.org/datatype3.html) both use signed integers.
-            let signed_tag_hash: i64 = row.try_get(0)?;
+            let signed_tag_hash: i64 = row.try_get("hash")?;
             let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
 
             for field_column in &field_columns {
@@ -470,7 +446,7 @@ impl TableMetadataManager {
         );
 
         create_insert_compressed_file_query(&insert_statement, query_schema_index, compressed_file)
-            .execute(&*self.metadata_database_pool)
+            .execute(self.metadata_database_pool)
             .await?;
 
         Ok(())
@@ -482,7 +458,6 @@ impl TableMetadataManager {
     /// * `compressed_files_to_delete` is empty.
     /// * The end time is before the start time in `replacement_compressed_file`.
     /// * The max value is smaller than the min value in `replacement_compressed_file`.
-    /// * Less than the number of files in `compressed_files_to_delete` was deleted.
     /// * The metadata database could not be modified.
     /// * A model table with `model_table_name` does not exist.
     pub async fn replace_compressed_files(
@@ -516,7 +491,7 @@ impl TableMetadataManager {
         // sqlx does not yet support binding arrays to IN (...) and recommends generating them.
         // https://github.com/launchbadge/sqlx/blob/main/FAQ.md#how-can-i-do-a-select--where-foo-in--query
         // query_schema_index is simply cast as a model table contains at most 1024 columns.
-        let delete_from_result = sqlx::query(&format!(
+        sqlx::query(&format!(
             "DELETE FROM {model_table_name}_compressed_files
              WHERE field_column = $1
              AND file_path IN ({compressed_files_to_delete_in})",
@@ -524,15 +499,6 @@ impl TableMetadataManager {
         .bind(query_schema_index as i64)
         .execute(&mut *transaction)
         .await?;
-
-        // The cast to usize is safe as only compressed_files_to_delete.len() can be deleted.
-        if compressed_files_to_delete.len() != delete_from_result.rows_affected() as usize {
-            return Err(Error::Configuration(Box::new(
-                ModelarDbError::ImplementationError(
-                    "Less than the expected number of files were deleted from the metadata database.".to_owned(),
-                ),
-            )));
-        }
 
         if let Some(compressed_file) = replacement_compressed_file {
             let insert_statement = format!(
@@ -610,11 +576,13 @@ impl TableMetadataManager {
             .bind(end_time)
             .bind(min_value)
             .bind(max_value)
-            .fetch(&*self.metadata_database_pool);
+            .fetch(self.metadata_database_pool);
 
         let mut files = vec![];
         while let Some(row) = rows.try_next().await? {
-            files.push(convert_compressed_file_row_to_object_meta(row)?);
+            let object_meta =
+                convert_compressed_file_row_to_object_meta::<DB, <DB as Database>::Row>(row)?;
+            files.push(object_meta);
         }
 
         Ok(files)
@@ -628,7 +596,7 @@ impl TableMetadataManager {
         ))
         .bind(name)
         .bind(sql)
-        .execute(&*self.metadata_database_pool)
+        .execute(self.metadata_database_pool)
         .await?;
 
         Ok(())
@@ -769,8 +737,8 @@ impl TableMetadataManager {
     pub async fn table_names(&self) -> Result<Vec<String>, Error> {
         let mut table_names: Vec<String> = vec![];
 
-        let mut rows = sqlx::query("SELECT table_name FROM table_metadata")
-            .fetch(&*self.metadata_database_pool);
+        let mut rows =
+            sqlx::query("SELECT table_name FROM table_metadata").fetch(self.metadata_database_pool);
 
         while let Some(row) = rows.try_next().await? {
             table_names.push(row.try_get("table_name")?)
@@ -786,7 +754,7 @@ impl TableMetadataManager {
         let mut model_table_metadata: Vec<Arc<ModelTableMetadata>> = vec![];
 
         let mut rows =
-            sqlx::query("SELECT * FROM model_table_metadata").fetch(&*self.metadata_database_pool);
+            sqlx::query("SELECT * FROM model_table_metadata").fetch(self.metadata_database_pool);
 
         while let Some(row) = rows.try_next().await? {
             let table_name: &str = row.try_get("table_name")?;
@@ -834,7 +802,7 @@ impl TableMetadataManager {
 
         let mut rows = sqlx::query(&select_statement)
             .bind(table_name)
-            .fetch(&*self.metadata_database_pool);
+            .fetch(self.metadata_database_pool);
 
         let mut column_to_error_bound =
             vec![ErrorBound::try_new(0.0).unwrap(); query_schema_columns];
@@ -843,11 +811,11 @@ impl TableMetadataManager {
             // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
             // (https://www.sqlite.org/datatype3.html) both use signed integers and column_index
             // is stored as an i64 instead of an u64 as a model table has at most 1024 columns.
-            let error_bound_index: i64 = row.try_get(0)?;
+            let error_bound_index: i64 = row.try_get("column_index")?;
 
             // unwrap() is safe as the error bounds are checked before they are stored.
             column_to_error_bound[error_bound_index as usize] =
-                ErrorBound::try_new(row.try_get(1)?).unwrap();
+                ErrorBound::try_new(row.try_get("error_bound")?).unwrap();
         }
 
         Ok(column_to_error_bound)
@@ -867,15 +835,17 @@ impl TableMetadataManager {
 
         let mut rows = sqlx::query(&select_statement)
             .bind(table_name)
-            .fetch(&*self.metadata_database_pool);
+            .fetch(self.metadata_database_pool);
 
         let mut generated_columns = vec![None; df_schema.fields().len()];
 
         while let Some(row) = rows.try_next().await? {
-            if let Some(original_expr) = row.try_get::<Option<&str>, _>(1)? {
+            if let Some(original_expr) = row.try_get::<Option<&str>, _>("generated_column_expr")? {
                 // unwrap() is safe as the expression is checked before it is written to the database.
                 let expr = parser::parse_sql_expression(df_schema, original_expr).unwrap();
-                let source_columns = row.try_get::<Option<&[u8]>, _>(2)?.unwrap();
+                let source_columns = row
+                    .try_get::<Option<&[u8]>, _>("generated_column_sources")?
+                    .unwrap();
 
                 let generated_column = GeneratedColumn {
                     expr,
@@ -886,22 +856,12 @@ impl TableMetadataManager {
                 // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
                 // (https://www.sqlite.org/datatype3.html) both use signed integers and column_index
                 // is stored as an i64 instead of an u64 as a model table has at most 1024 columns.
-                let generated_columns_index: i64 = row.try_get(0)?;
+                let generated_columns_index: i64 = row.try_get("column_index")?;
                 generated_columns[generated_columns_index as usize] = Some(generated_column);
             }
         }
 
         Ok(generated_columns)
-    }
-}
-
-// TODO: Add test for this.
-/// Return [`true`] if `path` is a data folder, otherwise [`false`].
-fn is_path_a_data_folder(path: &Path) -> bool {
-    if let Ok(files_and_folders) = fs::read_dir(path) {
-        files_and_folders.count() == 0 || path.join(METADATA_DATABASE_NAME).exists()
-    } else {
-        false
     }
 }
 
@@ -947,12 +907,9 @@ fn create_insert_compressed_file_query<'a, DB: Database>(
     compressed_file: &'a CompressedFile,
 ) -> Query<'a, DB, <DB as HasArguments<'a>>::Arguments>
 where
-    i64: sqlx::Encode<'a, DB>,
-    i64: sqlx::Type<DB>,
-    f32: sqlx::Encode<'a, DB>,
-    f32: sqlx::Type<DB>,
-    String: sqlx::Encode<'a, DB>,
-    String: sqlx::Type<DB>,
+    i64: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
+    f32: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
+    String: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
 {
     let min_value = rewrite_special_value_to_normal_value(compressed_file.min_value);
     let max_value = rewrite_special_value_to_normal_value(compressed_file.max_value);
@@ -991,7 +948,14 @@ fn rewrite_special_value_to_normal_value(value: Value) -> Value {
 
 /// Convert a row in the table_name_compressed_files table to an [`ObjectMeta`]. If the
 /// necessary column values could not be extracted from the row, return [`Error`].
-fn convert_compressed_file_row_to_object_meta(row: AnyRow) -> Result<ObjectMeta, Error> {
+fn convert_compressed_file_row_to_object_meta<DB, R>(row: R) -> Result<ObjectMeta, Error>
+where
+    DB: Database,
+    R: Row,
+    for<'a> &'a str: sqlx::ColumnIndex<R>,
+    for<'a> i64: sqlx::Type<<R as Row>::Database> + sqlx::Decode<'a, <R as Row>::Database>,
+    for<'a> String: sqlx::Type<<R as Row>::Database> + sqlx::Decode<'a, <R as Row>::Database>,
+{
     let file_path: String = row.try_get("file_path")?;
 
     // unwrap() is safe as the created_at timestamp cannot be out of range.
