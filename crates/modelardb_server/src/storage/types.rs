@@ -514,10 +514,13 @@ mod tests {
     #[test]
     fn test_append_to_metric() {
         let mut metric = Metric::new();
-        let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let timestamp = since_the_epoch.as_millis() as Timestamp;
 
         metric.append(30, false);
+
+        // timestamp is measured just before metric.append() to minimize the change that enough time
+        // has passed that the timestamp written to metric is different than what the test expects.
+        let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let timestamp = since_the_epoch.as_millis() as Timestamp;
         metric.append(30, false);
 
         assert_eq!(metric.timestamps.pop_iter().last(), Some(timestamp));
