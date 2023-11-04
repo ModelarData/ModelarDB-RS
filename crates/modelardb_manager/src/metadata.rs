@@ -16,35 +16,42 @@
 //! Management of the metadata database for the manager. Metadata which is unique to the manager,
 //! such as metadata about registered edges, is handled here.
 
+use std::marker::PhantomData;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use dashmap::DashMap;
 use futures::TryStreamExt;
 use modelardb_common::errors::ModelarDbError;
-use modelardb_common::metadata::TableMetadataManager;
+use modelardb_common::metadata::{MetadataDatabaseType, TableMetadataManager};
 use modelardb_common::types::ServerMode;
-use sqlx::{AnyPool, Row};
+use sqlx::{PgPool, Postgres, Row};
 use uuid::Uuid;
 
 use crate::cluster::Node;
 
 /// Stores the metadata required for reading from and writing to the tables and model tables and
 /// persisting edges. The data that needs to be persisted is stored in the metadata database.
-#[derive(Clone)]
 pub struct MetadataManager {
     /// Pool of connections to the metadata database.
-    metadata_database_pool: Arc<AnyPool>,
+    metadata_database_pool: Arc<PgPool>,
     /// Metadata manager used to interface with the subset of the manager metadata database related
     /// to tables and model tables.
-    pub(crate) table_metadata_manager: TableMetadataManager,
+    pub(crate) table_metadata_manager: TableMetadataManager<Postgres>,
 }
 
 impl MetadataManager {
     /// Return [`MetadataManager`] if the necessary tables could be created in the metadata database,
     /// otherwise return [`sqlx::Error`].
-    pub async fn try_new(metadata_database_pool: Arc<AnyPool>) -> Result<Self, sqlx::Error> {
-        let table_metadata_manager =
-            TableMetadataManager::try_new_postgres(metadata_database_pool.clone()).await?;
+    pub async fn try_new(metadata_database_pool: Arc<PgPool>) -> Result<Self, sqlx::Error> {
+        let table_metadata_manager = TableMetadataManager {
+            metadata_database_type: MetadataDatabaseType::PostgreSQL,
+            metadata_database_pool: metadata_database_pool.clone(),
+            tag_value_hashes: DashMap::new(),
+            phantom: PhantomData,
+        };
+
+        table_metadata_manager.create_metadata_database_tables().await?;
 
         let metadata_manager = Self {
             metadata_database_pool,

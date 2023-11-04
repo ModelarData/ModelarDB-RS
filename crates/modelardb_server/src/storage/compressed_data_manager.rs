@@ -36,6 +36,7 @@ use object_store::{ObjectMeta, ObjectStore};
 use parquet::arrow::async_reader::ParquetObjectReader;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
 use parquet::format::SortingColumn;
+use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::codegen::Bytes;
@@ -65,7 +66,7 @@ pub(super) struct CompressedDataManager {
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
     /// Management of metadata for saving compressed file metadata.
-    metadata_manager: Arc<TableMetadataManager>,
+    metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used compressed memory in bytes, updated every time the used memory changes.
@@ -83,7 +84,7 @@ impl CompressedDataManager {
         local_data_folder: PathBuf,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
-        metadata_manager: Arc<TableMetadataManager>,
+        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the compressed data manager exists.

@@ -2006,6 +2006,7 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "arrow-flight",
+ "dashmap",
  "futures",
  "log",
  "modelardb_common",

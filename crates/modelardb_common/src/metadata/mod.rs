@@ -38,7 +38,7 @@ use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
 use sqlx::database::HasArguments;
 use sqlx::query::Query;
-use sqlx::{Acquire, Database, Error, Executor, IntoArguments, Row};
+use sqlx::{Database, Error, Executor, IntoArguments, Pool, Row};
 
 use crate::errors::ModelarDbError;
 use crate::metadata::compressed_file::CompressedFile;
@@ -59,22 +59,21 @@ pub enum MetadataDatabaseType {
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata database.
 #[derive(Clone)]
-pub struct TableMetadataManager<DB, E> {
+pub struct TableMetadataManager<DB: Database> {
     /// The type of the database, used to handle small differences in SQL syntax between providers.
-    metadata_database_type: MetadataDatabaseType,
+    pub metadata_database_type: MetadataDatabaseType,
     /// Pool of connections to the metadata database.
-    pub metadata_database_pool: E,
+    pub metadata_database_pool: Arc<Pool<DB>>,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
-    tag_value_hashes: DashMap<String, u64>,
+    pub tag_value_hashes: DashMap<String, u64>,
     // TODO: Try to remove this with a trait.
-    phantom: PhantomData<DB>,
+    pub phantom: PhantomData<DB>,
 }
 
-impl<DB, E> TableMetadataManager<DB, E>
+impl<DB> TableMetadataManager<DB>
 where
     DB: Database,
     for<'a> <DB as HasArguments<'a>>::Arguments: IntoArguments<'a, DB>,
-    for<'a> E: Acquire<'a, Database = DB> + Executor<'a, Database = DB> + Copy,
     for<'a> &'a mut <DB as Database>::Connection: Executor<'a, Database = DB>,
     for<'a> &'a str: sqlx::ColumnIndex<<DB as Database>::Row>
         + sqlx::Decode<'a, DB>
@@ -93,7 +92,7 @@ where
     /// table and model table metadata. If the tables could not be created, [`Error`] is returned.
     pub async fn try_new(
         metadata_database_type: MetadataDatabaseType,
-        metadata_database_pool: E,
+        metadata_database_pool: Arc<Pool<DB>>,
     ) -> Result<Self, Error> {
         let metadata_manager = Self {
             metadata_database_type,
@@ -117,7 +116,7 @@ where
     /// * The model_table_field_columns table contains the name, index, error bound, and generation
     /// expression of the field columns in each model table.
     /// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
-    async fn create_metadata_database_tables(&self) -> Result<(), Error> {
+    pub async fn create_metadata_database_tables(&self) -> Result<(), Error> {
         let (strict, binary_type) = match self.metadata_database_type {
             MetadataDatabaseType::SQLite => ("STRICT", "BLOB"),
             MetadataDatabaseType::PostgreSQL => ("", "BYTEA"),
@@ -279,7 +278,7 @@ where
 
         sqlx::query("SELECT table_name FROM model_table_hash_table_name WHERE hash = $1")
             .bind(signed_tag_hash)
-            .fetch_one(self.metadata_database_pool)
+            .fetch_one(&*self.metadata_database_pool)
             .await?
             .try_get("table_name")
     }
@@ -302,7 +301,7 @@ where
             tag_column_names.join(","),
         );
 
-        let mut rows = sqlx::query(&select_statement).fetch(self.metadata_database_pool);
+        let mut rows = sqlx::query(&select_statement).fetch(&*self.metadata_database_pool);
 
         let mut hash_to_tags = HashMap::new();
         while let Some(row) = rows.try_next().await? {
@@ -390,7 +389,7 @@ where
         query_hashes: &str,
     ) -> Result<Vec<u64>, Error> {
         // Retrieve the field columns.
-        let mut rows = sqlx::query(query_field_columns).fetch(self.metadata_database_pool);
+        let mut rows = sqlx::query(query_field_columns).fetch(&*self.metadata_database_pool);
 
         let mut field_columns = vec![];
         while let Some(row) = rows.try_next().await? {
@@ -409,7 +408,7 @@ where
         }
 
         // Retrieve the hashes and compute the univariate ids;
-        let mut rows = sqlx::query(query_hashes).fetch(self.metadata_database_pool);
+        let mut rows = sqlx::query(query_hashes).fetch(&*self.metadata_database_pool);
 
         let mut univariate_ids = vec![];
         while let Some(row) = rows.try_next().await? {
@@ -446,7 +445,7 @@ where
         );
 
         create_insert_compressed_file_query(&insert_statement, query_schema_index, compressed_file)
-            .execute(self.metadata_database_pool)
+            .execute(&*self.metadata_database_pool)
             .await?;
 
         Ok(())
@@ -576,7 +575,7 @@ where
             .bind(end_time)
             .bind(min_value)
             .bind(max_value)
-            .fetch(self.metadata_database_pool);
+            .fetch(&*self.metadata_database_pool);
 
         let mut files = vec![];
         while let Some(row) = rows.try_next().await? {
@@ -596,7 +595,7 @@ where
         ))
         .bind(name)
         .bind(sql)
-        .execute(self.metadata_database_pool)
+        .execute(&*self.metadata_database_pool)
         .await?;
 
         Ok(())
@@ -737,8 +736,8 @@ where
     pub async fn table_names(&self) -> Result<Vec<String>, Error> {
         let mut table_names: Vec<String> = vec![];
 
-        let mut rows =
-            sqlx::query("SELECT table_name FROM table_metadata").fetch(self.metadata_database_pool);
+        let mut rows = sqlx::query("SELECT table_name FROM table_metadata")
+            .fetch(&*self.metadata_database_pool);
 
         while let Some(row) = rows.try_next().await? {
             table_names.push(row.try_get("table_name")?)
@@ -754,7 +753,7 @@ where
         let mut model_table_metadata: Vec<Arc<ModelTableMetadata>> = vec![];
 
         let mut rows =
-            sqlx::query("SELECT * FROM model_table_metadata").fetch(self.metadata_database_pool);
+            sqlx::query("SELECT * FROM model_table_metadata").fetch(&*self.metadata_database_pool);
 
         while let Some(row) = rows.try_next().await? {
             let table_name: &str = row.try_get("table_name")?;
@@ -802,7 +801,7 @@ where
 
         let mut rows = sqlx::query(&select_statement)
             .bind(table_name)
-            .fetch(self.metadata_database_pool);
+            .fetch(&*self.metadata_database_pool);
 
         let mut column_to_error_bound =
             vec![ErrorBound::try_new(0.0).unwrap(); query_schema_columns];
@@ -835,7 +834,7 @@ where
 
         let mut rows = sqlx::query(&select_statement)
             .bind(table_name)
-            .fetch(self.metadata_database_pool);
+            .fetch(&*self.metadata_database_pool);
 
         let mut generated_columns = vec![None; df_schema.fields().len()];
 

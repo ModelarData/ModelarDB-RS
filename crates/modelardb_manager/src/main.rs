@@ -21,7 +21,6 @@ mod metadata;
 mod remote;
 
 use std::env;
-use std::str::FromStr;
 use std::sync::Arc;
 
 use modelardb_common::arguments::{
@@ -29,8 +28,8 @@ use modelardb_common::arguments::{
     validate_remote_data_folder,
 };
 use once_cell::sync::Lazy;
-use sqlx::any::{install_default_drivers, AnyConnectOptions, AnyPoolOptions};
-use sqlx::AnyPool;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::PgPool;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::metadata::errors::InvalidMetadataValue;
@@ -68,9 +67,6 @@ pub struct Context {
 /// cannot be parsed, if the metadata cannot be read from the database, or if the Apache Arrow
 /// Flight server cannot be started.
 fn main() -> Result<(), String> {
-    // Install the Postgres driver so it can be used by the metadata database.
-    install_default_drivers();
-
     // Initialize a tracing layer that logs events to stdout.
     let stdout_log = tracing_subscriber::fmt::layer();
     tracing_subscriber::registry().with(stdout_log).init();
@@ -127,22 +123,23 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-/// Parse the command lines arguments into an [`AnyPool`] connection to the metadata database and a
+/// Parse the command lines arguments into a [`PgPool`] connection to the metadata database and a
 /// remote data folder. If the necessary command line arguments are not provided, too many
 /// arguments are provided, or if the arguments are malformed, [`String`] is returned.
 async fn parse_command_line_arguments(
     arguments: &[&str],
-) -> Result<(Arc<AnyPool>, RemoteDataFolder), String> {
+) -> Result<(Arc<PgPool>, RemoteDataFolder), String> {
     match arguments {
         &[metadata_database, remote_data_folder] => {
             let username = env::var("METADATA_DB_USER").map_err(|error| error.to_string())?;
             let password = env::var("METADATA_DB_PASSWORD").map_err(|error| error.to_string())?;
             let host = env::var("METADATA_DB_HOST").map_err(|error| error.to_string())?;
 
-            let connection_options = AnyConnectOptions::from_str(&format!(
-                "postgres://{username}:{password}@{host}/{metadata_database}",
-            ))
-            .map_err(|error| error.to_string())?;
+            let connection_options = PgConnectOptions::new()
+                .host(host.as_str())
+                .username(username.as_str())
+                .password(password.as_str())
+                .database(metadata_database);
 
             let object_store = argument_to_remote_object_store(remote_data_folder)?;
             let connection_info = argument_to_connection_info(remote_data_folder)?;
@@ -150,7 +147,7 @@ async fn parse_command_line_arguments(
             // TODO: Look into what an ideal number of max connections would be.
             Ok((
                 Arc::new(
-                    AnyPoolOptions::new()
+                    PgPoolOptions::new()
                         .max_connections(10)
                         .connect_with(connection_options)
                         .await

@@ -17,10 +17,13 @@
 //! components.
 
 use std::fs;
+use std::marker::PhantomData;
+use std::path::Path;
 use std::sync::Arc;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::Action;
+use dashmap::DashMap;
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::schema::SchemaProvider;
@@ -29,15 +32,19 @@ use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::{ParquetReadOptions, SessionConfig, SessionContext};
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::metadata::TableMetadataManager;
+use modelardb_common::metadata::{
+    MetadataDatabaseType, TableMetadataManager, METADATA_DATABASE_NAME,
+};
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::types::{ClusterMode, ServerMode};
 use object_store::ObjectStore;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::Request;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::configuration::ConfigurationManager;
 use crate::query::ModelTable;
@@ -47,7 +54,7 @@ use crate::{optimizer, storage, DataFolders};
 /// Provides access to the system's configuration and components.
 pub struct Context {
     /// Metadata for the tables and model tables in the data folder.
-    pub metadata_manager: Arc<TableMetadataManager>,
+    pub metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     /// Updatable configuration of the server.
     pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
     /// Main interface for Apache Arrow DataFusion.
@@ -65,15 +72,34 @@ impl Context {
         cluster_mode: ClusterMode,
         server_mode: ServerMode,
     ) -> Result<Self, ModelarDbError> {
-        let metadata_manager = Arc::new(
-            TableMetadataManager::try_new_sqlite(&data_folders.local_data_folder)
+        if !is_path_a_data_folder(&data_folders.local_data_folder) {
+            warn!("The data folder is not empty and does not contain data from ModelarDB");
+        }
+
+        // Specify the metadata database's path and that it should be created if it does not exist.
+        let options = SqliteConnectOptions::new()
+            .filename(data_folders.local_data_folder.join(METADATA_DATABASE_NAME))
+            .create_if_missing(true);
+
+        let metadata_database_pool = Arc::new(
+            SqlitePoolOptions::new()
+                .max_connections(10)
+                .connect_with(options)
                 .await
-                .map_err(|error| {
-                    ModelarDbError::ConfigurationError(format!(
-                        "Unable to create a MetadataManager: {error}"
-                    ))
-                })?,
+                .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?,
         );
+
+        let metadata_manager = Arc::new(TableMetadataManager {
+            metadata_database_type: MetadataDatabaseType::SQLite,
+            metadata_database_pool,
+            tag_value_hashes: DashMap::new(),
+            phantom: PhantomData,
+        });
+
+        metadata_manager
+            .create_metadata_database_tables()
+            .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
             &data_folders.local_data_folder,
@@ -421,5 +447,15 @@ impl Context {
             return Err(ModelarDbError::ConfigurationError(message));
         }
         Ok(())
+    }
+}
+
+// TODO: Add test for this.
+/// Return [`true`] if `path` is a data folder, otherwise [`false`].
+fn is_path_a_data_folder(path: &Path) -> bool {
+    if let Ok(files_and_folders) = fs::read_dir(path) {
+        files_and_folders.count() == 0 || path.join(METADATA_DATABASE_NAME).exists()
+    } else {
+        false
     }
 }

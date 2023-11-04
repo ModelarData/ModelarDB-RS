@@ -29,6 +29,7 @@ use modelardb_common::metadata::TableMetadataManager;
 use object_store::local::LocalFileSystem;
 use object_store::path::{Path as ObjectStorePath, PathPart};
 use object_store::{ObjectMeta, ObjectStore};
+use sqlx::Sqlite;
 use tracing::debug;
 
 use crate::storage::compressed_data_manager::CompressedDataManager;
@@ -50,7 +51,7 @@ pub struct DataTransfer {
     /// The object store that the data should be transferred to.
     pub remote_data_folder: Arc<dyn ObjectStore>,
     /// Management of metadata for deleting file metadata after transferring.
-    metadata_manager: Arc<TableMetadataManager>,
+    metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     /// Map from table names and column indices to the combined size in bytes of the compressed
     /// files currently saved for the column in that table.
     compressed_files: DashMap<(String, u16), usize>,
@@ -68,7 +69,7 @@ impl DataTransfer {
     pub async fn try_new(
         local_data_folder: PathBuf,
         remote_data_folder: Arc<dyn ObjectStore>,
-        metadata_manager: Arc<TableMetadataManager>,
+        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         transfer_batch_size_in_bytes: usize,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {

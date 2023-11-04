@@ -50,6 +50,7 @@ use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::{Timestamp, TimestampArray, Value};
 use object_store::{ObjectMeta, ObjectStore};
+use sqlx::Sqlite;
 use tokio::fs::File as TokioFile;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -106,7 +107,7 @@ impl StorageEngine {
         local_data_folder: PathBuf,
         remote_data_folder: Option<Arc<dyn ObjectStore>>,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
-        metadata_manager: Arc<TableMetadataManager>,
+        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     ) -> Result<Self, IOError> {
         // Create shared memory pool.
         let configuration_manager = configuration_manager.read().await;
@@ -424,7 +425,7 @@ impl StorageEngine {
     pub(super) async fn update_remote_data_folder(
         &mut self,
         remote_data_folder: Arc<dyn ObjectStore>,
-        metadata_manager: &Arc<TableMetadataManager>,
+        metadata_manager: &Arc<TableMetadataManager<Sqlite>>,
     ) -> Result<(), IOError> {
         let maybe_current_data_transfer =
             &mut *self.compressed_data_manager.data_transfer.write().await;

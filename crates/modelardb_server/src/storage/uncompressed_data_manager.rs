@@ -25,6 +25,7 @@ use std::sync::{Arc, Mutex};
 use crossbeam_channel::SendError;
 use dashmap::DashMap;
 use datafusion::arrow::array::{Array, StringArray};
+use sqlx::Sqlite;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
@@ -58,7 +59,7 @@ pub(super) struct UncompressedDataManager {
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
     /// Management of metadata for ingesting and compressing time series.
-    metadata_manager: Arc<TableMetadataManager>,
+    metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used uncompressed memory in bytes, updated every time the used memory changes.
@@ -78,7 +79,7 @@ impl UncompressedDataManager {
         local_data_folder: PathBuf,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
-        metadata_manager: Arc<TableMetadataManager>,
+        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the uncompressed data manager exists.
