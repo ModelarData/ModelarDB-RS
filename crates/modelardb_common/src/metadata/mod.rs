@@ -23,7 +23,6 @@ pub mod model_table_metadata;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::Hasher;
-use std::marker::PhantomData;
 use std::path::Path;
 use std::sync::Arc;
 use std::{fs, mem};
@@ -50,13 +49,35 @@ use crate::parser;
 use crate::types::{ErrorBound, Timestamp, UnivariateId, Value};
 
 /// Name used for the file containing the SQLite database storing the metadata.
-pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
+const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
 
-/// The database providers that are currently supported by the metadata database.
-#[derive(Clone)]
-enum MetadataDatabaseType {
-    SQLite,
-    PostgreSQL,
+/// The database providers that are currently supported by the metadata database. This trait is
+/// also used to handle small differences in the SQL syntax between database providers.
+pub trait MetadataDatabase {
+    /// Syntax added after a CREATE TABLE statement to specify that the table should use strict types.
+    fn strict(&self) -> &str;
+    /// Type used for binary columns in CREATE TABLE statements.
+    fn binary_type(&self) -> &str;
+}
+
+impl MetadataDatabase for Postgres {
+    fn strict(&self) -> &str {
+        ""
+    }
+
+    fn binary_type(&self) -> &str {
+        "BYTEA"
+    }
+}
+
+impl MetadataDatabase for Sqlite {
+    fn strict(&self) -> &str {
+        "STRICT"
+    }
+
+    fn binary_type(&self) -> &str {
+        "BLOB"
+    }
 }
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
@@ -64,18 +85,16 @@ enum MetadataDatabaseType {
 #[derive(Clone)]
 pub struct TableMetadataManager<DB: Database> {
     /// The type of the database, used to handle small differences in SQL syntax between providers.
-    metadata_database_type: MetadataDatabaseType,
+    metadata_database_type: DB,
     /// Pool of connections to the metadata database.
     metadata_database_pool: Pool<DB>,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
     tag_value_hashes: DashMap<String, u64>,
-    // TODO: Try to remove this with a trait.
-    phantom: PhantomData<DB>,
 }
 
 impl<DB> TableMetadataManager<DB>
 where
-    DB: Database,
+    DB: Database + MetadataDatabase,
     usize: sqlx::ColumnIndex<<DB as Database>::Row>,
     for<'a> <DB as HasArguments<'a>>::Arguments: IntoArguments<'a, DB>,
     for<'a> &'a mut <DB as Database>::Connection: Executor<'a, Database = DB>,
@@ -101,10 +120,8 @@ where
     /// expression of the field columns in each model table.
     /// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
     pub async fn create_metadata_database_tables(&self) -> Result<(), Error> {
-        let (strict, binary_type) = match self.metadata_database_type {
-            MetadataDatabaseType::SQLite => ("STRICT", "BLOB"),
-            MetadataDatabaseType::PostgreSQL => ("", "BYTEA"),
-        };
+        let strict = self.metadata_database_type.strict();
+        let binary_type = self.metadata_database_type.binary_type();
 
         let mut transaction = self.metadata_database_pool.begin().await?;
 
@@ -594,10 +611,7 @@ where
         model_table_metadata: &ModelTableMetadata,
         sql: &str,
     ) -> Result<(), Error> {
-        let strict = match self.metadata_database_type {
-            MetadataDatabaseType::SQLite => "STRICT",
-            MetadataDatabaseType::PostgreSQL => "",
-        };
+        let strict = self.metadata_database_type.strict();
 
         // Convert the query schema to bytes so it can be saved as a BLOB in the metadata database.
         let query_schema_bytes = try_convert_schema_to_blob(&model_table_metadata.query_schema)?;
@@ -855,10 +869,9 @@ pub async fn try_new_postgres_table_metadata_manager(
     metadata_database_pool: Pool<Postgres>,
 ) -> Result<TableMetadataManager<Postgres>, Error> {
     let metadata_manager = TableMetadataManager {
-        metadata_database_type: MetadataDatabaseType::PostgreSQL,
+        metadata_database_type: Postgres,
         metadata_database_pool,
         tag_value_hashes: DashMap::new(),
-        phantom: PhantomData,
     };
 
     // Create the necessary tables in the metadata database.
@@ -887,10 +900,9 @@ pub async fn try_new_sqlite_table_metadata_manager(
         .await?;
 
     let metadata_manager = TableMetadataManager {
-        metadata_database_type: MetadataDatabaseType::SQLite,
+        metadata_database_type: Sqlite,
         metadata_database_pool,
         tag_value_hashes: DashMap::new(),
-        phantom: PhantomData,
     };
 
     // Create the necessary tables in the metadata database.
