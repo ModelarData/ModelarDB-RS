@@ -211,21 +211,29 @@ impl TestContext {
     fn create_table(&mut self, table_name: &str, table_type: TableType) {
         let cmd = match table_type {
             TableType::NormalTable => {
-                format!("CREATE TABLE {table_name}(timestamp TIMESTAMP,
-                         field_one REAL, field_two REAL, metadata TEXT)")
+                format!(
+                    "CREATE TABLE {table_name}(timestamp TIMESTAMP,
+                         field_one REAL, field_two REAL, metadata TEXT)"
+                )
             }
             TableType::ModelTable => {
-                format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
-                         field_one FIELD, field_two FIELD, tag TAG)")
+                format!(
+                    "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
+                         field_one FIELD, field_two FIELD, tag TAG)"
+                )
             }
             TableType::ModelTableNoTag => {
-                format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
-                         field_one FIELD, field_two FIELD)")
+                format!(
+                    "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
+                         field_one FIELD, field_two FIELD)"
+                )
             }
             TableType::ModelTableAsField => {
-                format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
+                format!(
+                    "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
                          generated FIELD AS (field_one + CAST(37.0 AS REAL)),
-                         field_one FIELD, field_two FIELD)")
+                         field_one FIELD, field_two FIELD)"
+                )
             }
         };
 
@@ -247,13 +255,15 @@ impl TestContext {
         multiply_noise_range: Option<Range<f32>>,
         maybe_tag: Option<&str>,
     ) -> RecordBatch {
-        let (uncompressed_timestamps, uncompressed_values) = data_generation::generate_time_series(
-            TIME_SERIES_TEST_LENGTH,
-            SEGMENT_TEST_MINIMUM_LENGTH..2 * SEGMENT_TEST_MINIMUM_LENGTH + 1,
-            generate_irregular_timestamps,
-            multiply_noise_range,
-            100.0..200.0,
-        );
+        let (uncompressed_timestamps, mut uncompressed_values) =
+            data_generation::generate_multivariate_time_series(
+                TIME_SERIES_TEST_LENGTH,
+                2,
+                SEGMENT_TEST_MINIMUM_LENGTH..2 * SEGMENT_TEST_MINIMUM_LENGTH + 1,
+                generate_irregular_timestamps,
+                multiply_noise_range,
+                100.0..200.0,
+            );
 
         let time_series_len = uncompressed_timestamps.len();
 
@@ -263,13 +273,11 @@ impl TestContext {
             Field::new("field_two", DataType::Float32, false),
         ];
 
-        // TODO: Update data generator after pull request 141 is merged to cleanup code and support
-        // generating multivariate time series with different field.
-        let field = Arc::new(uncompressed_values);
+        // 0 is used as the index for each call to swap_remove() as a value is removed each time.
         let mut columns: Vec<Arc<dyn Array>> = vec![
             Arc::new(uncompressed_timestamps),
-            field.clone(),
-            field
+            Arc::new(uncompressed_values.swap_remove(0)),
+            Arc::new(uncompressed_values.swap_remove(0)),
         ];
 
         if let Some(tag) = maybe_tag {
@@ -697,8 +705,6 @@ fn test_can_ingest_time_series_without_tags() {
     let query_result = test_context
         .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
         .unwrap();
-    dbg!(time_series.schema());
-    dbg!(query_result.schema());
 
     assert_eq!(time_series, query_result);
 }
@@ -776,16 +782,12 @@ fn test_optimized_query_results_equals_non_optimized_query_results() {
 
     ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
 
-    let optimized_query = test_context
-        .execute_query(format!("SELECT MIN(field_one) FROM {TABLE_NAME}"))
-        .unwrap();
-
-    // The trivial filter ensures the query is rewritten by the optimizer. TODO: verify as part of test
-    let non_optimized_query = test_context
-        .execute_query(format!("SELECT MIN(field_one) FROM {TABLE_NAME} WHERE 1=1"))
-        .unwrap();
-
-    assert_eq!(optimized_query, non_optimized_query);
+    // The trivial filter ensures the query is rewritten by the optimizer.
+    assert_ne_query_plans_and_eq_result(
+        &mut test_context,
+        format!("SELECT MIN(field_one) FROM {TABLE_NAME}"),
+        format!("SELECT MIN(field_one) FROM {TABLE_NAME} WHERE 1=1"),
+    )
 }
 
 fn ingest_time_series_and_flush_data(
@@ -803,6 +805,25 @@ fn ingest_time_series_and_flush_data(
         .unwrap();
 
     test_context.flush_data_to_disk();
+}
+
+fn assert_ne_query_plans_and_eq_result(
+    test_context: &mut TestContext,
+    optimized_query: String,
+    unoptimized_query: String,
+) {
+    // TODO: check actual result of plan is same for equal query plans but different queries plan
+    let optimized_query_plan = test_context
+        .execute_query(format!("EXPLAIN {}", optimized_query))
+        .unwrap();
+    let unoptimized_query_plan = test_context
+        .execute_query(format!("EXPLAIN {}", unoptimized_query))
+        .unwrap();
+    assert_eq!(optimized_query_plan, unoptimized_query_plan);
+
+    let optimized_query_result = test_context.execute_query(optimized_query).unwrap();
+    let unoptimized_query_result = test_context.execute_query(unoptimized_query).unwrap();
+    assert_eq!(optimized_query_result, unoptimized_query_result);
 }
 
 #[test]

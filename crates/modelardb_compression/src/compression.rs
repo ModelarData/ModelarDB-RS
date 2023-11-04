@@ -686,13 +686,14 @@ mod tests {
         generate_irregular_timestamps: bool,
         multiply_noise_range: Option<Range<f32>>,
     ) {
-        let (uncompressed_timestamps, uncompressed_values) = data_generation::generate_time_series(
-            1000 * TRY_COMPRESS_TEST_LENGTH,
-            TRY_COMPRESS_TEST_LENGTH..10 * TRY_COMPRESS_TEST_LENGTH + 1,
-            generate_irregular_timestamps,
-            multiply_noise_range,
-            100.0..200.0,
-        );
+        let (uncompressed_timestamps, uncompressed_values) =
+            data_generation::generate_univariate_time_series(
+                1000 * TRY_COMPRESS_TEST_LENGTH,
+                TRY_COMPRESS_TEST_LENGTH..10 * TRY_COMPRESS_TEST_LENGTH + 1,
+                generate_irregular_timestamps,
+                multiply_noise_range,
+                100.0..200.0,
+            );
 
         let compressed_record_batch =
             compress_time_series(&uncompressed_timestamps, &uncompressed_values, error_bound);

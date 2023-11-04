@@ -86,52 +86,108 @@ fn create_random_number_generator() -> StdRng {
     StdRng::from_seed(*RANDOM_NUMBER_SEED)
 }
 
-/// Generate a time series with sub-sequences of values with different [`ValuesStructure`]. The time
-/// series will have `length` data points in sequences of `segment_length_range` (except possibly
-/// for the last as it may be truncated to match `length`) and the timestamps will be regular or
-/// irregular depending on the value of `generate_irregular_timestamps`. If `multiply_noise_range`
-/// is [`Some`], random values will be generated in the [`Range<f32>`] and multiplied with each
-/// value in the sequences with constant and linear values. Sequences with random values are
-/// generated in the range specified as `random_value_range`.
-pub fn generate_time_series(
+/// Generate a univariate time series with sub-sequences of values with different
+/// [`ValuesStructure`]. The time series will have `length` data points in sequences of
+/// `segment_length_range` (except possibly for the last as it may be truncated to match `length`)
+/// and the timestamps will be regular or irregular depending on the value of
+/// `generate_irregular_timestamps`. If `multiply_noise_range` is [`Some`], random values will be
+/// generated in the [`Range<f32>`] and multiplied with each value in the sequences with constant
+/// and linear values. Sequences with random values are generated in the range specified as
+/// `random_value_range`.
+pub fn generate_univariate_time_series(
     length: usize,
     segment_length_range: Range<usize>,
     generate_irregular_timestamps: bool,
     multiply_noise_range: Option<Range<f32>>,
     random_value_range: Range<f32>,
 ) -> (TimestampArray, ValueArray) {
+    let (uncompressed_timestamps, mut uncompressed_values) = generate_multivariate_time_series(
+        length,
+        1,
+        segment_length_range,
+        generate_irregular_timestamps,
+        multiply_noise_range,
+        random_value_range,
+    );
+
+    (uncompressed_timestamps, uncompressed_values.remove(0))
+}
+
+/// Generate a univariate or multivariate time series with sub-sequences of values with different
+/// [`ValuesStructure`]. The time series will have `field_columns columns containing `length` data
+/// points in sequences of `segment_length_range` (except possibly for the last as it may be
+/// truncated to match `length`) and the timestamps will be regular or irregular depending on the
+/// value of `generate_irregular_timestamps`. If `multiply_noise_range` is [`Some`], random values
+/// will be generated in the [``Range<f32>``] and multiplied with each value in the sequences with
+/// constant and linear values. Sequences with random values are generated in the range specified as
+/// `random_value_range`.
+pub fn generate_multivariate_time_series(
+    length: usize,
+    field_columns: usize,
+    segment_length_range: Range<usize>,
+    generate_irregular_timestamps: bool,
+    multiply_noise_range: Option<Range<f32>>,
+    random_value_range: Range<f32>,
+) -> (TimestampArray, Vec<ValueArray>) {
     let values_structures = &[
         ValuesStructure::Constant(multiply_noise_range.clone()),
         ValuesStructure::Linear(multiply_noise_range),
         ValuesStructure::Random(random_value_range),
     ];
 
-    let mut std_rng = create_random_number_generator();
-    let mut uncompressed_values_builder = ValueBuilder::with_capacity(length);
+    // Create value builders.
+    let mut uncompressed_values_builders = (0..field_columns)
+        .map(|_| ValueBuilder::with_capacity(length))
+        .collect::<Vec<_>>();
+    let mut value_columns = Vec::with_capacity(uncompressed_values_builders.len());
+
+    // Generate timestamps.
     let uncompressed_timestamps = generate_timestamps(length, generate_irregular_timestamps);
-    while uncompressed_values_builder.values_slice().len() < length {
-        let segment_length = std_rng.gen_range(segment_length_range.clone());
-        let values_structure_index = std_rng.gen_range(0..values_structures.len());
-        let values_structure = &values_structures[values_structure_index];
 
-        let uncompressed_values_builder_len = uncompressed_values_builder.values_slice().len();
-        let uncompressed_timestamps_for_segment_end = usize::min(
-            uncompressed_timestamps.len(),
-            uncompressed_values_builder_len + segment_length,
-        );
-        let uncompressed_timestamps_for_segment = &uncompressed_timestamps.values()
-            [uncompressed_values_builder_len..uncompressed_timestamps_for_segment_end];
+    // Generates values.
+    let mut std_rng = create_random_number_generator();
+    while !uncompressed_values_builders.is_empty() {
+        let mut uncompressed_values_builders_to_delete =
+            Vec::with_capacity(uncompressed_values_builders.len());
 
-        let uncompressed_values = generate_values(
-            uncompressed_timestamps_for_segment,
-            (*values_structure).clone(),
-        );
+        for (index, uncompressed_values_builder) in
+            uncompressed_values_builders.iter_mut().enumerate()
+        {
+            let segment_length = std_rng.gen_range(segment_length_range.clone());
+            let values_structure_index = std_rng.gen_range(0..values_structures.len());
+            let values_structure = &values_structures[values_structure_index];
 
-        uncompressed_values_builder.extend(&uncompressed_values);
+            let uncompressed_values_builder_len = uncompressed_values_builder.values_slice().len();
+            let uncompressed_timestamps_for_segment_end = usize::min(
+                uncompressed_timestamps.len(),
+                uncompressed_values_builder_len + segment_length,
+            );
+            let uncompressed_timestamps_for_segment = &uncompressed_timestamps.values()
+                [uncompressed_values_builder_len..uncompressed_timestamps_for_segment_end];
+
+            let uncompressed_values = generate_values(
+                uncompressed_timestamps_for_segment,
+                (*values_structure).clone(),
+            );
+
+            uncompressed_values_builder.extend(&uncompressed_values);
+
+            // Ignore builder with enough values.
+            if uncompressed_values_builder.values_slice().len() >= length {
+                value_columns.push(uncompressed_values_builder.finish().slice(0, length));
+                uncompressed_values_builders_to_delete.push(index);
+            }
+        }
+
+        // Finished builders are deleted after the loop to not conflict with the loop.
+        uncompressed_values_builders_to_delete
+            .iter()
+            .for_each(|index| {
+                uncompressed_values_builders.swap_remove(*index);
+            });
     }
-    let uncompressed_values = uncompressed_values_builder.finish().slice(0, length);
 
-    (uncompressed_timestamps, uncompressed_values)
+    (uncompressed_timestamps, value_columns)
 }
 
 /// Generate regular/irregular timestamps with [ThreadRng](rand::rngs::ThreadRng). Selects the
