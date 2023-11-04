@@ -16,14 +16,12 @@
 //! Management of the metadata database for the manager. Metadata which is unique to the manager,
 //! such as metadata about registered edges, is handled here.
 
-use std::marker::PhantomData;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use dashmap::DashMap;
 use futures::TryStreamExt;
 use modelardb_common::errors::ModelarDbError;
-use modelardb_common::metadata::{MetadataDatabaseType, TableMetadataManager};
+use modelardb_common::metadata::{try_new_postgres_table_metadata_manager, TableMetadataManager};
 use modelardb_common::types::ServerMode;
 use sqlx::{PgPool, Postgres, Row};
 use uuid::Uuid;
@@ -44,14 +42,8 @@ impl MetadataManager {
     /// Return [`MetadataManager`] if the necessary tables could be created in the metadata database,
     /// otherwise return [`sqlx::Error`].
     pub async fn try_new(metadata_database_pool: Arc<PgPool>) -> Result<Self, sqlx::Error> {
-        let table_metadata_manager = TableMetadataManager {
-            metadata_database_type: MetadataDatabaseType::PostgreSQL,
-            metadata_database_pool: metadata_database_pool.clone(),
-            tag_value_hashes: DashMap::new(),
-            phantom: PhantomData,
-        };
-
-        table_metadata_manager.create_metadata_database_tables().await?;
+        let table_metadata_manager =
+            try_new_postgres_table_metadata_manager(metadata_database_pool.clone()).await?;
 
         let metadata_manager = Self {
             metadata_database_pool,

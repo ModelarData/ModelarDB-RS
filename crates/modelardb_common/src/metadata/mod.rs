@@ -24,8 +24,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::Hasher;
 use std::marker::PhantomData;
-use std::mem;
+use std::path::Path;
 use std::sync::Arc;
+use std::{fs, mem};
 
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use chrono::{TimeZone, Utc};
@@ -38,7 +39,9 @@ use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
 use sqlx::database::HasArguments;
 use sqlx::query::Query;
-use sqlx::{Database, Error, Executor, IntoArguments, Pool, Row};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::{Database, Error, Executor, IntoArguments, Pool, Postgres, Row, Sqlite};
+use tracing::warn;
 
 use crate::errors::ModelarDbError;
 use crate::metadata::compressed_file::CompressedFile;
@@ -51,7 +54,7 @@ pub const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
 
 /// The database providers that are currently supported by the metadata database.
 #[derive(Clone)]
-pub enum MetadataDatabaseType {
+enum MetadataDatabaseType {
     SQLite,
     PostgreSQL,
 }
@@ -61,13 +64,13 @@ pub enum MetadataDatabaseType {
 #[derive(Clone)]
 pub struct TableMetadataManager<DB: Database> {
     /// The type of the database, used to handle small differences in SQL syntax between providers.
-    pub metadata_database_type: MetadataDatabaseType,
+    metadata_database_type: MetadataDatabaseType,
     /// Pool of connections to the metadata database.
-    pub metadata_database_pool: Arc<Pool<DB>>,
+    metadata_database_pool: Arc<Pool<DB>>,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
-    pub tag_value_hashes: DashMap<String, u64>,
+    tag_value_hashes: DashMap<String, u64>,
     // TODO: Try to remove this with a trait.
-    pub phantom: PhantomData<DB>,
+    phantom: PhantomData<DB>,
 }
 
 impl<DB> TableMetadataManager<DB>
@@ -88,25 +91,6 @@ where
     for<'a> Option<Option<String>>: sqlx::Encode<'a, DB>,
     for<'a> Option<Vec<u8>>: sqlx::Encode<'a, DB>,
 {
-    /// Create a [`TableMetadataManager`] and initialize the metadata database with the tables used for
-    /// table and model table metadata. If the tables could not be created, [`Error`] is returned.
-    pub async fn try_new(
-        metadata_database_type: MetadataDatabaseType,
-        metadata_database_pool: Arc<Pool<DB>>,
-    ) -> Result<Self, Error> {
-        let metadata_manager = Self {
-            metadata_database_type,
-            metadata_database_pool,
-            tag_value_hashes: DashMap::new(),
-            phantom: PhantomData,
-        };
-
-        // Create the necessary tables in the metadata database.
-        metadata_manager.create_metadata_database_tables().await?;
-
-        Ok(metadata_manager)
-    }
-
     /// If they do not already exist, create the tables in the metadata database used for table and
     /// model table metadata.
     /// * The table_metadata table contains the metadata for tables.
@@ -861,6 +845,69 @@ where
         }
 
         Ok(generated_columns)
+    }
+}
+
+// TODO: Find a way to fix the trait issue that forces us to have these outside the struct.
+/// Create a PostgreSQL [`TableMetadataManager`] and initialize the metadata database with the tables
+/// used for table and model table metadata. If the tables could not be created, [`Error`] is returned.
+pub async fn try_new_postgres_table_metadata_manager(
+    metadata_database_pool: Arc<Pool<Postgres>>,
+) -> Result<TableMetadataManager<Postgres>, Error> {
+    let metadata_manager = TableMetadataManager {
+        metadata_database_type: MetadataDatabaseType::PostgreSQL,
+        metadata_database_pool,
+        tag_value_hashes: DashMap::new(),
+        phantom: PhantomData,
+    };
+
+    // Create the necessary tables in the metadata database.
+    metadata_manager.create_metadata_database_tables().await?;
+
+    Ok(metadata_manager)
+}
+
+/// Create a SQLite [`TableMetadataManager`] and initialize the metadata database with the tables used
+/// for table and model table metadata. If the tables could not be created, [`Error`] is returned.
+pub async fn try_new_sqlite_table_metadata_manager(
+    local_data_folder: &Path,
+) -> Result<TableMetadataManager<Sqlite>, Error> {
+    if !is_path_a_data_folder(local_data_folder) {
+        warn!("The data folder is not empty and does not contain data from ModelarDB");
+    }
+
+    // Specify the metadata database's path and that it should be created if it does not exist.
+    let options = SqliteConnectOptions::new()
+        .filename(local_data_folder.join(METADATA_DATABASE_NAME))
+        .create_if_missing(true);
+
+    let metadata_database_pool = Arc::new(
+        SqlitePoolOptions::new()
+            .max_connections(10)
+            .connect_with(options)
+            .await?,
+    );
+
+    let metadata_manager = TableMetadataManager {
+        metadata_database_type: MetadataDatabaseType::SQLite,
+        metadata_database_pool,
+        tag_value_hashes: DashMap::new(),
+        phantom: PhantomData,
+    };
+
+    // Create the necessary tables in the metadata database.
+    metadata_manager.create_metadata_database_tables().await?;
+
+    Ok(metadata_manager)
+}
+
+// TODO: Add test for this.
+/// Return [`true`] if `path` is a data folder, otherwise [`false`].
+fn is_path_a_data_folder(path: &Path) -> bool {
+    if let Ok(files_and_folders) = fs::read_dir(path) {
+        files_and_folders.count() == 0 || path.join(METADATA_DATABASE_NAME).exists()
+    } else {
+        false
     }
 }
 

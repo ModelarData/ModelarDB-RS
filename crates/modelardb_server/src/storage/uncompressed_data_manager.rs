@@ -25,10 +25,10 @@ use std::sync::{Arc, Mutex};
 use crossbeam_channel::SendError;
 use dashmap::DashMap;
 use datafusion::arrow::array::{Array, StringArray};
-use sqlx::Sqlite;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
+use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tracing::{debug, error};
 
