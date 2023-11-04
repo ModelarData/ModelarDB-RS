@@ -911,7 +911,6 @@ pub async fn try_new_sqlite_table_metadata_manager(
     Ok(metadata_manager)
 }
 
-// TODO: Add test for this.
 /// Return [`true`] if `path` is a data folder, otherwise [`false`].
 fn is_path_a_data_folder(path: &Path) -> bool {
     if let Ok(files_and_folders) = fs::read_dir(path) {
@@ -1088,45 +1087,62 @@ pub fn normalize_name(name: &str) -> String {
 mod tests {
     use super::*;
 
-    use std::path::Path;
+    use std::path::PathBuf;
     use std::sync::Arc;
 
+    use chrono::SubsecRound;
     use datafusion::arrow::array::ArrowPrimitiveType;
     use datafusion::arrow::datatypes::{Field, Schema};
     use futures::TryStreamExt;
+    use once_cell::sync::Lazy;
     use proptest::{collection, num, prop_assert_eq, proptest};
-    use sqlx::sqlite::SqliteConnectOptions;
-    use sqlx::{Row, SqlitePool};
+    use sqlx::Row;
+    use uuid::Uuid;
 
+    use crate::test;
     use crate::types::ArrowValue;
 
-    // Tests for metadata database functions.
+    static SEVEN_COMPRESSED_FILES: Lazy<Vec<CompressedFile>> = Lazy::new(|| {
+        vec![
+            create_compressed_file(0, 0, 37.0, 73.0),
+            create_compressed_file(0, Timestamp::MAX, 37.0, 73.0),
+            create_compressed_file(100, 200, 37.0, 73.0),
+            create_compressed_file(300, 400, Value::NAN, Value::NAN),
+            create_compressed_file(500, 600, Value::NEG_INFINITY, 73.0),
+            create_compressed_file(700, 800, 37.0, Value::INFINITY),
+            create_compressed_file(Timestamp::MAX, Timestamp::MAX, 37.0, 73.0),
+        ]
+    });
+
+    // Tests for TableMetadataManager methods.
     #[tokio::test]
     async fn test_create_metadata_database_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_database_pool = connect_to_metadata_database(temp_dir.path()).await;
-
-        create_metadata_database_tables(&metadata_database_pool, MetadataDatabaseType::SQLite)
+        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
             .await
             .unwrap();
 
         // Verify that the tables were created and has the expected columns.
-        metadata_database_pool
+        metadata_manager
+            .metadata_database_pool
             .execute("SELECT table_name FROM table_metadata")
             .await
             .unwrap();
 
-        metadata_database_pool
+        metadata_manager
+            .metadata_database_pool
             .execute("SELECT table_name, query_schema FROM model_table_metadata")
             .await
             .unwrap();
 
-        metadata_database_pool
+        metadata_manager
+            .metadata_database_pool
             .execute("SELECT hash, table_name FROM model_table_hash_table_name")
             .await
             .unwrap();
 
-        metadata_database_pool
+        metadata_manager
+            .metadata_database_pool
             .execute(
                 "SELECT table_name, column_name, column_index, error_bound, generated_column_expr,
                  generated_column_sources FROM model_table_field_columns",
@@ -1136,23 +1152,770 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_get_new_tag_hash() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+            .await
+            .unwrap();
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        let result = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await;
+        assert!(result.is_ok());
+
+        // When a new tag hash is retrieved, the hash should be saved in the cache.
+        assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
+
+        // It should also be saved in the metadata database table.
+        let mut rows = metadata_manager
+            .metadata_database_pool
+            .fetch("SELECT * FROM model_table_tags");
+
+        assert_eq!(
+            rows.try_next()
+                .await
+                .unwrap()
+                .unwrap()
+                .try_get::<&str, _>(1)
+                .unwrap(),
+            "tag1"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_get_existing_tag_hash() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+            .await
+            .unwrap();
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
+        assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
+
+        // When getting the same tag hash again, it should just be retrieved from the cache.
+        let result = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await;
+
+        assert!(result.is_ok());
+        assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
+    }
+
+    proptest! {
+        #[test]
+        fn test_univariate_id_to_tag_hash_and_column_index(
+            tag_hash in num::u64::ANY,
+            column_index in num::u16::ANY,
+        ) {
+            // Combine tag hash and column index into a univariate id.
+            let tag_hash = tag_hash << 10; // 54-bits is used for the tag hash.
+            let column_index = column_index % 1024; // 10-bits is used for the column index.
+            let univariate_id = tag_hash | column_index as u64;
+
+            // Split the univariate_id into the tag hash and column index.
+            let computed_tag_hash = MetadataManager::univariate_id_to_tag_hash(univariate_id);
+            let computed_column_index = MetadataManager::univariate_id_to_column_index(univariate_id);
+
+            // Original and split should match.
+            prop_assert_eq!(tag_hash, computed_tag_hash);
+            prop_assert_eq!(column_index, computed_column_index);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_compute_univariate_ids_using_fields_and_tags_for_missing_model_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+            .await
+            .unwrap();
+
+        assert!(metadata_manager
+            .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_compute_univariate_ids_using_fields_and_tags_for_empty_model_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+            .await
+            .unwrap();
+
+        // Save a model table to the metadata database.
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        // Lookup univariate ids using fields and tags for an empty table.
+        let univariate_ids = metadata_manager
+            .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
+            .await
+            .unwrap();
+
+        assert!(univariate_ids.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_compute_univariate_ids_using_no_fields_and_tags_for_model_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+            .await
+            .unwrap();
+
+        // Save a model table to the metadata database.
+        initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]).await;
+
+        // Lookup all univariate ids for the table by not passing any fields or tags.
+        let univariate_ids = metadata_manager
+            .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
+            .await
+            .unwrap();
+
+        assert_eq!(2, univariate_ids.len());
+    }
+
+    #[tokio::test]
+    async fn test_compute_univariate_ids_for_the_fallback_column_using_only_a_tag_column_for_model_table(
+    ) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+            .await
+            .unwrap();
+
+        // Save a model table to the metadata database.
+        initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]).await;
+
+        // Lookup the univariate ids for the fallback column by only requesting tag columns.
+        let univariate_ids = metadata_manager
+            .compute_univariate_ids_using_fields_and_tags("model_table", Some(&vec![0]), 10, &[])
+            .await
+            .unwrap();
+
+        assert_eq!(1, univariate_ids.len());
+    }
+
+    #[tokio::test]
+    async fn test_compute_the_univariate_ids_for_a_specific_field_column_for_model_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+            .await
+            .unwrap();
+
+        // Save a model table to the metadata database.
+        initialize_model_table_with_tag_values(
+            &mut metadata_manager,
+            &["tag_value1", "tag_value2"],
+        )
+        .await;
+
+        // Lookup all univariate ids for the table by not requesting ids for columns.
+        let univariate_ids = metadata_manager
+            .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
+            .await
+            .unwrap();
+        assert_eq!(4, univariate_ids.len());
+
+        // Lookup univariate ids for the table by requesting ids for a specific field column.
+        let univariate_ids = metadata_manager
+            .compute_univariate_ids_using_fields_and_tags("model_table", Some(&vec![1]), 10, &[])
+            .await
+            .unwrap();
+        assert_eq!(2, univariate_ids.len());
+    }
+
+    #[tokio::test]
+    async fn test_compute_the_univariate_ids_for_a_specific_tag_value_for_model_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let mut metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+            .await
+            .unwrap();
+
+        // Save a model table to the metadata database.
+        initialize_model_table_with_tag_values(
+            &mut metadata_manager,
+            &["tag_value1", "tag_value2"],
+        )
+        .await;
+
+        // Lookup all univariate ids for the table by not requesting ids for a tag value.
+        let univariate_ids = metadata_manager
+            .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
+            .await
+            .unwrap();
+        assert_eq!(4, univariate_ids.len());
+
+        // Lookup univariate ids for the table by requesting ids for a specific tag value.
+        let univariate_ids = metadata_manager
+            .compute_univariate_ids_using_fields_and_tags(
+                "model_table",
+                None,
+                10,
+                &[("tag", "tag_value1")],
+            )
+            .await
+            .unwrap();
+        assert_eq!(2, univariate_ids.len());
+    }
+
+    async fn initialize_model_table_with_tag_values(
+        metadata_manager: &mut TableMetadataManager<Sqlite>,
+        tag_values: &[&str],
+    ) {
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        for tag_value in tag_values {
+            let tag_value = tag_value.to_string();
+            metadata_manager
+                .lookup_or_compute_tag_hash(&model_table_metadata, &[tag_value])
+                .await
+                .unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_save_compressed_file_for_column_in_existing_model_table() {
+        let compressed_file = create_compressed_file(100, 200, 37.0, 73.0);
+
+        // An assert is purposely not used so the test fails with information about why it failed.
+        create_metadata_manager_with_named_model_table_and_save_files(
+            "model_table",
+            &[compressed_file],
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_save_compressed_file_for_column_in_missing_model_table() {
+        let compressed_file = create_compressed_file(100, 200, 37.0, 73.0);
+
+        assert!(
+            create_metadata_manager_with_named_model_table_and_save_files(
+                "table_model",
+                &[compressed_file]
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_save_compressed_file_with_invalid_timestamps_for_column_in_existing_model_table()
+    {
+        let compressed_file = create_compressed_file(200, 100, 37.0, 73.0);
+
+        assert!(
+            create_metadata_manager_with_named_model_table_and_save_files(
+                "model_table",
+                &[compressed_file]
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_save_compressed_file_with_invalid_values_for_column_in_existing_model_table() {
+        let compressed_file = create_compressed_file(100, 200, 73.0, 37.0);
+
+        assert!(
+            create_metadata_manager_with_named_model_table_and_save_files(
+                "model_table",
+                &[compressed_file]
+            )
+            .await
+            .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn test_replace_compressed_files_with_nothing() {
+        let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
+        let compressed_files_to_delete = &[
+            compressed_files[0].file_metadata.clone(),
+            compressed_files[1].file_metadata.clone(),
+            compressed_files[2].file_metadata.clone(),
+        ];
+        let returned_object_metas =
+            create_metadata_manager_with_named_model_table_save_files_delete_and_get(
+                &compressed_files,
+                compressed_files_to_delete,
+                None,
+            )
+            .await;
+
+        assert_eq!(4, returned_object_metas.len());
+        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[0]);
+        assert_eq!(compressed_files[4].file_metadata, returned_object_metas[1]);
+        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[2]);
+        assert_eq!(compressed_files[6].file_metadata, returned_object_metas[3]);
+    }
+
+    #[tokio::test]
+    async fn test_replace_compressed_files_with_replacement_file() {
+        let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
+        let compressed_files_to_delete = &[
+            compressed_files[0].file_metadata.clone(),
+            compressed_files[1].file_metadata.clone(),
+            compressed_files[2].file_metadata.clone(),
+        ];
+        let replacement_file = create_compressed_file(100, 200, 37.0, 73.0);
+
+        let returned_object_metas =
+            create_metadata_manager_with_named_model_table_save_files_delete_and_get(
+                &compressed_files,
+                compressed_files_to_delete,
+                Some(&replacement_file),
+            )
+            .await;
+
+        assert_eq!(5, returned_object_metas.len());
+        assert_eq!(replacement_file.file_metadata, returned_object_metas[0]);
+        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[1]);
+        assert_eq!(compressed_files[4].file_metadata, returned_object_metas[2]);
+        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[3]);
+        assert_eq!(compressed_files[6].file_metadata, returned_object_metas[4]);
+    }
+
+    async fn create_metadata_manager_with_named_model_table_save_files_delete_and_get(
+        compressed_files: &[CompressedFile],
+        compressed_files_to_delete: &[ObjectMeta],
+        replacement_file: Option<&CompressedFile>,
+    ) -> Vec<ObjectMeta> {
+        // create_metadata_manager_with_named_model_table_and_save_files() is not reused as dropping
+        // the TempDir which created the folder containing the database leaves it in read-only mode.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+            .await
+            .unwrap();
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        for compressed_file in compressed_files {
+            metadata_manager
+                .save_compressed_file("model_table", 1, compressed_file)
+                .await
+                .unwrap();
+        }
+
+        metadata_manager
+            .replace_compressed_files(
+                "model_table",
+                1,
+                compressed_files_to_delete,
+                replacement_file,
+            )
+            .await
+            .unwrap();
+
+        metadata_manager
+            .compressed_files("model_table", 1, None, None, None, None)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn test_replace_compressed_files_without_files_to_delete() {
+        assert_that_replace_compressed_files_fails(Some(&[]), None).await;
+    }
+
+    #[tokio::test]
+    async fn test_replace_compressed_files_with_invalid_timestamps() {
+        let replacement_file = create_compressed_file(200, 100, 37.0, 73.0);
+        assert_that_replace_compressed_files_fails(None, Some(&replacement_file)).await;
+    }
+
+    #[tokio::test]
+    async fn test_replace_compressed_files_with_invalid_values() {
+        let replacement_file = create_compressed_file(100, 200, 73.0, 37.0);
+        assert_that_replace_compressed_files_fails(None, Some(&replacement_file)).await;
+    }
+
+    async fn assert_that_replace_compressed_files_fails(
+        compressed_files_to_delete: Option<&[ObjectMeta]>,
+        replacement_compressed_file: Option<&CompressedFile>,
+    ) {
+        // create_metadata_manager_with_named_model_table_and_save_files() is not reused as dropping
+        // the TempDir which created the folder containing the database leaves it in read-only mode.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
+
+        let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
+        for compressed_file in &compressed_files {
+            metadata_manager
+                .save_compressed_file("model_table", 1, compressed_file)
+                .await
+                .unwrap();
+        }
+
+        let compressed_files_first_object_meta = &[compressed_files[0].file_metadata.clone()];
+        let compressed_files_to_delete =
+            compressed_files_to_delete.unwrap_or(compressed_files_first_object_meta);
+
+        assert!(metadata_manager
+            .replace_compressed_files(
+                "model_table",
+                1,
+                compressed_files_to_delete,
+                replacement_compressed_file,
+            )
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_file_ends_within_time_range() {
+        assert!(
+            is_compressed_file_within_time_and_value_range(Some(150), Some(250), None, None).await
+        )
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_file_starts_within_time_range() {
+        assert!(
+            is_compressed_file_within_time_and_value_range(Some(50), Some(150), None, None).await
+        )
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_file_is_within_time_range() {
+        assert!(
+            is_compressed_file_within_time_and_value_range(Some(50), Some(250), None, None).await
+        )
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_file_is_before_time_range() {
+        assert!(
+            !is_compressed_file_within_time_and_value_range(Some(225), Some(275), None, None).await
+        )
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_file_is_after_time_range() {
+        assert!(
+            !is_compressed_file_within_time_and_value_range(Some(25), Some(75), None, None).await
+        )
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_without_filtering() {
+        let (compressed_files, returned_object_metas) =
+            create_metadata_manager_with_model_table_save_seven_files_and_get_files(
+                None, None, None, None,
+            )
+            .await;
+
+        assert_eq!(compressed_files.len(), returned_object_metas.len());
+        for (compressed_file, returned_object_meta) in
+            compressed_files.iter().zip(returned_object_metas)
+        {
+            assert_eq!(compressed_file.file_metadata, returned_object_meta);
+        }
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_with_minimum_timestamp() {
+        let (compressed_files, returned_object_metas) =
+            create_metadata_manager_with_model_table_save_seven_files_and_get_files(
+                Some(400),
+                None,
+                None,
+                None,
+            )
+            .await;
+
+        assert_eq!(5, returned_object_metas.len());
+        assert_eq!(compressed_files[1].file_metadata, returned_object_metas[0]);
+        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[1]);
+        assert_eq!(compressed_files[4].file_metadata, returned_object_metas[2]);
+        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[3]);
+        assert_eq!(compressed_files[6].file_metadata, returned_object_metas[4]);
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_with_maximum_timestamp() {
+        let (compressed_files, returned_object_metas) =
+            create_metadata_manager_with_model_table_save_seven_files_and_get_files(
+                None,
+                Some(400),
+                None,
+                None,
+            )
+            .await;
+
+        assert_eq!(4, returned_object_metas.len());
+        assert_eq!(compressed_files[0].file_metadata, returned_object_metas[0]);
+        assert_eq!(compressed_files[1].file_metadata, returned_object_metas[1]);
+        assert_eq!(compressed_files[2].file_metadata, returned_object_metas[2]);
+        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[3]);
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_with_minimum_and_maximum_timestamp() {
+        let (compressed_files, returned_object_metas) =
+            create_metadata_manager_with_model_table_save_seven_files_and_get_files(
+                Some(400),
+                Some(400),
+                None,
+                None,
+            )
+            .await;
+
+        assert_eq!(2, returned_object_metas.len());
+        assert_eq!(compressed_files[1].file_metadata, returned_object_metas[0]);
+        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[1]);
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_file_max_is_within_value_range() {
+        assert!(
+            is_compressed_file_within_time_and_value_range(None, None, Some(50.0), Some(100.0))
+                .await
+        )
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_file_min_is_within_value_range() {
+        assert!(
+            is_compressed_file_within_time_and_value_range(None, None, Some(0.0), Some(50.0)).await
+        )
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_file_is_within_value_range() {
+        assert!(
+            is_compressed_file_within_time_and_value_range(None, None, Some(0.0), Some(100.0))
+                .await
+        )
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_file_is_less_than_value_range() {
+        assert!(
+            !is_compressed_file_within_time_and_value_range(None, None, Some(100.0), Some(150.0))
+                .await
+        )
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_file_is_greater_than_value_range() {
+        assert!(
+            !is_compressed_file_within_time_and_value_range(None, None, Some(0.0), Some(25.0))
+                .await
+        )
+    }
+
+    async fn is_compressed_file_within_time_and_value_range(
+        start_time: Option<Timestamp>,
+        end_time: Option<Timestamp>,
+        min_value: Option<Value>,
+        max_value: Option<Value>,
+    ) -> bool {
+        let compressed_files = vec![create_compressed_file(100, 200, 37.0, 73.0)];
+
+        let returned_object_metas =
+            create_metadata_manager_with_model_table_save_files_and_get_files(
+                &compressed_files,
+                start_time,
+                end_time,
+                min_value,
+                max_value,
+            )
+            .await;
+
+        compressed_files.len() == returned_object_metas.len()
+    }
+
+    fn create_compressed_file(
+        start_time: Timestamp,
+        end_time: Timestamp,
+        min_value: Value,
+        max_value: Value,
+    ) -> CompressedFile {
+        let file_metadata = ObjectMeta {
+            location: ObjectStorePath::from(format!("test/{}.parquet", Uuid::new_v4())),
+            last_modified: Utc::now().round_subsecs(3),
+            size: 0,
+            e_tag: None,
+        };
+
+        CompressedFile {
+            file_metadata,
+            start_time,
+            end_time,
+            min_value,
+            max_value,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_with_minimum_value() {
+        let (compressed_files, returned_object_metas) =
+            create_metadata_manager_with_model_table_save_seven_files_and_get_files(
+                None,
+                None,
+                Some(80.0),
+                None,
+            )
+            .await;
+
+        assert_eq!(2, returned_object_metas.len());
+        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[0]);
+        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[1]);
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_with_maximum_value() {
+        let (compressed_files, returned_object_metas) =
+            create_metadata_manager_with_model_table_save_seven_files_and_get_files(
+                None,
+                None,
+                None,
+                Some(80.0),
+            )
+            .await;
+
+        assert_eq!(6, returned_object_metas.len());
+        assert_eq!(compressed_files[0].file_metadata, returned_object_metas[0]);
+        assert_eq!(compressed_files[1].file_metadata, returned_object_metas[1]);
+        assert_eq!(compressed_files[2].file_metadata, returned_object_metas[2]);
+        assert_eq!(compressed_files[4].file_metadata, returned_object_metas[3]);
+        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[4]);
+        assert_eq!(compressed_files[6].file_metadata, returned_object_metas[5]);
+    }
+
+    #[tokio::test]
+    async fn test_compressed_files_with_minimum_and_maximum_value() {
+        let (compressed_files, returned_object_metas) =
+            create_metadata_manager_with_model_table_save_seven_files_and_get_files(
+                None,
+                None,
+                Some(75.0),
+                Some(80.0),
+            )
+            .await;
+
+        assert_eq!(1, returned_object_metas.len());
+        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[0]);
+    }
+
+    async fn create_metadata_manager_with_model_table_save_seven_files_and_get_files(
+        start_time: Option<Timestamp>,
+        end_time: Option<Timestamp>,
+        min_value: Option<Value>,
+        max_value: Option<Value>,
+    ) -> (Vec<CompressedFile>, Vec<ObjectMeta>) {
+        let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
+
+        let returned_files = create_metadata_manager_with_model_table_save_files_and_get_files(
+            &compressed_files,
+            start_time,
+            end_time,
+            min_value,
+            max_value,
+        )
+        .await;
+
+        (compressed_files, returned_files)
+    }
+
+    async fn create_metadata_manager_with_model_table_save_files_and_get_files(
+        compressed_files: &[CompressedFile],
+        start_time: Option<Timestamp>,
+        end_time: Option<Timestamp>,
+        min_value: Option<Value>,
+        max_value: Option<Value>,
+    ) -> Vec<ObjectMeta> {
+        let metadata_manager = create_metadata_manager_with_named_model_table_and_save_files(
+            "model_table",
+            compressed_files,
+        )
+        .await
+        .unwrap();
+
+        metadata_manager
+            .compressed_files("model_table", 1, start_time, end_time, min_value, max_value)
+            .await
+            .unwrap()
+    }
+
+    async fn create_metadata_manager_with_named_model_table_and_save_files(
+        model_table_name: &str,
+        compressed_files: &[CompressedFile],
+    ) -> Result<TableMetadataManager<Sqlite>, Error> {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
+
+        for compressed_file in compressed_files {
+            metadata_manager
+                .save_compressed_file(model_table_name, 1, compressed_file)
+                .await?;
+        }
+
+        Ok(metadata_manager)
+    }
+
+    async fn create_metadata_manager_and_save_model_table(temp_dir: &Path) -> TableMetadataManager<Sqlite> {
+        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir)
+            .await
+            .unwrap();
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        metadata_manager
+    }
+
+    #[tokio::test]
     async fn test_save_table_metadata() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_database_pool = connect_to_metadata_database(temp_dir.path()).await;
-
-        create_metadata_database_tables(&metadata_database_pool, MetadataDatabaseType::SQLite)
+        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
             .await
             .unwrap();
 
         let table_name = "table_name";
         let sql = "CREATE TABLE table_name(timestamp TIMESTAMP, values REAL, metadata REAL)";
 
-        save_table_metadata(&metadata_database_pool, table_name, sql)
+        metadata_manager
+            .save_table_metadata(table_name, sql)
             .await
             .unwrap();
 
         // Retrieve the table from the metadata database.
-        let mut rows = metadata_database_pool.fetch("SELECT table_name, sql FROM table_metadata");
+        let mut rows = metadata_manager
+            .metadata_database_pool
+            .fetch("SELECT table_name, sql FROM table_metadata");
 
         let row = rows.try_next().await.unwrap().unwrap();
         let retrieved_table_name = row.try_get::<&str, _>(0).unwrap();
@@ -1164,12 +1927,119 @@ mod tests {
         assert!(rows.try_next().await.unwrap().is_none());
     }
 
-    async fn connect_to_metadata_database(path: &Path) -> SqlitePool {
-        let options = SqliteConnectOptions::new()
-            .filename(path.join("metadata.sqlite3"))
-            .create_if_missing(true);
+    #[tokio::test]
+    async fn test_save_model_table_metadata() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+            .await
+            .unwrap();
 
-        SqlitePool::connect_with(options).await.unwrap()
+        // Save a model table to the metadata database.
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        // Retrieve the tables with metadata for the model table from the metadata database.
+        let mut rows = metadata_manager
+            .metadata_database_pool
+            .fetch("SELECT hash FROM model_table_tags");
+        assert!(rows.try_next().await.unwrap().is_none());
+
+        let mut rows = metadata_manager.metadata_database_pool.fetch(
+            "SELECT file_path, field_column, size, created_at, start_time, end_time,
+             min_value, max_value FROM model_table_compressed_files",
+        );
+        assert!(rows.try_next().await.unwrap().is_none());
+
+        // Retrieve the rows in model_table_metadata from the metadata database.
+        let mut rows = metadata_manager
+            .metadata_database_pool
+            .fetch("SELECT table_name, query_schema, sql FROM model_table_metadata");
+
+        let row = rows.try_next().await.unwrap().unwrap();
+        assert_eq!("model_table", row.try_get::<&str, _>(0).unwrap());
+        assert_eq!(
+            try_convert_schema_to_blob(&model_table_metadata.query_schema).unwrap(),
+            row.try_get::<Vec<u8>, _>(1).unwrap()
+        );
+        assert_eq!(test::MODEL_TABLE_SQL, row.try_get::<&str, _>(2).unwrap());
+
+        assert!(rows.try_next().await.unwrap().is_none());
+
+        // Retrieve the rows in model_table_field_columns from the metadata database.
+        let mut rows = metadata_manager.metadata_database_pool.fetch(
+            "SELECT table_name, column_name, column_index, error_bound, generated_column_expr,
+             generated_column_sources FROM model_table_field_columns",
+        );
+
+        let row = rows.try_next().await.unwrap().unwrap();
+        assert_eq!("model_table", row.try_get::<&str, _>(0).unwrap());
+        assert_eq!("field_1", row.try_get::<&str, _>(1).unwrap());
+        assert_eq!(1, row.try_get::<i32, _>(2).unwrap());
+        assert_eq!(1.0, row.try_get::<f32, _>(3).unwrap());
+        assert_eq!(None, row.try_get::<Option<&str>, _>(4).unwrap());
+        assert_eq!(None, row.try_get::<Option<Vec<u8>>, _>(5).unwrap());
+
+        let row = rows.try_next().await.unwrap().unwrap();
+        assert_eq!("model_table", row.try_get::<&str, _>(0).unwrap());
+        assert_eq!("field_2", row.try_get::<&str, _>(1).unwrap());
+        assert_eq!(2, row.try_get::<i32, _>(2).unwrap());
+        assert_eq!(5.0, row.try_get::<f32, _>(3).unwrap());
+        assert_eq!(None, row.try_get::<Option<&str>, _>(4).unwrap());
+        assert_eq!(None, row.try_get::<Option<Vec<u8>>, _>(5).unwrap());
+
+        assert!(rows.try_next().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_error_bound() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+            .await
+            .unwrap();
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        let error_bounds = metadata_manager
+            .error_bounds("model_table", 4)
+            .await
+            .unwrap();
+        let percentages: Vec<f32> = error_bounds
+            .iter()
+            .map(|error_bound| error_bound.into_inner())
+            .collect();
+
+        assert_eq!(percentages, &[0.0, 1.0, 5.0, 0.0]);
+    }
+
+    #[tokio::test]
+    async fn test_generated_columns() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+            .await
+            .unwrap();
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        let df_schema = model_table_metadata.query_schema.to_dfschema().unwrap();
+        let generated_columns = metadata_manager
+            .generated_columns("model_table", &df_schema)
+            .await
+            .unwrap();
+
+        for generated_column in generated_columns {
+            assert!(generated_column.is_none());
+        }
     }
 
     // Tests for conversion functions.
@@ -1200,6 +2070,31 @@ mod tests {
             let usizes = try_convert_slice_u8_to_vec_usize(&bytes).unwrap();
             prop_assert_eq!(values, usizes);
         }
+    }
+
+    // Tests for is_path_a_data_folder().
+    #[test]
+    fn test_a_non_empty_folder_without_metadata_is_not_a_data_folder() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        create_empty_folder(temp_dir.path(), "folder");
+        assert!(!is_path_a_data_folder(temp_dir.path()));
+    }
+    #[test]
+    fn test_an_empty_folder_is_a_data_folder() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        assert!(is_path_a_data_folder(temp_dir.path()));
+    }
+    #[test]
+    fn test_a_non_empty_folder_with_metadata_is_a_data_folder() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        create_empty_folder(temp_dir.path(), "table_folder");
+        fs::create_dir(temp_dir.path().join(METADATA_DATABASE_NAME)).unwrap();
+        assert!(is_path_a_data_folder(temp_dir.path()));
+    }
+    fn create_empty_folder(path: &Path, name: &str) -> PathBuf {
+        let path_buf = path.join(name);
+        fs::create_dir(&path_buf).unwrap();
+        path_buf
     }
 
     // Tests for normalize_name().
