@@ -40,6 +40,7 @@ use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, StreamExt};
+use modelardb_common::array;
 use modelardb_common::test::data_generation;
 use sysinfo::{Pid, PidExt, System, SystemExt};
 use tempfile::TempDir;
@@ -776,20 +777,31 @@ fn test_cannot_ingest_invalid_time_series() {
 }
 
 #[test]
-fn test_optimized_query_results_equals_non_optimized_query_results() {
-    let mut test_context = TestContext::new();
-    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
-
-    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
-
-    // The trivial filter ensures the query is rewritten by the optimizer.
-    assert_ne_query_plans_and_eq_result(
-        &mut test_context,
-        format!("SELECT MIN(field_one) FROM {TABLE_NAME}"),
-        format!("SELECT MIN(field_one) FROM {TABLE_NAME} WHERE 1=1"),
-    )
+fn test_count_from_segments_equals_count_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT COUNT(field_one) FROM {TABLE_NAME}"));
 }
 
+#[test]
+fn test_min_from_segments_equals_min_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT MIN(field_one) FROM {TABLE_NAME}"));
+}
+
+#[test]
+fn test_max_from_segments_equals_max_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT MAX(field_one) FROM {TABLE_NAME}"));
+}
+
+#[test]
+fn test_sum_from_segments_equals_sum_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT SUM(field_one) FROM {TABLE_NAME}"));
+}
+
+#[test]
+fn test_avg_from_segments_equals_avg_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT AVG(field_one) FROM {TABLE_NAME}"));
+}
+
+/// Creates a table of type `table_type`, ingests `time_series`, and then flushes that data to disk.
 fn ingest_time_series_and_flush_data(
     test_context: &mut TestContext,
     time_series: &[RecordBatch],
@@ -807,23 +819,36 @@ fn ingest_time_series_and_flush_data(
     test_context.flush_data_to_disk();
 }
 
-fn assert_ne_query_plans_and_eq_result(
-    test_context: &mut TestContext,
-    optimized_query: String,
-    unoptimized_query: String,
-) {
-    // TODO: check actual result of plan is same for equal query plans but different queries plan
-    let optimized_query_plan = test_context
-        .execute_query(format!("EXPLAIN {}", optimized_query))
-        .unwrap();
-    let unoptimized_query_plan = test_context
-        .execute_query(format!("EXPLAIN {}", unoptimized_query))
-        .unwrap();
-    assert_eq!(optimized_query_plan, unoptimized_query_plan);
+/// Generates a time series with one tag and ingests it into a model table. Then a query is created
+/// from `segment_query` that cannot be rewritten so it is executed on segments, executes both,
+/// compares their query plans to ensure one query was rewritten and the other query was not, and
+/// then compares the query results to ensure they are equivalent.
+fn assert_ne_query_plans_and_eq_result(segment_query: String) {
+    let mut test_context = TestContext::new();
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
 
-    let optimized_query_result = test_context.execute_query(optimized_query).unwrap();
-    let unoptimized_query_result = test_context.execute_query(unoptimized_query).unwrap();
-    assert_eq!(optimized_query_result, unoptimized_query_result);
+    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
+
+    // The predicate will guarantee that all data points will be included in the query but which
+    // prevents the optimizer from rewriting the query due to its presence in segment_query.
+    let data_point_query = format!("{segment_query} WHERE timestamp >= 0::TIMESTAMP");
+
+    let data_point_query_plans = test_context
+        .execute_query(format!("EXPLAIN {}", data_point_query))
+        .unwrap();
+    let segment_query_plans = test_context
+        .execute_query(format!("EXPLAIN {}", segment_query))
+        .unwrap();
+
+    let data_point_query_plans_text = array!(data_point_query_plans, 1, StringArray);
+    let segment_query_plans_text = array!(segment_query_plans, 1, StringArray);
+    assert_ne!(data_point_query_plans, segment_query_plans);
+    assert!(data_point_query_plans_text.value(1).contains("GridExec"));
+    assert!(!segment_query_plans_text.value(1).contains("GridExec"));
+
+    let data_point_query_result = test_context.execute_query(data_point_query).unwrap();
+    let segment_query_result = test_context.execute_query(segment_query).unwrap();
+    assert_eq!(data_point_query_result, segment_query_result);
 }
 
 #[test]
