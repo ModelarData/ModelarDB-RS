@@ -1245,16 +1245,7 @@ mod tests {
     #[tokio::test]
     async fn test_compute_univariate_ids_using_fields_and_tags_for_empty_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
-            .await
-            .unwrap();
-
-        // Save a model table to the metadata database.
-        let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
+        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
 
         // Lookup univariate ids using fields and tags for an empty table.
         let univariate_ids = metadata_manager
@@ -1499,15 +1490,7 @@ mod tests {
         // create_metadata_manager_with_named_model_table_and_save_files() is not reused as dropping
         // the TempDir which created the folder containing the database leaves it in read-only mode.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
-            .await
-            .unwrap();
-
-        let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
+        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
 
         for compressed_file in compressed_files {
             metadata_manager
