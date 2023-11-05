@@ -28,7 +28,8 @@ use modelardb_common::arguments::{
     validate_remote_data_folder,
 };
 use once_cell::sync::Lazy;
-use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::PgPool;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::metadata::errors::InvalidMetadataValue;
@@ -122,7 +123,7 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-/// Parse the command lines arguments into a [`PgPool`] to the metadata database and a
+/// Parse the command line arguments into a [`PgPool`] connection to the metadata database and a
 /// remote data folder. If the necessary command line arguments are not provided, too many
 /// arguments are provided, or if the arguments are malformed, [`String`] is returned.
 async fn parse_command_line_arguments(

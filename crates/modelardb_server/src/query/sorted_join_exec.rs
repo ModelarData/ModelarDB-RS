@@ -16,8 +16,9 @@
 //! Implementation of the Apache Arrow DataFusion execution plan [`SortedJoinExec`] and its
 //! corresponding stream [`SortedJoinStream`] which joins multiple sorted array produced by
 //! [`GridExecs`](crate::query::grid_exec::GridExec) streams and combines them with the time series
-//! tags retrieved from the [`MetadataManager`] to create the complete results containing a
-//! timestamp column, one or more field columns, and zero or more tag columns.
+//! tags retrieved from the [`TableMetadataManager`](modelardb_common::metadata::TableMetadataManager)
+//! to create the complete results containing a timestamp column, one or more field columns, and zero
+//! or more tag columns.
 
 use std::any::Any;
 use std::collections::HashMap;
@@ -40,8 +41,7 @@ use datafusion::physical_plan::{
     SendableRecordBatchStream, Statistics,
 };
 use futures::stream::{Stream, StreamExt};
-
-use crate::metadata::MetadataManager;
+use modelardb_common::metadata::univariate_id_to_tag_hash;
 
 use super::QUERY_ORDER_DATA_POINT;
 
@@ -300,7 +300,7 @@ impl SortedJoinStream {
                 .collect();
 
             for univariate_id in univariate_ids.values() {
-                let tag_hash = MetadataManager::univariate_id_to_tag_hash(*univariate_id);
+                let tag_hash = univariate_id_to_tag_hash(*univariate_id);
                 let tags = &self.hash_to_tags[&tag_hash];
                 for (index, tag) in tags.iter().enumerate() {
                     tag_columns[index].append_value(tag.clone());

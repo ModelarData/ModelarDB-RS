@@ -40,6 +40,10 @@ pub const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 M
 /// Number of bytes reserved for compressed data in tests.
 pub const COMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
 
+/// SQL to create a table with a timestamp column and two floating point columns.
+pub const TABLE_SQL: &str =
+    "CREATE TABLE table_name(timestamp TIMESTAMP, values REAL, metadata REAL)";
+
 /// SQL to create a model table with a timestamp column, two field columns, and a tag column.
 pub const MODEL_TABLE_SQL: &str =
     "CREATE MODEL TABLE model_table(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD, tag TAG)";

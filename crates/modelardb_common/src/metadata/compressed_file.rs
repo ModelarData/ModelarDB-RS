@@ -17,15 +17,17 @@
 
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::record_batch::RecordBatch;
-use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
 use object_store::ObjectMeta;
 
-/// Metadata about a file tracked by [`MetadataManager`](crate::metadata::MetadataManager) which
-/// contains compressed segments.
+use crate::array;
+use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
+
+/// Metadata about a file tracked by [`TableMetadataManager`](crate::metadata::TableMetadataManager)
+/// which contains compressed segments.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CompressedFile {
     /// The metadata that describes the file.
-    pub(crate) file_metadata: ObjectMeta,
+    pub file_metadata: ObjectMeta,
     /// Timestamp of the first data point in the file.
     pub(super) start_time: Timestamp,
     /// Timestamp of the last data point in the file.
@@ -38,18 +40,17 @@ pub struct CompressedFile {
 
 impl CompressedFile {
     /// Convert the given [`ObjectMeta`] and [`RecordBatch`] to a [`CompressedFile`].
-    pub(crate) fn from_record_batch(file_metadata: ObjectMeta, batch: &RecordBatch) -> Self {
+    pub fn from_record_batch(file_metadata: ObjectMeta, batch: &RecordBatch) -> Self {
         // unwrap() is safe as None is only returned if all of the values are None.
-        let start_time =
-            aggregate::min(modelardb_common::array!(batch, 2, TimestampArray)).unwrap();
-        let end_time = aggregate::max(modelardb_common::array!(batch, 3, TimestampArray)).unwrap();
+        let start_time = aggregate::min(array!(batch, 2, TimestampArray)).unwrap();
+        let end_time = aggregate::max(array!(batch, 3, TimestampArray)).unwrap();
 
         // unwrap() is safe as None is only returned if all of the values are None.
         // Both aggregate::min() and aggregate::max() consider NaN to be greater than other non-null
         // values. So since min_values and max_values cannot contain null, min_value will be NaN if all
         // values in min_values are NaN while max_value will be NaN if any value in max_values is NaN.
-        let min_value = aggregate::min(modelardb_common::array!(batch, 5, ValueArray)).unwrap();
-        let max_value = aggregate::max(modelardb_common::array!(batch, 6, ValueArray)).unwrap();
+        let min_value = aggregate::min(array!(batch, 5, ValueArray)).unwrap();
+        let max_value = aggregate::max(array!(batch, 6, ValueArray)).unwrap();
 
         Self {
             file_metadata,
@@ -66,9 +67,10 @@ mod tests {
     use super::*;
 
     use chrono::Utc;
-    use modelardb_common::test;
     use object_store::path::Path as ObjectStorePath;
     use uuid::Uuid;
+
+    use crate::test::compressed_segments_record_batch;
 
     #[test]
     fn test_compressed_file_from_record_batch() {
@@ -80,10 +82,8 @@ mod tests {
             e_tag: None,
         };
 
-        let compressed_file = CompressedFile::from_record_batch(
-            object_meta,
-            &test::compressed_segments_record_batch(),
-        );
+        let compressed_file =
+            CompressedFile::from_record_batch(object_meta, &compressed_segments_record_batch());
 
         assert_eq!(compressed_file.start_time, 0);
         assert_eq!(compressed_file.end_time, 5);

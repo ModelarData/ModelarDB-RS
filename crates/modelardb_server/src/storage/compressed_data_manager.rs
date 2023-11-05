@@ -29,19 +29,20 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
+use modelardb_common::metadata::compressed_file::CompressedFile;
+use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::{Timestamp, Value};
 use object_store::{ObjectMeta, ObjectStore};
 use parquet::arrow::async_reader::ParquetObjectReader;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
 use parquet::format::SortingColumn;
+use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::codegen::Bytes;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use crate::metadata::compressed_file::CompressedFile;
-use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
@@ -65,7 +66,7 @@ pub(super) struct CompressedDataManager {
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
     /// Management of metadata for saving compressed file metadata.
-    metadata_manager: Arc<MetadataManager>,
+    metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used compressed memory in bytes, updated every time the used memory changes.
@@ -83,7 +84,7 @@ impl CompressedDataManager {
         local_data_folder: PathBuf,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
-        metadata_manager: Arc<MetadataManager>,
+        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the compressed data manager exists.
@@ -517,6 +518,7 @@ mod tests {
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
     use futures::StreamExt;
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+    use modelardb_common::metadata::try_new_sqlite_table_metadata_manager;
     use modelardb_common::test;
     use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
     use object_store::local::LocalFileSystem;
@@ -855,7 +857,11 @@ mod tests {
         ));
 
         // Create a metadata manager and save a single model table to the metadata database.
-        let metadata_manager = Arc::new(MetadataManager::try_new(temp_dir.path()).await.unwrap());
+        let metadata_manager = Arc::new(
+            try_new_sqlite_table_metadata_manager(temp_dir.path())
+                .await
+                .unwrap(),
+        );
 
         let model_table_metadata = test::model_table_metadata();
         metadata_manager

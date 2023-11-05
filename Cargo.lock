@@ -1963,6 +1963,8 @@ version = "0.1.0"
 dependencies = [
  "arrow",
  "arrow-flight",
+ "chrono",
+ "dashmap",
  "datafusion",
  "futures",
  "object_store",
@@ -1974,6 +1976,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tonic",
+ "tracing",
  "uuid",
 ]
 
@@ -3274,7 +3277,6 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "url",
- "uuid",
  "webpki-roots 0.24.0",
 ]
 
@@ -3356,7 +3358,6 @@ dependencies = [
  "stringprep",
  "thiserror",
  "tracing",
- "uuid",
  "whoami",
 ]
 
@@ -3396,7 +3397,6 @@ dependencies = [
  "stringprep",
  "thiserror",
  "tracing",
- "uuid",
  "whoami",
 ]
 
@@ -3420,7 +3420,6 @@ dependencies = [
  "sqlx-core",
  "tracing",
  "url",
- "uuid",
 ]
 
 [[package]]
