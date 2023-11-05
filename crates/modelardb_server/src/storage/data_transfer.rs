@@ -274,7 +274,6 @@ mod tests {
 
     use crate::storage::StorageEngine;
 
-    const TABLE_NAME: &str = "model_table";
     const COLUMN_INDEX: u16 = 5;
     const COMPRESSED_FILE_SIZE: usize = 2429;
 
@@ -288,21 +287,23 @@ mod tests {
     #[test]
     fn test_folder_path_is_not_compressed_file() {
         let path = ObjectStorePath::from(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}"
+            "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}",
+            test::MODEL_TABLE_NAME
         ));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_table_folder_without_compressed_folder_is_not_compressed_file() {
-        let path = ObjectStorePath::from(format!("test/{TABLE_NAME}/test.parquet"));
+        let path = ObjectStorePath::from(format!("test/{}/test.parquet", test::MODEL_TABLE_NAME));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_non_apache_parquet_file_is_not_compressed_file() {
         let path = ObjectStorePath::from(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/test.txt"
+            "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}/test.txt",
+            test::MODEL_TABLE_NAME
         ));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
@@ -310,11 +311,12 @@ mod tests {
     #[test]
     fn test_compressed_file_is_compressed_file() {
         let path = ObjectStorePath::from(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/test.parquet"
+            "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}/test.parquet",
+            test::MODEL_TABLE_NAME
         ));
         assert_eq!(
             DataTransfer::path_is_compressed_file(path),
-            Some((TABLE_NAME.to_owned(), COLUMN_INDEX))
+            Some((test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
         );
     }
 
@@ -333,7 +335,7 @@ mod tests {
         assert_eq!(
             *data_transfer
                 .compressed_files
-                .get(&(TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
                 .unwrap(),
             COMPRESSED_FILE_SIZE * 2
         );
@@ -359,14 +361,14 @@ mod tests {
         let (compressed_file, _) = create_compressed_file(metadata_manager, temp_dir.path()).await;
 
         assert!(data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .is_ok());
 
         assert_eq!(
             data_transfer
                 .compressed_files
-                .get(&(TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
                 .unwrap()
                 .value(),
             &COMPRESSED_FILE_SIZE
@@ -383,18 +385,18 @@ mod tests {
         let (compressed_file, _) = create_compressed_file(metadata_manager, temp_dir.path()).await;
 
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .unwrap();
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .unwrap();
 
         assert_eq!(
             data_transfer
                 .compressed_files
-                .get(&(TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
                 .unwrap()
                 .value(),
             &(COMPRESSED_FILE_SIZE * 2)
@@ -412,11 +414,11 @@ mod tests {
             create_compressed_file(metadata_manager, temp_dir.path()).await;
 
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .unwrap();
         data_transfer
-            .transfer_data(TABLE_NAME, COLUMN_INDEX)
+            .transfer_data(test::MODEL_TABLE_NAME, COLUMN_INDEX)
             .await
             .unwrap();
 
@@ -436,15 +438,15 @@ mod tests {
             create_compressed_file(metadata_manager, temp_dir.path()).await;
 
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file_1)
+            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file_1)
             .await
             .unwrap();
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file_2)
+            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file_2)
             .await
             .unwrap();
         data_transfer
-            .transfer_data(TABLE_NAME, COLUMN_INDEX)
+            .transfer_data(test::MODEL_TABLE_NAME, COLUMN_INDEX)
             .await
             .unwrap();
 
@@ -464,7 +466,7 @@ mod tests {
         // Set the max batch size to ensure that the file is transferred immediately.
         data_transfer.transfer_batch_size_in_bytes = COMPRESSED_FILE_SIZE - 1;
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .unwrap();
 
@@ -518,7 +520,8 @@ mod tests {
 
         // The transferred file should be in a sub-folder under the table name and column index.
         let target_folder = target.path().join(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}",
+            "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}",
+            test::MODEL_TABLE_NAME
         ));
 
         assert!(target_folder.exists());
@@ -535,7 +538,14 @@ mod tests {
         // The metadata for the files should be deleted from the metadata database.
         let compressed_files = data_transfer
             .metadata_manager
-            .compressed_files(TABLE_NAME, COLUMN_INDEX.into(), None, None, None, None)
+            .compressed_files(
+                test::MODEL_TABLE_NAME,
+                COLUMN_INDEX.into(),
+                None,
+                None,
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -544,7 +554,7 @@ mod tests {
         assert_eq!(
             *data_transfer
                 .compressed_files
-                .get(&(TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
                 .unwrap(),
             0_usize
         );
@@ -568,7 +578,10 @@ mod tests {
         metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         local_data_folder_path: &Path,
     ) -> (CompressedFile, PathBuf) {
-        let folder_path = format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}");
+        let folder_path = format!(
+            "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}",
+            test::MODEL_TABLE_NAME
+        );
         let path = local_data_folder_path.join(folder_path.clone());
         fs::create_dir_all(path.clone()).unwrap();
 
@@ -593,7 +606,11 @@ mod tests {
 
         // Save the metadata of the compressed file to the metadata database.
         metadata_manager
-            .save_compressed_file(TABLE_NAME, COLUMN_INDEX.into(), &compressed_file)
+            .save_compressed_file(
+                test::MODEL_TABLE_NAME,
+                COLUMN_INDEX.into(),
+                &compressed_file,
+            )
             .await
             .unwrap();
 

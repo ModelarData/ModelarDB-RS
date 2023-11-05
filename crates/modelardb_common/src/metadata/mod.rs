@@ -13,7 +13,7 @@
  * limitations under the License.
  */
 
-//! Table metadata manager that includes functionality shared between the server metadata database
+//! Table metadata manager that includes functionality used to access both the server metadata database
 //! and the manager metadata database. Note that the entire server metadata database can be accessed
 //! through this metadata manager, while it only supports a subset of the manager metadata database.
 
@@ -51,8 +51,8 @@ use crate::types::{ErrorBound, Timestamp, UnivariateId, Value};
 /// Name used for the file containing the SQLite database storing the metadata.
 const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
 
-/// The database providers that are currently supported by the metadata database. This trait is
-/// also used to handle small differences in the SQL syntax between database providers.
+/// The RDBMSs that are currently supported by the metadata manager. This trait is also used to
+/// handle small differences in the SQL syntax between RDBMSs.
 pub trait MetadataDatabase {
     /// Syntax added after a CREATE TABLE statement to specify that the table should use strict types.
     fn strict(&self) -> &str;
@@ -1105,7 +1105,7 @@ mod tests {
         ]
     });
 
-    // Tests for TableMetadataManager methods.
+    // Tests for TableMetadataManager.
     #[tokio::test]
     async fn test_create_metadata_database_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -1164,9 +1164,10 @@ mod tests {
         assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
 
         // It should also be saved in the metadata database table.
+        let select_statement = format!("SELECT * FROM {}_tags", test::MODEL_TABLE_NAME);
         let mut rows = metadata_manager
             .metadata_database_pool
-            .fetch("SELECT * FROM model_table_tags");
+            .fetch(&*select_statement);
 
         assert_eq!(
             rows.try_next()
@@ -1237,7 +1238,7 @@ mod tests {
             .unwrap();
 
         assert!(metadata_manager
-            .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
+            .compute_univariate_ids_using_fields_and_tags(test::MODEL_TABLE_NAME, None, 10, &[])
             .await
             .is_err());
     }
@@ -1249,7 +1250,7 @@ mod tests {
 
         // Lookup univariate ids using fields and tags for an empty table.
         let univariate_ids = metadata_manager
-            .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
+            .compute_univariate_ids_using_fields_and_tags(test::MODEL_TABLE_NAME, None, 10, &[])
             .await
             .unwrap();
 
@@ -1268,7 +1269,7 @@ mod tests {
 
         // Lookup all univariate ids for the table by not passing any fields or tags.
         let univariate_ids = metadata_manager
-            .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
+            .compute_univariate_ids_using_fields_and_tags(test::MODEL_TABLE_NAME, None, 10, &[])
             .await
             .unwrap();
 
@@ -1288,7 +1289,12 @@ mod tests {
 
         // Lookup the univariate ids for the fallback column by only requesting tag columns.
         let univariate_ids = metadata_manager
-            .compute_univariate_ids_using_fields_and_tags("model_table", Some(&vec![0]), 10, &[])
+            .compute_univariate_ids_using_fields_and_tags(
+                test::MODEL_TABLE_NAME,
+                Some(&vec![0]),
+                10,
+                &[],
+            )
             .await
             .unwrap();
 
@@ -1311,14 +1317,19 @@ mod tests {
 
         // Lookup all univariate ids for the table by not requesting ids for columns.
         let univariate_ids = metadata_manager
-            .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
+            .compute_univariate_ids_using_fields_and_tags(test::MODEL_TABLE_NAME, None, 10, &[])
             .await
             .unwrap();
         assert_eq!(4, univariate_ids.len());
 
         // Lookup univariate ids for the table by requesting ids for a specific field column.
         let univariate_ids = metadata_manager
-            .compute_univariate_ids_using_fields_and_tags("model_table", Some(&vec![1]), 10, &[])
+            .compute_univariate_ids_using_fields_and_tags(
+                test::MODEL_TABLE_NAME,
+                Some(&vec![1]),
+                10,
+                &[],
+            )
             .await
             .unwrap();
         assert_eq!(2, univariate_ids.len());
@@ -1340,7 +1351,7 @@ mod tests {
 
         // Lookup all univariate ids for the table by not requesting ids for a tag value.
         let univariate_ids = metadata_manager
-            .compute_univariate_ids_using_fields_and_tags("model_table", None, 10, &[])
+            .compute_univariate_ids_using_fields_and_tags(test::MODEL_TABLE_NAME, None, 10, &[])
             .await
             .unwrap();
         assert_eq!(4, univariate_ids.len());
@@ -1348,7 +1359,7 @@ mod tests {
         // Lookup univariate ids for the table by requesting ids for a specific tag value.
         let univariate_ids = metadata_manager
             .compute_univariate_ids_using_fields_and_tags(
-                "model_table",
+                test::MODEL_TABLE_NAME,
                 None,
                 10,
                 &[("tag", "tag_value1")],
@@ -1383,7 +1394,7 @@ mod tests {
 
         // An assert is purposely not used so the test fails with information about why it failed.
         create_metadata_manager_with_named_model_table_and_save_files(
-            "model_table",
+            test::MODEL_TABLE_NAME,
             &[compressed_file],
         )
         .await
@@ -1411,7 +1422,7 @@ mod tests {
 
         assert!(
             create_metadata_manager_with_named_model_table_and_save_files(
-                "model_table",
+                test::MODEL_TABLE_NAME,
                 &[compressed_file]
             )
             .await
@@ -1425,7 +1436,7 @@ mod tests {
 
         assert!(
             create_metadata_manager_with_named_model_table_and_save_files(
-                "model_table",
+                test::MODEL_TABLE_NAME,
                 &[compressed_file]
             )
             .await
@@ -1494,14 +1505,14 @@ mod tests {
 
         for compressed_file in compressed_files {
             metadata_manager
-                .save_compressed_file("model_table", 1, compressed_file)
+                .save_compressed_file(test::MODEL_TABLE_NAME, 1, compressed_file)
                 .await
                 .unwrap();
         }
 
         metadata_manager
             .replace_compressed_files(
-                "model_table",
+                test::MODEL_TABLE_NAME,
                 1,
                 compressed_files_to_delete,
                 replacement_file,
@@ -1510,7 +1521,7 @@ mod tests {
             .unwrap();
 
         metadata_manager
-            .compressed_files("model_table", 1, None, None, None, None)
+            .compressed_files(test::MODEL_TABLE_NAME, 1, None, None, None, None)
             .await
             .unwrap()
     }
@@ -1544,7 +1555,7 @@ mod tests {
         let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
         for compressed_file in &compressed_files {
             metadata_manager
-                .save_compressed_file("model_table", 1, compressed_file)
+                .save_compressed_file(test::MODEL_TABLE_NAME, 1, compressed_file)
                 .await
                 .unwrap();
         }
@@ -1555,7 +1566,7 @@ mod tests {
 
         assert!(metadata_manager
             .replace_compressed_files(
-                "model_table",
+                test::MODEL_TABLE_NAME,
                 1,
                 compressed_files_to_delete,
                 replacement_compressed_file,
@@ -1829,14 +1840,21 @@ mod tests {
         max_value: Option<Value>,
     ) -> Vec<ObjectMeta> {
         let metadata_manager = create_metadata_manager_with_named_model_table_and_save_files(
-            "model_table",
+            test::MODEL_TABLE_NAME,
             compressed_files,
         )
         .await
         .unwrap();
 
         metadata_manager
-            .compressed_files("model_table", 1, start_time, end_time, min_value, max_value)
+            .compressed_files(
+                test::MODEL_TABLE_NAME,
+                1,
+                start_time,
+                end_time,
+                min_value,
+                max_value,
+            )
             .await
             .unwrap()
     }
@@ -1901,15 +1919,20 @@ mod tests {
             .unwrap();
 
         // Retrieve the tables with metadata for the model table from the metadata database.
+        let select_statement = format!("SELECT hash FROM {}_tags", test::MODEL_TABLE_NAME);
         let mut rows = metadata_manager
             .metadata_database_pool
-            .fetch("SELECT hash FROM model_table_tags");
+            .fetch(&*select_statement);
         assert!(rows.try_next().await.unwrap().is_none());
 
-        let mut rows = metadata_manager.metadata_database_pool.fetch(
+        let select_statement = format!(
             "SELECT file_path, field_column, size, created_at, start_time, end_time,
-             min_value, max_value FROM model_table_compressed_files",
+             min_value, max_value FROM {}_compressed_files",
+            test::MODEL_TABLE_NAME
         );
+        let mut rows = metadata_manager
+            .metadata_database_pool
+            .fetch(&*select_statement);
         assert!(rows.try_next().await.unwrap().is_none());
 
         // Retrieve the rows in model_table_metadata from the metadata database.
@@ -1918,7 +1941,7 @@ mod tests {
             .fetch("SELECT table_name, query_schema, sql FROM model_table_metadata");
 
         let row = rows.try_next().await.unwrap().unwrap();
-        assert_eq!("model_table", row.try_get::<&str, _>(0).unwrap());
+        assert_eq!(test::MODEL_TABLE_NAME, row.try_get::<&str, _>(0).unwrap());
         assert_eq!(
             try_convert_schema_to_blob(&model_table_metadata.query_schema).unwrap(),
             row.try_get::<Vec<u8>, _>(1).unwrap()
@@ -1934,7 +1957,7 @@ mod tests {
         );
 
         let row = rows.try_next().await.unwrap().unwrap();
-        assert_eq!("model_table", row.try_get::<&str, _>(0).unwrap());
+        assert_eq!(test::MODEL_TABLE_NAME, row.try_get::<&str, _>(0).unwrap());
         assert_eq!("field_1", row.try_get::<&str, _>(1).unwrap());
         assert_eq!(1, row.try_get::<i32, _>(2).unwrap());
         assert_eq!(1.0, row.try_get::<f32, _>(3).unwrap());
@@ -1942,7 +1965,7 @@ mod tests {
         assert_eq!(None, row.try_get::<Option<Vec<u8>>, _>(5).unwrap());
 
         let row = rows.try_next().await.unwrap().unwrap();
-        assert_eq!("model_table", row.try_get::<&str, _>(0).unwrap());
+        assert_eq!(test::MODEL_TABLE_NAME, row.try_get::<&str, _>(0).unwrap());
         assert_eq!("field_2", row.try_get::<&str, _>(1).unwrap());
         assert_eq!(2, row.try_get::<i32, _>(2).unwrap());
         assert_eq!(5.0, row.try_get::<f32, _>(3).unwrap());
@@ -2011,7 +2034,7 @@ mod tests {
             .unwrap();
 
         let error_bounds = metadata_manager
-            .error_bounds("model_table", 4)
+            .error_bounds(test::MODEL_TABLE_NAME, 4)
             .await
             .unwrap();
         let percentages: Vec<f32> = error_bounds
@@ -2037,7 +2060,7 @@ mod tests {
 
         let df_schema = model_table_metadata.query_schema.to_dfschema().unwrap();
         let generated_columns = metadata_manager
-            .generated_columns("model_table", &df_schema)
+            .generated_columns(test::MODEL_TABLE_NAME, &df_schema)
             .await
             .unwrap();
 

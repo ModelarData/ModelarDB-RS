@@ -510,7 +510,10 @@ mod tests {
         );
 
         // The model table should be registered in the Apache Arrow DataFusion catalog.
-        assert!(context.check_if_table_exists("model_table").await.is_err());
+        assert!(context
+            .check_if_table_exists(test::MODEL_TABLE_NAME)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -579,7 +582,7 @@ mod tests {
             .unwrap();
 
         let metadata = context
-            .model_table_metadata_from_default_database_schema("model_table")
+            .model_table_metadata_from_default_database_schema(test::MODEL_TABLE_NAME)
             .await
             .unwrap()
             .unwrap();
@@ -610,7 +613,7 @@ mod tests {
         let context = create_context(temp_dir.path()).await;
 
         assert!(context
-            .model_table_metadata_from_default_database_schema("model_table")
+            .model_table_metadata_from_default_database_schema(test::MODEL_TABLE_NAME)
             .await
             .is_err());
     }
@@ -625,7 +628,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(context.check_if_table_exists("model_table").await.is_err());
+        assert!(context
+            .check_if_table_exists(test::MODEL_TABLE_NAME)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -633,7 +639,10 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(temp_dir.path()).await;
 
-        assert!(context.check_if_table_exists("model_table").await.is_ok());
+        assert!(context
+            .check_if_table_exists(test::MODEL_TABLE_NAME)
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
@@ -647,7 +656,7 @@ mod tests {
             .unwrap();
 
         let schema = context
-            .schema_of_table_in_default_database_schema("model_table")
+            .schema_of_table_in_default_database_schema(test::MODEL_TABLE_NAME)
             .await
             .unwrap();
 
@@ -660,7 +669,7 @@ mod tests {
         let context = create_context(temp_dir.path()).await;
 
         assert!(context
-            .schema_of_table_in_default_database_schema("model_table")
+            .schema_of_table_in_default_database_schema(test::MODEL_TABLE_NAME)
             .await
             .is_err())
     }
