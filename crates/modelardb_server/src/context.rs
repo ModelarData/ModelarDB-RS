@@ -446,7 +446,7 @@ mod tests {
         let context = create_context(temp_dir.path()).await;
 
         context
-            .parse_and_create_table("CREATE TABLE table_name(timestamp TIMESTAMP)", &context)
+            .parse_and_create_table(test::TABLE_SQL, &context)
             .await
             .unwrap();
 
@@ -470,12 +470,12 @@ mod tests {
         let context = create_context(temp_dir.path()).await;
 
         assert!(context
-            .parse_and_create_table("CREATE TABLE table_name(timestamp TIMESTAMP)", &context)
+            .parse_and_create_table(test::TABLE_SQL, &context)
             .await
             .is_ok());
 
         assert!(context
-            .parse_and_create_table("CREATE TABLE table_name(timestamp TIMESTAMP)", &context)
+            .parse_and_create_table(test::TABLE_SQL, &context)
             .await
             .is_err())
     }
@@ -528,7 +528,7 @@ mod tests {
         let context = create_context(temp_dir.path()).await;
 
         context
-            .parse_and_create_table("CREATE TABLE table_name(timestamp TIMESTAMP)", &context)
+            .parse_and_create_table(test::TABLE_SQL, &context)
             .await
             .unwrap();
 

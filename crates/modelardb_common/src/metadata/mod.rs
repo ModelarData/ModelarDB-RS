@@ -1900,10 +1900,9 @@ mod tests {
             .unwrap();
 
         let table_name = "table_name";
-        let sql = "CREATE TABLE table_name(timestamp TIMESTAMP, values REAL, metadata REAL)";
 
         metadata_manager
-            .save_table_metadata(table_name, sql)
+            .save_table_metadata(table_name, test::TABLE_SQL)
             .await
             .unwrap();
 
@@ -1917,7 +1916,7 @@ mod tests {
         assert_eq!(table_name, retrieved_table_name);
 
         let retrieved_sql = row.try_get::<&str, _>(1).unwrap();
-        assert_eq!(sql, retrieved_sql);
+        assert_eq!(test::TABLE_SQL, retrieved_sql);
 
         assert!(rows.try_next().await.unwrap().is_none());
     }
