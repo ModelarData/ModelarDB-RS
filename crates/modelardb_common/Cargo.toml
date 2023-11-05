@@ -30,7 +30,7 @@ object_store = { workspace = true, features = ["aws", "azure"] }
 once_cell.workspace = true
 rand.workspace = true
 sqlparser.workspace = true
-sqlx = { workspace = true, features = ["runtime-tokio-rustls"] }
+sqlx = { workspace = true, features = ["runtime-tokio-rustls", "sqlite", "postgres"] }
 tonic.workspace = true
 tracing.workspace = true
 uuid.workspace = true
