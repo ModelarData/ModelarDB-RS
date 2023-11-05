@@ -726,7 +726,6 @@ where
         transaction.commit().await
     }
 
-    // TODO: Add a test for this.
     /// Return the table name of each table currently in the metadata database. If the table names
     /// cannot be retrieved, [`Error`] is returned.
     pub async fn table_names(&self) -> Result<Vec<String>, Error> {
@@ -742,7 +741,6 @@ where
         Ok(table_names)
     }
 
-    // TODO: Add a test for this.
     /// Return the [`ModelTableMetadata`] of each model table currently in the metadata database.
     /// If the [`ModelTableMetadata`] cannot be retrieved, [`Error`] is returned.
     pub async fn model_table_metadata(&self) -> Result<Vec<Arc<ModelTableMetadata>>, Error> {
@@ -1876,22 +1874,6 @@ mod tests {
         Ok(metadata_manager)
     }
 
-    async fn create_metadata_manager_and_save_model_table(
-        temp_dir: &Path,
-    ) -> TableMetadataManager<Sqlite> {
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir)
-            .await
-            .unwrap();
-
-        let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
-
-        metadata_manager
-    }
-
     #[tokio::test]
     async fn test_save_table_metadata() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -1985,6 +1967,51 @@ mod tests {
         assert_eq!(None, row.try_get::<Option<Vec<u8>>, _>(5).unwrap());
 
         assert!(rows.try_next().await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn test_table_names() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+            .await
+            .unwrap();
+
+        metadata_manager
+            .save_table_metadata("table_name", test::TABLE_SQL)
+            .await
+            .unwrap();
+
+        let table_names = metadata_manager.table_names().await.unwrap();
+        assert!(table_names.contains(&"table_name".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn test_model_table_metadata() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
+
+        let model_table_metadata = metadata_manager.model_table_metadata().await.unwrap();
+
+        assert_eq!(
+            model_table_metadata.get(0).unwrap().name,
+            test::model_table_metadata().name
+        );
+    }
+
+    async fn create_metadata_manager_and_save_model_table(
+        temp_dir: &Path,
+    ) -> TableMetadataManager<Sqlite> {
+        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir)
+            .await
+            .unwrap();
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        metadata_manager
     }
 
     #[tokio::test]
