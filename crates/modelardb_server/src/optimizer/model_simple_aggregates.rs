@@ -726,6 +726,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
             let min_value = min_values.value(row_index);
             let max_value = max_values.value(row_index);
             let values = values.value(row_index);
+            let residuals = residuals.value(row_index);
 
             sum += modelardb_compression::sum(
                 model_type_id,
@@ -735,7 +736,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
                 min_value,
                 max_value,
                 values,
-                residuals.values(),
+                residuals,
             ) as f64;
         }
 
@@ -869,6 +870,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
             let min_value = min_values.value(row_index);
             let max_value = max_values.value(row_index);
             let values = values.value(row_index);
+            let residuals = residuals.value(row_index);
 
             sum += modelardb_compression::sum(
                 model_type_id,
@@ -878,7 +880,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
                 min_value,
                 max_value,
                 values,
-                residuals.values(),
+                residuals,
             );
 
             count += modelardb_compression::len(start_time, end_time, timestamps);
