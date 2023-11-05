@@ -461,7 +461,10 @@ mod tests {
 
         // The table should be saved to the metadata database.
         let table_names = context.metadata_manager.table_names().await.unwrap();
-        assert!(table_names.contains(&"table_name".to_owned()))
+        assert!(table_names.contains(&"table_name".to_owned()));
+
+        // The table should be registered in the Apache Arrow DataFusion catalog.
+        assert!(context.check_if_table_exists("table_name").await.is_err());
     }
 
     #[tokio::test]
@@ -500,7 +503,10 @@ mod tests {
         assert_eq!(
             model_table_metadata.get(0).unwrap().name,
             test::model_table_metadata().name
-        )
+        );
+
+        // The model table should be registered in the Apache Arrow DataFusion catalog.
+        assert!(context.check_if_table_exists("model_table").await.is_err());
     }
 
     #[tokio::test]
@@ -558,6 +564,53 @@ mod tests {
         context.register_model_tables(&context).await.unwrap();
     }
 
+    #[tokio::test]
+    async fn test_model_table_metadata_from_default_database_schema() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(temp_dir.path()).await;
+
+        context
+            .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
+            .await
+            .unwrap();
+
+        let metadata = context
+            .model_table_metadata_from_default_database_schema("model_table")
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(metadata.name, test::model_table_metadata().name);
+    }
+
+    #[tokio::test]
+    async fn test_table_model_table_metadata_from_default_database_schema() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(temp_dir.path()).await;
+
+        context
+            .parse_and_create_table(test::TABLE_SQL, &context)
+            .await
+            .unwrap();
+
+        assert!(context
+            .model_table_metadata_from_default_database_schema("table_name")
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn test_non_existent_model_table_metadata_from_default_database_schema() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(temp_dir.path()).await;
+
+        assert!(context
+            .model_table_metadata_from_default_database_schema("model_table")
+            .await
+            .is_err());
+    }
+
     /// Create a simple [`Context`] that uses `path` as the local data folder and query data folder.
     async fn create_context(path: &Path) -> Arc<Context> {
         Arc::new(
@@ -575,5 +628,4 @@ mod tests {
             .unwrap(),
         )
     }
-
 }
