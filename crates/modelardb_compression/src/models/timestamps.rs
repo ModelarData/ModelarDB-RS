@@ -107,9 +107,9 @@ fn compress_irregular_residual_timestamps(uncompressed_timestamps: &[Timestamp])
     let mut compressed_timestamps = BitVecBuilder::new();
     compressed_timestamps.append_a_one_bit();
 
-    // Store the second timestamp as a delta using 14 bits.
+    // Store the second timestamp as a delta using 24 bits.
     let mut last_delta = uncompressed_timestamps[1] - uncompressed_timestamps[0];
-    compressed_timestamps.append_bits(last_delta as u32, 14); // 14-bit delta is max four hours.
+    compressed_timestamps.append_bits(last_delta as u32, 24); // 24-bit delta is max four hours.
 
     // Encode the timestamps from the third timestamp to the second to last.
     // A delta-of-delta is computed and then encoded in buckets of different
@@ -231,8 +231,8 @@ fn decompress_all_irregular_timestamps(
     let mut bits = BitReader::try_new(residual_timestamps).unwrap();
     bits.read_bit();
 
-    // Decompress the second timestamp stored as a delta in 14 bits.
-    let mut last_delta = bits.read_bits(14);
+    // Decompress the second timestamp stored as a delta in 24 bits.
+    let mut last_delta = bits.read_bits(24);
     let mut timestamp = start_time + last_delta as i64;
     timestamp_builder.append_value(timestamp);
 

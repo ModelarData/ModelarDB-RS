@@ -399,11 +399,10 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
 mod tests {
     use super::*;
 
+    use modelardb_common::test;
     use proptest::num::u64 as ProptestTimestamp;
     use proptest::{collection, proptest};
     use tokio::runtime::Runtime;
-
-    use crate::common_test;
 
     const CURRENT_BATCH_INDEX: u64 = 1;
     const UNIVARIATE_ID: u64 = 1;
@@ -413,7 +412,7 @@ mod tests {
     fn test_get_in_memory_data_buffer_memory_size() {
         let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
-            common_test::model_table_metadata_arc(),
+            test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -423,7 +422,7 @@ mod tests {
         assert_eq!(UncompressedInMemoryDataBuffer::memory_size(), expected);
         assert_eq!(
             UncompressedInMemoryDataBuffer::memory_size(),
-            common_test::UNCOMPRESSED_BUFFER_SIZE
+            test::UNCOMPRESSED_BUFFER_SIZE
         );
     }
 
@@ -431,7 +430,7 @@ mod tests {
     fn test_get_in_memory_data_buffer_disk_size() {
         let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
-            common_test::model_table_metadata_arc(),
+            test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -442,7 +441,7 @@ mod tests {
     fn test_get_in_memory_data_buffer_len() {
         let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
-            common_test::model_table_metadata_arc(),
+            test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -453,7 +452,7 @@ mod tests {
     fn test_can_insert_data_point_into_in_memory_data_buffer() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
-            common_test::model_table_metadata_arc(),
+            test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
         insert_data_points(1, &mut uncompressed_buffer);
@@ -465,7 +464,7 @@ mod tests {
     fn test_check_if_in_memory_data_buffer_is_unused() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
-            common_test::model_table_metadata_arc(),
+            test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX - 1,
         );
 
@@ -483,7 +482,7 @@ mod tests {
     fn test_check_is_in_memory_data_buffer_full() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
-            common_test::model_table_metadata_arc(),
+            test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
@@ -495,7 +494,7 @@ mod tests {
     fn test_check_is_in_memory_data_buffer_not_full() {
         let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
-            common_test::model_table_metadata_arc(),
+            test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -508,7 +507,7 @@ mod tests {
     fn test_in_memory_data_buffer_panic_if_inserting_data_point_when_full() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
-            common_test::model_table_metadata_arc(),
+            test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -519,7 +518,7 @@ mod tests {
     async fn test_get_record_batch_from_in_memory_data_buffer() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
-            common_test::model_table_metadata_arc(),
+            test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
@@ -538,7 +537,7 @@ mod tests {
 
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
-            common_test::model_table_metadata_arc(),
+            test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -558,7 +557,7 @@ mod tests {
     async fn test_in_memory_data_buffer_can_spill_not_full_buffer() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
-            common_test::model_table_metadata_arc(),
+            test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
         insert_data_points(1, &mut uncompressed_buffer);
@@ -580,7 +579,7 @@ mod tests {
     async fn test_in_memory_data_buffer_can_spill_full_buffer() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
-            common_test::model_table_metadata_arc(),
+            test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
         insert_data_points(uncompressed_buffer.capacity(), &mut uncompressed_buffer);
@@ -603,7 +602,7 @@ mod tests {
     fn test_get_on_disk_data_buffer_memory_size() {
         let uncompressed_buffer = UncompressedOnDiskDataBuffer {
             univariate_id: UNIVARIATE_ID,
-            model_table_metadata: common_test::model_table_metadata_arc(),
+            model_table_metadata: test::model_table_metadata_arc(),
             file_path: Path::new("file_path").to_path_buf(),
         };
 
@@ -614,7 +613,7 @@ mod tests {
     async fn test_get_on_disk_data_buffer_disk_size() {
         let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
-            common_test::model_table_metadata_arc(),
+            test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
         let capacity = uncompressed_in_memory_buffer.capacity();
@@ -633,7 +632,7 @@ mod tests {
     async fn test_get_record_batch_from_on_disk_data_buffer() {
         let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
-            common_test::model_table_metadata_arc(),
+            test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
         let capacity = uncompressed_in_memory_buffer.capacity();
@@ -672,7 +671,7 @@ mod tests {
 
         let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
-            common_test::model_table_metadata_arc(),
+            test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
 
@@ -716,7 +715,7 @@ mod tests {
     async fn test_cannot_spill_on_disk_data_buffer() {
         let uncompressed_buffer = UncompressedOnDiskDataBuffer {
             univariate_id: UNIVARIATE_ID,
-            model_table_metadata: common_test::model_table_metadata_arc(),
+            model_table_metadata: test::model_table_metadata_arc(),
             file_path: Path::new("file_path").to_path_buf(),
         };
 

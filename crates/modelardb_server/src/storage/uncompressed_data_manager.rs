@@ -625,10 +625,10 @@ mod tests {
     use datafusion::arrow::datatypes::SchemaRef;
     use datafusion::arrow::record_batch::RecordBatch;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
+    use modelardb_common::test;
     use modelardb_common::types::{TimestampBuilder, ValueBuilder};
     use ringbuf::Rb;
 
-    use crate::common_test;
     use crate::metadata::MetadataManager;
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
 
@@ -640,7 +640,7 @@ mod tests {
     async fn test_can_find_existing_on_disk_data_buffers() {
         // Spill an uncompressed buffer to disk.
         let temp_dir = tempfile::tempdir().unwrap();
-        let model_table_metadata = Arc::new(common_test::model_table_metadata());
+        let model_table_metadata = Arc::new(test::model_table_metadata());
         let mut buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
             model_table_metadata,
@@ -1082,7 +1082,7 @@ mod tests {
             data_manager
                 .memory_pool
                 .remaining_uncompressed_memory_in_bytes() as usize,
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + 10000
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + 10000
         )
     }
 
@@ -1103,7 +1103,7 @@ mod tests {
 
         data_manager
             .adjust_uncompressed_remaining_memory_in_bytes(
-                -(common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize),
+                -(test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize),
             )
             .await;
 
@@ -1111,7 +1111,7 @@ mod tests {
             data_manager
                 .memory_pool
                 .remaining_uncompressed_memory_in_bytes(),
-            -(common_test::UNCOMPRESSED_BUFFER_SIZE as isize)
+            -(test::UNCOMPRESSED_BUFFER_SIZE as isize)
         );
 
         // Insert data that should be spilled not that the remaining memory is decreased.
@@ -1127,7 +1127,7 @@ mod tests {
         // while the second should have a memory size of 0 as it has been spilled to disk.
         assert_eq!(
             next_data_message(&data_manager).memory_size(),
-            common_test::UNCOMPRESSED_BUFFER_SIZE
+            test::UNCOMPRESSED_BUFFER_SIZE
         );
         assert_eq!(next_data_message(&data_manager).memory_size(), 0);
     }
@@ -1168,10 +1168,10 @@ mod tests {
         let metadata_manager = Arc::new(MetadataManager::try_new(path).await.unwrap());
 
         // Ensure the expected metadata is available through the metadata manager.
-        let model_table_metadata = common_test::model_table_metadata();
+        let model_table_metadata = test::model_table_metadata();
 
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, common_test::MODEL_TABLE_SQL)
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
@@ -1181,8 +1181,8 @@ mod tests {
             .unwrap();
 
         let memory_pool = Arc::new(MemoryPool::new(
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
-            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         ));
 
         let channels = Arc::new(Channels::new());

@@ -24,6 +24,12 @@ use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;
 
+/// The amount of reserved memory for uncompressed data by default, specifically 512 MiB.
+const DEFAULT_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 512 * 1024 * 1024;
+
+/// The amount of reserved memory for compressed data by default, specifically 512 MiB.
+const DEFAULT_COMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 512 * 1024 * 1024;
+
 /// Manages the system's configuration and provides functionality for updating the configuration.
 #[derive(Clone)]
 pub struct ConfigurationManager {
@@ -51,8 +57,8 @@ impl ConfigurationManager {
         Self {
             cluster_mode,
             server_mode,
-            uncompressed_reserved_memory_in_bytes: 512 * 1024 * 1024, // 512 MiB
-            compressed_reserved_memory_in_bytes: 512 * 1024 * 1024,   // 512 MiB
+            uncompressed_reserved_memory_in_bytes: DEFAULT_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            compressed_reserved_memory_in_bytes: DEFAULT_COMPRESSED_RESERVED_MEMORY_IN_BYTES,
             // TODO: Add support for running multiple threads per component. The individual
             // components in the storage engine have not been validated with multiple threads, e.g.,
             // UncompressedDataManager may have race conditions finishing buffers if multiple
@@ -118,23 +124,30 @@ impl ConfigurationManager {
 
 #[cfg(test)]
 mod tests {
-    use crate::common_test;
+    use super::*;
+
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use modelardb_common::types::{ClusterMode, ServerMode};
+    use tokio::runtime::Runtime;
+    use tokio::sync::RwLock;
+
+    use crate::metadata::MetadataManager;
+    use crate::storage::StorageEngine;
 
     // Tests for ConfigurationManager.
     #[tokio::test]
     async fn test_set_uncompressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = common_test::test_context(temp_dir.path()).await;
-
-        let configuration_manager = context.configuration_manager.clone();
-        let storage_engine = context.storage_engine.clone();
+        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
 
         assert_eq!(
             configuration_manager
                 .read()
                 .await
                 .uncompressed_reserved_memory_in_bytes,
-            common_test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
+            DEFAULT_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
         );
 
         configuration_manager
@@ -155,17 +168,14 @@ mod tests {
     #[tokio::test]
     async fn test_set_compressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = common_test::test_context(temp_dir.path()).await;
-
-        let configuration_manager = context.configuration_manager.clone();
-        let storage_engine = context.storage_engine.clone();
+        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
 
         assert_eq!(
             configuration_manager
                 .read()
                 .await
                 .compressed_reserved_memory_in_bytes(),
-            common_test::COMPRESSED_RESERVED_MEMORY_IN_BYTES
+            DEFAULT_COMPRESSED_RESERVED_MEMORY_IN_BYTES
         );
 
         configuration_manager
@@ -182,5 +192,33 @@ mod tests {
                 .compressed_reserved_memory_in_bytes(),
             1024
         );
+    }
+
+    /// Create a [`StorageEngine`] and a [`ConfigurationManager`].
+    async fn create_components(
+        path: &Path,
+    ) -> (
+        Arc<RwLock<StorageEngine>>,
+        Arc<RwLock<ConfigurationManager>>,
+    ) {
+        let metadata_manager = Arc::new(MetadataManager::try_new(path).await.unwrap());
+        let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
+            ClusterMode::SingleNode,
+            ServerMode::Edge,
+        )));
+
+        let storage_engine = Arc::new(RwLock::new(
+            StorageEngine::try_new(
+                Arc::new(Runtime::new().unwrap()),
+                path.to_owned(),
+                None,
+                &configuration_manager,
+                metadata_manager.clone(),
+            )
+            .await
+            .unwrap(),
+        ));
+
+        (storage_engine, configuration_manager)
     }
 }
