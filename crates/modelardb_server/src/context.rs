@@ -611,6 +611,56 @@ mod tests {
             .is_err());
     }
 
+    #[tokio::test]
+    async fn test_check_if_existing_table_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(temp_dir.path()).await;
+
+        context
+            .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
+            .await
+            .unwrap();
+
+        assert!(context.check_if_table_exists("model_table").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_check_if_non_existent_table_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(temp_dir.path()).await;
+
+        assert!(context.check_if_table_exists("model_table").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_schema_of_table_in_default_database_schema() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(temp_dir.path()).await;
+
+        context
+            .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
+            .await
+            .unwrap();
+
+        let schema = context
+            .schema_of_table_in_default_database_schema("model_table")
+            .await
+            .unwrap();
+
+        assert_eq!(schema, test::model_table_metadata().schema)
+    }
+
+    #[tokio::test]
+    async fn test_schema_of_non_existent_table_in_default_database_schema() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(temp_dir.path()).await;
+
+        assert!(context
+            .schema_of_table_in_default_database_schema("model_table")
+            .await
+            .is_err())
+    }
+
     /// Create a simple [`Context`] that uses `path` as the local data folder and query data folder.
     async fn create_context(path: &Path) -> Arc<Context> {
         Arc::new(
