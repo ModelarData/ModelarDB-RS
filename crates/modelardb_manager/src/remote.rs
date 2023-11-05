@@ -42,11 +42,12 @@ use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::normalize_name;
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
+use modelardb_common::schemas::{COMPRESSED_FILE_METADATA_SCHEMA, TAG_METADATA_SCHEMA};
 use modelardb_common::types::ServerMode;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::cluster::Node;
 use crate::data_folder::RemoteDataFolder;
@@ -180,6 +181,43 @@ impl FlightServiceHandler {
         Ok(())
     }
 
+    /// Insert the tag metadata in `flight_data_stream` into the `table_name_tags` and
+    /// `model_table_hash_table_name` tables in the metadata database. If the stream did not contain
+    /// the correct metadata, or the metadata could not be inserted into the database, return [`Status`].
+    async fn save_tag_metadata(
+        &self,
+        flight_data_stream: &mut Streaming<FlightData>,
+    ) -> Result<(), Status> {
+        while let Some(flight_data) = flight_data_stream.next().await {
+            let _tag_metadata =
+                self.flight_data_to_record_batch(&flight_data?, &TAG_METADATA_SCHEMA.0)?;
+
+            // TODO: Create a new method in the table metadata manager just to insert.
+            // TODO: Use the new method here.
+        }
+
+        Ok(())
+    }
+
+    /// Insert the compressed file metadata in `flight_data_stream` into the `table_name_compressed_files`
+    /// table in the metadata database. If the stream did not contain the correct metadata, or the
+    /// metadata could not be inserted into the database, return [`Status`].
+    async fn save_compressed_file_metadata(
+        &self,
+        flight_data_stream: &mut Streaming<FlightData>,
+    ) -> Result<(), Status> {
+        while let Some(flight_data) = flight_data_stream.next().await {
+            let _compressed_file_metadata = self
+                .flight_data_to_record_batch(&flight_data?, &COMPRESSED_FILE_METADATA_SCHEMA.0)?;
+
+            // TODO: Convert into a CompressedFile.
+            // TODO: Use save_compressed_file in the table metadata manager.
+        }
+
+        Ok(())
+    }
+
+    // TODO: Maybe move to common.
     /// Return the table stored as the first element in [`FlightDescriptor.path`], otherwise a
     /// [`Status`] that specifies that the table name is missing.
     fn table_name_from_flight_descriptor<'a>(
@@ -192,6 +230,7 @@ impl FlightServiceHandler {
             .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
     }
 
+    // TODO: Maybe move to common.
     /// Convert `flight_data` to a [`RecordBatch`].
     fn flight_data_to_record_batch(
         &self,
@@ -306,21 +345,19 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    // TODO: Maybe add common functions to avoid duplicated code here and in util methods.
     /// Insert metadata about tags into a table_name_tags table or metadata about compressed files
     /// into a table_name_compressed_files table in the metadata database. The name of the table
     /// must be provided as the first element of `FlightDescriptor.path` and the schema of the
-    /// metadata must match [`TAG_METADATA_SCHEMA`](modelardb_common::schemas::TAG_METADATA_SCHEMA)
-    /// or [`COMPRESSED_FILE_METADATA_SCHEMA`](modelardb_common::schemas::COMPRESSED_FILE_METADATA_SCHEMA)
-    /// for either tag metadata or compressed file metadata. If the metadata is successfully
-    /// inserted, an empty stream is returned as confirmation, otherwise [`Status`] is returned.
+    /// metadata must match [`TAG_METADATA_SCHEMA`] or [`COMPRESSED_FILE_METADATA_SCHEMA`] for
+    /// either tag metadata or compressed file metadata. If the metadata is successfully inserted,
+    /// an empty stream is returned as confirmation, otherwise [`Status`] is returned.
     async fn do_put(
         &self,
         request: Request<Streaming<FlightData>>,
     ) -> Result<Response<Self::DoPutStream>, Status> {
-        // Extract the table name to insert metadata into.
         let mut flight_data_stream = request.into_inner();
 
+        // Extract the table name to insert metadata into.
         let flight_data = flight_data_stream
             .next()
             .await
@@ -334,11 +371,17 @@ impl FlightService for FlightServiceHandler {
 
         // Check that the table name matches a table_name_tags or table_name_compressed_files table.
         if normalized_table_name.ends_with("_tags") {
-            // If tag metadata, insert the metadata into the table_name_tags table and the
-            // model_table_hash_table_name table.
+            debug!(
+                "Writing tag metadata to metadata database table '{}'.",
+                normalized_table_name
+            );
+            self.save_tag_metadata(&mut flight_data_stream).await?;
         } else if normalized_table_name.ends_with("_compressed_files") {
-            // If compressed files metadata, insert the metadata into the
-            // table_name_compressed_files table.
+            debug!(
+                "Writing compressed file metadata to metadata database table '{}'.",
+                normalized_table_name
+            );
+            self.save_compressed_file_metadata(&mut flight_data_stream).await?;
         } else {
             return Err(Status::invalid_argument(format!(
                 "Table '{normalized_table_name}' is not a valid metadata database table."
