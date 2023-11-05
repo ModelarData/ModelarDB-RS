@@ -429,6 +429,95 @@ mod tests {
     use modelardb_common::test;
     use object_store::local::LocalFileSystem;
 
+    #[tokio::test]
+    async fn test_parse_and_create_table_with_invalid_sql_statement() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(temp_dir.path()).await;
+
+        assert!(context
+            .parse_and_create_table("TABLE CREATE table_name(timestamp TIMESTAMP)", &context)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_parse_and_create_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(temp_dir.path()).await;
+
+        context
+            .parse_and_create_table("CREATE TABLE table_name(timestamp TIMESTAMP)", &context)
+            .await
+            .unwrap();
+
+        // An Apache Parquet file should be created to save the schema.
+        let folder_path = temp_dir
+            .path()
+            .join(COMPRESSED_DATA_FOLDER)
+            .join("table_name")
+            .join("empty_for_schema.parquet");
+
+        assert!(folder_path.exists());
+
+        // The table should be saved to the metadata database.
+        let table_names = context.metadata_manager.table_names().await.unwrap();
+        assert!(table_names.contains(&"table_name".to_owned()))
+    }
+
+    #[tokio::test]
+    async fn test_parse_and_create_existing_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(temp_dir.path()).await;
+
+        assert!(context
+            .parse_and_create_table("CREATE TABLE table_name(timestamp TIMESTAMP)", &context)
+            .await
+            .is_ok());
+
+        assert!(context
+            .parse_and_create_table("CREATE TABLE table_name(timestamp TIMESTAMP)", &context)
+            .await
+            .is_err())
+    }
+
+    #[tokio::test]
+    async fn test_parse_and_create_model_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(temp_dir.path()).await;
+
+        context
+            .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
+            .await
+            .unwrap();
+
+        // The table should be saved to the metadata database.
+        let model_table_metadata = context
+            .metadata_manager
+            .model_table_metadata()
+            .await
+            .unwrap();
+
+        assert_eq!(
+            model_table_metadata.get(0).unwrap().name,
+            test::model_table_metadata().name
+        )
+    }
+
+    #[tokio::test]
+    async fn test_parse_and_create_existing_model_table() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(temp_dir.path()).await;
+
+        assert!(context
+            .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
+            .await
+            .is_ok());
+
+        assert!(context
+            .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
+            .await
+            .is_err())
+    }
 
     #[tokio::test]
     async fn test_register_tables() {
@@ -439,10 +528,7 @@ mod tests {
         let context = create_context(temp_dir.path()).await;
 
         context
-            .parse_and_create_table(
-                "CREATE TABLE table_name(timestamp TIMESTAMP, values REAL, metadata REAL)",
-                &context,
-            )
+            .parse_and_create_table("CREATE TABLE table_name(timestamp TIMESTAMP)", &context)
             .await
             .unwrap();
 
