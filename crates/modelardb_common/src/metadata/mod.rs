@@ -146,7 +146,7 @@ where
         .execute(&mut *transaction)
         .await?;
 
-        // Create the model_table_hash_name table if it does not exist.
+        // Create the model_table_hash_table_name table if it does not exist.
         sqlx::query(&format!(
             "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
                  hash INTEGER PRIMARY KEY,
@@ -954,9 +954,9 @@ fn create_insert_compressed_file_query<'a, DB: Database>(
     compressed_file: &'a CompressedFile,
 ) -> Query<'a, DB, <DB as HasArguments<'a>>::Arguments>
 where
-    i64: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
-    f32: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
-    String: sqlx::Encode<'a, DB> + sqlx::Type<DB>,
+    i64: sqlx::Type<DB> + sqlx::Encode<'a, DB>,
+    f32: sqlx::Type<DB> + sqlx::Encode<'a, DB>,
+    String: sqlx::Type<DB> + sqlx::Encode<'a, DB>,
 {
     let min_value = rewrite_special_value_to_normal_value(compressed_file.min_value);
     let max_value = rewrite_special_value_to_normal_value(compressed_file.max_value);
@@ -2083,11 +2083,13 @@ mod tests {
         create_empty_folder(temp_dir.path(), "folder");
         assert!(!is_path_a_data_folder(temp_dir.path()));
     }
+
     #[test]
     fn test_an_empty_folder_is_a_data_folder() {
         let temp_dir = tempfile::tempdir().unwrap();
         assert!(is_path_a_data_folder(temp_dir.path()));
     }
+
     #[test]
     fn test_a_non_empty_folder_with_metadata_is_a_data_folder() {
         let temp_dir = tempfile::tempdir().unwrap();
@@ -2095,6 +2097,7 @@ mod tests {
         fs::create_dir(temp_dir.path().join(METADATA_DATABASE_NAME)).unwrap();
         assert!(is_path_a_data_folder(temp_dir.path()));
     }
+
     fn create_empty_folder(path: &Path, name: &str) -> PathBuf {
         let path_buf = path.join(name);
         fs::create_dir(&path_buf).unwrap();

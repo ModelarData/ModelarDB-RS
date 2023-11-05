@@ -142,7 +142,7 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-/// Parse the command lines arguments into a [`ServerMode`], a [`ClusterMode`] and an instance of
+/// Parse the command line arguments into a [`ServerMode`], a [`ClusterMode`] and an instance of
 /// [`DataFolders`]. If the necessary command line arguments are not provided, too many arguments
 /// are provided, or if the arguments are malformed, [`String`] is returned.
 async fn parse_command_line_arguments(

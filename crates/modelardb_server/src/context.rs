@@ -69,7 +69,11 @@ impl Context {
         let metadata_manager = Arc::new(
             try_new_sqlite_table_metadata_manager(&data_folders.local_data_folder)
                 .await
-                .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?,
+                .map_err(|error| {
+                    ModelarDbError::ConfigurationError(format!(
+                        "Unable to create a TableMetadataManager: {error}"
+                    ))
+                })?,
         );
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
@@ -430,7 +434,7 @@ mod tests {
     use object_store::local::LocalFileSystem;
 
     #[tokio::test]
-    async fn test_parse_and_create_table_with_invalid_sql_statement() {
+    async fn test_parse_and_create_table_with_invalid_sql() {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(temp_dir.path()).await;
 
