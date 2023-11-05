@@ -130,37 +130,6 @@ impl Context {
         SessionContext::new_with_state(session_state)
     }
 
-    /// Return the schema of `table_name` if the table exists in the default database schema,
-    /// otherwise a [`ModelarDbError`] indicating at what level the lookup failed is returned.
-    pub async fn schema_of_table_in_default_database_schema(
-        &self,
-        table_name: &str,
-    ) -> Result<SchemaRef, ModelarDbError> {
-        let database_schema = self.default_database_schema()?;
-
-        let table = database_schema.table(table_name).await.ok_or_else(|| {
-            ModelarDbError::DataRetrievalError("Table does not exist.".to_owned())
-        })?;
-
-        Ok(table.schema())
-    }
-
-    /// Return the default database schema if it exists, otherwise a [`ModelarDbError`] indicating
-    /// at what level the lookup failed is returned.
-    pub fn default_database_schema(&self) -> Result<Arc<dyn SchemaProvider>, ModelarDbError> {
-        let session = self.session.clone();
-
-        let catalog = session.catalog("datafusion").ok_or_else(|| {
-            ModelarDbError::ImplementationError("Default catalog does not exist.".to_owned())
-        })?;
-
-        let schema = catalog.schema("public").ok_or_else(|| {
-            ModelarDbError::ImplementationError("Default schema does not exist.".to_owned())
-        })?;
-
-        Ok(schema)
-    }
-
     /// Initialize the local database schema with the tables and model tables from the managers
     /// database schema. `context` is needed as an argument instead of using `self` to avoid having
     /// to copy the context when registering model tables. If the tables to create could not be
@@ -417,6 +386,37 @@ impl Context {
             return Err(ModelarDbError::ConfigurationError(message));
         }
         Ok(())
+    }
+
+    /// Return the schema of `table_name` if the table exists in the default database schema,
+    /// otherwise a [`ModelarDbError`] indicating at what level the lookup failed is returned.
+    pub async fn schema_of_table_in_default_database_schema(
+        &self,
+        table_name: &str,
+    ) -> Result<SchemaRef, ModelarDbError> {
+        let database_schema = self.default_database_schema()?;
+
+        let table = database_schema.table(table_name).await.ok_or_else(|| {
+            ModelarDbError::DataRetrievalError("Table does not exist.".to_owned())
+        })?;
+
+        Ok(table.schema())
+    }
+
+    /// Return the default database schema if it exists, otherwise a [`ModelarDbError`] indicating
+    /// at what level the lookup failed is returned.
+    pub fn default_database_schema(&self) -> Result<Arc<dyn SchemaProvider>, ModelarDbError> {
+        let session = self.session.clone();
+
+        let catalog = session.catalog("datafusion").ok_or_else(|| {
+            ModelarDbError::ImplementationError("Default catalog does not exist.".to_owned())
+        })?;
+
+        let schema = catalog.schema("public").ok_or_else(|| {
+            ModelarDbError::ImplementationError("Default schema does not exist.".to_owned())
+        })?;
+
+        Ok(schema)
     }
 }
 
