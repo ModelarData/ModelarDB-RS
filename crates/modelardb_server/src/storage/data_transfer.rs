@@ -51,7 +51,7 @@ pub struct DataTransfer {
     /// The object store that the data should be transferred to.
     pub remote_data_folder: Arc<dyn ObjectStore>,
     /// Management of metadata for deleting file metadata after transferring.
-    metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+    table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     /// Map from table names and column indices to the combined size in bytes of the compressed
     /// files currently saved for the column in that table.
     compressed_files: DashMap<(String, u16), usize>,
@@ -69,7 +69,7 @@ impl DataTransfer {
     pub async fn try_new(
         local_data_folder: PathBuf,
         remote_data_folder: Arc<dyn ObjectStore>,
-        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         transfer_batch_size_in_bytes: usize,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
@@ -94,7 +94,7 @@ impl DataTransfer {
         let data_transfer = Self {
             local_data_folder,
             remote_data_folder,
-            metadata_manager,
+            table_metadata_manager,
             compressed_files: compressed_files.clone(),
             transfer_batch_size_in_bytes,
             used_disk_space_metric,
@@ -208,7 +208,7 @@ impl DataTransfer {
         .await?;
 
         // Delete the metadata for the transferred files from the metadata database.
-        self.metadata_manager
+        self.table_metadata_manager
             .replace_compressed_files(table_name, column_index.into(), &object_metas, None)
             .await
             .map_err(|error| ParquetError::General(error.to_string()))?;
@@ -266,7 +266,7 @@ mod tests {
     use std::path::Path;
 
     use chrono::Utc;
-    use modelardb_common::metadata::try_new_sqlite_table_metadata_manager;
+    use modelardb_common::metadata;
     use modelardb_common::test;
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
@@ -537,7 +537,7 @@ mod tests {
 
         // The metadata for the files should be deleted from the metadata database.
         let compressed_files = data_transfer
-            .metadata_manager
+            .table_metadata_manager
             .compressed_files(
                 test::MODEL_TABLE_NAME,
                 COLUMN_INDEX.into(),
@@ -575,7 +575,7 @@ mod tests {
     /// Set up a data folder with a table folder that has a single compressed file in it. Return the
     /// [`CompressedFile`] representing the created Apache Parquet file and the path to the file.
     async fn create_compressed_file(
-        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         local_data_folder_path: &Path,
     ) -> (CompressedFile, PathBuf) {
         let folder_path = format!(
@@ -605,7 +605,7 @@ mod tests {
         let compressed_file = CompressedFile::from_record_batch(object_meta, &batch);
 
         // Save the metadata of the compressed file to the metadata database.
-        metadata_manager
+        table_metadata_manager
             .save_compressed_file(
                 test::MODEL_TABLE_NAME,
                 COLUMN_INDEX.into(),
@@ -619,7 +619,7 @@ mod tests {
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
     async fn create_data_transfer_component(
-        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         local_data_folder_path: &Path,
     ) -> (TempDir, DataTransfer) {
         let target_dir = tempfile::tempdir().unwrap();
@@ -631,7 +631,7 @@ mod tests {
         let data_transfer = DataTransfer::try_new(
             local_data_folder_path.to_path_buf(),
             remote_data_folder_object_store,
-            metadata_manager,
+            table_metadata_manager,
             COMPRESSED_FILE_SIZE * 3 - 1,
             Arc::new(Mutex::new(Metric::new())),
         )
@@ -641,13 +641,14 @@ mod tests {
         (target_dir, data_transfer)
     }
 
-    /// Create a metadata manager and save a single model table to the metadata database.
+    /// Create a table metadata manager and save a single model table to the metadata database.
     async fn create_metadata_manager(
         local_data_folder_path: &Path,
     ) -> Arc<TableMetadataManager<Sqlite>> {
-        let metadata_manager = try_new_sqlite_table_metadata_manager(local_data_folder_path)
-            .await
-            .unwrap();
+        let metadata_manager =
+            metadata::try_new_sqlite_table_metadata_manager(local_data_folder_path)
+                .await
+                .unwrap();
 
         let model_table_metadata = test::model_table_metadata();
         metadata_manager

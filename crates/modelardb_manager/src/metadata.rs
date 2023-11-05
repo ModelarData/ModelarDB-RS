@@ -20,7 +20,8 @@ use std::str::FromStr;
 
 use futures::TryStreamExt;
 use modelardb_common::errors::ModelarDbError;
-use modelardb_common::metadata::{try_new_postgres_table_metadata_manager, TableMetadataManager};
+use modelardb_common::metadata;
+use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::ServerMode;
 use sqlx::{PgPool, Postgres, Row};
 use uuid::Uuid;
@@ -43,7 +44,8 @@ impl MetadataManager {
     pub async fn try_new(metadata_database_pool: PgPool) -> Result<Self, sqlx::Error> {
         // Cloning the pool simply increments the reference count to the inner pool state.
         let table_metadata_manager =
-            try_new_postgres_table_metadata_manager(metadata_database_pool.clone()).await?;
+            metadata::try_new_postgres_table_metadata_manager(metadata_database_pool.clone())
+                .await?;
 
         let metadata_manager = Self {
             metadata_database_pool,

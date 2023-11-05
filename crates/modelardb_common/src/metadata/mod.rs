@@ -1370,18 +1370,18 @@ mod tests {
     }
 
     async fn initialize_model_table_with_tag_values(
-        metadata_manager: &mut TableMetadataManager<Sqlite>,
+        table_metadata_manager: &mut TableMetadataManager<Sqlite>,
         tag_values: &[&str],
     ) {
         let model_table_metadata = test::model_table_metadata();
-        metadata_manager
+        table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
 
         for tag_value in tag_values {
             let tag_value = tag_value.to_string();
-            metadata_manager
+            table_metadata_manager
                 .lookup_or_compute_tag_hash(&model_table_metadata, &[tag_value])
                 .await
                 .unwrap();

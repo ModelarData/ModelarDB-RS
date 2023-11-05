@@ -59,7 +59,7 @@ pub(super) struct UncompressedDataManager {
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
     /// Management of metadata for ingesting and compressing time series.
-    metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+    table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used uncompressed memory in bytes, updated every time the used memory changes.
@@ -79,7 +79,7 @@ impl UncompressedDataManager {
         local_data_folder: PathBuf,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
-        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the uncompressed data manager exists.
@@ -91,7 +91,7 @@ impl UncompressedDataManager {
             current_batch_index: AtomicU64::new(0),
             active_uncompressed_data_buffers: DashMap::new(),
             channels,
-            metadata_manager,
+            table_metadata_manager,
             memory_pool,
             used_uncompressed_memory_metric: Mutex::new(Metric::new()),
             ingested_data_points_metric: Mutex::new(Metric::new()),
@@ -121,7 +121,7 @@ impl UncompressedDataManager {
 
             // unwrap() is safe as univariate_id can only exist if it is in the metadata database.
             let table_name = context
-                .metadata_manager
+                .table_metadata_manager
                 .univariate_id_to_table_name(univariate_id)
                 .await
                 .unwrap();
@@ -278,7 +278,7 @@ impl UncompressedDataManager {
                 .collect();
 
             let tag_hash = self
-                .metadata_manager
+                .table_metadata_manager
                 .lookup_or_compute_tag_hash(&model_table_metadata, &tag_values)
                 .await
                 .map_err(|error| format!("Tag hash could not be saved: {error}"))?;
@@ -625,7 +625,7 @@ mod tests {
     use datafusion::arrow::array::StringBuilder;
     use datafusion::arrow::datatypes::SchemaRef;
     use datafusion::arrow::record_batch::RecordBatch;
-    use modelardb_common::metadata::try_new_sqlite_table_metadata_manager;
+    use modelardb_common::metadata;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_common::test;
     use modelardb_common::types::{TimestampBuilder, ValueBuilder};
@@ -1166,7 +1166,11 @@ mod tests {
         UncompressedDataManager,
         Arc<ModelTableMetadata>,
     ) {
-        let metadata_manager = Arc::new(try_new_sqlite_table_metadata_manager(path).await.unwrap());
+        let metadata_manager = Arc::new(
+            metadata::try_new_sqlite_table_metadata_manager(path)
+                .await
+                .unwrap(),
+        );
 
         // Ensure the expected metadata is available through the metadata manager.
         let model_table_metadata = test::model_table_metadata();

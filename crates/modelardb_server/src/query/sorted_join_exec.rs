@@ -41,7 +41,7 @@ use datafusion::physical_plan::{
     SendableRecordBatchStream, Statistics,
 };
 use futures::stream::{Stream, StreamExt};
-use modelardb_common::metadata::univariate_id_to_tag_hash;
+use modelardb_common::metadata;
 
 use super::QUERY_ORDER_DATA_POINT;
 
@@ -300,7 +300,7 @@ impl SortedJoinStream {
                 .collect();
 
             for univariate_id in univariate_ids.values() {
-                let tag_hash = univariate_id_to_tag_hash(*univariate_id);
+                let tag_hash = metadata::univariate_id_to_tag_hash(*univariate_id);
                 let tags = &self.hash_to_tags[&tag_hash];
                 for (index, tag) in tags.iter().enumerate() {
                     tag_columns[index].append_value(tag.clone());
