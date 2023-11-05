@@ -321,7 +321,6 @@ impl Context {
         Ok(())
     }
 
-    // TODO: Move test for this.
     /// For each table saved in the metadata database, register the table in Apache Arrow
     /// DataFusion. If the tables could not be retrieved from the metadata database or a table
     /// could not be registered, return [`ModelarDbError`].
@@ -332,9 +331,10 @@ impl Context {
             .await
             .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
+        let configuration_manager = self.configuration_manager.read().await;
+
         for table_name in table_names {
             // Compute the path to the folder containing data for the table.
-            let configuration_manager = self.configuration_manager.read().await;
             let table_folder_path = configuration_manager
                 .local_data_folder
                 .join(COMPRESSED_DATA_FOLDER)
@@ -356,7 +356,6 @@ impl Context {
         Ok(())
     }
 
-    // TODO: Move test for this.
     /// For each model table saved in the metadata database, register the model table in Apache
     /// Arrow DataFusion. `context` is needed as an argument instead of using `self` to avoid
     /// having to copy the context when registering model tables. If the model tables could not be
@@ -419,4 +418,76 @@ impl Context {
         }
         Ok(())
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::path::Path;
+
+    use modelardb_common::test;
+    use object_store::local::LocalFileSystem;
+
+
+    #[tokio::test]
+    async fn test_register_tables() {
+        // The test succeeds if none of the unwrap()s fails.
+
+        // Save a table to the metadata database.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(temp_dir.path()).await;
+
+        context
+            .parse_and_create_table(
+                "CREATE TABLE table_name(timestamp TIMESTAMP, values REAL, metadata REAL)",
+                &context,
+            )
+            .await
+            .unwrap();
+
+        // Create a new context to clear the Apache Arrow Datafusion catalog.
+        let context_2 = create_context(temp_dir.path()).await;
+
+        // Register the table with Apache Arrow DataFusion.
+        context_2.register_tables().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_register_model_tables() {
+        // The test succeeds if none of the unwrap()s fails.
+
+        // Save a model table to the metadata database.
+        let temp_dir = tempfile::tempdir().unwrap();
+        let context = create_context(temp_dir.path()).await;
+
+        let model_table_metadata = test::model_table_metadata();
+        context
+            .metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        // Register the model table with Apache Arrow DataFusion.
+        context.register_model_tables(&context).await.unwrap();
+    }
+
+    /// Create a simple [`Context`] that uses `path` as the local data folder and query data folder.
+    async fn create_context(path: &Path) -> Arc<Context> {
+        Arc::new(
+            Context::try_new(
+                Arc::new(Runtime::new().unwrap()),
+                &DataFolders {
+                    local_data_folder: path.to_path_buf(),
+                    remote_data_folder: None,
+                    query_data_folder: Arc::new(LocalFileSystem::new_with_prefix(path).unwrap()),
+                },
+                ClusterMode::SingleNode,
+                ServerMode::Edge,
+            )
+            .await
+            .unwrap(),
+        )
+    }
+
 }
