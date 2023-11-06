@@ -48,7 +48,7 @@ use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
-use modelardb_common::types::{Timestamp, TimestampArray, Value};
+use modelardb_common::types::{ClusterMode, Timestamp, TimestampArray, Value};
 use object_store::{ObjectMeta, ObjectStore};
 use sqlx::Sqlite;
 use tokio::fs::File as TokioFile;
@@ -178,6 +178,7 @@ impl StorageEngine {
                     local_data_folder.clone(),
                     remote_data_folder,
                     table_metadata_manager.clone(),
+                    configuration_manager.cluster_mode.clone(),
                     TRANSFER_BATCH_SIZE_IN_BYTES,
                     used_disk_space_metric.clone(),
                 )
@@ -426,6 +427,7 @@ impl StorageEngine {
         &mut self,
         remote_data_folder: Arc<dyn ObjectStore>,
         table_metadata_manager: &Arc<TableMetadataManager<Sqlite>>,
+        cluster_mode: ClusterMode,
     ) -> Result<(), IOError> {
         let maybe_current_data_transfer =
             &mut *self.compressed_data_manager.data_transfer.write().await;
@@ -437,6 +439,7 @@ impl StorageEngine {
                 self.compressed_data_manager.local_data_folder.clone(),
                 remote_data_folder,
                 table_metadata_manager.clone(),
+                cluster_mode,
                 TRANSFER_BATCH_SIZE_IN_BYTES,
                 self.compressed_data_manager.used_disk_space_metric.clone(),
             )

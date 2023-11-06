@@ -26,6 +26,7 @@ use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::TableMetadataManager;
+use modelardb_common::types::ClusterMode;
 use object_store::local::LocalFileSystem;
 use object_store::path::{Path as ObjectStorePath, PathPart};
 use object_store::{ObjectMeta, ObjectStore};
@@ -55,6 +56,8 @@ pub struct DataTransfer {
     /// Map from table names and column indices to the combined size in bytes of the compressed
     /// files currently saved for the column in that table.
     compressed_files: DashMap<(String, u16), usize>,
+    /// The mode of the cluster used to determine the behaviour when transferring files.
+    cluster_mode: ClusterMode,
     /// The number of bytes that are required before transferring a batch of data to the remote
     /// object store.
     transfer_batch_size_in_bytes: usize,
@@ -70,6 +73,7 @@ impl DataTransfer {
         local_data_folder: PathBuf,
         remote_data_folder: Arc<dyn ObjectStore>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        cluster_mode: ClusterMode,
         transfer_batch_size_in_bytes: usize,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
@@ -96,6 +100,7 @@ impl DataTransfer {
             remote_data_folder,
             table_metadata_manager,
             compressed_files: compressed_files.clone(),
+            cluster_mode,
             transfer_batch_size_in_bytes,
             used_disk_space_metric,
         };
@@ -199,7 +204,7 @@ impl DataTransfer {
 
         // Merge the files and transfer them to the remote object store by setting the remote data
         // folder as the output data folder for the merged file.
-        CompressedDataManager::merge_compressed_apache_parquet_files(
+        let _compressed_file = CompressedDataManager::merge_compressed_apache_parquet_files(
             &self.local_data_folder,
             &object_metas,
             &self.remote_data_folder,
@@ -632,6 +637,7 @@ mod tests {
             local_data_folder_path.to_path_buf(),
             remote_data_folder_object_store,
             table_metadata_manager,
+            ClusterMode::SingleNode,
             COMPRESSED_FILE_SIZE * 3 - 1,
             Arc::new(Mutex::new(Metric::new())),
         )
