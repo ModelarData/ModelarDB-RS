@@ -26,12 +26,13 @@ use crossbeam_channel::SendError;
 use dashmap::DashMap;
 use datafusion::arrow::array::{Array, StringArray};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
+use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tracing::{debug, error};
 
 use crate::context::Context;
-use crate::metadata::MetadataManager;
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
 use crate::storage::types::Channels;
 use crate::storage::types::MemoryPool;
@@ -58,7 +59,7 @@ pub(super) struct UncompressedDataManager {
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
     /// Management of metadata for ingesting and compressing time series.
-    metadata_manager: Arc<MetadataManager>,
+    table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used uncompressed memory in bytes, updated every time the used memory changes.
@@ -78,7 +79,7 @@ impl UncompressedDataManager {
         local_data_folder: PathBuf,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
-        metadata_manager: Arc<MetadataManager>,
+        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the uncompressed data manager exists.
@@ -90,7 +91,7 @@ impl UncompressedDataManager {
             current_batch_index: AtomicU64::new(0),
             active_uncompressed_data_buffers: DashMap::new(),
             channels,
-            metadata_manager,
+            table_metadata_manager,
             memory_pool,
             used_uncompressed_memory_metric: Mutex::new(Metric::new()),
             ingested_data_points_metric: Mutex::new(Metric::new()),
@@ -120,7 +121,7 @@ impl UncompressedDataManager {
 
             // unwrap() is safe as univariate_id can only exist if it is in the metadata database.
             let table_name = context
-                .metadata_manager
+                .table_metadata_manager
                 .univariate_id_to_table_name(univariate_id)
                 .await
                 .unwrap();
@@ -277,7 +278,7 @@ impl UncompressedDataManager {
                 .collect();
 
             let tag_hash = self
-                .metadata_manager
+                .table_metadata_manager
                 .lookup_or_compute_tag_hash(&model_table_metadata, &tag_values)
                 .await
                 .map_err(|error| format!("Tag hash could not be saved: {error}"))?;
@@ -318,7 +319,7 @@ impl UncompressedDataManager {
     /// Insert a single data point into the in-memory buffer for `univariate_id` if one exists. If
     /// no in-memory buffer exist for `univariate_id`, allocate a new buffer that will be compressed
     /// within `error_bound`. Returns [`IOError`] if the error bound cannot be retrieved from the
-    /// [`MetadataManager`].
+    /// [`TableMetadataManager`].
     async fn insert_data_point(
         &self,
         univariate_id: u64,
@@ -624,12 +625,12 @@ mod tests {
     use datafusion::arrow::array::StringBuilder;
     use datafusion::arrow::datatypes::SchemaRef;
     use datafusion::arrow::record_batch::RecordBatch;
+    use modelardb_common::metadata;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_common::test;
     use modelardb_common::types::{TimestampBuilder, ValueBuilder};
     use ringbuf::Rb;
 
-    use crate::metadata::MetadataManager;
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
 
     const CURRENT_BATCH_INDEX: u64 = 0;
@@ -829,7 +830,7 @@ mod tests {
         assert_eq!(
             data_manager
                 .active_uncompressed_data_buffers
-                .get(&11395701956291516418)
+                .get(&4940964593210619905)
                 .unwrap()
                 .len(),
             3
@@ -1161,11 +1162,15 @@ mod tests {
     async fn create_managers(
         path: &Path,
     ) -> (
-        Arc<MetadataManager>,
+        Arc<TableMetadataManager<Sqlite>>,
         UncompressedDataManager,
         Arc<ModelTableMetadata>,
     ) {
-        let metadata_manager = Arc::new(MetadataManager::try_new(path).await.unwrap());
+        let metadata_manager = Arc::new(
+            metadata::try_new_sqlite_table_metadata_manager(path)
+                .await
+                .unwrap(),
+        );
 
         // Ensure the expected metadata is available through the metadata manager.
         let model_table_metadata = test::model_table_metadata();
@@ -1189,7 +1194,7 @@ mod tests {
 
         // UncompressedDataManager::try_new() lookup the error bounds for each univariate_id.
         let uncompressed_data_manager = UncompressedDataManager::try_new(
-            metadata_manager.local_data_folder().to_owned(),
+            path.to_path_buf(),
             memory_pool,
             channels,
             metadata_manager.clone(),

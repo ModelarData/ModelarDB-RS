@@ -30,6 +30,7 @@ use datafusion::arrow::array::{Array, ArrayBuilder};
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
+use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
 use modelardb_common::types::{
@@ -37,7 +38,6 @@ use modelardb_common::types::{
 };
 use tracing::debug;
 
-use crate::metadata::MetadataManager;
 use crate::storage::{StorageEngine, UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER};
 
 /// Number of [`RecordBatches`](RecordBatch) that must be ingested without modifying an
@@ -233,7 +233,7 @@ impl UncompressedDataBuffer for UncompressedInMemoryDataBuffer {
     /// Return the error bound the buffer must be compressed within.
     fn error_bound(&self) -> ErrorBound {
         let column_index: usize =
-            MetadataManager::univariate_id_to_column_index(self.univariate_id).into();
+            metadata::univariate_id_to_column_index(self.univariate_id).into();
         self.model_table_metadata.error_bounds[column_index]
     }
 
@@ -365,7 +365,7 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
     /// Return the error bound the buffer must be compressed within.
     fn error_bound(&self) -> ErrorBound {
         let column_index: usize =
-            MetadataManager::univariate_id_to_column_index(self.univariate_id).into();
+            metadata::univariate_id_to_column_index(self.univariate_id).into();
         self.model_table_metadata.error_bounds[column_index]
     }
 
