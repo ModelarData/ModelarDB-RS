@@ -32,7 +32,9 @@ use std::time::Duration;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket};
 use bytes::{Buf, Bytes};
-use datafusion::arrow::array::{Array, ListArray, StringArray, UInt32Array, UInt64Array};
+use datafusion::arrow::array::{
+    Array, Float64Array, ListArray, StringArray, UInt32Array, UInt64Array,
+};
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Millisecond};
 use datafusion::arrow::ipc::convert;
@@ -42,6 +44,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, StreamExt};
 use modelardb_common::array;
 use modelardb_common::test::data_generation;
+use modelardb_common::types::ErrorBound;
 use sysinfo::{Pid, PidExt, System, SystemExt};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
@@ -778,27 +781,27 @@ fn test_cannot_ingest_invalid_time_series() {
 
 #[test]
 fn test_count_from_segments_equals_count_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT COUNT(field_one) FROM {TABLE_NAME}"));
+    assert_ne_query_plans_and_eq_result(format!("SELECT COUNT(field_one) FROM {TABLE_NAME}"), 0.0);
 }
 
 #[test]
 fn test_min_from_segments_equals_min_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT MIN(field_one) FROM {TABLE_NAME}"));
+    assert_ne_query_plans_and_eq_result(format!("SELECT MIN(field_one) FROM {TABLE_NAME}"), 0.0);
 }
 
 #[test]
 fn test_max_from_segments_equals_max_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT MAX(field_one) FROM {TABLE_NAME}"));
+    assert_ne_query_plans_and_eq_result(format!("SELECT MAX(field_one) FROM {TABLE_NAME}"), 0.0);
 }
 
 #[test]
 fn test_sum_from_segments_equals_sum_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT SUM(field_one) FROM {TABLE_NAME}"));
+    assert_ne_query_plans_and_eq_result(format!("SELECT SUM(field_one) FROM {TABLE_NAME}"), 0.001);
 }
 
 #[test]
 fn test_avg_from_segments_equals_avg_from_data_points() {
-    assert_ne_query_plans_and_eq_result(format!("SELECT AVG(field_one) FROM {TABLE_NAME}"));
+    assert_ne_query_plans_and_eq_result(format!("SELECT AVG(field_one) FROM {TABLE_NAME}"), 0.001);
 }
 
 /// Creates a table of type `table_type`, ingests `time_series`, and then flushes that data to disk.
@@ -822,8 +825,8 @@ fn ingest_time_series_and_flush_data(
 /// Generates a time series with one tag and ingests it into a model table. Then a query is created
 /// from `segment_query` that cannot be rewritten so it is executed on segments, executes both,
 /// compares their query plans to ensure one query was rewritten and the other query was not, and
-/// then compares the query results to ensure they are equivalent.
-fn assert_ne_query_plans_and_eq_result(segment_query: String) {
+/// then compares the query results to ensure they are within `error_bound`.
+fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) {
     let mut test_context = TestContext::new();
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
 
@@ -846,9 +849,34 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String) {
     assert!(data_point_query_plans_text.value(1).contains("GridExec"));
     assert!(!segment_query_plans_text.value(1).contains("GridExec"));
 
-    let data_point_query_result = test_context.execute_query(data_point_query).unwrap();
-    let segment_query_result = test_context.execute_query(segment_query).unwrap();
-    assert_eq!(data_point_query_result, segment_query_result);
+    let data_point_query_result_set = test_context.execute_query(data_point_query).unwrap();
+    let segment_query_result_set = test_context.execute_query(segment_query).unwrap();
+
+    if error_bound == 0.0 {
+        assert_eq!(data_point_query_result_set, segment_query_result_set);
+    } else {
+        assert_eq!(data_point_query_result_set.num_columns(), 1);
+        assert_eq!(data_point_query_result_set.num_rows(), 1);
+        assert_eq!(segment_query_result_set.num_columns(), 1);
+        assert_eq!(segment_query_result_set.num_rows(), 1);
+
+        let data_point_query_result = array!(data_point_query_result_set, 0, Float64Array);
+        let segment_query_result = array!(segment_query_result_set, 0, Float64Array);
+
+        let within_error_bound = modelardb_compression::is_value_within_error_bound(
+            ErrorBound::try_new(error_bound).unwrap(),
+            data_point_query_result.value(0) as f32,
+            segment_query_result.value(0) as f32,
+        );
+
+        assert!(
+            within_error_bound,
+            "{} is not within {}% of {}",
+            segment_query_result.value(0),
+            error_bound,
+            data_point_query_result.value(0)
+        );
+    }
 }
 
 #[test]

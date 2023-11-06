@@ -265,7 +265,7 @@ pub fn sum(
         let first = slope * start_time as f64 + intercept;
         let last = slope * end_time as f64 + intercept;
         let average = (first + last) / 2.0;
-        let length = models::len(start_time, end_time, timestamps);
+        let length = models::len(start_time, end_time, timestamps) - residuals_length;
         (average * length as f64) as Value
     } else {
         let mut timestamp_builder = TimestampBuilder::new();
