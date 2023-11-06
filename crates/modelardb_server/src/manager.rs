@@ -19,7 +19,11 @@
 use std::sync::Arc;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::Action;
+use arrow_flight::{Action, FlightData, FlightDescriptor};
+use bytes::Bytes;
+use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
+use datafusion::arrow::record_batch::RecordBatch;
+use futures::stream;
 use modelardb_common::arguments;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
@@ -146,6 +150,47 @@ impl Manager {
                 "Response for request to initialize database is empty.".to_owned(),
             ))
         }
+    }
+
+    /// Transfer `metadata` to the `metadata_table_name` table in the managers metadata
+    /// database. If `metadata` could not be transferred, return [`ModelarDbError`].
+    pub async fn transfer_metadata(
+        &self,
+        metadata: RecordBatch,
+        metadata_table_name: &str,
+    ) -> Result<(), ModelarDbError> {
+        let mut flight_client = FlightServiceClient::connect(self.url.clone())
+            .await
+            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+
+        // Put the table name in the flight descriptor of the first flight data in the stream.
+        let flight_descriptor = FlightDescriptor::new_path(vec![metadata_table_name.to_owned()]);
+        let mut flight_data = vec![FlightData {
+            flight_descriptor: Some(flight_descriptor),
+            data_header: Bytes::new(),
+            app_metadata: Bytes::new(),
+            data_body: Bytes::new(),
+        }];
+
+        // Write the metadata in the record batch into Arrow IPC format so it can be transferred.
+        let data_generator = IpcDataGenerator::default();
+        let writer_options = IpcWriteOptions::default();
+        let mut dictionary_tracker = DictionaryTracker::new(false);
+
+        let (_encoded_dictionaries, encoded_batch) = data_generator
+            .encoded_batch(&metadata, &mut dictionary_tracker, &writer_options)
+            .unwrap();
+
+        flight_data.push(encoded_batch.into());
+
+        // Stream the metadata to the Apache Arrow Flight client of the manager.
+        let flight_data_stream = stream::iter(flight_data);
+        flight_client
+            .do_put(flight_data_stream)
+            .await
+            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+
+        Ok(())
     }
 
     /// If the requested action is restricted to only be called by the manager, check that the

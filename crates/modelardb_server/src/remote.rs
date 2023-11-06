@@ -468,7 +468,7 @@ impl FlightService for FlightServiceHandler {
         let metadata = request.metadata().clone();
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
-        
+
         // If the server was started with a manager, validate the request.
         let configuration_manager = self.context.configuration_manager.read().await;
         if let ClusterMode::MultiNode(manager) = &configuration_manager.cluster_mode {
