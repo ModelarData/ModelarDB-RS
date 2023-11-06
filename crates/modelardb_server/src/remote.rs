@@ -51,7 +51,6 @@ use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::metadata::MetadataMap;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
@@ -259,38 +258,6 @@ impl FlightServiceHandler {
 
         utils::flight_data_to_arrow_batch(flight_data, schema.clone(), &self.dictionaries_by_id)
             .map_err(|error| Status::invalid_argument(error.to_string()))
-    }
-
-    /// If the server was started with a manager, and the requested action is restricted to only
-    /// be called by the manager, check that the request actually came from the manager. If the
-    /// request is valid, return [`Ok`], otherwise return [`Status`].
-    async fn validate_action_request(
-        &self,
-        action_type: &str,
-        metadata: MetadataMap,
-    ) -> Result<(), Status> {
-        let configuration_manager = self.context.configuration_manager.read().await;
-
-        if let ClusterMode::MultiNode(manager) = &configuration_manager.cluster_mode {
-            // If the server is started with a manager, these actions require a manager key.
-            let restricted_actions = [
-                "CommandStatementUpdate",
-                "UpdateRemoteObjectStore",
-                "KillEdge",
-            ];
-
-            if restricted_actions.iter().any(|&a| a == action_type) {
-                let request_key = metadata
-                    .get("x-manager-key")
-                    .ok_or(Status::unauthenticated("Missing manager key."))?;
-
-                if &manager.key != request_key {
-                    return Err(Status::unauthenticated("Manager key is invalid."));
-                }
-            }
-        }
-
-        Ok(())
     }
 }
 
@@ -501,9 +468,14 @@ impl FlightService for FlightServiceHandler {
         let metadata = request.metadata().clone();
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
-
-        self.validate_action_request(&action.r#type, metadata)
-            .await?;
+        
+        // If the server was started with a manager, validate the request.
+        let configuration_manager = self.context.configuration_manager.read().await;
+        if let ClusterMode::MultiNode(manager) = &configuration_manager.cluster_mode {
+            manager
+                .validate_action_request(&action.r#type, &metadata)
+                .map_err(|error| Status::unauthenticated(error.to_string()))?
+        };
 
         if action.r#type == "CommandStatementUpdate" {
             // Read the SQL from the action.

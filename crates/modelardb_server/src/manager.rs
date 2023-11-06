@@ -24,6 +24,7 @@ use modelardb_common::arguments;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
 use object_store::ObjectStore;
+use tonic::metadata::MetadataMap;
 use tonic::Request;
 
 use crate::context::Context;
@@ -145,5 +146,37 @@ impl Manager {
                 "Response for request to initialize database is empty.".to_owned(),
             ))
         }
+    }
+
+    /// If the requested action is restricted to only be called by the manager, check that the
+    /// request actually came from the manager. If the request is valid, return [`Ok`], otherwise
+    /// return [`ModelarDbError`].
+    pub fn validate_action_request(
+        &self,
+        action_type: &str,
+        metadata: &MetadataMap,
+    ) -> Result<(), ModelarDbError> {
+        // If the server is started with a manager, these actions require a manager key.
+        let restricted_actions = [
+            "CommandStatementUpdate",
+            "UpdateRemoteObjectStore",
+            "KillEdge",
+        ];
+
+        if restricted_actions.iter().any(|&a| a == action_type) {
+            let request_key = metadata
+                .get("x-manager-key")
+                .ok_or(ModelarDbError::ClusterError(
+                    "Missing manager key.".to_owned(),
+                ))?;
+
+            if &self.key != request_key {
+                return Err(ModelarDbError::ClusterError(
+                    "Manager key is invalid.".to_owned(),
+                ));
+            }
+        }
+
+        Ok(())
     }
 }
