@@ -874,7 +874,7 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
     ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
 
     // The predicate will guarantee that all data points will be included in the query but will
-    // prevents the optimizer from rewriting the query due to its presence in segment_query.
+    // prevent the optimizer from rewriting the query due to its presence in segment_query.
     let data_point_query = format!("{segment_query} WHERE timestamp >= 0::TIMESTAMP");
 
     let data_point_query_plans = test_context
