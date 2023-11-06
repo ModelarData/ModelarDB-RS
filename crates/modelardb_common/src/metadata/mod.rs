@@ -230,43 +230,63 @@ where
                 .collect::<Vec<String>>()
                 .join(",");
 
-            // Create a transaction to ensure the database state is consistent across tables.
-            let mut transaction = self.metadata_database_pool.begin().await?;
-
-            // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
-            // (https://www.sqlite.org/datatype3.html) both use signed integers.
-            let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
-
-            let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
-            let model_table_name = &model_table_metadata.name;
-
-            // ON CONFLICT DO NOTHING is used to silently fail when trying to insert an already
-            // existing hash. This purposely occurs if the hash has already been written to the
-            // metadata database but is no longer stored in the cache, e.g., if the system has
-            // been restarted.
-            sqlx::query(&format!(
-                "INSERT INTO {model_table_name}_tags (hash{maybe_separator}{tag_columns})
-                 VALUES ($1{maybe_separator}{values})
-                 ON CONFLICT DO NOTHING",
-            ))
-            .bind(signed_tag_hash)
-            .execute(&mut *transaction)
-            .await?;
-
-            sqlx::query(
-                "INSERT INTO model_table_hash_table_name (hash, table_name)
-                 VALUES ($1, $2)
-                 ON CONFLICT DO NOTHING",
+            self.save_tag_hash_metadata(
+                &model_table_metadata.name,
+                tag_hash,
+                &tag_columns,
+                &values,
             )
-            .bind(signed_tag_hash)
-            .bind(model_table_name)
-            .execute(&mut *transaction)
             .await?;
-
-            transaction.commit().await?;
 
             Ok(tag_hash)
         }
+    }
+
+    /// Save the given tag hash metadata to the model_table_tags table if it does not already
+    /// contain it, and to the model_table_hash_table_name table if it does not already contain it.
+    /// If the metadata cannot be inserted into either model_table_tags or model_table_hash_table_name,
+    /// [`Error`] is returned.
+    pub async fn save_tag_hash_metadata(
+        &self,
+        table_name: &str,
+        tag_hash: u64,
+        tag_columns: &str,
+        tag_values: &str,
+    ) -> Result<(), Error> {
+        // Create a transaction to ensure the database state is consistent across tables.
+        let mut transaction = self.metadata_database_pool.begin().await?;
+
+        // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
+        // (https://www.sqlite.org/datatype3.html) both use signed integers.
+        let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
+        let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
+
+        // ON CONFLICT DO NOTHING is used to silently fail when trying to insert an already
+        // existing hash. This purposely occurs if the hash has already been written to the
+        // metadata database but is no longer stored in the cache, e.g., if the system has
+        // been restarted.
+        sqlx::query(&format!(
+            "INSERT INTO {table_name}_tags (hash{maybe_separator}{tag_columns})
+             VALUES ($1{maybe_separator}{tag_values})
+             ON CONFLICT DO NOTHING",
+        ))
+        .bind(signed_tag_hash)
+        .execute(&mut *transaction)
+        .await?;
+
+        sqlx::query(
+            "INSERT INTO model_table_hash_table_name (hash, table_name)
+             VALUES ($1, $2)
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(signed_tag_hash)
+        .bind(table_name)
+        .execute(&mut *transaction)
+        .await?;
+
+        transaction.commit().await?;
+
+        Ok(())
     }
 
     /// Return the name of the table that contains the time series with `univariate_id`. Returns an
