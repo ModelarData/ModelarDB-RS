@@ -27,7 +27,6 @@ use datafusion::parquet::format::SortingColumn;
 use modelardb_common::metadata;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::metadata::univariate_id_to_column_index;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;

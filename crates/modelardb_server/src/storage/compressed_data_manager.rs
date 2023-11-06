@@ -519,7 +519,6 @@ mod tests {
     use futures::StreamExt;
     use modelardb_common::metadata;
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-    use modelardb_common::metadata::try_new_sqlite_table_metadata_manager;
     use modelardb_common::test;
     use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
     use object_store::local::LocalFileSystem;
