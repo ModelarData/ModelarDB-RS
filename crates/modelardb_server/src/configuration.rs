@@ -20,10 +20,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use modelardb_common::errors::ModelarDbError;
-use modelardb_common::types::{ClusterMode, ServerMode};
+use modelardb_common::types::ServerMode;
 use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;
+use crate::ClusterMode;
 
 /// The amount of reserved memory for uncompressed data by default, specifically 512 MiB.
 const DEFAULT_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 512 * 1024 * 1024;
@@ -138,7 +139,7 @@ mod tests {
     use std::sync::Arc;
 
     use modelardb_common::metadata;
-    use modelardb_common::types::{ClusterMode, ServerMode};
+    use modelardb_common::types::ServerMode;
     use tokio::runtime::Runtime;
     use tokio::sync::RwLock;
 

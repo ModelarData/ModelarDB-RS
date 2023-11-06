@@ -30,7 +30,7 @@ use std::sync::Arc;
 use std::{env, fs};
 
 use modelardb_common::arguments::{collect_command_line_arguments, validate_remote_data_folder};
-use modelardb_common::types::{ClusterMode, ServerMode};
+use modelardb_common::types::ServerMode;
 use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
@@ -50,6 +50,14 @@ pub static PORT: Lazy<u16> = Lazy::new(|| match env::var("MODELARDBD_PORT") {
         .unwrap(),
     Err(_) => 9999,
 });
+
+/// The different possible modes that a ModelarDB server can be deployed in, assigned when the
+/// server is started.
+#[derive(Clone)]
+pub enum ClusterMode {
+    SingleNode,
+    MultiNode(Manager),
+}
 
 /// Folders for storing metadata and Apache Parquet files.
 pub struct DataFolders {
@@ -110,9 +118,9 @@ fn main() -> Result<(), String> {
         .block_on(context.register_model_tables(&context))
         .map_err(|error| format!("Unable to register model tables: {error}"))?;
 
-    if let ClusterMode::MultiNode(manager_url, _key) = &cluster_mode {
+    if let ClusterMode::MultiNode(manager) = &cluster_mode {
         runtime
-            .block_on(context.register_and_save_manager_tables(manager_url, &context))
+            .block_on(context.register_and_save_manager_tables(&manager.url, &context))
             .map_err(|error| format!("Unable to register manager tables: {error}"))?;
     }
 
@@ -159,13 +167,14 @@ async fn parse_command_line_arguments(
             },
         )),
         &["multi", "cloud", manager_url, local_data_folder] => {
-            let (key, remote_object_store) = Manager::register_node(manager_url, ServerMode::Cloud)
-                .await
-                .map_err(|error| error.to_string())?;
+            let (manager, remote_object_store) =
+                Manager::register_node(manager_url, ServerMode::Cloud)
+                    .await
+                    .map_err(|error| error.to_string())?;
 
             Ok((
                 ServerMode::Cloud,
-                ClusterMode::MultiNode(manager_url.to_owned(), key),
+                ClusterMode::MultiNode(manager),
                 DataFolders {
                     local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                     remote_data_folder: Some(remote_object_store.clone()),
@@ -175,13 +184,14 @@ async fn parse_command_line_arguments(
         }
         &["multi", "edge", manager_url, local_data_folder]
         | &["multi", manager_url, local_data_folder] => {
-            let (key, remote_object_store) = Manager::register_node(manager_url, ServerMode::Cloud)
-                .await
-                .map_err(|error| error.to_string())?;
+            let (manager, remote_object_store) =
+                Manager::register_node(manager_url, ServerMode::Cloud)
+                    .await
+                    .map_err(|error| error.to_string())?;
 
             Ok((
                 ServerMode::Edge,
-                ClusterMode::MultiNode(manager_url.to_owned(), key),
+                ClusterMode::MultiNode(manager),
                 DataFolders {
                     local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                     remote_data_folder: Some(remote_object_store),

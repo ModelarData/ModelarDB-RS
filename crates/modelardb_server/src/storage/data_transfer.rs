@@ -26,7 +26,6 @@ use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::TableMetadataManager;
-use modelardb_common::types::ClusterMode;
 use object_store::local::LocalFileSystem;
 use object_store::path::{Path as ObjectStorePath, PathPart};
 use object_store::{ObjectMeta, ObjectStore};
@@ -36,6 +35,7 @@ use tracing::debug;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::Metric;
 use crate::storage::COMPRESSED_DATA_FOLDER;
+use crate::ClusterMode;
 
 // TODO: Make the transfer batch size in bytes part of the user-configurable settings.
 // TODO: When the storage engine is changed to use object store for everything, receive

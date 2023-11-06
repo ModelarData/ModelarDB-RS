@@ -46,7 +46,7 @@ use modelardb_common::arguments::{decode_argument, parse_object_store_arguments}
 use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
-use modelardb_common::types::{ClusterMode, ServerMode, TimestampBuilder};
+use modelardb_common::types::{ServerMode, TimestampBuilder};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
@@ -57,6 +57,7 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
 use crate::context::Context;
+use crate::ClusterMode;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through [`FlightServiceHandler`].
@@ -270,7 +271,7 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         let configuration_manager = self.context.configuration_manager.read().await;
 
-        if let ClusterMode::MultiNode(_manager_url, key) = &configuration_manager.cluster_mode {
+        if let ClusterMode::MultiNode(manager) = &configuration_manager.cluster_mode {
             // If the server is started with a manager, these actions require a manager key.
             let restricted_actions = [
                 "CommandStatementUpdate",
@@ -283,7 +284,7 @@ impl FlightServiceHandler {
                     .get("x-manager-key")
                     .ok_or(Status::unauthenticated("Missing manager key."))?;
 
-                if key != request_key {
+                if &manager.key != request_key {
                     return Err(Status::unauthenticated("Manager key is invalid."));
                 }
             }

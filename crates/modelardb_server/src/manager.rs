@@ -18,8 +18,8 @@
 
 use std::sync::Arc;
 
-use arrow_flight::Action;
 use arrow_flight::flight_service_client::FlightServiceClient;
+use arrow_flight::Action;
 use modelardb_common::arguments;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
@@ -29,12 +29,13 @@ use tonic::Request;
 use crate::PORT;
 
 /// Manages metadata related to the manager and provides functionality for interacting with the manager.
+#[derive(Clone)]
 pub struct Manager {
     /// The gRPC URL of the manager's Apache Arrow Flight server.
-    url: String,
+    pub(crate) url: String,
     /// Key received from the manager when registering, used to validate future requests that are
     /// only allowed to come from the manager.
-    key: String,
+    pub(crate) key: String,
 }
 
 impl Manager {
@@ -45,7 +46,7 @@ impl Manager {
     pub(crate) async fn register_node(
         manager_url: &str,
         server_mode: ServerMode,
-    ) -> Result<(String, Arc<dyn ObjectStore>), ModelarDbError> {
+    ) -> Result<(Self, Arc<dyn ObjectStore>), ModelarDbError> {
         let mut flight_client = FlightServiceClient::connect(manager_url.to_owned())
             .await
             .map_err(|error| {
@@ -79,7 +80,10 @@ impl Manager {
                 .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
             Ok((
-                key.to_owned(),
+                Self {
+                    url: manager_url.to_owned(),
+                    key: key.to_owned(),
+                },
                 arguments::parse_object_store_arguments(offset_data)
                     .await
                     .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?,

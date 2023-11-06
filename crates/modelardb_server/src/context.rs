@@ -31,7 +31,7 @@ use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::parser::ValidStatement;
-use modelardb_common::types::{ClusterMode, ServerMode};
+use modelardb_common::types::ServerMode;
 use modelardb_common::{metadata, parser};
 use object_store::ObjectStore;
 use sqlx::Sqlite;
@@ -43,7 +43,7 @@ use tracing::info;
 use crate::configuration::ConfigurationManager;
 use crate::query::ModelTable;
 use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::{optimizer, storage, DataFolders};
+use crate::{optimizer, storage, ClusterMode, DataFolders};
 
 /// Provides access to the system's configuration and components.
 pub struct Context {

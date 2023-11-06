@@ -48,7 +48,7 @@ use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
-use modelardb_common::types::{ClusterMode, Timestamp, TimestampArray, Value};
+use modelardb_common::types::{Timestamp, TimestampArray, Value};
 use object_store::{ObjectMeta, ObjectStore};
 use sqlx::Sqlite;
 use tokio::fs::File as TokioFile;
@@ -64,6 +64,7 @@ use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::{Channels, MemoryPool, Message, Metric, MetricType};
 use crate::storage::uncompressed_data_buffer::UncompressedDataMultivariate;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
+use crate::ClusterMode;
 
 /// The folder storing uncompressed data in the data folders.
 const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
