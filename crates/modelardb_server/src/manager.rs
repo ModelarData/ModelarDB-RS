@@ -16,9 +16,21 @@
 //! Interface to connect to and interact with the manager, used if the server is started with a
 //! manager and needs to interact with it to initialize the metadata database and transfer metadata.
 
+use std::sync::Arc;
+
+use arrow_flight::Action;
+use arrow_flight::flight_service_client::FlightServiceClient;
+use modelardb_common::arguments;
+use modelardb_common::errors::ModelarDbError;
+use modelardb_common::types::ServerMode;
+use object_store::ObjectStore;
+use tonic::Request;
+
+use crate::PORT;
+
 /// Manages metadata related to the manager and provides functionality for interacting with the manager.
 pub struct Manager {
-    /// The gRPC URL of the manager, used to connect to the Apache Arrow Flight server.
+    /// The gRPC URL of the manager's Apache Arrow Flight server.
     url: String,
     /// Key received from the manager when registering, used to validate future requests that are
     /// only allowed to come from the manager.
@@ -26,5 +38,56 @@ pub struct Manager {
 }
 
 impl Manager {
+    /// Register the server as a node in the cluster and retrieve the key and remote object store
+    /// connection information from the manager. If the key and connection information could not be
+    /// retrieved or a connection to the remote object store could not be established,
+    /// [`ModelarDbError`] is returned.
+    pub(crate) async fn register_node(
+        manager_url: &str,
+        server_mode: ServerMode,
+    ) -> Result<(String, Arc<dyn ObjectStore>), ModelarDbError> {
+        let mut flight_client = FlightServiceClient::connect(manager_url.to_owned())
+            .await
+            .map_err(|error| {
+                ModelarDbError::ClusterError(format!("Could not connect to manager: {error}"))
+            })?;
 
+        // Add the url and mode of the server to the action request.
+        let localhost_with_port = "grpc://127.0.0.1:".to_owned() + &PORT.to_string();
+        let mut body = arguments::encode_argument(localhost_with_port.as_str());
+        body.append(&mut arguments::encode_argument(
+            server_mode.to_string().as_str(),
+        ));
+
+        let action = Action {
+            r#type: "RegisterNode".to_owned(),
+            body: body.into(),
+        };
+
+        // Extract the connection information for the remote object store from the response.
+        let maybe_response = flight_client
+            .do_action(Request::new(action))
+            .await
+            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?
+            .into_inner()
+            .message()
+            .await
+            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+
+        if let Some(response) = maybe_response {
+            let (key, offset_data) = arguments::decode_argument(&response.body)
+                .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
+
+            Ok((
+                key.to_owned(),
+                arguments::parse_object_store_arguments(offset_data)
+                    .await
+                    .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?,
+            ))
+        } else {
+            Err(ModelarDbError::ImplementationError(
+                "Response for request to register the node is empty.".to_owned(),
+            ))
+        }
+    }
 }

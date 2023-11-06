@@ -32,7 +32,8 @@ pub enum ModelarDbError {
     /// Error returned when failing to create a new instance of a struct or when updating a struct
     /// field with an invalid value.
     ConfigurationError(String),
-    /// Error returned when failing to retrieve data from the storage engine, query engine, or metadata database.
+    /// Error returned when failing to retrieve data from the storage engine, query engine,
+    /// or metadata database.
     DataRetrievalError(String),
     /// Error returned when something happens that should be impossible.
     ImplementationError(String),

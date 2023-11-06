@@ -19,6 +19,7 @@
 
 mod configuration;
 mod context;
+mod manager;
 mod optimizer;
 mod query;
 mod remote;
@@ -28,20 +29,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::{env, fs};
 
-use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::Action;
-use modelardb_common::arguments::{
-    collect_command_line_arguments, decode_argument, encode_argument, parse_object_store_arguments,
-    validate_remote_data_folder,
-};
+use modelardb_common::arguments::{collect_command_line_arguments, validate_remote_data_folder};
 use modelardb_common::types::{ClusterMode, ServerMode};
 use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
-use tonic::Request;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::context::Context;
+use crate::manager::Manager;
 
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
@@ -163,7 +159,9 @@ async fn parse_command_line_arguments(
             },
         )),
         &["multi", "cloud", manager_url, local_data_folder] => {
-            let (key, remote_object_store) = register_node(manager_url, ServerMode::Cloud).await?;
+            let (key, remote_object_store) = Manager::register_node(manager_url, ServerMode::Cloud)
+                .await
+                .map_err(|error| error.to_string())?;
 
             Ok((
                 ServerMode::Cloud,
@@ -177,7 +175,9 @@ async fn parse_command_line_arguments(
         }
         &["multi", "edge", manager_url, local_data_folder]
         | &["multi", manager_url, local_data_folder] => {
-            let (key, remote_object_store) = register_node(manager_url, ServerMode::Cloud).await?;
+            let (key, remote_object_store) = Manager::register_node(manager_url, ServerMode::Cloud)
+                .await
+                .map_err(|error| error.to_string())?;
 
             Ok((
                 ServerMode::Edge,
@@ -225,52 +225,6 @@ fn argument_to_local_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>
     let object_store =
         LocalFileSystem::new_with_prefix(argument).map_err(|error| error.to_string())?;
     Ok(Arc::new(object_store))
-}
-
-/// Register the node and retrieve the key and object store connection info from the ModelarDB
-/// manager and use it to connect to the remote object store. If the key and connection information
-/// could not be retrieved or a connection could not be established, [`String`] is returned.
-async fn register_node(
-    manager_url: &str,
-    server_mode: ServerMode,
-) -> Result<(String, Arc<dyn ObjectStore>), String> {
-    let mut flight_client = FlightServiceClient::connect(manager_url.to_owned())
-        .await
-        .map_err(|error| format!("Could not connect to manager: {error}"))?;
-
-    // Add the url and mode of the server to the action request.
-    let localhost_with_port = "grpc://127.0.0.1:".to_owned() + &PORT.to_string();
-    let mut body = encode_argument(localhost_with_port.as_str());
-    body.append(&mut encode_argument(server_mode.to_string().as_str()));
-
-    let action = Action {
-        r#type: "RegisterNode".to_owned(),
-        body: body.into(),
-    };
-
-    // Extract the connection information for the remote object store from the response.
-    let maybe_response = flight_client
-        .do_action(Request::new(action))
-        .await
-        .map_err(|error| error.to_string())?
-        .into_inner()
-        .message()
-        .await
-        .map_err(|error| error.to_string())?;
-
-    if let Some(response) = maybe_response {
-        let (key, offset_data) =
-            decode_argument(&response.body).map_err(|error| error.to_string())?;
-
-        Ok((
-            key.to_owned(),
-            parse_object_store_arguments(offset_data)
-                .await
-                .map_err(|error| error.to_string())?,
-        ))
-    } else {
-        Err("Response for request to register the node is empty.".to_owned())
-    }
 }
 
 /// Register a handler to execute when CTRL+C is pressed. The handler takes an exclusive lock for
