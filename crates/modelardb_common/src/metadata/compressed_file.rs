@@ -39,6 +39,22 @@ pub struct CompressedFile {
 }
 
 impl CompressedFile {
+    pub fn new(
+        file_metadata: ObjectMeta,
+        start_time: Timestamp,
+        end_time: Timestamp,
+        min_value: Value,
+        max_value: Value,
+    ) -> Self {
+        CompressedFile {
+            file_metadata,
+            start_time,
+            end_time,
+            min_value,
+            max_value,
+        }
+    }
+
     /// Convert the given [`ObjectMeta`] and [`RecordBatch`] to a [`CompressedFile`].
     pub fn from_record_batch(file_metadata: ObjectMeta, batch: &RecordBatch) -> Self {
         // unwrap() is safe as None is only returned if all of the values are None.
