@@ -505,7 +505,7 @@ impl CompressedDataManager {
             .await
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
-        Ok(CompressedFile::from_record_batch(object_meta, &merged))
+        Ok(CompressedFile::from_compressed_data(object_meta, &merged))
     }
 }
 

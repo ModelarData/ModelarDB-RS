@@ -607,7 +607,7 @@ mod tests {
             e_tag: None,
         };
 
-        let compressed_file = CompressedFile::from_record_batch(object_meta, &batch);
+        let compressed_file = CompressedFile::from_compressed_data(object_meta, &batch);
 
         // Save the metadata of the compressed file to the metadata database.
         table_metadata_manager
