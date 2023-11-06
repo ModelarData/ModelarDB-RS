@@ -217,26 +217,29 @@ impl TestContext {
             TableType::NormalTable => {
                 format!(
                     "CREATE TABLE {table_name}(timestamp TIMESTAMP,
-                         field_one REAL, field_two REAL, metadata TEXT)"
+                         field_one REAL, field_two REAL, field_three REAL,
+                         field_four REAL, field_five REAL, metadata TEXT)"
                 )
             }
             TableType::ModelTable => {
                 format!(
-                    "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
-                         field_one FIELD, field_two FIELD, tag TAG)"
+                    "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, field_one FIELD,
+                     field_two FIELD, field_three FIELD, field_four FIELD, field_five FIELD,
+                     tag TAG)"
                 )
             }
             TableType::ModelTableNoTag => {
                 format!(
                     "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
-                         field_one FIELD, field_two FIELD)"
+                         field_one FIELD, field_two FIELD, field_three FIELD,
+                         field_four FIELD, field_five FIELD)"
                 )
             }
             TableType::ModelTableAsField => {
                 format!(
                     "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
                          generated FIELD AS (field_one + CAST(37.0 AS REAL)),
-                         field_one FIELD, field_two FIELD)"
+                         field_one FIELD, field_two FIELD, field_three FIELD)"
                 )
             }
         };
@@ -262,7 +265,7 @@ impl TestContext {
         let (uncompressed_timestamps, mut uncompressed_values) =
             data_generation::generate_multivariate_time_series(
                 TIME_SERIES_TEST_LENGTH,
-                2,
+                5,
                 SEGMENT_TEST_MINIMUM_LENGTH..2 * SEGMENT_TEST_MINIMUM_LENGTH + 1,
                 generate_irregular_timestamps,
                 multiply_noise_range,
@@ -275,13 +278,19 @@ impl TestContext {
             Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
             Field::new("field_one", DataType::Float32, false),
             Field::new("field_two", DataType::Float32, false),
+            Field::new("field_three", DataType::Float32, false),
+            Field::new("field_four", DataType::Float32, false),
+            Field::new("field_five", DataType::Float32, false),
         ];
 
-        // 0 is used as the index for each call to swap_remove() as a value is removed each time.
+        // 0 is used as the index for each call to remove() as a value is removed each time.
         let mut columns: Vec<Arc<dyn Array>> = vec![
             Arc::new(uncompressed_timestamps),
-            Arc::new(uncompressed_values.swap_remove(0)),
-            Arc::new(uncompressed_values.swap_remove(0)),
+            Arc::new(uncompressed_values.remove(0)),
+            Arc::new(uncompressed_values.remove(0)),
+            Arc::new(uncompressed_values.remove(0)),
+            Arc::new(uncompressed_values.remove(0)),
+            Arc::new(uncompressed_values.remove(0)),
         ];
 
         if let Some(tag) = maybe_tag {
@@ -584,6 +593,9 @@ fn test_can_get_schema() {
             Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
             Field::new("field_one", DataType::Float32, false),
             Field::new("field_two", DataType::Float32, false),
+            Field::new("field_three", DataType::Float32, false),
+            Field::new("field_four", DataType::Float32, false),
+            Field::new("field_five", DataType::Float32, false),
             Field::new("tag", DataType::Utf8, false)
         ])
     );
@@ -647,6 +659,7 @@ fn test_can_collect_metrics() {
     let values_array = modelardb_common::array!(metrics, 2, ListArray);
 
     // The used_uncompressed_memory metric should record the change when ingesting and when flushing.
+    // 786432 is common_test::UNCOMPRESSED_BUFFER_SIZE
     assert_eq!(
         values_array
             .value(0)
@@ -654,12 +667,12 @@ fn test_can_collect_metrics() {
             .downcast_ref::<UInt32Array>()
             .unwrap()
             .values(),
-        &[786432, 1572864, 786432, 0] // 786432 is common_test::UNCOMPRESSED_BUFFER_SIZE
+        &[786432, 1572864, 2359296, 3145728, 3932160, 3145728, 2359296, 1572864, 786432, 0]
     );
 
     // The amount of bytes used for compressed memory changes depending on the compression so we
     // can only check that the metric is populated when compressing and when flushing.
-    assert_eq!(values_array.value(1).len(), 4);
+    assert_eq!(values_array.value(1).len(), 10);
 
     // The ingested_data_points metric should record the single request to ingest data points.
     assert_eq!(
@@ -674,7 +687,7 @@ fn test_can_collect_metrics() {
 
     // The amount of bytes used for disk space changes depending on the compression so we
     // can only check that the metric is populated when initializing and when flushing.
-    assert_eq!(values_array.value(3).len(), 3);
+    assert_eq!(values_array.value(3).len(), 6);
 }
 
 #[test]
@@ -730,8 +743,8 @@ fn test_can_ingest_time_series_with_generated_field() {
         .unwrap();
 
     // Column two in the query is the generated column which does not exist in data point.
-    assert_eq!(time_series.num_columns(), 3);
-    assert_eq!(query_result.num_columns(), 4);
+    assert_eq!(time_series.num_columns(), 6);
+    assert_eq!(query_result.num_columns(), 5);
     assert_eq!(time_series.column(0), query_result.column(0));
     assert_eq!(time_series.column(1), query_result.column(2));
 }
