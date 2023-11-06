@@ -123,7 +123,7 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-/// Parse the command line arguments into a [`PgPool`] connection to the metadata database and a
+/// Parse the command line arguments into a [`PgPool`] of connections to the metadata database and a
 /// remote data folder. If the necessary command line arguments are not provided, too many
 /// arguments are provided, or if the arguments are malformed, [`String`] is returned.
 async fn parse_command_line_arguments(

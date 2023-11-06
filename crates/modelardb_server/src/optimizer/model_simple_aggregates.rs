@@ -995,7 +995,7 @@ mod tests {
     #[tokio::test]
     async fn test_rewrite_aggregate_on_one_column_without_predicates() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let query = "SELECT COUNT(field_1) FROM model_table";
+        let query = &format!("SELECT COUNT(field_1) FROM {}", test::MODEL_TABLE_NAME);
         let physical_plan = query_optimized_physical_query_plan(temp_dir.path(), query).await;
 
         let expected_plan = vec![
@@ -1012,9 +1012,11 @@ mod tests {
     async fn test_rewrite_aggregates_on_one_column_without_predicates() {
         // Apache Arrow DataFusion 30 creates two input columns to AggregateExec when both SUM and
         // AVG is computed in the same query, so for now, multiple queries are used for the test.
-        let query_no_avg = "SELECT COUNT(field_1), MIN(field_1), MAX(field_1), SUM(field_1)
-                                  FROM model_table";
-        let query_only_avg = "SELECT AVG(field_1) FROM model_table";
+        let query_no_avg = &format!(
+            "SELECT COUNT(field_1), MIN(field_1), MAX(field_1), SUM(field_1) FROM {}",
+            test::MODEL_TABLE_NAME
+        );
+        let query_only_avg = &format!("SELECT AVG(field_1) FROM {}", test::MODEL_TABLE_NAME);
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -1034,7 +1036,10 @@ mod tests {
     #[tokio::test]
     async fn test_do_not_rewrite_aggregate_on_one_column_with_predicates() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let query = "SELECT COUNT(field_1) FROM model_table WHERE field_1 = 37.0";
+        let query = &format!(
+            "SELECT COUNT(field_1) FROM {} WHERE field_1 = 37.0",
+            test::MODEL_TABLE_NAME
+        );
         let physical_plan = query_optimized_physical_query_plan(temp_dir.path(), query).await;
 
         let expected_plan = vec![
@@ -1055,7 +1060,10 @@ mod tests {
     #[tokio::test]
     async fn test_do_not_rewrite_aggregate_on_multiple_columns_without_predicates() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let query = "SELECT COUNT(field_1), COUNT(field_2) FROM model_table";
+        let query = &format!(
+            "SELECT COUNT(field_1), COUNT(field_2) FROM {}",
+            test::MODEL_TABLE_NAME
+        );
         let physical_plan = query_optimized_physical_query_plan(temp_dir.path(), query).await;
 
         let expected_plan = vec![
@@ -1095,7 +1103,7 @@ mod tests {
         let model_table_metadata = test::model_table_metadata_arc();
 
         context
-            .metadata_manager
+            .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
@@ -1103,7 +1111,7 @@ mod tests {
         context
             .session
             .register_table(
-                "model_table",
+                test::MODEL_TABLE_NAME,
                 ModelTable::new(context.clone(), model_table_metadata),
             )
             .unwrap();

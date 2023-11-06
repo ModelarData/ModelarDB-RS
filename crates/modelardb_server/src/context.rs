@@ -29,10 +29,10 @@ use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::{ParquetReadOptions, SessionConfig, SessionContext};
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::metadata::{try_new_sqlite_table_metadata_manager, TableMetadataManager};
-use modelardb_common::parser;
+use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::types::{ClusterMode, ServerMode};
+use modelardb_common::{metadata, parser};
 use object_store::ObjectStore;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
@@ -48,7 +48,7 @@ use crate::{optimizer, storage, DataFolders};
 /// Provides access to the system's configuration and components.
 pub struct Context {
     /// Metadata for the tables and model tables in the data folder.
-    pub metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+    pub table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     /// Updatable configuration of the server.
     pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
     /// Main interface for Apache Arrow DataFusion.
@@ -66,8 +66,8 @@ impl Context {
         cluster_mode: ClusterMode,
         server_mode: ServerMode,
     ) -> Result<Self, ModelarDbError> {
-        let metadata_manager = Arc::new(
-            try_new_sqlite_table_metadata_manager(&data_folders.local_data_folder)
+        let table_metadata_manager = Arc::new(
+            metadata::try_new_sqlite_table_metadata_manager(&data_folders.local_data_folder)
                 .await
                 .map_err(|error| {
                     ModelarDbError::ConfigurationError(format!(
@@ -90,7 +90,7 @@ impl Context {
                 data_folders.local_data_folder.clone(),
                 data_folders.remote_data_folder.clone(),
                 &configuration_manager,
-                metadata_manager.clone(),
+                table_metadata_manager.clone(),
             )
             .await
             .map_err(|error| {
@@ -101,7 +101,7 @@ impl Context {
         ));
 
         Ok(Context {
-            metadata_manager,
+            table_metadata_manager,
             configuration_manager,
             session,
             storage_engine,
@@ -254,7 +254,7 @@ impl Context {
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Persist the new table to the metadata database.
-        self.metadata_manager
+        self.table_metadata_manager
             .save_table_metadata(table_name, sql)
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
@@ -285,7 +285,7 @@ impl Context {
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Persist the new model table to the metadata database.
-        self.metadata_manager
+        self.table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, sql)
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
@@ -299,7 +299,7 @@ impl Context {
     /// could not be registered, return [`ModelarDbError`].
     pub async fn register_tables(&self) -> Result<(), ModelarDbError> {
         let table_names = self
-            .metadata_manager
+            .table_metadata_manager
             .table_names()
             .await
             .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
@@ -339,7 +339,7 @@ impl Context {
         context: &Arc<Context>,
     ) -> Result<(), ModelarDbError> {
         let model_table_metadata = self
-            .metadata_manager
+            .table_metadata_manager
             .model_table_metadata()
             .await
             .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
@@ -371,8 +371,9 @@ impl Context {
         let database_schema = self.default_database_schema()?;
 
         let table = database_schema.table(table_name).await.ok_or_else(|| {
-            let message = format!("Table with name '{table_name}' does not exist.");
-            ModelarDbError::DataRetrievalError(message)
+            ModelarDbError::DataRetrievalError(format!(
+                "Table with name '{table_name}' does not exist."
+            ))
         })?;
 
         if let Some(model_table) = table.as_any().downcast_ref::<ModelTable>() {
@@ -386,8 +387,9 @@ impl Context {
     pub async fn check_if_table_exists(&self, table_name: &str) -> Result<(), ModelarDbError> {
         let maybe_schema = self.schema_of_table_in_default_database_schema(table_name);
         if maybe_schema.await.is_ok() {
-            let message = format!("Table with name '{table_name}' already exists.");
-            return Err(ModelarDbError::ConfigurationError(message));
+            return Err(ModelarDbError::ConfigurationError(format!(
+                "Table with name '{table_name}' already exists."
+            )));
         }
         Ok(())
     }
@@ -401,7 +403,9 @@ impl Context {
         let database_schema = self.default_database_schema()?;
 
         let table = database_schema.table(table_name).await.ok_or_else(|| {
-            ModelarDbError::DataRetrievalError("Table does not exist.".to_owned())
+            ModelarDbError::DataRetrievalError(format!(
+                "Table with name '{table_name}' does not exist."
+            ))
         })?;
 
         Ok(table.schema())
@@ -464,7 +468,7 @@ mod tests {
         assert!(folder_path.exists());
 
         // The table should be saved to the metadata database.
-        let table_names = context.metadata_manager.table_names().await.unwrap();
+        let table_names = context.table_metadata_manager.table_names().await.unwrap();
         assert!(table_names.contains(&"table_name".to_owned()));
 
         // The table should be registered in the Apache Arrow DataFusion catalog.
@@ -499,7 +503,7 @@ mod tests {
 
         // The table should be saved to the metadata database.
         let model_table_metadata = context
-            .metadata_manager
+            .table_metadata_manager
             .model_table_metadata()
             .await
             .unwrap();
@@ -510,7 +514,10 @@ mod tests {
         );
 
         // The model table should be registered in the Apache Arrow DataFusion catalog.
-        assert!(context.check_if_table_exists("model_table").await.is_err());
+        assert!(context
+            .check_if_table_exists(test::MODEL_TABLE_NAME)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -559,7 +566,7 @@ mod tests {
 
         let model_table_metadata = test::model_table_metadata();
         context
-            .metadata_manager
+            .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
             .await
             .unwrap();
@@ -579,7 +586,7 @@ mod tests {
             .unwrap();
 
         let metadata = context
-            .model_table_metadata_from_default_database_schema("model_table")
+            .model_table_metadata_from_default_database_schema(test::MODEL_TABLE_NAME)
             .await
             .unwrap()
             .unwrap();
@@ -610,7 +617,7 @@ mod tests {
         let context = create_context(temp_dir.path()).await;
 
         assert!(context
-            .model_table_metadata_from_default_database_schema("model_table")
+            .model_table_metadata_from_default_database_schema(test::MODEL_TABLE_NAME)
             .await
             .is_err());
     }
@@ -625,7 +632,10 @@ mod tests {
             .await
             .unwrap();
 
-        assert!(context.check_if_table_exists("model_table").await.is_err());
+        assert!(context
+            .check_if_table_exists(test::MODEL_TABLE_NAME)
+            .await
+            .is_err());
     }
 
     #[tokio::test]
@@ -633,7 +643,10 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let context = create_context(temp_dir.path()).await;
 
-        assert!(context.check_if_table_exists("model_table").await.is_ok());
+        assert!(context
+            .check_if_table_exists(test::MODEL_TABLE_NAME)
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
@@ -647,7 +660,7 @@ mod tests {
             .unwrap();
 
         let schema = context
-            .schema_of_table_in_default_database_schema("model_table")
+            .schema_of_table_in_default_database_schema(test::MODEL_TABLE_NAME)
             .await
             .unwrap();
 
@@ -660,7 +673,7 @@ mod tests {
         let context = create_context(temp_dir.path()).await;
 
         assert!(context
-            .schema_of_table_in_default_database_schema("model_table")
+            .schema_of_table_in_default_database_schema(test::MODEL_TABLE_NAME)
             .await
             .is_err())
     }

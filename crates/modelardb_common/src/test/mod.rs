@@ -46,7 +46,10 @@ pub const TABLE_SQL: &str =
 
 /// SQL to create a model table with a timestamp column, two field columns, and a tag column.
 pub const MODEL_TABLE_SQL: &str =
-    "CREATE MODEL TABLE model_table(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD, tag TAG)";
+    "CREATE MODEL TABLE model_table_name(timestamp TIMESTAMP, field_1 FIELD, field_2 FIELD, tag TAG)";
+
+/// Name of the model table used in tests.
+pub const MODEL_TABLE_NAME: &str = "model_table_name";
 
 /// Return [`ModelTableMetadata`] for a model table with a schema containing a tag column, a
 /// timestamp column, and two field columns.
@@ -68,7 +71,7 @@ pub fn model_table_metadata() -> ModelTableMetadata {
     let generated_columns = vec![None, None, None, None];
 
     ModelTableMetadata::try_new(
-        "model_table".to_owned(),
+        MODEL_TABLE_NAME.to_owned(),
         query_schema,
         error_bounds,
         generated_columns,

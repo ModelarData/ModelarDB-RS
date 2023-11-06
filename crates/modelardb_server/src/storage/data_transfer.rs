@@ -51,7 +51,7 @@ pub struct DataTransfer {
     /// The object store that the data should be transferred to.
     pub remote_data_folder: Arc<dyn ObjectStore>,
     /// Management of metadata for deleting file metadata after transferring.
-    metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+    table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     /// Map from table names and column indices to the combined size in bytes of the compressed
     /// files currently saved for the column in that table.
     compressed_files: DashMap<(String, u16), usize>,
@@ -69,7 +69,7 @@ impl DataTransfer {
     pub async fn try_new(
         local_data_folder: PathBuf,
         remote_data_folder: Arc<dyn ObjectStore>,
-        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         transfer_batch_size_in_bytes: usize,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
@@ -94,7 +94,7 @@ impl DataTransfer {
         let data_transfer = Self {
             local_data_folder,
             remote_data_folder,
-            metadata_manager,
+            table_metadata_manager,
             compressed_files: compressed_files.clone(),
             transfer_batch_size_in_bytes,
             used_disk_space_metric,
@@ -208,7 +208,7 @@ impl DataTransfer {
         .await?;
 
         // Delete the metadata for the transferred files from the metadata database.
-        self.metadata_manager
+        self.table_metadata_manager
             .replace_compressed_files(table_name, column_index.into(), &object_metas, None)
             .await
             .map_err(|error| ParquetError::General(error.to_string()))?;
@@ -266,7 +266,7 @@ mod tests {
     use std::path::Path;
 
     use chrono::Utc;
-    use modelardb_common::metadata::try_new_sqlite_table_metadata_manager;
+    use modelardb_common::metadata;
     use modelardb_common::test;
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
@@ -274,7 +274,6 @@ mod tests {
 
     use crate::storage::StorageEngine;
 
-    const TABLE_NAME: &str = "model_table";
     const COLUMN_INDEX: u16 = 5;
     const COMPRESSED_FILE_SIZE: usize = 2429;
 
@@ -288,21 +287,23 @@ mod tests {
     #[test]
     fn test_folder_path_is_not_compressed_file() {
         let path = ObjectStorePath::from(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}"
+            "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}",
+            test::MODEL_TABLE_NAME
         ));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_table_folder_without_compressed_folder_is_not_compressed_file() {
-        let path = ObjectStorePath::from(format!("test/{TABLE_NAME}/test.parquet"));
+        let path = ObjectStorePath::from(format!("test/{}/test.parquet", test::MODEL_TABLE_NAME));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
 
     #[test]
     fn test_non_apache_parquet_file_is_not_compressed_file() {
         let path = ObjectStorePath::from(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/test.txt"
+            "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}/test.txt",
+            test::MODEL_TABLE_NAME
         ));
         assert!(DataTransfer::path_is_compressed_file(path).is_none());
     }
@@ -310,11 +311,12 @@ mod tests {
     #[test]
     fn test_compressed_file_is_compressed_file() {
         let path = ObjectStorePath::from(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}/test.parquet"
+            "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}/test.parquet",
+            test::MODEL_TABLE_NAME
         ));
         assert_eq!(
             DataTransfer::path_is_compressed_file(path),
-            Some((TABLE_NAME.to_owned(), COLUMN_INDEX))
+            Some((test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
         );
     }
 
@@ -333,7 +335,7 @@ mod tests {
         assert_eq!(
             *data_transfer
                 .compressed_files
-                .get(&(TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
                 .unwrap(),
             COMPRESSED_FILE_SIZE * 2
         );
@@ -359,14 +361,14 @@ mod tests {
         let (compressed_file, _) = create_compressed_file(metadata_manager, temp_dir.path()).await;
 
         assert!(data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .is_ok());
 
         assert_eq!(
             data_transfer
                 .compressed_files
-                .get(&(TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
                 .unwrap()
                 .value(),
             &COMPRESSED_FILE_SIZE
@@ -383,18 +385,18 @@ mod tests {
         let (compressed_file, _) = create_compressed_file(metadata_manager, temp_dir.path()).await;
 
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .unwrap();
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .unwrap();
 
         assert_eq!(
             data_transfer
                 .compressed_files
-                .get(&(TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
                 .unwrap()
                 .value(),
             &(COMPRESSED_FILE_SIZE * 2)
@@ -412,11 +414,11 @@ mod tests {
             create_compressed_file(metadata_manager, temp_dir.path()).await;
 
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .unwrap();
         data_transfer
-            .transfer_data(TABLE_NAME, COLUMN_INDEX)
+            .transfer_data(test::MODEL_TABLE_NAME, COLUMN_INDEX)
             .await
             .unwrap();
 
@@ -436,15 +438,15 @@ mod tests {
             create_compressed_file(metadata_manager, temp_dir.path()).await;
 
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file_1)
+            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file_1)
             .await
             .unwrap();
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file_2)
+            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file_2)
             .await
             .unwrap();
         data_transfer
-            .transfer_data(TABLE_NAME, COLUMN_INDEX)
+            .transfer_data(test::MODEL_TABLE_NAME, COLUMN_INDEX)
             .await
             .unwrap();
 
@@ -464,7 +466,7 @@ mod tests {
         // Set the max batch size to ensure that the file is transferred immediately.
         data_transfer.transfer_batch_size_in_bytes = COMPRESSED_FILE_SIZE - 1;
         data_transfer
-            .add_compressed_file(TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .unwrap();
 
@@ -518,7 +520,8 @@ mod tests {
 
         // The transferred file should be in a sub-folder under the table name and column index.
         let target_folder = target.path().join(format!(
-            "{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}",
+            "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}",
+            test::MODEL_TABLE_NAME
         ));
 
         assert!(target_folder.exists());
@@ -534,8 +537,15 @@ mod tests {
 
         // The metadata for the files should be deleted from the metadata database.
         let compressed_files = data_transfer
-            .metadata_manager
-            .compressed_files(TABLE_NAME, COLUMN_INDEX.into(), None, None, None, None)
+            .table_metadata_manager
+            .compressed_files(
+                test::MODEL_TABLE_NAME,
+                COLUMN_INDEX.into(),
+                None,
+                None,
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -544,7 +554,7 @@ mod tests {
         assert_eq!(
             *data_transfer
                 .compressed_files
-                .get(&(TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
                 .unwrap(),
             0_usize
         );
@@ -565,10 +575,13 @@ mod tests {
     /// Set up a data folder with a table folder that has a single compressed file in it. Return the
     /// [`CompressedFile`] representing the created Apache Parquet file and the path to the file.
     async fn create_compressed_file(
-        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         local_data_folder_path: &Path,
     ) -> (CompressedFile, PathBuf) {
-        let folder_path = format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/{COLUMN_INDEX}");
+        let folder_path = format!(
+            "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}",
+            test::MODEL_TABLE_NAME
+        );
         let path = local_data_folder_path.join(folder_path.clone());
         fs::create_dir_all(path.clone()).unwrap();
 
@@ -592,8 +605,12 @@ mod tests {
         let compressed_file = CompressedFile::from_record_batch(object_meta, &batch);
 
         // Save the metadata of the compressed file to the metadata database.
-        metadata_manager
-            .save_compressed_file(TABLE_NAME, COLUMN_INDEX.into(), &compressed_file)
+        table_metadata_manager
+            .save_compressed_file(
+                test::MODEL_TABLE_NAME,
+                COLUMN_INDEX.into(),
+                &compressed_file,
+            )
             .await
             .unwrap();
 
@@ -602,7 +619,7 @@ mod tests {
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
     async fn create_data_transfer_component(
-        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         local_data_folder_path: &Path,
     ) -> (TempDir, DataTransfer) {
         let target_dir = tempfile::tempdir().unwrap();
@@ -614,7 +631,7 @@ mod tests {
         let data_transfer = DataTransfer::try_new(
             local_data_folder_path.to_path_buf(),
             remote_data_folder_object_store,
-            metadata_manager,
+            table_metadata_manager,
             COMPRESSED_FILE_SIZE * 3 - 1,
             Arc::new(Mutex::new(Metric::new())),
         )
@@ -624,13 +641,14 @@ mod tests {
         (target_dir, data_transfer)
     }
 
-    /// Create a metadata manager and save a single model table to the metadata database.
+    /// Create a table metadata manager and save a single model table to the metadata database.
     async fn create_metadata_manager(
         local_data_folder_path: &Path,
     ) -> Arc<TableMetadataManager<Sqlite>> {
-        let metadata_manager = try_new_sqlite_table_metadata_manager(local_data_folder_path)
-            .await
-            .unwrap();
+        let metadata_manager =
+            metadata::try_new_sqlite_table_metadata_manager(local_data_folder_path)
+                .await
+                .unwrap();
 
         let model_table_metadata = test::model_table_metadata();
         metadata_manager

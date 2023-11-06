@@ -24,6 +24,7 @@ use std::sync::Arc;
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::format::SortingColumn;
+use modelardb_common::metadata;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::univariate_id_to_column_index;
@@ -67,7 +68,7 @@ impl CompressedSegmentBatch {
 
     /// Return the index of the column the buffer stores data for.
     pub(super) fn column_index(&self) -> u16 {
-        univariate_id_to_column_index(self.univariate_id)
+        metadata::univariate_id_to_column_index(self.univariate_id)
     }
 }
 

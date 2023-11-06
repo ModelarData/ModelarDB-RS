@@ -488,7 +488,7 @@ impl TableProvider for ModelTable {
         // Compute a mapping from hashes to the requested tag values in the requested order.
         let hash_to_tags = self
             .context
-            .metadata_manager
+            .table_metadata_manager
             .mapping_from_hash_to_tags(table_name, &stored_tag_columns_in_projection)
             .await
             .map_err(|error| DataFusionError::Plan(error.to_string()))?;

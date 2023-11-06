@@ -107,7 +107,7 @@ impl StorageEngine {
         local_data_folder: PathBuf,
         remote_data_folder: Option<Arc<dyn ObjectStore>>,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
-        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     ) -> Result<Self, IOError> {
         // Create shared memory pool.
         let configuration_manager = configuration_manager.read().await;
@@ -129,7 +129,7 @@ impl StorageEngine {
                 local_data_folder.clone(),
                 memory_pool.clone(),
                 channels.clone(),
-                metadata_manager.clone(),
+                table_metadata_manager.clone(),
                 used_disk_space_metric.clone(),
             )
             .await?,
@@ -177,7 +177,7 @@ impl StorageEngine {
                 DataTransfer::try_new(
                     local_data_folder.clone(),
                     remote_data_folder,
-                    metadata_manager.clone(),
+                    table_metadata_manager.clone(),
                     TRANSFER_BATCH_SIZE_IN_BYTES,
                     used_disk_space_metric.clone(),
                 )
@@ -192,7 +192,7 @@ impl StorageEngine {
             local_data_folder,
             channels.clone(),
             memory_pool.clone(),
-            metadata_manager,
+            table_metadata_manager,
             used_disk_space_metric,
         )?);
 
@@ -425,7 +425,7 @@ impl StorageEngine {
     pub(super) async fn update_remote_data_folder(
         &mut self,
         remote_data_folder: Arc<dyn ObjectStore>,
-        metadata_manager: &Arc<TableMetadataManager<Sqlite>>,
+        table_metadata_manager: &Arc<TableMetadataManager<Sqlite>>,
     ) -> Result<(), IOError> {
         let maybe_current_data_transfer =
             &mut *self.compressed_data_manager.data_transfer.write().await;
@@ -436,7 +436,7 @@ impl StorageEngine {
             let data_transfer = DataTransfer::try_new(
                 self.compressed_data_manager.local_data_folder.clone(),
                 remote_data_folder,
-                metadata_manager.clone(),
+                table_metadata_manager.clone(),
                 TRANSFER_BATCH_SIZE_IN_BYTES,
                 self.compressed_data_manager.used_disk_space_metric.clone(),
             )

@@ -66,7 +66,7 @@ pub(super) struct CompressedDataManager {
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
     /// Management of metadata for saving compressed file metadata.
-    metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+    table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used compressed memory in bytes, updated every time the used memory changes.
@@ -84,7 +84,7 @@ impl CompressedDataManager {
         local_data_folder: PathBuf,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
-        metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the compressed data manager exists.
@@ -96,7 +96,7 @@ impl CompressedDataManager {
             compressed_data_buffers: DashMap::new(),
             compressed_queue: SegQueue::new(),
             channels,
-            metadata_manager,
+            table_metadata_manager,
             memory_pool,
             used_compressed_memory_metric: Mutex::new(Metric::new()),
             used_disk_space_metric,
@@ -260,7 +260,7 @@ impl CompressedDataManager {
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
         // Retrieve the metadata of all files that fit the given arguments.
         let relevant_object_metas = self
-            .metadata_manager
+            .table_metadata_manager
             .compressed_files(
                 table_name,
                 column_index.into(),
@@ -287,7 +287,7 @@ impl CompressedDataManager {
                     ))
                 })?;
 
-            self.metadata_manager
+            self.table_metadata_manager
                 .replace_compressed_files(
                     table_name,
                     column_index.into(),
@@ -374,7 +374,7 @@ impl CompressedDataManager {
             compressed_data_buffer.save_to_apache_parquet(&self.local_data_folder, &folder_path)?;
 
         // Save the metadata of the compressed file to the metadata database.
-        self.metadata_manager
+        self.table_metadata_manager
             .save_compressed_file(table_name, column_index.into(), &compressed_file)
             .await
             .unwrap();
@@ -517,6 +517,7 @@ mod tests {
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
     use futures::StreamExt;
+    use modelardb_common::metadata;
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_common::metadata::try_new_sqlite_table_metadata_manager;
     use modelardb_common::test;
@@ -527,7 +528,6 @@ mod tests {
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
 
-    const TABLE_NAME: &str = "model_table";
     const COLUMN_INDEX: u16 = 5;
 
     // Tests for insert_record_batch().
@@ -537,8 +537,11 @@ mod tests {
         let (temp_dir, data_manager) = create_compressed_data_manager().await;
 
         let local_data_folder = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-        let table_folder =
-            ObjectStorePath::parse(format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}/")).unwrap();
+        let table_folder = ObjectStorePath::parse(format!(
+            "{COMPRESSED_DATA_FOLDER}/{}/",
+            test::MODEL_TABLE_NAME
+        ))
+        .unwrap();
 
         let table_folder_files = local_data_folder
             .list(Some(&table_folder))
@@ -549,7 +552,7 @@ mod tests {
         assert!(table_folder_files.is_empty());
 
         data_manager
-            .insert_record_batch(TABLE_NAME, record_batch)
+            .insert_record_batch(test::MODEL_TABLE_NAME, record_batch)
             .await
             .unwrap();
 
@@ -567,7 +570,7 @@ mod tests {
     async fn test_can_insert_compressed_segment_into_new_compressed_data_buffer() {
         let segments = compressed_segments_record_batch();
         let (_temp_dir, data_manager) = create_compressed_data_manager().await;
-        let key = (TABLE_NAME.to_owned(), COLUMN_INDEX);
+        let key = (test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX);
 
         data_manager
             .insert_compressed_segments(segments)
@@ -590,7 +593,7 @@ mod tests {
     async fn test_can_insert_compressed_segment_into_existing_compressed_data_buffer() {
         let segments = compressed_segments_record_batch();
         let (_temp_dir, data_manager) = create_compressed_data_manager().await;
-        let key = (TABLE_NAME.to_owned(), COLUMN_INDEX);
+        let key = (test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX);
 
         data_manager
             .insert_compressed_segments(segments.clone())
@@ -636,14 +639,23 @@ mod tests {
 
         // The compressed data should be saved to the table_name folder in the compressed folder.
         let local_data_folder = Path::new(&data_manager.local_data_folder);
-        let compressed_path =
-            local_data_folder.join(format!("{COMPRESSED_DATA_FOLDER}/{TABLE_NAME}"));
+        let compressed_path = local_data_folder.join(format!(
+            "{COMPRESSED_DATA_FOLDER}/{}",
+            test::MODEL_TABLE_NAME
+        ));
         assert_eq!(compressed_path.read_dir().unwrap().count(), 1);
 
         // The metadata of the compressed data should be saved to the metadata database.
         let compressed_files = data_manager
-            .metadata_manager
-            .compressed_files(TABLE_NAME, COLUMN_INDEX.into(), None, None, None, None)
+            .table_metadata_manager
+            .compressed_files(
+                test::MODEL_TABLE_NAME,
+                COLUMN_INDEX.into(),
+                None,
+                None,
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -749,7 +761,7 @@ mod tests {
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager
             .compressed_files(
-                TABLE_NAME,
+                test::MODEL_TABLE_NAME,
                 COLUMN_INDEX,
                 None,
                 None,
@@ -770,7 +782,7 @@ mod tests {
         let object_store: Arc<dyn ObjectStore> =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let result = data_manager.compressed_files(
-            TABLE_NAME,
+            test::MODEL_TABLE_NAME,
             COLUMN_INDEX,
             None,
             None,
@@ -858,7 +870,7 @@ mod tests {
 
         // Create a metadata manager and save a single model table to the metadata database.
         let metadata_manager = Arc::new(
-            try_new_sqlite_table_metadata_manager(temp_dir.path())
+            metadata::try_new_sqlite_table_metadata_manager(temp_dir.path())
                 .await
                 .unwrap(),
         );
@@ -899,7 +911,7 @@ mod tests {
         ]));
         let model_table_metadata = Arc::new(
             ModelTableMetadata::try_new(
-                TABLE_NAME.to_owned(),
+                test::MODEL_TABLE_NAME.to_owned(),
                 query_schema,
                 vec![
                     ErrorBound::try_new(0.0).unwrap(),
