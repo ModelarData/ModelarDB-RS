@@ -204,7 +204,7 @@ impl DataTransfer {
 
         // Merge the files and transfer them to the remote object store by setting the remote data
         // folder as the output data folder for the merged file.
-        let _compressed_file = CompressedDataManager::merge_compressed_apache_parquet_files(
+        let compressed_file = CompressedDataManager::merge_compressed_apache_parquet_files(
             &self.local_data_folder,
             &object_metas,
             &self.remote_data_folder,
@@ -235,6 +235,17 @@ impl DataTransfer {
             "Transferred {} bytes of compressed data to path '{}' in remote object store.",
             transferred_bytes, path,
         );
+
+        // If the server was started with a manager, transfer the metadata of the transferred file.
+        if let ClusterMode::MultiNode(manager) = &self.cluster_mode {
+            let metadata =
+                compressed_file.insert_into_record_batch(table_name, column_index as i64);
+
+            manager
+                .transfer_metadata(metadata, &format!("{table_name}_compressed_files"))
+                .await
+                .map_err(|error| ParquetError::General(error.to_string()))?;
+        }
 
         Ok(())
     }

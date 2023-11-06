@@ -88,6 +88,7 @@ impl CompressedFile {
         let file_path = self.file_metadata.location.to_string();
         let created_at = self.file_metadata.last_modified.timestamp_millis();
 
+        // unwrap() is safe since the columns match the schema and all columns are of the same length.
         RecordBatch::try_new(
             schema.0,
             vec![
