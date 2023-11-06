@@ -120,7 +120,7 @@ fn main() -> Result<(), String> {
 
     if let ClusterMode::MultiNode(manager) = &cluster_mode {
         runtime
-            .block_on(context.register_and_save_manager_tables(&manager.url, &context))
+            .block_on(manager.retrieve_and_create_tables(&context))
             .map_err(|error| format!("Unable to register manager tables: {error}"))?;
     }
 

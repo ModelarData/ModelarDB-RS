@@ -26,6 +26,7 @@ use modelardb_common::types::ServerMode;
 use object_store::ObjectStore;
 use tonic::Request;
 
+use crate::context::Context;
 use crate::PORT;
 
 /// Manages metadata related to the manager and provides functionality for interacting with the manager.
@@ -91,6 +92,57 @@ impl Manager {
         } else {
             Err(ModelarDbError::ImplementationError(
                 "Response for request to register the node is empty.".to_owned(),
+            ))
+        }
+    }
+
+    /// Initialize the local database schema with the tables and model tables from the managers
+    /// database schema. If the tables to create could not be retrieved from the manager, or the
+    /// tables could not be created, return [`ModelarDbError`].
+    pub(crate) async fn retrieve_and_create_tables(
+        &self,
+        context: &Arc<Context>,
+    ) -> Result<(), ModelarDbError> {
+        let existing_tables = context.default_database_schema()?.table_names();
+
+        // Retrieve the tables to create from the manager.
+        let mut flight_client = FlightServiceClient::connect(self.url.clone())
+            .await
+            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+
+        // Add the already existing tables to the action request.
+        let action = Action {
+            r#type: "InitializeDatabase".to_owned(),
+            body: existing_tables.join(",").into_bytes().into(),
+        };
+
+        // Extract the SQL for the tables that need to be created from the response.
+        let response = flight_client
+            .do_action(Request::new(action))
+            .await
+            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+
+        let maybe_message = response
+            .into_inner()
+            .message()
+            .await
+            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+
+        if let Some(message) = maybe_message {
+            let table_sql_queries = std::str::from_utf8(&message.body)
+                .map_err(|error| ModelarDbError::TableError(error.to_string()))?
+                .split(';')
+                .filter(|sql| !sql.is_empty());
+
+            // For each table to create, register and save the table in the metadata database.
+            for sql in table_sql_queries {
+                context.parse_and_create_table(sql, context).await?;
+            }
+
+            Ok(())
+        } else {
+            Err(ModelarDbError::ImplementationError(
+                "Response for request to initialize database is empty.".to_owned(),
             ))
         }
     }

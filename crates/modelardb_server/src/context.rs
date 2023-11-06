@@ -19,8 +19,6 @@
 use std::fs;
 use std::sync::Arc;
 
-use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::Action;
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::catalog::schema::SchemaProvider;
@@ -37,7 +35,6 @@ use object_store::ObjectStore;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
-use tonic::Request;
 use tracing::info;
 
 use crate::configuration::ConfigurationManager;
@@ -132,57 +129,6 @@ impl Context {
         }
 
         SessionContext::new_with_state(session_state)
-    }
-
-    /// Initialize the local database schema with the tables and model tables from the managers
-    /// database schema. `context` is needed as an argument instead of using `self` to avoid having
-    /// to copy the context when registering model tables. If the tables to create could not be
-    /// retrieved from the manager, or the tables could not be created, return [`ModelarDbError`].
-    pub(crate) async fn register_and_save_manager_tables(
-        &self,
-        manager_url: &str,
-        context: &Arc<Context>,
-    ) -> Result<(), ModelarDbError> {
-        let existing_tables = self.default_database_schema()?.table_names();
-
-        // Retrieve the tables to create from the manager.
-        let mut flight_client = FlightServiceClient::connect(manager_url.to_owned())
-            .await
-            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
-
-        // Add the already existing tables to the action request.
-        let action = Action {
-            r#type: "InitializeDatabase".to_owned(),
-            body: existing_tables.join(",").into_bytes().into(),
-        };
-
-        // Extract the SQL for the tables that need to be created from the response.
-        let maybe_response = flight_client
-            .do_action(Request::new(action))
-            .await
-            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?
-            .into_inner()
-            .message()
-            .await
-            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
-
-        if let Some(response) = maybe_response {
-            let table_sql_queries = std::str::from_utf8(&response.body)
-                .map_err(|error| ModelarDbError::TableError(error.to_string()))?
-                .split(';')
-                .filter(|sql| !sql.is_empty());
-
-            // For each table to create, register and save the table in the metadata database.
-            for sql in table_sql_queries {
-                self.parse_and_create_table(sql, context).await?;
-            }
-
-            Ok(())
-        } else {
-            Err(ModelarDbError::ImplementationError(
-                "Response for request to initialize database is empty.".to_owned(),
-            ))
-        }
     }
 
     /// Parse `sql` and create a normal table or a model table based on the SQL. `context` is needed
