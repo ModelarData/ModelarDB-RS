@@ -216,30 +216,51 @@ impl TestContext {
         let cmd = match table_type {
             TableType::NormalTable => {
                 format!(
-                    "CREATE TABLE {table_name}(timestamp TIMESTAMP,
-                         field_one REAL, field_two REAL, field_three REAL,
-                         field_four REAL, field_five REAL, metadata TEXT)"
+                    "CREATE TABLE {table_name}(
+                         timestamp TIMESTAMP,
+                         field_one REAL,
+                         field_two REAL,
+                         field_three REAL,
+                         field_four REAL,
+                         field_five REAL,
+                         metadata TEXT
+                     )"
                 )
             }
             TableType::ModelTable => {
                 format!(
-                    "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, field_one FIELD,
-                     field_two FIELD, field_three FIELD, field_four FIELD, field_five FIELD,
-                     tag TAG)"
+                    "CREATE MODEL TABLE {table_name}(
+                         timestamp TIMESTAMP,
+                         field_one FIELD,
+                         field_two FIELD,
+                         field_three FIELD,
+                         field_four FIELD,
+                         field_five FIELD,
+                         tag TAG
+                     )"
                 )
             }
             TableType::ModelTableNoTag => {
                 format!(
-                    "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
-                         field_one FIELD, field_two FIELD, field_three FIELD,
-                         field_four FIELD, field_five FIELD)"
+                    "CREATE MODEL TABLE {table_name}(
+                         timestamp TIMESTAMP,
+                         field_one FIELD,
+                         field_two FIELD,
+                         field_three FIELD,
+                         field_four FIELD,
+                         field_five FIELD
+                     )"
                 )
             }
             TableType::ModelTableAsField => {
                 format!(
-                    "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
+                    "CREATE MODEL TABLE {table_name}(
+                         timestamp TIMESTAMP,
                          generated FIELD AS (field_one + CAST(37.0 AS REAL)),
-                         field_one FIELD, field_two FIELD, field_three FIELD)"
+                         field_one FIELD,
+                         field_two FIELD,
+                         field_three FIELD
+                     )"
                 )
             }
         };
@@ -659,7 +680,7 @@ fn test_can_collect_metrics() {
     let values_array = modelardb_common::array!(metrics, 2, ListArray);
 
     // The used_uncompressed_memory metric should record the change when ingesting and when flushing.
-    // 786432 is common_test::UNCOMPRESSED_BUFFER_SIZE
+    // 786432 is modelardb_common::test::UNCOMPRESSED_BUFFER_SIZE.
     assert_eq!(
         values_array
             .value(0)
@@ -835,17 +856,24 @@ fn ingest_time_series_and_flush_data(
     test_context.flush_data_to_disk();
 }
 
-/// Generates a time series with one tag and ingests it into a model table. Then a query is created
-/// from `segment_query` that cannot be rewritten so it is executed on segments, executes both,
-/// compares their query plans to ensure one query was rewritten and the other query was not, and
-/// then compares the query results to ensure they are within `error_bound`.
+/// Asserts that the query executed on segments in `segment_query` returns a result within
+/// `error_bound` of an equivalent query executed on data points reconstructed from the segments by:
+/// 1. Generating a multivariate time series with one tag and ingesting it into a model table.
+/// 2. Creating an equivalent query from `segment_query` that the optimizer cannot rewrite so it is
+/// executed on segments.
+/// 3. Executing `segment_query` and the new equivalent query against the model table containing the
+/// generated time series.
+/// 4. Comparing the query plans of `segment_query` and the new equivalent query to ensure the first
+/// query was rewritten by the optimizer and the other query was not.
+/// 5. Comparing the results of `segment_query` and the new equivalent query to ensure they are
+/// within `error_bound`.
 fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) {
     let mut test_context = TestContext::new();
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
 
     ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
 
-    // The predicate will guarantee that all data points will be included in the query but which
+    // The predicate will guarantee that all data points will be included in the query but will
     // prevents the optimizer from rewriting the query due to its presence in segment_query.
     let data_point_query = format!("{segment_query} WHERE timestamp >= 0::TIMESTAMP");
 
@@ -884,7 +912,7 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
 
         assert!(
             within_error_bound,
-            "{} is not within {}% of {}",
+            "{} is not within {}% of {}.",
             segment_query_result.value(0),
             error_bound,
             data_point_query_result.value(0)

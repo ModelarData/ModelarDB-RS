@@ -114,11 +114,11 @@ pub fn generate_univariate_time_series(
 }
 
 /// Generate a univariate or multivariate time series with sub-sequences of values with different
-/// [`ValuesStructure`]. The time series will have `field_columns columns containing `length` data
+/// [`ValuesStructure`]. The time series will have `field_columns` columns containing `length` data
 /// points in sequences of `segment_length_range` (except possibly for the last as it may be
 /// truncated to match `length`) and the timestamps will be regular or irregular depending on the
 /// value of `generate_irregular_timestamps`. If `multiply_noise_range` is [`Some`], random values
-/// will be generated in the [``Range<f32>``] and multiplied with each value in the sequences with
+/// will be generated in the [`Range<f32>`] and multiplied with each value in the sequences with
 /// constant and linear values. Sequences with random values are generated in the range specified as
 /// `random_value_range`.
 pub fn generate_multivariate_time_series(

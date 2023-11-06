@@ -517,7 +517,7 @@ mod tests {
 
         metric.append(30, false);
 
-        // timestamp is measured just before metric.append() to minimize the change that enough time
+        // timestamp is measured just before metric.append() to minimize the chance that enough time
         // has passed that the timestamp written to metric is different than what the test expects.
         let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let timestamp = since_the_epoch.as_millis() as Timestamp;
