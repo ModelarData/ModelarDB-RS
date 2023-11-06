@@ -37,8 +37,9 @@ use futures::TryStreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
 use sqlx::database::HasArguments;
+use sqlx::postgres::PgQueryResult;
 use sqlx::query::Query;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteQueryResult};
 use sqlx::{Database, Error, Executor, IntoArguments, Pool, Postgres, Row, Sqlite};
 use tracing::warn;
 
@@ -80,6 +81,25 @@ impl MetadataDatabase for Sqlite {
     }
 }
 
+/// SQLx does not provide a trait for query results so we have to provide one ourselves to
+/// ensure the `rows_affected()` method is available for each supported RDBMS.
+pub trait MetadataDatabaseQueryResult {
+    /// The number of rows that were affected by the query being executed.
+    fn rows_affected(&self) -> u64;
+}
+
+impl MetadataDatabaseQueryResult for PgQueryResult {
+    fn rows_affected(&self) -> u64 {
+        self.rows_affected()
+    }
+}
+
+impl MetadataDatabaseQueryResult for SqliteQueryResult {
+    fn rows_affected(&self) -> u64 {
+        self.rows_affected()
+    }
+}
+
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata database.
 #[derive(Clone)]
@@ -98,6 +118,7 @@ where
     usize: sqlx::ColumnIndex<<DB as Database>::Row>,
     for<'a> <DB as HasArguments<'a>>::Arguments: IntoArguments<'a, DB>,
     for<'a> &'a mut <DB as Database>::Connection: Executor<'a, Database = DB>,
+    for<'a> <DB as Database>::QueryResult: MetadataDatabaseQueryResult,
     for<'a> String: sqlx::Type<DB> + sqlx::Encode<'a, DB> + sqlx::Decode<'a, DB>,
     for<'a> Vec<u8>: sqlx::Type<DB> + sqlx::Encode<'a, DB> + sqlx::Decode<'a, DB>,
     for<'a> &'a [u8]: sqlx::Type<DB> + sqlx::Decode<'a, DB>,
@@ -478,6 +499,7 @@ where
     /// * `compressed_files_to_delete` is empty.
     /// * The end time is before the start time in `replacement_compressed_file`.
     /// * The max value is smaller than the min value in `replacement_compressed_file`.
+    /// * Less than the number of files in `compressed_files_to_delete` was deleted.
     /// * The metadata database could not be modified.
     /// * A model table with `model_table_name` does not exist.
     pub async fn replace_compressed_files(
@@ -511,7 +533,7 @@ where
         // sqlx does not yet support binding arrays to IN (...) and recommends generating them.
         // https://github.com/launchbadge/sqlx/blob/main/FAQ.md#how-can-i-do-a-select--where-foo-in--query
         // query_schema_index is simply cast as a model table contains at most 1024 columns.
-        sqlx::query(&format!(
+        let delete_from_result = sqlx::query(&format!(
             "DELETE FROM {model_table_name}_compressed_files
              WHERE field_column = $1
              AND file_path IN ({compressed_files_to_delete_in})",
@@ -519,6 +541,15 @@ where
         .bind(query_schema_index as i64)
         .execute(&mut *transaction)
         .await?;
+
+        // The cast to usize is safe as only compressed_files_to_delete.len() can be deleted.
+        if compressed_files_to_delete.len() != delete_from_result.rows_affected() as usize {
+            return Err(Error::Configuration(Box::new(
+                ModelarDbError::ImplementationError(
+                    "Less than the expected number of files were deleted from the metadata database.".to_owned(),
+                ),
+            )));
+        }
 
         if let Some(compressed_file) = replacement_compressed_file {
             let insert_statement = format!(
