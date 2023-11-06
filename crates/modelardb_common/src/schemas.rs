@@ -112,9 +112,10 @@ pub static TAG_METADATA_SCHEMA: Lazy<TagMetadataSchema> = Lazy::new(|| {
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed file metadata.
 pub static COMPRESSED_FILE_METADATA_SCHEMA: Lazy<CompressedFileMetadataSchema> = Lazy::new(|| {
     CompressedFileMetadataSchema(Arc::new(Schema::new(vec![
-        Field::new("file_path", DataType::Utf8, false),
+        Field::new("table_name", DataType::Utf8, false),
         Field::new("field_column", DataType::Int64, false),
-        Field::new("size", DataType::Int64, false),
+        Field::new("file_path", DataType::Utf8, false),
+        Field::new("size", DataType::UInt64, false),
         Field::new("created_at", DataType::Int64, false),
         Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
         Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),

@@ -25,7 +25,7 @@ use std::str;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use arrow::array::{ArrayRef, StringArray, UInt64Array};
+use arrow::array::{ArrayRef, Int64Array, StringArray, UInt64Array};
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow::ipc::writer::IpcWriteOptions;
@@ -36,14 +36,18 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
+use chrono::{TimeZone, Utc};
 use futures::{stream, Stream, StreamExt};
 use modelardb_common::arguments::{decode_argument, encode_argument, parse_object_store_arguments};
+use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::normalize_name;
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::schemas::{COMPRESSED_FILE_METADATA_SCHEMA, TAG_METADATA_SCHEMA};
-use modelardb_common::types::ServerMode;
+use modelardb_common::types::{ServerMode, TimestampArray, ValueArray};
+use object_store::path::Path as ObjectStorePath;
+use object_store::ObjectMeta;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
@@ -189,16 +193,17 @@ impl FlightServiceHandler {
         flight_data_stream: &mut Streaming<FlightData>,
     ) -> Result<(), Status> {
         while let Some(flight_data) = flight_data_stream.next().await {
-            let tag_metadata =
+            let metadata =
                 self.flight_data_to_record_batch(&flight_data?, &TAG_METADATA_SCHEMA.0)?;
 
-            let table_name_array = modelardb_common::array!(tag_metadata, 0, StringArray);
-            let tag_hash_array = modelardb_common::array!(tag_metadata, 1, UInt64Array);
-            let tag_columns_array = modelardb_common::array!(tag_metadata, 2, StringArray);
-            let tag_values_array = modelardb_common::array!(tag_metadata, 3, StringArray);
+            // Extract the columns of the record batch so they can be accessed by row.
+            let table_name_array = modelardb_common::array!(metadata, 0, StringArray);
+            let tag_hash_array = modelardb_common::array!(metadata, 1, UInt64Array);
+            let tag_columns_array = modelardb_common::array!(metadata, 2, StringArray);
+            let tag_values_array = modelardb_common::array!(metadata, 3, StringArray);
 
             // For each tag metadata in the record batch, insert it in to the metadata database.
-            for row_index in 0..tag_metadata.num_rows() {
+            for row_index in 0..metadata.num_rows() {
                 self.context
                     .metadata_manager
                     .table_metadata_manager
@@ -224,11 +229,54 @@ impl FlightServiceHandler {
         flight_data_stream: &mut Streaming<FlightData>,
     ) -> Result<(), Status> {
         while let Some(flight_data) = flight_data_stream.next().await {
-            let _compressed_file_metadata = self
+            let metadata = self
                 .flight_data_to_record_batch(&flight_data?, &COMPRESSED_FILE_METADATA_SCHEMA.0)?;
 
-            // TODO: Convert into a CompressedFile.
-            // TODO: Use save_compressed_file in the table metadata manager.
+            // Extract the columns of the record batch so they can be accessed by row.
+            let table_name_array = modelardb_common::array!(metadata, 0, StringArray);
+            let field_column_array = modelardb_common::array!(metadata, 1, Int64Array);
+            let file_path_array = modelardb_common::array!(metadata, 2, StringArray);
+            let size_array = modelardb_common::array!(metadata, 3, UInt64Array);
+            let created_at_array = modelardb_common::array!(metadata, 4, Int64Array);
+            let start_time_array = modelardb_common::array!(metadata, 5, TimestampArray);
+            let end_time_array = modelardb_common::array!(metadata, 6, TimestampArray);
+            let min_value_array = modelardb_common::array!(metadata, 7, ValueArray);
+            let max_value_array = modelardb_common::array!(metadata, 8, ValueArray);
+
+            // For each compressed file in the record batch, insert it into the metadata database.
+            for row_index in 0..metadata.num_rows() {
+                // unwrap() is safe as the created_at timestamp cannot be out of range.
+                let last_modified = Utc
+                    .timestamp_millis_opt(created_at_array.value(row_index))
+                    .unwrap();
+
+                let file_metadata = ObjectMeta {
+                    location: ObjectStorePath::from(file_path_array.value(row_index)),
+                    last_modified,
+                    size: size_array.value(row_index) as usize,
+                    e_tag: None,
+                };
+
+                let compressed_file = CompressedFile::new(
+                    file_metadata,
+                    start_time_array.value(row_index),
+                    end_time_array.value(row_index),
+                    min_value_array.value(row_index),
+                    max_value_array.value(row_index),
+                );
+
+                // Save the compressed file in the row to the metadata database.
+                self.context
+                    .metadata_manager
+                    .table_metadata_manager
+                    .save_compressed_file(
+                        table_name_array.value(row_index),
+                        field_column_array.value(row_index) as usize,
+                        &compressed_file,
+                    )
+                    .await
+                    .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            }
         }
 
         Ok(())
