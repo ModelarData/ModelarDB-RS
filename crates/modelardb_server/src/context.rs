@@ -371,8 +371,9 @@ impl Context {
         let database_schema = self.default_database_schema()?;
 
         let table = database_schema.table(table_name).await.ok_or_else(|| {
-            let message = format!("Table with name '{table_name}' does not exist.");
-            ModelarDbError::DataRetrievalError(message)
+            ModelarDbError::DataRetrievalError(format!(
+                "Table with name '{table_name}' does not exist."
+            ))
         })?;
 
         if let Some(model_table) = table.as_any().downcast_ref::<ModelTable>() {
@@ -386,8 +387,9 @@ impl Context {
     pub async fn check_if_table_exists(&self, table_name: &str) -> Result<(), ModelarDbError> {
         let maybe_schema = self.schema_of_table_in_default_database_schema(table_name);
         if maybe_schema.await.is_ok() {
-            let message = format!("Table with name '{table_name}' already exists.");
-            return Err(ModelarDbError::ConfigurationError(message));
+            return Err(ModelarDbError::ConfigurationError(format!(
+                "Table with name '{table_name}' already exists."
+            )));
         }
         Ok(())
     }
@@ -401,7 +403,9 @@ impl Context {
         let database_schema = self.default_database_schema()?;
 
         let table = database_schema.table(table_name).await.ok_or_else(|| {
-            ModelarDbError::DataRetrievalError("Table does not exist.".to_owned())
+            ModelarDbError::DataRetrievalError(format!(
+                "Table with name '{table_name}' does not exist."
+            ))
         })?;
 
         Ok(table.schema())
