@@ -103,7 +103,7 @@ pub static CONFIGURATION_SCHEMA: Lazy<ConfigurationSchema> = Lazy::new(|| {
 pub static TAG_METADATA_SCHEMA: Lazy<TagMetadataSchema> = Lazy::new(|| {
     TagMetadataSchema(Arc::new(Schema::new(vec![
         Field::new("table_name", DataType::Utf8, false),
-        Field::new("hash", DataType::Int64, false),
+        Field::new("hash", DataType::UInt64, false),
         Field::new("tag_columns", DataType::Utf8, false),
         Field::new("tag_values", DataType::Utf8, false),
     ])))

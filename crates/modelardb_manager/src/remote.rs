@@ -25,7 +25,7 @@ use std::str;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use arrow::array::ArrayRef;
+use arrow::array::{ArrayRef, StringArray, UInt64Array};
 use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow::ipc::writer::IpcWriteOptions;
@@ -189,11 +189,28 @@ impl FlightServiceHandler {
         flight_data_stream: &mut Streaming<FlightData>,
     ) -> Result<(), Status> {
         while let Some(flight_data) = flight_data_stream.next().await {
-            let _tag_metadata =
+            let tag_metadata =
                 self.flight_data_to_record_batch(&flight_data?, &TAG_METADATA_SCHEMA.0)?;
 
-            // TODO: Create a new method in the table metadata manager just to insert.
-            // TODO: Use the new method here.
+            let table_name_array = modelardb_common::array!(tag_metadata, 0, StringArray);
+            let tag_hash_array = modelardb_common::array!(tag_metadata, 1, UInt64Array);
+            let tag_columns_array = modelardb_common::array!(tag_metadata, 2, StringArray);
+            let tag_values_array = modelardb_common::array!(tag_metadata, 3, StringArray);
+
+            // For each tag metadata in the record batch, insert it in to the metadata database.
+            for row_index in 0..tag_metadata.num_rows() {
+                self.context
+                    .metadata_manager
+                    .table_metadata_manager
+                    .save_tag_hash_metadata(
+                        table_name_array.value(row_index),
+                        tag_hash_array.value(row_index),
+                        tag_columns_array.value(row_index),
+                        tag_values_array.value(row_index),
+                    )
+                    .await
+                    .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            }
         }
 
         Ok(())
@@ -381,7 +398,8 @@ impl FlightService for FlightServiceHandler {
                 "Writing compressed file metadata to metadata database table '{}'.",
                 normalized_table_name
             );
-            self.save_compressed_file_metadata(&mut flight_data_stream).await?;
+            self.save_compressed_file_metadata(&mut flight_data_stream)
+                .await?;
         } else {
             return Err(Status::invalid_argument(format!(
                 "Table '{normalized_table_name}' is not a valid metadata database table."
