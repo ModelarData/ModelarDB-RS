@@ -21,6 +21,7 @@ use std::sync::Arc;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, FlightData, FlightDescriptor};
 use bytes::Bytes;
+use datafusion::arrow::array::{StringArray, UInt64Array};
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::stream;
@@ -28,6 +29,7 @@ use modelardb_common::arguments;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::schemas::TAG_METADATA_SCHEMA;
 use modelardb_common::types::ServerMode;
 use object_store::ObjectStore;
 use tonic::metadata::MetadataMap;
@@ -167,6 +169,46 @@ impl Manager {
         self.transfer_metadata(metadata, &format!("{model_table_name}_compressed_files"))
             .await
     }
+
+    /// Insert the tag metadata into a record batch and transfer it to the `model_table_name_tags`
+    /// metadata table in the manager. If the metadata could not be transferred,
+    /// return [`ModelarDbError`].
+    pub async fn transfer_tag_metadata(
+        &self,
+        model_table_metadata: &ModelTableMetadata,
+        tag_hash: u64,
+        tag_values: &[String],
+    ) -> Result<(), ModelarDbError> {
+        // Convert the tag columns and tag values into strings so they can be inserted into a record batch.
+        let tag_columns: String = model_table_metadata
+            .tag_column_indices
+            .iter()
+            .map(|index| model_table_metadata.schema.field(*index).name().clone())
+            .collect::<Vec<String>>()
+            .join(",");
+
+        let values = tag_values
+            .iter()
+            .map(|value| format!("'{value}'"))
+            .collect::<Vec<String>>()
+            .join(",");
+
+        // unwrap() is safe since the columns match the schema and all columns are of the same length.
+        let metadata = RecordBatch::try_new(
+            TAG_METADATA_SCHEMA.0.clone(),
+            vec![
+                Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
+                Arc::new(UInt64Array::from(vec![tag_hash])),
+                Arc::new(StringArray::from(vec![tag_columns])),
+                Arc::new(StringArray::from(vec![values])),
+            ],
+        )
+        .unwrap();
+
+        self.transfer_metadata(metadata, &format!("{}_tags", model_table_metadata.name))
+            .await
+    }
+
     /// Transfer `metadata` to the `metadata_table_name` table in the managers metadata
     /// database. If `metadata` could not be transferred, return [`ModelarDbError`].
     async fn transfer_metadata(

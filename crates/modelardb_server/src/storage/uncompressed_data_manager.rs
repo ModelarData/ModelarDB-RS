@@ -32,7 +32,6 @@ use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tracing::{debug, error};
 
-use crate::ClusterMode;
 use crate::context::Context;
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
 use crate::storage::types::Channels;
@@ -43,6 +42,7 @@ use crate::storage::uncompressed_data_buffer::{
     UncompressedDataBuffer, UncompressedInMemoryDataBuffer, UncompressedOnDiskDataBuffer,
 };
 use crate::storage::{Metric, UNCOMPRESSED_DATA_FOLDER};
+use crate::ClusterMode;
 
 /// Stores uncompressed data points temporarily in an in-memory buffer that spills to Apache Parquet
 /// files. When a uncompressed data buffer is finished the data is made available for compression.
@@ -282,11 +282,22 @@ impl UncompressedDataManager {
                 .map(|array| array.value(index).to_string())
                 .collect();
 
-            let (tag_hash, _) = self
+            let (tag_hash, tag_hash_is_saved) = self
                 .table_metadata_manager
                 .lookup_or_compute_tag_hash(&model_table_metadata, &tag_values)
                 .await
                 .map_err(|error| format!("Tag hash could not be saved: {error}"))?;
+
+            // If the server was started with a manager, transfer the tag hash metadata if it was
+            // saved to the server metadata database.
+            if let ClusterMode::MultiNode(manager) = &self.cluster_mode {
+                if tag_hash_is_saved {
+                    manager
+                        .transfer_tag_metadata(&model_table_metadata, tag_hash, &tag_values)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                }
+            }
 
             // For each field column, generate the 64-bit univariate id, and append the current
             // timestamp and the field's value into the in-memory buffer for the univariate id.
