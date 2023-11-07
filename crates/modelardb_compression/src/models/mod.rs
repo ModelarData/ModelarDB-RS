@@ -46,7 +46,7 @@ pub(super) const VALUE_SIZE_IN_BYTES: u8 = mem::size_of::<Value>() as u8;
 pub(super) const VALUE_SIZE_IN_BITS: u8 = 8 * VALUE_SIZE_IN_BYTES;
 
 /// Determine if `approximate_value` is within `error_bound` of `real_value`.
-pub(super) fn is_value_within_error_bound(
+pub fn is_value_within_error_bound(
     error_bound: ErrorBound,
     real_value: Value,
     approximate_value: Value,
@@ -264,7 +264,12 @@ pub fn sum(
     if residuals.is_empty() {
         model_sum
     } else {
-        model_sum + gorilla::sum(residuals_length, residuals, Some(model_last_value))
+        let residuals_sum = gorilla::sum(
+            residuals_length - 1,
+            &residuals[..residuals.len() - 1],
+            Some(model_last_value),
+        );
+        model_sum + residuals_sum
     }
 }
 

@@ -32,7 +32,9 @@ use std::time::Duration;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, PutResult, Ticket};
 use bytes::{Buf, Bytes};
-use datafusion::arrow::array::{Array, ListArray, StringArray, UInt32Array, UInt64Array};
+use datafusion::arrow::array::{
+    Array, Float64Array, ListArray, StringArray, UInt32Array, UInt64Array,
+};
 use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Millisecond};
 use datafusion::arrow::ipc::convert;
@@ -40,7 +42,9 @@ use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, StreamExt};
+use modelardb_common::array;
 use modelardb_common::test::data_generation;
+use modelardb_common::types::ErrorBound;
 use sysinfo::{Pid, PidExt, System, SystemExt};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
@@ -211,20 +215,52 @@ impl TestContext {
     fn create_table(&mut self, table_name: &str, table_type: TableType) {
         let cmd = match table_type {
             TableType::NormalTable => {
-                format!("CREATE TABLE {table_name}(timestamp TIMESTAMP, value REAL, metadata REAL)")
+                format!(
+                    "CREATE TABLE {table_name}(
+                         timestamp TIMESTAMP,
+                         field_one REAL,
+                         field_two REAL,
+                         field_three REAL,
+                         field_four REAL,
+                         field_five REAL,
+                         metadata TEXT
+                     )"
+                )
             }
             TableType::ModelTable => {
                 format!(
-                "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD(0.0), tag TAG)"
-            )
+                    "CREATE MODEL TABLE {table_name}(
+                         timestamp TIMESTAMP,
+                         field_one FIELD,
+                         field_two FIELD,
+                         field_three FIELD,
+                         field_four FIELD,
+                         field_five FIELD,
+                         tag TAG
+                     )"
+                )
             }
             TableType::ModelTableNoTag => {
-                format!("CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP, value FIELD)")
+                format!(
+                    "CREATE MODEL TABLE {table_name}(
+                         timestamp TIMESTAMP,
+                         field_one FIELD,
+                         field_two FIELD,
+                         field_three FIELD,
+                         field_four FIELD,
+                         field_five FIELD
+                     )"
+                )
             }
             TableType::ModelTableAsField => {
                 format!(
-                    "CREATE MODEL TABLE {table_name}(timestamp TIMESTAMP,
-                 generated FIELD AS (value + CAST(37.0 AS REAL)), value FIELD(0.0))"
+                    "CREATE MODEL TABLE {table_name}(
+                         timestamp TIMESTAMP,
+                         generated FIELD AS (field_one + CAST(37.0 AS REAL)),
+                         field_one FIELD,
+                         field_two FIELD,
+                         field_three FIELD
+                     )"
                 )
             }
         };
@@ -247,24 +283,35 @@ impl TestContext {
         multiply_noise_range: Option<Range<f32>>,
         maybe_tag: Option<&str>,
     ) -> RecordBatch {
-        let (uncompressed_timestamps, uncompressed_values) = data_generation::generate_time_series(
-            TIME_SERIES_TEST_LENGTH,
-            SEGMENT_TEST_MINIMUM_LENGTH..2 * SEGMENT_TEST_MINIMUM_LENGTH + 1,
-            generate_irregular_timestamps,
-            multiply_noise_range,
-            100.0..200.0,
-        );
+        let (uncompressed_timestamps, mut uncompressed_values) =
+            data_generation::generate_multivariate_time_series(
+                TIME_SERIES_TEST_LENGTH,
+                5,
+                SEGMENT_TEST_MINIMUM_LENGTH..2 * SEGMENT_TEST_MINIMUM_LENGTH + 1,
+                generate_irregular_timestamps,
+                multiply_noise_range,
+                100.0..200.0,
+            );
 
         let time_series_len = uncompressed_timestamps.len();
 
         let mut fields = vec![
             Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
-            Field::new("value", DataType::Float32, false),
+            Field::new("field_one", DataType::Float32, false),
+            Field::new("field_two", DataType::Float32, false),
+            Field::new("field_three", DataType::Float32, false),
+            Field::new("field_four", DataType::Float32, false),
+            Field::new("field_five", DataType::Float32, false),
         ];
 
+        // 0 is used as the index for each call to remove() as a value is removed each time.
         let mut columns: Vec<Arc<dyn Array>> = vec![
             Arc::new(uncompressed_timestamps),
-            Arc::new(uncompressed_values),
+            Arc::new(uncompressed_values.remove(0)),
+            Arc::new(uncompressed_values.remove(0)),
+            Arc::new(uncompressed_values.remove(0)),
+            Arc::new(uncompressed_values.remove(0)),
+            Arc::new(uncompressed_values.remove(0)),
         ];
 
         if let Some(tag) = maybe_tag {
@@ -565,7 +612,11 @@ fn test_can_get_schema() {
         schema,
         Schema::new(vec![
             Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
-            Field::new("value", DataType::Float32, false),
+            Field::new("field_one", DataType::Float32, false),
+            Field::new("field_two", DataType::Float32, false),
+            Field::new("field_three", DataType::Float32, false),
+            Field::new("field_four", DataType::Float32, false),
+            Field::new("field_five", DataType::Float32, false),
             Field::new("tag", DataType::Utf8, false)
         ])
     );
@@ -629,6 +680,7 @@ fn test_can_collect_metrics() {
     let values_array = modelardb_common::array!(metrics, 2, ListArray);
 
     // The used_uncompressed_memory metric should record the change when ingesting and when flushing.
+    // 786432 is modelardb_common::test::UNCOMPRESSED_BUFFER_SIZE.
     assert_eq!(
         values_array
             .value(0)
@@ -636,12 +688,12 @@ fn test_can_collect_metrics() {
             .downcast_ref::<UInt32Array>()
             .unwrap()
             .values(),
-        &[786432, 0] // 786432 is common_test::UNCOMPRESSED_BUFFER_SIZE
+        &[786432, 1572864, 2359296, 3145728, 3932160, 3145728, 2359296, 1572864, 786432, 0]
     );
 
     // The amount of bytes used for compressed memory changes depending on the compression so we
     // can only check that the metric is populated when compressing and when flushing.
-    assert_eq!(values_array.value(1).len(), 2);
+    assert_eq!(values_array.value(1).len(), 10);
 
     // The ingested_data_points metric should record the single request to ingest data points.
     assert_eq!(
@@ -656,7 +708,7 @@ fn test_can_collect_metrics() {
 
     // The amount of bytes used for disk space changes depending on the compression so we
     // can only check that the metric is populated when initializing and when flushing.
-    assert_eq!(values_array.value(3).len(), 2);
+    assert_eq!(values_array.value(3).len(), 6);
 }
 
 #[test]
@@ -712,8 +764,8 @@ fn test_can_ingest_time_series_with_generated_field() {
         .unwrap();
 
     // Column two in the query is the generated column which does not exist in data point.
-    assert_eq!(time_series.num_columns(), 2);
-    assert_eq!(query_result.num_columns(), 3);
+    assert_eq!(time_series.num_columns(), 6);
+    assert_eq!(query_result.num_columns(), 5);
     assert_eq!(time_series.column(0), query_result.column(0));
     assert_eq!(time_series.column(1), query_result.column(2));
 }
@@ -762,24 +814,31 @@ fn test_cannot_ingest_invalid_time_series() {
 }
 
 #[test]
-fn test_optimized_query_results_equals_non_optimized_query_results() {
-    let mut test_context = TestContext::new();
-    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
-
-    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
-
-    let optimized_query = test_context
-        .execute_query(format!("SELECT MIN(value) FROM {TABLE_NAME}"))
-        .unwrap();
-
-    // The trivial filter ensures the query is rewritten by the optimizer.
-    let non_optimized_query = test_context
-        .execute_query(format!("SELECT MIN(value) FROM {TABLE_NAME} WHERE 1=1"))
-        .unwrap();
-
-    assert_eq!(optimized_query, non_optimized_query);
+fn test_count_from_segments_equals_count_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT COUNT(field_one) FROM {TABLE_NAME}"), 0.0);
 }
 
+#[test]
+fn test_min_from_segments_equals_min_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT MIN(field_one) FROM {TABLE_NAME}"), 0.0);
+}
+
+#[test]
+fn test_max_from_segments_equals_max_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT MAX(field_one) FROM {TABLE_NAME}"), 0.0);
+}
+
+#[test]
+fn test_sum_from_segments_equals_sum_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT SUM(field_one) FROM {TABLE_NAME}"), 0.001);
+}
+
+#[test]
+fn test_avg_from_segments_equals_avg_from_data_points() {
+    assert_ne_query_plans_and_eq_result(format!("SELECT AVG(field_one) FROM {TABLE_NAME}"), 0.001);
+}
+
+/// Creates a table of type `table_type`, ingests `time_series`, and then flushes that data to disk.
 fn ingest_time_series_and_flush_data(
     test_context: &mut TestContext,
     time_series: &[RecordBatch],
@@ -795,6 +854,70 @@ fn ingest_time_series_and_flush_data(
         .unwrap();
 
     test_context.flush_data_to_disk();
+}
+
+/// Asserts that the query executed on segments in `segment_query` returns a result within
+/// `error_bound` of an equivalent query executed on data points reconstructed from the segments by:
+/// 1. Generating a multivariate time series with one tag and ingesting it into a model table.
+/// 2. Creating an equivalent query from `segment_query` that the optimizer cannot rewrite so it is
+/// executed on segments.
+/// 3. Executing `segment_query` and the new equivalent query against the model table containing the
+/// generated time series.
+/// 4. Comparing the query plans of `segment_query` and the new equivalent query to ensure the first
+/// query was rewritten by the optimizer and the other query was not.
+/// 5. Comparing the results of `segment_query` and the new equivalent query to ensure they are
+/// within `error_bound`.
+fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) {
+    let mut test_context = TestContext::new();
+    let time_series = TestContext::generate_time_series_with_tag(false, None, Some("tag"));
+
+    ingest_time_series_and_flush_data(&mut test_context, &[time_series], TableType::ModelTable);
+
+    // The predicate will guarantee that all data points will be included in the query but will
+    // prevent the optimizer from rewriting the query due to its presence in segment_query.
+    let data_point_query = format!("{segment_query} WHERE timestamp >= 0::TIMESTAMP");
+
+    let data_point_query_plans = test_context
+        .execute_query(format!("EXPLAIN {}", data_point_query))
+        .unwrap();
+    let segment_query_plans = test_context
+        .execute_query(format!("EXPLAIN {}", segment_query))
+        .unwrap();
+
+    let data_point_query_plans_text = array!(data_point_query_plans, 1, StringArray);
+    let segment_query_plans_text = array!(segment_query_plans, 1, StringArray);
+    assert_ne!(data_point_query_plans, segment_query_plans);
+    assert!(data_point_query_plans_text.value(1).contains("GridExec"));
+    assert!(!segment_query_plans_text.value(1).contains("GridExec"));
+
+    let data_point_query_result_set = test_context.execute_query(data_point_query).unwrap();
+    let segment_query_result_set = test_context.execute_query(segment_query).unwrap();
+
+    if error_bound == 0.0 {
+        assert_eq!(data_point_query_result_set, segment_query_result_set);
+    } else {
+        assert_eq!(data_point_query_result_set.num_columns(), 1);
+        assert_eq!(data_point_query_result_set.num_rows(), 1);
+        assert_eq!(segment_query_result_set.num_columns(), 1);
+        assert_eq!(segment_query_result_set.num_rows(), 1);
+
+        let data_point_query_result = array!(data_point_query_result_set, 0, Float64Array);
+        let segment_query_result = array!(segment_query_result_set, 0, Float64Array);
+
+        let within_error_bound = modelardb_compression::is_value_within_error_bound(
+            ErrorBound::try_new(error_bound).unwrap(),
+            data_point_query_result.value(0) as f32,
+            segment_query_result.value(0) as f32,
+        );
+
+        assert!(
+            within_error_bound,
+            "{} is not within {}% of {}.",
+            segment_query_result.value(0),
+            error_bound,
+            data_point_query_result.value(0)
+        );
+    }
 }
 
 #[test]
