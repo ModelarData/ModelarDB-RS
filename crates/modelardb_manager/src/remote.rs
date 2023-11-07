@@ -401,8 +401,6 @@ impl FlightService for FlightServiceHandler {
         Ok(Response::new(schema_result))
     }
 
-    /// TODO: Execute a SQL query provided in UTF-8 and return the schema of the query
-    ///       result followed by the query result.
     async fn do_get(
         &self,
         _request: Request<Ticket>,
@@ -468,6 +466,8 @@ impl FlightService for FlightServiceHandler {
 
     /// Perform a specific action based on the type of the action in `request`. Currently the
     /// following actions are supported:
+    /// * `InitiateQuery`: Given a query, return the gRPC url of the cloud node in the cluster that
+    /// is currently most capable of executing the query.
     /// * `InitializeDatabase`: Given a list of existing table names, respond with the SQL required
     /// to create the tables and model tables that are missing in the list. The list of table names
     /// is also checked to make sure all given tables actually exist.
@@ -494,7 +494,21 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        if action.r#type == "InitializeDatabase" {
+        if action.r#type == "InitiateQuery" {
+            let mut cluster = self.context.cluster.write().await;
+            let cloud_node = cluster
+                .query_node()
+                .map_err(|error| Status::failed_precondition(error.to_string()))?;
+
+            let response_body = cloud_node.url.as_bytes().to_vec();
+
+            // Return the cloud node url.
+            Ok(Response::new(Box::pin(stream::once(async {
+                Ok(FlightResult {
+                    body: response_body.into(),
+                })
+            }))))
+        } else if action.r#type == "InitializeDatabase" {
             // Extract the list of comma seperated tables that already exist in the node.
             let node_tables: Vec<&str> = str::from_utf8(&action.body)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?
@@ -666,6 +680,13 @@ impl FlightService for FlightServiceHandler {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<Self::ListActionsStream>, Status> {
+        let initiate_query_action = ActionType {
+            r#type: "InitiateQuery".to_owned(),
+            description: "Return the gRPC URL of the cloud node in the cluster that should be \
+            used to execute the given query"
+                .to_owned(),
+        };
+
         let initialize_database_action = ActionType {
             r#type: "InitializeDatabase".to_owned(),
             description: "Return the SQL required to create all tables and models tables \
@@ -699,6 +720,7 @@ impl FlightService for FlightServiceHandler {
         };
 
         let output = stream::iter(vec![
+            Ok(initiate_query_action),
             Ok(initialize_database_action),
             Ok(update_remote_object_store_action),
             Ok(command_statement_update_action),
