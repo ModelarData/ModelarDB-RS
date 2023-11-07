@@ -258,8 +258,6 @@ fn setup_ctrl_c_handler(context: &Arc<Context>, runtime: &Arc<Runtime>) {
 mod tests {
     use super::*;
 
-    use std::env;
-
     // Tests for parse_command_line_arguments().
     #[tokio::test]
     async fn test_parse_empty_command_line_arguments() {
@@ -267,82 +265,72 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_parse_cloud_command_line_arguments() {
-        setup_environment();
-        let tempdir = tempfile::tempdir().unwrap();
-        let tempdir_str = tempdir.path().to_str().unwrap();
-        let (local_data_folder, remote_data_folder) =
-            new_data_folders(&["cloud", tempdir_str, "s3://bucket"]).await;
+    async fn test_parse_edge_command_line_arguments_without_manager() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        // Equals cannot be applied to type dyn object_store::ObjectStore.
-        assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
-        remote_data_folder.unwrap();
+        assert_single_edge_without_remote_data_folder(
+            temp_dir_str,
+            &["single", "edge", temp_dir_str],
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_parse_edge_command_line_arguments_without_server_mode_and_manager() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_str = temp_dir.path().to_str().unwrap();
+
+        assert_single_edge_without_remote_data_folder(temp_dir_str, &["single", temp_dir_str])
+            .await;
+    }
+
+    #[tokio::test]
+    async fn test_parse_edge_command_line_arguments_without_cluster_mode_and_manager() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_str = temp_dir.path().to_str().unwrap();
+
+        assert_single_edge_without_remote_data_folder(temp_dir_str, &["edge", temp_dir_str]).await;
+    }
+
+    #[tokio::test]
+    async fn test_parse_edge_command_line_arguments_without_cluster_mode_and_server_mode_and_manager(
+    ) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_str = temp_dir.path().to_str().unwrap();
+
+        assert_single_edge_without_remote_data_folder(temp_dir_str, &[temp_dir_str]).await;
+    }
+
+    async fn assert_single_edge_without_remote_data_folder(temp_dir_str: &str, input: &[&str]) {
+        let (server_mode, cluster_mode, data_folders) =
+            parse_command_line_arguments(input).await.unwrap();
+
+        assert!(server_mode, ServerMode::Edge);
+        assert!(cluster_mode, ClusterMode::SingleNode);
+        assert_eq!(data_folders.local_data_folder, PathBuf::from(temp_dir_str));
+        assert!(data_folders.remote_data_folder.is_none());
     }
 
     #[tokio::test]
     async fn test_parse_incomplete_cloud_command_line_arguments() {
-        assert!(parse_command_line_arguments(&["cloud", "s3://bucket"])
-            .await
-            .is_err())
-    }
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-    #[tokio::test]
-    async fn test_parse_edge_full_command_line_arguments() {
-        setup_environment();
-        let tempdir = tempfile::tempdir().unwrap();
-        let tempdir_str = tempdir.path().to_str().unwrap();
-        let (local_data_folder, remote_data_folder) =
-            new_data_folders(&["edge", tempdir_str, "s3://bucket"]).await;
-
-        // Equals cannot be applied to type dyn object_store::ObjectStore.
-        assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
-        remote_data_folder.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_parse_edge_command_line_arguments_without_remote_object_store() {
-        setup_environment();
-        let tempdir = tempfile::tempdir().unwrap();
-        let tempdir_str = tempdir.path().to_str().unwrap();
-        let (local_data_folder, remote_data_folder) =
-            new_data_folders(&["edge", tempdir_str]).await;
-
-        // Equals cannot be applied to type dyn object_store::ObjectStore.
-        assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
-        assert!(remote_data_folder.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_parse_edge_command_line_arguments_without_mode_and_remote_object_store() {
-        setup_environment();
-        let tempdir = tempfile::tempdir().unwrap();
-        let tempdir_str = tempdir.path().to_str().unwrap();
-        let (local_data_folder, remote_data_folder) = new_data_folders(&[tempdir_str]).await;
-
-        // Equals cannot be applied to type dyn object_store::ObjectStore.
-        assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
-        assert!(remote_data_folder.is_none());
+        assert!(
+            parse_command_line_arguments(&["multi", "cloud", temp_dir_str])
+                .await
+                .is_err()
+        )
     }
 
     #[tokio::test]
     async fn test_parse_incomplete_edge_command_line_arguments() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let tempdir_str = tempdir.path().to_str().unwrap();
-        let input = &[tempdir_str, "s3://bucket"];
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        assert!(parse_command_line_arguments(input).await.is_err())
-    }
-
-    fn setup_environment() {
-        env::set_var("AWS_DEFAULT_REGION", "");
-    }
-
-    async fn new_data_folders(input: &[&str]) -> (PathBuf, Option<Arc<dyn ObjectStore>>) {
-        let (_, _, data_folders) = parse_command_line_arguments(input).await.unwrap();
-
-        (
-            data_folders.local_data_folder,
-            data_folders.remote_data_folder,
-        )
+        assert!(parse_command_line_arguments(&["multi", temp_dir_str])
+            .await
+            .is_err())
     }
 }
