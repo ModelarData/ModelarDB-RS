@@ -185,7 +185,7 @@ async fn parse_command_line_arguments(
         &["multi", "edge", manager_url, local_data_folder]
         | &["multi", manager_url, local_data_folder] => {
             let (manager, remote_object_store) =
-                Manager::register_node(manager_url, ServerMode::Cloud)
+                Manager::register_node(manager_url, ServerMode::Edge)
                     .await
                     .map_err(|error| error.to_string())?;
 
