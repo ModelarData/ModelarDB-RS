@@ -254,6 +254,13 @@ mod test {
 
         assert!(cluster.register_node(node.clone()).is_ok());
         assert!(cluster.nodes.contains(&node));
+        assert!(cluster.query_queue.is_empty());
+
+        let cloud_node = Node::new("cloud".to_owned(), ServerMode::Cloud);
+
+        assert!(cluster.register_node(cloud_node.clone()).is_ok());
+        assert!(cluster.nodes.contains(&cloud_node));
+        assert!(cluster.query_queue.contains(&cloud_node));
     }
 
     #[test]
@@ -272,5 +279,29 @@ mod test {
             .remove_node("invalid_url", &Uuid::new_v4().to_string().parse().unwrap())
             .await
             .is_err());
+    }
+
+    #[test]
+    fn test_query_node() {
+        let cloud_node_1 = Node::new("cloud_1".to_owned(), ServerMode::Cloud);
+        let cloud_node_2 = Node::new("cloud_2".to_owned(), ServerMode::Cloud);
+        let mut cluster = Cluster::new();
+
+        assert!(cluster.register_node(cloud_node_1.clone()).is_ok());
+        assert!(cluster.register_node(cloud_node_2.clone()).is_ok());
+
+        assert_eq!(cluster.query_node().unwrap(), cloud_node_1);
+        assert_eq!(cluster.query_node().unwrap(), cloud_node_2);
+        assert_eq!(cluster.query_node().unwrap(), cloud_node_1);
+        assert_eq!(cluster.query_node().unwrap(), cloud_node_2);
+    }
+
+    #[test]
+    fn test_query_node_no_cloud_nodes() {
+        let node = Node::new("localhost".to_owned(), ServerMode::Edge);
+        let mut cluster = Cluster::new();
+
+        assert!(cluster.register_node(node).is_ok());
+        assert!(cluster.query_node().is_err());
     }
 }
