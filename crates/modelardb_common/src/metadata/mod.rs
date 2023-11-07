@@ -57,6 +57,8 @@ const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
 pub trait MetadataDatabase {
     /// Syntax added after a CREATE TABLE statement to specify that the table should use strict types.
     fn strict(&self) -> &str;
+    /// Type used for 64-bit integer columns in CREATE TABLE statements.
+    fn integer_type(&self) -> &str;
     /// Type used for binary columns in CREATE TABLE statements.
     fn binary_type(&self) -> &str;
 }
@@ -64,6 +66,10 @@ pub trait MetadataDatabase {
 impl MetadataDatabase for Postgres {
     fn strict(&self) -> &str {
         ""
+    }
+
+    fn integer_type(&self) -> &str {
+        "BIGINT"
     }
 
     fn binary_type(&self) -> &str {
@@ -74,6 +80,10 @@ impl MetadataDatabase for Postgres {
 impl MetadataDatabase for Sqlite {
     fn strict(&self) -> &str {
         "STRICT"
+    }
+
+    fn integer_type(&self) -> &str {
+        "INTEGER"
     }
 
     fn binary_type(&self) -> &str {
@@ -142,6 +152,7 @@ where
     /// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
     pub async fn create_metadata_database_tables(&self) -> Result<(), Error> {
         let strict = self.metadata_database_type.strict();
+        let integer_type = self.metadata_database_type.integer_type();
         let binary_type = self.metadata_database_type.binary_type();
 
         let mut transaction = self.metadata_database_pool.begin().await?;
@@ -170,7 +181,7 @@ where
         // Create the model_table_hash_table_name table if it does not exist.
         sqlx::query(&format!(
             "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
-                 hash INTEGER PRIMARY KEY,
+                 hash {integer_type} PRIMARY KEY,
                  table_name TEXT
              ) {strict}"
         ))
@@ -183,7 +194,7 @@ where
             "CREATE TABLE IF NOT EXISTS model_table_field_columns (
                  table_name TEXT NOT NULL,
                  column_name TEXT NOT NULL,
-                 column_index INTEGER NOT NULL,
+                 column_index {integer_type} NOT NULL,
                  error_bound REAL NOT NULL,
                  generated_column_expr TEXT,
                  generated_column_sources {binary_type},
@@ -659,6 +670,7 @@ where
         model_table_metadata: &ModelTableMetadata,
         sql: &str,
     ) -> Result<(), Error> {
+        let integer_type = self.metadata_database_type.integer_type();
         let strict = self.metadata_database_type.strict();
 
         // Convert the query schema to bytes so it can be saved as a BLOB in the metadata database.
@@ -683,7 +695,7 @@ where
         // Create a table_name_tags table to save the 54-bit tag hashes when ingesting data.
         sqlx::query(&format!(
             "CREATE TABLE {}_tags (
-                 hash INTEGER PRIMARY KEY{maybe_separator}
+                 hash {integer_type} PRIMARY KEY{maybe_separator}
                  {tag_columns}
              ) {strict}",
             model_table_metadata.name
@@ -695,11 +707,11 @@ where
         sqlx::query(&format!(
             "CREATE TABLE {}_compressed_files (
                  file_path TEXT PRIMARY KEY,
-                 field_column INTEGER,
-                 size INTEGER,
-                 created_at INTEGER,
-                 start_time INTEGER,
-                 end_time INTEGER,
+                 field_column {integer_type},
+                 size {integer_type},
+                 created_at {integer_type},
+                 start_time {integer_type},
+                 end_time {integer_type},
                  min_value REAL,
                  max_value REAL
              ) {strict}",
