@@ -131,6 +131,7 @@ impl StorageEngine {
                 memory_pool.clone(),
                 channels.clone(),
                 table_metadata_manager.clone(),
+                configuration_manager.cluster_mode.clone(),
                 used_disk_space_metric.clone(),
             )
             .await?,

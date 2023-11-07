@@ -202,8 +202,8 @@ where
     /// or, if the combination of tag values is not in the cache, by computing a new hash. If the
     /// hash is not in the cache, it is both saved to the cache, persisted to the model_table_tags
     /// table if it does not already contain it, and persisted to the model_table_hash_table_name if
-    /// it does not already contain it. If the hash was saved to the metadata database, [`true`] is
-    /// returned as well. If the model_table_tags or the model_table_hash_table_name table cannot
+    /// it does not already contain it. If the hash was saved to the metadata database, also return
+    /// [`true`]. If the model_table_tags or the model_table_hash_table_name table cannot
     /// be accessed, [`Error`] is returned.
     pub async fn lookup_or_compute_tag_hash(
         &self,

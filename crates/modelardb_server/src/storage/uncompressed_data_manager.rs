@@ -32,6 +32,7 @@ use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tracing::{debug, error};
 
+use crate::ClusterMode;
 use crate::context::Context;
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
 use crate::storage::types::Channels;
@@ -60,6 +61,8 @@ pub(super) struct UncompressedDataManager {
     channels: Arc<Channels>,
     /// Management of metadata for ingesting and compressing time series.
     table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+    /// The mode of the cluster used to determine the behaviour when inserting data points.
+    cluster_mode: ClusterMode,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used uncompressed memory in bytes, updated every time the used memory changes.
@@ -80,6 +83,7 @@ impl UncompressedDataManager {
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        cluster_mode: ClusterMode,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the uncompressed data manager exists.
@@ -92,6 +96,7 @@ impl UncompressedDataManager {
             active_uncompressed_data_buffers: DashMap::new(),
             channels,
             table_metadata_manager,
+            cluster_mode,
             memory_pool,
             used_uncompressed_memory_metric: Mutex::new(Metric::new()),
             ingested_data_points_metric: Mutex::new(Metric::new()),
@@ -277,7 +282,7 @@ impl UncompressedDataManager {
                 .map(|array| array.value(index).to_string())
                 .collect();
 
-            let tag_hash = self
+            let (tag_hash, _) = self
                 .table_metadata_manager
                 .lookup_or_compute_tag_hash(&model_table_metadata, &tag_values)
                 .await
@@ -1198,6 +1203,7 @@ mod tests {
             memory_pool,
             channels,
             metadata_manager.clone(),
+            ClusterMode::SingleNode,
             Arc::new(Mutex::new(Metric::new())),
         )
         .await

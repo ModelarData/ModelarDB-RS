@@ -26,6 +26,8 @@ use datafusion::arrow::record_batch::RecordBatch;
 use futures::stream;
 use modelardb_common::arguments;
 use modelardb_common::errors::ModelarDbError;
+use modelardb_common::metadata::compressed_file::CompressedFile;
+use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::types::ServerMode;
 use object_store::ObjectStore;
 use tonic::metadata::MetadataMap;
@@ -152,9 +154,22 @@ impl Manager {
         }
     }
 
+    /// Insert the compressed file metadata into a record batch and transfer it to the
+    /// `model_table_name_compressed_files` metadata table in the manager. If the metadata could
+    /// not be transferred, return [`ModelarDbError`].
+    pub async fn transfer_compressed_file_metadata(
+        &self,
+        model_table_name: &str,
+        column_index: i64,
+        compressed_file: CompressedFile,
+    ) -> Result<(), ModelarDbError> {
+        let metadata = compressed_file.insert_into_record_batch(model_table_name, column_index);
+        self.transfer_metadata(metadata, &format!("{model_table_name}_compressed_files"))
+            .await
+    }
     /// Transfer `metadata` to the `metadata_table_name` table in the managers metadata
     /// database. If `metadata` could not be transferred, return [`ModelarDbError`].
-    pub async fn transfer_metadata(
+    async fn transfer_metadata(
         &self,
         metadata: RecordBatch,
         metadata_table_name: &str,
