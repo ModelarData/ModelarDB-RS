@@ -477,6 +477,9 @@ impl FlightService for FlightServiceHandler {
                 .map_err(|error| Status::unauthenticated(error.to_string()))?
         };
 
+        // Manually drop the read lock on the configuration manager to avoid deadlock issues.
+        std::mem::drop(configuration_manager);
+
         if action.r#type == "CommandStatementUpdate" {
             // Read the SQL from the action.
             let sql = str::from_utf8(&action.body)
