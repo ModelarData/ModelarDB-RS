@@ -53,7 +53,7 @@ pub static PORT: Lazy<u16> = Lazy::new(|| match env::var("MODELARDBD_PORT") {
 
 /// The different possible modes that a ModelarDB server can be deployed in, assigned when the
 /// server is started.
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ClusterMode {
     SingleNode,
     MultiNode(Manager),
@@ -306,8 +306,8 @@ mod tests {
         let (server_mode, cluster_mode, data_folders) =
             parse_command_line_arguments(input).await.unwrap();
 
-        assert!(server_mode, ServerMode::Edge);
-        assert!(cluster_mode, ClusterMode::SingleNode);
+        assert_eq!(server_mode, ServerMode::Edge);
+        assert_eq!(cluster_mode, ClusterMode::SingleNode);
         assert_eq!(data_folders.local_data_folder, PathBuf::from(temp_dir_str));
         assert!(data_folders.remote_data_folder.is_none());
     }

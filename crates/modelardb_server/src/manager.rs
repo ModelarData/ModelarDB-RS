@@ -35,13 +35,13 @@ use crate::context::Context;
 use crate::PORT;
 
 /// Manages metadata related to the manager and provides functionality for interacting with the manager.
-#[derive(Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manager {
     /// The gRPC URL of the manager's Apache Arrow Flight server.
-    pub(crate) url: String,
+    url: String,
     /// Key received from the manager when registering, used to validate future requests that are
     /// only allowed to come from the manager.
-    pub(crate) key: String,
+    key: String,
 }
 
 impl Manager {

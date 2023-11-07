@@ -202,13 +202,14 @@ where
     /// or, if the combination of tag values is not in the cache, by computing a new hash. If the
     /// hash is not in the cache, it is both saved to the cache, persisted to the model_table_tags
     /// table if it does not already contain it, and persisted to the model_table_hash_table_name if
-    /// it does not already contain it. If the model_table_tags or the model_table_hash_table_name
-    /// table cannot be accessed, [`Error`] is returned.
+    /// it does not already contain it. If the hash was saved to the metadata database, [`true`] is
+    /// returned as well. If the model_table_tags or the model_table_hash_table_name table cannot
+    /// be accessed, [`Error`] is returned.
     pub async fn lookup_or_compute_tag_hash(
         &self,
         model_table_metadata: &ModelTableMetadata,
         tag_values: &[String],
-    ) -> Result<u64, Error> {
+    ) -> Result<(u64, bool), Error> {
         let cache_key = {
             let mut cache_key_list = tag_values.to_vec();
             cache_key_list.push(model_table_metadata.name.clone());
@@ -222,7 +223,7 @@ where
         // hash is done without taking a lock on the tag_value_hashes. However, by allowing a hash
         // to possible be computed more than once, the cache can be used without an explicit lock.
         if let Some(tag_hash) = self.tag_value_hashes.get(&cache_key) {
-            Ok(*tag_hash)
+            Ok((*tag_hash, false))
         } else {
             // Generate the 54-bit tag hash based on the tag values of the record batch and model
             // table name.
@@ -251,29 +252,26 @@ where
                 .collect::<Vec<String>>()
                 .join(",");
 
-            self.save_tag_hash_metadata(
-                &model_table_metadata.name,
-                tag_hash,
-                &tag_columns,
-                &values,
-            )
-            .await?;
+            let tag_hash_is_saved = self
+                .save_tag_hash_metadata(&model_table_metadata.name, tag_hash, &tag_columns, &values)
+                .await?;
 
-            Ok(tag_hash)
+            Ok((tag_hash, tag_hash_is_saved))
         }
     }
 
     /// Save the given tag hash metadata to the model_table_tags table if it does not already
     /// contain it, and to the model_table_hash_table_name table if it does not already contain it.
-    /// If the metadata cannot be inserted into either model_table_tags or model_table_hash_table_name,
-    /// [`Error`] is returned.
+    /// If the tables did not contain the tag hash, meaning it is a new tag combination, return
+    /// [`true`]. If the metadata cannot be inserted into either model_table_tags or
+    /// model_table_hash_table_name, [`Error`] is returned.
     pub async fn save_tag_hash_metadata(
         &self,
         table_name: &str,
         tag_hash: u64,
         tag_columns: &str,
         tag_values: &str,
-    ) -> Result<(), Error> {
+    ) -> Result<bool, Error> {
         // Create a transaction to ensure the database state is consistent across tables.
         let mut transaction = self.metadata_database_pool.begin().await?;
 
@@ -286,7 +284,7 @@ where
         // existing hash. This purposely occurs if the hash has already been written to the
         // metadata database but is no longer stored in the cache, e.g., if the system has
         // been restarted.
-        sqlx::query(&format!(
+        let insert_into_tags_result = sqlx::query(&format!(
             "INSERT INTO {table_name}_tags (hash{maybe_separator}{tag_columns})
              VALUES ($1{maybe_separator}{tag_values})
              ON CONFLICT DO NOTHING",
@@ -295,7 +293,7 @@ where
         .execute(&mut *transaction)
         .await?;
 
-        sqlx::query(
+        let insert_into_hash_table_name_result = sqlx::query(
             "INSERT INTO model_table_hash_table_name (hash, table_name)
              VALUES ($1, $2)
              ON CONFLICT DO NOTHING",
@@ -307,7 +305,8 @@ where
 
         transaction.commit().await?;
 
-        Ok(())
+        Ok(insert_into_tags_result.rows_affected() > 0
+            || insert_into_hash_table_name_result.rows_affected() > 0)
     }
 
     /// Return the name of the table that contains the time series with `univariate_id`. Returns an
@@ -1206,10 +1205,10 @@ mod tests {
             .await
             .unwrap();
 
-        let result = metadata_manager
+        let (_tag_hash, tag_hash_is_saved) = metadata_manager
             .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
-            .await;
-        assert!(result.is_ok());
+            .await
+            .unwrap();
 
         // When a new tag hash is retrieved, the hash should be saved in the cache.
         assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
@@ -1220,6 +1219,7 @@ mod tests {
             .metadata_database_pool
             .fetch(&*select_statement);
 
+        assert!(tag_hash_is_saved);
         assert_eq!(
             rows.try_next()
                 .await
@@ -1252,11 +1252,12 @@ mod tests {
         assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
 
         // When getting the same tag hash again, it should just be retrieved from the cache.
-        let result = metadata_manager
+        let (_tag_hash, tag_hash_is_saved) = metadata_manager
             .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
-            .await;
+            .await
+            .unwrap();
 
-        assert!(result.is_ok());
+        assert!(!tag_hash_is_saved);
         assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
     }
 
