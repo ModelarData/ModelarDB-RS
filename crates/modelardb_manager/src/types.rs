@@ -16,9 +16,12 @@
 //! Wrappers for [`ObjectStore`] and [`MetadataManager`] to support saving the connection
 //! information with the object that the connection information is associated with.
 
+use std::env;
 use std::sync::Arc;
 
+use modelardb_common::errors::ModelarDbError;
 use object_store::ObjectStore;
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 use crate::metadata::MetadataManager;
 
@@ -60,11 +63,48 @@ pub struct RemoteMetadataManager {
 }
 
 impl RemoteMetadataManager {
-    pub fn new(connection_info: Vec<u8>, metadata_manager: MetadataManager) -> Self {
-        Self {
-            connection_info,
+    /// Use `metadata_database_name` and the connection information in the environment variables to
+    /// connect to a remote database and create a [`MetadataManager`] with the connection. If the
+    /// connection could not be established, or the [`MetadataManager`] could not be created,
+    /// return [`ModelarDbError`].
+    pub async fn try_new(metadata_database_name: &str) -> Result<Self, ModelarDbError> {
+        let username = env::var("METADATA_DB_USER")
+            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
+        let password = env::var("METADATA_DB_PASSWORD")
+            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
+        let host = env::var("METADATA_DB_HOST")
+            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
+
+        let connection_options = PgConnectOptions::new()
+            .host(host.as_str())
+            .username(username.as_str())
+            .password(password.as_str())
+            .database(metadata_database_name);
+
+        // TODO: Look into what an ideal number of max connections would be.
+        let connection = PgPoolOptions::new()
+            .max_connections(10)
+            .connect_with(connection_options)
+            .await
+            .map_err(|error| {
+                ModelarDbError::ConfigurationError(format!(
+                    "Unable to connect to metadata database: {error}"
+                ))
+            })?;
+
+        let metadata_manager = MetadataManager::try_new(connection)
+            .await
+            .map_err(|error| {
+                ModelarDbError::ConfigurationError(format!(
+                    "Unable to setup metadata database: {error}"
+                ))
+            })?;
+
+        // TODO: Create the connection info.
+        Ok(Self {
+            connection_info: vec![],
             metadata_manager,
-        }
+        })
     }
 
     pub fn connection_info(&self) -> &Vec<u8> {
