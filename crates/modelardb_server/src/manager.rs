@@ -258,7 +258,7 @@ async fn do_action_and_extract_result(
             .map_err(|error| {
                 ModelarDbError::ClusterError(format!("Could not connect to {url}: {error}"))
             })?;
-    
+
     let response = flight_client
         .do_action(Request::new(action.clone()))
         .await

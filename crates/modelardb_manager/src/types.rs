@@ -19,6 +19,7 @@
 use std::env;
 use std::sync::Arc;
 
+use modelardb_common::arguments;
 use modelardb_common::errors::ModelarDbError;
 use object_store::ObjectStore;
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
@@ -76,9 +77,9 @@ impl RemoteMetadataManager {
             .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
 
         let connection_options = PgConnectOptions::new()
-            .host(host.as_str())
             .username(username.as_str())
             .password(password.as_str())
+            .host(host.as_str())
             .database(metadata_database_name);
 
         // TODO: Look into what an ideal number of max connections would be.
@@ -100,9 +101,19 @@ impl RemoteMetadataManager {
                 ))
             })?;
 
-        // TODO: Create the connection info.
+        // Encode the connection information so it can be transferred over Apache Arrow Flight.
+        let connection_info: Vec<u8> = [
+            username.as_str(),
+            password.as_str(),
+            host.as_str(),
+            metadata_database_name,
+        ]
+        .iter()
+        .flat_map(|argument| arguments::encode_argument(argument))
+        .collect();
+
         Ok(Self {
-            connection_info: vec![],
+            connection_info,
             metadata_manager,
         })
     }
