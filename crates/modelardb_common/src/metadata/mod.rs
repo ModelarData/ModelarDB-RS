@@ -922,11 +922,7 @@ where
 pub async fn try_new_postgres_table_metadata_manager(
     metadata_database_pool: Pool<Postgres>,
 ) -> Result<TableMetadataManager<Postgres>, Error> {
-    let metadata_manager = TableMetadataManager {
-        metadata_database_type: Postgres,
-        metadata_database_pool,
-        tag_value_hashes: DashMap::new(),
-    };
+    let metadata_manager = new_table_metadata_manager(Postgres, metadata_database_pool);
 
     // Create the necessary tables in the metadata database.
     metadata_manager.create_metadata_database_tables().await?;
@@ -953,16 +949,23 @@ pub async fn try_new_sqlite_table_metadata_manager(
         .connect_with(options)
         .await?;
 
-    let metadata_manager = TableMetadataManager {
-        metadata_database_type: Sqlite,
-        metadata_database_pool,
-        tag_value_hashes: DashMap::new(),
-    };
+    let metadata_manager = new_table_metadata_manager(Sqlite, metadata_database_pool);
 
     // Create the necessary tables in the metadata database.
     metadata_manager.create_metadata_database_tables().await?;
 
     Ok(metadata_manager)
+}
+
+pub fn new_table_metadata_manager<DB: Database + MetadataDatabase>(
+    metadata_database_type: DB,
+    metadata_database_pool: Pool<DB>,
+) -> TableMetadataManager<DB> {
+    TableMetadataManager {
+        metadata_database_type,
+        metadata_database_pool,
+        tag_value_hashes: DashMap::new(),
+    }
 }
 
 /// Return [`true`] if `path` is a data folder, otherwise [`false`].

@@ -25,13 +25,14 @@ use datafusion::arrow::array::{StringArray, UInt64Array};
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::stream;
-use modelardb_common::arguments;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::TAG_METADATA_SCHEMA;
 use modelardb_common::types::ServerMode;
+use modelardb_common::{arguments, metadata};
 use object_store::ObjectStore;
+use sqlx::Postgres;
 use tonic::metadata::MetadataMap;
 use tonic::Request;
 
@@ -71,9 +72,17 @@ impl Manager {
 
         let message = do_action_and_extract_result(manager_url, action).await?;
 
-        // Extract the key and connection information for the remote object store from the response.
+        // Extract the key and connection information for the metadata database and remote object
+        // store from the response.
         let (key, offset_data) = arguments::decode_argument(&message.body)
             .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
+
+        // Use the connection information to create a metadata manager for the remote metadata database.
+        let (connection, offset_data) = arguments::parse_postgres_arguments(offset_data)
+            .await
+            .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
+
+        let _table_metadata_manager = metadata::new_table_metadata_manager(Postgres, connection);
 
         let manager = Self {
             url: manager_url.to_owned(),
