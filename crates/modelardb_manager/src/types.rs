@@ -22,7 +22,6 @@ use std::sync::Arc;
 use modelardb_common::arguments;
 use modelardb_common::errors::ModelarDbError;
 use object_store::ObjectStore;
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 
 use crate::metadata::MetadataManager;
 
@@ -76,22 +75,14 @@ impl RemoteMetadataManager {
         let host = env::var("METADATA_DB_HOST")
             .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
 
-        let connection_options = PgConnectOptions::new()
-            .username(username.as_str())
-            .password(password.as_str())
-            .host(host.as_str())
-            .database(metadata_database_name);
-
-        // TODO: Look into what an ideal number of max connections would be.
-        let connection = PgPoolOptions::new()
-            .max_connections(10)
-            .connect_with(connection_options)
-            .await
-            .map_err(|error| {
-                ModelarDbError::ConfigurationError(format!(
-                    "Unable to connect to metadata database: {error}"
-                ))
-            })?;
+        let connection =
+            arguments::connect_to_postgres(&username, &password, &host, metadata_database_name)
+                .await
+                .map_err(|error| {
+                    ModelarDbError::ConfigurationError(format!(
+                        "Unable to connect to metadata database: {error}"
+                    ))
+                })?;
 
         let metadata_manager = MetadataManager::try_new(connection)
             .await
