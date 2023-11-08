@@ -109,7 +109,8 @@ impl FlightServiceHandler {
     async fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
         let existing_tables = self
             .context
-            .metadata_manager
+            .remote_metadata_manager
+            .metadata_manager()
             .table_metadata_column("table_name")
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
@@ -135,7 +136,8 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Persist the new table to the metadata database.
         self.context
-            .metadata_manager
+            .remote_metadata_manager
+            .metadata_manager()
             .table_metadata_manager
             .save_table_metadata(&table_name, sql)
             .await
@@ -165,7 +167,8 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Persist the new model table to the metadata database.
         self.context
-            .metadata_manager
+            .remote_metadata_manager
+            .metadata_manager()
             .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, sql)
             .await
@@ -205,7 +208,8 @@ impl FlightServiceHandler {
             // For each tag metadata in the record batch, insert it in to the metadata database.
             for row_index in 0..metadata.num_rows() {
                 self.context
-                    .metadata_manager
+                    .remote_metadata_manager
+                    .metadata_manager()
                     .table_metadata_manager
                     .save_tag_hash_metadata(
                         table_name_array.value(row_index),
@@ -267,7 +271,8 @@ impl FlightServiceHandler {
 
                 // Save the compressed file in the row to the metadata database.
                 self.context
-                    .metadata_manager
+                    .remote_metadata_manager
+                    .metadata_manager()
                     .table_metadata_manager
                     .save_compressed_file(
                         table_name_array.value(row_index),
@@ -342,7 +347,8 @@ impl FlightService for FlightServiceHandler {
         // Retrieve the table names from the metadata database.
         let table_names = self
             .context
-            .metadata_manager
+            .remote_metadata_manager
+            .metadata_manager()
             .table_metadata_column("table_name")
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
@@ -373,7 +379,8 @@ impl FlightService for FlightServiceHandler {
 
         let table_sql = self
             .context
-            .metadata_manager
+            .remote_metadata_manager
+            .metadata_manager()
             .table_sql(table_name)
             .await
             .map_err(|error| {
@@ -519,7 +526,8 @@ impl FlightService for FlightServiceHandler {
             // Get the table names in the clusters current database schema.
             let cluster_tables = self
                 .context
-                .metadata_manager
+                .remote_metadata_manager
+                .metadata_manager()
                 .table_metadata_column("table_name")
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
@@ -543,7 +551,8 @@ impl FlightService for FlightServiceHandler {
                 for table in missing_cluster_tables {
                     table_sql_queries.push(
                         self.context
-                            .metadata_manager
+                            .remote_metadata_manager
+                            .metadata_manager()
                             .table_sql(table)
                             .await
                             .map_err(|error| Status::internal(error.to_string()))?,
@@ -622,7 +631,8 @@ impl FlightService for FlightServiceHandler {
 
             // Use the metadata manager to persist the node to the metadata database.
             self.context
-                .metadata_manager
+                .remote_metadata_manager
+                .metadata_manager()
                 .save_node(&node)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
@@ -653,7 +663,8 @@ impl FlightService for FlightServiceHandler {
 
             // Remove the node with the given url from the metadata database.
             self.context
-                .metadata_manager
+                .remote_metadata_manager
+                .metadata_manager()
                 .remove_node(url)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
