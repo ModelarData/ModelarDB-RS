@@ -16,7 +16,7 @@
 //! Implementation of ModelarDB manager's main function.
 
 mod cluster;
-mod data_folder;
+mod types;
 mod metadata;
 mod remote;
 
@@ -37,7 +37,7 @@ use tonic::metadata::{Ascii, MetadataValue};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::Cluster;
-use crate::data_folder::RemoteDataFolder;
+use crate::types::{RemoteDataFolder, RemoteMetadataManager};
 use crate::metadata::MetadataManager;
 use crate::remote::start_apache_arrow_flight_server;
 
@@ -53,7 +53,7 @@ pub static PORT: Lazy<u16> = Lazy::new(|| match env::var("MODELARDBM_PORT") {
 /// Provides access to the managers components.
 pub struct Context {
     /// Manager for the access to the metadata database.
-    pub metadata_manager: MetadataManager,
+    pub metadata_manager: RemoteMetadataManager,
     /// Folder for storing Apache Parquet files in a remote object store.
     pub remote_data_folder: RwLock<RemoteDataFolder>,
     /// Cluster of nodes currently controlled by the manager.

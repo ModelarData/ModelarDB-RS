@@ -54,7 +54,7 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, info};
 
 use crate::cluster::Node;
-use crate::data_folder::RemoteDataFolder;
+use crate::types::RemoteDataFolder;
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
