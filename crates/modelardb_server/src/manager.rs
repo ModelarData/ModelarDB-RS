@@ -28,6 +28,7 @@ use futures::stream;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
+use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::schemas::TAG_METADATA_SCHEMA;
 use modelardb_common::types::ServerMode;
 use modelardb_common::{arguments, metadata};
@@ -40,13 +41,15 @@ use crate::context::Context;
 use crate::PORT;
 
 /// Manages metadata related to the manager and provides functionality for interacting with the manager.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct Manager {
     /// The gRPC URL of the manager's Apache Arrow Flight server.
     url: String,
     /// Key received from the manager when registering, used to validate future requests that are
     /// only allowed to come from the manager.
     key: String,
+    /// Metadata for the tables and model tables in the remote data folder.
+    pub(crate) table_metadata_manager: Arc<TableMetadataManager<Postgres>>,
 }
 
 impl Manager {
@@ -82,11 +85,12 @@ impl Manager {
             .await
             .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
-        let _table_metadata_manager = metadata::new_table_metadata_manager(Postgres, connection);
+        let table_metadata_manager = metadata::new_table_metadata_manager(Postgres, connection);
 
         let manager = Self {
             url: manager_url.to_owned(),
             key: key.to_owned(),
+            table_metadata_manager: Arc::new(table_metadata_manager),
         };
 
         let remote_object_store = arguments::parse_object_store_arguments(offset_data)

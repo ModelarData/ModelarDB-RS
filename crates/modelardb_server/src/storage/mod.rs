@@ -194,6 +194,8 @@ impl StorageEngine {
             RwLock::new(data_transfer),
             local_data_folder,
             channels.clone(),
+            configuration_manager.server_mode.clone(),
+            configuration_manager.cluster_mode.clone(),
             memory_pool.clone(),
             table_metadata_manager,
             used_disk_space_metric,

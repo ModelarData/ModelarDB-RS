@@ -47,7 +47,7 @@ use datafusion::physical_plan::expressions::{Column, PhysicalSortExpr};
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr, Statistics};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{COMPRESSED_SCHEMA, QUERY_SCHEMA};
-use modelardb_common::types::{ArrowTimestamp, ArrowValue};
+use modelardb_common::types::{ArrowTimestamp, ArrowValue, ServerMode};
 use object_store::ObjectStore;
 use once_cell::sync::Lazy;
 use tokio::sync::RwLockWriteGuard;
@@ -56,8 +56,8 @@ use crate::context::Context;
 use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
 use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
-use crate::storage;
 use crate::storage::StorageEngine;
+use crate::{storage, ClusterMode};
 
 /// The global sort order [`ParquetExec`] guarantees for the segments it produces and that
 /// [`GridExec`] requires for the segments its receives as its input. It is guaranteed by
@@ -485,13 +485,24 @@ impl TableProvider for ModelTable {
         let (maybe_parquet_predicates, maybe_grid_predicates) =
             rewrite_and_combine_filters(schema, filters);
 
-        // Compute a mapping from hashes to the requested tag values in the requested order.
-        let hash_to_tags = self
-            .context
-            .table_metadata_manager
-            .mapping_from_hash_to_tags(table_name, &stored_tag_columns_in_projection)
-            .await
-            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
+        // Compute a mapping from hashes to the requested tag values in the requested order. If the
+        // server is a cloud node, use the table metadata manager for the remote metadata database.
+        let configuration_manager = self.context.configuration_manager.read().await;
+        let hash_to_tags = if let (ServerMode::Cloud, ClusterMode::MultiNode(manager)) = (
+            &configuration_manager.server_mode,
+            &configuration_manager.cluster_mode,
+        ) {
+            manager
+                .table_metadata_manager
+                .mapping_from_hash_to_tags(table_name, &stored_tag_columns_in_projection)
+                .await
+        } else {
+            self.context
+                .table_metadata_manager
+                .mapping_from_hash_to_tags(table_name, &stored_tag_columns_in_projection)
+                .await
+        }
+        .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
         // unwrap() is safe as the store is set by create_session_context().
         let query_object_store = ctx
