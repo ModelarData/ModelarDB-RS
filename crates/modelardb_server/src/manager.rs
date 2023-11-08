@@ -57,12 +57,6 @@ impl Manager {
         manager_url: &str,
         server_mode: ServerMode,
     ) -> Result<(Self, Arc<dyn ObjectStore>), ModelarDbError> {
-        let mut flight_client = FlightServiceClient::connect(manager_url.to_owned())
-            .await
-            .map_err(|error| {
-                ModelarDbError::ClusterError(format!("Could not connect to manager: {error}"))
-            })?;
-
         // Add the url and mode of the server to the action request.
         let localhost_with_port = "grpc://127.0.0.1:".to_owned() + &PORT.to_string();
         let mut body = arguments::encode_argument(localhost_with_port.as_str());
@@ -75,34 +69,22 @@ impl Manager {
             body: body.into(),
         };
 
-        // Extract the connection information for the remote object store from the response.
-        let maybe_response = flight_client
-            .do_action(Request::new(action))
-            .await
-            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?
-            .into_inner()
-            .message()
-            .await
-            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+        let message = do_action_and_extract_result(manager_url, action).await?;
 
-        if let Some(response) = maybe_response {
-            let (key, offset_data) = arguments::decode_argument(&response.body)
-                .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
+        // Extract the key and connection information for the remote object store from the response.
+        let (key, offset_data) = arguments::decode_argument(&message.body)
+            .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
-            Ok((
-                Self {
-                    url: manager_url.to_owned(),
-                    key: key.to_owned(),
-                },
-                arguments::parse_object_store_arguments(offset_data)
-                    .await
-                    .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?,
-            ))
-        } else {
-            Err(ModelarDbError::ImplementationError(
-                "Response for request to register the node is empty.".to_owned(),
-            ))
-        }
+        let manager = Self {
+            url: manager_url.to_owned(),
+            key: key.to_owned(),
+        };
+
+        let remote_object_store = arguments::parse_object_store_arguments(offset_data)
+            .await
+            .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
+
+        Ok((manager, remote_object_store))
     }
 
     /// Initialize the local database schema with the tables and model tables from the managers
@@ -114,46 +96,26 @@ impl Manager {
     ) -> Result<(), ModelarDbError> {
         let existing_tables = context.default_database_schema()?.table_names();
 
-        // Retrieve the tables to create from the manager.
-        let mut flight_client = FlightServiceClient::connect(self.url.clone())
-            .await
-            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
-
         // Add the already existing tables to the action request.
         let action = Action {
             r#type: "InitializeDatabase".to_owned(),
             body: existing_tables.join(",").into_bytes().into(),
         };
 
+        let message = do_action_and_extract_result(&self.url, action).await?;
+
         // Extract the SQL for the tables that need to be created from the response.
-        let response = flight_client
-            .do_action(Request::new(action))
-            .await
-            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+        let table_sql_queries = std::str::from_utf8(&message.body)
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?
+            .split(';')
+            .filter(|sql| !sql.is_empty());
 
-        let maybe_message = response
-            .into_inner()
-            .message()
-            .await
-            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
-
-        if let Some(message) = maybe_message {
-            let table_sql_queries = std::str::from_utf8(&message.body)
-                .map_err(|error| ModelarDbError::TableError(error.to_string()))?
-                .split(';')
-                .filter(|sql| !sql.is_empty());
-
-            // For each table to create, register and save the table in the metadata database.
-            for sql in table_sql_queries {
-                context.parse_and_create_table(sql, context).await?;
-            }
-
-            Ok(())
-        } else {
-            Err(ModelarDbError::ImplementationError(
-                "Response for request to initialize database is empty.".to_owned(),
-            ))
+        // For each table to create, register and save the table in the metadata database.
+        for sql in table_sql_queries {
+            context.parse_and_create_table(sql, context).await?;
         }
+
+        Ok(())
     }
 
     /// Insert the compressed file metadata into a record batch and transfer it to the
@@ -281,4 +243,39 @@ impl Manager {
 
         Ok(())
     }
+}
+
+/// Connect to an Apache Arrow Flight client using `url`, execute `action`, and extract the message
+/// inside the response. If `url` could not be connected to, `action` could not be executed, or
+/// the response is invalid or empty, return [`ModelarDbError`].
+async fn do_action_and_extract_result(
+    url: &str,
+    action: Action,
+) -> Result<arrow_flight::Result, ModelarDbError> {
+    let mut flight_client =
+        FlightServiceClient::connect(url.to_owned())
+            .await
+            .map_err(|error| {
+                ModelarDbError::ClusterError(format!("Could not connect to {url}: {error}"))
+            })?;
+    
+    let response = flight_client
+        .do_action(Request::new(action.clone()))
+        .await
+        .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+
+    // Extract the message from the response.
+    let maybe_message = response
+        .into_inner()
+        .message()
+        .await
+        .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
+
+    // Handle that the response is potentially empty.
+    maybe_message.ok_or_else(|| {
+        ModelarDbError::ImplementationError(format!(
+            "Response for action request '{}' is empty.",
+            action.r#type
+        ))
+    })
 }
