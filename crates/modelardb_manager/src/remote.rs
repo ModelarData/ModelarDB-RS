@@ -357,6 +357,11 @@ impl FlightService for FlightServiceHandler {
             .query_node()
             .map_err(|error| Status::failed_precondition(error.to_string()))?;
 
+        info!(
+            "Assigning query '{query}' to cloud node with url '{}'.",
+            cloud_node.url
+        );
+
         // All data in the query result should be returned using a single endpoint.
         let endpoint = FlightEndpoint {
             ticket: Some(Ticket::new(query)),
@@ -365,9 +370,12 @@ impl FlightService for FlightServiceHandler {
             }],
         };
 
-        // schema and flight_descriptor are empty and total_records and total_bytes are -1 since we
-        // do not know anything about the result of the query at this point.
-        let flight_info = FlightInfo::new().with_endpoint(endpoint).with_ordered(true);
+        // schema is empty and total_records and total_bytes are -1 since we do not know anything
+        // about the result of the query at this point.
+        let flight_info = FlightInfo::new()
+            .with_descriptor(flight_descriptor)
+            .with_endpoint(endpoint)
+            .with_ordered(true);
 
         Ok(Response::new(flight_info))
     }
