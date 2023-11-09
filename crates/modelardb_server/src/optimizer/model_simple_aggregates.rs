@@ -25,7 +25,7 @@ use std::mem;
 use std::sync::Arc;
 
 use datafusion::arrow::array::{
-    ArrayRef, BinaryArray, Float32Array, Int64Array, UInt64Array, UInt8Array,
+    ArrayRef, BinaryArray, Float32Array, Float64Array, Int64Array, UInt64Array, UInt8Array,
 };
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -231,8 +231,8 @@ impl ModelAggregateExpr {
             ModelAggregateType::Count => DataType::Int64,
             ModelAggregateType::Min => DataType::Float32,
             ModelAggregateType::Max => DataType::Float32,
-            ModelAggregateType::Sum => DataType::Float32,
-            ModelAggregateType::Avg => DataType::Float32,
+            ModelAggregateType::Sum => DataType::Float64,
+            ModelAggregateType::Avg => DataType::Float64,
         };
 
         Arc::new(Self {
@@ -271,13 +271,10 @@ impl AggregateExpr for ModelAggregateExpr {
     /// [`Accumulator's`](Accumulator) intermediate state.
     fn state_fields(&self) -> Result<Vec<Field>> {
         Ok(match &self.aggregate_type {
-            ModelAggregateType::Sum => vec![
-                Field::new("SUM", DataType::Float32, false),
-                Field::new("COUNT", DataType::UInt64, false),
-            ],
+            ModelAggregateType::Sum => vec![Field::new("SUM", DataType::Float64, false)],
             ModelAggregateType::Avg => vec![
                 Field::new("COUNT", DataType::UInt64, false),
-                Field::new("SUM", DataType::Float32, false),
+                Field::new("SUM", DataType::Float64, false),
             ],
             _ => vec![Field::new(
                 expressions::format_state_name(self.name(), "NOT NULL"),
@@ -304,7 +301,7 @@ impl AggregateExpr for ModelAggregateExpr {
             ModelAggregateType::Count => Box::new(ModelCountAccumulator { count: 0 }),
             ModelAggregateType::Min => Box::new(ModelMinAccumulator { min: f32::MAX }),
             ModelAggregateType::Max => Box::new(ModelMaxAccumulator { max: f32::MIN }),
-            ModelAggregateType::Sum => Box::new(ModelSumAccumulator { sum: 0.0, count: 0 }),
+            ModelAggregateType::Sum => Box::new(ModelSumAccumulator { sum: 0.0 }),
             ModelAggregateType::Avg => Box::new(ModelAvgAccumulator { sum: 0.0, count: 0 }),
         })
     }
@@ -677,7 +674,7 @@ pub struct ModelSumPhysicalExpr {}
 
 impl Display for ModelSumPhysicalExpr {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "ModelSumPhysicalExpr(Float32)")
+        write!(f, "ModelSumPhysicalExpr(Float64)")
     }
 }
 
@@ -696,7 +693,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
 
     /// Return the return [`DataType`] of this [`PhysicalExpr`].
     fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
-        Ok(DataType::Float32)
+        Ok(DataType::Float64)
     }
 
     /// Return [`true`] as this expression returns `NULL` for empty [`RecordBatches`](RecordBatch).
@@ -729,6 +726,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
             let min_value = min_values.value(row_index);
             let max_value = max_values.value(row_index);
             let values = values.value(row_index);
+            let residuals = residuals.value(row_index);
 
             sum += modelardb_compression::sum(
                 model_type_id,
@@ -738,12 +736,12 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
                 min_value,
                 max_value,
                 values,
-                residuals.values(),
-            );
+                residuals,
+            ) as f64;
         }
 
         // Returning a Scalar fills an array with the value.
-        let mut result = Float32Array::builder(1);
+        let mut result = Float64Array::builder(1);
         result.append_value(sum);
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
@@ -775,10 +773,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
 #[derive(Debug)]
 struct ModelSumAccumulator {
     /// Current sum stored by the [`Accumulator`].
-    sum: f32,
-    /// Current count stored by the [`Accumulator`]. It is stored so it can be passed to
-    /// [SumAccumulator](repository/datafusion/physical-expr/src/aggregate/sum.rs).
-    count: u64,
+    sum: f64,
 }
 
 impl Accumulator for ModelSumAccumulator {
@@ -787,10 +782,9 @@ impl Accumulator for ModelSumAccumulator {
         for array in values {
             self.sum += array
                 .as_any()
-                .downcast_ref::<Float32Array>()
+                .downcast_ref::<Float64Array>()
                 .unwrap()
                 .value(0);
-            self.count += 1;
         }
         Ok(())
     }
@@ -803,10 +797,7 @@ impl Accumulator for ModelSumAccumulator {
     /// Return the current state of the [`Accumulator`]. It must match
     /// [SumAccumulator](repository/datafusion/physical-expr/src/aggregate/sum.rs).
     fn state(&self) -> Result<Vec<ScalarValue>> {
-        Ok(vec![
-            ScalarValue::Float32(Some(self.sum)),
-            ScalarValue::from(self.count),
-        ])
+        Ok(vec![ScalarValue::Float64(Some(self.sum))])
     }
 
     /// Panics as this method should never be called.
@@ -826,7 +817,7 @@ pub struct ModelAvgPhysicalExpr {}
 
 impl Display for ModelAvgPhysicalExpr {
     fn fmt(&self, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "ModelAvgPhysicalExpr(Float32)")
+        write!(f, "ModelAvgPhysicalExpr(Float64)")
     }
 }
 
@@ -845,7 +836,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
 
     /// Return the return [`DataType`] of this [`PhysicalExpr`].
     fn data_type(&self, _input_schema: &Schema) -> Result<DataType> {
-        Ok(DataType::Float32)
+        Ok(DataType::Float64)
     }
 
     /// Return [`true`] as this expression returns `NULL` for empty [`RecordBatches`](RecordBatch).
@@ -879,6 +870,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
             let min_value = min_values.value(row_index);
             let max_value = max_values.value(row_index);
             let values = values.value(row_index);
+            let residuals = residuals.value(row_index);
 
             sum += modelardb_compression::sum(
                 model_type_id,
@@ -888,16 +880,16 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
                 min_value,
                 max_value,
                 values,
-                residuals.values(),
+                residuals,
             );
 
             count += modelardb_compression::len(start_time, end_time, timestamps);
         }
 
         // Returning a Scalar fills an array with the value.
-        let mut result = ValueArray::builder(2);
-        result.append_value(sum as Value);
-        result.append_value(count as Value);
+        let mut result = Float64Array::builder(2);
+        result.append_value(sum as f64);
+        result.append_value(count as f64);
         Ok(ColumnarValue::Array(Arc::new(result.finish())))
     }
 
@@ -928,7 +920,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
 #[derive(Debug)]
 struct ModelAvgAccumulator {
     /// The current sum stored in the [`Accumulator`].
-    sum: f32,
+    sum: f64,
     /// The current count stored in the [`Accumulator`].
     count: u64,
 }
@@ -937,7 +929,7 @@ impl Accumulator for ModelAvgAccumulator {
     /// Update the [`Accumulators`](Accumulator) state from `values`.
     fn update_batch(&mut self, values: &[ArrayRef]) -> Result<()> {
         for array in values {
-            let array = array.as_any().downcast_ref::<Float32Array>().unwrap();
+            let array = array.as_any().downcast_ref::<Float64Array>().unwrap();
             self.sum += array.value(0);
             self.count += array.value(1) as u64;
         }
@@ -954,7 +946,7 @@ impl Accumulator for ModelAvgAccumulator {
     fn state(&self) -> Result<Vec<ScalarValue>> {
         Ok(vec![
             ScalarValue::UInt64(Some(self.count)),
-            ScalarValue::Float32(Some(self.sum)),
+            ScalarValue::Float64(Some(self.sum)),
         ])
     }
 
