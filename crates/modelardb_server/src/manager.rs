@@ -307,3 +307,99 @@ impl fmt::Debug for Manager {
         write!(f, "{{ url: {}, key: {} }}", self.url, self.key)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use sqlx::PgPool;
+    use uuid::Uuid;
+
+    // Tests for validate_action_request().
+    #[tokio::test]
+    async fn test_validate_unrestricted_action_request() {
+        let manager = create_manager();
+        let request_metadata = MetadataMap::new();
+
+        assert!(manager
+            .validate_action_request("FlushMemory", &request_metadata)
+            .is_ok());
+        assert!(manager
+            .validate_action_request("FlushEdge", &request_metadata)
+            .is_ok());
+        assert!(manager
+            .validate_action_request("CollectMetrics", &request_metadata)
+            .is_ok());
+        assert!(manager
+            .validate_action_request("GetConfiguration", &request_metadata)
+            .is_ok());
+        assert!(manager
+            .validate_action_request("UpdateConfiguration", &request_metadata)
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_restricted_action_request() {
+        let manager = create_manager();
+        let mut request_metadata = MetadataMap::new();
+        request_metadata.append("x-manager-key", manager.key.parse().unwrap());
+
+        assert!(manager
+            .validate_action_request("CommandStatementUpdate", &request_metadata)
+            .is_ok());
+        assert!(manager
+            .validate_action_request("UpdateRemoteObjectStore", &request_metadata)
+            .is_ok());
+        assert!(manager
+            .validate_action_request("KillEdge", &request_metadata)
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_validate_restricted_action_request_without_key() {
+        let manager = create_manager();
+        let request_metadata = MetadataMap::new();
+
+        assert!(manager
+            .validate_action_request("CommandStatementUpdate", &request_metadata)
+            .is_err());
+        assert!(manager
+            .validate_action_request("UpdateRemoteObjectStore", &request_metadata)
+            .is_err());
+        assert!(manager
+            .validate_action_request("KillEdge", &request_metadata)
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_validate_restricted_action_request_with_invalid_key() {
+        let manager = create_manager();
+        let mut request_metadata = MetadataMap::new();
+        request_metadata.append("x-manager-key", Uuid::new_v4().to_string().parse().unwrap());
+
+        assert!(manager
+            .validate_action_request("CommandStatementUpdate", &request_metadata)
+            .is_err());
+        assert!(manager
+            .validate_action_request("UpdateRemoteObjectStore", &request_metadata)
+            .is_err());
+        assert!(manager
+            .validate_action_request("KillEdge", &request_metadata)
+            .is_err());
+    }
+
+    fn create_manager() -> Manager {
+        // Create a lazy connection to avoid the connection being validated.
+        let metadata_database_pool =
+            PgPool::connect_lazy("postgres://postgres:password@localhost/database").unwrap();
+
+        let table_metadata_manager =
+            metadata::new_table_metadata_manager(Postgres, metadata_database_pool);
+
+        Manager {
+            url: "grpc://manager:8888".to_owned(),
+            key: Uuid::new_v4().to_string(),
+            table_metadata_manager: Arc::new(table_metadata_manager),
+        }
+    }
+}
