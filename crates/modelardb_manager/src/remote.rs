@@ -85,7 +85,8 @@ pub fn start_apache_arrow_flight_server(
 struct FlightServiceHandler {
     /// Singleton that provides access to the system's components.
     context: Arc<Context>,
-    /// Pre-allocated static argument for [`utils::flight_data_to_arrow_batch`].
+    /// Pre-allocated static argument for
+    /// [`flight_data_to_arrow_batch`](arrow_flight::utils::flight_data_to_arrow_batch).
     /// For more information about the use of dictionaries in Apache Arrow see
     /// the [Arrow Columnar Format].
     ///
@@ -205,7 +206,7 @@ impl FlightServiceHandler {
             let tag_columns_array = modelardb_common::array!(metadata, 2, StringArray);
             let tag_values_array = modelardb_common::array!(metadata, 3, StringArray);
 
-            // For each tag metadata in the record batch, insert it in to the metadata database.
+            // For each tag metadata in the record batch, insert it into the metadata database.
             for row_index in 0..metadata.num_rows() {
                 self.context
                     .remote_metadata_manager
@@ -362,7 +363,7 @@ impl FlightService for FlightServiceHandler {
             cloud_node.url
         );
 
-        // All data in the query result should be returned using a single endpoint.
+        // All data in the query result should be retrieved using a single endpoint.
         let endpoint = FlightEndpoint {
             ticket: Some(Ticket::new(query)),
             location: vec![Location {
@@ -427,8 +428,8 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// Insert metadata about tags into a table_name_tags table or metadata about compressed files
-    /// into a table_name_compressed_files table in the metadata database. The name of the table
+    /// Insert metadata about tags into a `table_name_tags` table or metadata about compressed files
+    /// into a `table_name_compressed_files` table in the metadata database. The name of the table
     /// must be provided as the first element of `FlightDescriptor.path` and the schema of the
     /// metadata must match [`TAG_METADATA_SCHEMA`] or [`COMPRESSED_FILE_METADATA_SCHEMA`] for
     /// either tag metadata or compressed file metadata. If the metadata is successfully inserted,

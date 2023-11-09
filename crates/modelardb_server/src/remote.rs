@@ -168,7 +168,8 @@ fn send_record_batch(
 struct FlightServiceHandler {
     /// Singleton that provides access to the system's components.
     context: Arc<Context>,
-    /// Pre-allocated static argument for [`utils::flight_data_to_arrow_batch`].
+    /// Pre-allocated static argument for
+    /// [`flight_data_to_arrow_batch`](arrow_flight::utils::flight_data_to_arrow_batch).
     /// For more information about the use of dictionaries in Apache Arrow see
     /// the [Arrow Columnar Format].
     ///

@@ -52,7 +52,7 @@ impl RemoteDataFolder {
     }
 }
 
-/// Stores the connection information with the manager manager to ensure that the information
+/// Stores the connection information with the metadata manager to ensure that the information
 /// is consistent with the metadata manager.
 pub struct RemoteMetadataManager {
     /// Connection information saved as bytes to make it possible to transfer the information using

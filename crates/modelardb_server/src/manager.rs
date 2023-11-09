@@ -21,7 +21,6 @@ use std::sync::Arc;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, FlightData, FlightDescriptor};
-use bytes::Bytes;
 use datafusion::arrow::array::{StringArray, UInt64Array};
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -54,9 +53,9 @@ pub struct Manager {
 }
 
 impl Manager {
-    /// Register the server as a node in the cluster and retrieve the key and remote object store
-    /// connection information from the manager. If the key and connection information could not be
-    /// retrieved or a connection to the remote object store could not be established,
+    /// Register the server as a node in the cluster and retrieve the key and connection information
+    /// from the manager. If the key and connection information could not be retrieved or a
+    /// connection to the metadata database or remote object store could not be established,
     /// [`ModelarDbError`] is returned.
     pub(crate) async fn register_node(
         manager_url: &str,
@@ -198,12 +197,7 @@ impl Manager {
 
         // Put the table name in the flight descriptor of the first flight data in the stream.
         let flight_descriptor = FlightDescriptor::new_path(vec![metadata_table_name.to_owned()]);
-        let mut flight_data = vec![FlightData {
-            flight_descriptor: Some(flight_descriptor),
-            data_header: Bytes::new(),
-            app_metadata: Bytes::new(),
-            data_body: Bytes::new(),
-        }];
+        let mut flight_data = vec![FlightData::new().with_descriptor(flight_descriptor)];
 
         // Write the metadata in the record batch into Arrow IPC format so it can be transferred.
         let data_generator = IpcDataGenerator::default();
@@ -217,9 +211,8 @@ impl Manager {
         flight_data.push(encoded_batch.into());
 
         // Stream the metadata to the Apache Arrow Flight client of the manager.
-        let flight_data_stream = stream::iter(flight_data);
         flight_client
-            .do_put(flight_data_stream)
+            .do_put(stream::iter(flight_data))
             .await
             .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
 
@@ -249,9 +242,10 @@ impl Manager {
                 ))?;
 
             if &self.key != request_key {
-                return Err(ModelarDbError::ClusterError(
-                    "Manager key is invalid.".to_owned(),
-                ));
+                return Err(ModelarDbError::ClusterError(format!(
+                    "Manager key '{:?}' is invalid.",
+                    request_key
+                )));
             }
         }
 
