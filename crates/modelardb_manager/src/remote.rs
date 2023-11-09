@@ -30,8 +30,8 @@ use arrow::error::ArrowError;
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
-    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
-    HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaAsIpc,
+    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightEndpoint, FlightInfo,
+    HandshakeRequest, HandshakeResponse, Location, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
 use chrono::{TimeZone, Utc};
@@ -337,12 +337,39 @@ impl FlightService for FlightServiceHandler {
         Ok(Response::new(Box::pin(output)))
     }
 
-    /// Not implemented.
+    /// Given a query, return [`FlightInfo`] containing [`FlightEndpoints`](FlightEndpoint)
+    /// describing which cloud nodes should be used to execute the query. The query must be
+    /// provided in `FlightDescriptor.cmd`.
     async fn get_flight_info(
         &self,
-        _request: Request<FlightDescriptor>,
+        request: Request<FlightDescriptor>,
     ) -> Result<Response<FlightInfo>, Status> {
-        Err(Status::unimplemented("Not implemented."))
+        let flight_descriptor = request.into_inner();
+
+        // Extract the query.
+        let query = str::from_utf8(&flight_descriptor.cmd)
+            .map_err(|error| Status::invalid_argument(error.to_string()))?
+            .to_owned();
+
+        // Retrieve the cloud node that should execute the given query.
+        let mut cluster = self.context.cluster.write().await;
+        let cloud_node = cluster
+            .query_node()
+            .map_err(|error| Status::failed_precondition(error.to_string()))?;
+
+        // All data in the query result should be returned using a single endpoint.
+        let endpoint = FlightEndpoint {
+            ticket: Some(Ticket::new(query)),
+            location: vec![Location {
+                uri: cloud_node.url,
+            }],
+        };
+
+        // schema and flight_descriptor are empty and total_records and total_bytes are -1 since we
+        // do not know anything about the result of the query at this point.
+        let flight_info = FlightInfo::new().with_endpoint(endpoint).with_ordered(true);
+
+        Ok(Response::new(flight_info))
     }
 
     /// Provide the schema of a table in the catalog. The name of the table must be provided as the
