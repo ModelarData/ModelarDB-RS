@@ -48,7 +48,7 @@ use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
-use modelardb_common::types::{Timestamp, TimestampArray, Value};
+use modelardb_common::types::{ServerMode, Timestamp, TimestampArray, Value};
 use object_store::{ObjectMeta, ObjectStore};
 use sqlx::Sqlite;
 use tokio::fs::File as TokioFile;
@@ -194,8 +194,6 @@ impl StorageEngine {
             RwLock::new(data_transfer),
             local_data_folder,
             channels.clone(),
-            configuration_manager.server_mode.clone(),
-            configuration_manager.cluster_mode.clone(),
             memory_pool.clone(),
             table_metadata_manager,
             used_disk_space_metric,
@@ -367,6 +365,8 @@ impl StorageEngine {
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
         max_value: Option<Value>,
+        server_mode: &ServerMode,
+        cluster_mode: &ClusterMode,
         query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
         self.compressed_data_manager
@@ -377,6 +377,8 @@ impl StorageEngine {
                 end_time,
                 min_value,
                 max_value,
+                server_mode,
+                cluster_mode,
                 query_data_folder,
             )
             .await

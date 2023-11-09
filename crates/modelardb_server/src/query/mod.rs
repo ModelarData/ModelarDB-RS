@@ -201,6 +201,8 @@ impl ModelTable {
         maybe_grid_predicates: Option<Expr>,
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
+        let configuration_manager = self.context.configuration_manager.read().await;
+
         // unwrap() is safe to use as compressed_files() only fails if a table with the name
         // table_name and column with column_index does not exists, if end time is before start
         // time, or if max value is larger than min value.
@@ -213,6 +215,8 @@ impl ModelTable {
                 None,
                 None,
                 None,
+                &configuration_manager.server_mode,
+                &configuration_manager.cluster_mode,
                 query_object_store,
             )
             .await

@@ -43,12 +43,12 @@ use tonic::codegen::Bytes;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
-use crate::ClusterMode;
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
 use crate::storage::types::{Channels, MemoryPool};
 use crate::storage::{Metric, StorageEngine, COMPRESSED_DATA_FOLDER};
+use crate::ClusterMode;
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
 /// Apache Parquet files.
@@ -68,10 +68,6 @@ pub(super) struct CompressedDataManager {
     channels: Arc<Channels>,
     /// Management of metadata for saving compressed file metadata.
     table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
-    /// The mode of the server used to determine the behaviour when getting compressed files.
-    server_mode: ServerMode,
-    /// The mode of the cluster used to determine the behaviour when getting compressed files.
-    cluster_mode: ClusterMode,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used compressed memory in bytes, updated every time the used memory changes.
@@ -88,8 +84,6 @@ impl CompressedDataManager {
         data_transfer: RwLock<Option<DataTransfer>>,
         local_data_folder: PathBuf,
         channels: Arc<Channels>,
-        server_mode: ServerMode,
-        cluster_mode: ClusterMode,
         memory_pool: Arc<MemoryPool>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
@@ -104,8 +98,6 @@ impl CompressedDataManager {
             compressed_queue: SegQueue::new(),
             channels,
             table_metadata_manager,
-            server_mode,
-            cluster_mode,
             memory_pool,
             used_compressed_memory_metric: Mutex::new(Metric::new()),
             used_disk_space_metric,
@@ -265,12 +257,14 @@ impl CompressedDataManager {
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
         max_value: Option<Value>,
+        server_mode: &ServerMode,
+        cluster_mode: &ClusterMode,
         query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
         // Retrieve the metadata of all files that fit the given arguments. If the server is a cloud
         // node, use the table metadata manager for the remote metadata database.
         let relevant_object_metas = if let (ServerMode::Cloud, ClusterMode::MultiNode(manager)) =
-            (&self.server_mode, &self.cluster_mode)
+            (server_mode, cluster_mode)
         {
             manager
                 .table_metadata_manager
@@ -315,7 +309,7 @@ impl CompressedDataManager {
             // Replace the merged files in the metadata database. If the server is a cloud node,
             // use the table metadata manager for the remote metadata database.
             if let (ServerMode::Cloud, ClusterMode::MultiNode(manager)) =
-                (&self.server_mode, &self.cluster_mode)
+                (server_mode, cluster_mode)
             {
                 manager
                     .table_metadata_manager
