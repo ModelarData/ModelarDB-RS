@@ -315,27 +315,29 @@ mod tests {
     use sqlx::PgPool;
     use uuid::Uuid;
 
+    const RESTRICTED_ACTIONS: [&str; 3] = [
+        "CommandStatementUpdate",
+        "UpdateRemoteObjectStore",
+        "KillEdge",
+    ];
+
     // Tests for validate_action_request().
     #[tokio::test]
     async fn test_validate_unrestricted_action_request() {
         let manager = create_manager();
         let request_metadata = MetadataMap::new();
 
-        assert!(manager
-            .validate_action_request("FlushMemory", &request_metadata)
-            .is_ok());
-        assert!(manager
-            .validate_action_request("FlushEdge", &request_metadata)
-            .is_ok());
-        assert!(manager
-            .validate_action_request("CollectMetrics", &request_metadata)
-            .is_ok());
-        assert!(manager
-            .validate_action_request("GetConfiguration", &request_metadata)
-            .is_ok());
-        assert!(manager
-            .validate_action_request("UpdateConfiguration", &request_metadata)
-            .is_ok());
+        for action_type in [
+            "FlushMemory",
+            "FlushEdge",
+            "CollectMetrics",
+            "GetConfiguration",
+            "UpdateConfiguration",
+        ] {
+            assert!(manager
+                .validate_action_request(action_type, &request_metadata)
+                .is_ok());
+        }
     }
 
     #[tokio::test]
@@ -344,15 +346,11 @@ mod tests {
         let mut request_metadata = MetadataMap::new();
         request_metadata.append("x-manager-key", manager.key.parse().unwrap());
 
-        assert!(manager
-            .validate_action_request("CommandStatementUpdate", &request_metadata)
-            .is_ok());
-        assert!(manager
-            .validate_action_request("UpdateRemoteObjectStore", &request_metadata)
-            .is_ok());
-        assert!(manager
-            .validate_action_request("KillEdge", &request_metadata)
-            .is_ok());
+        for action_type in RESTRICTED_ACTIONS {
+            assert!(manager
+                .validate_action_request(action_type, &request_metadata)
+                .is_ok());
+        }
     }
 
     #[tokio::test]
@@ -360,15 +358,11 @@ mod tests {
         let manager = create_manager();
         let request_metadata = MetadataMap::new();
 
-        assert!(manager
-            .validate_action_request("CommandStatementUpdate", &request_metadata)
-            .is_err());
-        assert!(manager
-            .validate_action_request("UpdateRemoteObjectStore", &request_metadata)
-            .is_err());
-        assert!(manager
-            .validate_action_request("KillEdge", &request_metadata)
-            .is_err());
+        for action_type in RESTRICTED_ACTIONS {
+            assert!(manager
+                .validate_action_request(action_type, &request_metadata)
+                .is_err());
+        }
     }
 
     #[tokio::test]
@@ -377,15 +371,11 @@ mod tests {
         let mut request_metadata = MetadataMap::new();
         request_metadata.append("x-manager-key", Uuid::new_v4().to_string().parse().unwrap());
 
-        assert!(manager
-            .validate_action_request("CommandStatementUpdate", &request_metadata)
-            .is_err());
-        assert!(manager
-            .validate_action_request("UpdateRemoteObjectStore", &request_metadata)
-            .is_err());
-        assert!(manager
-            .validate_action_request("KillEdge", &request_metadata)
-            .is_err());
+        for action_type in RESTRICTED_ACTIONS {
+            assert!(manager
+                .validate_action_request(action_type, &request_metadata)
+                .is_err());
+        }
     }
 
     fn create_manager() -> Manager {
