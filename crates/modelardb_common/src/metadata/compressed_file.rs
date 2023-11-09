@@ -83,7 +83,7 @@ impl CompressedFile {
 
     /// Insert `table_name`, `column_index`, and the compressed file into a single row
     /// in a [`RecordBatch`].
-    pub fn insert_into_record_batch(&self, table_name: &str, column_index: i64) -> RecordBatch {
+    pub fn insert_into_record_batch(&self, table_name: &str, column_index: usize) -> RecordBatch {
         let schema = COMPRESSED_FILE_METADATA_SCHEMA.clone();
         let file_path = self.file_metadata.location.to_string();
         let created_at = self.file_metadata.last_modified.timestamp_millis();
@@ -93,7 +93,7 @@ impl CompressedFile {
             schema.0,
             vec![
                 Arc::new(StringArray::from(vec![table_name])),
-                Arc::new(Int64Array::from(vec![column_index])),
+                Arc::new(UInt64Array::from(vec![column_index as u64])),
                 Arc::new(StringArray::from(vec![file_path])),
                 Arc::new(UInt64Array::from(vec![self.file_metadata.size as u64])),
                 Arc::new(Int64Array::from(vec![created_at])),

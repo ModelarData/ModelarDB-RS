@@ -137,7 +137,7 @@ impl Manager {
     pub async fn transfer_compressed_file_metadata(
         &self,
         model_table_name: &str,
-        column_index: i64,
+        column_index: usize,
         compressed_file: CompressedFile,
     ) -> Result<(), ModelarDbError> {
         let metadata = compressed_file.insert_into_record_batch(model_table_name, column_index);

@@ -239,7 +239,7 @@ impl DataTransfer {
         // If the server was started with a manager, transfer the metadata of the transferred file.
         if let ClusterMode::MultiNode(manager) = &self.cluster_mode {
             manager
-                .transfer_compressed_file_metadata(table_name, column_index as i64, compressed_file)
+                .transfer_compressed_file_metadata(table_name, column_index.into(), compressed_file)
                 .await
                 .map_err(|error| ParquetError::General(error.to_string()))?;
         }

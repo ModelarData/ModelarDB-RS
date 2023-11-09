@@ -238,7 +238,7 @@ impl FlightServiceHandler {
 
             // Extract the columns of the record batch so they can be accessed by row.
             let table_name_array = modelardb_common::array!(metadata, 0, StringArray);
-            let field_column_array = modelardb_common::array!(metadata, 1, Int64Array);
+            let field_column_array = modelardb_common::array!(metadata, 1, UInt64Array);
             let file_path_array = modelardb_common::array!(metadata, 2, StringArray);
             let size_array = modelardb_common::array!(metadata, 3, UInt64Array);
             let created_at_array = modelardb_common::array!(metadata, 4, Int64Array);
