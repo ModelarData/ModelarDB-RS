@@ -801,6 +801,8 @@ mod tests {
                 None,
                 None,
                 None,
+                &ServerMode::Edge,
+                &ClusterMode::SingleNode,
                 &object_store,
             )
             .await;
@@ -822,6 +824,8 @@ mod tests {
             None,
             None,
             None,
+            &ServerMode::Edge,
+            &ClusterMode::SingleNode,
             &object_store,
         );
 
@@ -921,8 +925,6 @@ mod tests {
                 RwLock::new(None),
                 local_data_folder,
                 channels,
-                ServerMode::Edge,
-                ClusterMode::SingleNode,
                 memory_pool,
                 metadata_manager,
                 Arc::new(Mutex::new(Metric::new())),

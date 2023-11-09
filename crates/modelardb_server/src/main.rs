@@ -53,7 +53,7 @@ pub static PORT: Lazy<u16> = Lazy::new(|| match env::var("MODELARDBD_PORT") {
 
 /// The different possible modes that a ModelarDB server can be deployed in, assigned when the
 /// server is started.
-#[derive(Clone)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ClusterMode {
     SingleNode,
     MultiNode(Manager),

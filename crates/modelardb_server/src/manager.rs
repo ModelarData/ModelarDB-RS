@@ -16,6 +16,7 @@
 //! Interface to connect to and interact with the manager, used if the server is started with a
 //! manager and needs to interact with it to initialize the metadata database and transfer metadata.
 
+use std::fmt;
 use std::sync::Arc;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
@@ -291,4 +292,18 @@ async fn do_action_and_extract_result(
             action.r#type
         ))
     })
+}
+
+impl PartialEq for Manager {
+    fn eq(&self, other: &Self) -> bool {
+        self.url == other.url && self.key == other.key
+    }
+}
+
+impl Eq for Manager {}
+
+impl fmt::Debug for Manager {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{{ url: {}, key: {} }}", self.url, self.key)
+    }
 }
