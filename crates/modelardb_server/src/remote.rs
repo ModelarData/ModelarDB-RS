@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
-    utils, Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
+    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
@@ -42,11 +42,10 @@ use datafusion::common::DFSchema;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
-use modelardb_common::arguments::{decode_argument, parse_object_store_arguments};
-use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
 use modelardb_common::types::{ServerMode, TimestampBuilder};
+use modelardb_common::{arguments, metadata, remote};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
@@ -194,7 +193,11 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
-            let record_batch = self.flight_data_to_record_batch(&flight_data?, schema)?;
+            let record_batch = remote::flight_data_to_record_batch(
+                &flight_data?,
+                schema,
+                &self.dictionaries_by_id,
+            )?;
             let storage_engine = self.context.storage_engine.write().await;
 
             // Write record_batch to the table with table_name as a compressed Apache Parquet file.
@@ -219,8 +222,11 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
-            let data_points =
-                self.flight_data_to_record_batch(&flight_data?, &model_table_metadata.schema)?;
+            let data_points = remote::flight_data_to_record_batch(
+                &flight_data?,
+                &model_table_metadata.schema,
+                &self.dictionaries_by_id,
+            )?;
             let mut storage_engine = self.context.storage_engine.write().await;
 
             // Note that the storage engine returns when the data is stored in memory, which means
@@ -234,30 +240,6 @@ impl FlightServiceHandler {
         }
 
         Ok(())
-    }
-
-    /// Return the table stored as the first element in [`FlightDescriptor.path`], otherwise a
-    /// [`Status`] that specifies that the table name is missing.
-    fn table_name_from_flight_descriptor<'a>(
-        &'a self,
-        flight_descriptor: &'a FlightDescriptor,
-    ) -> Result<&String, Status> {
-        flight_descriptor
-            .path
-            .get(0)
-            .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
-    }
-
-    /// Convert `flight_data` to a [`RecordBatch`].
-    fn flight_data_to_record_batch(
-        &self,
-        flight_data: &FlightData,
-        schema: &SchemaRef,
-    ) -> Result<RecordBatch, Status> {
-        debug_assert_eq!(flight_data.flight_descriptor, None);
-
-        utils::flight_data_to_arrow_batch(flight_data, schema.clone(), &self.dictionaries_by_id)
-            .map_err(|error| Status::invalid_argument(error.to_string()))
     }
 }
 
@@ -311,7 +293,7 @@ impl FlightService for FlightServiceHandler {
         request: Request<FlightDescriptor>,
     ) -> Result<Response<SchemaResult>, Status> {
         let flight_descriptor = request.into_inner();
-        let table_name = self.table_name_from_flight_descriptor(&flight_descriptor)?;
+        let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
         let schema = self
             .context
             .schema_of_table_in_default_database_schema(table_name)
@@ -393,7 +375,7 @@ impl FlightService for FlightServiceHandler {
         let flight_descriptor = flight_data
             .flight_descriptor
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
-        let table_name = self.table_name_from_flight_descriptor(&flight_descriptor)?;
+        let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
         let normalized_table_name = metadata::normalize_name(table_name);
 
         // Handle the data based on whether it is a normal table or a model table.
@@ -565,7 +547,7 @@ impl FlightService for FlightServiceHandler {
                 ));
             }
 
-            let object_store = parse_object_store_arguments(&action.body).await?;
+            let object_store = arguments::parse_object_store_arguments(&action.body).await?;
 
             // Update the object store used for data transfers.
             let mut storage_engine = self.context.storage_engine.write().await;
@@ -609,8 +591,8 @@ impl FlightService for FlightServiceHandler {
 
             send_record_batch(schema.0, batch)
         } else if action.r#type == "UpdateConfiguration" {
-            let (setting, offset_data) = decode_argument(&action.body)?;
-            let (new_value, _offset_data) = decode_argument(offset_data)?;
+            let (setting, offset_data) = arguments::decode_argument(&action.body)?;
+            let (new_value, _offset_data) = arguments::decode_argument(offset_data)?;
             let new_value: usize = new_value.parse().map_err(|error| {
                 Status::invalid_argument(format!("New value for {setting} is not valid: {error}"))
             })?;

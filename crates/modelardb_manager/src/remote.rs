@@ -26,13 +26,11 @@ use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow::array::{ArrayRef, Int64Array, StringArray, UInt64Array};
-use arrow::datatypes::SchemaRef;
 use arrow::error::ArrowError;
 use arrow::ipc::writer::IpcWriteOptions;
-use arrow::record_batch::RecordBatch;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
-    utils, Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
+    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
@@ -41,11 +39,10 @@ use futures::{stream, Stream, StreamExt};
 use modelardb_common::arguments::{decode_argument, encode_argument, parse_object_store_arguments};
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::metadata::normalize_name;
-use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::schemas::{COMPRESSED_FILE_METADATA_SCHEMA, TAG_METADATA_SCHEMA};
 use modelardb_common::types::{ServerMode, TimestampArray, ValueArray};
+use modelardb_common::{metadata, parser, remote};
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
 use tokio::runtime::Runtime;
@@ -196,8 +193,11 @@ impl FlightServiceHandler {
         flight_data_stream: &mut Streaming<FlightData>,
     ) -> Result<(), Status> {
         while let Some(flight_data) = flight_data_stream.next().await {
-            let metadata =
-                self.flight_data_to_record_batch(&flight_data?, &TAG_METADATA_SCHEMA.0)?;
+            let metadata = remote::flight_data_to_record_batch(
+                &flight_data?,
+                &TAG_METADATA_SCHEMA.0,
+                &self.dictionaries_by_id,
+            )?;
 
             // Extract the columns of the record batch so they can be accessed by row.
             let table_name_array = modelardb_common::array!(metadata, 0, StringArray);
@@ -233,8 +233,11 @@ impl FlightServiceHandler {
         flight_data_stream: &mut Streaming<FlightData>,
     ) -> Result<(), Status> {
         while let Some(flight_data) = flight_data_stream.next().await {
-            let metadata = self
-                .flight_data_to_record_batch(&flight_data?, &COMPRESSED_FILE_METADATA_SCHEMA.0)?;
+            let metadata = remote::flight_data_to_record_batch(
+                &flight_data?,
+                &COMPRESSED_FILE_METADATA_SCHEMA.0,
+                &self.dictionaries_by_id,
+            )?;
 
             // Extract the columns of the record batch so they can be accessed by row.
             let table_name_array = modelardb_common::array!(metadata, 0, StringArray);
@@ -285,32 +288,6 @@ impl FlightServiceHandler {
         }
 
         Ok(())
-    }
-
-    // TODO: Maybe move to common.
-    /// Return the table stored as the first element in [`FlightDescriptor.path`], otherwise a
-    /// [`Status`] that specifies that the table name is missing.
-    fn table_name_from_flight_descriptor<'a>(
-        &'a self,
-        flight_descriptor: &'a FlightDescriptor,
-    ) -> Result<&String, Status> {
-        flight_descriptor
-            .path
-            .get(0)
-            .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
-    }
-
-    // TODO: Maybe move to common.
-    /// Convert `flight_data` to a [`RecordBatch`].
-    fn flight_data_to_record_batch(
-        &self,
-        flight_data: &FlightData,
-        schema: &SchemaRef,
-    ) -> Result<RecordBatch, Status> {
-        debug_assert_eq!(flight_data.flight_descriptor, None);
-
-        utils::flight_data_to_arrow_batch(flight_data, schema.clone(), &self.dictionaries_by_id)
-            .map_err(|error| Status::invalid_argument(error.to_string()))
     }
 }
 
@@ -375,7 +352,7 @@ impl FlightService for FlightServiceHandler {
         request: Request<FlightDescriptor>,
     ) -> Result<Response<SchemaResult>, Status> {
         let flight_descriptor = request.into_inner();
-        let table_name = self.table_name_from_flight_descriptor(&flight_descriptor)?;
+        let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
 
         let table_sql = self
             .context
@@ -436,8 +413,8 @@ impl FlightService for FlightServiceHandler {
         let flight_descriptor = flight_data
             .flight_descriptor
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
-        let table_name = self.table_name_from_flight_descriptor(&flight_descriptor)?;
-        let normalized_table_name = normalize_name(table_name);
+        let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
+        let normalized_table_name = metadata::normalize_name(table_name);
 
         // Check that the table name matches a table_name_tags or table_name_compressed_files table.
         if normalized_table_name.ends_with("_tags") {
