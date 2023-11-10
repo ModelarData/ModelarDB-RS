@@ -80,26 +80,17 @@ pub(super) const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
 /// element is a [`Timestamp`] and a [`Value`](use crate::types::Value). Note that the resulting
 /// size of the buffer has to be a multiple of 64 bytes to avoid the actual capacity being larger
 /// than the requested due to internal alignment when allocating memory for the two array builders.
-pub static UNCOMPRESSED_DATA_BUFFER_CAPACITY: Lazy<usize> =
-    Lazy::new(
-        || match env::var("MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY") {
-            Ok(uncompressed_data_buffer_capacity) => {
-                let parsed = uncompressed_data_buffer_capacity
-                    .parse::<usize>()
-                    .map_err(|_| {
-                        "MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY must be a positive integer."
-                    })
-                    .unwrap();
+pub static UNCOMPRESSED_DATA_BUFFER_CAPACITY: Lazy<usize> = Lazy::new(|| {
+    env::var("MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY").map_or(64 * 1024, |value| {
+        let parsed = value.parse::<usize>().unwrap();
 
-                if parsed >= 64 && parsed % 64 == 0 {
-                    parsed
-                } else {
-                    panic!("MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY must be a multiple of 64.")
-                }
-            }
-            Err(_) => 64 * 1024,
-        },
-    );
+        if parsed >= 64 && parsed % 64 == 0 {
+            parsed
+        } else {
+            panic!("MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY must be a multiple of 64.")
+        }
+    })
+});
 
 /// Manages all uncompressed and compressed data, both while being stored in memory during ingestion
 /// and when persisted to disk afterwards.
