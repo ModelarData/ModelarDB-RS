@@ -612,10 +612,18 @@ impl FlightService for FlightServiceHandler {
             let settings = [
                 "uncompressed_reserved_memory_in_bytes",
                 "compressed_reserved_memory_in_bytes",
+                "transfer_batch_size_in_bytes",
+                "ingestion_threads",
+                "compression_threads",
+                "writer_threads",
             ];
             let values = [
                 configuration_manager.uncompressed_reserved_memory_in_bytes() as u64,
                 configuration_manager.compressed_reserved_memory_in_bytes() as u64,
+                configuration_manager.transfer_batch_size_in_bytes() as u64,
+                configuration_manager.ingestion_threads as u64,
+                configuration_manager.compression_threads as u64,
+                configuration_manager.writer_threads as u64,
             ];
 
             let schema = CONFIGURATION_SCHEMA.clone();
