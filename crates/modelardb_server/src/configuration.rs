@@ -142,6 +142,25 @@ impl ConfigurationManager {
     pub(crate) fn transfer_batch_size_in_bytes(&self) -> usize {
         self.transfer_batch_size_in_bytes
     }
+
+    /// Set the new value and update the transfer batch size in the storage engine. If the value
+    /// was updated, return [`Ok`], otherwise return
+    /// [`ConfigurationError`](ModelarDbError::ConfigurationError).
+    pub(crate) async fn set_transfer_batch_size_in_bytes(
+        &mut self,
+        new_transfer_batch_size_in_bytes: usize,
+        storage_engine: Arc<RwLock<StorageEngine>>,
+    ) -> Result<(), ModelarDbError> {
+        storage_engine
+            .write()
+            .await
+            .set_transfer_batch_size_in_bytes(new_transfer_batch_size_in_bytes)
+            .await
+            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
+
+        self.transfer_batch_size_in_bytes = new_transfer_batch_size_in_bytes;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

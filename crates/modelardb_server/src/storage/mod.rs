@@ -320,7 +320,7 @@ impl StorageEngine {
     pub(super) async fn transfer(&mut self) -> Result<(), Status> {
         if let Some(data_transfer) = &*self.compressed_data_manager.data_transfer.read().await {
             data_transfer
-                .flush()
+                .transfer_larger_than_threshold(0)
                 .await
                 .map_err(|error: ParquetError| Status::internal(error.to_string()))
         } else {
@@ -474,6 +474,23 @@ impl StorageEngine {
         self.compressed_data_manager
             .adjust_compressed_remaining_memory_in_bytes(value_change)
             .await
+    }
+
+    /// Set the transfer batch size in the data transfer component to `new_value`. If the value
+    /// is changed successfully return [`Ok`], otherwise return [`ParquetError`].
+    pub(super) async fn set_transfer_batch_size_in_bytes(
+        &self,
+        new_value: usize,
+    ) -> Result<(), ParquetError> {
+        if let Some(ref mut data_transfer) =
+            *self.compressed_data_manager.data_transfer.write().await
+        {
+            data_transfer
+                .set_transfer_batch_size_in_bytes(new_value)
+                .await
+        } else {
+            Ok(())
+        }
     }
 
     /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`
