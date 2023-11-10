@@ -126,16 +126,16 @@ impl UncompressedInMemoryDataBuffer {
             univariate_id,
             model_table_metadata,
             updated_by_batch_index: current_batch_index,
-            timestamps: TimestampBuilder::with_capacity(UNCOMPRESSED_DATA_BUFFER_CAPACITY),
-            values: ValueBuilder::with_capacity(UNCOMPRESSED_DATA_BUFFER_CAPACITY),
+            timestamps: TimestampBuilder::with_capacity(*UNCOMPRESSED_DATA_BUFFER_CAPACITY),
+            values: ValueBuilder::with_capacity(*UNCOMPRESSED_DATA_BUFFER_CAPACITY),
         }
     }
 
     /// Return the total size of the [`UncompressedInMemoryDataBuffer`] in bytes. Note that this is
     /// constant.
     pub(super) fn memory_size() -> usize {
-        (UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Timestamp>())
-            + (UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Value>())
+        (*UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Timestamp>())
+            + (*UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Value>())
     }
 
     /// Return [`true`] if the [`UncompressedInMemoryDataBuffer`] is full, meaning additional data

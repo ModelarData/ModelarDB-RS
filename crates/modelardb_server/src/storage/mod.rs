@@ -27,6 +27,7 @@ mod types;
 mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
 
+use std::env;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{Error as IOError, ErrorKind, Write};
@@ -50,6 +51,7 @@ use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::{Timestamp, TimestampArray, Value};
 use object_store::{ObjectMeta, ObjectStore};
+use once_cell::sync::Lazy;
 use sqlx::Sqlite;
 use tokio::fs::File as TokioFile;
 use tokio::runtime::Runtime;
@@ -78,7 +80,26 @@ pub(super) const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
 /// element is a [`Timestamp`] and a [`Value`](use crate::types::Value). Note that the resulting
 /// size of the buffer has to be a multiple of 64 bytes to avoid the actual capacity being larger
 /// than the requested due to internal alignment when allocating memory for the two array builders.
-const UNCOMPRESSED_DATA_BUFFER_CAPACITY: usize = 64 * 1024;
+pub static UNCOMPRESSED_DATA_BUFFER_CAPACITY: Lazy<usize> =
+    Lazy::new(
+        || match env::var("MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY") {
+            Ok(uncompressed_data_buffer_capacity) => {
+                let parsed = uncompressed_data_buffer_capacity
+                    .parse::<usize>()
+                    .map_err(|_| {
+                        "MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY must be a positive integer."
+                    })
+                    .unwrap();
+
+                if parsed >= 64 && parsed % 64 == 0 {
+                    parsed
+                } else {
+                    panic!("MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY must be a multiple of 64.")
+                }
+            }
+            Err(_) => 64 * 1024,
+        },
+    );
 
 /// The number of bytes that are required before transferring a batch of data to the remote object store.
 const TRANSFER_BATCH_SIZE_IN_BYTES: usize = 64 * 1024 * 1024; // 64 MiB;
