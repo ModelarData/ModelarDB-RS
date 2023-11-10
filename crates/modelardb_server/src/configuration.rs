@@ -16,6 +16,7 @@
 //! Management of the system's configuration. The configuration consists of the server mode and
 //! the amount of reserved memory for uncompressed and compressed data.
 
+use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -24,12 +25,6 @@ use modelardb_common::types::{ClusterMode, ServerMode};
 use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;
-
-/// The amount of reserved memory for uncompressed data by default, specifically 512 MiB.
-const DEFAULT_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 512 * 1024 * 1024;
-
-/// The amount of reserved memory for compressed data by default, specifically 512 MiB.
-const DEFAULT_COMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 512 * 1024 * 1024;
 
 /// Manages the system's configuration and provides functionality for updating the configuration.
 #[derive(Clone)]
@@ -64,13 +59,24 @@ impl ConfigurationManager {
         cluster_mode: ClusterMode,
         server_mode: ServerMode,
     ) -> Self {
+        let uncompressed_reserved_memory_in_bytes =
+            env::var("MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES")
+                .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
+
+        let compressed_reserved_memory_in_bytes =
+            env::var("MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES")
+                .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
+
+        let transfer_batch_size_in_bytes = env::var("MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES")
+            .map_or(64 * 1024 * 1024, |value| value.parse().unwrap());
+
         Self {
             local_data_folder: local_data_folder.to_path_buf(),
             cluster_mode,
             server_mode,
-            uncompressed_reserved_memory_in_bytes: DEFAULT_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
-            compressed_reserved_memory_in_bytes: DEFAULT_COMPRESSED_RESERVED_MEMORY_IN_BYTES,
-            transfer_batch_size_in_bytes:  64 * 1024 * 1024, // 64 MiB
+            uncompressed_reserved_memory_in_bytes,
+            compressed_reserved_memory_in_bytes,
+            transfer_batch_size_in_bytes,
             // TODO: Add support for running multiple threads per component. The individual
             // components in the storage engine have not been validated with multiple threads, e.g.,
             // UncompressedDataManager may have race conditions finishing buffers if multiple
@@ -158,14 +164,6 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
 
-        assert_eq!(
-            configuration_manager
-                .read()
-                .await
-                .uncompressed_reserved_memory_in_bytes,
-            DEFAULT_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
-        );
-
         configuration_manager
             .write()
             .await
@@ -185,14 +183,6 @@ mod tests {
     async fn test_set_compressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
-
-        assert_eq!(
-            configuration_manager
-                .read()
-                .await
-                .compressed_reserved_memory_in_bytes(),
-            DEFAULT_COMPRESSED_RESERVED_MEMORY_IN_BYTES
-        );
 
         configuration_manager
             .write()
