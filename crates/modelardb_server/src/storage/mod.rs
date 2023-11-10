@@ -101,9 +101,6 @@ pub static UNCOMPRESSED_DATA_BUFFER_CAPACITY: Lazy<usize> =
         },
     );
 
-/// The number of bytes that are required before transferring a batch of data to the remote object store.
-const TRANSFER_BATCH_SIZE_IN_BYTES: usize = 64 * 1024 * 1024; // 64 MiB;
-
 /// Manages all uncompressed and compressed data, both while being stored in memory during ingestion
 /// and when persisted to disk afterwards.
 pub struct StorageEngine {
@@ -199,7 +196,7 @@ impl StorageEngine {
                     local_data_folder.clone(),
                     remote_data_folder,
                     table_metadata_manager.clone(),
-                    TRANSFER_BATCH_SIZE_IN_BYTES,
+                    configuration_manager.transfer_batch_size_in_bytes(),
                     used_disk_space_metric.clone(),
                 )
                 .await?,
@@ -447,6 +444,7 @@ impl StorageEngine {
         &mut self,
         remote_data_folder: Arc<dyn ObjectStore>,
         table_metadata_manager: &Arc<TableMetadataManager<Sqlite>>,
+        transfer_batch_size_in_bytes: usize,
     ) -> Result<(), IOError> {
         let maybe_current_data_transfer =
             &mut *self.compressed_data_manager.data_transfer.write().await;
@@ -458,7 +456,7 @@ impl StorageEngine {
                 self.compressed_data_manager.local_data_folder.clone(),
                 remote_data_folder,
                 table_metadata_manager.clone(),
-                TRANSFER_BATCH_SIZE_IN_BYTES,
+                transfer_batch_size_in_bytes,
                 self.compressed_data_manager.used_disk_space_metric.clone(),
             )
             .await?;

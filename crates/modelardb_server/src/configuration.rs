@@ -46,8 +46,11 @@ pub struct ConfigurationManager {
     uncompressed_reserved_memory_in_bytes: usize,
     /// Amount of memory to reserve for storing compressed data buffers.
     compressed_reserved_memory_in_bytes: usize,
-    /// Number of threads to allocate for converting multivariate time series to univariate time
-    /// series.
+    /// The number of bytes that are required before transferring a batch of data to the remote
+    /// object store.
+    transfer_batch_size_in_bytes: usize,
+    /// Number of threads to allocate for converting multivariate time series to univariate
+    /// time series.
     pub(crate) ingestion_threads: usize,
     /// Number of threads to allocate for compressing univariate time series to segments.
     pub(crate) compression_threads: usize,
@@ -67,6 +70,7 @@ impl ConfigurationManager {
             server_mode,
             uncompressed_reserved_memory_in_bytes: DEFAULT_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
             compressed_reserved_memory_in_bytes: DEFAULT_COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            transfer_batch_size_in_bytes:  64 * 1024 * 1024, // 64 MiB
             // TODO: Add support for running multiple threads per component. The individual
             // components in the storage engine have not been validated with multiple threads, e.g.,
             // UncompressedDataManager may have race conditions finishing buffers if multiple
@@ -127,6 +131,10 @@ impl ConfigurationManager {
 
         self.compressed_reserved_memory_in_bytes = new_compressed_reserved_memory_in_bytes;
         Ok(())
+    }
+
+    pub(crate) fn transfer_batch_size_in_bytes(&self) -> usize {
+        self.transfer_batch_size_in_bytes
     }
 }
 
