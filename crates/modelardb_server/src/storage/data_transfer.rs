@@ -503,6 +503,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_increase_transfer_batch_size_in_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = create_metadata_manager(temp_dir.path()).await;
+
+        create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+        create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+
+        let (_, mut data_transfer) =
+            create_data_transfer_component(metadata_manager, temp_dir.path()).await;
+
+        data_transfer
+            .set_transfer_batch_size_in_bytes(COMPRESSED_FILE_SIZE * 10)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            data_transfer.transfer_batch_size_in_bytes,
+            COMPRESSED_FILE_SIZE * 10
+        );
+
+        // Data should not be transferred.
+        assert_eq!(
+            *data_transfer
+                .compressed_files
+                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .unwrap(),
+            COMPRESSED_FILE_SIZE * 2
+        );
+    }
+
+    #[tokio::test]
+    async fn test_decrease_transfer_batch_size_in_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = create_metadata_manager(temp_dir.path()).await;
+
+        let (_, path_1) = create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+        let (_, path_2) = create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+
+        let (target_dir, mut data_transfer) =
+            create_data_transfer_component(metadata_manager, temp_dir.path()).await;
+
+        data_transfer
+            .set_transfer_batch_size_in_bytes(COMPRESSED_FILE_SIZE * 2 - 1)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            data_transfer.transfer_batch_size_in_bytes,
+            COMPRESSED_FILE_SIZE * 2 - 1
+        );
+        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer, 6).await;
+    }
+
+    #[tokio::test]
     async fn test_flush_compressed_files() {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = create_metadata_manager(temp_dir.path()).await;

@@ -193,7 +193,7 @@ mod tests {
             configuration_manager
                 .read()
                 .await
-                .uncompressed_reserved_memory_in_bytes,
+                .uncompressed_reserved_memory_in_bytes(),
             1024
         );
     }
@@ -215,6 +215,27 @@ mod tests {
                 .read()
                 .await
                 .compressed_reserved_memory_in_bytes(),
+            1024
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_transfer_batch_size_in_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+
+        configuration_manager
+            .write()
+            .await
+            .set_transfer_batch_size_in_bytes(1024, storage_engine)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .transfer_batch_size_in_bytes(),
             1024
         );
     }
