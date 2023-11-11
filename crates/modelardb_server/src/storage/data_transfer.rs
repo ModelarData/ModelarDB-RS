@@ -513,7 +513,10 @@ mod tests {
         let (target_dir, data_transfer) =
             create_data_transfer_component(metadata_manager, temp_dir.path()).await;
 
-        data_transfer.transfer_larger_than_threshold(0).await.unwrap();
+        data_transfer
+            .transfer_larger_than_threshold(0)
+            .await
+            .unwrap();
 
         assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer, 6).await;
     }
