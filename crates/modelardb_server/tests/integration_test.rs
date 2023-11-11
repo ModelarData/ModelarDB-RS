@@ -1002,7 +1002,7 @@ fn test_cannot_update_non_existing_setting() {
 }
 
 #[test]
-fn test_cannot_update_not_updatable_setting() {
+fn test_cannot_update_non_updatable_setting() {
     let mut test_context = TestContext::new();
 
     for setting in ["ingestion_threads", "compression_threads", "writer_threads"] {
