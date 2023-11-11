@@ -661,8 +661,17 @@ impl FlightService for FlightServiceHandler {
                     .set_compressed_reserved_memory_in_bytes(new_value, storage_engine)
                     .await
                     .map_err(|error| Status::internal(error.to_string())),
+                "transfer_batch_size_in_bytes" => configuration_manager
+                    .set_transfer_batch_size_in_bytes(new_value, storage_engine)
+                    .await
+                    .map_err(|error| Status::internal(error.to_string())),
+                "ingestion_threads" | "compression_threads" | "writer_threads" => {
+                    Err(Status::unimplemented(format!(
+                        "{setting} is not an updatable setting in the server configuration."
+                    )))
+                }
                 _ => Err(Status::unimplemented(format!(
-                    "{setting} is not a valid setting in the server configuration."
+                    "{setting} is not a setting in the server configuration."
                 ))),
             }?;
 
