@@ -112,7 +112,7 @@ impl MetadataDatabaseQueryResult for SqliteQueryResult {
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata database.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TableMetadataManager<DB: Database> {
     /// The type of the database, used to handle small differences in SQL syntax between providers.
     metadata_database_type: DB,

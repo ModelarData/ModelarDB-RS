@@ -16,7 +16,7 @@
 //! Interface to connect to and interact with the manager, used if the server is started with a
 //! manager and needs to interact with it to initialize the metadata database and transfer metadata.
 
-use std::fmt;
+use std::str;
 use std::sync::Arc;
 
 use arrow_flight::flight_service_client::FlightServiceClient;
@@ -34,17 +34,19 @@ use modelardb_common::types::ServerMode;
 use modelardb_common::{arguments, metadata};
 use object_store::ObjectStore;
 use sqlx::Postgres;
+use tokio::sync::RwLock;
 use tonic::metadata::MetadataMap;
+use tonic::transport::Channel;
 use tonic::Request;
 
 use crate::context::Context;
 use crate::PORT;
 
 /// Manages metadata related to the manager and provides functionality for interacting with the manager.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Manager {
-    /// The gRPC URL of the manager's Apache Arrow Flight server.
-    url: String,
+    /// Flight client that is connected to the Apache Arrow Flight server of the manager.
+    flight_client: Arc<RwLock<FlightServiceClient<Channel>>>,
     /// Key received from the manager when registering, used to validate future requests that are
     /// only allowed to come from the manager.
     key: String,
@@ -61,6 +63,12 @@ impl Manager {
         manager_url: &str,
         server_mode: ServerMode,
     ) -> Result<(Self, Arc<dyn ObjectStore>), ModelarDbError> {
+        let flight_client = Arc::new(RwLock::new(
+            FlightServiceClient::connect(manager_url.to_owned())
+                .await
+                .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?,
+        ));
+
         // Add the url and mode of the server to the action request.
         let localhost_with_port = "grpc://127.0.0.1:".to_owned() + &PORT.to_string();
         let mut body = arguments::encode_argument(localhost_with_port.as_str());
@@ -73,7 +81,7 @@ impl Manager {
             body: body.into(),
         };
 
-        let message = do_action_and_extract_result(manager_url, action).await?;
+        let message = do_action_and_extract_result(flight_client.clone(), action).await?;
 
         // Extract the key and connection information for the metadata database and remote object
         // store from the response.
@@ -88,7 +96,7 @@ impl Manager {
         let table_metadata_manager = metadata::new_table_metadata_manager(Postgres, connection);
 
         let manager = Self {
-            url: manager_url.to_owned(),
+            flight_client,
             key: key.to_owned(),
             table_metadata_manager: Arc::new(table_metadata_manager),
         };
@@ -115,10 +123,10 @@ impl Manager {
             body: existing_tables.join(",").into_bytes().into(),
         };
 
-        let message = do_action_and_extract_result(&self.url, action).await?;
+        let message = do_action_and_extract_result(self.flight_client.clone(), action).await?;
 
         // Extract the SQL for the tables that need to be created from the response.
-        let table_sql_queries = std::str::from_utf8(&message.body)
+        let table_sql_queries = str::from_utf8(&message.body)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?
             .split(';')
             .filter(|sql| !sql.is_empty());
@@ -131,7 +139,7 @@ impl Manager {
         Ok(())
     }
 
-    /// Insert the compressed file metadata into a record batch and transfer it to the
+    /// Convert the compressed file metadata to a record batch and transfer it to the
     /// `model_table_name_compressed_files` metadata table in the manager. If the metadata could
     /// not be transferred, return [`ModelarDbError`].
     pub async fn transfer_compressed_file_metadata(
@@ -145,7 +153,7 @@ impl Manager {
             .await
     }
 
-    /// Insert the tag metadata into a record batch and transfer it to the `model_table_name_tags`
+    /// Convert the tag metadata to a record batch and transfer it to the `model_table_name_tags`
     /// metadata table in the manager. If the metadata could not be transferred,
     /// return [`ModelarDbError`].
     pub async fn transfer_tag_metadata(
@@ -154,7 +162,7 @@ impl Manager {
         tag_hash: u64,
         tag_values: &[String],
     ) -> Result<(), ModelarDbError> {
-        // Convert the tag columns and tag values into strings so they can be inserted into a record batch.
+        // Convert the tag columns and tag values to strings so they can be inserted into a record batch.
         let tag_columns: String = model_table_metadata
             .tag_column_indices
             .iter()
@@ -191,15 +199,11 @@ impl Manager {
         metadata: RecordBatch,
         metadata_table_name: &str,
     ) -> Result<(), ModelarDbError> {
-        let mut flight_client = FlightServiceClient::connect(self.url.clone())
-            .await
-            .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
-
         // Put the table name in the flight descriptor of the first flight data in the stream.
         let flight_descriptor = FlightDescriptor::new_path(vec![metadata_table_name.to_owned()]);
         let mut flight_data = vec![FlightData::new().with_descriptor(flight_descriptor)];
 
-        // Write the metadata in the record batch into Arrow IPC format so it can be transferred.
+        // Convert the metadata in the record batch to the Arrow IPC format so it can be transferred.
         let data_generator = IpcDataGenerator::default();
         let writer_options = IpcWriteOptions::default();
         let mut dictionary_tracker = DictionaryTracker::new(false);
@@ -210,8 +214,10 @@ impl Manager {
 
         flight_data.push(encoded_batch.into());
 
-        // Stream the metadata to the Apache Arrow Flight client of the manager.
-        flight_client
+        // Stream the metadata to the Apache Arrow Flight server of the manager.
+        self.flight_client
+            .write()
+            .await
             .do_put(stream::iter(flight_data))
             .await
             .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
@@ -219,9 +225,9 @@ impl Manager {
         Ok(())
     }
 
-    /// If the requested action is restricted to only be called by the manager, check that the
-    /// request actually came from the manager. If the request is valid, return [`Ok`], otherwise
-    /// return [`ModelarDbError`].
+    /// If `action_type` is `CommandStatementUpdate`, `UpdateRemoteObjectStore`, or `KillEdge`,
+    /// check that the request actually came from the manager. If the request is valid, return
+    /// [`Ok`], otherwise return [`ModelarDbError`].
     pub fn validate_action_request(
         &self,
         action_type: &str,
@@ -253,21 +259,15 @@ impl Manager {
     }
 }
 
-/// Connect to an Apache Arrow Flight client using `url`, execute `action`, and extract the message
-/// inside the response. If `url` could not be connected to, `action` could not be executed, or
-/// the response is invalid or empty, return [`ModelarDbError`].
+/// Execute `action` using `flight_client` and extract the message inside the response. If `action`
+/// could not be executed or the response is invalid or empty, return [`ModelarDbError`].
 async fn do_action_and_extract_result(
-    url: &str,
+    flight_client: Arc<RwLock<FlightServiceClient<Channel>>>,
     action: Action,
 ) -> Result<arrow_flight::Result, ModelarDbError> {
-    let mut flight_client =
-        FlightServiceClient::connect(url.to_owned())
-            .await
-            .map_err(|error| {
-                ModelarDbError::ClusterError(format!("Could not connect to {url}: {error}"))
-            })?;
-
     let response = flight_client
+        .write()
+        .await
         .do_action(Request::new(action.clone()))
         .await
         .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?;
@@ -290,15 +290,7 @@ async fn do_action_and_extract_result(
 
 impl PartialEq for Manager {
     fn eq(&self, other: &Self) -> bool {
-        self.url == other.url && self.key == other.key
-    }
-}
-
-impl Eq for Manager {}
-
-impl fmt::Debug for Manager {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{{ url: {}, key: {} }}", self.url, self.key)
+        self.key == other.key
     }
 }
 
@@ -308,6 +300,14 @@ mod tests {
 
     use sqlx::PgPool;
     use uuid::Uuid;
+
+    const UNRESTRICTED_ACTIONS: [&str; 5] = [
+        "FlushMemory",
+        "FlushEdge",
+        "CollectMetrics",
+        "GetConfiguration",
+        "UpdateConfiguration",
+    ];
 
     const RESTRICTED_ACTIONS: [&str; 3] = [
         "CommandStatementUpdate",
@@ -321,13 +321,7 @@ mod tests {
         let manager = create_manager();
         let request_metadata = MetadataMap::new();
 
-        for action_type in [
-            "FlushMemory",
-            "FlushEdge",
-            "CollectMetrics",
-            "GetConfiguration",
-            "UpdateConfiguration",
-        ] {
+        for action_type in UNRESTRICTED_ACTIONS {
             assert!(manager
                 .validate_action_request(action_type, &request_metadata)
                 .is_ok());
@@ -380,8 +374,12 @@ mod tests {
         let table_metadata_manager =
             metadata::new_table_metadata_manager(Postgres, metadata_database_pool);
 
+        // Create a lazy connection to avoid the connection being validated.
+        let channel = Channel::builder("grpc://manager:8888".parse().unwrap()).connect_lazy();
+        let flight_client = FlightServiceClient::new(channel);
+
         Manager {
-            url: "grpc://manager:8888".to_owned(),
+            flight_client: Arc::new(RwLock::new(flight_client)),
             key: Uuid::new_v4().to_string(),
             table_metadata_manager: Arc::new(table_metadata_manager),
         }

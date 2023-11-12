@@ -53,7 +53,7 @@ pub static PORT: Lazy<u16> = Lazy::new(|| match env::var("MODELARDBD_PORT") {
 
 /// The different possible modes that a ModelarDB server can be deployed in, assigned when the
 /// server is started.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ClusterMode {
     SingleNode,
     MultiNode(Manager),
@@ -263,11 +263,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        assert_single_edge_without_remote_data_folder(
-            temp_dir_str,
-            &["edge", temp_dir_str],
-        )
-        .await;
+        assert_single_edge_without_remote_data_folder(temp_dir_str, &["edge", temp_dir_str]).await;
     }
 
     #[tokio::test]
@@ -275,8 +271,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        assert_single_edge_without_remote_data_folder(temp_dir_str, &[temp_dir_str])
-            .await;
+        assert_single_edge_without_remote_data_folder(temp_dir_str, &[temp_dir_str]).await;
     }
 
     async fn assert_single_edge_without_remote_data_folder(temp_dir_str: &str, input: &[&str]) {
@@ -294,10 +289,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        assert!(
-            parse_command_line_arguments(&["cloud", temp_dir_str])
-                .await
-                .is_err()
-        )
+        assert!(parse_command_line_arguments(&["cloud", temp_dir_str])
+            .await
+            .is_err())
     }
 }

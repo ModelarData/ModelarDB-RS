@@ -18,6 +18,7 @@
 
 use std::env;
 use std::io::Write;
+use std::str;
 use std::sync::Arc;
 
 use object_store::{aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, path::Path, ObjectStore};
@@ -272,7 +273,7 @@ pub fn decode_argument(data: &[u8]) -> Result<(&str, &[u8]), Status> {
 
     let size = u16::from_be_bytes(size_bytes) as usize;
 
-    let argument = std::str::from_utf8(&data[2..(size + 2)])
+    let argument = str::from_utf8(&data[2..(size + 2)])
         .map_err(|error| Status::invalid_argument(error.to_string()))?;
     let remaining_bytes = &data[(size + 2)..];
 
