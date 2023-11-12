@@ -300,9 +300,9 @@ async fn do_action_and_extract_result(
     })
 }
 
-/// Partial equality is implemented so PartialEq can be derived for [`ClusterMode`]. It cannot be
-/// derived for [`Manager`] since both `flight_client` and `table_metadata_manager` does not
-/// support equality comparisons.
+/// Partial equality is implemented so PartialEq can be derived for [`ClusterMode`](crate::ClusterMode).
+/// It cannot be derived for [`Manager`] since both `flight_client` and `table_metadata_manager`
+/// does not support equality comparisons.
 impl PartialEq for Manager {
     fn eq(&self, other: &Self) -> bool {
         self.key == other.key
