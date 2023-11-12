@@ -93,7 +93,7 @@ impl Manager {
             body: body.into(),
         };
 
-        let message = do_action_and_extract_result(flight_client.clone(), action).await?;
+        let message = do_action_and_extract_result(&flight_client, action).await?;
 
         // Extract the key and connection information for the metadata database and remote object
         // store from the response.
@@ -135,7 +135,7 @@ impl Manager {
             body: existing_tables.join(",").into_bytes().into(),
         };
 
-        let message = do_action_and_extract_result(self.flight_client.clone(), action).await?;
+        let message = do_action_and_extract_result(&self.flight_client, action).await?;
 
         // Extract the SQL for the tables that need to be created from the response.
         let table_sql_queries = str::from_utf8(&message.body)
@@ -274,7 +274,7 @@ impl Manager {
 /// Execute `action` using `flight_client` and extract the message inside the response. If `action`
 /// could not be executed or the response is invalid or empty, return [`ModelarDbError`].
 async fn do_action_and_extract_result(
-    flight_client: Arc<RwLock<FlightServiceClient<Channel>>>,
+    flight_client: &RwLock<FlightServiceClient<Channel>>,
     action: Action,
 ) -> Result<arrow_flight::Result, ModelarDbError> {
     let response = flight_client
@@ -300,6 +300,9 @@ async fn do_action_and_extract_result(
     })
 }
 
+/// Partial equality is implemented so PartialEq can be derived for [`ClusterMode`]. It cannot be
+/// derived for [`Manager`] since both `flight_client` and `table_metadata_manager` does not
+/// support equality comparisons.
 impl PartialEq for Manager {
     fn eq(&self, other: &Self) -> bool {
         self.key == other.key

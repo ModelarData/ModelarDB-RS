@@ -289,7 +289,8 @@ impl UncompressedDataManager {
                 .map_err(|error| format!("Tag hash could not be saved: {error}"))?;
 
             // If the server was started with a manager, transfer the tag hash metadata if it was
-            // saved to the server metadata database.
+            // saved to the server metadata database. We purposely transfer tag metadata before the
+            // associated files for convenience. This does not cause problems when querying.
             if let ClusterMode::MultiNode(manager) = &self.cluster_mode {
                 if tag_hash_is_saved {
                     manager

@@ -163,7 +163,7 @@ async fn parse_command_line_arguments(
                 query_data_folder: argument_to_local_object_store(local_data_folder)?,
             },
         )),
-        &["cloud", manager_url, local_data_folder] => {
+        &["cloud", local_data_folder, manager_url] => {
             let (manager, remote_object_store) =
                 Manager::register_node(manager_url, ServerMode::Cloud)
                     .await
@@ -179,7 +179,7 @@ async fn parse_command_line_arguments(
                 },
             ))
         }
-        &["edge", manager_url, local_data_folder] | &[manager_url, local_data_folder] => {
+        &["edge", local_data_folder, manager_url] | &[local_data_folder, manager_url] => {
             let (manager, remote_object_store) =
                 Manager::register_node(manager_url, ServerMode::Edge)
                     .await
@@ -200,7 +200,7 @@ async fn parse_command_line_arguments(
             let binary_path = std::env::current_exe().unwrap();
             let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
             Err(format!(
-                "Usage: {binary_name} [server_mode] [manager_url] local_data_folder."
+                "Usage: {binary_name} [server_mode] local_data_folder [manager_url]."
             ))
         }
     }
