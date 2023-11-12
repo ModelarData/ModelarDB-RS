@@ -55,6 +55,18 @@ pub struct Manager {
 }
 
 impl Manager {
+    pub fn new(
+        flight_client: Arc<RwLock<FlightServiceClient<Channel>>>,
+        key: String,
+        table_metadata_manager: Arc<TableMetadataManager<Postgres>>,
+    ) -> Self {
+        Self {
+            flight_client,
+            key,
+            table_metadata_manager,
+        }
+    }
+
     /// Register the server as a node in the cluster and retrieve the key and connection information
     /// from the manager. If the key and connection information could not be retrieved or a
     /// connection to the metadata database or remote object store could not be established,
@@ -95,11 +107,11 @@ impl Manager {
 
         let table_metadata_manager = metadata::new_table_metadata_manager(Postgres, connection);
 
-        let manager = Self {
+        let manager = Manager::new(
             flight_client,
-            key: key.to_owned(),
-            table_metadata_manager: Arc::new(table_metadata_manager),
-        };
+            key.to_owned(),
+            Arc::new(table_metadata_manager),
+        );
 
         let remote_object_store = arguments::parse_object_store_arguments(offset_data)
             .await
@@ -298,7 +310,7 @@ impl PartialEq for Manager {
 mod tests {
     use super::*;
 
-    use sqlx::PgPool;
+    use modelardb_common::test;
     use uuid::Uuid;
 
     const UNRESTRICTED_ACTIONS: [&str; 5] = [
@@ -367,21 +379,12 @@ mod tests {
     }
 
     fn create_manager() -> Manager {
-        // Create a lazy connection to avoid the connection being validated.
-        let metadata_database_pool =
-            PgPool::connect_lazy("postgres://postgres:password@localhost/database").unwrap();
+        let (lazy_metadata_manager, lazy_flight_client) = test::lazy_connections();
 
-        let table_metadata_manager =
-            metadata::new_table_metadata_manager(Postgres, metadata_database_pool);
-
-        // Create a lazy connection to avoid the connection being validated.
-        let channel = Channel::builder("grpc://manager:8888".parse().unwrap()).connect_lazy();
-        let flight_client = FlightServiceClient::new(channel);
-
-        Manager {
-            flight_client: Arc::new(RwLock::new(flight_client)),
-            key: Uuid::new_v4().to_string(),
-            table_metadata_manager: Arc::new(table_metadata_manager),
-        }
+        Manager::new(
+            Arc::new(RwLock::new(lazy_flight_client)),
+            Uuid::new_v4().to_string(),
+            Arc::new(lazy_metadata_manager),
+        )
     }
 }
