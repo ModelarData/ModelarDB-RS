@@ -32,10 +32,10 @@ use object_store::{ObjectMeta, ObjectStore};
 use sqlx::Sqlite;
 use tracing::debug;
 
+use crate::manager::Manager;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::Metric;
 use crate::storage::COMPRESSED_DATA_FOLDER;
-use crate::ClusterMode;
 
 // TODO: Make the transfer batch size in bytes part of the user-configurable settings.
 // TODO: When the storage engine is changed to use object store for everything, receive
@@ -56,8 +56,8 @@ pub struct DataTransfer {
     /// Map from table names and column indices to the combined size in bytes of the compressed
     /// files currently saved for the column in that table.
     compressed_files: DashMap<(String, u16), usize>,
-    /// The mode of the cluster used to determine the behaviour when transferring files.
-    cluster_mode: ClusterMode,
+    /// Interface to access the manager and transfer metadata when data is transferred.
+    manager: Manager,
     /// The number of bytes that are required before transferring a batch of data to the remote
     /// object store.
     transfer_batch_size_in_bytes: usize,
@@ -73,7 +73,7 @@ impl DataTransfer {
         local_data_folder: PathBuf,
         remote_data_folder: Arc<dyn ObjectStore>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
-        cluster_mode: ClusterMode,
+        manager: Manager,
         transfer_batch_size_in_bytes: usize,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
@@ -100,7 +100,7 @@ impl DataTransfer {
             remote_data_folder,
             table_metadata_manager,
             compressed_files: compressed_files.clone(),
-            cluster_mode,
+            manager,
             transfer_batch_size_in_bytes,
             used_disk_space_metric,
         };
@@ -236,13 +236,11 @@ impl DataTransfer {
             transferred_bytes, path,
         );
 
-        // If the server was started with a manager, transfer the metadata of the transferred file.
-        if let ClusterMode::MultiNode(manager) = &self.cluster_mode {
-            manager
-                .transfer_compressed_file_metadata(table_name, column_index.into(), compressed_file)
-                .await
-                .map_err(|error| ParquetError::General(error.to_string()))?;
-        }
+        // Transfer the metadata of the transferred file to the manager.
+        self.manager
+            .transfer_compressed_file_metadata(table_name, column_index.into(), compressed_file)
+            .await
+            .map_err(|error| ParquetError::General(error.to_string()))?;
 
         Ok(())
     }

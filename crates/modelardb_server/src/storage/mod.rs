@@ -106,7 +106,7 @@ impl StorageEngine {
     pub(super) async fn try_new(
         runtime: Arc<Runtime>,
         local_data_folder: PathBuf,
-        remote_data_folder: Option<Arc<dyn ObjectStore>>,
+        maybe_remote_data_folder: Option<Arc<dyn ObjectStore>>,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     ) -> Result<Self, IOError> {
@@ -174,13 +174,16 @@ impl StorageEngine {
         }
 
         // Create the compressed data manager.
-        let data_transfer = if let Some(remote_data_folder) = remote_data_folder {
+        let data_transfer = if let (ClusterMode::MultiNode(manager), Some(remote_data_folder)) = (
+            &configuration_manager.cluster_mode,
+            maybe_remote_data_folder,
+        ) {
             Some(
                 DataTransfer::try_new(
                     local_data_folder.clone(),
                     remote_data_folder,
                     table_metadata_manager.clone(),
-                    configuration_manager.cluster_mode.clone(),
+                    manager.clone(),
                     TRANSFER_BATCH_SIZE_IN_BYTES,
                     used_disk_space_metric.clone(),
                 )
@@ -426,35 +429,23 @@ impl StorageEngine {
         ]
     }
 
-    /// Update the remote data folder, used to transfer data to in the data transfer component.
-    /// If one does not already exists, create a new data transfer component. If the remote
-    /// data folder was successfully updated, return [`Ok`], otherwise return [`IOError`].
+    /// Update the remote data folder, used to transfer data to in the data transfer component. If
+    /// a data transfer component does not exist, return [`ModelarDbError].
     pub(super) async fn update_remote_data_folder(
         &mut self,
         remote_data_folder: Arc<dyn ObjectStore>,
-        table_metadata_manager: &Arc<TableMetadataManager<Sqlite>>,
-        cluster_mode: ClusterMode,
-    ) -> Result<(), IOError> {
-        let maybe_current_data_transfer =
-            &mut *self.compressed_data_manager.data_transfer.write().await;
+    ) -> Result<(), ModelarDbError> {
+        let maybe_data_transfer = &mut *self.compressed_data_manager.data_transfer.write().await;
 
-        if let Some(data_transfer) = maybe_current_data_transfer {
+        if let Some(data_transfer) = maybe_data_transfer {
             data_transfer.remote_data_folder = remote_data_folder;
+
+            Ok(())
         } else {
-            let data_transfer = DataTransfer::try_new(
-                self.compressed_data_manager.local_data_folder.clone(),
-                remote_data_folder,
-                table_metadata_manager.clone(),
-                cluster_mode,
-                TRANSFER_BATCH_SIZE_IN_BYTES,
-                self.compressed_data_manager.used_disk_space_metric.clone(),
-            )
-            .await?;
-
-            *maybe_current_data_transfer = Some(data_transfer);
+            Err(ModelarDbError::ConfigurationError(
+                "Storage engine is not configured to transfer data.".to_owned(),
+            ))
         }
-
-        Ok(())
     }
 
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.

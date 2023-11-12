@@ -552,13 +552,8 @@ impl FlightService for FlightServiceHandler {
 
             // Update the object store used for data transfers.
             let mut storage_engine = self.context.storage_engine.write().await;
-            let configuration_manager = self.context.configuration_manager.read().await;
             storage_engine
-                .update_remote_data_folder(
-                    object_store,
-                    &self.context.table_metadata_manager,
-                    configuration_manager.cluster_mode.clone(),
-                )
+                .update_remote_data_folder(object_store)
                 .await
                 .map_err(|error| {
                     Status::internal(format!("Could not update remote data folder: {error}"))
