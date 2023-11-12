@@ -140,7 +140,7 @@ impl Manager {
         column_index: usize,
         compressed_file: CompressedFile,
     ) -> Result<(), ModelarDbError> {
-        let metadata = compressed_file.insert_into_record_batch(model_table_name, column_index);
+        let metadata = compressed_file.to_record_batch(model_table_name, column_index);
         self.transfer_metadata(metadata, &format!("{model_table_name}_compressed_files"))
             .await
     }

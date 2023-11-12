@@ -282,7 +282,7 @@ mod test {
     }
 
     #[test]
-    fn test_query_node() {
+    fn test_query_node_round_robin() {
         let cloud_node_1 = Node::new("cloud_1".to_owned(), ServerMode::Cloud);
         let cloud_node_2 = Node::new("cloud_2".to_owned(), ServerMode::Cloud);
         let mut cluster = Cluster::new();

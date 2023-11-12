@@ -81,9 +81,9 @@ impl CompressedFile {
         }
     }
 
-    /// Insert `table_name`, `column_index`, and the compressed file into a single row
-    /// in a [`RecordBatch`].
-    pub fn insert_into_record_batch(&self, table_name: &str, column_index: usize) -> RecordBatch {
+    /// Create a [`RecordBatch`] with a single row containing `table_name`, `column_index`, and the
+    /// compressed file.
+    pub fn to_record_batch(&self, table_name: &str, column_index: usize) -> RecordBatch {
         let schema = COMPRESSED_FILE_METADATA_SCHEMA.clone();
         let file_path = self.file_metadata.location.to_string();
         let created_at = self.file_metadata.last_modified.timestamp_millis();

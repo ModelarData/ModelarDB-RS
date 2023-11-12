@@ -154,10 +154,7 @@ async fn parse_command_line_arguments(
 ) -> Result<(ServerMode, ClusterMode, DataFolders), String> {
     // Match the provided command line arguments to the supported inputs.
     match arguments {
-        &["single", "edge", local_data_folder]
-        | &["single", local_data_folder]
-        | &["edge", local_data_folder]
-        | &[local_data_folder] => Ok((
+        &["edge", local_data_folder] | &[local_data_folder] => Ok((
             ServerMode::Edge,
             ClusterMode::SingleNode,
             DataFolders {
@@ -166,7 +163,7 @@ async fn parse_command_line_arguments(
                 query_data_folder: argument_to_local_object_store(local_data_folder)?,
             },
         )),
-        &["multi", "cloud", manager_url, local_data_folder] => {
+        &["cloud", manager_url, local_data_folder] => {
             let (manager, remote_object_store) =
                 Manager::register_node(manager_url, ServerMode::Cloud)
                     .await
@@ -182,8 +179,7 @@ async fn parse_command_line_arguments(
                 },
             ))
         }
-        &["multi", "edge", manager_url, local_data_folder]
-        | &["multi", manager_url, local_data_folder] => {
+        &["edge", manager_url, local_data_folder] | &[manager_url, local_data_folder] => {
             let (manager, remote_object_store) =
                 Manager::register_node(manager_url, ServerMode::Edge)
                     .await
@@ -200,13 +196,11 @@ async fn parse_command_line_arguments(
             ))
         }
         _ => {
-            // TODO: Update the usage instructions to specify that if cluster mode is "multi" a
-            //       manager url should be given and the remote data folder should not be given.
             // The errors are consciously ignored as the program is terminating.
             let binary_path = std::env::current_exe().unwrap();
             let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
             Err(format!(
-                "Usage: {binary_name} [cluster_mode] [server_mode] [manager_url] local_data_folder."
+                "Usage: {binary_name} [server_mode] [manager_url] local_data_folder."
             ))
         }
     }
@@ -271,7 +265,7 @@ mod tests {
 
         assert_single_edge_without_remote_data_folder(
             temp_dir_str,
-            &["single", "edge", temp_dir_str],
+            &["edge", temp_dir_str],
         )
         .await;
     }
@@ -281,25 +275,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        assert_single_edge_without_remote_data_folder(temp_dir_str, &["single", temp_dir_str])
+        assert_single_edge_without_remote_data_folder(temp_dir_str, &[temp_dir_str])
             .await;
-    }
-
-    #[tokio::test]
-    async fn test_parse_edge_command_line_arguments_without_cluster_mode_and_manager() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_dir_str = temp_dir.path().to_str().unwrap();
-
-        assert_single_edge_without_remote_data_folder(temp_dir_str, &["edge", temp_dir_str]).await;
-    }
-
-    #[tokio::test]
-    async fn test_parse_edge_command_line_arguments_without_cluster_mode_and_server_mode_and_manager(
-    ) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_dir_str = temp_dir.path().to_str().unwrap();
-
-        assert_single_edge_without_remote_data_folder(temp_dir_str, &[temp_dir_str]).await;
     }
 
     async fn assert_single_edge_without_remote_data_folder(temp_dir_str: &str, input: &[&str]) {
@@ -318,19 +295,9 @@ mod tests {
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
         assert!(
-            parse_command_line_arguments(&["multi", "cloud", temp_dir_str])
+            parse_command_line_arguments(&["cloud", temp_dir_str])
                 .await
                 .is_err()
         )
-    }
-
-    #[tokio::test]
-    async fn test_parse_incomplete_edge_command_line_arguments() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let temp_dir_str = temp_dir.path().to_str().unwrap();
-
-        assert!(parse_command_line_arguments(&["multi", temp_dir_str])
-            .await
-            .is_err())
     }
 }
