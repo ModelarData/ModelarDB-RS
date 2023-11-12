@@ -155,8 +155,7 @@ impl ConfigurationManager {
             .write()
             .await
             .set_transfer_batch_size_in_bytes(new_transfer_batch_size_in_bytes)
-            .await
-            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
+            .await?;
 
         self.transfer_batch_size_in_bytes = new_transfer_batch_size_in_bytes;
         Ok(())

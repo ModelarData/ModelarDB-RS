@@ -151,8 +151,8 @@ impl DataTransfer {
     }
 
     /// Set the transfer batch size to `new_value`. For each table that compressed data is saved
-    /// for, check if the amount of data exceeds `new_value` and transfer if so. If the value
-    /// is changed successfully return [`Ok`], otherwise return [`ParquetError`].
+    /// for, check if the amount of data exceeds `new_value` and transfer all of the data if it does.
+    /// If the value is changed successfully return [`Ok`], otherwise return [`ParquetError`].
     pub(super) async fn set_transfer_batch_size_in_bytes(
         &mut self,
         new_value: usize,
@@ -523,7 +523,7 @@ mod tests {
             COMPRESSED_FILE_SIZE * 10
         );
 
-        // Data should not be transferred.
+        // Data should not have been transferred.
         assert_eq!(
             *data_transfer
                 .compressed_files

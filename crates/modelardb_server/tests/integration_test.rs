@@ -698,7 +698,7 @@ fn test_can_collect_metrics() {
             uncompressed_buffer_size * 3,
             uncompressed_buffer_size * 2,
             uncompressed_buffer_size,
-            0
+            uncompressed_buffer_size * 0,
         ]
     );
 
