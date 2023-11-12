@@ -974,19 +974,26 @@ fn test_can_update_compressed_reserved_memory_in_bytes() {
     assert_eq!(values_array.value(1), 1);
 }
 
-#[test]
-fn test_can_update_transfer_batch_size_in_bytes() {
-    let values_array = update_and_retrieve_configuration_values("transfer_batch_size_in_bytes");
-
-    assert_eq!(values_array.value(2), 1);
-}
-
 fn update_and_retrieve_configuration_values(setting: &str) -> UInt64Array {
     let mut test_context = TestContext::new();
     test_context.update_configuration(setting, "1").unwrap();
 
     let configuration = test_context.retrieve_action_record_batch("GetConfiguration");
     modelardb_common::array!(configuration, 1, UInt64Array).clone()
+}
+
+#[test]
+fn test_cannot_update_transfer_batch_size_in_bytes() {
+    // It is only possible to test that this fails since we cannot start the server with a
+    // remote data folder.
+    let mut test_context = TestContext::new();
+    let response = test_context.update_configuration("transfer_batch_size_in_bytes", "1");
+
+    assert!(response.is_err());
+    assert_eq!(
+        response.err().unwrap().message(),
+        "Configuration Error: Storage engine is not configured to transfer data."
+    );
 }
 
 #[test]

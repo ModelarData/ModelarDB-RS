@@ -171,6 +171,7 @@ mod tests {
 
     use modelardb_common::metadata;
     use modelardb_common::types::{ClusterMode, ServerMode};
+    use object_store::local::LocalFileSystem;
     use tokio::runtime::Runtime;
     use tokio::sync::RwLock;
 
@@ -255,11 +256,14 @@ mod tests {
             ServerMode::Edge,
         )));
 
+        let target_dir = tempfile::tempdir().unwrap();
+        let target_fs = LocalFileSystem::new_with_prefix(target_dir.path()).unwrap();
+
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(
                 Arc::new(Runtime::new().unwrap()),
                 path.to_owned(),
-                None,
+                Some(Arc::new(target_fs)),
                 &configuration_manager,
                 Arc::new(metadata_manager),
             )
