@@ -16,6 +16,7 @@
 //! Management of the system's configuration. The configuration consists of the server mode and
 //! the amount of reserved memory for uncompressed and compressed data.
 
+use std::env;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -24,12 +25,6 @@ use modelardb_common::types::{ClusterMode, ServerMode};
 use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;
-
-/// The amount of reserved memory for uncompressed data by default, specifically 512 MiB.
-const DEFAULT_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 512 * 1024 * 1024;
-
-/// The amount of reserved memory for compressed data by default, specifically 512 MiB.
-const DEFAULT_COMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 512 * 1024 * 1024;
 
 /// Manages the system's configuration and provides functionality for updating the configuration.
 #[derive(Clone)]
@@ -46,8 +41,11 @@ pub struct ConfigurationManager {
     uncompressed_reserved_memory_in_bytes: usize,
     /// Amount of memory to reserve for storing compressed data buffers.
     compressed_reserved_memory_in_bytes: usize,
-    /// Number of threads to allocate for converting multivariate time series to univariate time
-    /// series.
+    /// The number of bytes that are required before transferring a batch of data to the remote
+    /// object store.
+    transfer_batch_size_in_bytes: usize,
+    /// Number of threads to allocate for converting multivariate time series to univariate
+    /// time series.
     pub(crate) ingestion_threads: usize,
     /// Number of threads to allocate for compressing univariate time series to segments.
     pub(crate) compression_threads: usize,
@@ -61,12 +59,24 @@ impl ConfigurationManager {
         cluster_mode: ClusterMode,
         server_mode: ServerMode,
     ) -> Self {
+        let uncompressed_reserved_memory_in_bytes =
+            env::var("MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES")
+                .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
+
+        let compressed_reserved_memory_in_bytes =
+            env::var("MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES")
+                .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
+
+        let transfer_batch_size_in_bytes = env::var("MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES")
+            .map_or(64 * 1024 * 1024, |value| value.parse().unwrap());
+
         Self {
             local_data_folder: local_data_folder.to_path_buf(),
             cluster_mode,
             server_mode,
-            uncompressed_reserved_memory_in_bytes: DEFAULT_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
-            compressed_reserved_memory_in_bytes: DEFAULT_COMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            uncompressed_reserved_memory_in_bytes,
+            compressed_reserved_memory_in_bytes,
+            transfer_batch_size_in_bytes,
             // TODO: Add support for running multiple threads per component. The individual
             // components in the storage engine have not been validated with multiple threads, e.g.,
             // UncompressedDataManager may have race conditions finishing buffers if multiple
@@ -128,6 +138,28 @@ impl ConfigurationManager {
         self.compressed_reserved_memory_in_bytes = new_compressed_reserved_memory_in_bytes;
         Ok(())
     }
+
+    pub(crate) fn transfer_batch_size_in_bytes(&self) -> usize {
+        self.transfer_batch_size_in_bytes
+    }
+
+    /// Set the new value and update the transfer batch size in the storage engine. If the value
+    /// was updated, return [`Ok`], otherwise return
+    /// [`ConfigurationError`](ModelarDbError::ConfigurationError).
+    pub(crate) async fn set_transfer_batch_size_in_bytes(
+        &mut self,
+        new_transfer_batch_size_in_bytes: usize,
+        storage_engine: Arc<RwLock<StorageEngine>>,
+    ) -> Result<(), ModelarDbError> {
+        storage_engine
+            .write()
+            .await
+            .set_transfer_batch_size_in_bytes(new_transfer_batch_size_in_bytes)
+            .await?;
+
+        self.transfer_batch_size_in_bytes = new_transfer_batch_size_in_bytes;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -139,6 +171,7 @@ mod tests {
 
     use modelardb_common::metadata;
     use modelardb_common::types::{ClusterMode, ServerMode};
+    use object_store::local::LocalFileSystem;
     use tokio::runtime::Runtime;
     use tokio::sync::RwLock;
 
@@ -150,14 +183,6 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
 
-        assert_eq!(
-            configuration_manager
-                .read()
-                .await
-                .uncompressed_reserved_memory_in_bytes,
-            DEFAULT_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES
-        );
-
         configuration_manager
             .write()
             .await
@@ -168,7 +193,7 @@ mod tests {
             configuration_manager
                 .read()
                 .await
-                .uncompressed_reserved_memory_in_bytes,
+                .uncompressed_reserved_memory_in_bytes(),
             1024
         );
     }
@@ -177,14 +202,6 @@ mod tests {
     async fn test_set_compressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
-
-        assert_eq!(
-            configuration_manager
-                .read()
-                .await
-                .compressed_reserved_memory_in_bytes(),
-            DEFAULT_COMPRESSED_RESERVED_MEMORY_IN_BYTES
-        );
 
         configuration_manager
             .write()
@@ -198,6 +215,27 @@ mod tests {
                 .read()
                 .await
                 .compressed_reserved_memory_in_bytes(),
+            1024
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_transfer_batch_size_in_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+
+        configuration_manager
+            .write()
+            .await
+            .set_transfer_batch_size_in_bytes(1024, storage_engine)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .transfer_batch_size_in_bytes(),
             1024
         );
     }
@@ -218,11 +256,14 @@ mod tests {
             ServerMode::Edge,
         )));
 
+        let target_dir = tempfile::tempdir().unwrap();
+        let target_fs = LocalFileSystem::new_with_prefix(target_dir.path()).unwrap();
+
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(
                 Arc::new(Runtime::new().unwrap()),
                 path.to_owned(),
-                None,
+                Some(Arc::new(target_fs)),
                 &configuration_manager,
                 Arc::new(metadata_manager),
             )

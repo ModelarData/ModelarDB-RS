@@ -47,13 +47,8 @@ use crate::context::Context;
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 
 /// The port of the Apache Arrow Flight Server. If the environment variable is not set, 9999 is used.
-pub static PORT: Lazy<u16> = Lazy::new(|| match env::var("MODELARDBD_PORT") {
-    Ok(port) => port
-        .parse()
-        .map_err(|_| "MODELARDBD_PORT must be between 1 and 65535.")
-        .unwrap(),
-    Err(_) => 9999,
-});
+pub static PORT: Lazy<u16> =
+    Lazy::new(|| env::var("MODELARDBD_PORT").map_or(9999, |value| value.parse().unwrap()));
 
 /// Folders for storing metadata and Apache Parquet files.
 pub struct DataFolders {

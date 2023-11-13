@@ -36,9 +36,6 @@ use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::Metric;
 use crate::storage::COMPRESSED_DATA_FOLDER;
 
-// TODO: Make the transfer batch size in bytes part of the user-configurable settings.
-// TODO: When the storage engine is changed to use object store for everything, receive
-//       the object store directly through the parameters instead.
 // TODO: Handle the case where a connection can not be established when transferring data.
 // TODO: Handle deleting the files after the transfer is complete in a safe way to avoid
 //       transferring the same data multiple times or deleting files that are currently used
@@ -153,19 +150,35 @@ impl DataTransfer {
         Ok(())
     }
 
-    /// Transfer all compressed files currently in the data folder to the remote object store.
-    /// Return [`Ok`] if all files were transferred successfully, otherwise [`ParquetError`]. Note
-    /// that if the function fails, some of the compressed files may still have been transferred.
-    /// Since the data is transferred separately for each table, the function can be called again if
-    /// it failed.
-    pub(crate) async fn flush(&self) -> Result<(), ParquetError> {
+    /// Set the transfer batch size to `new_value`. For each table that compressed data is saved
+    /// for, check if the amount of data exceeds `new_value` and transfer all of the data if it does.
+    /// If the value is changed successfully return [`Ok`], otherwise return [`ParquetError`].
+    pub(super) async fn set_transfer_batch_size_in_bytes(
+        &mut self,
+        new_value: usize,
+    ) -> Result<(), ParquetError> {
+        self.transfer_larger_than_threshold(new_value).await?;
+        self.transfer_batch_size_in_bytes = new_value;
+
+        Ok(())
+    }
+
+    /// Transfer all compressed files from tables currently using more than `threshold` bytes in
+    /// the data folder to the remote object store. Return [`Ok`] if all files were transferred
+    /// successfully, otherwise [`ParquetError`]. Note that if the function fails, some of the
+    /// compressed files may still have been transferred. Since the data is transferred separately
+    /// for each table, the function can be called again if it failed.
+    pub(crate) async fn transfer_larger_than_threshold(
+        &self,
+        threshold: usize,
+    ) -> Result<(), ParquetError> {
         // The clone is performed to not create a deadlock with transfer_data().
         for table_name_column_index_size_in_bytes in self.compressed_files.clone().iter() {
             let table_name = &table_name_column_index_size_in_bytes.key().0;
             let column_index = table_name_column_index_size_in_bytes.key().1;
             let size_in_bytes = table_name_column_index_size_in_bytes.value();
 
-            if size_in_bytes > &0_usize {
+            if size_in_bytes > &threshold {
                 self.transfer_data(table_name, column_index)
                     .await
                     .map_err(|err| IOError::new(Other, err.to_string()))?;
@@ -490,6 +503,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_increase_transfer_batch_size_in_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = create_metadata_manager(temp_dir.path()).await;
+
+        create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+        create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+
+        let (_, mut data_transfer) =
+            create_data_transfer_component(metadata_manager, temp_dir.path()).await;
+
+        data_transfer
+            .set_transfer_batch_size_in_bytes(COMPRESSED_FILE_SIZE * 10)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            data_transfer.transfer_batch_size_in_bytes,
+            COMPRESSED_FILE_SIZE * 10
+        );
+
+        // Data should not have been transferred.
+        assert_eq!(
+            *data_transfer
+                .compressed_files
+                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .unwrap(),
+            COMPRESSED_FILE_SIZE * 2
+        );
+    }
+
+    #[tokio::test]
+    async fn test_decrease_transfer_batch_size_in_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = create_metadata_manager(temp_dir.path()).await;
+
+        let (_, path_1) = create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+        let (_, path_2) = create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+
+        let (target_dir, mut data_transfer) =
+            create_data_transfer_component(metadata_manager, temp_dir.path()).await;
+
+        data_transfer
+            .set_transfer_batch_size_in_bytes(COMPRESSED_FILE_SIZE * 2 - 1)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            data_transfer.transfer_batch_size_in_bytes,
+            COMPRESSED_FILE_SIZE * 2 - 1
+        );
+        assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer, 6).await;
+    }
+
+    #[tokio::test]
     async fn test_flush_compressed_files() {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = create_metadata_manager(temp_dir.path()).await;
@@ -500,7 +567,10 @@ mod tests {
         let (target_dir, data_transfer) =
             create_data_transfer_component(metadata_manager, temp_dir.path()).await;
 
-        data_transfer.flush().await.unwrap();
+        data_transfer
+            .transfer_larger_than_threshold(0)
+            .await
+            .unwrap();
 
         assert_data_transferred(vec![path_1, path_2], target_dir, data_transfer, 6).await;
     }

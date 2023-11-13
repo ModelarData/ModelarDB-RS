@@ -594,7 +594,11 @@ impl FlightService for FlightServiceHandler {
             // Update the object store used for data transfers.
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine
-                .update_remote_data_folder(object_store, &self.context.table_metadata_manager)
+                .update_remote_data_folder(
+                    object_store,
+                    &self.context.table_metadata_manager,
+                    configuration_manager.transfer_batch_size_in_bytes(),
+                )
                 .await
                 .map_err(|error| {
                     Status::internal(format!("Could not update remote data folder: {error}"))
@@ -608,10 +612,18 @@ impl FlightService for FlightServiceHandler {
             let settings = [
                 "uncompressed_reserved_memory_in_bytes",
                 "compressed_reserved_memory_in_bytes",
+                "transfer_batch_size_in_bytes",
+                "ingestion_threads",
+                "compression_threads",
+                "writer_threads",
             ];
             let values = [
                 configuration_manager.uncompressed_reserved_memory_in_bytes() as u64,
                 configuration_manager.compressed_reserved_memory_in_bytes() as u64,
+                configuration_manager.transfer_batch_size_in_bytes() as u64,
+                configuration_manager.ingestion_threads as u64,
+                configuration_manager.compression_threads as u64,
+                configuration_manager.writer_threads as u64,
             ];
 
             let schema = CONFIGURATION_SCHEMA.clone();
@@ -649,8 +661,17 @@ impl FlightService for FlightServiceHandler {
                     .set_compressed_reserved_memory_in_bytes(new_value, storage_engine)
                     .await
                     .map_err(|error| Status::internal(error.to_string())),
+                "transfer_batch_size_in_bytes" => configuration_manager
+                    .set_transfer_batch_size_in_bytes(new_value, storage_engine)
+                    .await
+                    .map_err(|error| Status::internal(error.to_string())),
+                "ingestion_threads" | "compression_threads" | "writer_threads" => {
+                    Err(Status::unimplemented(format!(
+                        "{setting} is not an updatable setting in the server configuration."
+                    )))
+                }
                 _ => Err(Status::unimplemented(format!(
-                    "{setting} is not a valid setting in the server configuration."
+                    "{setting} is not a setting in the server configuration."
                 ))),
             }?;
 
