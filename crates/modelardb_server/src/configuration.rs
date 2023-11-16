@@ -170,12 +170,14 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
-    use modelardb_common::metadata;
-    use modelardb_common::types::{ClusterMode, ServerMode};
+    use modelardb_common::types::ServerMode;
+    use modelardb_common::{metadata, test};
     use object_store::local::LocalFileSystem;
     use tokio::runtime::Runtime;
     use tokio::sync::RwLock;
+    use uuid::Uuid;
 
+    use crate::manager::Manager;
     use crate::storage::StorageEngine;
 
     // Tests for ConfigurationManager.
@@ -251,9 +253,17 @@ mod tests {
         let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(path)
             .await
             .unwrap();
+
+        let (lazy_metadata_manager, lazy_flight_client) = test::lazy_connections();
+        let manager = Manager::new(
+            Arc::new(RwLock::new(lazy_flight_client)),
+            Uuid::new_v4().to_string(),
+            Arc::new(lazy_metadata_manager),
+        );
+
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
             path,
-            ClusterMode::SingleNode,
+            ClusterMode::MultiNode(manager),
             ServerMode::Edge,
         )));
 

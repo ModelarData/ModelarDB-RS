@@ -391,12 +391,11 @@ mod tests {
             .is_ok());
 
         assert_eq!(
-            data_transfer
+            *data_transfer
                 .compressed_files
                 .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
-                .unwrap()
-                .value(),
-            &COMPRESSED_FILE_SIZE
+                .unwrap(),
+            COMPRESSED_FILE_SIZE
         );
     }
 
@@ -419,12 +418,11 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            data_transfer
+            *data_transfer
                 .compressed_files
                 .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
-                .unwrap()
-                .value(),
-            &(COMPRESSED_FILE_SIZE * 2)
+                .unwrap(),
+            COMPRESSED_FILE_SIZE * 2
         );
     }
 
