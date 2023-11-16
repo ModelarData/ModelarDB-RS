@@ -252,6 +252,18 @@ By using Telegraf, data points can be efficiently streamed into `modelardbd` fro
 [collection of data sources](https://www.influxdata.com/time-series-platform/telegraf/telegraf-input-plugin/)
 such as [MQTT](https://mqtt.org/) and [OPC-UA](https://opcfoundation.org/about/opc-technologies/opc-ua/).
 
+## ModelarDB configuration
+`ModelarDB` can be configured before the server is started using environment variables. A full list of the environment 
+variables is provided here. If an environment variable is not set, the specified default value will be used.
+
+| **Variable**                                     | **Default** | **Description**                                                                                                                                                                                                                                                                                          |
+|--------------------------------------------------|-------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| MODELARDBD_PORT                                  | 9999        | The port of the Apache Arrow Flight Server.                                                                                                                                                                                                                                                              |
+| MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES | 512 MB      | The amount of memory to reserve for storing uncompressed data buffers.                                                                                                                                                                                                                                   |
+| MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES   | 512 MB      | The amount of memory to reserve for storing compressed data buffers.                                                                                                                                                                                                                                     |
+| MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES          | 64 MB       | The amount of data that must be collected before transferring a batch of data to the remote object store.                                                                                                                                                                                                |
+| MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY     | 65536       | The capacity of each uncompressed data buffer as the number of elements in the buffer where each element is a timestamp and a value. Note that the resulting size of the buffer has to be a multiple of 64 bytes to avoid the actual capacity being larger than the requested due to internal alignment. |
+
 ## Docker
 An environment that includes a local [MinIO](https://min.io/) instance and an edge node using the [MinIO](https://min.io/)
 instance as the remote object store, can be set up using [Docker](https://docs.docker.com/). Note that since

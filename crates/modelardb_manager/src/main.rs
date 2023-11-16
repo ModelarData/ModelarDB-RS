@@ -38,14 +38,9 @@ use crate::cluster::Cluster;
 use crate::remote::start_apache_arrow_flight_server;
 use crate::types::{RemoteDataFolder, RemoteMetadataManager};
 
-/// The port of the Apache Arrow Flight Server. If the environment variable is not set, 8888 is used.
-pub static PORT: Lazy<u16> = Lazy::new(|| match env::var("MODELARDBM_PORT") {
-    Ok(port) => port
-        .parse()
-        .map_err(|_| "MODELARDBM_PORT must be between 1 and 65535.")
-        .unwrap(),
-    Err(_) => 8888,
-});
+/// The port of the Apache Arrow Flight Server. If the environment variable is not set, 9998 is used.
+pub static PORT: Lazy<u16> =
+    Lazy::new(|| env::var("MODELARDBM_PORT").map_or(9998, |value| value.parse().unwrap()));
 
 /// Provides access to the managers components.
 pub struct Context {

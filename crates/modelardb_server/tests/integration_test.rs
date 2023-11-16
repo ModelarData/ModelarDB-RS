@@ -42,9 +42,9 @@ use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::{stream, StreamExt};
-use modelardb_common::array;
 use modelardb_common::test::data_generation;
 use modelardb_common::types::ErrorBound;
+use modelardb_common::{array, test};
 use sysinfo::{Pid, PidExt, System, SystemExt};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
@@ -680,7 +680,7 @@ fn test_can_collect_metrics() {
     let values_array = modelardb_common::array!(metrics, 2, ListArray);
 
     // The used_uncompressed_memory metric should record the change when ingesting and when flushing.
-    // 786432 is modelardb_common::test::UNCOMPRESSED_BUFFER_SIZE.
+    let uncompressed_buffer_size = test::UNCOMPRESSED_BUFFER_SIZE as u32;
     assert_eq!(
         values_array
             .value(0)
@@ -688,7 +688,18 @@ fn test_can_collect_metrics() {
             .downcast_ref::<UInt32Array>()
             .unwrap()
             .values(),
-        &[786432, 1572864, 2359296, 3145728, 3932160, 3145728, 2359296, 1572864, 786432, 0]
+        &[
+            uncompressed_buffer_size,
+            uncompressed_buffer_size * 2,
+            uncompressed_buffer_size * 3,
+            uncompressed_buffer_size * 4,
+            uncompressed_buffer_size * 5,
+            uncompressed_buffer_size * 4,
+            uncompressed_buffer_size * 3,
+            uncompressed_buffer_size * 2,
+            uncompressed_buffer_size,
+            0,
+        ]
     );
 
     // The amount of bytes used for compressed memory changes depending on the compression so we
@@ -921,6 +932,33 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
 }
 
 #[test]
+fn test_can_get_configuration() {
+    let mut test_context = TestContext::new();
+    let configuration = test_context.retrieve_action_record_batch("GetConfiguration");
+
+    let settings = modelardb_common::array!(configuration, 0, StringArray);
+    let values = modelardb_common::array!(configuration, 1, UInt64Array);
+
+    assert_eq!(settings.value(0), "uncompressed_reserved_memory_in_bytes");
+    assert_eq!(values.value(0), 512 * 1024 * 1024);
+
+    assert_eq!(settings.value(1), "compressed_reserved_memory_in_bytes");
+    assert_eq!(values.value(1), 512 * 1024 * 1024);
+
+    assert_eq!(settings.value(2), "transfer_batch_size_in_bytes");
+    assert_eq!(values.value(2), 64 * 1024 * 1024);
+
+    assert_eq!(settings.value(3), "ingestion_threads");
+    assert_eq!(values.value(3), 1);
+
+    assert_eq!(settings.value(4), "compression_threads");
+    assert_eq!(values.value(4), 1);
+
+    assert_eq!(settings.value(5), "writer_threads");
+    assert_eq!(values.value(5), 1);
+}
+
+#[test]
 fn test_can_update_uncompressed_reserved_memory_in_bytes() {
     let values_array =
         update_and_retrieve_configuration_values("uncompressed_reserved_memory_in_bytes");
@@ -945,6 +983,20 @@ fn update_and_retrieve_configuration_values(setting: &str) -> UInt64Array {
 }
 
 #[test]
+fn test_cannot_update_transfer_batch_size_in_bytes() {
+    // It is only possible to test that this fails since we cannot start the server with a
+    // remote data folder.
+    let mut test_context = TestContext::new();
+    let response = test_context.update_configuration("transfer_batch_size_in_bytes", "1");
+
+    assert!(response.is_err());
+    assert_eq!(
+        response.err().unwrap().message(),
+        "Configuration Error: Storage engine is not configured to transfer data."
+    );
+}
+
+#[test]
 fn test_cannot_update_non_existing_setting() {
     let mut test_context = TestContext::new();
     let response = test_context.update_configuration("invalid", "1");
@@ -952,8 +1004,23 @@ fn test_cannot_update_non_existing_setting() {
     assert!(response.is_err());
     assert_eq!(
         response.err().unwrap().message(),
-        "invalid is not a valid setting in the server configuration."
+        "invalid is not a setting in the server configuration."
     );
+}
+
+#[test]
+fn test_cannot_update_non_updatable_setting() {
+    let mut test_context = TestContext::new();
+
+    for setting in ["ingestion_threads", "compression_threads", "writer_threads"] {
+        let response = test_context.update_configuration(setting, "1");
+
+        assert!(response.is_err());
+        assert_eq!(
+            response.err().unwrap().message(),
+            format!("{setting} is not an updatable setting in the server configuration.")
+        );
+    }
 }
 
 #[test]

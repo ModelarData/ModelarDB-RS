@@ -873,7 +873,7 @@ mod tests {
         let (_metadata_manager, mut data_manager, model_table_metadata) =
             create_managers(temp_dir.path()).await;
         insert_data_points(
-            UNCOMPRESSED_DATA_BUFFER_CAPACITY,
+            *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
             model_table_metadata,
             UNIVARIATE_ID,
@@ -894,7 +894,7 @@ mod tests {
             create_managers(temp_dir.path()).await;
 
         insert_data_points(
-            UNCOMPRESSED_DATA_BUFFER_CAPACITY * 2,
+            *UNCOMPRESSED_DATA_BUFFER_CAPACITY * 2,
             &mut data_manager,
             model_table_metadata,
             UNIVARIATE_ID,
@@ -939,7 +939,7 @@ mod tests {
         // If there is enough memory to hold n full buffers, we need n + 1 to spill a buffer.
         let max_full_buffers =
             (reserved_memory / UncompressedInMemoryDataBuffer::memory_size()) + 1;
-        let message_count = max_full_buffers * UNCOMPRESSED_DATA_BUFFER_CAPACITY;
+        let message_count = max_full_buffers * *UNCOMPRESSED_DATA_BUFFER_CAPACITY;
         insert_data_points(
             message_count,
             &mut data_manager,
@@ -999,7 +999,7 @@ mod tests {
             runtime.block_on(create_managers(temp_dir.path()));
 
         runtime.block_on(insert_data_points(
-            UNCOMPRESSED_DATA_BUFFER_CAPACITY,
+            *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
             model_table_metadata,
             UNIVARIATE_ID,
@@ -1112,7 +1112,7 @@ mod tests {
 
         // Insert data that should not be spilled when the remaining memory is decreased.
         insert_data_points(
-            UNCOMPRESSED_DATA_BUFFER_CAPACITY,
+            *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
             model_table_metadata.clone(),
             UNIVARIATE_ID,
@@ -1134,7 +1134,7 @@ mod tests {
 
         // Insert data that should be spilled not that the remaining memory is decreased.
         insert_data_points(
-            UNCOMPRESSED_DATA_BUFFER_CAPACITY,
+            *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
             model_table_metadata,
             UNIVARIATE_ID,

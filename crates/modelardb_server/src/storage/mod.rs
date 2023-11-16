@@ -27,6 +27,7 @@ mod types;
 mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
 
+use std::env;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{Error as IOError, ErrorKind, Write};
@@ -50,6 +51,7 @@ use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::{ServerMode, Timestamp, TimestampArray, Value};
 use object_store::{ObjectMeta, ObjectStore};
+use once_cell::sync::Lazy;
 use sqlx::Sqlite;
 use tokio::fs::File as TokioFile;
 use tokio::runtime::Runtime;
@@ -79,10 +81,17 @@ pub(super) const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
 /// element is a [`Timestamp`] and a [`Value`](use crate::types::Value). Note that the resulting
 /// size of the buffer has to be a multiple of 64 bytes to avoid the actual capacity being larger
 /// than the requested due to internal alignment when allocating memory for the two array builders.
-const UNCOMPRESSED_DATA_BUFFER_CAPACITY: usize = 64 * 1024;
+pub static UNCOMPRESSED_DATA_BUFFER_CAPACITY: Lazy<usize> = Lazy::new(|| {
+    env::var("MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY").map_or(64 * 1024, |value| {
+        let parsed = value.parse::<usize>().unwrap();
 
-/// The number of bytes that are required before transferring a batch of data to the remote object store.
-const TRANSFER_BATCH_SIZE_IN_BYTES: usize = 64 * 1024 * 1024; // 64 MiB;
+        if parsed >= 64 && parsed % 64 == 0 {
+            parsed
+        } else {
+            panic!("MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY must be a multiple of 64.")
+        }
+    })
+});
 
 /// Manages all uncompressed and compressed data, both while being stored in memory during ingestion
 /// and when persisted to disk afterwards.
@@ -184,7 +193,7 @@ impl StorageEngine {
                     remote_data_folder,
                     table_metadata_manager.clone(),
                     manager.clone(),
-                    TRANSFER_BATCH_SIZE_IN_BYTES,
+                    configuration_manager.transfer_batch_size_in_bytes(),
                     used_disk_space_metric.clone(),
                 )
                 .await?,
@@ -317,7 +326,7 @@ impl StorageEngine {
     pub(super) async fn transfer(&mut self) -> Result<(), Status> {
         if let Some(data_transfer) = &*self.compressed_data_manager.data_transfer.read().await {
             data_transfer
-                .flush()
+                .transfer_larger_than_threshold(0)
                 .await
                 .map_err(|error: ParquetError| Status::internal(error.to_string()))
         } else {
@@ -464,6 +473,27 @@ impl StorageEngine {
         self.compressed_data_manager
             .adjust_compressed_remaining_memory_in_bytes(value_change)
             .await
+    }
+
+    /// Set the transfer batch size in the data transfer component to `new_value` if it exists. If
+    /// a data transfer component does not exists, or the value could not be changed,
+    /// return [`ModelarDbError`].
+    pub(super) async fn set_transfer_batch_size_in_bytes(
+        &self,
+        new_value: usize,
+    ) -> Result<(), ModelarDbError> {
+        if let Some(ref mut data_transfer) =
+            *self.compressed_data_manager.data_transfer.write().await
+        {
+            data_transfer
+                .set_transfer_batch_size_in_bytes(new_value)
+                .await
+                .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))
+        } else {
+            Err(ModelarDbError::ConfigurationError(
+                "Storage engine is not configured to transfer data.".to_owned(),
+            ))
+        }
     }
 
     /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`
