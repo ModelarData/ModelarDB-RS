@@ -64,6 +64,12 @@ pub struct QuerySchema(pub arrow::datatypes::SchemaRef);
 #[derive(Clone)]
 pub struct ConfigurationSchema(pub arrow::datatypes::SchemaRef);
 
+#[derive(Clone)]
+pub struct TagMetadataSchema(pub arrow::datatypes::SchemaRef);
+
+#[derive(Clone)]
+pub struct CompressedFileMetadataSchema(pub arrow::datatypes::SchemaRef);
+
 /// Error bound in percentage that is guaranteed to be from 0.0% to 100.0%. For both `PMCMean`,
 /// `Swing`, and `Gorilla` the error bound is interpreted as a relative per value error bound.
 #[derive(Debug, Copy, Clone)]
@@ -128,15 +134,6 @@ impl fmt::Display for ServerMode {
             ServerMode::Edge => write!(f, "edge"),
         }
     }
-}
-
-/// The different possible modes that a ModelarDB server can be deployed in, assigned when the
-/// server is started. MultiNode includes the url of the manager and the key received from the
-/// manager when registering.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ClusterMode {
-    SingleNode,
-    MultiNode(String, String),
 }
 
 #[cfg(test)]

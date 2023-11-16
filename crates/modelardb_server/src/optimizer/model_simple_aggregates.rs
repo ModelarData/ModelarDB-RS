@@ -974,14 +974,14 @@ mod tests {
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion::physical_plan::filter::FilterExec;
     use modelardb_common::test;
-    use modelardb_common::types::{ClusterMode, ServerMode};
+    use modelardb_common::types::ServerMode;
     use object_store::local::LocalFileSystem;
     use tokio::runtime::Runtime;
 
     use crate::context::Context;
     use crate::query::grid_exec::GridExec;
     use crate::query::ModelTable;
-    use crate::DataFolders;
+    use crate::{ClusterMode, DataFolders};
 
     // Tests for ModelSimpleAggregatesPhysicalOptimizerRule.
     #[tokio::test]

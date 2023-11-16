@@ -42,6 +42,7 @@ use crate::storage::uncompressed_data_buffer::{
     UncompressedDataBuffer, UncompressedInMemoryDataBuffer, UncompressedOnDiskDataBuffer,
 };
 use crate::storage::{Metric, UNCOMPRESSED_DATA_FOLDER};
+use crate::ClusterMode;
 
 /// Stores uncompressed data points temporarily in an in-memory buffer that spills to Apache Parquet
 /// files. When a uncompressed data buffer is finished the data is made available for compression.
@@ -60,6 +61,8 @@ pub(super) struct UncompressedDataManager {
     channels: Arc<Channels>,
     /// Management of metadata for ingesting and compressing time series.
     table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+    /// The mode of the cluster used to determine the behaviour when inserting data points.
+    cluster_mode: ClusterMode,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used uncompressed memory in bytes, updated every time the used memory changes.
@@ -80,6 +83,7 @@ impl UncompressedDataManager {
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        cluster_mode: ClusterMode,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the uncompressed data manager exists.
@@ -92,6 +96,7 @@ impl UncompressedDataManager {
             active_uncompressed_data_buffers: DashMap::new(),
             channels,
             table_metadata_manager,
+            cluster_mode,
             memory_pool,
             used_uncompressed_memory_metric: Mutex::new(Metric::new()),
             ingested_data_points_metric: Mutex::new(Metric::new()),
@@ -277,11 +282,23 @@ impl UncompressedDataManager {
                 .map(|array| array.value(index).to_string())
                 .collect();
 
-            let tag_hash = self
+            let (tag_hash, tag_hash_is_saved) = self
                 .table_metadata_manager
                 .lookup_or_compute_tag_hash(&model_table_metadata, &tag_values)
                 .await
                 .map_err(|error| format!("Tag hash could not be saved: {error}"))?;
+
+            // If the server was started with a manager, transfer the tag hash metadata if it was
+            // saved to the server metadata database. We purposely transfer tag metadata before the
+            // associated files for convenience. This does not cause problems when querying.
+            if let ClusterMode::MultiNode(manager) = &self.cluster_mode {
+                if tag_hash_is_saved {
+                    manager
+                        .transfer_tag_metadata(&model_table_metadata, tag_hash, &tag_values)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                }
+            }
 
             // For each field column, generate the 64-bit univariate id, and append the current
             // timestamp and the field's value into the in-memory buffer for the univariate id.
@@ -1198,6 +1215,7 @@ mod tests {
             memory_pool,
             channels,
             metadata_manager.clone(),
+            ClusterMode::SingleNode,
             Arc::new(Mutex::new(Metric::new())),
         )
         .await

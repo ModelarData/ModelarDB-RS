@@ -19,6 +19,7 @@
 
 mod configuration;
 mod context;
+mod manager;
 mod optimizer;
 mod query;
 mod remote;
@@ -28,20 +29,15 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::{env, fs};
 
-use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::Action;
-use modelardb_common::arguments::{
-    argument_to_remote_object_store, collect_command_line_arguments, decode_argument,
-    encode_argument, parse_object_store_arguments, validate_remote_data_folder,
-};
-use modelardb_common::types::{ClusterMode, ServerMode};
+use modelardb_common::arguments::{collect_command_line_arguments, validate_remote_data_folder};
+use modelardb_common::types::ServerMode;
 use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
-use tonic::Request;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::context::Context;
+use crate::manager::Manager;
 
 #[global_allocator]
 static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
@@ -49,6 +45,14 @@ static ALLOC: snmalloc_rs::SnMalloc = snmalloc_rs::SnMalloc;
 /// The port of the Apache Arrow Flight Server. If the environment variable is not set, 9999 is used.
 pub static PORT: Lazy<u16> =
     Lazy::new(|| env::var("MODELARDBD_PORT").map_or(9999, |value| value.parse().unwrap()));
+
+/// The different possible modes that a ModelarDB server can be deployed in, assigned when the
+/// server is started.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ClusterMode {
+    SingleNode,
+    MultiNode(Manager),
+}
 
 /// Folders for storing metadata and Apache Parquet files.
 pub struct DataFolders {
@@ -109,9 +113,9 @@ fn main() -> Result<(), String> {
         .block_on(context.register_model_tables(&context))
         .map_err(|error| format!("Unable to register model tables: {error}"))?;
 
-    if let ClusterMode::MultiNode(manager_url, _key) = &cluster_mode {
+    if let ClusterMode::MultiNode(manager) = &cluster_mode {
         runtime
-            .block_on(context.register_and_save_manager_tables(manager_url, &context))
+            .block_on(manager.retrieve_and_create_tables(&context))
             .map_err(|error| format!("Unable to register manager tables: {error}"))?;
     }
 
@@ -145,24 +149,6 @@ async fn parse_command_line_arguments(
 ) -> Result<(ServerMode, ClusterMode, DataFolders), String> {
     // Match the provided command line arguments to the supported inputs.
     match arguments {
-        &["cloud", local_data_folder, remote_data_folder] => Ok((
-            ServerMode::Cloud,
-            ClusterMode::SingleNode,
-            DataFolders {
-                local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
-                remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
-                query_data_folder: argument_to_remote_object_store(remote_data_folder)?,
-            },
-        )),
-        &["edge", local_data_folder, remote_data_folder] => Ok((
-            ServerMode::Edge,
-            ClusterMode::SingleNode,
-            DataFolders {
-                local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
-                remote_data_folder: Some(argument_to_remote_object_store(remote_data_folder)?),
-                query_data_folder: argument_to_local_object_store(local_data_folder)?,
-            },
-        )),
         &["edge", local_data_folder] | &[local_data_folder] => Ok((
             ServerMode::Edge,
             ClusterMode::SingleNode,
@@ -172,12 +158,15 @@ async fn parse_command_line_arguments(
                 query_data_folder: argument_to_local_object_store(local_data_folder)?,
             },
         )),
-        &["multi", "cloud", manager_url, local_data_folder] => {
-            let (key, remote_object_store) = register_node(manager_url, ServerMode::Cloud).await?;
+        &["cloud", local_data_folder, manager_url] => {
+            let (manager, remote_object_store) =
+                Manager::register_node(manager_url, ServerMode::Cloud)
+                    .await
+                    .map_err(|error| error.to_string())?;
 
             Ok((
                 ServerMode::Cloud,
-                ClusterMode::MultiNode(manager_url.to_owned(), key),
+                ClusterMode::MultiNode(manager),
                 DataFolders {
                     local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                     remote_data_folder: Some(remote_object_store.clone()),
@@ -185,13 +174,15 @@ async fn parse_command_line_arguments(
                 },
             ))
         }
-        &["multi", "edge", manager_url, local_data_folder]
-        | &["multi", manager_url, local_data_folder] => {
-            let (key, remote_object_store) = register_node(manager_url, ServerMode::Cloud).await?;
+        &["edge", local_data_folder, manager_url] | &[local_data_folder, manager_url] => {
+            let (manager, remote_object_store) =
+                Manager::register_node(manager_url, ServerMode::Edge)
+                    .await
+                    .map_err(|error| error.to_string())?;
 
             Ok((
                 ServerMode::Edge,
-                ClusterMode::MultiNode(manager_url.to_owned(), key),
+                ClusterMode::MultiNode(manager),
                 DataFolders {
                     local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
                     remote_data_folder: Some(remote_object_store),
@@ -200,13 +191,11 @@ async fn parse_command_line_arguments(
             ))
         }
         _ => {
-            // TODO: Update the usage instructions to specify that if cluster mode is "multi" a
-            //       manager url should be given and the remote data folder should not be given.
             // The errors are consciously ignored as the program is terminating.
             let binary_path = std::env::current_exe().unwrap();
             let binary_name = binary_path.file_name().unwrap().to_str().unwrap();
             Err(format!(
-                "Usage: {binary_name} [cluster_mode] [server_mode] [manager_url] local_data_folder [remote_data_folder]."
+                "Usage: {binary_name} [server_mode] local_data_folder [manager_url]."
             ))
         }
     }
@@ -237,52 +226,6 @@ fn argument_to_local_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>
     Ok(Arc::new(object_store))
 }
 
-/// Register the node and retrieve the key and object store connection info from the ModelarDB
-/// manager and use it to connect to the remote object store. If the key and connection information
-/// could not be retrieved or a connection could not be established, [`String`] is returned.
-async fn register_node(
-    manager_url: &str,
-    server_mode: ServerMode,
-) -> Result<(String, Arc<dyn ObjectStore>), String> {
-    let mut flight_client = FlightServiceClient::connect(manager_url.to_owned())
-        .await
-        .map_err(|error| format!("Could not connect to manager: {error}"))?;
-
-    // Add the url and mode of the server to the action request.
-    let localhost_with_port = "grpc://127.0.0.1:".to_owned() + &PORT.to_string();
-    let mut body = encode_argument(localhost_with_port.as_str());
-    body.append(&mut encode_argument(server_mode.to_string().as_str()));
-
-    let action = Action {
-        r#type: "RegisterNode".to_owned(),
-        body: body.into(),
-    };
-
-    // Extract the connection information for the remote object store from the response.
-    let maybe_response = flight_client
-        .do_action(Request::new(action))
-        .await
-        .map_err(|error| error.to_string())?
-        .into_inner()
-        .message()
-        .await
-        .map_err(|error| error.to_string())?;
-
-    if let Some(response) = maybe_response {
-        let (key, offset_data) =
-            decode_argument(&response.body).map_err(|error| error.to_string())?;
-
-        Ok((
-            key.to_owned(),
-            parse_object_store_arguments(offset_data)
-                .await
-                .map_err(|error| error.to_string())?,
-        ))
-    } else {
-        Err("Response for request to register the node is empty.".to_owned())
-    }
-}
-
 /// Register a handler to execute when CTRL+C is pressed. The handler takes an exclusive lock for
 /// the storage engine, flushes the data the storage engine currently buffers, and terminates the
 /// system without releasing the lock.
@@ -304,8 +247,6 @@ fn setup_ctrl_c_handler(context: &Arc<Context>, runtime: &Arc<Runtime>) {
 mod tests {
     use super::*;
 
-    use std::env;
-
     // Tests for parse_command_line_arguments().
     #[tokio::test]
     async fn test_parse_empty_command_line_arguments() {
@@ -313,82 +254,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_parse_cloud_command_line_arguments() {
-        setup_environment();
-        let tempdir = tempfile::tempdir().unwrap();
-        let tempdir_str = tempdir.path().to_str().unwrap();
-        let (local_data_folder, remote_data_folder) =
-            new_data_folders(&["cloud", tempdir_str, "s3://bucket"]).await;
+    async fn test_parse_edge_command_line_arguments_without_manager() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        // Equals cannot be applied to type dyn object_store::ObjectStore.
-        assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
-        remote_data_folder.unwrap();
+        assert_single_edge_without_remote_data_folder(temp_dir_str, &["edge", temp_dir_str]).await;
+    }
+
+    #[tokio::test]
+    async fn test_parse_edge_command_line_arguments_without_server_mode_and_manager() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_str = temp_dir.path().to_str().unwrap();
+
+        assert_single_edge_without_remote_data_folder(temp_dir_str, &[temp_dir_str]).await;
+    }
+
+    async fn assert_single_edge_without_remote_data_folder(temp_dir_str: &str, input: &[&str]) {
+        let (server_mode, cluster_mode, data_folders) =
+            parse_command_line_arguments(input).await.unwrap();
+
+        assert_eq!(server_mode, ServerMode::Edge);
+        assert_eq!(cluster_mode, ClusterMode::SingleNode);
+        assert_eq!(data_folders.local_data_folder, PathBuf::from(temp_dir_str));
+        assert!(data_folders.remote_data_folder.is_none());
     }
 
     #[tokio::test]
     async fn test_parse_incomplete_cloud_command_line_arguments() {
-        assert!(parse_command_line_arguments(&["cloud", "s3://bucket"])
+        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir_str = temp_dir.path().to_str().unwrap();
+
+        assert!(parse_command_line_arguments(&["cloud", temp_dir_str])
             .await
             .is_err())
-    }
-
-    #[tokio::test]
-    async fn test_parse_edge_full_command_line_arguments() {
-        setup_environment();
-        let tempdir = tempfile::tempdir().unwrap();
-        let tempdir_str = tempdir.path().to_str().unwrap();
-        let (local_data_folder, remote_data_folder) =
-            new_data_folders(&["edge", tempdir_str, "s3://bucket"]).await;
-
-        // Equals cannot be applied to type dyn object_store::ObjectStore.
-        assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
-        remote_data_folder.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_parse_edge_command_line_arguments_without_remote_object_store() {
-        setup_environment();
-        let tempdir = tempfile::tempdir().unwrap();
-        let tempdir_str = tempdir.path().to_str().unwrap();
-        let (local_data_folder, remote_data_folder) =
-            new_data_folders(&["edge", tempdir_str]).await;
-
-        // Equals cannot be applied to type dyn object_store::ObjectStore.
-        assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
-        assert!(remote_data_folder.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_parse_edge_command_line_arguments_without_mode_and_remote_object_store() {
-        setup_environment();
-        let tempdir = tempfile::tempdir().unwrap();
-        let tempdir_str = tempdir.path().to_str().unwrap();
-        let (local_data_folder, remote_data_folder) = new_data_folders(&[tempdir_str]).await;
-
-        // Equals cannot be applied to type dyn object_store::ObjectStore.
-        assert_eq!(local_data_folder, PathBuf::from(tempdir_str));
-        assert!(remote_data_folder.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_parse_incomplete_edge_command_line_arguments() {
-        let tempdir = tempfile::tempdir().unwrap();
-        let tempdir_str = tempdir.path().to_str().unwrap();
-        let input = &[tempdir_str, "s3://bucket"];
-
-        assert!(parse_command_line_arguments(input).await.is_err())
-    }
-
-    fn setup_environment() {
-        env::set_var("AWS_DEFAULT_REGION", "");
-    }
-
-    async fn new_data_folders(input: &[&str]) -> (PathBuf, Option<Arc<dyn ObjectStore>>) {
-        let (_, _, data_folders) = parse_command_line_arguments(input).await.unwrap();
-
-        (
-            data_folders.local_data_folder,
-            data_folders.remote_data_folder,
-        )
     }
 }

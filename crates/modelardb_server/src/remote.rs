@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
-    utils, Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
+    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
     HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
@@ -42,21 +42,20 @@ use datafusion::common::DFSchema;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
-use modelardb_common::arguments::{decode_argument, parse_object_store_arguments};
-use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{CONFIGURATION_SCHEMA, METRIC_SCHEMA};
-use modelardb_common::types::{ClusterMode, ServerMode, TimestampBuilder};
+use modelardb_common::types::{ServerMode, TimestampBuilder};
+use modelardb_common::{arguments, metadata, remote};
 use tokio::runtime::Runtime;
 use tokio::sync::mpsc::{self, Sender};
 use tokio::task;
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::metadata::MetadataMap;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, error, info};
 
 use crate::context::Context;
+use crate::ClusterMode;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port` that pass `context` to
 /// the methods that process the requests through [`FlightServiceHandler`].
@@ -169,7 +168,8 @@ fn send_record_batch(
 struct FlightServiceHandler {
     /// Singleton that provides access to the system's components.
     context: Arc<Context>,
-    /// Pre-allocated static argument for [`utils::flight_data_to_arrow_batch`].
+    /// Pre-allocated static argument for
+    /// [`flight_data_to_arrow_batch`](arrow_flight::utils::flight_data_to_arrow_batch).
     /// For more information about the use of dictionaries in Apache Arrow see
     /// the [Arrow Columnar Format].
     ///
@@ -194,7 +194,11 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
-            let record_batch = self.flight_data_to_record_batch(&flight_data?, schema)?;
+            let record_batch = remote::flight_data_to_record_batch(
+                &flight_data?,
+                schema,
+                &self.dictionaries_by_id,
+            )?;
             let storage_engine = self.context.storage_engine.write().await;
 
             // Write record_batch to the table with table_name as a compressed Apache Parquet file.
@@ -219,8 +223,11 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Retrieve the data until the request does not contain any more data.
         while let Some(flight_data) = flight_data_stream.next().await {
-            let data_points =
-                self.flight_data_to_record_batch(&flight_data?, &model_table_metadata.schema)?;
+            let data_points = remote::flight_data_to_record_batch(
+                &flight_data?,
+                &model_table_metadata.schema,
+                &self.dictionaries_by_id,
+            )?;
             let mut storage_engine = self.context.storage_engine.write().await;
 
             // Note that the storage engine returns when the data is stored in memory, which means
@@ -231,62 +238,6 @@ impl FlightServiceHandler {
                 .map_err(|error| {
                     Status::internal(format!("Data could not be ingested: {error}"))
                 })?;
-        }
-
-        Ok(())
-    }
-
-    /// Return the table stored as the first element in [`FlightDescriptor.path`], otherwise a
-    /// [`Status`] that specifies that the table name is missing.
-    fn table_name_from_flight_descriptor<'a>(
-        &'a self,
-        flight_descriptor: &'a FlightDescriptor,
-    ) -> Result<&String, Status> {
-        flight_descriptor
-            .path
-            .get(0)
-            .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
-    }
-
-    /// Convert `flight_data` to a [`RecordBatch`].
-    fn flight_data_to_record_batch(
-        &self,
-        flight_data: &FlightData,
-        schema: &SchemaRef,
-    ) -> Result<RecordBatch, Status> {
-        debug_assert_eq!(flight_data.flight_descriptor, None);
-
-        utils::flight_data_to_arrow_batch(flight_data, schema.clone(), &self.dictionaries_by_id)
-            .map_err(|error| Status::invalid_argument(error.to_string()))
-    }
-
-    /// If the server was started with a manager, and the requested action is restricted to only
-    /// be called by the manager, check that the request actually came from the manager. If the
-    /// request is valid, return [`Ok`], otherwise return [`Status`].
-    async fn validate_action_request(
-        &self,
-        action_type: &str,
-        metadata: MetadataMap,
-    ) -> Result<(), Status> {
-        let configuration_manager = self.context.configuration_manager.read().await;
-
-        if let ClusterMode::MultiNode(_manager_url, key) = &configuration_manager.cluster_mode {
-            // If the server is started with a manager, these actions require a manager key.
-            let restricted_actions = [
-                "CommandStatementUpdate",
-                "UpdateRemoteObjectStore",
-                "KillEdge",
-            ];
-
-            if restricted_actions.iter().any(|&a| a == action_type) {
-                let request_key = metadata
-                    .get("x-manager-key")
-                    .ok_or(Status::unauthenticated("Missing manager key."))?;
-
-                if key != request_key {
-                    return Err(Status::unauthenticated("Manager key is invalid."));
-                }
-            }
         }
 
         Ok(())
@@ -343,7 +294,7 @@ impl FlightService for FlightServiceHandler {
         request: Request<FlightDescriptor>,
     ) -> Result<Response<SchemaResult>, Status> {
         let flight_descriptor = request.into_inner();
-        let table_name = self.table_name_from_flight_descriptor(&flight_descriptor)?;
+        let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
         let schema = self
             .context
             .schema_of_table_in_default_database_schema(table_name)
@@ -425,7 +376,7 @@ impl FlightService for FlightServiceHandler {
         let flight_descriptor = flight_data
             .flight_descriptor
             .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
-        let table_name = self.table_name_from_flight_descriptor(&flight_descriptor)?;
+        let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
         let normalized_table_name = metadata::normalize_name(table_name);
 
         // Handle the data based on whether it is a normal table or a model table.
@@ -501,8 +452,16 @@ impl FlightService for FlightServiceHandler {
         let action = request.into_inner();
         info!("Received request to perform action '{}'.", action.r#type);
 
-        self.validate_action_request(&action.r#type, metadata)
-            .await?;
+        // If the server was started with a manager, validate the request.
+        let configuration_manager = self.context.configuration_manager.read().await;
+        if let ClusterMode::MultiNode(manager) = &configuration_manager.cluster_mode {
+            manager
+                .validate_action_request(&action.r#type, &metadata)
+                .map_err(|error| Status::unauthenticated(error.to_string()))?
+        };
+
+        // Manually drop the read lock on the configuration manager to avoid deadlock issues.
+        std::mem::drop(configuration_manager);
 
         if action.r#type == "CommandStatementUpdate" {
             // Read the SQL from the action.
@@ -589,16 +548,12 @@ impl FlightService for FlightServiceHandler {
                 ));
             }
 
-            let object_store = parse_object_store_arguments(&action.body).await?;
+            let object_store = arguments::parse_object_store_arguments(&action.body).await?;
 
             // Update the object store used for data transfers.
             let mut storage_engine = self.context.storage_engine.write().await;
             storage_engine
-                .update_remote_data_folder(
-                    object_store,
-                    &self.context.table_metadata_manager,
-                    configuration_manager.transfer_batch_size_in_bytes(),
-                )
+                .update_remote_data_folder(object_store)
                 .await
                 .map_err(|error| {
                     Status::internal(format!("Could not update remote data folder: {error}"))
@@ -640,8 +595,8 @@ impl FlightService for FlightServiceHandler {
 
             send_record_batch(schema.0, batch)
         } else if action.r#type == "UpdateConfiguration" {
-            let (setting, offset_data) = decode_argument(&action.body)?;
-            let (new_value, _offset_data) = decode_argument(offset_data)?;
+            let (setting, offset_data) = arguments::decode_argument(&action.body)?;
+            let (new_value, _offset_data) = arguments::decode_argument(offset_data)?;
             let new_value: usize = new_value.parse().map_err(|error| {
                 Status::invalid_argument(format!("New value for {setting} is not valid: {error}"))
             })?;

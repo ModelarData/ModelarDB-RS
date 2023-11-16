@@ -17,6 +17,7 @@
 //! An Apache Arrow Flight server that process requests using [`FlightServiceHandler`] can be started
 //! with [`start_apache_arrow_flight_server()`].
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::net::SocketAddr;
 use std::pin::Pin;
@@ -24,27 +25,33 @@ use std::str;
 use std::str::FromStr;
 use std::sync::Arc;
 
+use arrow::array::{ArrayRef, Int64Array, StringArray, UInt64Array};
 use arrow::error::ArrowError;
 use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
-    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
-    HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaAsIpc,
+    Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightEndpoint, FlightInfo,
+    HandshakeRequest, HandshakeResponse, Location, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
-use futures::{stream, Stream};
+use chrono::{TimeZone, Utc};
+use futures::{stream, Stream, StreamExt};
 use modelardb_common::arguments::{decode_argument, encode_argument, parse_object_store_arguments};
+use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
-use modelardb_common::types::ServerMode;
+use modelardb_common::schemas::{COMPRESSED_FILE_METADATA_SCHEMA, TAG_METADATA_SCHEMA};
+use modelardb_common::types::{ServerMode, TimestampArray, ValueArray};
+use modelardb_common::{metadata, parser, remote};
+use object_store::path::Path as ObjectStorePath;
+use object_store::ObjectMeta;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::cluster::Node;
-use crate::data_folder::RemoteDataFolder;
+use crate::types::RemoteDataFolder;
 use crate::Context;
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
@@ -78,11 +85,21 @@ pub fn start_apache_arrow_flight_server(
 struct FlightServiceHandler {
     /// Singleton that provides access to the system's components.
     context: Arc<Context>,
+    /// Pre-allocated static argument for
+    /// [`flight_data_to_arrow_batch`](arrow_flight::utils::flight_data_to_arrow_batch).
+    /// For more information about the use of dictionaries in Apache Arrow see
+    /// the [Arrow Columnar Format].
+    ///
+    /// [Arrow Columnar Format]: https://arrow.apache.org/docs/format/Columnar.html
+    dictionaries_by_id: HashMap<i64, ArrayRef>,
 }
 
 impl FlightServiceHandler {
     pub fn new(context: Arc<Context>) -> FlightServiceHandler {
-        Self { context }
+        Self {
+            context,
+            dictionaries_by_id: HashMap::new(),
+        }
     }
 
     /// Return [`Ok`] if a table named `table_name` does not exist already in the metadata
@@ -90,7 +107,8 @@ impl FlightServiceHandler {
     async fn check_if_table_exists(&self, table_name: &str) -> Result<(), Status> {
         let existing_tables = self
             .context
-            .metadata_manager
+            .remote_metadata_manager
+            .metadata_manager()
             .table_metadata_column("table_name")
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
@@ -116,7 +134,8 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Persist the new table to the metadata database.
         self.context
-            .metadata_manager
+            .remote_metadata_manager
+            .metadata_manager()
             .table_metadata_manager
             .save_table_metadata(&table_name, sql)
             .await
@@ -146,7 +165,8 @@ impl FlightServiceHandler {
     ) -> Result<(), Status> {
         // Persist the new model table to the metadata database.
         self.context
-            .metadata_manager
+            .remote_metadata_manager
+            .metadata_manager()
             .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, sql)
             .await
@@ -162,6 +182,111 @@ impl FlightServiceHandler {
             .map_err(|error| Status::internal(error.to_string()))?;
 
         info!("Created model table '{}'.", model_table_metadata.name);
+
+        Ok(())
+    }
+
+    /// Insert the tag metadata in `flight_data_stream` into the `table_name_tags` and
+    /// `model_table_hash_table_name` tables in the metadata database. If the stream did not contain
+    /// the correct metadata, or the metadata could not be inserted into the database, return [`Status`].
+    async fn save_tag_metadata(
+        &self,
+        flight_data_stream: &mut Streaming<FlightData>,
+    ) -> Result<(), Status> {
+        while let Some(flight_data) = flight_data_stream.next().await {
+            let metadata = remote::flight_data_to_record_batch(
+                &flight_data?,
+                &TAG_METADATA_SCHEMA.0,
+                &self.dictionaries_by_id,
+            )?;
+
+            // Extract the columns of the record batch so they can be accessed by row.
+            let table_name_array = modelardb_common::array!(metadata, 0, StringArray);
+            let tag_hash_array = modelardb_common::array!(metadata, 1, UInt64Array);
+            let tag_columns_array = modelardb_common::array!(metadata, 2, StringArray);
+            let tag_values_array = modelardb_common::array!(metadata, 3, StringArray);
+
+            // For each tag metadata in the record batch, insert it into the metadata database.
+            for row_index in 0..metadata.num_rows() {
+                self.context
+                    .remote_metadata_manager
+                    .metadata_manager()
+                    .table_metadata_manager
+                    .save_tag_hash_metadata(
+                        table_name_array.value(row_index),
+                        tag_hash_array.value(row_index),
+                        tag_columns_array.value(row_index),
+                        tag_values_array.value(row_index),
+                    )
+                    .await
+                    .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Insert the compressed file metadata in `flight_data_stream` into the `table_name_compressed_files`
+    /// table in the metadata database. If the stream did not contain the correct metadata, or the
+    /// metadata could not be inserted into the database, return [`Status`].
+    async fn save_compressed_file_metadata(
+        &self,
+        flight_data_stream: &mut Streaming<FlightData>,
+    ) -> Result<(), Status> {
+        while let Some(flight_data) = flight_data_stream.next().await {
+            let metadata = remote::flight_data_to_record_batch(
+                &flight_data?,
+                &COMPRESSED_FILE_METADATA_SCHEMA.0,
+                &self.dictionaries_by_id,
+            )?;
+
+            // Extract the columns of the record batch so they can be accessed by row.
+            let table_name_array = modelardb_common::array!(metadata, 0, StringArray);
+            let field_column_array = modelardb_common::array!(metadata, 1, UInt64Array);
+            let file_path_array = modelardb_common::array!(metadata, 2, StringArray);
+            let size_array = modelardb_common::array!(metadata, 3, UInt64Array);
+            let created_at_array = modelardb_common::array!(metadata, 4, Int64Array);
+            let start_time_array = modelardb_common::array!(metadata, 5, TimestampArray);
+            let end_time_array = modelardb_common::array!(metadata, 6, TimestampArray);
+            let min_value_array = modelardb_common::array!(metadata, 7, ValueArray);
+            let max_value_array = modelardb_common::array!(metadata, 8, ValueArray);
+
+            // For each compressed file in the record batch, insert it into the metadata database.
+            for row_index in 0..metadata.num_rows() {
+                // unwrap() is safe as the created_at timestamp cannot be out of range.
+                let last_modified = Utc
+                    .timestamp_millis_opt(created_at_array.value(row_index))
+                    .unwrap();
+
+                let file_metadata = ObjectMeta {
+                    location: ObjectStorePath::from(file_path_array.value(row_index)),
+                    last_modified,
+                    size: size_array.value(row_index) as usize,
+                    e_tag: None,
+                };
+
+                let compressed_file = CompressedFile::new(
+                    file_metadata,
+                    start_time_array.value(row_index),
+                    end_time_array.value(row_index),
+                    min_value_array.value(row_index),
+                    max_value_array.value(row_index),
+                );
+
+                // Save the compressed file in the row to the metadata database.
+                self.context
+                    .remote_metadata_manager
+                    .metadata_manager()
+                    .table_metadata_manager
+                    .save_compressed_file(
+                        table_name_array.value(row_index),
+                        field_column_array.value(row_index) as usize,
+                        &compressed_file,
+                    )
+                    .await
+                    .map_err(|error| Status::invalid_argument(error.to_string()))?;
+            }
+        }
 
         Ok(())
     }
@@ -200,7 +325,8 @@ impl FlightService for FlightServiceHandler {
         // Retrieve the table names from the metadata database.
         let table_names = self
             .context
-            .metadata_manager
+            .remote_metadata_manager
+            .metadata_manager()
             .table_metadata_column("table_name")
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
@@ -212,12 +338,47 @@ impl FlightService for FlightServiceHandler {
         Ok(Response::new(Box::pin(output)))
     }
 
-    /// Not implemented.
+    /// Given a query, return [`FlightInfo`] containing [`FlightEndpoints`](FlightEndpoint)
+    /// describing which cloud nodes should be used to execute the query. The query must be
+    /// provided in `FlightDescriptor.cmd`.
     async fn get_flight_info(
         &self,
-        _request: Request<FlightDescriptor>,
+        request: Request<FlightDescriptor>,
     ) -> Result<Response<FlightInfo>, Status> {
-        Err(Status::unimplemented("Not implemented."))
+        let flight_descriptor = request.into_inner();
+
+        // Extract the query.
+        let query = str::from_utf8(&flight_descriptor.cmd)
+            .map_err(|error| Status::invalid_argument(error.to_string()))?
+            .to_owned();
+
+        // Retrieve the cloud node that should execute the given query.
+        let mut cluster = self.context.cluster.write().await;
+        let cloud_node = cluster
+            .query_node()
+            .map_err(|error| Status::failed_precondition(error.to_string()))?;
+
+        info!(
+            "Assigning query '{query}' to cloud node with url '{}'.",
+            cloud_node.url
+        );
+
+        // All data in the query result should be retrieved using a single endpoint.
+        let endpoint = FlightEndpoint {
+            ticket: Some(Ticket::new(query)),
+            location: vec![Location {
+                uri: cloud_node.url,
+            }],
+        };
+
+        // schema is empty and total_records and total_bytes are -1 since we do not know anything
+        // about the result of the query at this point.
+        let flight_info = FlightInfo::new()
+            .with_descriptor(flight_descriptor)
+            .with_endpoint(endpoint)
+            .with_ordered(true);
+
+        Ok(Response::new(flight_info))
     }
 
     /// Provide the schema of a table in the catalog. The name of the table must be provided as the
@@ -227,14 +388,12 @@ impl FlightService for FlightServiceHandler {
         request: Request<FlightDescriptor>,
     ) -> Result<Response<SchemaResult>, Status> {
         let flight_descriptor = request.into_inner();
-        let table_name = flight_descriptor
-            .path
-            .get(0)
-            .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))?;
+        let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
 
         let table_sql = self
             .context
-            .metadata_manager
+            .remote_metadata_manager
+            .metadata_manager()
             .table_sql(table_name)
             .await
             .map_err(|error| {
@@ -262,8 +421,6 @@ impl FlightService for FlightServiceHandler {
         Ok(Response::new(schema_result))
     }
 
-    /// TODO: Execute a SQL query provided in UTF-8 and return the schema of the query
-    ///       result followed by the query result.
     async fn do_get(
         &self,
         _request: Request<Ticket>,
@@ -271,12 +428,52 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// TODO: Insert metadata such as tags into the metadata database.
+    /// Insert metadata about tags into a `table_name_tags` table or metadata about compressed files
+    /// into a `table_name_compressed_files` table in the metadata database. The name of the table
+    /// must be provided as the first element of `FlightDescriptor.path` and the schema of the
+    /// metadata must match [`TAG_METADATA_SCHEMA`] or [`COMPRESSED_FILE_METADATA_SCHEMA`] for
+    /// either tag metadata or compressed file metadata. If the metadata is successfully inserted,
+    /// an empty stream is returned as confirmation, otherwise [`Status`] is returned.
     async fn do_put(
         &self,
-        _request: Request<Streaming<FlightData>>,
+        request: Request<Streaming<FlightData>>,
     ) -> Result<Response<Self::DoPutStream>, Status> {
-        Err(Status::unimplemented("Not implemented."))
+        let mut flight_data_stream = request.into_inner();
+
+        // Extract the table name to insert metadata into.
+        let flight_data = flight_data_stream
+            .next()
+            .await
+            .ok_or_else(|| Status::invalid_argument("Missing FlightData."))??;
+
+        let flight_descriptor = flight_data
+            .flight_descriptor
+            .ok_or_else(|| Status::invalid_argument("Missing FlightDescriptor."))?;
+        let table_name = remote::table_name_from_flight_descriptor(&flight_descriptor)?;
+        let normalized_table_name = metadata::normalize_name(table_name);
+
+        // Check that the table name matches a table_name_tags or table_name_compressed_files table.
+        if normalized_table_name.ends_with("_tags") {
+            debug!(
+                "Writing tag metadata to metadata database table '{}'.",
+                normalized_table_name
+            );
+            self.save_tag_metadata(&mut flight_data_stream).await?;
+        } else if normalized_table_name.ends_with("_compressed_files") {
+            debug!(
+                "Writing compressed file metadata to metadata database table '{}'.",
+                normalized_table_name
+            );
+            self.save_compressed_file_metadata(&mut flight_data_stream)
+                .await?;
+        } else {
+            return Err(Status::invalid_argument(format!(
+                "Table '{normalized_table_name}' is not a valid metadata database table."
+            )));
+        }
+
+        // Confirm the metadata was received.
+        Ok(Response::new(Box::pin(stream::empty())))
     }
 
     /// Not implemented.
@@ -303,8 +500,8 @@ impl FlightService for FlightServiceHandler {
     /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a model table.
     /// The table is created for all nodes controlled by the manager.
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
-    /// to the cluster of nodes controlled by the manager and the object store used in the cluster
-    /// is returned.
+    /// to the cluster of nodes controlled by the manager and the key, metadata database, and object
+    /// store used in the cluster is returned.
     /// * `RemoveNode`: Remove a node from the cluster of nodes controlled by the manager and
     /// kill the process running on the node. The specific node to remove is given through the
     /// uniquely identifying URL of the node.
@@ -326,7 +523,8 @@ impl FlightService for FlightServiceHandler {
             // Get the table names in the clusters current database schema.
             let cluster_tables = self
                 .context
-                .metadata_manager
+                .remote_metadata_manager
+                .metadata_manager()
                 .table_metadata_column("table_name")
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
@@ -350,7 +548,8 @@ impl FlightService for FlightServiceHandler {
                 for table in missing_cluster_tables {
                     table_sql_queries.push(
                         self.context
-                            .metadata_manager
+                            .remote_metadata_manager
+                            .metadata_manager()
                             .table_sql(table)
                             .await
                             .map_err(|error| Status::internal(error.to_string()))?,
@@ -429,7 +628,8 @@ impl FlightService for FlightServiceHandler {
 
             // Use the metadata manager to persist the node to the metadata database.
             self.context
-                .metadata_manager
+                .remote_metadata_manager
+                .metadata_manager()
                 .save_node(&node)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
@@ -443,13 +643,22 @@ impl FlightService for FlightServiceHandler {
                 .register_node(node)
                 .map_err(|error| Status::internal(error.to_string()))?;
 
-            // Return the key for the manager and connection info for the remote object store.
             // unwrap() is safe since the key cannot contain invalid characters.
             let mut response_body = encode_argument(self.context.key.to_str().unwrap());
+
+            response_body.append(
+                &mut self
+                    .context
+                    .remote_metadata_manager
+                    .connection_info()
+                    .clone(),
+            );
 
             let remote_data_folder = self.context.remote_data_folder.read().await;
             response_body.append(&mut remote_data_folder.connection_info().clone());
 
+            // Return the key for the manager, the connection info for the metadata database, and
+            // connection info for the remote object store.
             Ok(Response::new(Box::pin(stream::once(async {
                 Ok(FlightResult {
                     body: response_body.into(),
@@ -460,7 +669,8 @@ impl FlightService for FlightServiceHandler {
 
             // Remove the node with the given url from the metadata database.
             self.context
-                .metadata_manager
+                .remote_metadata_manager
+                .metadata_manager()
                 .remove_node(url)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;

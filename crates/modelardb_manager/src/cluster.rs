@@ -15,6 +15,8 @@
 
 //! Management of the cluster of nodes that are currently controlled by the manager.
 
+use std::collections::VecDeque;
+
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::Action;
 use futures::stream::FuturesUnordered;
@@ -47,11 +49,17 @@ impl Node {
 pub struct Cluster {
     /// The nodes that are currently managed by the cluster.
     nodes: Vec<Node>,
+    /// Queue of cloud nodes used to determine which cloud node should execute a query in
+    /// a round-robin fashion.
+    query_queue: VecDeque<Node>,
 }
 
 impl Cluster {
     pub fn new() -> Self {
-        Self { nodes: vec![] }
+        Self {
+            nodes: vec![],
+            query_queue: VecDeque::new(),
+        }
     }
 
     /// Checks if the node is already registered and adds it to the current nodes if not. If it
@@ -67,7 +75,13 @@ impl Cluster {
                 node.url
             )))
         } else {
+            // Also add it to the query queue if it is a cloud node.
+            if node.mode == ServerMode::Cloud {
+                self.query_queue.push_back(node.clone());
+            }
+
             self.nodes.push(node);
+
             Ok(())
         }
     }
@@ -86,6 +100,7 @@ impl Cluster {
             .any(|n| n.url.to_lowercase() == url.to_lowercase())
         {
             self.nodes.retain(|n| n.url != url);
+            self.query_queue.retain(|n| n.url != url);
 
             // Flush the node and kill the process running on the node.
             let mut flight_client = FlightServiceClient::connect(url.to_owned())
@@ -110,6 +125,21 @@ impl Cluster {
             Err(ModelarDbError::ConfigurationError(format!(
                 "A node with the url `{url}` does not exist."
             )))
+        }
+    }
+
+    /// Return the cloud node in the cluster that is currently most capable of running a query.
+    /// If there are no cloud nodes in the cluster, return [`ClusterError`](ModelarDbError::ClusterError).
+    pub fn query_node(&mut self) -> Result<Node, ModelarDbError> {
+        if let Some(query_node) = self.query_queue.pop_front() {
+            // Add the cloud node back to the queue.
+            self.query_queue.push_back(query_node.clone());
+
+            Ok(query_node)
+        } else {
+            Err(ModelarDbError::ClusterError(
+                "There are no cloud nodes to execute the query in the cluster.".to_owned(),
+            ))
         }
     }
 
@@ -224,6 +254,13 @@ mod test {
 
         assert!(cluster.register_node(node.clone()).is_ok());
         assert!(cluster.nodes.contains(&node));
+        assert!(cluster.query_queue.is_empty());
+
+        let cloud_node = Node::new("cloud".to_owned(), ServerMode::Cloud);
+
+        assert!(cluster.register_node(cloud_node.clone()).is_ok());
+        assert!(cluster.nodes.contains(&cloud_node));
+        assert!(cluster.query_queue.contains(&cloud_node));
     }
 
     #[test]
@@ -242,5 +279,29 @@ mod test {
             .remove_node("invalid_url", &Uuid::new_v4().to_string().parse().unwrap())
             .await
             .is_err());
+    }
+
+    #[test]
+    fn test_query_node_round_robin() {
+        let cloud_node_1 = Node::new("cloud_1".to_owned(), ServerMode::Cloud);
+        let cloud_node_2 = Node::new("cloud_2".to_owned(), ServerMode::Cloud);
+        let mut cluster = Cluster::new();
+
+        assert!(cluster.register_node(cloud_node_1.clone()).is_ok());
+        assert!(cluster.register_node(cloud_node_2.clone()).is_ok());
+
+        assert_eq!(cluster.query_node().unwrap(), cloud_node_1);
+        assert_eq!(cluster.query_node().unwrap(), cloud_node_2);
+        assert_eq!(cluster.query_node().unwrap(), cloud_node_1);
+        assert_eq!(cluster.query_node().unwrap(), cloud_node_2);
+    }
+
+    #[test]
+    fn test_query_node_no_cloud_nodes() {
+        let node = Node::new("localhost".to_owned(), ServerMode::Edge);
+        let mut cluster = Cluster::new();
+
+        assert!(cluster.register_node(node).is_ok());
+        assert!(cluster.query_node().is_err());
     }
 }

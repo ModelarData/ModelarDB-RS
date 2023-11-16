@@ -15,11 +15,15 @@
 
 //! Support for handling file metadata for files that contain compressed segments.
 
+use std::sync::Arc;
+
+use arrow::array::{Int64Array, StringArray, UInt64Array};
 use datafusion::arrow::compute::kernels::aggregate;
 use datafusion::arrow::record_batch::RecordBatch;
 use object_store::ObjectMeta;
 
 use crate::array;
+use crate::schemas::COMPRESSED_FILE_METADATA_SCHEMA;
 use crate::types::{Timestamp, TimestampArray, Value, ValueArray};
 
 /// Metadata about a file tracked by [`TableMetadataManager`](crate::metadata::TableMetadataManager)
@@ -39,8 +43,24 @@ pub struct CompressedFile {
 }
 
 impl CompressedFile {
+    pub fn new(
+        file_metadata: ObjectMeta,
+        start_time: Timestamp,
+        end_time: Timestamp,
+        min_value: Value,
+        max_value: Value,
+    ) -> Self {
+        CompressedFile {
+            file_metadata,
+            start_time,
+            end_time,
+            min_value,
+            max_value,
+        }
+    }
+
     /// Convert the given [`ObjectMeta`] and [`RecordBatch`] to a [`CompressedFile`].
-    pub fn from_record_batch(file_metadata: ObjectMeta, batch: &RecordBatch) -> Self {
+    pub fn from_compressed_data(file_metadata: ObjectMeta, batch: &RecordBatch) -> Self {
         // unwrap() is safe as None is only returned if all of the values are None.
         let start_time = aggregate::min(array!(batch, 2, TimestampArray)).unwrap();
         let end_time = aggregate::max(array!(batch, 3, TimestampArray)).unwrap();
@@ -60,6 +80,31 @@ impl CompressedFile {
             max_value,
         }
     }
+
+    /// Create a [`RecordBatch`] with a single row containing `table_name`, `column_index`, and the
+    /// compressed file.
+    pub fn to_record_batch(&self, table_name: &str, column_index: usize) -> RecordBatch {
+        let schema = COMPRESSED_FILE_METADATA_SCHEMA.clone();
+        let file_path = self.file_metadata.location.to_string();
+        let created_at = self.file_metadata.last_modified.timestamp_millis();
+
+        // unwrap() is safe since the columns match the schema and all columns are of the same length.
+        RecordBatch::try_new(
+            schema.0,
+            vec![
+                Arc::new(StringArray::from(vec![table_name])),
+                Arc::new(UInt64Array::from(vec![column_index as u64])),
+                Arc::new(StringArray::from(vec![file_path])),
+                Arc::new(UInt64Array::from(vec![self.file_metadata.size as u64])),
+                Arc::new(Int64Array::from(vec![created_at])),
+                Arc::new(TimestampArray::from(vec![self.start_time])),
+                Arc::new(TimestampArray::from(vec![self.end_time])),
+                Arc::new(ValueArray::from(vec![self.min_value])),
+                Arc::new(ValueArray::from(vec![self.max_value])),
+            ],
+        )
+        .unwrap()
+    }
 }
 
 #[cfg(test)]
@@ -73,7 +118,7 @@ mod tests {
     use crate::test::compressed_segments_record_batch;
 
     #[test]
-    fn test_compressed_file_from_record_batch() {
+    fn test_compressed_file_from_compressed_data() {
         let uuid = Uuid::new_v4();
         let object_meta = ObjectMeta {
             location: ObjectStorePath::from(format!("test/{uuid}.parquet")),
@@ -83,7 +128,7 @@ mod tests {
         };
 
         let compressed_file =
-            CompressedFile::from_record_batch(object_meta, &compressed_segments_record_batch());
+            CompressedFile::from_compressed_data(object_meta, &compressed_segments_record_batch());
 
         assert_eq!(compressed_file.start_time, 0);
         assert_eq!(compressed_file.end_time, 5);

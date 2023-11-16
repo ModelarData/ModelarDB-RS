@@ -147,7 +147,7 @@ impl CompressedDataBuffer {
             e_tag: None,
         };
 
-        Ok(CompressedFile::from_record_batch(object_meta, &batch))
+        Ok(CompressedFile::from_compressed_data(object_meta, &batch))
     }
 
     /// Return the size in bytes of `compressed_segments`.

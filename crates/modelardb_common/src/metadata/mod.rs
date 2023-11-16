@@ -37,8 +37,9 @@ use futures::TryStreamExt;
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
 use sqlx::database::HasArguments;
+use sqlx::postgres::PgQueryResult;
 use sqlx::query::Query;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteQueryResult};
 use sqlx::{Database, Error, Executor, IntoArguments, Pool, Postgres, Row, Sqlite};
 use tracing::warn;
 
@@ -56,6 +57,8 @@ const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
 pub trait MetadataDatabase {
     /// Syntax added after a CREATE TABLE statement to specify that the table should use strict types.
     fn strict(&self) -> &str;
+    /// Type used for 64-bit integer columns in CREATE TABLE statements.
+    fn integer_type(&self) -> &str;
     /// Type used for binary columns in CREATE TABLE statements.
     fn binary_type(&self) -> &str;
 }
@@ -63,6 +66,10 @@ pub trait MetadataDatabase {
 impl MetadataDatabase for Postgres {
     fn strict(&self) -> &str {
         ""
+    }
+
+    fn integer_type(&self) -> &str {
+        "BIGINT"
     }
 
     fn binary_type(&self) -> &str {
@@ -75,14 +82,37 @@ impl MetadataDatabase for Sqlite {
         "STRICT"
     }
 
+    fn integer_type(&self) -> &str {
+        "INTEGER"
+    }
+
     fn binary_type(&self) -> &str {
         "BLOB"
     }
 }
 
+/// SQLx does not provide a trait for query results so we have to provide one ourselves to
+/// ensure the `rows_affected()` method is available for each supported RDBMS.
+pub trait MetadataDatabaseQueryResult {
+    /// The number of rows that were affected by the query being executed.
+    fn rows_affected(&self) -> u64;
+}
+
+impl MetadataDatabaseQueryResult for PgQueryResult {
+    fn rows_affected(&self) -> u64 {
+        self.rows_affected()
+    }
+}
+
+impl MetadataDatabaseQueryResult for SqliteQueryResult {
+    fn rows_affected(&self) -> u64 {
+        self.rows_affected()
+    }
+}
+
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata database.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TableMetadataManager<DB: Database> {
     /// The type of the database, used to handle small differences in SQL syntax between providers.
     metadata_database_type: DB,
@@ -98,6 +128,7 @@ where
     usize: sqlx::ColumnIndex<<DB as Database>::Row>,
     for<'a> <DB as HasArguments<'a>>::Arguments: IntoArguments<'a, DB>,
     for<'a> &'a mut <DB as Database>::Connection: Executor<'a, Database = DB>,
+    for<'a> <DB as Database>::QueryResult: MetadataDatabaseQueryResult,
     for<'a> String: sqlx::Type<DB> + sqlx::Encode<'a, DB> + sqlx::Decode<'a, DB>,
     for<'a> Vec<u8>: sqlx::Type<DB> + sqlx::Encode<'a, DB> + sqlx::Decode<'a, DB>,
     for<'a> &'a [u8]: sqlx::Type<DB> + sqlx::Decode<'a, DB>,
@@ -121,6 +152,7 @@ where
     /// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
     pub async fn create_metadata_database_tables(&self) -> Result<(), Error> {
         let strict = self.metadata_database_type.strict();
+        let integer_type = self.metadata_database_type.integer_type();
         let binary_type = self.metadata_database_type.binary_type();
 
         let mut transaction = self.metadata_database_pool.begin().await?;
@@ -149,7 +181,7 @@ where
         // Create the model_table_hash_table_name table if it does not exist.
         sqlx::query(&format!(
             "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
-                 hash INTEGER PRIMARY KEY,
+                 hash {integer_type} PRIMARY KEY,
                  table_name TEXT
              ) {strict}"
         ))
@@ -162,7 +194,7 @@ where
             "CREATE TABLE IF NOT EXISTS model_table_field_columns (
                  table_name TEXT NOT NULL,
                  column_name TEXT NOT NULL,
-                 column_index INTEGER NOT NULL,
+                 column_index {integer_type} NOT NULL,
                  error_bound REAL NOT NULL,
                  generated_column_expr TEXT,
                  generated_column_sources {binary_type},
@@ -181,13 +213,14 @@ where
     /// or, if the combination of tag values is not in the cache, by computing a new hash. If the
     /// hash is not in the cache, it is both saved to the cache, persisted to the model_table_tags
     /// table if it does not already contain it, and persisted to the model_table_hash_table_name if
-    /// it does not already contain it. If the model_table_tags or the model_table_hash_table_name
-    /// table cannot be accessed, [`Error`] is returned.
+    /// it does not already contain it. If the hash was saved to the metadata database, also return
+    /// [`true`]. If the model_table_tags or the model_table_hash_table_name table cannot
+    /// be accessed, [`Error`] is returned.
     pub async fn lookup_or_compute_tag_hash(
         &self,
         model_table_metadata: &ModelTableMetadata,
         tag_values: &[String],
-    ) -> Result<u64, Error> {
+    ) -> Result<(u64, bool), Error> {
         let cache_key = {
             let mut cache_key_list = tag_values.to_vec();
             cache_key_list.push(model_table_metadata.name.clone());
@@ -201,7 +234,7 @@ where
         // hash is done without taking a lock on the tag_value_hashes. However, by allowing a hash
         // to possible be computed more than once, the cache can be used without an explicit lock.
         if let Some(tag_hash) = self.tag_value_hashes.get(&cache_key) {
-            Ok(*tag_hash)
+            Ok((*tag_hash, false))
         } else {
             // Generate the 54-bit tag hash based on the tag values of the record batch and model
             // table name.
@@ -230,43 +263,61 @@ where
                 .collect::<Vec<String>>()
                 .join(",");
 
-            // Create a transaction to ensure the database state is consistent across tables.
-            let mut transaction = self.metadata_database_pool.begin().await?;
+            let tag_hash_is_saved = self
+                .save_tag_hash_metadata(&model_table_metadata.name, tag_hash, &tag_columns, &values)
+                .await?;
 
-            // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
-            // (https://www.sqlite.org/datatype3.html) both use signed integers.
-            let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
-
-            let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
-            let model_table_name = &model_table_metadata.name;
-
-            // ON CONFLICT DO NOTHING is used to silently fail when trying to insert an already
-            // existing hash. This purposely occurs if the hash has already been written to the
-            // metadata database but is no longer stored in the cache, e.g., if the system has
-            // been restarted.
-            sqlx::query(&format!(
-                "INSERT INTO {model_table_name}_tags (hash{maybe_separator}{tag_columns})
-                 VALUES ($1{maybe_separator}{values})
-                 ON CONFLICT DO NOTHING",
-            ))
-            .bind(signed_tag_hash)
-            .execute(&mut *transaction)
-            .await?;
-
-            sqlx::query(
-                "INSERT INTO model_table_hash_table_name (hash, table_name)
-                 VALUES ($1, $2)
-                 ON CONFLICT DO NOTHING",
-            )
-            .bind(signed_tag_hash)
-            .bind(model_table_name)
-            .execute(&mut *transaction)
-            .await?;
-
-            transaction.commit().await?;
-
-            Ok(tag_hash)
+            Ok((tag_hash, tag_hash_is_saved))
         }
+    }
+
+    /// Save the given tag hash metadata to the model_table_tags table if it does not already
+    /// contain it, and to the model_table_hash_table_name table if it does not already contain it.
+    /// If the tables did not contain the tag hash, meaning it is a new tag combination, return
+    /// [`true`]. If the metadata cannot be inserted into either model_table_tags or
+    /// model_table_hash_table_name, [`Error`] is returned.
+    pub async fn save_tag_hash_metadata(
+        &self,
+        table_name: &str,
+        tag_hash: u64,
+        tag_columns: &str,
+        tag_values: &str,
+    ) -> Result<bool, Error> {
+        // Create a transaction to ensure the database state is consistent across tables.
+        let mut transaction = self.metadata_database_pool.begin().await?;
+
+        // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
+        // (https://www.sqlite.org/datatype3.html) both use signed integers.
+        let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
+        let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
+
+        // ON CONFLICT DO NOTHING is used to silently fail when trying to insert an already
+        // existing hash. This purposely occurs if the hash has already been written to the
+        // metadata database but is no longer stored in the cache, e.g., if the system has
+        // been restarted.
+        let insert_into_tags_result = sqlx::query(&format!(
+            "INSERT INTO {table_name}_tags (hash{maybe_separator}{tag_columns})
+             VALUES ($1{maybe_separator}{tag_values})
+             ON CONFLICT DO NOTHING",
+        ))
+        .bind(signed_tag_hash)
+        .execute(&mut *transaction)
+        .await?;
+
+        let insert_into_hash_table_name_result = sqlx::query(
+            "INSERT INTO model_table_hash_table_name (hash, table_name)
+             VALUES ($1, $2)
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(signed_tag_hash)
+        .bind(table_name)
+        .execute(&mut *transaction)
+        .await?;
+
+        transaction.commit().await?;
+
+        Ok(insert_into_tags_result.rows_affected() > 0
+            || insert_into_hash_table_name_result.rows_affected() > 0)
     }
 
     /// Return the name of the table that contains the time series with `univariate_id`. Returns an
@@ -458,6 +509,7 @@ where
     /// * `compressed_files_to_delete` is empty.
     /// * The end time is before the start time in `replacement_compressed_file`.
     /// * The max value is smaller than the min value in `replacement_compressed_file`.
+    /// * Less than the number of files in `compressed_files_to_delete` was deleted.
     /// * The metadata database could not be modified.
     /// * A model table with `model_table_name` does not exist.
     pub async fn replace_compressed_files(
@@ -491,7 +543,7 @@ where
         // sqlx does not yet support binding arrays to IN (...) and recommends generating them.
         // https://github.com/launchbadge/sqlx/blob/main/FAQ.md#how-can-i-do-a-select--where-foo-in--query
         // query_schema_index is simply cast as a model table contains at most 1024 columns.
-        sqlx::query(&format!(
+        let delete_from_result = sqlx::query(&format!(
             "DELETE FROM {model_table_name}_compressed_files
              WHERE field_column = $1
              AND file_path IN ({compressed_files_to_delete_in})",
@@ -499,6 +551,15 @@ where
         .bind(query_schema_index as i64)
         .execute(&mut *transaction)
         .await?;
+
+        // The cast to usize is safe as only compressed_files_to_delete.len() can be deleted.
+        if compressed_files_to_delete.len() != delete_from_result.rows_affected() as usize {
+            return Err(Error::Configuration(Box::new(
+                ModelarDbError::ImplementationError(
+                    "Less than the expected number of files were deleted from the metadata database.".to_owned(),
+                ),
+            )));
+        }
 
         if let Some(compressed_file) = replacement_compressed_file {
             let insert_statement = format!(
@@ -609,6 +670,7 @@ where
         model_table_metadata: &ModelTableMetadata,
         sql: &str,
     ) -> Result<(), Error> {
+        let integer_type = self.metadata_database_type.integer_type();
         let strict = self.metadata_database_type.strict();
 
         // Convert the query schema to bytes so it can be saved as a BLOB in the metadata database.
@@ -633,7 +695,7 @@ where
         // Create a table_name_tags table to save the 54-bit tag hashes when ingesting data.
         sqlx::query(&format!(
             "CREATE TABLE {}_tags (
-                 hash INTEGER PRIMARY KEY{maybe_separator}
+                 hash {integer_type} PRIMARY KEY{maybe_separator}
                  {tag_columns}
              ) {strict}",
             model_table_metadata.name
@@ -645,11 +707,11 @@ where
         sqlx::query(&format!(
             "CREATE TABLE {}_compressed_files (
                  file_path TEXT PRIMARY KEY,
-                 field_column INTEGER,
-                 size INTEGER,
-                 created_at INTEGER,
-                 start_time INTEGER,
-                 end_time INTEGER,
+                 field_column {integer_type},
+                 size {integer_type},
+                 created_at {integer_type},
+                 start_time {integer_type},
+                 end_time {integer_type},
                  min_value REAL,
                  max_value REAL
              ) {strict}",
@@ -860,11 +922,7 @@ where
 pub async fn try_new_postgres_table_metadata_manager(
     metadata_database_pool: Pool<Postgres>,
 ) -> Result<TableMetadataManager<Postgres>, Error> {
-    let metadata_manager = TableMetadataManager {
-        metadata_database_type: Postgres,
-        metadata_database_pool,
-        tag_value_hashes: DashMap::new(),
-    };
+    let metadata_manager = new_table_metadata_manager(Postgres, metadata_database_pool);
 
     // Create the necessary tables in the metadata database.
     metadata_manager.create_metadata_database_tables().await?;
@@ -891,16 +949,23 @@ pub async fn try_new_sqlite_table_metadata_manager(
         .connect_with(options)
         .await?;
 
-    let metadata_manager = TableMetadataManager {
-        metadata_database_type: Sqlite,
-        metadata_database_pool,
-        tag_value_hashes: DashMap::new(),
-    };
+    let metadata_manager = new_table_metadata_manager(Sqlite, metadata_database_pool);
 
     // Create the necessary tables in the metadata database.
     metadata_manager.create_metadata_database_tables().await?;
 
     Ok(metadata_manager)
+}
+
+pub fn new_table_metadata_manager<DB: Database + MetadataDatabase>(
+    metadata_database_type: DB,
+    metadata_database_pool: Pool<DB>,
+) -> TableMetadataManager<DB> {
+    TableMetadataManager {
+        metadata_database_type,
+        metadata_database_pool,
+        tag_value_hashes: DashMap::new(),
+    }
 }
 
 /// Return [`true`] if `path` is a data folder, otherwise [`false`].
@@ -1155,10 +1220,10 @@ mod tests {
             .await
             .unwrap();
 
-        let result = metadata_manager
+        let (_tag_hash, tag_hash_is_saved) = metadata_manager
             .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
-            .await;
-        assert!(result.is_ok());
+            .await
+            .unwrap();
 
         // When a new tag hash is retrieved, the hash should be saved in the cache.
         assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
@@ -1169,6 +1234,7 @@ mod tests {
             .metadata_database_pool
             .fetch(&*select_statement);
 
+        assert!(tag_hash_is_saved);
         assert_eq!(
             rows.try_next()
                 .await
@@ -1201,11 +1267,12 @@ mod tests {
         assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
 
         // When getting the same tag hash again, it should just be retrieved from the cache.
-        let result = metadata_manager
+        let (_tag_hash, tag_hash_is_saved) = metadata_manager
             .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
-            .await;
+            .await
+            .unwrap();
 
-        assert!(result.is_ok());
+        assert!(!tag_hash_is_saved);
         assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
     }
 
@@ -1752,13 +1819,7 @@ mod tests {
             e_tag: None,
         };
 
-        CompressedFile {
-            file_metadata,
-            start_time,
-            end_time,
-            min_value,
-            max_value,
-        }
+        CompressedFile::new(file_metadata, start_time, end_time, min_value, max_value)
     }
 
     #[tokio::test]
