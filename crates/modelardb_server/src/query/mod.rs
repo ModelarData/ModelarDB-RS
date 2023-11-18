@@ -233,19 +233,13 @@ impl ModelTable {
             })
             .collect::<Vec<PartitionedFile>>();
 
-        // TODO: predict the accumulate size of the input data after filtering.
-        let statistics = Statistics {
-            num_rows: None,
-            total_byte_size: None,
-            column_statistics: None,
-            is_exact: false,
-        };
-
+        // TODO: give the optimizer more info for timestamps and values through statistics, e.g, min
+        // can be computed using only the metadata database due to the aggregate_statistics rule.
         let file_scan_config = FileScanConfig {
             object_store_url: self.object_store_url.clone(),
             file_schema: COMPRESSED_SCHEMA.0.clone(),
             file_groups: vec![partitioned_files],
-            statistics,
+            statistics: Statistics::new_unknown(&COMPRESSED_SCHEMA.0),
             projection: None,
             limit,
             table_partition_cols: vec![],

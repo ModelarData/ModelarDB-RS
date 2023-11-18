@@ -150,13 +150,8 @@ impl ExecutionPlan for GeneratedAsExec {
     }
 
     /// Specify that [`GeneratedAsExec`] knows nothing about the data it will output.
-    fn statistics(&self) -> Statistics {
-        Statistics {
-            num_rows: None,
-            total_byte_size: None,
-            column_statistics: None,
-            is_exact: false,
-        }
+    fn statistics(&self) -> Result<Statistics, DataFusionError> {
+        Ok(Statistics::new_unknown(&self.schema))
     }
 
     /// Return a snapshot of the set of metrics being collected by the execution plain.
@@ -272,7 +267,8 @@ impl Stream for GeneratedAsStream {
                     // Compute the values of the next generated column and, if successful, add it.
                     let maybe_generated_column = column_to_generate.physical_expr.evaluate(&batch);
                     if let Ok(generated_column) = maybe_generated_column {
-                        columns.push(generated_column.into_array(batch.num_rows()));
+                        // unwrap() is safe as generated_column is generated to be batch.num_rows().
+                        columns.push(generated_column.into_array(batch.num_rows()).unwrap());
                         generated_columns += 1;
                     } else {
                         let column_name = self.schema.field(column_to_generate.index).name();
