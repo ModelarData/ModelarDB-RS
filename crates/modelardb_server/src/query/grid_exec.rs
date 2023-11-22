@@ -172,7 +172,7 @@ impl ExecutionPlan for GridExec {
         vec![Some(physical_sort_requirements)]
     }
 
-    /// Return a [`EquivalenceProperties`] to specify how the output of [`GridExec`] is ordered.
+    /// Return an [`EquivalenceProperties`] to specify how the output of [`GridExec`] is ordered.
     /// This is required in addition to [`ExecutionPlan::output_partitioning()`] and
     /// [`ExecutionPlan::output_ordering()`] as it is used by some physical optimizer rules included
     /// with Apache Arrow DataFusion to check the correct sort order is preserved.
