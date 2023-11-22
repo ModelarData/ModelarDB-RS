@@ -161,13 +161,8 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Specify that [`SortedJoinExec`] knows nothing about the data it will output.
-    fn statistics(&self) -> Statistics {
-        Statistics {
-            num_rows: None,
-            total_byte_size: None,
-            column_statistics: None,
-            is_exact: false,
-        }
+    fn statistics(&self) -> Result<Statistics, DataFusionError> {
+        Ok(Statistics::new_unknown(&self.schema))
     }
 
     /// Specify that [`SortedJoinStream`] requires one partition for each input as it assumes that

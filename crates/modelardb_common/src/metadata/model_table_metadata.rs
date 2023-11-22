@@ -293,13 +293,13 @@ mod test {
             model_table_schema_error_bounds_and_generated_columns();
 
         generated_columns[5] = Some(GeneratedColumn {
-            expr: Expr::Wildcard,
+            expr: Expr::Wildcard { qualifier: None },
             source_columns: vec![],
             original_expr: None,
         });
 
         generated_columns[6] = Some(GeneratedColumn {
-            expr: Expr::Wildcard,
+            expr: Expr::Wildcard { qualifier: None },
             source_columns: vec![5],
             original_expr: None,
         });

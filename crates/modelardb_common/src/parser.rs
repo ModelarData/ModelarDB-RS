@@ -689,7 +689,7 @@ struct EmptyContextProvider {
 }
 
 impl ContextProvider for EmptyContextProvider {
-    fn get_table_provider(
+    fn get_table_source(
         &self,
         _name: TableReference,
     ) -> Result<Arc<dyn TableSource>, DataFusionError> {

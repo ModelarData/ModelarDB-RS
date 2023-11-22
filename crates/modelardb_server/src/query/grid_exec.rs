@@ -33,7 +33,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::common::cast::as_boolean_array;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::PhysicalSortRequirement;
+use datafusion::physical_expr::{EquivalenceProperties, PhysicalSortRequirement};
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::{
@@ -153,13 +153,8 @@ impl ExecutionPlan for GridExec {
     }
 
     /// Specify that [`GridExec`] knows nothing about the data it will output.
-    fn statistics(&self) -> Statistics {
-        Statistics {
-            num_rows: None,
-            total_byte_size: None,
-            column_statistics: None,
-            is_exact: false,
-        }
+    fn statistics(&self) -> Result<Statistics, DataFusionError> {
+        Ok(Statistics::new_unknown(&self.schema))
     }
 
     /// Specify that [`GridExec`] requires one partition for each input as it assumes that the
@@ -175,6 +170,14 @@ impl ExecutionPlan for GridExec {
         let physical_sort_requirements =
             PhysicalSortRequirement::from_sort_exprs(QUERY_ORDER_SEGMENT.iter());
         vec![Some(physical_sort_requirements)]
+    }
+
+    /// Return an [`EquivalenceProperties`] to specify how the output of [`GridExec`] is ordered.
+    /// This is required in addition to [`ExecutionPlan::output_partitioning()`] and
+    /// [`ExecutionPlan::output_ordering()`] as it is used by some physical optimizer rules included
+    /// with Apache Arrow DataFusion to check the correct sort order is preserved.
+    fn equivalence_properties(&self) -> EquivalenceProperties {
+        EquivalenceProperties::new_with_orderings(self.schema(), &[QUERY_ORDER_DATA_POINT.clone()])
     }
 
     /// Return a snapshot of the set of metrics being collected by the execution plain.
@@ -315,7 +318,7 @@ impl GridStream {
         self.current_batch = if let Some(predicate) = &self.maybe_predicate {
             // unwrap() is safe as the predicate has been written for the schema.
             let column_value = predicate.evaluate(&current_batch).unwrap();
-            let array = column_value.into_array(current_batch.num_rows());
+            let array = column_value.into_array(current_batch.num_rows()).unwrap();
             let boolean_array = as_boolean_array(&array).unwrap();
             filter_record_batch(&current_batch, boolean_array).unwrap()
         } else {
