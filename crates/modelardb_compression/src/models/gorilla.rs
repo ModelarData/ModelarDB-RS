@@ -189,7 +189,7 @@ pub fn sum(length: usize, values: &[u8], maybe_model_last_value: Option<Value>) 
     };
 
     // Then values are stored using XOR and a variable length binary encoding.
-    for _ in 0..length - 1 {
+    for _ in 0..length - maybe_model_last_value.is_none() as usize {
         if bits.read_bit() {
             if bits.read_bit() {
                 // New leading and trailing zeros.

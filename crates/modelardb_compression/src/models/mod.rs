@@ -265,7 +265,7 @@ pub fn sum(
         model_sum
     } else {
         let residuals_sum = gorilla::sum(
-            residuals_length - 1,
+            residuals_length,
             &residuals[..residuals.len() - 1],
             Some(model_last_value),
         );
