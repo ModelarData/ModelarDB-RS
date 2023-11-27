@@ -189,7 +189,7 @@ pub fn sum(length: usize, values: &[u8], maybe_model_last_value: Option<Value>) 
     };
 
     // Then values are stored using XOR and a variable length binary encoding.
-    for _ in 0..length - 1 {
+    for _ in 0..length - maybe_model_last_value.is_none() as usize {
         if bits.read_bit() {
             if bits.read_bit() {
                 // New leading and trailing zeros.
@@ -361,11 +361,26 @@ mod tests {
     #[test]
     fn test_sum(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
-        let compressed_values = compress_values_using_gorilla(&values);
+        let compressed_values = compress_values_using_gorilla(&values, None);
         let sum = sum(values.len(), &compressed_values, None);
         let expected_sum = aggregate::sum(&ValueArray::from_iter_values(values)).unwrap();
         prop_assert!(models::equal_or_nan(expected_sum as f64, sum as f64));
     }
+    }
+
+    #[test]
+    fn test_sum_model_single_value() {
+        let compressed_values = compress_values_using_gorilla(&[37.0], None);
+        let sum = sum(1, &compressed_values, None);
+        assert_eq!(sum, 37.0);
+    }
+
+    #[test]
+    fn test_sum_residuals_single_value() {
+        let maybe_model_last_value = Some(37.0);
+        let compressed_values = compress_values_using_gorilla(&[37.0], maybe_model_last_value);
+        let sum = sum(1, &compressed_values, maybe_model_last_value);
+        assert_eq!(sum, 37.0);
     }
 
     // Tests for grid().
@@ -373,7 +388,7 @@ mod tests {
     #[test]
     fn test_grid(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
-        let compressed_values = compress_values_using_gorilla(&values);
+        let compressed_values = compress_values_using_gorilla(&values, None);
 
         let mut univariate_id_builder = UnivariateIdBuilder::with_capacity(values.len());
         let timestamps: Vec<Timestamp> = (1 ..= values.len() as i64).step_by(1).collect();
@@ -403,10 +418,50 @@ mod tests {
     }
     }
 
-    fn compress_values_using_gorilla(values: &[Value]) -> Vec<u8> {
+    #[test]
+    fn test_grid_model_single_value() {
+        assert_grid_single(None);
+    }
+
+    #[test]
+    fn test_grid_residuals_single_value() {
+        assert_grid_single(Some(37.0));
+    }
+
+    fn assert_grid_single(maybe_model_last_value: Option<Value>) {
+        let compressed_values = compress_values_using_gorilla(&[37.0], maybe_model_last_value);
+        let mut univariate_id_builder = UnivariateIdBuilder::new();
+        let mut value_builder = ValueBuilder::new();
+
+        grid(
+            1,
+            &compressed_values,
+            &mut univariate_id_builder,
+            &[100],
+            &mut value_builder,
+            maybe_model_last_value
+        );
+
+        let univariate_ids = univariate_id_builder.finish();
+        let values = value_builder.finish();
+
+        assert_eq!(univariate_ids.len(), 1);
+        assert_eq!(values.len(), 1);
+        assert_eq!(univariate_ids.value(0), 1);
+        assert_eq!(values.value(0), 37.0);
+    }
+
+    fn compress_values_using_gorilla(
+        values: &[Value],
+        maybe_model_last_value: Option<Value>,
+    ) -> Vec<u8> {
         let error_bound = ErrorBound::try_new(0.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
-        model_type.compress_values(values);
+        if let Some(model_last_value) = maybe_model_last_value {
+            model_type.compress_values_without_first(values, model_last_value);
+        } else {
+            model_type.compress_values(values);
+        }
         model_type.compressed_values.finish()
     }
 
