@@ -16,8 +16,8 @@
 //! Interface to connect to and interact with the manager, used if the server is started with a
 //! manager and needs to interact with it to initialize the metadata database and transfer metadata.
 
-use std::str;
 use std::sync::Arc;
+use std::{env, str};
 
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{Action, FlightData, FlightDescriptor};
@@ -81,9 +81,11 @@ impl Manager {
                 .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?,
         ));
 
+        let ip_address = env::var("MODELARDBD_IP_ADDRESS").unwrap_or("127.0.0.1".to_string());
+
         // Add the url and mode of the server to the action request.
-        let localhost_with_port = "grpc://127.0.0.1:".to_owned() + &PORT.to_string();
-        let mut body = arguments::encode_argument(localhost_with_port.as_str());
+        let url_with_port = format!("grpc://{ip_address}:{}", &PORT.to_string());
+        let mut body = arguments::encode_argument(url_with_port.as_str());
         body.append(&mut arguments::encode_argument(
             server_mode.to_string().as_str(),
         ));
