@@ -59,10 +59,10 @@ pub enum ClusterMode {
 impl ClusterMode {
     /// Return the optional remote table metadata manager from the manager interface if the cluster
     /// mode is `MultiNode`, otherwise return [`None`].
-    fn remote_table_metadata_manager(&self) -> Option<Arc<TableMetadataManager<Postgres>>> {
+    fn remote_table_metadata_manager(&self) -> &Option<Arc<TableMetadataManager<Postgres>>> {
         match self {
-            ClusterMode::SingleNode => None,
-            ClusterMode::MultiNode(manager) => manager.table_metadata_manager.clone(),
+            ClusterMode::SingleNode => &None,
+            ClusterMode::MultiNode(manager) => &manager.table_metadata_manager,
         }
     }
 }
