@@ -266,8 +266,11 @@ impl CompressedDataManager {
         let relevant_object_metas = if let (ServerMode::Cloud, ClusterMode::MultiNode(manager)) =
             (server_mode, cluster_mode)
         {
+            // unwrap() is safe since cloud nodes always have access to the remote metadata database.
             manager
                 .table_metadata_manager
+                .clone()
+                .unwrap()
                 .compressed_files(
                     table_name,
                     column_index.into(),
@@ -311,8 +314,11 @@ impl CompressedDataManager {
             if let (ServerMode::Cloud, ClusterMode::MultiNode(manager)) =
                 (server_mode, cluster_mode)
             {
+                // unwrap() is safe since cloud nodes always have access to the remote metadata database.
                 manager
                     .table_metadata_manager
+                    .clone()
+                    .unwrap()
                     .replace_compressed_files(
                         table_name,
                         column_index.into(),

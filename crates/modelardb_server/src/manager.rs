@@ -51,14 +51,14 @@ pub struct Manager {
     /// only allowed to come from the manager.
     key: String,
     /// Metadata for the tables and model tables in the remote data folder.
-    pub(crate) table_metadata_manager: Arc<TableMetadataManager<Postgres>>,
+    pub(crate) table_metadata_manager: Option<Arc<TableMetadataManager<Postgres>>>,
 }
 
 impl Manager {
     pub fn new(
         flight_client: Arc<RwLock<FlightServiceClient<Channel>>>,
         key: String,
-        table_metadata_manager: Arc<TableMetadataManager<Postgres>>,
+        table_metadata_manager: Option<Arc<TableMetadataManager<Postgres>>>,
     ) -> Self {
         Self {
             flight_client,
@@ -102,22 +102,26 @@ impl Manager {
         let (key, offset_data) = arguments::decode_argument(&message.body)
             .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
-        let (remote_object_store, offset_data) = arguments::parse_object_store_arguments(offset_data)
-            .await
-            .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
+        let (remote_object_store, offset_data) =
+            arguments::parse_object_store_arguments(offset_data)
+                .await
+                .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
-        // Use the connection information to create a metadata manager for the remote metadata database.
-        let (connection, _offset_data) = arguments::parse_postgres_arguments(offset_data)
-            .await
-            .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
+        // Use the connection information to create a metadata manager for the remote metadata
+        // database if the node is a cloud node.
+        let maybe_table_metadata_manager = if server_mode == ServerMode::Cloud {
+            let (connection, _offset_data) = arguments::parse_postgres_arguments(offset_data)
+                .await
+                .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
-        let table_metadata_manager = metadata::new_table_metadata_manager(Postgres, connection);
+            Some(Arc::new(metadata::new_table_metadata_manager(
+                Postgres, connection,
+            )))
+        } else {
+            None
+        };
 
-        let manager = Manager::new(
-            flight_client,
-            key.to_owned(),
-            Arc::new(table_metadata_manager),
-        );
+        let manager = Manager::new(flight_client, key.to_owned(), maybe_table_metadata_manager);
 
         Ok((manager, remote_object_store))
     }

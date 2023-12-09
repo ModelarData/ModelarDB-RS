@@ -548,7 +548,8 @@ impl FlightService for FlightServiceHandler {
                 ));
             }
 
-            let (object_store, _offset_data) = arguments::parse_object_store_arguments(&action.body).await?;
+            let (object_store, _offset_data) =
+                arguments::parse_object_store_arguments(&action.body).await?;
 
             // Update the object store used for data transfers.
             let mut storage_engine = self.context.storage_engine.write().await;

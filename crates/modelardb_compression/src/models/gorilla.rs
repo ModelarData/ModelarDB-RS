@@ -439,7 +439,7 @@ mod tests {
             &mut univariate_id_builder,
             &[100],
             &mut value_builder,
-            maybe_model_last_value
+            maybe_model_last_value,
         );
 
         let univariate_ids = univariate_id_builder.finish();

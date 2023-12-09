@@ -625,7 +625,7 @@ impl FlightService for FlightServiceHandler {
             let (mode, _offset_data) = decode_argument(offset_data)?;
 
             let server_mode = ServerMode::from_str(mode).map_err(Status::invalid_argument)?;
-            let node = Node::new(url.to_string(), server_mode);
+            let node = Node::new(url.to_string(), server_mode.clone());
 
             // Use the metadata manager to persist the node to the metadata database.
             self.context
@@ -650,8 +650,10 @@ impl FlightService for FlightServiceHandler {
             let remote_data_folder = self.context.remote_data_folder.read().await;
             response_body.append(&mut remote_data_folder.connection_info().clone());
 
-            let remote_metadata_manager = &self.context.remote_metadata_manager;
-            response_body.append(&mut remote_metadata_manager.connection_info().clone());
+            if server_mode == ServerMode::Cloud {
+                let remote_metadata_manager = &self.context.remote_metadata_manager;
+                response_body.append(&mut remote_metadata_manager.connection_info().clone());
+            }
 
             // Return the key for the manager, the connection info for the remote object store, and
             // if the node is a cloud node, the connection info for the metadata database.

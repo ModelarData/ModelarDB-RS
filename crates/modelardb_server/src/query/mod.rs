@@ -490,8 +490,11 @@ impl TableProvider for ModelTable {
             &configuration_manager.server_mode,
             &configuration_manager.cluster_mode,
         ) {
+            // unwrap() is safe since cloud nodes always have access to the remote metadata database.
             manager
                 .table_metadata_manager
+                .clone()
+                .unwrap()
                 .mapping_from_hash_to_tags(table_name, &stored_tag_columns_in_projection)
                 .await
         } else {
