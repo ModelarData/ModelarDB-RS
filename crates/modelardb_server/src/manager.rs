@@ -320,7 +320,6 @@ impl PartialEq for Manager {
 mod tests {
     use super::*;
 
-    use modelardb_common::test;
     use uuid::Uuid;
 
     const UNRESTRICTED_ACTIONS: [&str; 5] = [
@@ -389,12 +388,13 @@ mod tests {
     }
 
     fn create_manager() -> Manager {
-        let (lazy_metadata_manager, lazy_flight_client) = test::lazy_connections();
+        let channel = Channel::builder("grpc://server:9999".parse().unwrap()).connect_lazy();
+        let lazy_flight_client = FlightServiceClient::new(channel);
 
         Manager::new(
             Arc::new(RwLock::new(lazy_flight_client)),
             Uuid::new_v4().to_string(),
-            Arc::new(lazy_metadata_manager),
+            None,
         )
     }
 }

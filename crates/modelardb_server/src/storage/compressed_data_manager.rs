@@ -795,7 +795,6 @@ mod tests {
                 None,
                 None,
                 None,
-                &ServerMode::Edge,
                 &ClusterMode::SingleNode,
                 &object_store,
             )
@@ -818,7 +817,6 @@ mod tests {
             None,
             None,
             None,
-            &ServerMode::Edge,
             &ClusterMode::SingleNode,
             &object_store,
         );
