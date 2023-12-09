@@ -50,7 +50,8 @@ pub struct Manager {
     /// Key received from the manager when registering, used to validate future requests that are
     /// only allowed to come from the manager.
     key: String,
-    /// Metadata for the tables and model tables in the remote data folder.
+    /// Metadata for the tables and model tables in the remote data folder. Note that only cloud
+    /// nodes have access to the remote metadata database.
     pub(crate) table_metadata_manager: Option<Arc<TableMetadataManager<Postgres>>>,
 }
 

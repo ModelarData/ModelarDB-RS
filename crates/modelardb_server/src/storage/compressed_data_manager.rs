@@ -31,7 +31,7 @@ use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::TableMetadataManager;
-use modelardb_common::types::{ServerMode, Timestamp, Value};
+use modelardb_common::types::{Timestamp, Value};
 use object_store::{ObjectMeta, ObjectStore};
 use parquet::arrow::async_reader::ParquetObjectReader;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
@@ -257,42 +257,36 @@ impl CompressedDataManager {
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
         max_value: Option<Value>,
-        server_mode: &ServerMode,
         cluster_mode: &ClusterMode,
         query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
         // Retrieve the metadata of all files that fit the given arguments. If the server is a cloud
         // node, use the table metadata manager for the remote metadata database.
-        let relevant_object_metas = if let (ServerMode::Cloud, ClusterMode::MultiNode(manager)) =
-            (server_mode, cluster_mode)
-        {
-            // unwrap() is safe since cloud nodes always have access to the remote metadata database.
-            manager
-                .table_metadata_manager
-                .clone()
-                .unwrap()
-                .compressed_files(
-                    table_name,
-                    column_index.into(),
-                    start_time,
-                    end_time,
-                    min_value,
-                    max_value,
-                )
-                .await
-        } else {
-            self.table_metadata_manager
-                .compressed_files(
-                    table_name,
-                    column_index.into(),
-                    start_time,
-                    end_time,
-                    min_value,
-                    max_value,
-                )
-                .await
-        }
-        .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
+        let relevant_object_metas =
+            if let Some(table_metadata_manager) = cluster_mode.remote_table_metadata_manager() {
+                table_metadata_manager
+                    .compressed_files(
+                        table_name,
+                        column_index.into(),
+                        start_time,
+                        end_time,
+                        min_value,
+                        max_value,
+                    )
+                    .await
+            } else {
+                self.table_metadata_manager
+                    .compressed_files(
+                        table_name,
+                        column_index.into(),
+                        start_time,
+                        end_time,
+                        min_value,
+                        max_value,
+                    )
+                    .await
+            }
+            .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
         // Merge the compressed Apache Parquet files if multiple are retrieved to ensure order.
         if relevant_object_metas.len() > 1 {
@@ -311,14 +305,8 @@ impl CompressedDataManager {
 
             // Replace the merged files in the metadata database. If the server is a cloud node,
             // use the table metadata manager for the remote metadata database.
-            if let (ServerMode::Cloud, ClusterMode::MultiNode(manager)) =
-                (server_mode, cluster_mode)
-            {
-                // unwrap() is safe since cloud nodes always have access to the remote metadata database.
-                manager
-                    .table_metadata_manager
-                    .clone()
-                    .unwrap()
+            if let Some(table_metadata_manager) = cluster_mode.remote_table_metadata_manager() {
+                table_metadata_manager
                     .replace_compressed_files(
                         table_name,
                         column_index.into(),
