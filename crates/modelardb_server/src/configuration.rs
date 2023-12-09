@@ -149,16 +149,16 @@ impl ConfigurationManager {
     /// [`ConfigurationError`](ModelarDbError::ConfigurationError).
     pub(crate) async fn set_transfer_batch_size_in_bytes(
         &mut self,
-        new_transfer_batch_size_in_bytes: usize,
+        new_transfer_batch_size_in_bytes: Option<usize>,
         storage_engine: Arc<RwLock<StorageEngine>>,
     ) -> Result<(), ModelarDbError> {
         storage_engine
             .write()
             .await
-            .set_transfer_batch_size_in_bytes(new_transfer_batch_size_in_bytes)
+            .set_transfer_batch_size_in_bytes(new_transfer_batch_size_in_bytes.unwrap())
             .await?;
 
-        self.transfer_batch_size_in_bytes = new_transfer_batch_size_in_bytes;
+        self.transfer_batch_size_in_bytes = new_transfer_batch_size_in_bytes.unwrap();
         Ok(())
     }
 }
