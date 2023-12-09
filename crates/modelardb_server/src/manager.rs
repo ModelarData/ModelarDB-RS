@@ -115,7 +115,7 @@ impl Manager {
             Arc::new(table_metadata_manager),
         );
 
-        let remote_object_store = arguments::parse_object_store_arguments(offset_data)
+        let (remote_object_store, _offset_data) = arguments::parse_object_store_arguments(offset_data)
             .await
             .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 

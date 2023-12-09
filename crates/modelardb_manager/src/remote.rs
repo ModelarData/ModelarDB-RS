@@ -571,7 +571,7 @@ impl FlightService for FlightServiceHandler {
                 )))
             }
         } else if action.r#type == "UpdateRemoteObjectStore" {
-            let object_store = parse_object_store_arguments(&action.body).await?;
+            let (object_store, _offset_data) = parse_object_store_arguments(&action.body).await?;
 
             // Create a new remote data folder and update it in the context.
             let mut remote_data_folder = self.context.remote_data_folder.write().await;
