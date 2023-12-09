@@ -97,13 +97,17 @@ impl Manager {
 
         let message = do_action_and_extract_result(&flight_client, action).await?;
 
-        // Extract the key and connection information for the metadata database and remote object
-        // store from the response.
+        // Extract the key, the connection information for the remote object store, and if the node
+        // is cloud node, the connection information for the metadata database, from the response.
         let (key, offset_data) = arguments::decode_argument(&message.body)
             .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
+        let (remote_object_store, offset_data) = arguments::parse_object_store_arguments(offset_data)
+            .await
+            .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
+
         // Use the connection information to create a metadata manager for the remote metadata database.
-        let (connection, offset_data) = arguments::parse_postgres_arguments(offset_data)
+        let (connection, _offset_data) = arguments::parse_postgres_arguments(offset_data)
             .await
             .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
@@ -114,10 +118,6 @@ impl Manager {
             key.to_owned(),
             Arc::new(table_metadata_manager),
         );
-
-        let (remote_object_store, _offset_data) = arguments::parse_object_store_arguments(offset_data)
-            .await
-            .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
         Ok((manager, remote_object_store))
     }
