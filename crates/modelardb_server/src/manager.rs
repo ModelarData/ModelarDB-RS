@@ -99,7 +99,7 @@ impl Manager {
         let message = do_action_and_extract_result(&flight_client, action).await?;
 
         // Extract the key, the connection information for the remote object store, and if the node
-        // is cloud node, the connection information for the metadata database, from the response.
+        // is a cloud node, the connection information for the metadata database, from the response.
         let (key, offset_data) = arguments::decode_argument(&message.body)
             .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
