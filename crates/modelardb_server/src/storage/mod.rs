@@ -480,7 +480,7 @@ impl StorageEngine {
     /// return [`ModelarDbError`].
     pub(super) async fn set_transfer_batch_size_in_bytes(
         &self,
-        new_value: usize,
+        new_value: Option<usize>,
     ) -> Result<(), ModelarDbError> {
         if let Some(ref mut data_transfer) =
             *self.compressed_data_manager.data_transfer.write().await

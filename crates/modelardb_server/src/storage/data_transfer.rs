@@ -56,8 +56,8 @@ pub struct DataTransfer {
     /// Interface to access the manager and transfer metadata when data is transferred.
     manager: Manager,
     /// The number of bytes that are required before transferring a batch of data to the remote
-    /// object store.
-    transfer_batch_size_in_bytes: usize,
+    /// object store. If [`None`], data is not transferred based on batch size.
+    transfer_batch_size_in_bytes: Option<usize>,
     /// Metric for the total used disk space in bytes, updated when data is transferred.
     pub used_disk_space_metric: Arc<Mutex<Metric>>,
 }
@@ -71,7 +71,7 @@ impl DataTransfer {
         remote_data_folder: Arc<dyn ObjectStore>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         manager: Manager,
-        transfer_batch_size_in_bytes: usize,
+        transfer_batch_size_in_bytes: Option<usize>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Parse through the data folder to retrieve already existing files that should be transferred.
@@ -118,7 +118,7 @@ impl DataTransfer {
             let column_index = table_name_column_index_size_in_bytes.key().1;
             let size_in_bytes = table_name_column_index_size_in_bytes.value();
 
-            if size_in_bytes >= &transfer_batch_size_in_bytes {
+            if transfer_batch_size_in_bytes.is_some_and(|batch_size| size_in_bytes >= &batch_size) {
                 data_transfer
                     .transfer_data(table_name, column_index)
                     .await
@@ -148,7 +148,9 @@ impl DataTransfer {
 
         // If the combined size of the files is larger than the batch size, transfer the data to the
         // remote object store. unwrap() is safe as key has just been added to the map.
-        if self.compressed_files.get(&key).unwrap().value() >= &self.transfer_batch_size_in_bytes {
+        if self.transfer_batch_size_in_bytes.is_some_and(|batch_size| {
+            self.compressed_files.get(&key).unwrap().value() >= &batch_size
+        }) {
             self.transfer_data(table_name, column_index).await?;
         }
 
@@ -160,9 +162,12 @@ impl DataTransfer {
     /// If the value is changed successfully return [`Ok`], otherwise return [`ParquetError`].
     pub(super) async fn set_transfer_batch_size_in_bytes(
         &mut self,
-        new_value: usize,
+        new_value: Option<usize>,
     ) -> Result<(), ParquetError> {
-        self.transfer_larger_than_threshold(new_value).await?;
+        if let Some(new_batch_size) = new_value {
+            self.transfer_larger_than_threshold(new_batch_size).await?;
+        }
+
         self.transfer_batch_size_in_bytes = new_value;
 
         Ok(())

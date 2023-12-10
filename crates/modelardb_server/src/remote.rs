@@ -571,13 +571,15 @@ impl FlightService for FlightServiceHandler {
                 "compression_threads",
                 "writer_threads",
             ];
-            let values = [
-                configuration_manager.uncompressed_reserved_memory_in_bytes() as u64,
-                configuration_manager.compressed_reserved_memory_in_bytes() as u64,
-                configuration_manager.transfer_batch_size_in_bytes() as u64,
-                configuration_manager.ingestion_threads as u64,
-                configuration_manager.compression_threads as u64,
-                configuration_manager.writer_threads as u64,
+            let values = vec![
+                Some(configuration_manager.uncompressed_reserved_memory_in_bytes() as u64),
+                Some(configuration_manager.compressed_reserved_memory_in_bytes() as u64),
+                configuration_manager
+                    .transfer_batch_size_in_bytes()
+                    .map(|n| n as u64),
+                Some(configuration_manager.ingestion_threads as u64),
+                Some(configuration_manager.compression_threads as u64),
+                Some(configuration_manager.writer_threads as u64),
             ];
 
             let schema = CONFIGURATION_SCHEMA.clone();
@@ -587,7 +589,7 @@ impl FlightService for FlightServiceHandler {
                 schema.0.clone(),
                 vec![
                     Arc::new(StringArray::from_iter_values(settings)),
-                    Arc::new(UInt64Array::from_iter_values(values)),
+                    Arc::new(UInt64Array::from(values)),
                 ],
             )
             .unwrap();

@@ -43,8 +43,8 @@ pub struct ConfigurationManager {
     /// Amount of memory to reserve for storing compressed data buffers.
     compressed_reserved_memory_in_bytes: usize,
     /// The number of bytes that are required before transferring a batch of data to the remote
-    /// object store.
-    transfer_batch_size_in_bytes: usize,
+    /// object store. If [`None`], data is not transferred based on batch size.
+    transfer_batch_size_in_bytes: Option<usize>,
     /// Number of threads to allocate for converting multivariate time series to univariate
     /// time series.
     pub(crate) ingestion_threads: usize,
@@ -77,7 +77,7 @@ impl ConfigurationManager {
             server_mode,
             uncompressed_reserved_memory_in_bytes,
             compressed_reserved_memory_in_bytes,
-            transfer_batch_size_in_bytes,
+            transfer_batch_size_in_bytes: Some(transfer_batch_size_in_bytes),
             // TODO: Add support for running multiple threads per component. The individual
             // components in the storage engine have not been validated with multiple threads, e.g.,
             // UncompressedDataManager may have race conditions finishing buffers if multiple
@@ -140,7 +140,7 @@ impl ConfigurationManager {
         Ok(())
     }
 
-    pub(crate) fn transfer_batch_size_in_bytes(&self) -> usize {
+    pub(crate) fn transfer_batch_size_in_bytes(&self) -> Option<usize> {
         self.transfer_batch_size_in_bytes
     }
 
@@ -155,10 +155,10 @@ impl ConfigurationManager {
         storage_engine
             .write()
             .await
-            .set_transfer_batch_size_in_bytes(new_transfer_batch_size_in_bytes.unwrap())
+            .set_transfer_batch_size_in_bytes(new_transfer_batch_size_in_bytes)
             .await?;
 
-        self.transfer_batch_size_in_bytes = new_transfer_batch_size_in_bytes.unwrap();
+        self.transfer_batch_size_in_bytes = new_transfer_batch_size_in_bytes;
         Ok(())
     }
 }
