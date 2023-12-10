@@ -281,7 +281,7 @@ mod tests {
             configuration_manager
                 .read()
                 .await
-                .transfer_time_in_seconds,
+                .transfer_time_in_seconds(),
             Some(60)
         );
     }

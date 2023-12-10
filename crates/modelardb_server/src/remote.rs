@@ -567,6 +567,7 @@ impl FlightService for FlightServiceHandler {
                 "uncompressed_reserved_memory_in_bytes",
                 "compressed_reserved_memory_in_bytes",
                 "transfer_batch_size_in_bytes",
+                "transfer_time_in_seconds",
                 "ingestion_threads",
                 "compression_threads",
                 "writer_threads",
@@ -576,6 +577,9 @@ impl FlightService for FlightServiceHandler {
                 Some(configuration_manager.compressed_reserved_memory_in_bytes() as u64),
                 configuration_manager
                     .transfer_batch_size_in_bytes()
+                    .map(|n| n as u64),
+                configuration_manager
+                    .transfer_time_in_seconds()
                     .map(|n| n as u64),
                 Some(configuration_manager.ingestion_threads as u64),
                 Some(configuration_manager.compression_threads as u64),
@@ -636,6 +640,10 @@ impl FlightService for FlightServiceHandler {
                 }
                 "transfer_batch_size_in_bytes" => configuration_manager
                     .set_transfer_batch_size_in_bytes(new_value, storage_engine)
+                    .await
+                    .map_err(|error| Status::internal(error.to_string())),
+                "transfer_time_in_seconds" => configuration_manager
+                    .set_transfer_time_in_seconds(new_value, storage_engine)
                     .await
                     .map_err(|error| Status::internal(error.to_string())),
                 "ingestion_threads" | "compression_threads" | "writer_threads" => {
