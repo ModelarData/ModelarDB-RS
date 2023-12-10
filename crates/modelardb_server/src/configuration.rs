@@ -45,6 +45,9 @@ pub struct ConfigurationManager {
     /// The number of bytes that are required before transferring a batch of data to the remote
     /// object store. If [`None`], data is not transferred based on batch size.
     transfer_batch_size_in_bytes: Option<usize>,
+    /// The number of seconds between each transfer of data to the remote object store. If [`None`],
+    /// data is not transferred based on time.
+    transfer_time_in_seconds: Option<usize>,
     /// Number of threads to allocate for converting multivariate time series to univariate
     /// time series.
     pub(crate) ingestion_threads: usize,
@@ -69,7 +72,10 @@ impl ConfigurationManager {
                 .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
 
         let transfer_batch_size_in_bytes = env::var("MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES")
-            .map_or(64 * 1024 * 1024, |value| value.parse().unwrap());
+            .map_or(Some(64 * 1024 * 1024), |value| Some(value.parse().unwrap()));
+
+        let transfer_time_in_seconds = env::var("MODELARDBD_TRANSFER_TIME_IN_SECONDS")
+            .map_or(None, |value| Some(value.parse().unwrap()));
 
         Self {
             local_data_folder: local_data_folder.to_path_buf(),
@@ -77,7 +83,8 @@ impl ConfigurationManager {
             server_mode,
             uncompressed_reserved_memory_in_bytes,
             compressed_reserved_memory_in_bytes,
-            transfer_batch_size_in_bytes: Some(transfer_batch_size_in_bytes),
+            transfer_batch_size_in_bytes,
+            transfer_time_in_seconds,
             // TODO: Add support for running multiple threads per component. The individual
             // components in the storage engine have not been validated with multiple threads, e.g.,
             // UncompressedDataManager may have race conditions finishing buffers if multiple
@@ -161,6 +168,21 @@ impl ConfigurationManager {
         self.transfer_batch_size_in_bytes = new_transfer_batch_size_in_bytes;
         Ok(())
     }
+
+    pub(crate) fn transfer_time_in_seconds(&self) -> Option<usize> {
+        self.transfer_time_in_seconds
+    }
+
+    /// Set the new value and update the transfer time in the storage engine. If the value was updated,
+    /// return [`Ok`], otherwise return [`ConfigurationError`](ModelarDbError::ConfigurationError).
+    pub(crate) async fn set_transfer_time_in_seconds(
+        &mut self,
+        new_transfer_time_in_seconds: Option<usize>,
+        storage_engine: Arc<RwLock<StorageEngine>>,
+    ) -> Result<(), ModelarDbError> {
+        self.transfer_time_in_seconds = new_transfer_time_in_seconds;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -240,6 +262,27 @@ mod tests {
                 .await
                 .transfer_batch_size_in_bytes(),
             Some(1024)
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_transfer_time_in_seconds() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+
+        configuration_manager
+            .write()
+            .await
+            .set_transfer_time_in_seconds(Some(60), storage_engine)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .transfer_time_in_seconds,
+            Some(60)
         );
     }
 
