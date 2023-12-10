@@ -1003,6 +1003,20 @@ fn test_cannot_update_non_existing_setting() {
 }
 
 #[test]
+fn test_cannot_update_non_nullable_setting_with_empty_value() {
+    for setting in [
+        "uncompressed_reserved_memory_in_bytes",
+        "compressed_reserved_memory_in_bytes",
+    ] {
+        update_configuration_and_assert_error(
+            setting,
+            "",
+            format!("New value for {setting} cannot be empty.").as_str(),
+        );
+    }
+}
+
+#[test]
 fn test_cannot_update_non_updatable_setting() {
     for setting in ["ingestion_threads", "compression_threads", "writer_threads"] {
         update_configuration_and_assert_error(
@@ -1019,24 +1033,6 @@ fn test_cannot_update_setting_with_invalid_value() {
         "compressed_reserved_memory_in_bytes",
         "-1",
         "New value for compressed_reserved_memory_in_bytes is not valid: invalid digit found in string",
-    );
-}
-
-#[test]
-fn test_cannot_update_uncompressed_reserved_memory_in_bytes_with_empty_value() {
-    update_configuration_and_assert_error(
-        "uncompressed_reserved_memory_in_bytes",
-        "",
-        "New value for uncompressed_reserved_memory_in_bytes cannot be empty.",
-    );
-}
-
-#[test]
-fn test_cannot_update_compressed_reserved_memory_in_bytes_with_empty_value() {
-    update_configuration_and_assert_error(
-        "compressed_reserved_memory_in_bytes",
-        "",
-        "New value for compressed_reserved_memory_in_bytes cannot be empty.",
     );
 }
 
