@@ -239,7 +239,7 @@ mod tests {
                 .read()
                 .await
                 .transfer_batch_size_in_bytes(),
-            1024
+            Some(1024)
         );
     }
 

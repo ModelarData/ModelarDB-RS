@@ -443,14 +443,42 @@ mod tests {
             create_data_transfer_component(metadata_manager, temp_dir.path()).await;
 
         data_transfer
-            .set_transfer_batch_size_in_bytes(COMPRESSED_FILE_SIZE * 10)
+            .set_transfer_batch_size_in_bytes(Some(COMPRESSED_FILE_SIZE * 10))
             .await
             .unwrap();
 
         assert_eq!(
             data_transfer.transfer_batch_size_in_bytes,
-            COMPRESSED_FILE_SIZE * 10
+            Some(COMPRESSED_FILE_SIZE * 10)
         );
+
+        // Data should not have been transferred.
+        assert_eq!(
+            *data_transfer
+                .compressed_files
+                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .unwrap(),
+            COMPRESSED_FILE_SIZE * 2
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_transfer_batch_size_in_bytes_to_none() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = create_metadata_manager(temp_dir.path()).await;
+
+        create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+        create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+
+        let (_, mut data_transfer) =
+            create_data_transfer_component(metadata_manager, temp_dir.path()).await;
+
+        data_transfer
+            .set_transfer_batch_size_in_bytes(None)
+            .await
+            .unwrap();
+
+        assert_eq!(data_transfer.transfer_batch_size_in_bytes, None);
 
         // Data should not have been transferred.
         assert_eq!(
@@ -531,7 +559,7 @@ mod tests {
             remote_data_folder_object_store,
             table_metadata_manager,
             manager,
-            COMPRESSED_FILE_SIZE * 3 - 1,
+            Some(COMPRESSED_FILE_SIZE * 3 - 1),
             Arc::new(Mutex::new(Metric::new())),
         )
         .await
