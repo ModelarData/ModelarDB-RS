@@ -230,7 +230,7 @@ mod tests {
         configuration_manager
             .write()
             .await
-            .set_transfer_batch_size_in_bytes(1024, storage_engine)
+            .set_transfer_batch_size_in_bytes(Some(1024), storage_engine)
             .await
             .unwrap();
 

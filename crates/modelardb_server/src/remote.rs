@@ -616,7 +616,6 @@ impl FlightService for FlightServiceHandler {
 
             match setting {
                 "uncompressed_reserved_memory_in_bytes" => {
-                    // TODO: Add test for this.
                     let new_value = new_value.ok_or_else(|| invalid_empty_error)?;
 
                     configuration_manager
@@ -626,7 +625,6 @@ impl FlightService for FlightServiceHandler {
                     Ok(())
                 }
                 "compressed_reserved_memory_in_bytes" => {
-                    // TODO: Add test for this.
                     let new_value = new_value.ok_or_else(|| invalid_empty_error)?;
 
                     configuration_manager
