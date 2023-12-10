@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 use dashmap::DashMap;
 use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
+use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::TableMetadataManager;
 use object_store::local::LocalFileSystem;
@@ -58,6 +59,9 @@ pub struct DataTransfer {
     /// The number of bytes that are required before transferring a batch of data to the remote
     /// object store. If [`None`], data is not transferred based on batch size.
     transfer_batch_size_in_bytes: Option<usize>,
+    /// The number of seconds between each transfer of data to the remote object store. If [`None`],
+    /// data is not transferred based on time.
+    transfer_time_in_seconds: Option<usize>,
     /// Metric for the total used disk space in bytes, updated when data is transferred.
     pub used_disk_space_metric: Arc<Mutex<Metric>>,
 }
@@ -72,6 +76,7 @@ impl DataTransfer {
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         manager: Manager,
         transfer_batch_size_in_bytes: Option<usize>,
+        transfer_time_in_seconds: Option<usize>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Parse through the data folder to retrieve already existing files that should be transferred.
@@ -99,6 +104,7 @@ impl DataTransfer {
             compressed_files: compressed_files.clone(),
             manager,
             transfer_batch_size_in_bytes,
+            transfer_time_in_seconds,
             used_disk_space_metric,
         };
 
@@ -169,6 +175,18 @@ impl DataTransfer {
         }
 
         self.transfer_batch_size_in_bytes = new_value;
+
+        Ok(())
+    }
+
+    /// Set the transfer time to `new_value`. If the value is changed successfully return [`Ok`],
+    /// otherwise return [`ModelarDbError`].
+    pub(super) async fn set_transfer_time_in_seconds(
+        &mut self,
+        new_value: Option<usize>,
+    ) -> Result<(), ModelarDbError> {
+        // TODO: Maybe just have an optional scheduler in this component instead.
+        self.transfer_time_in_seconds = new_value;
 
         Ok(())
     }

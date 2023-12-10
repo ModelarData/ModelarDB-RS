@@ -180,6 +180,12 @@ impl ConfigurationManager {
         new_transfer_time_in_seconds: Option<usize>,
         storage_engine: Arc<RwLock<StorageEngine>>,
     ) -> Result<(), ModelarDbError> {
+        storage_engine
+            .write()
+            .await
+            .set_transfer_time_in_seconds(new_transfer_time_in_seconds)
+            .await?;
+
         self.transfer_time_in_seconds = new_transfer_time_in_seconds;
         Ok(())
     }

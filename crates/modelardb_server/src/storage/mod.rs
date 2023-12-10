@@ -194,6 +194,7 @@ impl StorageEngine {
                     table_metadata_manager.clone(),
                     manager.clone(),
                     configuration_manager.transfer_batch_size_in_bytes(),
+                    configuration_manager.transfer_time_in_seconds(),
                     used_disk_space_metric.clone(),
                 )
                 .await?,
@@ -489,6 +490,24 @@ impl StorageEngine {
                 .set_transfer_batch_size_in_bytes(new_value)
                 .await
                 .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))
+        } else {
+            Err(ModelarDbError::ConfigurationError(
+                "Storage engine is not configured to transfer data.".to_owned(),
+            ))
+        }
+    }
+
+    /// Set the transfer time in the data transfer component to `new_value` if it exists. If
+    /// a data transfer component does not exists, or the value could not be changed,
+    /// return [`ModelarDbError`].
+    pub(super) async fn set_transfer_time_in_seconds(
+        &self,
+        new_value: Option<usize>,
+    ) -> Result<(), ModelarDbError> {
+        if let Some(ref mut data_transfer) =
+            *self.compressed_data_manager.data_transfer.write().await
+        {
+            data_transfer.set_transfer_time_in_seconds(new_value).await
         } else {
             Err(ModelarDbError::ConfigurationError(
                 "Storage engine is not configured to transfer data.".to_owned(),
