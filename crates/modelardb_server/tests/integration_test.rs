@@ -948,14 +948,18 @@ fn test_can_get_configuration() {
     assert_eq!(settings.value(2), "transfer_batch_size_in_bytes");
     assert_eq!(values.value(2), 64 * 1024 * 1024);
 
-    assert_eq!(settings.value(3), "ingestion_threads");
-    assert_eq!(values.value(3), 1);
+    assert_eq!(settings.value(3), "transfer_time_in_seconds");
+    assert_eq!(values.value(3), 0);
+    assert_eq!(values.null_count(), 1);
 
-    assert_eq!(settings.value(4), "compression_threads");
+    assert_eq!(settings.value(4), "ingestion_threads");
     assert_eq!(values.value(4), 1);
 
-    assert_eq!(settings.value(5), "writer_threads");
+    assert_eq!(settings.value(5), "compression_threads");
     assert_eq!(values.value(5), 1);
+
+    assert_eq!(settings.value(6), "writer_threads");
+    assert_eq!(values.value(6), 1);
 }
 
 #[test]
@@ -988,6 +992,17 @@ fn test_cannot_update_transfer_batch_size_in_bytes() {
     // remote data folder.
     update_configuration_and_assert_error(
         "transfer_batch_size_in_bytes",
+        "1",
+        "Configuration Error: Storage engine is not configured to transfer data.",
+    );
+}
+
+#[test]
+fn test_cannot_update_transfer_time_in_seconds() {
+    // It is only possible to test that this fails since we cannot start the server with a
+    // remote data folder.
+    update_configuration_and_assert_error(
+        "transfer_time_in_seconds",
         "1",
         "Configuration Error: Storage engine is not configured to transfer data.",
     );
