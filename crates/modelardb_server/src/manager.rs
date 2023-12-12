@@ -50,15 +50,16 @@ pub struct Manager {
     /// Key received from the manager when registering, used to validate future requests that are
     /// only allowed to come from the manager.
     key: String,
-    /// Metadata for the tables and model tables in the remote data folder.
-    pub(crate) table_metadata_manager: Arc<TableMetadataManager<Postgres>>,
+    /// Metadata for the tables and model tables in the remote data folder. Note that only cloud
+    /// nodes have access to the remote metadata database.
+    pub(crate) table_metadata_manager: Option<Arc<TableMetadataManager<Postgres>>>,
 }
 
 impl Manager {
     pub fn new(
         flight_client: Arc<RwLock<FlightServiceClient<Channel>>>,
         key: String,
-        table_metadata_manager: Arc<TableMetadataManager<Postgres>>,
+        table_metadata_manager: Option<Arc<TableMetadataManager<Postgres>>>,
     ) -> Self {
         Self {
             flight_client,
@@ -97,27 +98,31 @@ impl Manager {
 
         let message = do_action_and_extract_result(&flight_client, action).await?;
 
-        // Extract the key and connection information for the metadata database and remote object
-        // store from the response.
+        // Extract the key, the connection information for the remote object store, and if the node
+        // is a cloud node, the connection information for the metadata database, from the response.
         let (key, offset_data) = arguments::decode_argument(&message.body)
             .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
-        // Use the connection information to create a metadata manager for the remote metadata database.
-        let (connection, offset_data) = arguments::parse_postgres_arguments(offset_data)
-            .await
-            .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
+        let (remote_object_store, offset_data) =
+            arguments::parse_object_store_arguments(offset_data)
+                .await
+                .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
-        let table_metadata_manager = metadata::new_table_metadata_manager(Postgres, connection);
+        // Use the connection information to create a metadata manager for the remote metadata
+        // database if the node is a cloud node.
+        let maybe_table_metadata_manager = if server_mode == ServerMode::Cloud {
+            let (connection, _offset_data) = arguments::parse_postgres_arguments(offset_data)
+                .await
+                .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
-        let manager = Manager::new(
-            flight_client,
-            key.to_owned(),
-            Arc::new(table_metadata_manager),
-        );
+            Some(Arc::new(metadata::new_table_metadata_manager(
+                Postgres, connection,
+            )))
+        } else {
+            None
+        };
 
-        let remote_object_store = arguments::parse_object_store_arguments(offset_data)
-            .await
-            .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
+        let manager = Manager::new(flight_client, key.to_owned(), maybe_table_metadata_manager);
 
         Ok((manager, remote_object_store))
     }
@@ -315,7 +320,6 @@ impl PartialEq for Manager {
 mod tests {
     use super::*;
 
-    use modelardb_common::test;
     use uuid::Uuid;
 
     const UNRESTRICTED_ACTIONS: [&str; 5] = [
@@ -384,12 +388,13 @@ mod tests {
     }
 
     fn create_manager() -> Manager {
-        let (lazy_metadata_manager, lazy_flight_client) = test::lazy_connections();
+        let channel = Channel::builder("grpc://server:9999".parse().unwrap()).connect_lazy();
+        let lazy_flight_client = FlightServiceClient::new(channel);
 
         Manager::new(
             Arc::new(RwLock::new(lazy_flight_client)),
             Uuid::new_v4().to_string(),
-            Arc::new(lazy_metadata_manager),
+            None,
         )
     }
 }

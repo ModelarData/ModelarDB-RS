@@ -170,11 +170,13 @@ mod tests {
     use std::path::Path;
     use std::sync::Arc;
 
+    use arrow_flight::flight_service_client::FlightServiceClient;
+    use modelardb_common::metadata;
     use modelardb_common::types::ServerMode;
-    use modelardb_common::{metadata, test};
     use object_store::local::LocalFileSystem;
     use tokio::runtime::Runtime;
     use tokio::sync::RwLock;
+    use tonic::transport::Channel;
     use uuid::Uuid;
 
     use crate::manager::Manager;
@@ -254,11 +256,13 @@ mod tests {
             .await
             .unwrap();
 
-        let (lazy_metadata_manager, lazy_flight_client) = test::lazy_connections();
+        let channel = Channel::builder("grpc://server:9999".parse().unwrap()).connect_lazy();
+        let lazy_flight_client = FlightServiceClient::new(channel);
+
         let manager = Manager::new(
             Arc::new(RwLock::new(lazy_flight_client)),
             Uuid::new_v4().to_string(),
-            Arc::new(lazy_metadata_manager),
+            None,
         );
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(

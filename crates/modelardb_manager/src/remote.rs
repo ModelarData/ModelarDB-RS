@@ -500,8 +500,9 @@ impl FlightService for FlightServiceHandler {
     /// normal table, and `CREATE MODEL TABLE table_name(...` which creates a model table.
     /// The table is created for all nodes controlled by the manager.
     /// * `RegisterNode`: Register either an edge or cloud node with the manager. The node is added
-    /// to the cluster of nodes controlled by the manager and the key, metadata database, and object
-    /// store used in the cluster is returned.
+    /// to the cluster of nodes controlled by the manager and the key and object store used in the
+    /// cluster is returned. If the node is a cloud node, the metadata database used in the cluster
+    /// is also returned.
     /// * `RemoveNode`: Remove a node from the cluster of nodes controlled by the manager and
     /// kill the process running on the node. The specific node to remove is given through the
     /// uniquely identifying URL of the node.
@@ -571,7 +572,7 @@ impl FlightService for FlightServiceHandler {
                 )))
             }
         } else if action.r#type == "UpdateRemoteObjectStore" {
-            let object_store = parse_object_store_arguments(&action.body).await?;
+            let (object_store, _offset_data) = parse_object_store_arguments(&action.body).await?;
 
             // Create a new remote data folder and update it in the context.
             let mut remote_data_folder = self.context.remote_data_folder.write().await;
@@ -624,7 +625,7 @@ impl FlightService for FlightServiceHandler {
             let (mode, _offset_data) = decode_argument(offset_data)?;
 
             let server_mode = ServerMode::from_str(mode).map_err(Status::invalid_argument)?;
-            let node = Node::new(url.to_string(), server_mode);
+            let node = Node::new(url.to_string(), server_mode.clone());
 
             // Use the metadata manager to persist the node to the metadata database.
             self.context
@@ -646,19 +647,16 @@ impl FlightService for FlightServiceHandler {
             // unwrap() is safe since the key cannot contain invalid characters.
             let mut response_body = encode_argument(self.context.key.to_str().unwrap());
 
-            response_body.append(
-                &mut self
-                    .context
-                    .remote_metadata_manager
-                    .connection_info()
-                    .clone(),
-            );
-
             let remote_data_folder = self.context.remote_data_folder.read().await;
             response_body.append(&mut remote_data_folder.connection_info().clone());
 
-            // Return the key for the manager, the connection info for the metadata database, and
-            // connection info for the remote object store.
+            if server_mode == ServerMode::Cloud {
+                let remote_metadata_manager = &self.context.remote_metadata_manager;
+                response_body.append(&mut remote_metadata_manager.connection_info().clone());
+            }
+
+            // Return the key for the manager, the connection info for the remote object store, and
+            // if the node is a cloud node, the connection info for the metadata database.
             Ok(Response::new(Box::pin(stream::once(async {
                 Ok(FlightResult {
                     body: response_body.into(),

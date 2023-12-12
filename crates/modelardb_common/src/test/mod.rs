@@ -19,17 +19,12 @@ pub mod data_generation;
 
 use std::sync::Arc;
 
-use arrow_flight::flight_service_client::FlightServiceClient;
 use datafusion::arrow::array::ArrowPrimitiveType;
 use datafusion::arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt8Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
-use sqlx::{PgPool, Postgres};
-use tonic::transport::Channel;
 
-use crate::metadata;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
-use crate::metadata::TableMetadataManager;
 use crate::schemas::COMPRESSED_SCHEMA;
 use crate::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray};
 
@@ -137,20 +132,4 @@ pub fn compressed_segments_record_batch_with_time(
         ],
     )
     .unwrap()
-}
-
-/// Return invalid but lazy connections to a PostgreSQL [`TableMetadataManager`] and a
-/// [`FlightServiceClient`]. Since the connections are lazy, they can be used in places
-/// where a connection is needed but not used directly.
-pub fn lazy_connections() -> (TableMetadataManager<Postgres>, FlightServiceClient<Channel>) {
-    let metadata_database_pool =
-        PgPool::connect_lazy("postgres://postgres:password@localhost/database").unwrap();
-
-    let table_metadata_manager =
-        metadata::new_table_metadata_manager(Postgres, metadata_database_pool);
-
-    let channel = Channel::builder("grpc://server:9999".parse().unwrap()).connect_lazy();
-    let flight_client = FlightServiceClient::new(channel);
-
-    (table_metadata_manager, flight_client)
 }

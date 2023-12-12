@@ -289,12 +289,14 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    use arrow_flight::flight_service_client::FlightServiceClient;
     use chrono::Utc;
     use modelardb_common::metadata;
     use modelardb_common::test;
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
     use tokio::sync::RwLock;
+    use tonic::transport::Channel;
     use uuid::Uuid;
 
     use crate::storage::StorageEngine;
@@ -514,11 +516,13 @@ mod tests {
         let remote_data_folder_object_store = Arc::new(local_fs);
 
         // Create a manager interface.
-        let (lazy_metadata_manager, lazy_flight_client) = test::lazy_connections();
+        let channel = Channel::builder("grpc://server:9999".parse().unwrap()).connect_lazy();
+        let lazy_flight_client = FlightServiceClient::new(channel);
+
         let manager = Manager::new(
             Arc::new(RwLock::new(lazy_flight_client)),
             Uuid::new_v4().to_string(),
-            Arc::new(lazy_metadata_manager),
+            None,
         );
 
         let data_transfer = DataTransfer::try_new(
