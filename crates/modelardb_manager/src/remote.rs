@@ -263,6 +263,7 @@ impl FlightServiceHandler {
                     last_modified,
                     size: size_array.value(row_index) as usize,
                     e_tag: None,
+                    version: None,
                 };
 
                 let compressed_file = CompressedFile::new(

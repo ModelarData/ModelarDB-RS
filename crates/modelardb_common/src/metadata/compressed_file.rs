@@ -125,6 +125,7 @@ mod tests {
             size: 0,
             last_modified: Utc::now(),
             e_tag: None,
+            version: None,
         };
 
         let compressed_file =

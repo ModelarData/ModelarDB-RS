@@ -76,7 +76,7 @@ impl DataTransfer {
     ) -> Result<Self, IOError> {
         // Parse through the data folder to retrieve already existing files that should be transferred.
         let local_data_folder = Arc::new(LocalFileSystem::new_with_prefix(local_data_folder)?);
-        let list_stream = local_data_folder.list(None).await?;
+        let list_stream = local_data_folder.list(None);
 
         let compressed_files = list_stream
             .fold(DashMap::new(), |acc, maybe_meta| async {
@@ -203,8 +203,6 @@ impl DataTransfer {
         let object_metas = self
             .local_data_folder
             .list(Some(&path))
-            .await
-            .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?
             .filter_map(|maybe_meta| async { maybe_meta.ok() })
             .collect::<Vec<ObjectMeta>>()
             .await;
@@ -487,6 +485,7 @@ mod tests {
             last_modified: Utc::now(),
             size: COMPRESSED_FILE_SIZE,
             e_tag: None,
+            version: None,
         };
 
         let compressed_file = CompressedFile::from_compressed_data(object_meta, &batch);
