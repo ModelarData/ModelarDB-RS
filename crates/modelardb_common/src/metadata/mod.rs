@@ -1081,6 +1081,7 @@ where
         last_modified,
         size: size as usize,
         e_tag: None,
+        version: None,
     })
 }
 
@@ -1817,6 +1818,7 @@ mod tests {
             last_modified: Utc::now().round_subsecs(3),
             size: 0,
             e_tag: None,
+            version: None,
         };
 
         CompressedFile::new(file_metadata, start_time, end_time, min_value, max_value)

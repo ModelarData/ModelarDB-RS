@@ -145,6 +145,7 @@ impl CompressedDataBuffer {
             last_modified: file_metadata.modified()?.into(),
             size: file_metadata.len() as usize,
             e_tag: None,
+            version: None,
         };
 
         Ok(CompressedFile::from_compressed_data(object_meta, &batch))

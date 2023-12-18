@@ -545,7 +545,6 @@ mod tests {
     use std::path::Path;
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
-    use futures::StreamExt;
     use modelardb_common::metadata;
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_common::test;
@@ -573,8 +572,6 @@ mod tests {
 
         let table_folder_files = local_data_folder
             .list(Some(&table_folder))
-            .await
-            .unwrap()
             .collect::<Vec<_>>()
             .await;
         assert!(table_folder_files.is_empty());
@@ -586,8 +583,6 @@ mod tests {
 
         let table_folder_files = local_data_folder
             .list(Some(&table_folder))
-            .await
-            .unwrap()
             .collect::<Vec<_>>()
             .await;
         assert_eq!(table_folder_files.len(), 1);
