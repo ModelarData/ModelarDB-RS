@@ -34,9 +34,7 @@ use std::io::{Error as IOError, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
 
-use clokwerk::{AsyncScheduler, TimeUnits};
 use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -58,7 +56,6 @@ use sqlx::Sqlite;
 use tokio::fs::File as TokioFile;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
-use tokio::task::JoinHandle as TaskJoinHandle;
 use tonic::Status;
 use tracing::error;
 
@@ -109,9 +106,7 @@ pub struct StorageEngine {
     join_handles: Vec<JoinHandle<()>>,
     /// Unbounded channels used by the threads to communicate.
     channels: Arc<Channels>,
-    /// Handle to the task that transfers data periodically to the remote object store. If [`None`],
-    /// data is not transferred based on time.
-    transfer_scheduler_handle: Option<TaskJoinHandle<()>>,}
+}
 
 impl StorageEngine {
     /// Return [`StorageEngine`] that writes ingested data to `local_data_folder` and optionally
@@ -239,13 +234,14 @@ impl StorageEngine {
             memory_pool,
             join_handles,
             channels,
-            transfer_scheduler_handle: None,
         };
 
         // Start the task that transfers data periodically if a data transfer component exists and
         // time-based data transfer is enabled. Errors are ignored since an error is only returned
         // if a data transfer component does not exist.
-        let _ = storage_engine.set_transfer_time_in_seconds(configuration_manager.transfer_time_in_seconds()).await;
+        let _ = storage_engine
+            .set_transfer_time_in_seconds(configuration_manager.transfer_time_in_seconds())
+            .await;
 
         Ok(storage_engine)
     }
@@ -509,55 +505,21 @@ impl StorageEngine {
         }
     }
 
-    /// If a new transfer time is given, stop the existing task transferring data periodically,
-    /// if there is one, and start a new task. If `new_value` is [`None`], the task is just stopped.
-    /// If the task was changed successfully return [`Ok`], otherwise return [`IOError`].
+    /// Set the transfer time in the data transfer component to `new_value` if it exists. If
+    /// a data transfer component does not exists, return [`ModelarDbError`].
     pub(super) async fn set_transfer_time_in_seconds(
         &mut self,
         new_value: Option<usize>,
     ) -> Result<(), ModelarDbError> {
-        let maybe_data_transfer = self.compressed_data_manager.data_transfer.clone();
-
-        if maybe_data_transfer.read().await.is_some() {
-            // Stop the current task periodically transferring data if there is one.
-            if let Some(task) = &self.transfer_scheduler_handle {
-                task.abort();
-            }
-
-            // If a transfer time was given, create the scheduler that periodically transfers data.
-            self.transfer_scheduler_handle = if let Some(transfer_time) = new_value {
-                let mut scheduler = AsyncScheduler::new();
-                scheduler
-                    .every((transfer_time as u32).seconds())
-                    .run(move || {
-                        // Clone the Arc so only the clone is moved.
-                        let maybe_data_transfer = maybe_data_transfer.clone();
-
-                        async move {
-                            // unwrap() is safe as this code can only be reached if maybe_data_transfer is some.
-                            maybe_data_transfer
-                                .write()
-                                .await
-                                .as_ref()
-                                .unwrap()
-                                .transfer_larger_than_threshold(0)
-                                .await
-                                .expect("Periodic data transfer failed.");
-                        }
-                    });
-
-                // Start a tokio task that checks if the scheduler has pending tasks and runs them if so.
-                let join_handle = tokio::spawn(async move {
-                    loop {
-                        scheduler.run_pending().await;
-                        tokio::time::sleep(Duration::from_millis(1000)).await;
-                    }
-                });
-
-                Some(join_handle)
-            } else {
-                None
-            };
+        if let Some(ref mut data_transfer) =
+            *self.compressed_data_manager.data_transfer.write().await
+        {
+            data_transfer
+                .set_transfer_time_in_seconds(
+                    new_value,
+                    self.compressed_data_manager.data_transfer.clone(),
+                )
+                .await;
 
             Ok(())
         } else {

@@ -20,7 +20,9 @@ use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use clokwerk::{AsyncScheduler, TimeUnits};
 use dashmap::DashMap;
 use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
@@ -30,6 +32,8 @@ use object_store::local::LocalFileSystem;
 use object_store::path::{Path as ObjectStorePath, PathPart};
 use object_store::{ObjectMeta, ObjectStore};
 use sqlx::Sqlite;
+use tokio::sync::RwLock;
+use tokio::task::JoinHandle as TaskJoinHandle;
 use tracing::debug;
 
 use crate::manager::Manager;
@@ -58,6 +62,9 @@ pub struct DataTransfer {
     /// The number of bytes that are required before transferring a batch of data to the remote
     /// object store. If [`None`], data is not transferred based on batch size.
     transfer_batch_size_in_bytes: Option<usize>,
+    /// Handle to the task that transfers data periodically to the remote object store. If [`None`],
+    /// data is not transferred based on time.
+    transfer_scheduler_handle: Option<TaskJoinHandle<()>>,
     /// Metric for the total used disk space in bytes, updated when data is transferred.
     pub used_disk_space_metric: Arc<Mutex<Metric>>,
 }
@@ -99,6 +106,7 @@ impl DataTransfer {
             compressed_files: compressed_files.clone(),
             manager,
             transfer_batch_size_in_bytes,
+            transfer_scheduler_handle: None,
             used_disk_space_metric,
         };
 
@@ -171,6 +179,56 @@ impl DataTransfer {
         self.transfer_batch_size_in_bytes = new_value;
 
         Ok(())
+    }
+
+    /// If a new transfer time is given, stop the existing task transferring data periodically,
+    /// if there is one, and start a new task. If `new_value` is [`None`], the task is just stopped.
+    /// `data_transfer` is needed as an argument instead of using `self` so it can be moved into the
+    /// periodic task.
+    pub(super) async fn set_transfer_time_in_seconds(
+        &mut self,
+        new_value: Option<usize>,
+        data_transfer: Arc<RwLock<Option<Self>>>,
+    ) {
+        // Stop the current task periodically transferring data if there is one.
+        if let Some(task) = &self.transfer_scheduler_handle {
+            task.abort();
+        }
+
+        // If a transfer time was given, create the scheduler that periodically transfers data.
+        self.transfer_scheduler_handle = if let Some(transfer_time) = new_value {
+            let mut scheduler = AsyncScheduler::new();
+            scheduler
+                .every((transfer_time as u32).seconds())
+                .run(move || {
+                    // Clone the Arc so only the clone is moved.
+                    let data_transfer = data_transfer.clone();
+
+                    async move {
+                        // unwrap() is safe as this code can only be reached if data_transfer is some.
+                        data_transfer
+                            .write()
+                            .await
+                            .as_ref()
+                            .unwrap()
+                            .transfer_larger_than_threshold(0)
+                            .await
+                            .expect("Periodic data transfer failed.");
+                    }
+                });
+
+            // Start a tokio task that checks if the scheduler has pending tasks and runs them if so.
+            let join_handle = tokio::spawn(async move {
+                loop {
+                    scheduler.run_pending().await;
+                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                }
+            });
+
+            Some(join_handle)
+        } else {
+            None
+        };
     }
 
     /// Transfer all compressed files from tables currently using more than `threshold` bytes in
