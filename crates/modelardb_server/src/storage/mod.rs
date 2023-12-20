@@ -34,7 +34,9 @@ use std::io::{Error as IOError, ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
+use clokwerk::{AsyncScheduler, TimeUnits};
 use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -56,6 +58,7 @@ use sqlx::Sqlite;
 use tokio::fs::File as TokioFile;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
+use tokio::task::JoinHandle as TaskJoinHandle;
 use tonic::Status;
 use tracing::error;
 
@@ -106,6 +109,7 @@ pub struct StorageEngine {
     join_handles: Vec<JoinHandle<()>>,
     /// Unbounded channels used by the threads to communicate.
     channels: Arc<Channels>,
+    transfer_scheduler_handle: Option<TaskJoinHandle<()>>,
 }
 
 impl StorageEngine {
@@ -194,7 +198,6 @@ impl StorageEngine {
                     table_metadata_manager.clone(),
                     manager.clone(),
                     configuration_manager.transfer_batch_size_in_bytes(),
-                    configuration_manager.transfer_time_in_seconds(),
                     used_disk_space_metric.clone(),
                 )
                 .await?,
@@ -235,6 +238,7 @@ impl StorageEngine {
             memory_pool,
             join_handles,
             channels,
+            transfer_scheduler_handle: None,
         })
     }
 
@@ -497,17 +501,41 @@ impl StorageEngine {
         }
     }
 
-    /// Set the transfer time in the data transfer component to `new_value` if it exists. If
-    /// a data transfer component does not exists, or the value could not be changed,
-    /// return [`ModelarDbError`].
+    /// If a new transfer time is given, stop the existing task transferring data periodically,
+    /// if there is one, and start a new task. If `new_value` is [`None`], the task is just stopped.
+    /// If the task was changed successfully return [`Ok`], otherwise return [`IOError`].
     pub(super) async fn set_transfer_time_in_seconds(
-        &self,
+        &mut self,
         new_value: Option<usize>,
     ) -> Result<(), ModelarDbError> {
         if let Some(ref mut data_transfer) =
             *self.compressed_data_manager.data_transfer.write().await
         {
-            data_transfer.set_transfer_time_in_seconds(new_value).await
+            // Stop the current task periodically transferring data if there is one.
+            if let Some(task) = &self.transfer_scheduler_handle {
+                task.abort();
+            }
+
+            // If a transfer time was given, create the scheduler that periodically transfers data.
+            self.transfer_scheduler_handle = if let Some(transfer_time) = new_value {
+                let mut scheduler = AsyncScheduler::new();
+                scheduler
+                    .every((transfer_time as u32).seconds())
+                    .run(|| async { println!("Transfer") });
+
+                let join_handle = tokio::spawn(async move {
+                    loop {
+                        scheduler.run_pending().await;
+                        tokio::time::sleep(Duration::from_millis(1000)).await;
+                    }
+                });
+
+                Some(join_handle)
+            } else {
+                None
+            };
+
+            Ok(())
         } else {
             Err(ModelarDbError::ConfigurationError(
                 "Storage engine is not configured to transfer data.".to_owned(),
