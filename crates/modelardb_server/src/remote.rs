@@ -622,7 +622,7 @@ impl FlightService for FlightServiceHandler {
 
             match setting {
                 "uncompressed_reserved_memory_in_bytes" => {
-                    let new_value = new_value.ok_or_else(|| invalid_empty_error)?;
+                    let new_value = new_value.ok_or(invalid_empty_error)?;
 
                     configuration_manager
                         .set_uncompressed_reserved_memory_in_bytes(new_value, storage_engine)
@@ -631,7 +631,7 @@ impl FlightService for FlightServiceHandler {
                     Ok(())
                 }
                 "compressed_reserved_memory_in_bytes" => {
-                    let new_value = new_value.ok_or_else(|| invalid_empty_error)?;
+                    let new_value = new_value.ok_or(invalid_empty_error)?;
 
                     configuration_manager
                         .set_compressed_reserved_memory_in_bytes(new_value, storage_engine)

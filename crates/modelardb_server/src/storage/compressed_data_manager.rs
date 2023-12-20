@@ -922,7 +922,7 @@ mod tests {
         (
             temp_dir,
             CompressedDataManager::try_new(
-                RwLock::new(None),
+                Arc::new(RwLock::new(None)),
                 local_data_folder,
                 channels,
                 memory_pool,
