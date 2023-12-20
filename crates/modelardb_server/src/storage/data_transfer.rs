@@ -83,7 +83,7 @@ impl DataTransfer {
     ) -> Result<Self, IOError> {
         // Parse through the data folder to retrieve already existing files that should be transferred.
         let local_data_folder = Arc::new(LocalFileSystem::new_with_prefix(local_data_folder)?);
-        let list_stream = local_data_folder.list(None).await?;
+        let list_stream = local_data_folder.list(None);
 
         let compressed_files = list_stream
             .fold(DashMap::new(), |acc, maybe_meta| async {
@@ -266,8 +266,6 @@ impl DataTransfer {
         let object_metas = self
             .local_data_folder
             .list(Some(&path))
-            .await
-            .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?
             .filter_map(|maybe_meta| async { maybe_meta.ok() })
             .collect::<Vec<ObjectMeta>>()
             .await;
@@ -352,12 +350,14 @@ mod tests {
     use std::fs;
     use std::path::Path;
 
+    use arrow_flight::flight_service_client::FlightServiceClient;
     use chrono::Utc;
     use modelardb_common::metadata;
     use modelardb_common::test;
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
     use tokio::sync::RwLock;
+    use tonic::transport::Channel;
     use uuid::Uuid;
 
     use crate::storage::StorageEngine;
@@ -576,6 +576,7 @@ mod tests {
             last_modified: Utc::now(),
             size: COMPRESSED_FILE_SIZE,
             e_tag: None,
+            version: None,
         };
 
         let compressed_file = CompressedFile::from_compressed_data(object_meta, &batch);
@@ -605,11 +606,13 @@ mod tests {
         let remote_data_folder_object_store = Arc::new(local_fs);
 
         // Create a manager interface.
-        let (lazy_metadata_manager, lazy_flight_client) = test::lazy_connections();
+        let channel = Channel::builder("grpc://server:9999".parse().unwrap()).connect_lazy();
+        let lazy_flight_client = FlightServiceClient::new(channel);
+
         let manager = Manager::new(
             Arc::new(RwLock::new(lazy_flight_client)),
             Uuid::new_v4().to_string(),
-            Arc::new(lazy_metadata_manager),
+            None,
         );
 
         let data_transfer = DataTransfer::try_new(

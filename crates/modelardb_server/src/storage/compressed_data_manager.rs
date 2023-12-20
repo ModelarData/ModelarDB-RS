@@ -31,7 +31,7 @@ use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::TableMetadataManager;
-use modelardb_common::types::{ServerMode, Timestamp, Value};
+use modelardb_common::types::{Timestamp, Value};
 use object_store::{ObjectMeta, ObjectStore};
 use parquet::arrow::async_reader::ParquetObjectReader;
 use parquet::arrow::ParquetRecordBatchStreamBuilder;
@@ -257,39 +257,36 @@ impl CompressedDataManager {
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
         max_value: Option<Value>,
-        server_mode: &ServerMode,
         cluster_mode: &ClusterMode,
         query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
         // Retrieve the metadata of all files that fit the given arguments. If the server is a cloud
         // node, use the table metadata manager for the remote metadata database.
-        let relevant_object_metas = if let (ServerMode::Cloud, ClusterMode::MultiNode(manager)) =
-            (server_mode, cluster_mode)
-        {
-            manager
-                .table_metadata_manager
-                .compressed_files(
-                    table_name,
-                    column_index.into(),
-                    start_time,
-                    end_time,
-                    min_value,
-                    max_value,
-                )
-                .await
-        } else {
-            self.table_metadata_manager
-                .compressed_files(
-                    table_name,
-                    column_index.into(),
-                    start_time,
-                    end_time,
-                    min_value,
-                    max_value,
-                )
-                .await
-        }
-        .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
+        let relevant_object_metas =
+            if let Some(table_metadata_manager) = cluster_mode.remote_table_metadata_manager() {
+                table_metadata_manager
+                    .compressed_files(
+                        table_name,
+                        column_index.into(),
+                        start_time,
+                        end_time,
+                        min_value,
+                        max_value,
+                    )
+                    .await
+            } else {
+                self.table_metadata_manager
+                    .compressed_files(
+                        table_name,
+                        column_index.into(),
+                        start_time,
+                        end_time,
+                        min_value,
+                        max_value,
+                    )
+                    .await
+            }
+            .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
         // Merge the compressed Apache Parquet files if multiple are retrieved to ensure order.
         if relevant_object_metas.len() > 1 {
@@ -308,11 +305,8 @@ impl CompressedDataManager {
 
             // Replace the merged files in the metadata database. If the server is a cloud node,
             // use the table metadata manager for the remote metadata database.
-            if let (ServerMode::Cloud, ClusterMode::MultiNode(manager)) =
-                (server_mode, cluster_mode)
-            {
-                manager
-                    .table_metadata_manager
+            if let Some(table_metadata_manager) = cluster_mode.remote_table_metadata_manager() {
+                table_metadata_manager
                     .replace_compressed_files(
                         table_name,
                         column_index.into(),
@@ -551,7 +545,6 @@ mod tests {
     use std::path::Path;
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
-    use futures::StreamExt;
     use modelardb_common::metadata;
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_common::test;
@@ -579,8 +572,6 @@ mod tests {
 
         let table_folder_files = local_data_folder
             .list(Some(&table_folder))
-            .await
-            .unwrap()
             .collect::<Vec<_>>()
             .await;
         assert!(table_folder_files.is_empty());
@@ -592,8 +583,6 @@ mod tests {
 
         let table_folder_files = local_data_folder
             .list(Some(&table_folder))
-            .await
-            .unwrap()
             .collect::<Vec<_>>()
             .await;
         assert_eq!(table_folder_files.len(), 1);
@@ -801,7 +790,6 @@ mod tests {
                 None,
                 None,
                 None,
-                &ServerMode::Edge,
                 &ClusterMode::SingleNode,
                 &object_store,
             )
@@ -824,7 +812,6 @@ mod tests {
             None,
             None,
             None,
-            &ServerMode::Edge,
             &ClusterMode::SingleNode,
             &object_store,
         );

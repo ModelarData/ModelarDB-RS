@@ -30,9 +30,11 @@ use std::sync::Arc;
 use std::{env, fs};
 
 use modelardb_common::arguments::{collect_command_line_arguments, validate_remote_data_folder};
+use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::ServerMode;
 use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
+use sqlx::Postgres;
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -52,6 +54,17 @@ pub static PORT: Lazy<u16> =
 pub enum ClusterMode {
     SingleNode,
     MultiNode(Manager),
+}
+
+impl ClusterMode {
+    /// Return the optional remote table metadata manager from the manager interface if the cluster
+    /// mode is `MultiNode`, otherwise return [`None`].
+    fn remote_table_metadata_manager(&self) -> &Option<Arc<TableMetadataManager<Postgres>>> {
+        match self {
+            ClusterMode::SingleNode => &None,
+            ClusterMode::MultiNode(manager) => &manager.table_metadata_manager,
+        }
+    }
 }
 
 /// Folders for storing metadata and Apache Parquet files.

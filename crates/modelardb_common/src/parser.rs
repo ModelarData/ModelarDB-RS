@@ -134,6 +134,7 @@ impl ModelarDbDialect {
                             generated_as: GeneratedAs::Always,
                             sequence_options: None,
                             generation_expr: Some(parser.parse_expr()?),
+                            generation_expr_mode: None,
                         };
                         parser.expect_token(&Token::RParen)?;
 
@@ -543,6 +544,7 @@ fn column_defs_to_model_table_query_schema(
                             generated_as: _,
                             sequence_options: _,
                             generation_expr,
+                            generation_expr_mode: _,
                         } => {
                             metadata.insert(
                                 "Generated As".to_owned(),
@@ -623,6 +625,7 @@ fn extract_generation_exprs_for_all_columns(
                 generated_as: _,
                 sequence_options: _,
                 generation_expr,
+                generation_expr_mode: _,
             } = &column_def_option.option
             {
                 // The expression is saved as a string so it can be stored in the metadata database,
@@ -797,6 +800,7 @@ mod tests {
                     generated_as: GeneratedAs::Always,
                     sequence_options: None,
                     generation_expr: Some(parser.parse_expr().unwrap()),
+                    generation_expr_mode: None,
                 },
             };
 

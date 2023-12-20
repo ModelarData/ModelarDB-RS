@@ -49,7 +49,7 @@ use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
-use modelardb_common::types::{ServerMode, Timestamp, TimestampArray, Value};
+use modelardb_common::types::{Timestamp, TimestampArray, Value};
 use object_store::{ObjectMeta, ObjectStore};
 use once_cell::sync::Lazy;
 use sqlx::Sqlite;
@@ -386,7 +386,6 @@ impl StorageEngine {
         end_time: Option<Timestamp>,
         min_value: Option<Value>,
         max_value: Option<Value>,
-        server_mode: &ServerMode,
         cluster_mode: &ClusterMode,
         query_data_folder: &Arc<dyn ObjectStore>,
     ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
@@ -398,7 +397,6 @@ impl StorageEngine {
                 end_time,
                 min_value,
                 max_value,
-                server_mode,
                 cluster_mode,
                 query_data_folder,
             )
