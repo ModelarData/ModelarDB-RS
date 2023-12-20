@@ -508,9 +508,9 @@ impl StorageEngine {
         &mut self,
         new_value: Option<usize>,
     ) -> Result<(), ModelarDbError> {
-        if let Some(ref mut data_transfer) =
-            *self.compressed_data_manager.data_transfer.write().await
-        {
+        let maybe_data_transfer = self.compressed_data_manager.data_transfer.clone();
+
+        if maybe_data_transfer.read().await.is_some() {
             // Stop the current task periodically transferring data if there is one.
             if let Some(task) = &self.transfer_scheduler_handle {
                 task.abort();
@@ -518,16 +518,16 @@ impl StorageEngine {
 
             // If a transfer time was given, create the scheduler that periodically transfers data.
             self.transfer_scheduler_handle = if let Some(transfer_time) = new_value {
-                let data_transfer = self.compressed_data_manager.data_transfer.clone();
                 let mut scheduler = AsyncScheduler::new();
                 scheduler
                     .every((transfer_time as u32).seconds())
                     .run(move || {
                         // Clone the Arc so only the clone is moved.
-                        let data_transfer = data_transfer.clone();
+                        let maybe_data_transfer = maybe_data_transfer.clone();
 
                         async move {
-                            data_transfer
+                            // unwrap() is safe as this code can only be reached if maybe_data_transfer is some.
+                            maybe_data_transfer
                                 .write()
                                 .await
                                 .as_ref()
@@ -538,6 +538,7 @@ impl StorageEngine {
                         }
                     });
 
+                // Start a tokio task that checks if the scheduler has pending tasks and runs them if so.
                 let join_handle = tokio::spawn(async move {
                     loop {
                         scheduler.run_pending().await;
