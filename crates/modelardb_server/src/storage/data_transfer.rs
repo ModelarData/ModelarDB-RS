@@ -185,7 +185,7 @@ impl DataTransfer {
     /// if there is one, and start a new task. If `new_value` is [`None`], the task is just stopped.
     /// `data_transfer` is needed as an argument instead of using `self` so it can be moved into the
     /// periodic task.
-    pub(super) async fn set_transfer_time_in_seconds(
+    pub(super) fn set_transfer_time_in_seconds(
         &mut self,
         new_value: Option<usize>,
         data_transfer: Arc<RwLock<Option<Self>>>,

@@ -512,12 +512,10 @@ impl StorageEngine {
         if let Some(ref mut data_transfer) =
             *self.compressed_data_manager.data_transfer.write().await
         {
-            data_transfer
-                .set_transfer_time_in_seconds(
-                    new_value,
-                    self.compressed_data_manager.data_transfer.clone(),
-                )
-                .await;
+            data_transfer.set_transfer_time_in_seconds(
+                new_value,
+                self.compressed_data_manager.data_transfer.clone(),
+            );
 
             Ok(())
         } else {
