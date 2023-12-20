@@ -207,7 +207,7 @@ impl StorageEngine {
         };
 
         let compressed_data_manager = Arc::new(CompressedDataManager::try_new(
-            RwLock::new(data_transfer),
+            Arc::new(RwLock::new(data_transfer)),
             local_data_folder,
             channels.clone(),
             memory_pool.clone(),
@@ -518,10 +518,25 @@ impl StorageEngine {
 
             // If a transfer time was given, create the scheduler that periodically transfers data.
             self.transfer_scheduler_handle = if let Some(transfer_time) = new_value {
+                let data_transfer = self.compressed_data_manager.data_transfer.clone();
                 let mut scheduler = AsyncScheduler::new();
                 scheduler
                     .every((transfer_time as u32).seconds())
-                    .run(|| async { println!("Transfer") });
+                    .run(move || {
+                        // Clone the Arc so only the clone is moved.
+                        let data_transfer = data_transfer.clone();
+
+                        async move {
+                            data_transfer
+                                .write()
+                                .await
+                                .as_ref()
+                                .unwrap()
+                                .transfer_larger_than_threshold(0)
+                                .await
+                                .expect("Periodic data transfer failed.");
+                        }
+                    });
 
                 let join_handle = tokio::spawn(async move {
                     loop {
