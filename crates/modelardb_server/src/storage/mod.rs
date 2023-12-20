@@ -109,8 +109,9 @@ pub struct StorageEngine {
     join_handles: Vec<JoinHandle<()>>,
     /// Unbounded channels used by the threads to communicate.
     channels: Arc<Channels>,
-    transfer_scheduler_handle: Option<TaskJoinHandle<()>>,
-}
+    /// Handle to the task that transfers data periodically to the remote object store. If [`None`],
+    /// data is not transferred based on time.
+    transfer_scheduler_handle: Option<TaskJoinHandle<()>>,}
 
 impl StorageEngine {
     /// Return [`StorageEngine`] that writes ingested data to `local_data_folder` and optionally
@@ -232,14 +233,21 @@ impl StorageEngine {
             )?;
         }
 
-        Ok(Self {
+        let mut storage_engine = Self {
             uncompressed_data_manager,
             compressed_data_manager,
             memory_pool,
             join_handles,
             channels,
             transfer_scheduler_handle: None,
-        })
+        };
+
+        // Start the task that transfers data periodically if a data transfer component exists and
+        // time-based data transfer is enabled. Errors are ignored since an error is only returned
+        // if a data transfer component does not exist.
+        let _ = storage_engine.set_transfer_time_in_seconds(configuration_manager.transfer_time_in_seconds()).await;
+
+        Ok(storage_engine)
     }
 
     /// Start `num_threads` threads with `name` that executes `function` and whose [`JoinHandle`] is
