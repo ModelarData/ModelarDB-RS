@@ -22,7 +22,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use clokwerk::{AsyncScheduler, TimeUnits};
 use dashmap::DashMap;
 use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
@@ -195,33 +194,20 @@ impl DataTransfer {
             task.abort();
         }
 
-        // If a transfer time was given, create the scheduler that periodically transfers data.
+        // If a transfer time was given, create the task that periodically transfers data.
         self.transfer_scheduler_handle = if let Some(transfer_time) = new_value {
-            let mut scheduler = AsyncScheduler::new();
-            scheduler
-                .every((transfer_time as u32).seconds())
-                .run(move || {
-                    // Clone the Arc so only the clone is moved.
-                    let data_transfer = data_transfer.clone();
-
-                    async move {
-                        // unwrap() is safe as this code can only be reached if data_transfer is some.
-                        data_transfer
-                            .write()
-                            .await
-                            .as_ref()
-                            .unwrap()
-                            .transfer_larger_than_threshold(0)
-                            .await
-                            .expect("Periodic data transfer failed.");
-                    }
-                });
-
-            // Start a tokio task that checks if the scheduler has pending tasks and runs them if so.
             let join_handle = tokio::spawn(async move {
                 loop {
-                    scheduler.run_pending().await;
-                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                    tokio::time::sleep(Duration::from_secs(transfer_time as u64)).await;
+
+                    data_transfer
+                        .write()
+                        .await
+                        .as_ref()
+                        .unwrap()
+                        .transfer_larger_than_threshold(0)
+                        .await
+                        .expect("Periodic data transfer failed.");
                 }
             });
 

@@ -665,15 +665,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "clokwerk"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd108d365fcb6d7eddf17a6718eb6a33db18ba4178f8cc6b667f480710f10d76"
-dependencies = [
- "chrono",
-]
-
-[[package]]
 name = "cmake"
 version = "0.1.50"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2020,7 +2011,6 @@ dependencies = [
  "async-trait",
  "bytes",
  "chrono",
- "clokwerk",
  "crossbeam-channel",
  "crossbeam-queue",
  "dashmap",
