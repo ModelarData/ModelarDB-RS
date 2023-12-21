@@ -948,14 +948,18 @@ fn test_can_get_configuration() {
     assert_eq!(settings.value(2), "transfer_batch_size_in_bytes");
     assert_eq!(values.value(2), 64 * 1024 * 1024);
 
-    assert_eq!(settings.value(3), "ingestion_threads");
-    assert_eq!(values.value(3), 1);
+    assert_eq!(settings.value(3), "transfer_time_in_seconds");
+    assert_eq!(values.value(3), 0);
+    assert_eq!(values.null_count(), 1);
 
-    assert_eq!(settings.value(4), "compression_threads");
+    assert_eq!(settings.value(4), "ingestion_threads");
     assert_eq!(values.value(4), 1);
 
-    assert_eq!(settings.value(5), "writer_threads");
+    assert_eq!(settings.value(5), "compression_threads");
     assert_eq!(values.value(5), 1);
+
+    assert_eq!(settings.value(6), "writer_threads");
+    assert_eq!(values.value(6), 1);
 }
 
 #[test]
@@ -986,51 +990,71 @@ fn update_and_retrieve_configuration_values(setting: &str) -> UInt64Array {
 fn test_cannot_update_transfer_batch_size_in_bytes() {
     // It is only possible to test that this fails since we cannot start the server with a
     // remote data folder.
-    let mut test_context = TestContext::new();
-    let response = test_context.update_configuration("transfer_batch_size_in_bytes", "1");
+    update_configuration_and_assert_error(
+        "transfer_batch_size_in_bytes",
+        "1",
+        "Configuration Error: Storage engine is not configured to transfer data.",
+    );
+}
 
-    assert!(response.is_err());
-    assert_eq!(
-        response.err().unwrap().message(),
-        "Configuration Error: Storage engine is not configured to transfer data."
+#[test]
+fn test_cannot_update_transfer_time_in_seconds() {
+    // It is only possible to test that this fails since we cannot start the server with a
+    // remote data folder.
+    update_configuration_and_assert_error(
+        "transfer_time_in_seconds",
+        "1",
+        "Configuration Error: Storage engine is not configured to transfer data.",
     );
 }
 
 #[test]
 fn test_cannot_update_non_existing_setting() {
-    let mut test_context = TestContext::new();
-    let response = test_context.update_configuration("invalid", "1");
-
-    assert!(response.is_err());
-    assert_eq!(
-        response.err().unwrap().message(),
-        "invalid is not a setting in the server configuration."
+    update_configuration_and_assert_error(
+        "invalid",
+        "1",
+        "invalid is not a setting in the server configuration.",
     );
 }
 
 #[test]
+fn test_cannot_update_non_nullable_setting_with_empty_value() {
+    for setting in [
+        "uncompressed_reserved_memory_in_bytes",
+        "compressed_reserved_memory_in_bytes",
+    ] {
+        update_configuration_and_assert_error(
+            setting,
+            "",
+            format!("New value for {setting} cannot be empty.").as_str(),
+        );
+    }
+}
+
+#[test]
 fn test_cannot_update_non_updatable_setting() {
-    let mut test_context = TestContext::new();
-
     for setting in ["ingestion_threads", "compression_threads", "writer_threads"] {
-        let response = test_context.update_configuration(setting, "1");
-
-        assert!(response.is_err());
-        assert_eq!(
-            response.err().unwrap().message(),
-            format!("{setting} is not an updatable setting in the server configuration.")
+        update_configuration_and_assert_error(
+            setting,
+            "1",
+            format!("{setting} is not an updatable setting in the server configuration.").as_str(),
         );
     }
 }
 
 #[test]
 fn test_cannot_update_setting_with_invalid_value() {
+    update_configuration_and_assert_error(
+        "compressed_reserved_memory_in_bytes",
+        "-1",
+        "New value for compressed_reserved_memory_in_bytes is not valid: invalid digit found in string",
+    );
+}
+
+fn update_configuration_and_assert_error(setting: &str, setting_value: &str, error: &str) {
     let mut test_context = TestContext::new();
-    let response = test_context.update_configuration("compressed_reserved_memory_in_bytes", "-1");
+    let response = test_context.update_configuration(setting, setting_value);
 
     assert!(response.is_err());
-    assert_eq!(
-        response.err().unwrap().message(),
-        "New value for compressed_reserved_memory_in_bytes is not valid: invalid digit found in string"
-    );
+    assert_eq!(response.err().unwrap().message(), error);
 }

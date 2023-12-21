@@ -20,6 +20,7 @@ use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use dashmap::DashMap;
 use datafusion::parquet::errors::ParquetError;
@@ -30,6 +31,8 @@ use object_store::local::LocalFileSystem;
 use object_store::path::{Path as ObjectStorePath, PathPart};
 use object_store::{ObjectMeta, ObjectStore};
 use sqlx::Sqlite;
+use tokio::sync::RwLock;
+use tokio::task::JoinHandle as TaskJoinHandle;
 use tracing::debug;
 
 use crate::manager::Manager;
@@ -56,8 +59,11 @@ pub struct DataTransfer {
     /// Interface to access the manager and transfer metadata when data is transferred.
     manager: Manager,
     /// The number of bytes that are required before transferring a batch of data to the remote
-    /// object store.
-    transfer_batch_size_in_bytes: usize,
+    /// object store. If [`None`], data is not transferred based on batch size.
+    transfer_batch_size_in_bytes: Option<usize>,
+    /// Handle to the task that transfers data periodically to the remote object store. If [`None`],
+    /// data is not transferred based on time.
+    transfer_scheduler_handle: Option<TaskJoinHandle<()>>,
     /// Metric for the total used disk space in bytes, updated when data is transferred.
     pub used_disk_space_metric: Arc<Mutex<Metric>>,
 }
@@ -71,7 +77,7 @@ impl DataTransfer {
         remote_data_folder: Arc<dyn ObjectStore>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         manager: Manager,
-        transfer_batch_size_in_bytes: usize,
+        transfer_batch_size_in_bytes: Option<usize>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Parse through the data folder to retrieve already existing files that should be transferred.
@@ -99,6 +105,7 @@ impl DataTransfer {
             compressed_files: compressed_files.clone(),
             manager,
             transfer_batch_size_in_bytes,
+            transfer_scheduler_handle: None,
             used_disk_space_metric,
         };
 
@@ -118,7 +125,7 @@ impl DataTransfer {
             let column_index = table_name_column_index_size_in_bytes.key().1;
             let size_in_bytes = table_name_column_index_size_in_bytes.value();
 
-            if size_in_bytes >= &transfer_batch_size_in_bytes {
+            if transfer_batch_size_in_bytes.is_some_and(|batch_size| size_in_bytes >= &batch_size) {
                 data_transfer
                     .transfer_data(table_name, column_index)
                     .await
@@ -148,7 +155,9 @@ impl DataTransfer {
 
         // If the combined size of the files is larger than the batch size, transfer the data to the
         // remote object store. unwrap() is safe as key has just been added to the map.
-        if self.compressed_files.get(&key).unwrap().value() >= &self.transfer_batch_size_in_bytes {
+        if self.transfer_batch_size_in_bytes.is_some_and(|batch_size| {
+            self.compressed_files.get(&key).unwrap().value() >= &batch_size
+        }) {
             self.transfer_data(table_name, column_index).await?;
         }
 
@@ -160,12 +169,52 @@ impl DataTransfer {
     /// If the value is changed successfully return [`Ok`], otherwise return [`ParquetError`].
     pub(super) async fn set_transfer_batch_size_in_bytes(
         &mut self,
-        new_value: usize,
+        new_value: Option<usize>,
     ) -> Result<(), ParquetError> {
-        self.transfer_larger_than_threshold(new_value).await?;
+        if let Some(new_batch_size) = new_value {
+            self.transfer_larger_than_threshold(new_batch_size).await?;
+        }
+
         self.transfer_batch_size_in_bytes = new_value;
 
         Ok(())
+    }
+
+    /// If a new transfer time is given, stop the existing task transferring data periodically,
+    /// if there is one, and start a new task. If `new_value` is [`None`], the task is just stopped.
+    /// `data_transfer` is needed as an argument instead of using `self` so it can be moved into the
+    /// periodic task.
+    pub(super) fn set_transfer_time_in_seconds(
+        &mut self,
+        new_value: Option<usize>,
+        data_transfer: Arc<RwLock<Option<Self>>>,
+    ) {
+        // Stop the current task periodically transferring data if there is one.
+        if let Some(task) = &self.transfer_scheduler_handle {
+            task.abort();
+        }
+
+        // If a transfer time was given, create the task that periodically transfers data.
+        self.transfer_scheduler_handle = if let Some(transfer_time) = new_value {
+            let join_handle = tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(transfer_time as u64)).await;
+
+                    data_transfer
+                        .write()
+                        .await
+                        .as_ref()
+                        .unwrap()
+                        .transfer_larger_than_threshold(0)
+                        .await
+                        .expect("Periodic data transfer failed.");
+                }
+            });
+
+            Some(join_handle)
+        } else {
+            None
+        };
     }
 
     /// Transfer all compressed files from tables currently using more than `threshold` bytes in
@@ -438,14 +487,47 @@ mod tests {
             create_data_transfer_component(metadata_manager, temp_dir.path()).await;
 
         data_transfer
-            .set_transfer_batch_size_in_bytes(COMPRESSED_FILE_SIZE * 10)
+            .set_transfer_batch_size_in_bytes(Some(COMPRESSED_FILE_SIZE * 10))
             .await
             .unwrap();
 
         assert_eq!(
             data_transfer.transfer_batch_size_in_bytes,
-            COMPRESSED_FILE_SIZE * 10
+            Some(COMPRESSED_FILE_SIZE * 10)
         );
+
+        // Data should not have been transferred.
+        assert_eq!(
+            *data_transfer
+                .compressed_files
+                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .unwrap(),
+            COMPRESSED_FILE_SIZE * 2
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_transfer_batch_size_in_bytes_to_none() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = create_metadata_manager(temp_dir.path()).await;
+
+        create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+        create_compressed_file(metadata_manager.clone(), temp_dir.path()).await;
+
+        let (_, mut data_transfer) =
+            create_data_transfer_component(metadata_manager, temp_dir.path()).await;
+
+        assert_eq!(
+            data_transfer.transfer_batch_size_in_bytes,
+            Some(COMPRESSED_FILE_SIZE * 3 - 1)
+        );
+
+        data_transfer
+            .set_transfer_batch_size_in_bytes(None)
+            .await
+            .unwrap();
+
+        assert_eq!(data_transfer.transfer_batch_size_in_bytes, None);
 
         // Data should not have been transferred.
         assert_eq!(
@@ -529,7 +611,7 @@ mod tests {
             remote_data_folder_object_store,
             table_metadata_manager,
             manager,
-            COMPRESSED_FILE_SIZE * 3 - 1,
+            Some(COMPRESSED_FILE_SIZE * 3 - 1),
             Arc::new(Mutex::new(Metric::new())),
         )
         .await

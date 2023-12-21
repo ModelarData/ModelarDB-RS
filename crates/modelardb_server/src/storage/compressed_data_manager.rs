@@ -54,7 +54,7 @@ use crate::ClusterMode;
 /// Apache Parquet files.
 pub(super) struct CompressedDataManager {
     /// Component that transfers saved compressed data to the remote data folder when it is necessary.
-    pub(super) data_transfer: RwLock<Option<DataTransfer>>,
+    pub(super) data_transfer: Arc<RwLock<Option<DataTransfer>>>,
     /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
     pub(crate) local_data_folder: PathBuf,
     /// The compressed segments before they are saved to persistent storage. The key is the name of
@@ -81,7 +81,7 @@ impl CompressedDataManager {
     /// Return a [`CompressedDataManager`] if the required folder can be created in
     /// `local_data_folder`, otherwise [`IOError`] is returned.
     pub(super) fn try_new(
-        data_transfer: RwLock<Option<DataTransfer>>,
+        data_transfer: Arc<RwLock<Option<DataTransfer>>>,
         local_data_folder: PathBuf,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
@@ -909,7 +909,7 @@ mod tests {
         (
             temp_dir,
             CompressedDataManager::try_new(
-                RwLock::new(None),
+                Arc::new(RwLock::new(None)),
                 local_data_folder,
                 channels,
                 memory_pool,

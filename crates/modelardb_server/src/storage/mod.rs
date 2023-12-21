@@ -202,8 +202,9 @@ impl StorageEngine {
             None
         };
 
+        let data_transfer_is_some = data_transfer.is_some();
         let compressed_data_manager = Arc::new(CompressedDataManager::try_new(
-            RwLock::new(data_transfer),
+            Arc::new(RwLock::new(data_transfer)),
             local_data_folder,
             channels.clone(),
             memory_pool.clone(),
@@ -228,13 +229,24 @@ impl StorageEngine {
             )?;
         }
 
-        Ok(Self {
+        let mut storage_engine = Self {
             uncompressed_data_manager,
             compressed_data_manager,
             memory_pool,
             join_handles,
             channels,
-        })
+        };
+
+        // Start the task that transfers data periodically if a remote data folder is given and
+        // time-based data transfer is enabled.
+        if data_transfer_is_some {
+            storage_engine
+                .set_transfer_time_in_seconds(configuration_manager.transfer_time_in_seconds())
+                .await
+                .map_err(|error| IOError::new(ErrorKind::Other, error))?;
+        }
+
+        Ok(storage_engine)
     }
 
     /// Start `num_threads` threads with `name` that executes `function` and whose [`JoinHandle`] is
@@ -478,7 +490,7 @@ impl StorageEngine {
     /// return [`ModelarDbError`].
     pub(super) async fn set_transfer_batch_size_in_bytes(
         &self,
-        new_value: usize,
+        new_value: Option<usize>,
     ) -> Result<(), ModelarDbError> {
         if let Some(ref mut data_transfer) =
             *self.compressed_data_manager.data_transfer.write().await
@@ -487,6 +499,28 @@ impl StorageEngine {
                 .set_transfer_batch_size_in_bytes(new_value)
                 .await
                 .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))
+        } else {
+            Err(ModelarDbError::ConfigurationError(
+                "Storage engine is not configured to transfer data.".to_owned(),
+            ))
+        }
+    }
+
+    /// Set the transfer time in the data transfer component to `new_value` if it exists. If
+    /// a data transfer component does not exists, return [`ModelarDbError`].
+    pub(super) async fn set_transfer_time_in_seconds(
+        &mut self,
+        new_value: Option<usize>,
+    ) -> Result<(), ModelarDbError> {
+        if let Some(ref mut data_transfer) =
+            *self.compressed_data_manager.data_transfer.write().await
+        {
+            data_transfer.set_transfer_time_in_seconds(
+                new_value,
+                self.compressed_data_manager.data_transfer.clone(),
+            );
+
+            Ok(())
         } else {
             Err(ModelarDbError::ConfigurationError(
                 "Storage engine is not configured to transfer data.".to_owned(),

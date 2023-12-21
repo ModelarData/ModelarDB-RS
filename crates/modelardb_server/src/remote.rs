@@ -441,9 +441,8 @@ impl FlightService for FlightServiceHandler {
     /// configuration is returned in a single [`RecordBatch`].
     /// * `UpdateConfiguration`: Update a single setting in the configuration. Each argument in the
     /// body should start with the size of the argument, immediately followed by the argument value.
-    /// The first argument should be the setting to update, specifically either
-    /// 'uncompressed_reserved_memory_in_bytes' or 'compressed_reserved_memory_in_bytes'. The second
-    /// argument should be the new value of the setting as an unsigned integer.
+    /// The first argument should be the setting to update. The second argument should be the new
+    /// value of the setting as an unsigned integer.
     async fn do_action(
         &self,
         request: Request<Action>,
@@ -569,17 +568,23 @@ impl FlightService for FlightServiceHandler {
                 "uncompressed_reserved_memory_in_bytes",
                 "compressed_reserved_memory_in_bytes",
                 "transfer_batch_size_in_bytes",
+                "transfer_time_in_seconds",
                 "ingestion_threads",
                 "compression_threads",
                 "writer_threads",
             ];
-            let values = [
-                configuration_manager.uncompressed_reserved_memory_in_bytes() as u64,
-                configuration_manager.compressed_reserved_memory_in_bytes() as u64,
-                configuration_manager.transfer_batch_size_in_bytes() as u64,
-                configuration_manager.ingestion_threads as u64,
-                configuration_manager.compression_threads as u64,
-                configuration_manager.writer_threads as u64,
+            let values = vec![
+                Some(configuration_manager.uncompressed_reserved_memory_in_bytes() as u64),
+                Some(configuration_manager.compressed_reserved_memory_in_bytes() as u64),
+                configuration_manager
+                    .transfer_batch_size_in_bytes()
+                    .map(|n| n as u64),
+                configuration_manager
+                    .transfer_time_in_seconds()
+                    .map(|n| n as u64),
+                Some(configuration_manager.ingestion_threads as u64),
+                Some(configuration_manager.compression_threads as u64),
+                Some(configuration_manager.writer_threads as u64),
             ];
 
             let schema = CONFIGURATION_SCHEMA.clone();
@@ -589,7 +594,7 @@ impl FlightService for FlightServiceHandler {
                 schema.0.clone(),
                 vec![
                     Arc::new(StringArray::from_iter_values(settings)),
-                    Arc::new(UInt64Array::from_iter_values(values)),
+                    Arc::new(UInt64Array::from(values)),
                 ],
             )
             .unwrap();
@@ -598,27 +603,48 @@ impl FlightService for FlightServiceHandler {
         } else if action.r#type == "UpdateConfiguration" {
             let (setting, offset_data) = arguments::decode_argument(&action.body)?;
             let (new_value, _offset_data) = arguments::decode_argument(offset_data)?;
-            let new_value: usize = new_value.parse().map_err(|error| {
-                Status::invalid_argument(format!("New value for {setting} is not valid: {error}"))
-            })?;
+
+            // Parse the new value into None if it is empty and a usize integer if it is not empty.
+            let new_value: Option<usize> = (!new_value.is_empty())
+                .then(|| {
+                    new_value.parse().map_err(|error| {
+                        Status::invalid_argument(format!(
+                            "New value for {setting} is not valid: {error}"
+                        ))
+                    })
+                })
+                .transpose()?;
 
             let mut configuration_manager = self.context.configuration_manager.write().await;
             let storage_engine = self.context.storage_engine.clone();
 
+            let invalid_empty_error =
+                Status::invalid_argument(format!("New value for {setting} cannot be empty."));
+
             match setting {
                 "uncompressed_reserved_memory_in_bytes" => {
+                    let new_value = new_value.ok_or(invalid_empty_error)?;
+
                     configuration_manager
                         .set_uncompressed_reserved_memory_in_bytes(new_value, storage_engine)
                         .await;
 
                     Ok(())
                 }
-                "compressed_reserved_memory_in_bytes" => configuration_manager
-                    .set_compressed_reserved_memory_in_bytes(new_value, storage_engine)
-                    .await
-                    .map_err(|error| Status::internal(error.to_string())),
+                "compressed_reserved_memory_in_bytes" => {
+                    let new_value = new_value.ok_or(invalid_empty_error)?;
+
+                    configuration_manager
+                        .set_compressed_reserved_memory_in_bytes(new_value, storage_engine)
+                        .await
+                        .map_err(|error| Status::internal(error.to_string()))
+                }
                 "transfer_batch_size_in_bytes" => configuration_manager
                     .set_transfer_batch_size_in_bytes(new_value, storage_engine)
+                    .await
+                    .map_err(|error| Status::internal(error.to_string())),
+                "transfer_time_in_seconds" => configuration_manager
+                    .set_transfer_time_in_seconds(new_value, storage_engine)
                     .await
                     .map_err(|error| Status::internal(error.to_string())),
                 "ingestion_threads" | "compression_threads" | "writer_threads" => {

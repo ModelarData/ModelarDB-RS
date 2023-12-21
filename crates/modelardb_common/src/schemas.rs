@@ -95,7 +95,7 @@ pub static QUERY_SCHEMA: Lazy<QuerySchema> = Lazy::new(|| {
 pub static CONFIGURATION_SCHEMA: Lazy<ConfigurationSchema> = Lazy::new(|| {
     ConfigurationSchema(Arc::new(Schema::new(vec![
         Field::new("setting", DataType::Utf8, false),
-        Field::new("value", DataType::UInt64, false),
+        Field::new("value", DataType::UInt64, true),
     ])))
 });
 
