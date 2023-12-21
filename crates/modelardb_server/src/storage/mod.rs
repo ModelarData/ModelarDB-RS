@@ -202,6 +202,7 @@ impl StorageEngine {
             None
         };
 
+        let data_transfer_is_some = data_transfer.is_some();
         let compressed_data_manager = Arc::new(CompressedDataManager::try_new(
             Arc::new(RwLock::new(data_transfer)),
             local_data_folder,
@@ -236,12 +237,14 @@ impl StorageEngine {
             channels,
         };
 
-        // Start the task that transfers data periodically if a data transfer component exists and
-        // time-based data transfer is enabled. Errors are ignored since an error is only returned
-        // if a data transfer component does not exist.
-        let _ = storage_engine
-            .set_transfer_time_in_seconds(configuration_manager.transfer_time_in_seconds())
-            .await;
+        // Start the task that transfers data periodically if a remote data folder is given and
+        // time-based data transfer is enabled.
+        if data_transfer_is_some {
+            storage_engine
+                .set_transfer_time_in_seconds(configuration_manager.transfer_time_in_seconds())
+                .await
+                .map_err(|error| IOError::new(ErrorKind::Other, error))?;
+        }
 
         Ok(storage_engine)
     }

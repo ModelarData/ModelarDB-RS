@@ -216,6 +216,14 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
 
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .uncompressed_reserved_memory_in_bytes(),
+            512 * 1024 * 1024
+        );
+
         configuration_manager
             .write()
             .await
@@ -235,6 +243,14 @@ mod tests {
     async fn test_set_compressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .compressed_reserved_memory_in_bytes(),
+            512 * 1024 * 1024
+        );
 
         configuration_manager
             .write()
@@ -257,6 +273,14 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
 
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .transfer_batch_size_in_bytes(),
+            Some(64 * 1024 * 1024)
+        );
+
         configuration_manager
             .write()
             .await
@@ -277,6 +301,14 @@ mod tests {
     async fn test_set_transfer_time_in_seconds() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .transfer_time_in_seconds(),
+            None
+        );
 
         configuration_manager
             .write()

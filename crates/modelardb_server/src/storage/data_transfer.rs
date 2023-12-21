@@ -517,6 +517,11 @@ mod tests {
         let (_, mut data_transfer) =
             create_data_transfer_component(metadata_manager, temp_dir.path()).await;
 
+        assert_eq!(
+            data_transfer.transfer_batch_size_in_bytes,
+            Some(COMPRESSED_FILE_SIZE * 3 - 1)
+        );
+
         data_transfer
             .set_transfer_batch_size_in_bytes(None)
             .await
