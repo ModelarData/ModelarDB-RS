@@ -32,9 +32,9 @@ use modelardb_common::types::{
 
 use crate::types::CompressedSegmentBuilder;
 
-/// Unique ids for each model type. Constant values are used instead of an enum
-/// so the stored model type ids can be used in match expressions without being
-/// converted to an enum first.
+/// Unique ids for each model type. Constant values are used instead of an enum so the stored model
+/// type ids can be used in match expressions without being converted to an enum first. Any changes
+/// to the ids must be reflected in all statement matching on them and in [`GridStreamMetrics`].
 pub const PMC_MEAN_ID: u8 = 0;
 pub const SWING_ID: u8 = 1;
 pub const GORILLA_ID: u8 = 2;
