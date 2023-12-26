@@ -181,6 +181,9 @@ async fn repl(
         let _ = editor.load_history(&home);
     }
 
+    // Specify where to find helpful information about the commands supported by the repl.
+    println!("Type \\h for help.\n");
+
     // Execute actions, commands, and queries and print the result.
     while let Ok(line) = editor.readline("ModelarDB> ") {
         editor.add_history_entry(line.as_str())?;
@@ -283,6 +286,14 @@ async fn execute_command(
                     println!("{table}");
                 }
             }
+            Ok(())
+        }
+        "\\h" => {
+            //Print helpful information, the first explanation must indented less to be aligned.
+            println!("SELECT DQL/DML  Execute SELECT statement.\
+                      \n\\d  TABLE_NAME  Print the schema of a table.\
+                      \n\\dt             Print the name of the tables.\
+                      \n\\h              Print helpful information.");
             Ok(())
         }
         "\\q" => {
