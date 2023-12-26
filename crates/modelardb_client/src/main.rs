@@ -27,20 +27,20 @@ use std::process;
 use std::result::Result;
 use std::sync::Arc;
 
-use arrow::datatypes::Schema;
+use arrow::array::ArrayRef;
+use arrow::datatypes::{Schema, SchemaRef};
 use arrow::error::ArrowError;
 use arrow::ipc::convert;
 use arrow::util::pretty;
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::utils;
 use arrow_flight::Ticket;
+use arrow_flight::{utils, FlightData};
 use arrow_flight::{Action, Criteria, FlightDescriptor};
 use bytes::Bytes;
 use rustyline::history::FileHistory;
 use rustyline::Editor;
-use tokio::runtime::Runtime;
 use tonic::transport::Channel;
-use tonic::Request;
+use tonic::{Request, Streaming};
 
 use crate::helper::ClientHelper;
 
@@ -60,7 +60,8 @@ const TRANSPORT_ERROR: &str = "transport error: no messages received.";
 /// read-eval-print loop is opened. Returns [`String`] if the command line arguments cannot be
 /// parsed, the client cannot connect to the server, or the file containing the queries cannot be
 /// read.
-fn main() -> Result<(), String> {
+#[tokio::main]
+async fn main() -> Result<(), String> {
     // Parse the command line arguments.
     let args = env::args();
     if args.len() > 3 {
@@ -74,21 +75,18 @@ fn main() -> Result<(), String> {
     }
     let (maybe_host, maybe_port, maybe_query_file_path) = parse_command_line_arguments(args);
 
-    // Create the Tokio runtime.
-    let runtime =
-        Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {error}"))?;
-
     // Connect to the server.
     let host = maybe_host.unwrap_or_else(|| DEFAULT_HOST.to_owned());
     let port = maybe_port.unwrap_or_else(|| DEFAULT_PORT.to_owned());
-    let flight_service_client = connect(&runtime, &host, port)
+    let flight_service_client = connect(&host, port)
+        .await
         .map_err(|error| format!("Cannot connect to {host}:{port}: {error}"))?;
 
     // Execute the queries.
     if let Some(query_file) = maybe_query_file_path {
-        file(runtime, flight_service_client, &query_file)
+        file(flight_service_client, &query_file).await
     } else {
-        repl(runtime, flight_service_client)
+        repl(flight_service_client).await
     }
     .map_err(|error| format!("Cannot execute queries: {error}"))
 }
@@ -131,18 +129,13 @@ fn parse_command_line_arguments(mut args: Args) -> (Option<String>, Option<u16>,
 
 /// Connect to the server at `host`:`port`. Returns [`Error`] if a connection to the server cannot
 /// be established.
-fn connect(
-    runtime: &Runtime,
-    host: &str,
-    port: u16,
-) -> Result<FlightServiceClient<Channel>, Box<dyn Error>> {
+async fn connect(host: &str, port: u16) -> Result<FlightServiceClient<Channel>, Box<dyn Error>> {
     let address = format!("grpc://{host}:{port}");
-    runtime.block_on(async { Ok(FlightServiceClient::connect(address).await?) })
+    Ok(FlightServiceClient::connect(address).await?)
 }
 
 /// Execute the actions, commands, and queries in the file at `query_file_path`.
-fn file(
-    runtime: Runtime,
+async fn file(
     mut flight_service_client: FlightServiceClient<Channel>,
     query_file_path: &str,
 ) -> Result<(), Box<dyn Error>> {
@@ -161,11 +154,9 @@ fn file(
         // Execute the query.
         if !query.is_empty() {
             println!("{query}");
-            if let Err(message) = execute_and_print_action_command_or_query(
-                &runtime,
-                &mut flight_service_client,
-                &query,
-            ) {
+            if let Err(message) =
+                execute_and_print_action_command_or_query(&mut flight_service_client, &query).await
+            {
                 eprintln!("{message}");
             }
             // Formatting newline.
@@ -177,13 +168,12 @@ fn file(
 }
 
 /// Execute actions, commands and queries in a read-eval-print loop.
-fn repl(
-    runtime: Runtime,
+async fn repl(
     mut flight_service_client: FlightServiceClient<Channel>,
 ) -> Result<(), Box<dyn Error>> {
     // Create the read-eval-print loop.
     let mut editor = Editor::<ClientHelper, FileHistory>::new()?;
-    let table_names = retrieve_table_names(&runtime, &mut flight_service_client)?;
+    let table_names = retrieve_table_names(&mut flight_service_client).await?;
     editor.set_helper(Some(ClientHelper::new(table_names)));
 
     // Read previously executed actions, commands, and queries from the history file.
@@ -197,7 +187,7 @@ fn repl(
     while let Ok(line) = editor.readline("ModelarDB> ") {
         editor.add_history_entry(line.as_str())?;
         if let Err(message) =
-            execute_and_print_action_command_or_query(&runtime, &mut flight_service_client, &line)
+            execute_and_print_action_command_or_query(&mut flight_service_client, &line).await
         {
             eprintln!("{message}");
         }
@@ -214,28 +204,25 @@ fn repl(
 
 /// Execute an action, a command, or a query. Returns [`Error`] if the action, command, or query
 /// could not be executed or their result could not be retrieved.
-fn execute_and_print_action_command_or_query(
-    runtime: &Runtime,
+async fn execute_and_print_action_command_or_query(
     flight_service_client: &mut FlightServiceClient<Channel>,
     action_command_or_query: &str,
 ) -> Result<(), Box<dyn Error>> {
     if action_command_or_query.starts_with('\\') {
-        execute_command(runtime, flight_service_client, action_command_or_query)?;
+        execute_command(flight_service_client, action_command_or_query).await
     } else if action_command_or_query.starts_with("SELECT")
         || action_command_or_query.starts_with("EXPLAIN")
     {
-        execute_query_and_print_result(runtime, flight_service_client, action_command_or_query)?;
+        execute_query_and_print_result(flight_service_client, action_command_or_query).await
     } else {
-        execute_action(runtime, flight_service_client, action_command_or_query)?;
+        execute_action(flight_service_client, action_command_or_query).await
     }
-    Ok(())
 }
 
 /// Execute an action. Currently, only the action `CommandStatementUpdate` is supported, which
 /// executes a SQL query that does not return a result on the server. The function returns [`Error`]
 /// if the action could not be executed.
-fn execute_action(
-    runtime: &Runtime,
+async fn execute_action(
     flight_service_client: &mut FlightServiceClient<Channel>,
     action_body: &str,
 ) -> Result<(), Box<dyn Error>> {
@@ -246,15 +233,14 @@ fn execute_action(
 
     let request = Request::new(action);
 
-    runtime.block_on(async {
-        flight_service_client
-            .do_action(request)
-            .await?
-            .into_inner()
-            .message()
-            .await?;
-        Ok(())
-    })
+    flight_service_client
+        .do_action(request)
+        .await?
+        .into_inner()
+        .message()
+        .await?;
+
+    Ok(())
 }
 
 /// Execute a command. Returns [`Error`] if:
@@ -262,8 +248,7 @@ fn execute_action(
 /// * An incorrect argument for the command was provided.
 /// * The command could not be executed.
 /// * The result could not be retrieved.
-fn execute_command(
-    runtime: &Runtime,
+async fn execute_command(
     flight_service_client: &mut FlightServiceClient<Channel>,
     command_and_argument: &str,
 ) -> Result<(), Box<dyn Error>> {
@@ -279,25 +264,23 @@ fn execute_command(
                 .ok_or("no table name was provided")?;
             let flight_descriptor = FlightDescriptor::new_path(vec![table_name.to_owned()]);
             let request = Request::new(flight_descriptor);
-            runtime.block_on(async {
-                let schema_result = flight_service_client
-                    .get_schema(request)
-                    .await?
-                    .into_inner();
-                let schema = convert::try_schema_from_ipc_buffer(&schema_result.schema)?;
-                for field in schema.fields() {
-                    print!("{}: {}", field.name(), field.data_type());
-                    for (metadata_name, metadata_value) in field.metadata() {
-                        print!(", {} {}", metadata_name, metadata_value);
-                    }
-                    println!();
+            let schema_result = flight_service_client
+                .get_schema(request)
+                .await?
+                .into_inner();
+            let schema = convert::try_schema_from_ipc_buffer(&schema_result.schema)?;
+            for field in schema.fields() {
+                print!("{}: {}", field.name(), field.data_type());
+                for (metadata_name, metadata_value) in field.metadata() {
+                    print!(", {} {}", metadata_name, metadata_value);
                 }
-                Ok(())
-            })
+                println!();
+            }
+            Ok(())
         }
         "\\dt" => {
             //Print the name of the tables on the server.
-            if let Ok(tables) = retrieve_table_names(runtime, flight_service_client) {
+            if let Ok(tables) = retrieve_table_names(flight_service_client).await {
                 for table in tables {
                     println!("{table}");
                 }
@@ -315,8 +298,7 @@ fn execute_command(
 
 /// Retrieve the names of the tables available on the server. Returns [`Error`] if the request could
 /// not be performed or the tables names could not be retrieved.
-fn retrieve_table_names(
-    runtime: &Runtime,
+async fn retrieve_table_names(
     flight_service_client: &mut FlightServiceClient<Channel>,
 ) -> Result<Vec<String>, Box<dyn Error>> {
     let criteria = Criteria {
@@ -324,75 +306,76 @@ fn retrieve_table_names(
     };
     let request = Request::new(criteria);
 
-    runtime.block_on(async {
-        let mut stream = flight_service_client
-            .list_flights(request)
-            .await?
-            .into_inner();
+    let mut stream = flight_service_client
+        .list_flights(request)
+        .await?
+        .into_inner();
 
-        let flight_infos = stream.message().await?.ok_or(TRANSPORT_ERROR)?;
+    let flight_infos = stream.message().await?.ok_or(TRANSPORT_ERROR)?;
 
-        let mut table_names = vec![];
-        if let Some(flight_descriptor) = flight_infos.flight_descriptor {
-            for table_name in flight_descriptor.path {
-                table_names.push(table_name);
-            }
+    let mut table_names = vec![];
+    if let Some(flight_descriptor) = flight_infos.flight_descriptor {
+        for table_name in flight_descriptor.path {
+            table_names.push(table_name);
         }
+    }
 
-        Ok(table_names)
-    })
+    Ok(table_names)
 }
 
 /// Execute a query and print each batch in the result set. Returns [`Error`] if the query could not
 /// be executed or the batches in the result set could not be printed.
-fn execute_query_and_print_result(
-    runtime: &Runtime,
+async fn execute_query_and_print_result(
     flight_service_client: &mut FlightServiceClient<Channel>,
     query: &str,
 ) -> Result<(), Box<dyn Error>> {
-    runtime.block_on(async {
-        // Execute the query.
-        let ticket = Ticket {
-            ticket: query.to_owned().into(),
-        };
-        let mut stream = flight_service_client.do_get(ticket).await?.into_inner();
+    // Execute the query.
+    let ticket = Ticket {
+        ticket: query.to_owned().into(),
+    };
+    let mut stream = flight_service_client.do_get(ticket).await?.into_inner();
 
-        // Get the schema of the data in the query result.
-        let flight_data = stream.message().await?.ok_or(TRANSPORT_ERROR)?;
-        let schema = Arc::new(Schema::try_from(&flight_data)?);
+    // Get the schema of the data in the query result.
+    let flight_data = stream.message().await?.ok_or(TRANSPORT_ERROR)?;
+    let schema = Arc::new(Schema::try_from(&flight_data)?);
+    let dictionaries_by_id = HashMap::new();
 
-        // Get each batch in the result set and print it.
-        let mut user_input = String::new();
-        let mut multiple_batches = false;
-        let dictionaries_by_id = HashMap::new();
+    print_result_in_batches(stream, schema, &dictionaries_by_id).await
+}
 
-        while let Some(flight_data) = stream.message().await? {
-            let record_batch = utils::flight_data_to_arrow_batch(
-                &flight_data,
-                schema.clone(),
-                &dictionaries_by_id,
-            )?;
+/// Print each batch in the result set. Returns [`Error`] if the batches in the result set could not
+/// be printed.
+async fn print_result_in_batches(
+    mut stream: Streaming<FlightData>,
+    schema: SchemaRef,
+    dictionaries_by_id: &HashMap<i64, ArrayRef>,
+) -> Result<(), Box<dyn Error>> {
+    let mut user_input = String::new();
+    let mut multiple_batches = false;
 
-            // Only ask for confirmation to print the next batch if there are multiple batches.
-            if multiple_batches {
-                loop {
-                    user_input.clear();
-                    print!("Press Enter for next batch and q+Enter to quit> ");
-                    io::stdout().flush()?;
-                    io::stdin().read_line(&mut user_input)?;
+    while let Some(flight_data) = stream.message().await? {
+        let record_batch =
+            utils::flight_data_to_arrow_batch(&flight_data, schema.clone(), &dictionaries_by_id)?;
 
-                    match user_input.as_str() {
-                        "\n" => break,
-                        "q\n" => return Ok(()),
-                        _ => (),
-                    }
+        // Only ask for confirmation to print the next batch if there are multiple batches.
+        if multiple_batches {
+            loop {
+                user_input.clear();
+                print!("Press Enter for next batch and q+Enter to quit> ");
+                io::stdout().flush()?;
+                io::stdin().read_line(&mut user_input)?;
+
+                match user_input.as_str() {
+                    "\n" => break,
+                    "q\n" => return Ok(()),
+                    _ => (),
                 }
             }
-
-            pretty::print_batches(&[record_batch])?;
-            multiple_batches = true;
         }
 
-        Ok(())
-    })
+        pretty::print_batches(&[record_batch])?;
+        multiple_batches = true;
+    }
+
+    Ok(())
 }
