@@ -22,7 +22,7 @@ use std::convert::TryFrom;
 use std::env::{self, Args};
 use std::error::Error;
 use std::fs::{self, File};
-use std::io::{self, BufRead, Write};
+use std::io::{self, BufRead, IsTerminal, Write};
 use std::process;
 use std::result::Result;
 use std::sync::Arc;
@@ -33,9 +33,7 @@ use arrow::error::ArrowError;
 use arrow::ipc::convert;
 use arrow::util::pretty;
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::Ticket;
-use arrow_flight::{utils, FlightData};
-use arrow_flight::{Action, Criteria, FlightDescriptor};
+use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, Ticket};
 use bytes::Bytes;
 use rustyline::history::FileHistory;
 use rustyline::Editor;
@@ -340,12 +338,16 @@ async fn execute_query_and_print_result(
     let schema = Arc::new(Schema::try_from(&flight_data)?);
     let dictionaries_by_id = HashMap::new();
 
-    print_result_in_batches(stream, schema, &dictionaries_by_id).await
+    if io::stdout().is_terminal() {
+        print_batches_with_confirmation(stream, schema, &dictionaries_by_id).await
+    } else {
+        print_batches_without_confirmation(stream, schema, &dictionaries_by_id).await
+    }
 }
 
-/// Print each batch in the result set. Returns [`Error`] if the batches in the result set could not
-/// be printed.
-async fn print_result_in_batches(
+/// Print each batch in the result set with confirmation from the user before printing each batch.
+/// Returns [`Error`] if the batches in the result set could not be printed.
+async fn print_batches_with_confirmation(
     mut stream: Streaming<FlightData>,
     schema: SchemaRef,
     dictionaries_by_id: &HashMap<i64, ArrayRef>,
@@ -375,6 +377,23 @@ async fn print_result_in_batches(
 
         pretty::print_batches(&[record_batch])?;
         multiple_batches = true;
+    }
+
+    Ok(())
+}
+
+/// Print each batch in the result set without user input. Returns [`Error`] if the batches in the
+/// result set could not be printed.
+async fn print_batches_without_confirmation(
+    mut stream: Streaming<FlightData>,
+    schema: SchemaRef,
+    dictionaries_by_id: &HashMap<i64, ArrayRef>,
+) -> Result<(), Box<dyn Error>> {
+    while let Some(flight_data) = stream.message().await? {
+        let record_batch =
+            utils::flight_data_to_arrow_batch(&flight_data, schema.clone(), &dictionaries_by_id)?;
+
+        pretty::print_batches(&[record_batch])?;
     }
 
     Ok(())
