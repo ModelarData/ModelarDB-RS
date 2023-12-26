@@ -216,19 +216,27 @@ async fn execute_and_print_action_command_or_query(
     {
         execute_query_and_print_result(flight_service_client, action_command_or_query).await
     } else {
-        execute_action(flight_service_client, action_command_or_query).await
+        execute_action(
+            flight_service_client,
+            "CommandStatementUpdate",
+            action_command_or_query,
+        )
+        .await
     }
 }
 
-/// Execute an action. Currently, only the action `CommandStatementUpdate` is supported, which
-/// executes a SQL query that does not return a result on the server. The function returns [`Error`]
-/// if the action could not be executed.
+/// Execute an action. Currently, the following actions are supported:
+/// * `CommandStatementUpdate` executes a SQL query that does not return a result on the server.
+/// * `FlushMemory` flush all data the server currently has in memory to disk.
+/// * `FlushEdge` flush all data the server currently has in memory and disk to the object store.
+/// The function returns [`Error`] if the action could not be executed.
 async fn execute_action(
     flight_service_client: &mut FlightServiceClient<Channel>,
+    action_type: &str,
     action_body: &str,
 ) -> Result<(), Box<dyn Error>> {
     let action = Action {
-        r#type: "CommandStatementUpdate".to_owned(),
+        r#type: action_type.to_owned(),
         body: action_body.to_owned().into(),
     };
 
@@ -258,8 +266,8 @@ async fn execute_command(
         .next()
         .ok_or("no command was provided")?
     {
+        //Print the schema of a table on the server.
         "\\d" => {
-            //Print the schema of a table on the server.
             let table_name = command_and_argument
                 .next()
                 .ok_or("no table name was provided")?;
@@ -279,8 +287,8 @@ async fn execute_command(
             }
             Ok(())
         }
+        //Print the name of the tables on the server.
         "\\dt" => {
-            //Print the name of the tables on the server.
             if let Ok(tables) = retrieve_table_names(flight_service_client).await {
                 for table in tables {
                     println!("{table}");
@@ -288,12 +296,21 @@ async fn execute_command(
             }
             Ok(())
         }
+        // Flushes all data the server currently has in memory to disk.
+        "\\f" => execute_action(flight_service_client, "FlushMemory", "").await,
+        // Flushes all data the server currently has in memory and disk to the object store.
+        "\\F" => execute_action(flight_service_client, "FlushEdge", "").await,
+        //Print helpful information, explanations with \\ must indented more to be aligned.
         "\\h" => {
-            //Print helpful information, the first explanation must indented less to be aligned.
-            println!("SELECT DQL/DML  Execute SELECT statement.\
-                      \n\\d  TABLE_NAME  Print the schema of a table.\
-                      \n\\dt             Print the name of the tables.\
-                      \n\\h              Print helpful information.");
+            println!(
+                "CREATE DDL        Execute CREATE TABLE or CREATE MODEL TABLE statement.\n\
+                 SELECT DQL/DML    Execute SELECT statement.\n\
+                 \\d TABLE_NAME     Print the schema of a table with TABLE_NAME.\n\
+                 \\dt               Print the name of all the tables.\n\
+                 \\f                Flushes data in memory to disk.\n\
+                 \\F                Flushes data in memory and disk to the object store.\n\
+                 \\h                Print documentation for all supported commands."
+            );
             Ok(())
         }
         "\\q" => {
@@ -368,7 +385,7 @@ async fn print_batches_with_confirmation(
 
     while let Some(flight_data) = stream.message().await? {
         let record_batch =
-            utils::flight_data_to_arrow_batch(&flight_data, schema.clone(), &dictionaries_by_id)?;
+            utils::flight_data_to_arrow_batch(&flight_data, schema.clone(), dictionaries_by_id)?;
 
         // Only ask for confirmation to print the next batch if there are multiple batches.
         if multiple_batches {
@@ -402,7 +419,7 @@ async fn print_batches_without_confirmation(
 ) -> Result<(), Box<dyn Error>> {
     while let Some(flight_data) = stream.message().await? {
         let record_batch =
-            utils::flight_data_to_arrow_batch(&flight_data, schema.clone(), &dictionaries_by_id)?;
+            utils::flight_data_to_arrow_batch(&flight_data, schema.clone(), dictionaries_by_id)?;
 
         pretty::print_batches(&[record_batch])?;
     }
