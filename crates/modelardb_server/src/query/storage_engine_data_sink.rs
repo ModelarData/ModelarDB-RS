@@ -13,8 +13,8 @@
  * limitations under the License.
  */
 
-//! Implementation of a [`DataSink`] that writes [`RecordBatches`](RecordBatch) to
-//! [`StorageEngine`].
+//! Implementation of a [`DataSink`] that writes
+//! [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) to [`StorageEngine`].
 
 use std::any::Any;
 use std::fmt::{self, Debug, Formatter};
@@ -32,8 +32,9 @@ use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;
 
-/// [`DataSink`] that writes [`RecordBatches`](RecordBatch) to [`StorageEngine`]. Assume the
-/// generated columns are included, thus they are dropped without checking the schema.
+/// [`DataSink`] that writes [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) to
+/// [`StorageEngine`]. Assume the generated columns are included, thus they are dropped without
+/// checking the schema.
 pub struct StorageEngineDataSink {
     storage_engine: Arc<RwLock<StorageEngine>>,
     model_table_metadata: Arc<ModelTableMetadata>,
@@ -82,7 +83,7 @@ impl DataSink for StorageEngineDataSink {
             storage_engine
                 .insert_data_points(self.model_table_metadata.clone(), record_batch)
                 .await
-                .map_err(|error| DataFusionError::Execution(error))?;
+                .map_err(DataFusionError::Execution)?;
         }
 
         Ok(data_points_inserted)

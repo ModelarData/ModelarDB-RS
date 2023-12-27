@@ -399,9 +399,9 @@ impl TableProvider for ModelTable {
     /// Create an [`ExecutionPlan`] that will insert the result of `input` into the table. `inputs`
     /// must include generated columns to match the query schema returned by
     /// [`TableProvider::schema()`]. The generated columns are immediately dropped. Generally,
-    /// [`TableProvider::do_put()`] should be used instead of this method as it is more efficient.
-    /// Returns a [`DataFusionError::Plan`] if the necessary metadata cannot be retrieved from the
-    /// metadata database.
+    /// [`arrow_flight::flight_service_server::FlightService::do_put()`] should be used instead of
+    /// this method as it is more efficient. Returns a [`DataFusionError::Plan`] if the necessary
+    /// metadata cannot be retrieved from the metadata database.
     async fn insert_into(
         &self,
         _state: &SessionState,
