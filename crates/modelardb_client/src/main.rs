@@ -211,8 +211,9 @@ async fn execute_and_print_action_command_or_query(
 ) -> Result<(), Box<dyn Error>> {
     if action_command_or_query.starts_with('\\') {
         execute_command(flight_service_client, action_command_or_query).await
-    } else if action_command_or_query.starts_with("SELECT")
+    } else if action_command_or_query.starts_with("INSERT")
         || action_command_or_query.starts_with("EXPLAIN")
+        || action_command_or_query.starts_with("SELECT")
     {
         execute_query_and_print_result(flight_service_client, action_command_or_query).await
     } else {
@@ -303,8 +304,9 @@ async fn execute_command(
         //Print helpful information, explanations with \\ must indented more to be aligned.
         "\\h" => {
             println!(
-                "CREATE DDL        Execute CREATE TABLE or CREATE MODEL TABLE statement.\n\
-                 SELECT DQL/DML    Execute SELECT statement.\n\
+                "CREATE DDL        Execute a CREATE TABLE or CREATE MODEL TABLE statement.\n\
+                 INSERT DML        Execute an INSERT statement. Must include generated columns.\n\
+                 SELECT DQL        Execute a SELECT statement.\n\
                  \\d TABLE_NAME     Print the schema of a table with TABLE_NAME.\n\
                  \\dt               Print the name of all the tables.\n\
                  \\f                Flushes data in memory to disk.\n\
