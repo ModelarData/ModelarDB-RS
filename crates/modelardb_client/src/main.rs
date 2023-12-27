@@ -26,6 +26,7 @@ use std::io::{self, BufRead, IsTerminal, Write};
 use std::process;
 use std::result::Result;
 use std::sync::Arc;
+use std::time::Instant;
 
 use arrow::array::ArrayRef;
 use arrow::datatypes::{Schema, SchemaRef};
@@ -152,13 +153,7 @@ async fn file(
         // Execute the query.
         if !query.is_empty() {
             println!("{query}");
-            if let Err(message) =
-                execute_and_print_action_command_or_query(&mut flight_service_client, &query).await
-            {
-                eprintln!("{message}");
-            }
-            // Formatting newline.
-            println!();
+            execute_and_print_action_command_or_query(&mut flight_service_client, &query).await
         }
     }
 
@@ -187,11 +182,7 @@ async fn repl(
     // Execute actions, commands, and queries and print the result.
     while let Ok(line) = editor.readline("ModelarDB> ") {
         editor.add_history_entry(line.as_str())?;
-        if let Err(message) =
-            execute_and_print_action_command_or_query(&mut flight_service_client, &line).await
-        {
-            eprintln!("{message}");
-        }
+        execute_and_print_action_command_or_query(&mut flight_service_client, &line).await
     }
 
     // Append the executed actions, commands, and queries to the history file.
@@ -208,8 +199,10 @@ async fn repl(
 async fn execute_and_print_action_command_or_query(
     flight_service_client: &mut FlightServiceClient<Channel>,
     action_command_or_query: &str,
-) -> Result<(), Box<dyn Error>> {
-    if action_command_or_query.starts_with('\\') {
+) {
+    let start_time = Instant::now();
+
+    let result = if action_command_or_query.starts_with('\\') {
         execute_command(flight_service_client, action_command_or_query).await
     } else if action_command_or_query.starts_with("INSERT")
         || action_command_or_query.starts_with("EXPLAIN")
@@ -223,7 +216,14 @@ async fn execute_and_print_action_command_or_query(
             action_command_or_query,
         )
         .await
+    };
+
+    if let Err(message) = result {
+        eprintln!("{message}");
     }
+    println!();
+
+    println!("Time: {:?}\n", start_time.elapsed());
 }
 
 /// Execute an action. Currently, the following actions are supported:
@@ -311,7 +311,8 @@ async fn execute_command(
                  \\dt               Print the name of all the tables.\n\
                  \\f                Flushes data in memory to disk.\n\
                  \\F                Flushes data in memory and disk to the object store.\n\
-                 \\h                Print documentation for all supported commands."
+                 \\h                Print documentation for all supported commands.\n\
+                 \\q                Quit modelardb."
             );
             Ok(())
         }
