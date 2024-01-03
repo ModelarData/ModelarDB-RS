@@ -318,7 +318,7 @@ impl GridStream {
                 model_type_ids.value(row_index),
                 univariate_id_builder.len() - length_before,
                 !residuals.value(row_index).is_empty(),
-                modelardb_compression::are_compressed_timestamps_regular(&timestamps.values()),
+                modelardb_compression::are_compressed_timestamps_regular(timestamps.values()),
             );
         }
 
