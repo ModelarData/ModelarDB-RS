@@ -318,6 +318,7 @@ impl GridStream {
                 model_type_ids.value(row_index),
                 univariate_id_builder.len() - length_before,
                 !residuals.value(row_index).is_empty(),
+                modelardb_compression::are_compressed_timestamps_regular(&timestamps.values()),
             );
         }
 
@@ -404,6 +405,10 @@ struct GridStreamMetrics {
     segments_with_residuals: Count,
     /// Number of segments grouped by model type.
     segments_with_model_type: [Count; 3],
+    /// Number of regular segments.
+    segments_regular: Count,
+    /// Number of irregular segments.
+    segments_irregular: Count,
 }
 
 impl GridStreamMetrics {
@@ -425,29 +430,38 @@ impl GridStreamMetrics {
             Self::new_counter(metrics, partition, "segments_with_gorilla"),
         ];
 
+        let segments_regular = Self::new_counter(metrics, partition, "regular_segments");
+        let segments_irregular = Self::new_counter(metrics, partition, "irregular_segments");
+
         Self {
             baseline_metrics,
             created_rows,
             created_rows_by_model_type,
             segments_with_residuals,
             segments_with_model_type,
+            segments_regular,
+            segments_irregular,
         }
     }
 
+    /// Return a [`Count`] for `partition` with `counter_name` which is associated with `metrics`.
     fn new_counter(
         metrics: &ExecutionPlanMetricsSet,
         partition: usize,
-        counter_name: &'static str
+        counter_name: &'static str,
     ) -> Count {
         MetricBuilder::new(metrics)
             .with_partition(partition)
             .global_counter(counter_name)
     }
 
-    fn add(&self, model_type_id: u8, created_rows: usize, has_residuals: bool) {
+    /// Calculate all metrics and add them to [`Self`].
+    fn add(&self, model_type_id: u8, created_rows: usize, has_residuals: bool, is_regular: bool) {
         self.created_rows.add(created_rows);
         self.created_rows_by_model_type[model_type_id as usize].add(created_rows);
         self.segments_with_residuals.add(has_residuals as usize);
         self.segments_with_model_type[model_type_id as usize].add(1);
+        self.segments_regular.add(is_regular as usize);
+        self.segments_irregular.add(!is_regular as usize);
     }
 }
