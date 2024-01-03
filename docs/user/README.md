@@ -119,7 +119,7 @@ modelardb
 
 Be aware that the REPL currently does not support splitting SQL statements over multiple lines and that the SQL
 statements do not need to end with a `;`. In addition to SQL statements, the REPL also supports listing all tables
-using `\dt`, printing the schema of a table using `\d table_name`, flushing data in memory to disk using `\f`,flushing
+using `\dt`, printing the schema of a table using `\d table_name`, flushing data in memory to disk using `\f`, flushing
 data in memory and on disk to an object store using `\F`, and printing operations supported by the client using `\h`.
 
 ```sql

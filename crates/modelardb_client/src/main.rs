@@ -83,9 +83,9 @@ async fn main() -> Result<(), String> {
 
     // Execute the queries.
     if let Some(query_file) = maybe_query_file_path {
-        file(flight_service_client, &query_file).await
+        execute_queries_from_a_file(flight_service_client, &query_file).await
     } else {
-        repl(flight_service_client).await
+        execute_queries_from_a_repl(flight_service_client).await
     }
     .map_err(|error| format!("Cannot execute queries: {error}"))
 }
@@ -134,7 +134,7 @@ async fn connect(host: &str, port: u16) -> Result<FlightServiceClient<Channel>, 
 }
 
 /// Execute the actions, commands, and queries in the file at `query_file_path`.
-async fn file(
+async fn execute_queries_from_a_file(
     mut flight_service_client: FlightServiceClient<Channel>,
     query_file_path: &str,
 ) -> Result<(), Box<dyn Error>> {
@@ -161,7 +161,7 @@ async fn file(
 }
 
 /// Execute actions, commands and queries in a read-eval-print loop.
-async fn repl(
+async fn execute_queries_from_a_repl(
     mut flight_service_client: FlightServiceClient<Channel>,
 ) -> Result<(), Box<dyn Error>> {
     // Create the read-eval-print loop.
@@ -221,15 +221,13 @@ async fn execute_and_print_action_command_or_query(
     if let Err(message) = result {
         eprintln!("{message}");
     }
-    println!();
-
-    println!("Time: {:?}\n", start_time.elapsed());
+    println!("\nTime: {:?}\n", start_time.elapsed());
 }
 
 /// Execute an action. Currently, the following actions are supported:
-/// * `CommandStatementUpdate` executes a SQL query that does not return a result on the server.
-/// * `FlushMemory` flush all data the server currently has in memory to disk.
-/// * `FlushEdge` flush all data the server currently has in memory and disk to the object store.
+/// * `CommandStatementUpdate`: Executes a SQL query that does not return a result on the server.
+/// * `FlushMemory`: Flush all data the server currently has in memory to disk.
+/// * `FlushEdge`: Flush all data the server currently has in memory and disk to the object store.
 /// The function returns [`Error`] if the action could not be executed.
 async fn execute_action(
     flight_service_client: &mut FlightServiceClient<Channel>,
@@ -267,7 +265,7 @@ async fn execute_command(
         .next()
         .ok_or("no command was provided")?
     {
-        //Print the schema of a table on the server.
+        // Print the schema of a table on the server.
         "\\d" => {
             let table_name = command_and_argument
                 .next()
@@ -288,7 +286,7 @@ async fn execute_command(
             }
             Ok(())
         }
-        //Print the name of the tables on the server.
+        // Print the name of the tables on the server.
         "\\dt" => {
             if let Ok(tables) = retrieve_table_names(flight_service_client).await {
                 for table in tables {
@@ -301,7 +299,7 @@ async fn execute_command(
         "\\f" => execute_action(flight_service_client, "FlushMemory", "").await,
         // Flushes all data the server currently has in memory and disk to the object store.
         "\\F" => execute_action(flight_service_client, "FlushEdge", "").await,
-        //Print helpful information, explanations with \\ must indented more to be aligned.
+        // Print helpful information, explanations with \\ must be indented more to be aligned.
         "\\h" => {
             println!(
                 "CREATE DDL        Execute a CREATE TABLE or CREATE MODEL TABLE statement.\n\

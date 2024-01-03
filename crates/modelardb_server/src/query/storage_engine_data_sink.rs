@@ -1,4 +1,4 @@
-/* Copyright 2023 The ModelarDB Contributors
+/* Copyright 2024 The ModelarDB Contributors
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -64,6 +64,8 @@ impl DataSink for StorageEngineDataSink {
         None
     }
 
+    /// Write all data points in `data` to [`StorageEngine`]. Returns the number of data points that
+    /// has been written or a [`DataFusionError`] if the data points could not be inserted.
     async fn write_all(
         &self,
         mut data: SendableRecordBatchStream,
@@ -94,7 +96,8 @@ impl Debug for StorageEngineDataSink {
     /// Write a string-based representation of the [`DataSink`] to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "StorageEngineDataSink")
+        let name = &self.model_table_metadata.name;
+        write!(f, "StorageEngineDataSink for {name}")
     }
 }
 
@@ -102,6 +105,7 @@ impl DisplayAs for StorageEngineDataSink {
     /// Write a string-based representation of the [`DataSink`] to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "StorageEngineDataSink")
+        let name = &self.model_table_metadata.name;
+        write!(f, "StorageEngineDataSink for {name}")
     }
 }

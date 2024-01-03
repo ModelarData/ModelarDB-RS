@@ -310,7 +310,7 @@ impl DataTransfer {
     fn path_is_compressed_file(path: ObjectStorePath) -> Option<(String, u16)> {
         let path_parts: Vec<PathPart> = path.parts().collect();
 
-        if Some(&PathPart::from(COMPRESSED_DATA_FOLDER)) == path_parts.get(0) {
+        if Some(&PathPart::from(COMPRESSED_DATA_FOLDER)) == path_parts.first() {
             if let Some(table_name) = path_parts.get(1) {
                 if let Some(column_index) = path_parts.get(2) {
                     if let Some(file_name) = path_parts.get(3) {

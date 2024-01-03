@@ -30,7 +30,7 @@ pub fn table_name_from_flight_descriptor(
 ) -> Result<&String, Status> {
     flight_descriptor
         .path
-        .get(0)
+        .first()
         .ok_or_else(|| Status::invalid_argument("No table name in FlightDescriptor.path."))
 }
 
