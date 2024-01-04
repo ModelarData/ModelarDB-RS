@@ -201,12 +201,14 @@ async fn execute_and_print_action_command_or_query(
     action_command_or_query: &str,
 ) {
     let start_time = Instant::now();
+    let action_command_or_query = action_command_or_query.trim();
+    let action_command_or_query_upper = action_command_or_query.to_uppercase();
 
     let result = if action_command_or_query.starts_with('\\') {
         execute_command(flight_service_client, action_command_or_query).await
-    } else if action_command_or_query.starts_with("INSERT")
-        || action_command_or_query.starts_with("EXPLAIN")
-        || action_command_or_query.starts_with("SELECT")
+    } else if action_command_or_query_upper.starts_with("INSERT")
+        || action_command_or_query_upper.starts_with("EXPLAIN")
+        || action_command_or_query_upper.starts_with("SELECT")
     {
         execute_query_and_print_result(flight_service_client, action_command_or_query).await
     } else {
@@ -302,15 +304,15 @@ async fn execute_command(
         // Print helpful information, explanations with \\ must be indented more to be aligned.
         "\\h" => {
             println!(
-                "CREATE DDL        Execute a CREATE TABLE or CREATE MODEL TABLE statement.\n\
-                 INSERT DML        Execute an INSERT statement. Must include generated columns.\n\
-                 SELECT DQL        Execute a SELECT statement.\n\
-                 \\d TABLE_NAME     Print the schema of a table with TABLE_NAME.\n\
-                 \\dt               Print the name of all the tables.\n\
-                 \\f                Flushes data in memory to disk.\n\
-                 \\F                Flushes data in memory and disk to the object store.\n\
-                 \\h                Print documentation for all supported commands.\n\
-                 \\q                Quit modelardb."
+                "CREATE [MODEL] TABLE     Execute a CREATE TABLE or CREATE MODEL TABLE statement.\n\
+                 INSERT INTO              Execute an INSERT INTO statement. Must include generated columns.\n\
+                 SELECT                   Execute a SELECT statement.\n\
+                 \\d TABLE_NAME            Print the schema of a table with TABLE_NAME.\n\
+                 \\dt                      Print the name of all the tables.\n\
+                 \\f                       Flushes data in memory to disk.\n\
+                 \\F                       Flushes data in memory and disk to the object store.\n\
+                 \\h                       Print documentation for all supported commands.\n\
+                 \\q                       Quit modelardb."
             );
             Ok(())
         }
