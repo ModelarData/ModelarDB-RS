@@ -18,6 +18,7 @@
 //! compressed segments containing metadata and models.
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::fmt::{self, Formatter};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -46,7 +47,7 @@ use datafusion::physical_plan::{
 use futures::stream::{Stream, StreamExt};
 use modelardb_common::schemas::QUERY_SCHEMA;
 use modelardb_common::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
-use modelardb_compression;
+use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
 
 use super::{QUERY_ORDER_DATA_POINT, QUERY_ORDER_SEGMENT};
 
@@ -398,13 +399,13 @@ struct GridStreamMetrics {
     /// Default set of metrics collected by operators.
     baseline_metrics: BaselineMetrics,
     /// Number of data points reconstructed from segments.
-    created_rows: Count,
+    rows_created: Count,
     /// Number of data points reconstructed from segments grouped by model type.
-    created_rows_by_model_type: [Count; 3],
+    rows_created_by_model_type: [Count; MODEL_TYPE_COUNT],
     /// Number of segments with residuals.
     segments_with_residuals: Count,
     /// Number of segments grouped by model type.
-    segments_with_model_type: [Count; 3],
+    segments_with_model_type: [Count; MODEL_TYPE_COUNT],
     /// Number of regular segments.
     segments_regular: Count,
     /// Number of irregular segments.
@@ -415,28 +416,34 @@ impl GridStreamMetrics {
     fn new(metrics: &ExecutionPlanMetricsSet, partition: usize) -> Self {
         let baseline_metrics = BaselineMetrics::new(metrics, partition);
 
-        let created_rows = Self::new_counter(metrics, partition, "created_rows");
-        let created_rows_by_model_type = [
-            Self::new_counter(metrics, partition, "created_rows_by_pmc_mean"),
-            Self::new_counter(metrics, partition, "created_rows_by_swing"),
-            Self::new_counter(metrics, partition, "created_rows_by_gorilla"),
-        ];
+        // Create metrics for collecting information about the number of created data points.
+        // unwrap() is safe if the size of the arrays in GridStreamMetrics is MODEL_TYPE_COUNT.
+        let rows_created = Self::new_counter(metrics, partition, "rows_created");
+        let rows_created_by_model_type = MODEL_TYPE_NAMES
+            .iter()
+            .map(|name| Self::new_counter(metrics, partition, format!("rows_created_by_{name}")))
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
 
+        // Create metrics for collecting information about the number of segments processed.
+        // unwrap() is safe if the size of the arrays in GridStreamMetrics is MODEL_TYPE_COUNT.
         let segments_with_residuals =
             Self::new_counter(metrics, partition, "segments_with_residuals");
-        let segments_with_model_type = [
-            Self::new_counter(metrics, partition, "segments_with_pmc_mean"),
-            Self::new_counter(metrics, partition, "segments_with_swing"),
-            Self::new_counter(metrics, partition, "segments_with_gorilla"),
-        ];
+        let segments_with_model_type = MODEL_TYPE_NAMES
+            .iter()
+            .map(|name| Self::new_counter(metrics, partition, format!("segments_with_{name}")))
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
 
         let segments_regular = Self::new_counter(metrics, partition, "regular_segments");
         let segments_irregular = Self::new_counter(metrics, partition, "irregular_segments");
 
         Self {
             baseline_metrics,
-            created_rows,
-            created_rows_by_model_type,
+            rows_created,
+            rows_created_by_model_type,
             segments_with_residuals,
             segments_with_model_type,
             segments_regular,
@@ -448,7 +455,7 @@ impl GridStreamMetrics {
     fn new_counter(
         metrics: &ExecutionPlanMetricsSet,
         partition: usize,
-        counter_name: &'static str,
+        counter_name: impl Into<Cow<'static, str>>,
     ) -> Count {
         MetricBuilder::new(metrics)
             .with_partition(partition)
@@ -457,8 +464,8 @@ impl GridStreamMetrics {
 
     /// Calculate all metrics and add them to [`Self`].
     fn add(&self, model_type_id: u8, created_rows: usize, has_residuals: bool, is_regular: bool) {
-        self.created_rows.add(created_rows);
-        self.created_rows_by_model_type[model_type_id as usize].add(created_rows);
+        self.rows_created.add(created_rows);
+        self.rows_created_by_model_type[model_type_id as usize].add(created_rows);
         self.segments_with_residuals.add(has_residuals as usize);
         self.segments_with_model_type[model_type_id as usize].add(1);
         self.segments_regular.add(is_regular as usize);
