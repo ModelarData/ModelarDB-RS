@@ -38,7 +38,6 @@ use datafusion::arrow::ipc::writer::{
     DictionaryTracker, IpcDataGenerator, IpcWriteOptions, StreamWriter,
 };
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::common::DFSchema;
 use datafusion::physical_plan::SendableRecordBatchStream;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
@@ -87,13 +86,13 @@ pub fn start_apache_arrow_flight_server(
 /// [`FlightService`] using `sender`. Returns [`Status`] with the code [`tonic::Code::Internal`] if
 /// the result cannot be sent through `sender`.
 async fn send_query_result(
-    df_schema: DFSchema,
     mut query_result_stream: SendableRecordBatchStream,
     sender: Sender<Result<FlightData, Status>>,
 ) -> Result<(), Status> {
     // Serialize and send the schema.
+    let schema = query_result_stream.schema();
     let options = IpcWriteOptions::default();
-    let schema_as_flight_data = SchemaAsIpc::new(&df_schema.into(), &options).into();
+    let schema_as_flight_data = SchemaAsIpc::new(&schema, &options).into();
     send_flight_data(&sender, Ok(schema_as_flight_data)).await?;
 
     // Serialize and send the query result.
@@ -323,7 +322,7 @@ impl FlightService for FlightServiceHandler {
             .to_owned();
 
         // Plan the query.
-        info!("Executing the query: {}.", query);
+        info!("Executing the statement: {}.", query);
         let session = self.context.session.clone();
         let data_frame = session
             .sql(&query)
@@ -331,7 +330,6 @@ impl FlightService for FlightServiceHandler {
             .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
         // Execute the query.
-        let df_schema = data_frame.schema().to_owned();
         let query_result_stream = data_frame
             .execute_stream()
             .await
@@ -346,7 +344,7 @@ impl FlightService for FlightServiceHandler {
             // error occurs it is logged using error!(). Simply calling await! on the JoinHandle
             // returned by task::spawn is also not an option as it waits until send_query_result()
             // returns and thus creates a deadlock since the results are never read from receiver.
-            if let Err(error) = send_query_result(df_schema, query_result_stream, sender).await {
+            if let Err(error) = send_query_result(query_result_stream, sender).await {
                 error!(
                     "Failed to send the result for '{}' due to: {}.",
                     query, error

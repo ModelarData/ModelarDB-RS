@@ -723,7 +723,7 @@ fn test_can_collect_metrics() {
 }
 
 #[test]
-fn test_can_ingest_time_series_with_tags() {
+fn test_do_put_can_ingest_time_series_with_tags() {
     let mut test_context = TestContext::new();
     let time_series = TestContext::generate_time_series_with_tag(false, None, Some("location"));
 
@@ -741,7 +741,34 @@ fn test_can_ingest_time_series_with_tags() {
 }
 
 #[test]
-fn test_can_ingest_time_series_without_tags() {
+fn test_insert_can_ingest_time_series_with_tags() {
+    let mut test_context = TestContext::new();
+    test_context.create_table(TABLE_NAME, TableType::ModelTable);
+
+    let insert_result = test_context
+        .execute_query(format!(
+            "INSERT INTO {TABLE_NAME} VALUES\
+             ('2020-01-01 13:00:00', 1, 2, 3, 4, 5, 'Aalborg'),\
+             ('2020-01-01 13:00:01', 1, 2, 3, 4, 5, 'Aalborg'),\
+             ('2020-01-01 13:00:02', 1, 2, 3, 4, 5, 'Aalborg'),\
+             ('2020-01-01 13:00:03', 1, 2, 3, 4, 5, 'Aalborg'),\
+             ('2020-01-01 13:00:04', 1, 2, 3, 4, 5, 'Aalborg')"
+        ))
+        .unwrap();
+    let insert_result_count = array!(insert_result, 0, UInt64Array).value(0);
+
+    test_context.flush_data_to_disk();
+    let query_result = test_context
+        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .unwrap();
+
+    assert_eq!(insert_result.num_rows(), 1);
+    assert_eq!(insert_result_count, 5);
+    assert_eq!(query_result.num_rows(), 5);
+}
+
+#[test]
+fn test_do_put_can_ingest_time_series_without_tags() {
     let mut test_context = TestContext::new();
     let time_series = TestContext::generate_time_series_with_tag(false, None, None);
 
@@ -759,7 +786,34 @@ fn test_can_ingest_time_series_without_tags() {
 }
 
 #[test]
-fn test_can_ingest_time_series_with_generated_field() {
+fn test_insert_can_ingest_time_series_without_tags() {
+    let mut test_context = TestContext::new();
+    test_context.create_table(TABLE_NAME, TableType::ModelTableNoTag);
+
+    let insert_result = test_context
+        .execute_query(format!(
+            "INSERT INTO {TABLE_NAME} VALUES\
+             ('2020-01-01 13:00:00', 1, 2, 3, 4, 5),\
+             ('2020-01-01 13:00:01', 1, 2, 3, 4, 5),\
+             ('2020-01-01 13:00:02', 1, 2, 3, 4, 5),\
+             ('2020-01-01 13:00:03', 1, 2, 3, 4, 5),\
+             ('2020-01-01 13:00:04', 1, 2, 3, 4, 5)"
+        ))
+        .unwrap();
+    let insert_result_count = array!(insert_result, 0, UInt64Array).value(0);
+
+    test_context.flush_data_to_disk();
+    let query_result = test_context
+        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .unwrap();
+
+    assert_eq!(insert_result.num_rows(), 1);
+    assert_eq!(insert_result_count, 5);
+    assert_eq!(query_result.num_rows(), 5);
+}
+
+#[test]
+fn test_do_put_can_ingest_time_series_with_generated_field() {
     let mut test_context = TestContext::new();
     let time_series = TestContext::generate_time_series_with_tag(false, None, None);
 
@@ -782,7 +836,34 @@ fn test_can_ingest_time_series_with_generated_field() {
 }
 
 #[test]
-fn test_can_ingest_multiple_time_series_with_different_tags() {
+fn test_insert_can_ingest_time_series_with_generated_field() {
+    let mut test_context = TestContext::new();
+    test_context.create_table(TABLE_NAME, TableType::ModelTableAsField);
+
+    let insert_result = test_context
+        .execute_query(format!(
+            "INSERT INTO {TABLE_NAME} VALUES\
+             ('2020-01-01 13:00:00', 1, 2, 3, 4),\
+             ('2020-01-01 13:00:01', 1, 2, 3, 4),\
+             ('2020-01-01 13:00:02', 1, 2, 3, 4),\
+             ('2020-01-01 13:00:03', 1, 2, 3, 4),\
+             ('2020-01-01 13:00:04', 1, 2, 3, 4)"
+        ))
+        .unwrap();
+    let insert_result_count = array!(insert_result, 0, UInt64Array).value(0);
+
+    test_context.flush_data_to_disk();
+    let query_result = test_context
+        .execute_query(format!("SELECT * FROM {TABLE_NAME}"))
+        .unwrap();
+
+    assert_eq!(insert_result.num_rows(), 1);
+    assert_eq!(insert_result_count, 5);
+    assert_eq!(query_result.num_rows(), 5);
+}
+
+#[test]
+fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
     let mut test_context = TestContext::new();
 
     let time_series_with_tag_one: RecordBatch =

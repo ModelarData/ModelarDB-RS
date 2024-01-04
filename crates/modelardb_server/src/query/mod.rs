@@ -21,6 +21,7 @@
 pub mod generated_as_exec;
 pub mod grid_exec;
 pub mod sorted_join_exec;
+pub mod storage_engine_data_sink;
 
 use std::any::Any;
 use std::collections::HashSet;
@@ -43,6 +44,7 @@ use datafusion::execution::context::{ExecutionProps, SessionState};
 use datafusion::logical_expr::{self, utils, BinaryExpr, Expr, Operator};
 use datafusion::physical_expr::planner;
 use datafusion::physical_plan::expressions::{Column, PhysicalSortExpr};
+use datafusion::physical_plan::insert::FileSinkExec;
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr, Statistics};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{COMPRESSED_SCHEMA, QUERY_SCHEMA};
@@ -55,6 +57,7 @@ use crate::context::Context;
 use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
 use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
+use crate::query::storage_engine_data_sink::StorageEngineDataSink;
 use crate::storage::{self, StorageEngine};
 
 /// The global sort order [`ParquetExec`] guarantees for the segments it produces and that
@@ -391,6 +394,33 @@ impl TableProvider for ModelTable {
     /// Specify that model tables performs inexact predicate push-down.
     fn supports_filter_pushdown(&self, _filter: &Expr) -> Result<TableProviderFilterPushDown> {
         Ok(TableProviderFilterPushDown::Inexact)
+    }
+
+    /// Create an [`ExecutionPlan`] that will insert the result of `input` into the table. `inputs`
+    /// must include generated columns to match the query schema returned by
+    /// [`TableProvider::schema()`]. The generated columns are immediately dropped. Generally,
+    /// [`arrow_flight::flight_service_server::FlightService::do_put()`] should be used instead of
+    /// this method as it is more efficient. Returns a [`DataFusionError::Plan`] if the necessary
+    /// metadata cannot be retrieved from the metadata database.
+    async fn insert_into(
+        &self,
+        _state: &SessionState,
+        input: Arc<dyn ExecutionPlan>,
+        _overwrite: bool,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
+        let data_sink = Arc::new(StorageEngineDataSink::new(
+            self.context.storage_engine.clone(),
+            self.model_table_metadata.clone(),
+        ));
+
+        let file_sink = Arc::new(FileSinkExec::new(
+            input,
+            data_sink,
+            self.model_table_metadata.query_schema.clone(),
+            None,
+        ));
+
+        Ok(file_sink)
     }
 
     /// Create an [`ExecutionPlan`] that will scan the table. Returns a [`DataFusionError::Plan`] if

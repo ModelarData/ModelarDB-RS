@@ -119,7 +119,8 @@ modelardb
 
 Be aware that the REPL currently does not support splitting SQL statements over multiple lines and that the SQL
 statements do not need to end with a `;`. In addition to SQL statements, the REPL also supports listing all tables
-using `\dt` and printing the schema of a table using `\d table_name`:
+using `\dt`, printing the schema of a table using `\d table_name`, flushing data in memory to disk using `\f`, flushing
+data in memory and on disk to an object store using `\F`, and printing operations supported by the client using `\h`.
 
 ```sql
 ModelarDB> \dt
@@ -217,8 +218,10 @@ result = flight_client.do_action(action)
 print(list(result))
 ```
 
-After creating a table or a model table, data can be ingested into `modelardbd` using Apache Arrow Flight. For example,
-the following Python example ingests three data points into the model table `wind_turbine`:
+After creating a table or a model table, data can be ingested into `modelardbd` with `INSERT` in `modelardb`. Be aware that
+`INSERT` statements currently must contain values for all columns but that the values for generated columns will be dropped
+by `modelardbd`. As parsing `INSERT` statements add signifigant overhead, binary data can also be ingested programmatically
+using Apache Arrow Flight. For example, this Python example ingests three data points into the model table `wind_turbine`:
 
 ```python
 import pyarrow

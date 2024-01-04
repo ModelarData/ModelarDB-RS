@@ -2062,7 +2062,7 @@ mod tests {
         let model_table_metadata = metadata_manager.model_table_metadata().await.unwrap();
 
         assert_eq!(
-            model_table_metadata.get(0).unwrap().name,
+            model_table_metadata.first().unwrap().name,
             test::model_table_metadata().name
         );
     }
