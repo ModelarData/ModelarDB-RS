@@ -29,5 +29,7 @@ pub use compression::try_compress;
 pub use merge::try_merge_segments;
 pub use models::grid;
 pub use models::is_value_within_error_bound;
+pub use models::{MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
 pub use models::len;
 pub use models::sum;
+pub use models::timestamps::are_compressed_timestamps_regular;

@@ -18,6 +18,7 @@
 //! compressed segments containing metadata and models.
 
 use std::any::Any;
+use std::borrow::Cow;
 use std::fmt::{self, Formatter};
 use std::pin::Pin;
 use std::sync::Arc;
@@ -25,7 +26,8 @@ use std::task::{Context as StdTaskContext, Poll};
 
 use async_trait::async_trait;
 use datafusion::arrow::array::{
-    Array, ArrayRef, BinaryArray, Float32Array, UInt64Array, UInt64Builder, UInt8Array,
+    Array, ArrayBuilder, ArrayRef, BinaryArray, Float32Array, UInt64Array, UInt64Builder,
+    UInt8Array,
 };
 use datafusion::arrow::compute::filter_record_batch;
 use datafusion::arrow::datatypes::SchemaRef;
@@ -35,7 +37,9 @@ use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::{EquivalenceProperties, PhysicalSortRequirement};
 use datafusion::physical_plan::expressions::PhysicalSortExpr;
-use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
+use datafusion::physical_plan::metrics::{
+    BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet,
+};
 use datafusion::physical_plan::{
     DisplayAs, DisplayFormatType, Distribution, ExecutionPlan, Partitioning, PhysicalExpr,
     RecordBatchStream, SendableRecordBatchStream, Statistics,
@@ -43,7 +47,7 @@ use datafusion::physical_plan::{
 use futures::stream::{Stream, StreamExt};
 use modelardb_common::schemas::QUERY_SCHEMA;
 use modelardb_common::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
-use modelardb_compression;
+use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
 
 use super::{QUERY_ORDER_DATA_POINT, QUERY_ORDER_SEGMENT};
 
@@ -141,6 +145,7 @@ impl ExecutionPlan for GridExec {
     ) -> Result<SendableRecordBatchStream> {
         // Must be read before GridStream as task_context are moved into input.
         let batch_size = task_context.session_config().batch_size();
+        let grid_stream_metrics = GridStreamMetrics::new(&self.metrics, partition);
 
         Ok(Box::pin(GridStream::new(
             self.schema.clone(),
@@ -148,7 +153,7 @@ impl ExecutionPlan for GridExec {
             self.limit,
             self.input.execute(partition, task_context)?,
             batch_size,
-            BaselineMetrics::new(&self.metrics, partition),
+            grid_stream_metrics,
         )))
     }
 
@@ -210,7 +215,7 @@ struct GridStream {
     /// Next data point in the current batch of data points to return when the stream is pooled.
     current_batch_offset: usize,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
-    baseline_metrics: BaselineMetrics,
+    grid_stream_metrics: GridStreamMetrics,
 }
 
 impl GridStream {
@@ -220,7 +225,7 @@ impl GridStream {
         limit: Option<usize>,
         input: SendableRecordBatchStream,
         batch_size: usize,
-        baseline_metrics: BaselineMetrics,
+        grid_stream_metrics: GridStreamMetrics,
     ) -> Self {
         // Assumes limit is mostly used to request less than batch_size rows so one batch is enough.
         // If it is a bit larger than batch_size the second batch will contain too many data points.
@@ -235,10 +240,10 @@ impl GridStream {
             schema: schema.clone(),
             maybe_predicate,
             input,
-            baseline_metrics,
             batch_size,
             current_batch: RecordBatch::new_empty(schema),
             current_batch_offset: 0,
+            grid_stream_metrics,
         }
     }
 
@@ -246,7 +251,11 @@ impl GridStream {
     /// points in the current batch and those reconstructed from the compressed segments in `batch`.
     fn grid_and_append_to_leftovers_in_current_batch(&mut self, batch: &RecordBatch) {
         // Record the time elapsed from the timer is created to it is dropped.
-        let _timer = self.baseline_metrics.elapsed_compute().timer();
+        let _timer = self
+            .grid_stream_metrics
+            .baseline_metrics
+            .elapsed_compute()
+            .timer();
 
         // Retrieve the arrays from batch and cast them to their concrete type.
         modelardb_common::arrays!(
@@ -289,6 +298,8 @@ impl GridStream {
 
         // Reconstruct the data points from the compressed segments.
         for row_index in 0..new_rows {
+            let length_before = univariate_id_builder.len();
+
             modelardb_compression::grid(
                 univariate_ids.value(row_index),
                 model_type_ids.value(row_index),
@@ -302,6 +313,13 @@ impl GridStream {
                 &mut univariate_id_builder,
                 &mut timestamp_builder,
                 &mut value_builder,
+            );
+
+            self.grid_stream_metrics.add(
+                model_type_ids.value(row_index),
+                univariate_id_builder.len() - length_before,
+                !residuals.value(row_index).is_empty(),
+                modelardb_compression::are_compressed_timestamps_regular(timestamps.values()),
             );
         }
 
@@ -351,7 +369,7 @@ impl Stream for GridStream {
                 Poll::Ready(None) if self.current_batch_offset < self.current_batch.num_rows() => {
                     // Ignore Poll::Ready(None) as there are data points in the current buffer.
                 }
-                other => return self.baseline_metrics.record_poll(other),
+                other => return self.grid_stream_metrics.baseline_metrics.record_poll(other),
             }
         }
 
@@ -362,7 +380,8 @@ impl Stream for GridStream {
         let length = usize::min(self.batch_size, remaining_data_points);
         let batch = self.current_batch.slice(self.current_batch_offset, length);
         self.current_batch_offset += batch.num_rows();
-        self.baseline_metrics
+        self.grid_stream_metrics
+            .baseline_metrics
             .record_poll(Poll::Ready(Some(Ok(batch))))
     }
 }
@@ -371,5 +390,85 @@ impl RecordBatchStream for GridStream {
     /// Return the schema of the stream.
     fn schema(&self) -> SchemaRef {
         self.schema.clone()
+    }
+}
+
+/// Metrics collected by [`GridStream`] for use by EXPLAIN ANALYZE.
+#[derive(Debug)]
+struct GridStreamMetrics {
+    /// Default set of metrics collected by operators.
+    baseline_metrics: BaselineMetrics,
+    /// Number of data points reconstructed from segments.
+    rows_created: Count,
+    /// Number of data points reconstructed from segments grouped by model type.
+    rows_created_by_model_type: [Count; MODEL_TYPE_COUNT],
+    /// Number of segments with residuals.
+    segments_with_residuals: Count,
+    /// Number of segments grouped by model type.
+    segments_with_model_type: [Count; MODEL_TYPE_COUNT],
+    /// Number of regular segments.
+    segments_regular: Count,
+    /// Number of irregular segments.
+    segments_irregular: Count,
+}
+
+impl GridStreamMetrics {
+    fn new(metrics: &ExecutionPlanMetricsSet, partition: usize) -> Self {
+        let baseline_metrics = BaselineMetrics::new(metrics, partition);
+
+        // Create metrics for collecting information about the number of created data points.
+        // unwrap() is safe if the size of the arrays in GridStreamMetrics is MODEL_TYPE_COUNT.
+        let rows_created = Self::new_counter(metrics, partition, "rows_created");
+        let rows_created_by_model_type = MODEL_TYPE_NAMES
+            .iter()
+            .map(|name| Self::new_counter(metrics, partition, format!("rows_created_by_{name}")))
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+
+        // Create metrics for collecting information about the number of segments processed.
+        // unwrap() is safe if the size of the arrays in GridStreamMetrics is MODEL_TYPE_COUNT.
+        let segments_with_residuals =
+            Self::new_counter(metrics, partition, "segments_with_residuals");
+        let segments_with_model_type = MODEL_TYPE_NAMES
+            .iter()
+            .map(|name| Self::new_counter(metrics, partition, format!("segments_with_{name}")))
+            .collect::<Vec<_>>()
+            .try_into()
+            .unwrap();
+
+        let segments_regular = Self::new_counter(metrics, partition, "regular_segments");
+        let segments_irregular = Self::new_counter(metrics, partition, "irregular_segments");
+
+        Self {
+            baseline_metrics,
+            rows_created,
+            rows_created_by_model_type,
+            segments_with_residuals,
+            segments_with_model_type,
+            segments_regular,
+            segments_irregular,
+        }
+    }
+
+    /// Return a [`Count`] for `partition` with `counter_name` which is associated with `metrics`.
+    fn new_counter(
+        metrics: &ExecutionPlanMetricsSet,
+        partition: usize,
+        counter_name: impl Into<Cow<'static, str>>,
+    ) -> Count {
+        MetricBuilder::new(metrics)
+            .with_partition(partition)
+            .global_counter(counter_name)
+    }
+
+    /// Calculate all metrics and add them to [`Self`].
+    fn add(&self, model_type_id: u8, created_rows: usize, has_residuals: bool, is_regular: bool) {
+        self.rows_created.add(created_rows);
+        self.rows_created_by_model_type[model_type_id as usize].add(created_rows);
+        self.segments_with_residuals.add(has_residuals as usize);
+        self.segments_with_model_type[model_type_id as usize].add(1);
+        self.segments_regular.add(is_regular as usize);
+        self.segments_irregular.add(!is_regular as usize);
     }
 }

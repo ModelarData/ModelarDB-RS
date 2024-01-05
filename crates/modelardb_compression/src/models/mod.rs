@@ -32,12 +32,18 @@ use modelardb_common::types::{
 
 use crate::types::CompressedSegmentBuilder;
 
-/// Unique ids for each model type. Constant values are used instead of an enum
-/// so the stored model type ids can be used in match expressions without being
-/// converted to an enum first.
+/// Unique ids for each model type. Constant values are used instead of an enum so the stored model
+/// type ids can be used in match expressions without being converted to an enum first. Any changes
+/// to the ids must be reflected in all statements matching on them.
 pub const PMC_MEAN_ID: u8 = 0;
 pub const SWING_ID: u8 = 1;
 pub const GORILLA_ID: u8 = 2;
+
+// Number of implemented model types. It is usize instead of u8 as it is used as an array length.
+pub const MODEL_TYPE_COUNT: usize = 3;
+
+// Mapping of model type ids to names.
+pub const MODEL_TYPE_NAMES: [&str; MODEL_TYPE_COUNT] = ["pmc_mean", "swing", "gorilla"];
 
 /// Size of [`Value`] in bytes.
 pub(super) const VALUE_SIZE_IN_BYTES: u8 = mem::size_of::<Value>() as u8;
