@@ -470,17 +470,14 @@ impl CompressedDataManager {
         let mut record_batches = Vec::with_capacity(input_files.len());
         for input_file in input_files {
             let reader = ParquetObjectReader::new(input_data_folder.clone(), input_file.clone());
-            let builder = ParquetRecordBatchStreamBuilder::new(reader).await?;
-            let mut stream = builder.with_batch_size(usize::MAX).build()?;
+            let mut stream = ParquetRecordBatchStreamBuilder::new(reader)
+                .await?
+                .build()?;
 
-            let record_batch = stream.next().await.ok_or_else(|| {
-                ParquetError::General(format!(
-                    "Apache Parquet file at path '{}' could not be read.",
-                    input_file.location
-                ))
-            })??;
-
-            record_batches.push(record_batch);
+            while let Some(maybe_record_batch) = stream.next().await {
+                let record_batch = maybe_record_batch?;
+                record_batches.push(record_batch);
+            }
         }
 
         // Merge the record batches into a single concatenated and merged record batch.
