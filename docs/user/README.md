@@ -219,7 +219,7 @@ print(list(result))
 
 After creating a table or a model table, data can be ingested into `modelardbd` with `INSERT` in `modelardb`. Be aware that
 `INSERT` statements currently must contain values for all columns but that the values for generated columns will be dropped
-by `modelardbd`. As parsing `INSERT` statements add signifigant overhead, binary data can also be ingested programmatically
+by `modelardbd`. As parsing `INSERT` statements add significant overhead, binary data can also be ingested programmatically
 using Apache Arrow Flight. For example, this Python example ingests three data points into the model table `wind_turbine`:
 
 ```python
