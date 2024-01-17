@@ -2,7 +2,6 @@
 :warning: **The current version of ModelarDB is alpha software and not yet ready for production use.**
 
 [![Cargo Build, Lint, and Test](https://github.com/ModelarData/ModelarDB-RS/actions/workflows/cargo-build-lint-and-test-on-pr-and-push.yml/badge.svg)](https://github.com/ModelarData/ModelarDB-RS/actions/workflows/cargo-build-lint-and-test-on-pr-and-push.yml)
-[![Python unittest](https://github.com/ModelarData/ModelarDB-RS/actions/workflows/python-unittest-on-pr-and-push.yml/badge.svg)](https://github.com/ModelarData/ModelarDB-RS/actions/workflows/python-unittest-on-pr-and-push.yml)
 
 ModelarDB is an efficient high-performance time series management system that is designed to efficiently ingest,
 transfer, store, and analyze high-frequency time series across the edge and cloud. It provides state-of-the-art

@@ -16,9 +16,8 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 1. Install [cURL](https://curl.se/) as the *root* user: `pkg install curl`
 
 ### Windows
-1. Install the latest versions of the Microsoft Visual C++ Prerequisites for Rust and Python 3:
+1. Install the latest versions of the Microsoft Visual C++ Prerequisites for Rust:
    - Microsoft Visual C++ Prerequisites for Rust: see [The rustup book](https://rust-lang.github.io/rustup/installation/windows-msvc.html).
-   - Python 3: install [Python 3](https://www.python.org/) and select _"Add python.exe to PATH"_.
 
 ### All
 2. Install the latest stable [Rust Toolchain](https://rustup.rs/).
@@ -220,7 +219,7 @@ print(list(result))
 
 After creating a table or a model table, data can be ingested into `modelardbd` with `INSERT` in `modelardb`. Be aware that
 `INSERT` statements currently must contain values for all columns but that the values for generated columns will be dropped
-by `modelardbd`. As parsing `INSERT` statements add signifigant overhead, binary data can also be ingested programmatically
+by `modelardbd`. As parsing `INSERT` statements add significant overhead, binary data can also be ingested programmatically
 using Apache Arrow Flight. For example, this Python example ingests three data points into the model table `wind_turbine`:
 
 ```python
