@@ -25,18 +25,18 @@ The ModelarDB project consists of the following crates:
 - [modelardb_server](/crates/modelardb_server) - The ModelarDB server in the form of the binary `modelardbd`.
 
 ## Components
-Each major component in the ModelarDB server is described in detail to support further development of the components
-and ease integration between components. We also provide a larger overview of the architecture of ModelarDB, focusing
-on the integration between the components to accomplish the goals of the system.
-
-TODO: Add link to architecture documentation when new architecture is implemented and documented.
+Each major component in the ModelarDB server is described to support further development of the components
+and ease integration between components.
 
 The ModelarDB server consists of the following major components:
-- [Arrow Flight API]() - TODO: Write documentation for Arrow Flight API.
-- [Storage Engine](storage-engine.md) - Component to manage all uncompressed and compressed data in the ModelarDB server.
-- [Compression]() - TODO: Write documentation for Compression component.
-- [Query Engine]() - TODO: Write documentation for Query Engine.
-- [Metadata]() - TODO: Write documentation for Metadata component.
+- **Arrow Flight API** - Provides a public interface to interact with a ModelarDB server.
+- **Storage Engine** - Manages all uncompressed and compressed data in the ModelarDB server.
+- **Compression** - Implements functionality for compressing time-series data using model-based compression.
+- **Query Engine** - Provides functionality for querying data that is compressed using model-based compression.
+- **Metadata Manager** - Provides an interface to interact with the metadata database that contains information about the 
+database schema and compressed data.
+- **Configuration Manager** - Manages the configuration of the ModelarDB server and provides functionality for updating the 
+configuration.
 
 ## Development
 All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md)
