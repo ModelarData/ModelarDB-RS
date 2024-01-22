@@ -23,6 +23,7 @@ The ModelarDB project consists of the following crates:
 - [modelardb_common](/crates/modelardb_common) - Library providing shared functions, macros, and types for use by the other crates.
 - [modelardb_compression](/crates/modelardb_compression) - Library providing lossless and lossy model-based compression of time series.
 - [modelardb_server](/crates/modelardb_server) - The ModelarDB server in the form of the binary `modelardbd`.
+- [modelardb_manager](/crates/modelardb_manager) - The ModelarDB manager in the form of the binary `modelardbm`.
 
 ## Components
 Each major component in the ModelarDB server is described to support further development of the components
@@ -37,6 +38,17 @@ The ModelarDB server consists of the following major components:
 database schema and compressed data.
 - **Configuration Manager** - Manages the configuration of the ModelarDB server and provides functionality for updating the 
 configuration.
+
+Furthermore, ModelarDB also includes a manager that is responsible for administering a cluster of ModelarDB server nodes 
+and providing a consistent database schema. The manager also links external components, such as SQL databases and 
+object stores to the ModelarDB server nodes to ensure access to external components is consistent.
+
+The ModelarDB manager consists of the following major components:
+- **Arrow Flight API** - Provides a public interface to interact with the ModelarDB manager.
+- **Cluster Manager** - Manages all edge and cloud nodes currently controlled by the ModelarDB manager and provides 
+functionality for balancing query workloads between multiple cloud nodes.
+- **Metadata Manager** - Provides an interface to interact with the metadata database that contains information about 
+manager itself, the nodes controlled by the manager, and the database schema and compressed data in the cluster.
 
 ## Development
 All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md)
