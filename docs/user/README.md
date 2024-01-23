@@ -219,6 +219,34 @@ for flight_stream_chunk in flight_stream_reader:
     print(pandas_data_frame)
 ```
 
+When running a larger cluster of `modelardbd` instances, it is recommended to use `modelardbm` to query the data in the 
+remote object store. As mentioned above, `modelardbm` implements the 
+[Arrow Flight RPC protocol](https://arrow.apache.org/docs/format/Flight.html#downloading-data) for querying data. This 
+means that a request is made to the manager first to determine which `modelardbd` cloud instance in the cluster should 
+be queried. The workload of the queries sent to the manager is balanced across all `modelardbd` cloud instances and 
+at least one `modelardbd` cloud instance must be running for the manager to accept queries. The following Python example
+shows how to execute a simple SQL query using a `modelardbm` instance and process the resulting stream of data points 
+using [`pyarrow`](https://pypi.org/project/pyarrow/) and [`pandas`](https://pypi.org/project/pandas/).
+
+```python
+from pyarrow import flight
+
+manager_client = flight.FlightClient("grpc://127.0.0.1:9998")
+query_descriptor = flight.FlightDescriptor.for_command(SELECT * FROM wind_turbine LIMIT 10)
+flight_info = manager_client.get_flight_info(query_descriptor)
+
+endpoint = flight_info.endpoints[0]
+cloud_node_url = endpoint.locations[0]
+
+cloud_client = flight.FlightClient(cloud_node_url)
+flight_stream_reader = cloud_client.do_get(endpoint.ticket)
+
+for flight_stream_chunk in flight_stream_reader:
+    record_batch = flight_stream_chunk.data
+    pandas_data_frame = record_batch.to_pandas()
+    print(pandas_data_frame)
+```
+
 ### Ingest Data
 Before time series can be ingested into `modelardbd`, a model table must be created. From a user's perspective a model
 table functions like any other table and can be queried using SQL. However, the implementation of model table is highly
