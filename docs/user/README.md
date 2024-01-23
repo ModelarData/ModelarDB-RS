@@ -44,6 +44,19 @@ execution mode dictates where queries are executed. When `modelardbd` is deploye
 against local storage and when it is deployed in cloud mode, it executes queries against the object store.
 
 ### Start Server
+There are three options available when starting `modelardbd` depending on the desired deployment use case. Each option
+has different requirements and support different features. 
+
+1. Start `modelardbd` in edge mode using only local storage - This is a limited deployment that should primarily be used
+for testing and experimentation. It does not support transferring ingested time series to an object store and does not 
+support querying data from the object store. However, it does support querying data from local storage.
+2. Start `modelardbd` in edge mode with a manager - An already running instance of `modelardbm` is required to start 
+`modelardbd` in edge mode with a manager. This deployment supports transferring ingested time series to an object store 
+but still queries data from local storage.
+3. Start `modelardbd` in cloud mode with a manager - As above, an already running instance of `modelardbm` is required
+to start `modelardbd` in cloud mode with a manager. This deployment supports transferring ingested time series to an 
+object store and queries data from the same object store.
+
 To run `modelardbd` in edge mode using only local storage, i.e., without transferring the ingested time series to an
 object store, simply pass the path to the local folder `modelardbd` should use as its data folder:
 
@@ -51,9 +64,19 @@ object store, simply pass the path to the local folder `modelardbd` should use a
 modelardbd edge path_to_local_data_folder
 ```
 
-To automatically transfer ingested time series to an object store the following environment variables must first be
-set to appropriate values so `modelardbd` knows which object store to connect to, how to authenticate, and if an HTTP
-connection is allowed or if HTTPS is required:
+To automatically transfer ingested time series to an object store, a manager must first be started. The manager requires
+a PostgreSQL database to store metadata and an Amazon S3-compatible or Azure Blob Storage object store to store the 
+transferred time series. The following environment variables must first be set to appropriate values so `modelardbm` 
+knows how to connect to the PostgreSQL database:
+
+```shell
+METADATA_DB_HOST
+METADATA_DB_PASSWORD
+METADATA_DB_USER
+```
+
+Furthermore, the following environment variables must be set to appropriate values so `modelardbm` knows which object 
+store to connect to, how to authenticate, and if an HTTP connection is allowed or if HTTPS is required:
 
 ```shell
 AWS_ACCESS_KEY_ID
@@ -75,14 +98,14 @@ AWS_ENDPOINT="http://127.0.0.1:9000"
 AWS_ALLOW_HTTP="true"
 ```
 
-Then, assuming a bucket named `wind-turbine` has been created through MinIO's command line tool or web interface, `modelardbd` 
-can be run in edge mode with automatic transfer of the ingested time series to the MinIO bucket `wind-turbine`:
+Then, assuming a bucket named `wind-turbine` has been created through MinIO's command line tool or web interface and 
+a PostgreSQL database named `metadata` has been created, `modelardbm` can be started with the following command:
 
 ```shell
-modelardbd edge path_to_local_data_folder s3://wind-turbine
+modelardbm metadata s3://wind-turbine
 ```
 
-`modelardbd` also supports using [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/)
+`modelardbm` also supports using [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/)
 for the remote object store. To use [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/),
 set the following environment variables instead:
 
@@ -91,26 +114,35 @@ AZURE_STORAGE_ACCOUNT_NAME
 AZURE_STORAGE_ACCESS_KEY
 ```
 
-Assuming a container named `wind-turbine` already exists, `modelardbd` can then be run in edge mode with transfer of
-the ingested time series to the [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/)
-container `wind-turbine`:
+Assuming a container named `wind-turbine` already exists, `modelardbm` can then be started with transfer of the ingested 
+time series to the [Azure Blob Storage](https://azure.microsoft.com/en-us/products/storage/blobs/) container `wind-turbine`:
 
 ```shell
-modelardbd edge path_to_local_data_folder azureblobstorage://wind-turbine
+modelardbm metadata azureblobstorage://wind-turbine
 ```
 
-To run `modelardbd` in cloud mode simply replace `edge` with `cloud` as shown below. Be aware that both a local data
-folder and an object store are required when `modelardbd` is run in cloud mode.
+When a manager is running, `modelardbd` can be started in edge mode with transfer of the ingested time series to the
+object store given to `modelardbm` using the following command:
 
 ```shell
-modelardbd cloud path_to_local_data_folder s3://bucket-name
+modelardbd edge path_to_local_data_folder manager_url
+````
+
+To run `modelardbd` in cloud mode simply replace `edge` with `cloud` as shown below. Be aware that when running in cloud
+mode the `modelardbd` instance will execute queries against the object store given to `modelardbm` and not against local
+storage.
+
+```shell
+modelardbd cloud path_to_local_data_folder manager_url
 ```
 
-Note that the server uses `9999` as the default port. The port can be changed by specifying a different port with an
-environment variable:
+In both cases, access to the PostgreSQL metadata database and the object store is handled by the manager and is set up
+automatically when the `modelardbd` instance started. Note that the manager uses `9998` as the default port and that the server uses `9999` as the default port. The ports 
+can be changed by specifying different ports with the following environment variables:
 
 ```shell
-MODELARDBD_PORT=9998
+MODELARDBM_PORT=8888
+MODELARDBD_PORT=8889
 ```
 
 ### Execute SQL
