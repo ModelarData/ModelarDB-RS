@@ -48,7 +48,7 @@ The ModelarDB manager consists of the following major components:
 - **Cluster Manager** - Manages all edge and cloud nodes currently controlled by the ModelarDB manager and provides 
 functionality for balancing query workloads between multiple cloud nodes.
 - **Metadata Manager** - Provides an interface to interact with the metadata database that contains information about 
-manager itself, the nodes controlled by the manager, and the database schema and compressed data in the cluster.
+the manager itself, the nodes controlled by the manager, and the database schema and compressed data in the cluster.
 
 ## Development
 All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md)

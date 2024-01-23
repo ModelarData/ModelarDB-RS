@@ -137,8 +137,9 @@ modelardbd cloud path_to_local_data_folder manager_url
 ```
 
 In both cases, access to the PostgreSQL metadata database and the object store is handled by the manager and is set up
-automatically when the `modelardbd` instance started. Note that the manager uses `9998` as the default port and that the server uses `9999` as the default port. The ports 
-can be changed by specifying different ports with the following environment variables:
+automatically when the `modelardbd` instances are started. Note that the manager uses `9998` as the default port and 
+that the server uses `9999` as the default port. The ports can be changed by specifying different ports with the 
+following environment variables:
 
 ```shell
 MODELARDBM_PORT=8888
@@ -225,14 +226,14 @@ remote object store. As mentioned above, `modelardbm` implements the
 means that a request is made to the manager first to determine which `modelardbd` cloud instance in the cluster should 
 be queried. The workload of the queries sent to the manager is balanced across all `modelardbd` cloud instances and 
 at least one `modelardbd` cloud instance must be running for the manager to accept queries. The following Python example
-shows how to execute a simple SQL query using a `modelardbm` instance and process the resulting stream of data points 
-using [`pyarrow`](https://pypi.org/project/pyarrow/) and [`pandas`](https://pypi.org/project/pandas/).
+shows how to execute a simple SQL query using a `modelardbm` instance and how to process the resulting stream of data 
+points using [`pyarrow`](https://pypi.org/project/pyarrow/) and [`pandas`](https://pypi.org/project/pandas/).
 
 ```python
 from pyarrow import flight
 
 manager_client = flight.FlightClient("grpc://127.0.0.1:9998")
-query_descriptor = flight.FlightDescriptor.for_command(SELECT * FROM wind_turbine LIMIT 10)
+query_descriptor = flight.FlightDescriptor.for_command("SELECT * FROM wind_turbine LIMIT 10")
 flight_info = manager_client.get_flight_info(query_descriptor)
 
 endpoint = flight_info.endpoints[0]
@@ -282,9 +283,9 @@ result = flight_client.do_action(action)
 print(list(result))
 ```
 
-When running a larger cluster of `modelardbd` instances, it is required to use `modelardbm` to create model tables. 
-This is a necessity as `modelardbm` is responsible for keeping the database schema consistent across all `modelardbd`
-instances in the cluster. The process for creating a model table on the manager is the same as when creating the 
+When running a larger cluster of `modelardbd` instances, it is required to use `modelardbm` to create tables and model 
+tables. This is a necessity as `modelardbm` is responsible for keeping the database schema consistent across all 
+`modelardbd` instances in the cluster. The process for creating a table on the manager is the same as when creating the 
 table directly on a `modelardbd` instance, as shown above. The only difference is that the gRPC URL should be changed to 
 connect to the flight client of the manager instead. When the table is created through `modelardbm`, the table is 
 created in all `modelardbd` instances managed by `modelardbm` automatically.
