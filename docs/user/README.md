@@ -30,13 +30,18 @@ The following commands are for Ubuntu Server. However, equivalent commands shoul
 4. Move `modelardbd`, `modelardbm`, and `modelardb` from the `target` directory to any directory.
 
 ## Usage
-`modelardbd` supports two execution modes, *edge* and *cloud*. For storage, `modelardbd` uses local storage and an
-Amazon S3-compatible or Azure Blob Storage object store (optional in edge mode). The execution mode dictates where
-queries are executed. When `modelardbd` is deployed in edge mode, it executes queries against local storage and when it
-is deployed in cloud mode, it executes queries against the object store. For both deployment modes, `modelardbd`
-automatically compresses the ingested time series using multiple different types of models and continuously transfers
-this compressed representation from local storage to the object store. Be aware that sharing metadata between multiple
-instances of `modelardbd` is currently under development, thus only the instance of `modelardbd` that ingested a time series can currently query it.
+ModelarDB includes two binaries that can be deployed individually or together to support different use cases. 
+`modelardbd` is a server that can be deployed in either *edge* or *cloud* mode and supports ingesting, compressing, 
+and querying time series. `modelardbm` is a manager that can be deployed to manage a cluster of `modelardbd` edge and 
+cloud instances. Specifically, `modelardbm` is responsible for keeping the database schema and access to external 
+components consistent across all `modelardbd` instances in the cluster. Furthermore, `modelardbm` implements the 
+[Arrow Flight RPC protocol](https://arrow.apache.org/docs/format/Flight.html#downloading-data) for querying data from 
+the cluster, thus providing a single, workload-balanced, interface for querying data from all `modelardbd` instances in 
+the cluster.
+
+For storage, `modelardbd` uses local storage and an Amazon S3-compatible or Azure Blob Storage object store. The 
+execution mode dictates where queries are executed. When `modelardbd` is deployed in edge mode, it executes queries 
+against local storage and when it is deployed in cloud mode, it executes queries against the object store.
 
 ### Start Server
 To run `modelardbd` in edge mode using only local storage, i.e., without transferring the ingested time series to an
