@@ -20,4 +20,4 @@ COPY . .
 
 RUN cargo build --release
 
-CMD ["target/release/modelardbd", "edge", "data", "s3://modelardata"]
+CMD ["target/release/modelardbd", "edge", "data"]

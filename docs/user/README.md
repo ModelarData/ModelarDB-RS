@@ -283,3 +283,25 @@ might be needed, it is not recommended to use the [Docker](https://docs.docker.c
 development of ModelarDB. They are however ideal to use for experimenting with ModelarDB or when developing 
 components that utilize ModelarDB. Downloading [Docker Desktop](https://docs.docker.com/desktop/) is recommended to 
 make maintenance of the created containers easier.
+
+### Single edge deployment
+Once [Docker](https://docs.docker.com/) is set up, the single edge deployment can be started by running the following
+command from the root of the ModelarDB-RS repository:
+
+```shell
+docker-compose -p modelardb-single -f docker-compose-single.yml up
+```
+
+Note that `-p modelardb-single` is only used to name the project to make it easier to manage in
+[Docker Desktop](https://docs.docker.com/desktop/). Once created, the container can be started and stopped using
+[Docker Desktop](https://docs.docker.com/desktop/) or by using the corresponding commands:
+
+```console
+docker-compose -p modelardb-single start
+docker-compose -p modelardb-single stop
+```
+
+The single edge is running locally on port `9999` and can be accessed using the `modelardb` client or through 
+Apache Arrow Flight as described above. Tables can be created and data can be ingested, compressed, and saved to local 
+disk. The compressed data on local disk can then be queried.
+
