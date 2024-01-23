@@ -282,6 +282,13 @@ result = flight_client.do_action(action)
 print(list(result))
 ```
 
+When running a larger cluster of `modelardbd` instances, it is required to use `modelardbm` to create model tables. 
+This is a necessity as `modelardbm` is responsible for keeping the database schema consistent across all `modelardbd`
+instances in the cluster. The process for creating a model table on the manager is the same as when creating the 
+table directly on a `modelardbd` instance, as shown above. The only difference is that the gRPC URL should be changed to 
+connect to the flight client of the manager instead. When the table is created through `modelardbm`, the table is 
+created in all `modelardbd` instances managed by `modelardbm` automatically.
+
 After creating a table or a model table, data can be ingested into `modelardbd` with `INSERT` in `modelardb`. Be aware that
 `INSERT` statements currently must contain values for all columns but that the values for generated columns will be dropped
 by `modelardbd`. As parsing `INSERT` statements add significant overhead, binary data can also be ingested programmatically
@@ -318,6 +325,10 @@ with the [Apache Arrow Flight output plugin](https://github.com/ModelarData/Tele
 By using Telegraf, data points can be efficiently streamed into `modelardbd` from a large
 [collection of data sources](https://www.influxdata.com/time-series-platform/telegraf/telegraf-input-plugin/)
 such as [MQTT](https://mqtt.org/) and [OPC-UA](https://opcfoundation.org/about/opc-technologies/opc-ua/).
+
+It should be noted that the ingested data is only transferred to the remote object store when `modelardbd` is deployed
+in edge mode with a manager or in cloud mode with a manager. When `modelardbd` is deployed in edge mode without a
+manager, the ingested data is only stored in local storage.
 
 ## ModelarDB configuration
 `ModelarDB` can be configured before the server is started using environment variables. A full list of the environment 
