@@ -269,31 +269,17 @@ variables is provided here. If an environment variable is not set, the specified
 | MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY     | 65536       | The capacity of each uncompressed data buffer as the number of elements in the buffer where each element is a timestamp and a value. Note that the resulting size of the buffer has to be a multiple of 64 bytes to avoid the actual capacity being larger than the requested due to internal alignment. |
 
 ## Docker
-An environment that includes a local [MinIO](https://min.io/) instance and an edge node using the [MinIO](https://min.io/)
-instance as the remote object store, can be set up using [Docker](https://docs.docker.com/). Note that since
-[Rust](https://www.rust-lang.org/) is a compiled language and a more dynamic `modelardbd` configuration might be needed,
-it is not recommended to use the [Docker](https://docs.docker.com/) environment during active development of `modelardbd`.
-It is however ideal to use for experimenting with `modelardbd` or when developing components that utilize `modelardbd`.
+Two different [Docker](https://docs.docker.com/) environments are included to make it easy to experiment with the 
+different use cases of ModelarDB. The first environment sets up a single instance of `modelardbd` that only uses local 
+storage. Time series data can be ingested into this instance, compressed, and saved to local storage. The compressed 
+data in local storage can then be queried. The second environment covers the more complex use case of ModelarDB where 
+multiple instances of `modelardbd` are deployed in a cluster with a manager that is responsible for managing the 
+cluster. A single edge node and a single cloud node is set up in the cluster. Data can be ingested into the edge or 
+cloud node, compressed, and transferred to a remote object store. The compressed data in the remote object store can 
+then be queried through the cloud node or by directing the query through the manager node.
 
-Downloading [Docker Desktop](https://docs.docker.com/desktop/) is recommended to make maintenance of the created
-containers easier. Once [Docker](https://docs.docker.com/) is set up, the [MinIO](https://min.io/) instance can be
-created by running the services defined in [docker-compose-minio.yml](/docker-compose-minio.yml). The services can
-be built and started using the command:
-
-```shell
-docker-compose -p modelardata-minio -f docker-compose-minio.yml up
-```
-
-After the [MinIO](https://min.io/) service is created, a [MinIO](https://min.io/) client is used to initialize
-the development bucket `modelardata`, if it does not already exist. [MinIO](https://min.io/) can be administered through
-its [web interface](http://127.0.0.1:9001). The default username and password, `minioadmin`, can be used to log in.
-A separate compose file is used for [MinIO](https://min.io/) so an existing [MinIO](https://min.io/) instance can be
-used when `modelardbd` is deployed using [Docker](https://docker.com/), if necessary.
-
-Similarly, the `modelardbd` instance can be built and started using the command:
-
-```shell
-docker-compose -p modelardbd up
-```
-
-The instance can then be accessed using the Apache Arrow Flight interface at `grpc://127.0.0.1:9999`.
+Note that since [Rust](https://www.rust-lang.org/) is a compiled language and a more dynamic ModelarDB configuration
+might be needed, it is not recommended to use the [Docker](https://docs.docker.com/) environments during active 
+development of ModelarDB. They are however ideal to use for experimenting with ModelarDB or when developing 
+components that utilize ModelarDB. Downloading [Docker Desktop](https://docs.docker.com/desktop/) is recommended to 
+make maintenance of the created containers easier.
