@@ -34,8 +34,8 @@ services:
       - minio-server
     entrypoint:
       /bin/sh -c "
-      /usr/bin/mc config host add modelardata-minio http://minio-server:9000 minioadmin minioadmin;
-      /usr/bin/mc mb modelardata-minio/modelardata;
+      /usr/bin/mc config host add modelardb-minio http://minio-server:9000 minioadmin minioadmin;
+      /usr/bin/mc mb modelardb-minio/modelardb;
       exit 0;
       "
 
@@ -52,9 +52,10 @@ services:
 
   # ModelarDB services.
   modelardb-manager:
-    container_name: modelardb-manager
+    image: modelardb
     build: .
-    command: ["target/release/modelardbm", "metadata", "s3://modelardata"]
+    container_name: modelardb-manager
+    command: ["target/release/modelardbm", "metadata", "s3://modelardb"]
     ports:
       - "9998:9998"
     environment:
@@ -72,8 +73,8 @@ services:
       - postgres
 
   modelardb-edge:
+    image: modelardb
     container_name: modelardb-edge
-    build: .
     command: ["target/release/modelardbd", "edge", "data/edge", "grpc://modelardb-manager:9998"]
     ports:
       - "9999:9999"
@@ -89,8 +90,8 @@ services:
       - ./data/edge:/usr/src/app/data/edge
 
   modelardb-cloud:
+    image: modelardb
     container_name: modelardb-cloud
-    build: .
     command: [ "target/release/modelardbd", "cloud", "data/cloud", "grpc://modelardb-manager:9998"]
     ports:
       - "9997:9997"
