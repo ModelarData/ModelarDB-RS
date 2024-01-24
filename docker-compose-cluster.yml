@@ -1,0 +1,105 @@
+# Copyright 2024 The ModelarDB Contributors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+version: "3.8"
+
+services:
+  # Object store services.
+  minio-server:
+    image: minio/minio
+    container_name: minio-server
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server --console-address ":9001" /data
+
+  create-bucket:
+    image: minio/mc
+    container_name: create-bucket
+    depends_on:
+      - minio-server
+    entrypoint:
+      /bin/sh -c "
+      /usr/bin/mc config host add modelardata-minio http://minio-server:9000 minioadmin minioadmin;
+      /usr/bin/mc mb modelardata-minio/modelardata;
+      exit 0;
+      "
+
+  # Metadata database service.
+  postgres:
+    image: postgres:latest
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: modelardb_password
+      POSTGRES_USER: modelardb_user
+      POSTGRES_DB: metadata
+
+  # ModelarDB services.
+  modelardb-manager:
+    container_name: modelardb-manager
+    build: .
+    command: ["target/release/modelardbm", "metadata", "s3://modelardata"]
+    ports:
+      - "9998:9998"
+    environment:
+      METADATA_DB_HOST: postgres
+      METADATA_DB_PASSWORD: modelardb_password
+      METADATA_DB_USER: modelardb_user
+      AWS_ACCESS_KEY_ID: minioadmin
+      AWS_SECRET_ACCESS_KEY: minioadmin
+      AWS_DEFAULT_REGION: eu-central-1
+      AWS_ENDPOINT: http://minio-server:9000
+      AWS_ALLOW_HTTP: "true"
+    depends_on:
+      - minio-server
+      - create-bucket
+      - postgres
+
+  modelardb-edge:
+    container_name: modelardb-edge
+    build: .
+    command: ["target/release/modelardbd", "edge", "data/edge", "grpc://modelardb-manager:9998"]
+    ports:
+      - "9999:9999"
+    environment:
+      MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY: 640
+      MODELARDBD_COMPRESSED_RESERVED_MEMORY_IN_BYTES: 10000
+      MODELARDBD_TRANSFER_BATCH_SIZE_IN_BYTES: 10000
+      MODELARDBD_IP_ADDRESS: host.docker.internal
+    restart: on-failure:10
+    depends_on:
+      - modelardb-manager
+    volumes:
+      - ./data/edge:/usr/src/app/data/edge
+
+  modelardb-cloud:
+    container_name: modelardb-cloud
+    build: .
+    command: [ "target/release/modelardbd", "cloud", "data/cloud", "grpc://modelardb-manager:9998"]
+    ports:
+      - "9997:9997"
+    environment:
+      MODELARDBD_PORT: 9997
+      MODELARDBD_IP_ADDRESS: host.docker.internal
+    restart: on-failure:10
+    depends_on:
+      - modelardb-manager
+      - modelardb-edge
+    volumes:
+      - ./data/cloud:/usr/src/app/data/cloud

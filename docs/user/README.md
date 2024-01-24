@@ -305,3 +305,5 @@ The single edge is running locally on port `9999` and can be accessed using the 
 Apache Arrow Flight as described above. Tables can be created and data can be ingested, compressed, and saved to local 
 disk. The compressed data on local disk can then be queried.
 
+### Cluster deployment
+
