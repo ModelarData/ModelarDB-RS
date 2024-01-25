@@ -135,6 +135,7 @@ impl ModelarDbDialect {
                             sequence_options: None,
                             generation_expr: Some(parser.parse_expr()?),
                             generation_expr_mode: None,
+                            generated_keyword: false
                         };
                         parser.expect_token(&Token::RParen)?;
 
@@ -545,6 +546,7 @@ fn column_defs_to_model_table_query_schema(
                             sequence_options: _,
                             generation_expr,
                             generation_expr_mode: _,
+                            generated_keyword: _,
                         } => {
                             metadata.insert(
                                 "Generated As".to_owned(),
@@ -626,6 +628,7 @@ fn extract_generation_exprs_for_all_columns(
                 sequence_options: _,
                 generation_expr,
                 generation_expr_mode: _,
+                generated_keyword: _,
             } = &column_def_option.option
             {
                 // The expression is saved as a string so it can be stored in the metadata database,
@@ -642,7 +645,7 @@ fn extract_generation_exprs_for_all_columns(
                 // physical Apache Arrow DataFusion expression within the context of schema. This is
                 // to improve error messages if the user-defined expression has semantic errors.
                 let _physical_expr =
-                    planner::create_physical_expr(&expr, &df_schema, &schema, &execution_props)?;
+                    planner::create_physical_expr(&expr, &df_schema, &execution_props)?;
 
                 // unwrap() is safe as the loop iterates over the columns in the schema.
                 let source_columns = expr
@@ -801,6 +804,7 @@ mod tests {
                     sequence_options: None,
                     generation_expr: Some(parser.parse_expr().unwrap()),
                     generation_expr_mode: None,
+                    generated_keyword: false,
                 },
             };
 

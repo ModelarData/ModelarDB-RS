@@ -45,7 +45,7 @@ use futures::{stream, StreamExt};
 use modelardb_common::test::data_generation;
 use modelardb_common::types::ErrorBound;
 use modelardb_common::{array, test};
-use sysinfo::{Pid, PidExt, System, SystemExt};
+use sysinfo::{Pid, System};
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 use tonic::transport::Channel;
