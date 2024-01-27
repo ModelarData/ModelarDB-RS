@@ -349,7 +349,7 @@ mod tests {
     use crate::storage::StorageEngine;
 
     const COLUMN_INDEX: u16 = 5;
-    const COMPRESSED_FILE_SIZE: usize = 2429;
+    const COMPRESSED_FILE_SIZE: usize = 2383;
 
     // Tests for path_is_compressed_file().
     #[test]

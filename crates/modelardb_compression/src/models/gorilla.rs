@@ -268,8 +268,6 @@ pub fn grid(
 mod tests {
     use super::*;
 
-    use arrow::compute::kernels::aggregate;
-    use modelardb_common::types::ValueArray;
     use proptest::num::f32 as ProptestValue;
     use proptest::{bool, collection, prop_assert, prop_assert_eq, prop_assume, proptest};
 
@@ -361,9 +359,9 @@ mod tests {
     #[test]
     fn test_sum(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
+        let expected_sum = values.iter().sum::<f32>();
         let compressed_values = compress_values_using_gorilla(&values, None);
         let sum = sum(values.len(), &compressed_values, None);
-        let expected_sum = aggregate::sum(&ValueArray::from_iter_values(values)).unwrap();
         prop_assert!(models::equal_or_nan(expected_sum as f64, sum as f64));
     }
     }
