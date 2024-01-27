@@ -343,6 +343,41 @@ fn rewrite_filter(query_schema: &SchemaRef, filter: &Expr) -> Option<(Expr, Expr
                 } else {
                     None
                 }
+            } else if let Expr::Column(column) = &**right {
+                // unwrap() is safe as it has already been checked that the fields exists.
+                let field = query_schema.field_with_name(&column.name).unwrap();
+                // Type aliases cannot be used as a constructor and thus cannot be used here.
+                if *field.data_type() == DataType::Timestamp(TimeUnit::Millisecond, None) {
+                    match op {
+                        Operator::Gt | Operator::GtEq => Some((
+                            new_binary_expr(*left.clone(), *op, logical_expr::col("start_time")),
+                            new_binary_expr(*left.clone(), *op, logical_expr::col("timestamp")),
+                        )),
+                        Operator::Lt | Operator::LtEq => Some((
+                            new_binary_expr(*left.clone(), *op, logical_expr::col("end_time")),
+                            new_binary_expr(*left.clone(), *op, logical_expr::col("timestamp")),
+                        )),
+                        Operator::Eq => Some((
+                            new_binary_expr(
+                                new_binary_expr(
+                                    *left.clone(),
+                                    Operator::LtEq,
+                                    logical_expr::col("start_time"),
+                                ),
+                                Operator::And,
+                                new_binary_expr(
+                                    *left.clone(),
+                                    Operator::GtEq,
+                                    logical_expr::col("end_time"),
+                                ),
+                            ),
+                            new_binary_expr(*right.clone(), *op, logical_expr::col("timestamp")),
+                        )),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
             } else {
                 None
             }
