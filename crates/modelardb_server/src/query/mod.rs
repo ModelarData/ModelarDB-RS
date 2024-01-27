@@ -244,7 +244,6 @@ impl ModelTable {
             limit,
             table_partition_cols: vec![],
             output_ordering: vec![QUERY_ORDER_SEGMENT.clone()],
-            infinite_source: false,
         };
 
         let maybe_physical_parquet_predicates =
@@ -401,12 +400,7 @@ fn convert_logical_expr_to_physical_expr(
     query_schema: SchemaRef,
 ) -> Result<Arc<dyn PhysicalExpr>> {
     let df_query_schema = query_schema.clone().to_dfschema()?;
-    planner::create_physical_expr(
-        expr,
-        &df_query_schema,
-        &query_schema,
-        &ExecutionProps::new(),
-    )
+    planner::create_physical_expr(expr, &df_query_schema, &ExecutionProps::new())
 }
 
 #[async_trait]

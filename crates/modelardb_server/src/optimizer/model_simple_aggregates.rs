@@ -164,7 +164,6 @@ fn try_new_aggregate_exec(
             aggregate_exec.group_expr().clone(),
             model_based_aggregate_exprs,
             aggregate_exec.filter_expr().to_vec(),
-            aggregate_exec.order_by_expr().to_vec(),
             grid_execs[0].children().remove(0),
             aggregate_exec.schema(),
         )
