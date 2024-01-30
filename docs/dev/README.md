@@ -30,18 +30,19 @@ Each major component in the ModelarDB server is described to support further dev
 and ease integration between components.
 
 The ModelarDB server consists of the following major components:
-- **Arrow Flight API** - Provides a public interface to interact with a ModelarDB server.
+- **Arrow Flight API** - Provides a public interface to interact with the ModelarDB server.
 - **Storage Engine** - Manages all uncompressed and compressed data in the ModelarDB server.
 - **Compression** - Implements functionality for compressing time-series data using model-based compression.
-- **Query Engine** - Provides functionality for querying data that is compressed using model-based compression.
+- **Query Engine** - Provides functionality for querying data that is ingested by the ModelarDB server.
 - **Metadata Manager** - Provides an interface to interact with the metadata database that contains information about the 
 database schema and compressed data.
 - **Configuration Manager** - Manages the configuration of the ModelarDB server and provides functionality for updating the 
 configuration.
 
 Furthermore, ModelarDB also includes a manager that is responsible for administering a cluster of ModelarDB server nodes 
-and providing a consistent database schema. The manager also links external components, such as SQL databases and 
-object stores to the ModelarDB server nodes to ensure access to external components is consistent.
+and providing a consistent database schema. The manager also links external components, such as the metadata database 
+and the object store for compressed data, to the ModelarDB server nodes to ensure access to external components is 
+consistent.
 
 The ModelarDB manager consists of the following major components:
 - **Arrow Flight API** - Provides a public interface to interact with the ModelarDB manager.

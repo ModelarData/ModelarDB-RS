@@ -47,15 +47,16 @@ against local storage and when it is deployed in cloud mode, it executes queries
 There are three options available when starting `modelardbd` depending on the desired deployment use case. Each option
 has different requirements and support different features. 
 
-1. Start `modelardbd` in edge mode using only local storage - This is a limited deployment that should primarily be used
+1. Start `modelardbd` in edge mode using only local storage - This is a simple and easy-to-use deployment that is ideal 
 for testing and experimentation. It does not support transferring ingested time series to an object store and does not 
-support querying data from the object store. However, it does support querying data from local storage.
-2. Start `modelardbd` in edge mode with a manager - An already running instance of `modelardbm` is required to start 
-`modelardbd` in edge mode with a manager. This deployment supports transferring ingested time series to an object store 
-but still queries data from local storage.
-3. Start `modelardbd` in cloud mode with a manager - As above, an already running instance of `modelardbm` is required
-to start `modelardbd` in cloud mode with a manager. This deployment supports transferring ingested time series to an 
-object store and queries data from the same object store.
+support querying data from the object store. However, it does support ingesting data to and querying data from local 
+storage.
+2. Start `modelardbd` in edge mode with a manager - An already running instance of `modelardbm`, an object store, and a 
+PostgreSQL database is required to start `modelardbd` in edge mode with a manager. This deployment supports transferring 
+ingested time series to an object store but still queries data from local storage.
+3. Start `modelardbd` in cloud mode with a manager - As above, an already running instance of `modelardbm`, an object 
+store, and a PostgreSQL database is required to start `modelardbd` in cloud mode with a manager. This deployment 
+supports transferring ingested time series to an object store and queries data from the same object store.
 
 To run `modelardbd` in edge mode using only local storage, i.e., without transferring the ingested time series to an
 object store, simply pass the path to the local folder `modelardbd` should use as its data folder:
@@ -136,8 +137,8 @@ storage.
 modelardbd cloud path_to_local_data_folder manager_url
 ```
 
-In both cases, access to the PostgreSQL metadata database and the object store is handled by the manager and is set up
-automatically when the `modelardbd` instances are started. Note that the manager uses `9998` as the default port and 
+In both cases, access to the PostgreSQL metadata database and the object store is automatically provided by the manager 
+when the `modelardbd` instances are connected to it. Note that the manager uses `9998` as the default port and 
 that the server uses `9999` as the default port. The ports can be changed by specifying different ports with the 
 following environment variables:
 
@@ -185,8 +186,8 @@ When running a larger cluster of `modelardbd` instances, it is required to use `
 tables. This is a necessity as `modelardbm` is responsible for keeping the database schema consistent across all 
 `modelardbd` instances in the cluster. The process for creating a table on the manager is the same as when creating the 
 table directly on a `modelardbd` instance, as shown above. The only difference is that the gRPC URL should be changed to 
-connect to the flight client of the manager instead. When the table is created through `modelardbm`, the table is 
-created in all `modelardbd` instances managed by `modelardbm` automatically.
+connect to the manager instead. When the table is created through `modelardbm`, the table is created in all `modelardbd` 
+instances managed by `modelardbm` automatically.
 
 After creating a table or a model table, data can be ingested into `modelardbd` with `INSERT` in `modelardb`. Be aware that
 `INSERT` statements currently must contain values for all columns but that the values for generated columns will be dropped
@@ -310,7 +311,9 @@ means that a request is made to the manager first to determine which `modelardbd
 be queried. The workload of the queries sent to the manager is balanced across all `modelardbd` cloud instances and 
 at least one `modelardbd` cloud instance must be running for the manager to accept queries. The following Python example
 shows how to execute a simple SQL query using a `modelardbm` instance and how to process the resulting stream of data 
-points using [`pyarrow`](https://pypi.org/project/pyarrow/) and [`pandas`](https://pypi.org/project/pandas/).
+points using [`pyarrow`](https://pypi.org/project/pyarrow/) and [`pandas`](https://pypi.org/project/pandas/). It should
+be noted that the manager is only responsible for workload balancing and that the query is sent directly to the `modelardbd` 
+cloud instance chosen by the manager which then sends the result set directly back to the requesting client.
 
 ```python
 from pyarrow import flight
