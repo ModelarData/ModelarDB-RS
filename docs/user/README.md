@@ -45,17 +45,17 @@ against local storage and when it is deployed in cloud mode, it executes queries
 
 ### Start Server
 There are three options available when starting `modelardbd` depending on the desired deployment use case. Each option
-has different requirements and support different features. 
+has different requirements and supports different features. 
 
 1. Start `modelardbd` in edge mode using only local storage - This is a simple and easy-to-use deployment that is ideal 
 for testing and experimentation. It does not support transferring ingested time series to an object store and does not 
 support querying data from the object store. However, it does support ingesting data to and querying data from local 
 storage.
 2. Start `modelardbd` in edge mode with a manager - An already running instance of `modelardbm`, an object store, and a 
-PostgreSQL database is required to start `modelardbd` in edge mode with a manager. This deployment supports transferring 
+PostgreSQL database are required to start `modelardbd` in edge mode with a manager. This deployment supports transferring 
 ingested time series to an object store but still queries data from local storage.
 3. Start `modelardbd` in cloud mode with a manager - As above, an already running instance of `modelardbm`, an object 
-store, and a PostgreSQL database is required to start `modelardbd` in cloud mode with a manager. This deployment 
+store, and a PostgreSQL database are required to start `modelardbd` in cloud mode with a manager. This deployment 
 supports transferring ingested time series to an object store and queries data from the same object store.
 
 To run `modelardbd` in edge mode using only local storage, i.e., without transferring the ingested time series to an
