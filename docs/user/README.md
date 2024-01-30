@@ -281,7 +281,7 @@ then be queried through the cloud node or by directing the query through the man
 Note that since [Rust](https://www.rust-lang.org/) is a compiled language and a more dynamic ModelarDB configuration
 might be needed, it is not recommended to use the [Docker](https://docs.docker.com/) environments during active 
 development of ModelarDB. They are however ideal to use for experimenting with ModelarDB or when developing 
-software that utilize ModelarDB. Downloading [Docker Desktop](https://docs.docker.com/desktop/) is recommended to 
+software that utilizes ModelarDB. Downloading [Docker Desktop](https://docs.docker.com/desktop/) is recommended to 
 make maintenance of the created containers easier.
 
 ### Single edge deployment
