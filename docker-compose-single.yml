@@ -1,4 +1,4 @@
-# Copyright 2023 The ModelarDB Contributors
+# Copyright 2024 The ModelarDB Contributors
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,9 +20,3 @@ services:
     build: .
     ports:
       - "9999:9999"
-    environment:
-      AWS_ACCESS_KEY_ID: minioadmin
-      AWS_SECRET_ACCESS_KEY: minioadmin
-      AWS_DEFAULT_REGION:
-      AWS_ENDPOINT: http://host.docker.internal:9000
-      AWS_ALLOW_HTTP: true

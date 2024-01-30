@@ -350,31 +350,68 @@ variables is provided here. If an environment variable is not set, the specified
 | MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY     | 65536       | The capacity of each uncompressed data buffer as the number of elements in the buffer where each element is a timestamp and a value. Note that the resulting size of the buffer has to be a multiple of 64 bytes to avoid the actual capacity being larger than the requested due to internal alignment. |
 
 ## Docker
-An environment that includes a local [MinIO](https://min.io/) instance and an edge node using the [MinIO](https://min.io/)
-instance as the remote object store, can be set up using [Docker](https://docs.docker.com/). Note that since
-[Rust](https://www.rust-lang.org/) is a compiled language and a more dynamic `modelardbd` configuration might be needed,
-it is not recommended to use the [Docker](https://docs.docker.com/) environment during active development of `modelardbd`.
-It is however ideal to use for experimenting with `modelardbd` or when developing components that utilize `modelardbd`.
+Two different [Docker](https://docs.docker.com/) environments are included to make it easy to experiment with the 
+different use cases of ModelarDB. The first environment sets up a single instance of `modelardbd` that only uses local 
+storage. Time series data can be ingested into this instance, compressed, and saved to local storage. The compressed 
+data in local storage can then be queried. The second environment covers the more complex use case of ModelarDB where 
+multiple instances of `modelardbd` are deployed in a cluster with a manager that is responsible for managing the 
+cluster. A single edge node and a single cloud node is set up in the cluster. Data can be ingested into the edge or 
+cloud node, compressed, and transferred to a remote object store. The compressed data in the remote object store can 
+then be queried through the cloud node or by directing the query through the manager node.
 
-Downloading [Docker Desktop](https://docs.docker.com/desktop/) is recommended to make maintenance of the created
-containers easier. Once [Docker](https://docs.docker.com/) is set up, the [MinIO](https://min.io/) instance can be
-created by running the services defined in [docker-compose-minio.yml](/docker-compose-minio.yml). The services can
-be built and started using the command:
+Note that since [Rust](https://www.rust-lang.org/) is a compiled language and a more dynamic ModelarDB configuration
+might be needed, it is not recommended to use the [Docker](https://docs.docker.com/) environments during active 
+development of ModelarDB. They are however ideal to use for experimenting with ModelarDB or when developing 
+software that utilizes ModelarDB. Downloading [Docker Desktop](https://docs.docker.com/desktop/) is recommended to 
+make maintenance of the created containers easier.
 
-```shell
-docker-compose -p modelardata-minio -f docker-compose-minio.yml up
-```
-
-After the [MinIO](https://min.io/) service is created, a [MinIO](https://min.io/) client is used to initialize
-the development bucket `modelardata`, if it does not already exist. [MinIO](https://min.io/) can be administered through
-its [web interface](http://127.0.0.1:9001). The default username and password, `minioadmin`, can be used to log in.
-A separate compose file is used for [MinIO](https://min.io/) so an existing [MinIO](https://min.io/) instance can be
-used when `modelardbd` is deployed using [Docker](https://docker.com/), if necessary.
-
-Similarly, the `modelardbd` instance can be built and started using the command:
+### Single edge deployment
+Once [Docker](https://docs.docker.com/) is set up, the single edge deployment can be started by running the following
+command from the root of the ModelarDB-RS repository:
 
 ```shell
-docker-compose -p modelardbd up
+docker-compose -p modelardb-single -f docker-compose-single.yml up
 ```
 
-The instance can then be accessed using the Apache Arrow Flight interface at `grpc://127.0.0.1:9999`.
+Note that `-p modelardb-single` is only used to name the project to make it easier to manage in
+[Docker Desktop](https://docs.docker.com/desktop/). Once created, the container can be started and stopped using
+[Docker Desktop](https://docs.docker.com/desktop/) or by using the corresponding commands:
+
+```console
+docker-compose -p modelardb-single start
+docker-compose -p modelardb-single stop
+```
+
+The single edge is running locally on port `9999` and can be accessed using the `modelardb` client or through 
+Apache Arrow Flight as described above. Tables can be created and data can be ingested, compressed, and saved to local 
+disk. The compressed data on local disk can then be queried.
+
+### Cluster deployment
+Once [Docker](https://docs.docker.com/) is set up, the cluster deployment can be started by running the following
+command from the root of the ModelarDB-RS repository:
+
+```shell
+docker-compose -p modelardb-cluster -f docker-compose-cluster.yml up
+```
+
+Note that `-p modelardb-cluster` is only used to name the project to make it easier to manage in
+[Docker Desktop](https://docs.docker.com/desktop/). Once created, the containers can be started and stopped using
+[Docker Desktop](https://docs.docker.com/desktop/) or by using the corresponding commands:
+
+```console
+docker-compose -p modelardb-cluster start
+docker-compose -p modelardb-cluster stop
+```
+
+The cluster deployment sets up a [MinIO](https://min.io/) object store and a [MinIO](https://min.io/) client is used to 
+initialize the bucket `modelardb` in the object store. [MinIO](https://min.io/) can be administered through its 
+[web interface](http://127.0.0.1:9001). The default username and password, `minioadmin`, can be used to log in. The 
+deployment also sets up a PostgreSQL database named `metadata` that is used as the metadata database for the cluster. 
+The username `modelardb_user` and the password `modelardb_password` can be used to access the database. 
+
+The cluster itself consists of a manager node, an edge node, and a cloud node. The manager node can be accessed using 
+the URL `grpc://127.0.0.1:9998`, the edge node using the URL `grpc://127.0.0.1:9999`, and the cloud node using the URL
+`grpc://127.0.0.1:9997`. Tables can be created through the manager node and data can be ingested, compressed, and 
+transferred to the object store through the edge node or the cloud node. The compressed data in the 
+[MinIO](https://min.io/) object store can then be queried through the cloud node or by directing the query through 
+the manager node.
