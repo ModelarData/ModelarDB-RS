@@ -281,7 +281,7 @@ then be queried through the cloud node or by directing the query through the man
 Note that since [Rust](https://www.rust-lang.org/) is a compiled language and a more dynamic ModelarDB configuration
 might be needed, it is not recommended to use the [Docker](https://docs.docker.com/) environments during active 
 development of ModelarDB. They are however ideal to use for experimenting with ModelarDB or when developing 
-components that utilize ModelarDB. Downloading [Docker Desktop](https://docs.docker.com/desktop/) is recommended to 
+software that utilize ModelarDB. Downloading [Docker Desktop](https://docs.docker.com/desktop/) is recommended to 
 make maintenance of the created containers easier.
 
 ### Single edge deployment
@@ -331,5 +331,6 @@ The username `modelardb_user` and the password `modelardb_password` can be used 
 The cluster itself consists of a manager node, an edge node, and a cloud node. The manager node can be accessed using 
 the URL `grpc://127.0.0.1:9998`, the edge node using the URL `grpc://127.0.0.1:9999`, and the cloud node using the URL
 `grpc://127.0.0.1:9997`. Tables can be created through the manager node and data can be ingested, compressed, and 
-transferred to the object store through the edge node or the cloud node. The compressed data in the object store can 
-then be queried through the cloud node or by directing the query through the manager node.
+transferred to the object store through the edge node or the cloud node. The compressed data in the 
+[MinIO](https://min.io/) object store can then be queried through the cloud node or by directing the query through 
+the manager node.
