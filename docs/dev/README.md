@@ -23,20 +23,33 @@ The ModelarDB project consists of the following crates:
 - [modelardb_common](/crates/modelardb_common) - Library providing shared functions, macros, and types for use by the other crates.
 - [modelardb_compression](/crates/modelardb_compression) - Library providing lossless and lossy model-based compression of time series.
 - [modelardb_server](/crates/modelardb_server) - The ModelarDB server in the form of the binary `modelardbd`.
+- [modelardb_manager](/crates/modelardb_manager) - The ModelarDB manager in the form of the binary `modelardbm`.
 
 ## Components
-Each major component in the ModelarDB server is described in detail to support further development of the components
-and ease integration between components. We also provide a larger overview of the architecture of ModelarDB, focusing
-on the integration between the components to accomplish the goals of the system.
-
-TODO: Add link to architecture documentation when new architecture is implemented and documented.
+Each major component in the ModelarDB server is described to support further development of the components
+and ease integration between components.
 
 The ModelarDB server consists of the following major components:
-- [Arrow Flight API]() - TODO: Write documentation for Arrow Flight API.
-- [Storage Engine](storage-engine.md) - Component to manage all uncompressed and compressed data in the ModelarDB server.
-- [Compression]() - TODO: Write documentation for Compression component.
-- [Query Engine]() - TODO: Write documentation for Query Engine.
-- [Metadata]() - TODO: Write documentation for Metadata component.
+- **Arrow Flight API** - Provides a public interface to interact with the ModelarDB server.
+- **Storage Engine** - Manages all uncompressed and compressed data in the ModelarDB server.
+- **Compression** - Implements functionality for compressing time-series data using model-based compression.
+- **Query Engine** - Provides functionality for querying data that is ingested by the ModelarDB server.
+- **Metadata Manager** - Provides an interface to interact with the metadata database that contains information about the 
+database schema and compressed data.
+- **Configuration Manager** - Manages the configuration of the ModelarDB server and provides functionality for updating the 
+configuration.
+
+Furthermore, ModelarDB also includes a manager that is responsible for administering a cluster of ModelarDB server nodes 
+and providing a consistent database schema. The manager also links external components, such as the metadata database 
+and the object store for compressed data, to the ModelarDB server nodes to ensure access to external components is 
+consistent.
+
+The ModelarDB manager consists of the following major components:
+- **Arrow Flight API** - Provides a public interface to interact with the ModelarDB manager.
+- **Cluster Manager** - Manages all edge and cloud nodes currently controlled by the ModelarDB manager and provides 
+functionality for balancing query workloads between multiple cloud nodes.
+- **Metadata Manager** - Provides an interface to interact with the metadata database that contains information about 
+the manager itself, the nodes controlled by the manager, and the database schema and compressed data in the cluster.
 
 ## Development
 All code must be formatted according to the [Rust Style Guide](https://github.com/rust-dev-tools/fmt-rfcs/blob/master/guide/guide.md)
@@ -71,8 +84,11 @@ includes crates used for purposes such as logging, where multiple crates provide
 - gRPC - [tonic](https://crates.io/crates/tonic)
 - UUID - [uuid](https://crates.io/crates/uuid)
 - Database Access - [sqlx](https://crates.io/crates/sqlx)
+- Object Store Access - [object_store](https://crates.io/crates/object_store)
 - TLS - [rustls](https://crates.io/crates/rustls)
 - Memory Allocation - [snmalloc-rs](https://crates.io/crates/snmalloc-rs)
 - Hardware Information - [sysinfo](https://crates.io/crates/sysinfo)
 - Property-based Testing - [proptest](https://crates.io/crates/proptest)
 - Temporary Files and Directories - [tempfile](https://crates.io/crates/tempfile)
+- Date and Time - [chrono](https://crates.io/crates/chrono)
+- Random Number Generator - [rand](https://crates.io/crates/rand)
