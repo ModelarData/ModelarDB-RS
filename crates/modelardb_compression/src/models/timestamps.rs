@@ -251,7 +251,7 @@ fn decompress_all_irregular_timestamps(
         }
 
         let delta = match leading_one_bits {
-            0 => last_delta,                                                             // Flag is 0.
+            0 => last_delta,                                               // Flag is 0.
             1 => read_decode_and_compute_delta(&mut bits, 7, last_delta),  // Flag is 10.
             2 => read_decode_and_compute_delta(&mut bits, 9, last_delta),  // Flag is 110.
             3 => read_decode_and_compute_delta(&mut bits, 12, last_delta), // Flag is 1110.
