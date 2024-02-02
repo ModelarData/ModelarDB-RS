@@ -116,7 +116,9 @@ fn compress_irregular_residual_timestamps(uncompressed_timestamps: &[Timestamp])
         let delta_of_delta = delta - last_delta;
 
         match delta_of_delta {
-            0 => compressed_timestamps.append_a_zero_bit(),
+            0 => {
+                compressed_timestamps.append_a_zero_bit()
+            },
             -63..=64 => {
                 compressed_timestamps.append_bits(0b10, 2);
                 compressed_timestamps.append_bits(delta_of_delta as u64, 7);
@@ -249,7 +251,7 @@ fn decompress_all_irregular_timestamps(
         }
 
         let delta = match leading_one_bits {
-            0 => last_delta,                                               // Flag is 0.
+            0 => last_delta,                                                             // Flag is 0.
             1 => read_decode_and_compute_delta(&mut bits, 7, last_delta),  // Flag is 10.
             2 => read_decode_and_compute_delta(&mut bits, 9, last_delta),  // Flag is 110.
             3 => read_decode_and_compute_delta(&mut bits, 12, last_delta), // Flag is 1110.
@@ -318,7 +320,7 @@ mod tests {
             1579701905700,
             1579701905800,
             1579701905900,
-        ]);
+        ], Some(1));
     }
 
     #[test]
@@ -329,19 +331,68 @@ mod tests {
             1579694400353,
             1579694400493,
             1579694400650,
-        ]);
+        ], Some(4));
+    }
+
+    #[test]
+    fn compress_and_decompress_bucket_sized_1_timestamps_for_an_irregular_time_series() {
+        compress_and_decompress_timestamps_for_a_time_series(&[
+            100,
+            100, // 0
+            200
+        ], Some(1));
+    }
+
+    #[test]
+    fn compress_and_decompress_bucket_sized_7_timestamps_for_an_irregular_time_series() {
+        compress_and_decompress_timestamps_for_a_time_series(&[
+            100,
+             37, // -63
+             38, //  64
+            200
+        ], Some(3));
+    }
+
+    #[test]
+    fn compress_and_decompress_bucket_sized_9_timestamps_for_an_irregular_time_series() {
+        compress_and_decompress_timestamps_for_a_time_series(&[
+            500,
+            245, // -255
+            246, //  256
+            500
+        ], Some(4));
+    }
+
+    #[test]
+    fn compress_and_decompress_fourth_bucket_12_sized_timestamps_for_an_irregular_time_series() {
+        compress_and_decompress_timestamps_for_a_time_series(&[
+            5000,
+            2953, // -2047
+            2954, //  2048
+            5000
+        ], Some(5));
+    }
+
+    #[test]
+    fn compress_and_decompress_fourth_bucket_32_sized_timestamps_for_an_irregular_time_series() {
+        compress_and_decompress_timestamps_for_a_time_series(&[
+            5000000000,
+            2852516353, // -2147483647
+            2852516354, //  2147483648
+            5000000000
+        ], Some(10));
     }
 
     #[test]
     fn compress_and_decompress_timestamps_for_a_generated_regular_time_series() {
         let timestamps = generate_timestamps(1000, false);
-        compress_and_decompress_timestamps_for_a_time_series(timestamps.values());
+        compress_and_decompress_timestamps_for_a_time_series(timestamps.values(), None);
     }
 
     #[test]
     fn compress_and_decompress_timestamps_for_a_generated_irregular_time_series() {
         let timestamps = generate_timestamps(1000, true);
-        compress_and_decompress_timestamps_for_a_time_series(timestamps.values());
+        compress_and_decompress_timestamps_for_a_time_series(timestamps.values(), None);
     }
 
     proptest! {
@@ -349,11 +400,11 @@ mod tests {
     fn compress_and_decompress_timestamps_for_a_random_irregular_time_series(timestamps in collection::vec(ProptestTimestamp::ANY, 1..50)) {
         let mut timestamps = timestamps.iter().map(|ts| ts.abs()).collect::<Vec<i64>>();
         timestamps.sort();
-        compress_and_decompress_timestamps_for_a_time_series(&timestamps);
+        compress_and_decompress_timestamps_for_a_time_series(&timestamps, None);
         }
     }
 
-    fn compress_and_decompress_timestamps_for_a_time_series(uncompressed_timestamps: &[Timestamp]) {
+    fn compress_and_decompress_timestamps_for_a_time_series(uncompressed_timestamps: &[Timestamp], maybe_known_size: Option<usize>) {
         let mut uncompressed_timestamps_builder =
             TimestampBuilder::with_capacity(uncompressed_timestamps.len());
         uncompressed_timestamps_builder.append_slice(uncompressed_timestamps);
@@ -362,6 +413,10 @@ mod tests {
         let compressed = compress_residual_timestamps(uncompressed_timestamps.values());
         assert!(uncompressed_timestamps.len() <= 2 || !compressed.is_empty());
         assert!(uncompressed_timestamps.len() > 2 || compressed.is_empty());
+
+        if let Some(known_size) = maybe_known_size {
+            assert_eq!(compressed.len(), known_size);
+        }
 
         let mut decompressed_timestamps = TimestampBuilder::with_capacity(10);
         decompress_all_timestamps(

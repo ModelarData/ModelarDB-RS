@@ -53,7 +53,7 @@ impl<'a> BitReader<'a> {
     }
 
     /// Read the next `number_of_bits` bits from the [`BitReader`]. Assumes that
-    /// `number_of_bits` is less than or equal to 32.
+    /// `number_of_bits` is less than or equal to 64.
     pub fn read_bits(&mut self, number_of_bits: u8) -> u64 {
         debug_assert!(
             number_of_bits <= 64,
