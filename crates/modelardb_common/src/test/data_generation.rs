@@ -198,15 +198,14 @@ pub fn generate_timestamps(length: usize, irregular: bool) -> TimestampArray {
     if irregular {
         let mut std_rng = create_random_number_generator();
         let mut timestamps = TimestampBuilder::with_capacity(length);
-        let mut previous_timestamp: i64 = 0;
+        let mut next_timestamp: i64 = 0;
         for _ in 0..length {
-            let next_timestamp = (std_rng.sample(Uniform::from(10..20))) + previous_timestamp;
             timestamps.append_value(next_timestamp);
-            previous_timestamp = next_timestamp;
+            next_timestamp += std_rng.sample(Uniform::from(100..200));
         }
         timestamps.finish()
     } else {
-        TimestampArray::from_iter_values((100..(length + 1) as i64 * 100).step_by(100))
+        TimestampArray::from_iter_values((0..length as i64 * 100).step_by(100))
     }
 }
 

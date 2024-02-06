@@ -72,7 +72,7 @@ impl Gorilla {
             if self.compressed_values.is_empty() {
                 // Store the first value uncompressed using size_of::<Value> bits.
                 self.compressed_values
-                    .append_bits(value.to_bits(), models::VALUE_SIZE_IN_BITS);
+                    .append_bits(value.to_bits() as u64, models::VALUE_SIZE_IN_BITS);
 
                 self.update_min_max_and_last_value(*value);
             } else {
@@ -123,7 +123,7 @@ impl Gorilla {
                     - self.last_leading_zero_bits
                     - self.last_trailing_zero_bits;
                 self.compressed_values.append_bits(
-                    value_xor_last_value >> self.last_trailing_zero_bits,
+                    (value_xor_last_value >> self.last_trailing_zero_bits) as u64,
                     meaningful_bits,
                 );
             } else {
@@ -131,14 +131,16 @@ impl Gorilla {
                 // 5 and 6 bits respectively as described in the Gorilla paper.
                 self.compressed_values.append_a_one_bit();
                 self.compressed_values
-                    .append_bits(leading_zero_bits as u32, 5);
+                    .append_bits(leading_zero_bits as u64, 5);
 
                 let meaningful_bits =
                     models::VALUE_SIZE_IN_BITS - leading_zero_bits - trailing_zero_bits;
                 self.compressed_values
-                    .append_bits(meaningful_bits as u32, 6);
-                self.compressed_values
-                    .append_bits(value_xor_last_value >> trailing_zero_bits, meaningful_bits);
+                    .append_bits(meaningful_bits as u64, 6);
+                self.compressed_values.append_bits(
+                    (value_xor_last_value >> trailing_zero_bits) as u64,
+                    meaningful_bits,
+                );
 
                 self.last_leading_zero_bits = leading_zero_bits;
                 self.last_trailing_zero_bits = trailing_zero_bits;
@@ -184,7 +186,7 @@ pub fn sum(length: usize, values: &[u8], maybe_model_last_value: Option<Value>) 
         (model_last_value.to_bits(), 0.0)
     } else {
         // The first value is stored uncompressed using size_of::<Value> bits.
-        let first_value = bits.read_bits(models::VALUE_SIZE_IN_BITS);
+        let first_value = bits.read_bits(models::VALUE_SIZE_IN_BITS) as u32;
         (first_value, Value::from_bits(first_value))
     };
 
@@ -201,7 +203,7 @@ pub fn sum(length: usize, values: &[u8], maybe_model_last_value: Option<Value>) 
             // Decompress the value by reading its meaningful bits, restoring
             // its trailing zeroes through shifting, and reversing the XOR.
             let meaningful_bits = models::VALUE_SIZE_IN_BITS - leading_zeros - trailing_zeros;
-            let mut value = bits.read_bits(meaningful_bits);
+            let mut value = bits.read_bits(meaningful_bits) as u32;
             value <<= trailing_zeros;
             value ^= last_value;
             last_value = value;
@@ -234,7 +236,7 @@ pub fn grid(
         model_last_value.to_bits()
     } else {
         // The first value is stored uncompressed using size_of::<Value> bits.
-        let first_value = bits.read_bits(models::VALUE_SIZE_IN_BITS);
+        let first_value = bits.read_bits(models::VALUE_SIZE_IN_BITS) as u32;
         univariate_id_builder.append_value(univariate_id);
         value_builder.append_value(Value::from_bits(first_value));
         first_value
@@ -254,7 +256,7 @@ pub fn grid(
             // Decompress the value by reading its meaningful bits, restoring
             // its trailing zeroes through shifting, and reversing the XOR.
             let meaningful_bits = models::VALUE_SIZE_IN_BITS - leading_zeros - trailing_zeros;
-            let mut value = bits.read_bits(meaningful_bits);
+            let mut value = bits.read_bits(meaningful_bits) as u32;
             value <<= trailing_zeros;
             value ^= last_value;
             last_value = value;

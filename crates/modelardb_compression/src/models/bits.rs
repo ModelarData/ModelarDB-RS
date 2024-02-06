@@ -53,11 +53,11 @@ impl<'a> BitReader<'a> {
     }
 
     /// Read the next `number_of_bits` bits from the [`BitReader`]. Assumes that
-    /// `number_of_bits` is less than or equal to 32.
-    pub fn read_bits(&mut self, number_of_bits: u8) -> u32 {
+    /// `number_of_bits` is less than or equal to 64.
+    pub fn read_bits(&mut self, number_of_bits: u8) -> u64 {
         debug_assert!(
-            number_of_bits <= 32,
-            "The number of bits to read must be less than or equal to 32."
+            number_of_bits <= 64,
+            "The number of bits to read must be less than or equal to 64."
         );
 
         let mut value = 0;
@@ -74,7 +74,7 @@ impl<'a> BitReader<'a> {
             value = (value << 1) | bit;
         }
         self.next_bit = end_bit;
-        value as u32
+        value
     }
 }
 
@@ -108,7 +108,7 @@ impl BitVecBuilder {
     }
 
     /// Append `number_of_bits` from `bits` to the [`BitVecBuilder`].
-    pub fn append_bits(&mut self, bits: u32, number_of_bits: u8) {
+    pub fn append_bits(&mut self, bits: u64, number_of_bits: u8) {
         let mut number_of_bits = number_of_bits;
 
         while number_of_bits > 0 {
@@ -120,7 +120,7 @@ impl BitVecBuilder {
             } else {
                 // Write the remaining number_of_bits bits from bits to self.current_byte.
                 let shift = self.remaining_bits - number_of_bits;
-                let mask = (u8::MAX >> (8 - self.remaining_bits)) as u32;
+                let mask = (u8::MAX >> (8 - self.remaining_bits)) as u64;
                 self.current_byte |= ((bits << shift) & mask) as u8;
                 number_of_bits
             };
@@ -163,7 +163,7 @@ impl BitVecBuilder {
     pub fn finish_with_one_bits(mut self) -> Vec<u8> {
         if self.remaining_bits != 8 {
             let remaining_bits_to_set = 2_u8.pow(self.remaining_bits as u32) - 1;
-            self.append_bits(remaining_bits_to_set as u32, self.remaining_bits);
+            self.append_bits(remaining_bits_to_set as u64, self.remaining_bits);
         }
         self.finish()
     }
