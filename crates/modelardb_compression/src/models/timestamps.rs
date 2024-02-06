@@ -116,9 +116,7 @@ fn compress_irregular_residual_timestamps(uncompressed_timestamps: &[Timestamp])
         let delta_of_delta = delta - last_delta;
 
         match delta_of_delta {
-            0 => {
-                compressed_timestamps.append_a_zero_bit()
-            },
+            0 => compressed_timestamps.append_a_zero_bit(),
             -63..=64 => {
                 compressed_timestamps.append_bits(0b10, 2);
                 compressed_timestamps.append_bits(delta_of_delta as u64, 7);
@@ -296,7 +294,7 @@ mod tests {
 
     // Tests for compress_residual_timestamps() and decompress_all_timestamps().
     #[test]
-    fn compress_timestamps_for_time_series_with_zero_one_or_two_timestamps() {
+    fn test_compress_timestamps_for_time_series_with_zero_one_or_two_timestamps() {
         let mut uncompressed_timestamps_builder = TimestampBuilder::with_capacity(3);
 
         uncompressed_timestamps_builder.append_slice(&[]);
@@ -313,98 +311,117 @@ mod tests {
     }
 
     #[test]
-    fn compress_and_decompress_timestamps_for_a_regular_time_series() {
-        compress_and_decompress_timestamps_for_a_time_series(&[
-            1579701905500,
-            1579701905600,
-            1579701905700,
-            1579701905800,
-            1579701905900,
-        ], Some(1));
+    fn test_compress_and_decompress_timestamps_for_a_regular_time_series() {
+        compress_and_decompress_timestamps_for_a_time_series(
+            &[
+                1579701905500,
+                1579701905600,
+                1579701905700,
+                1579701905800,
+                1579701905900,
+            ],
+            Some(1),
+        );
     }
 
     #[test]
-    fn compress_and_decompress_timestamps_for_an_irregular_time_series() {
-        compress_and_decompress_timestamps_for_a_time_series(&[
-            1579694400057,
-            1579694400197,
-            1579694400353,
-            1579694400493,
-            1579694400650,
-        ], Some(4));
+    fn test_compress_and_decompress_timestamps_for_an_irregular_time_series() {
+        compress_and_decompress_timestamps_for_a_time_series(
+            &[
+                1579694400057,
+                1579694400197,
+                1579694400353,
+                1579694400493,
+                1579694400650,
+            ],
+            Some(4),
+        );
     }
 
     #[test]
-    fn compress_and_decompress_bucket_sized_1_timestamps_for_an_irregular_time_series() {
-        compress_and_decompress_timestamps_for_a_time_series(&[
-            100,
-            100, // 0
-            200
-        ], Some(1));
+    fn test_compress_and_decompress_bucket_sized_1_timestamps_for_an_irregular_time_series() {
+        compress_and_decompress_timestamps_for_a_time_series(
+            &[
+                100, 100, // 0
+                200,
+            ],
+            Some(1),
+        );
     }
 
     #[test]
-    fn compress_and_decompress_bucket_sized_7_timestamps_for_an_irregular_time_series() {
-        compress_and_decompress_timestamps_for_a_time_series(&[
-            100,
-             37, // -63
-             38, //  64
-            200
-        ], Some(3));
+    fn test_compress_and_decompress_bucket_sized_7_timestamps_for_an_irregular_time_series() {
+        compress_and_decompress_timestamps_for_a_time_series(
+            &[
+                100, 37, // -63
+                38, //  64
+                200,
+            ],
+            Some(3),
+        );
     }
 
     #[test]
-    fn compress_and_decompress_bucket_sized_9_timestamps_for_an_irregular_time_series() {
-        compress_and_decompress_timestamps_for_a_time_series(&[
-            500,
-            245, // -255
-            246, //  256
-            500
-        ], Some(4));
+    fn test_compress_and_decompress_bucket_sized_9_timestamps_for_an_irregular_time_series() {
+        compress_and_decompress_timestamps_for_a_time_series(
+            &[
+                500, 245, // -255
+                246, //  256
+                500,
+            ],
+            Some(4),
+        );
     }
 
     #[test]
-    fn compress_and_decompress_fourth_bucket_12_sized_timestamps_for_an_irregular_time_series() {
-        compress_and_decompress_timestamps_for_a_time_series(&[
-            5000,
-            2953, // -2047
-            2954, //  2048
-            5000
-        ], Some(5));
+    fn test_compress_and_decompress_bucket_sized_12_timestamps_for_an_irregular_time_series() {
+        compress_and_decompress_timestamps_for_a_time_series(
+            &[
+                5000, 2953, // -2047
+                2954, //  2048
+                5000,
+            ],
+            Some(5),
+        );
     }
 
     #[test]
-    fn compress_and_decompress_fourth_bucket_32_sized_timestamps_for_an_irregular_time_series() {
-        compress_and_decompress_timestamps_for_a_time_series(&[
-            5000000000,
-            2852516353, // -2147483647
-            2852516354, //  2147483648
-            5000000000
-        ], Some(10));
+    fn test_compress_and_decompress_bucket_sized_32_timestamps_for_an_irregular_time_series() {
+        compress_and_decompress_timestamps_for_a_time_series(
+            &[
+                5000000000, 2852516353, // -2147483647
+                2852516354, //  2147483648
+                5000000000,
+            ],
+            Some(10),
+        );
     }
 
     #[test]
-    fn compress_and_decompress_timestamps_for_a_generated_regular_time_series() {
+    fn test_compress_and_decompress_timestamps_for_a_generated_regular_time_series() {
         let timestamps = generate_timestamps(1000, false);
         compress_and_decompress_timestamps_for_a_time_series(timestamps.values(), None);
     }
 
     #[test]
-    fn compress_and_decompress_timestamps_for_a_generated_irregular_time_series() {
+    fn test_compress_and_decompress_timestamps_for_a_generated_irregular_time_series() {
         let timestamps = generate_timestamps(1000, true);
         compress_and_decompress_timestamps_for_a_time_series(timestamps.values(), None);
     }
 
     proptest! {
     #[test]
-    fn compress_and_decompress_timestamps_for_a_random_irregular_time_series(timestamps in collection::vec(ProptestTimestamp::ANY, 1..50)) {
+    fn test_compress_and_decompress_timestamps_for_a_random_irregular_time_series(timestamps in collection::vec(ProptestTimestamp::ANY, 1..50)) {
         let mut timestamps = timestamps.iter().map(|ts| ts.abs()).collect::<Vec<i64>>();
         timestamps.sort();
         compress_and_decompress_timestamps_for_a_time_series(&timestamps, None);
         }
     }
 
-    fn compress_and_decompress_timestamps_for_a_time_series(uncompressed_timestamps: &[Timestamp], maybe_known_size: Option<usize>) {
+    fn compress_and_decompress_timestamps_for_a_time_series(
+        uncompressed_timestamps: &[Timestamp],
+        maybe_known_size: Option<usize>,
+    ) {
         let mut uncompressed_timestamps_builder =
             TimestampBuilder::with_capacity(uncompressed_timestamps.len());
         uncompressed_timestamps_builder.append_slice(uncompressed_timestamps);
