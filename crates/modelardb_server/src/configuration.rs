@@ -38,6 +38,8 @@ pub struct ConfigurationManager {
     /// The mode of the server used to determine the behaviour when modifying the remote object
     /// store and querying.
     pub(crate) server_mode: ServerMode,
+    /// Amount of memory to reserve for storing multivariate time series.
+    multivariate_reserved_memory_in_bytes: usize,
     /// Amount of memory to reserve for storing uncompressed data buffers.
     uncompressed_reserved_memory_in_bytes: usize,
     /// Amount of memory to reserve for storing compressed data buffers.
@@ -63,6 +65,10 @@ impl ConfigurationManager {
         cluster_mode: ClusterMode,
         server_mode: ServerMode,
     ) -> Self {
+        let multivariate_reserved_memory_in_bytes =
+            env::var("MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES")
+                .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
+
         let uncompressed_reserved_memory_in_bytes =
             env::var("MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES")
                 .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
@@ -81,6 +87,7 @@ impl ConfigurationManager {
             local_data_folder: local_data_folder.to_path_buf(),
             cluster_mode,
             server_mode,
+            multivariate_reserved_memory_in_bytes,
             uncompressed_reserved_memory_in_bytes,
             compressed_reserved_memory_in_bytes,
             transfer_batch_size_in_bytes,
@@ -94,6 +101,11 @@ impl ConfigurationManager {
             writer_threads: 1,
         }
     }
+
+    pub(crate) fn multivariate_reserved_memory_in_bytes(&self) -> usize {
+        self.multivariate_reserved_memory_in_bytes
+    }
+    // TODO: Implement set_multivariate_reserved_memory_in_bytes().
 
     pub(crate) fn uncompressed_reserved_memory_in_bytes(&self) -> usize {
         self.uncompressed_reserved_memory_in_bytes

@@ -39,11 +39,15 @@ use crate::storage::uncompressed_data_buffer::{
 /// additional memory will be rejected while the amount of available memory is negative. Thus,
 /// [`StorageEngine`](crate::storage::StorageEngine) will decrease its memory usage.
 pub(super) struct MemoryPool {
+    /// Condition variable that allow threads to wait for more multivariate memory to be released.
+    wait_for_multivariate_memory: Condvar,
+    /// How many bytes of memory that are left for storing
+    /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) containing multivariate time
+    /// series with metadata
+    remaining_multivariate_memory_in_bytes: Mutex<isize>,
     /// Condition variable that allow threads to wait for more uncompressed memory to be released.
     wait_for_uncompressed_memory: Condvar,
     /// How many bytes of memory that are left for storing
-    /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) containing multivariate time
-    /// series with metadata and
     /// [`UncompressedDataBuffers`](crate::storage::uncompressed_data_buffer::UncompressedDataBuffer)
     /// containing univariate time series without metadata.
     remaining_uncompressed_memory_in_bytes: Mutex<isize>,
@@ -52,19 +56,25 @@ pub(super) struct MemoryPool {
     remaining_compressed_memory_in_bytes: Mutex<isize>,
 }
 
-/// The pool of memory the
+/// The pool of memory the [`StorageEngine`](super::StorageEngine) can use for multivariate data,
+/// the
 /// [`UncompressedDataManager`](crate::storage::uncompressed_data_manager::UncompressedDataManager)
-/// can use for uncompressed data and the
+/// can use for uncompressed data, and the
 /// [`CompressedDataManager`](crate::storage::CompressedDataManager) can use for compressed data.
 impl MemoryPool {
-    /// Create a new [`MemoryPool`] with at most [`i64::MAX`] bytes of memory for uncompressed data
-    /// and at most [`i64::MAX`] bytes of memory for compressed data.
+    /// Create a new [`MemoryPool`] with at most [`i64::MAX`] bytes of memory for multivariate,
+    /// uncompressed, and compressed data.
     pub(super) fn new(
+        multivariate_memory_in_bytes: usize,
         uncompressed_memory_in_bytes: usize,
         compressed_memory_in_bytes: usize,
     ) -> Self {
         // unwrap() is safe as i64::MAX is 8192 PiB and the value is from ConfigurationManager.
         Self {
+            wait_for_multivariate_memory: Condvar::new(),
+            remaining_multivariate_memory_in_bytes: Mutex::new(
+                uncompressed_memory_in_bytes.try_into().unwrap(),
+            ),
             wait_for_uncompressed_memory: Condvar::new(),
             remaining_uncompressed_memory_in_bytes: Mutex::new(
                 uncompressed_memory_in_bytes.try_into().unwrap(),
@@ -73,6 +83,50 @@ impl MemoryPool {
                 compressed_memory_in_bytes.try_into().unwrap(),
             ),
         }
+    }
+
+    /// Change the amount of memory available for multivariate data by `size_in_bytes`.
+    pub(super) fn adjust_multivariate_memory(&self, size_in_bytes: isize) {
+        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
+        *self.remaining_multivariate_memory_in_bytes.lock().unwrap() += size_in_bytes;
+        self.wait_for_multivariate_memory.notify_all();
+    }
+
+    /// Return the amount of memory available for multivariate data in bytes.
+    pub(super) fn remaining_multivariate_memory_in_bytes(&self) -> isize {
+        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
+        *self.remaining_multivariate_memory_in_bytes.lock().unwrap()
+    }
+
+    /// Reserve `size_in_bytes` bytes of memory for multivariate data. This is a soft limit, thus
+    /// there may temporarily be an over allocation of memory for multivariate data.
+    pub(super) fn reserve_multivariate_memory(&self, size_in_bytes: usize) {
+        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
+        *self.remaining_multivariate_memory_in_bytes.lock().unwrap() -= size_in_bytes as isize;
+    }
+
+    /// Wait until `size_in_bytes` bytes of memory is available for multivariate data and then
+    /// reserve it. Thus, this method never over allocates memory for multivariate data.
+    pub(super) fn wait_for_multivariate_memory(&self, size_in_bytes: usize) {
+        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
+        let mut memory_in_bytes = self.remaining_multivariate_memory_in_bytes.lock().unwrap();
+
+        while *memory_in_bytes < size_in_bytes as isize {
+            // unwrap() is safe as wait() only returns an error if the mutex is poisoned.
+            memory_in_bytes = self
+                .wait_for_multivariate_memory
+                .wait(memory_in_bytes)
+                .unwrap();
+        }
+
+        *memory_in_bytes -= size_in_bytes as isize;
+    }
+
+    /// Free `size_in_bytes` bytes of memory for storing multivariate data.
+    pub(super) fn free_multivariate_memory(&self, size_in_bytes: usize) {
+        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
+        *self.remaining_multivariate_memory_in_bytes.lock().unwrap() += size_in_bytes as isize;
+        self.wait_for_multivariate_memory.notify_all();
     }
 
     /// Change the amount of memory available for uncompressed data by `size_in_bytes`.

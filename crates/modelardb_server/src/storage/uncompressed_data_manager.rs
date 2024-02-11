@@ -328,7 +328,7 @@ impl UncompressedDataManager {
 
         // Return the memory used by the data points to the pool right before they are de-allocated.
         self.memory_pool
-            .free_uncompressed_memory(data_points.get_array_memory_size());
+            .free_multivariate_memory(data_points.get_array_memory_size());
 
         Ok(())
     }

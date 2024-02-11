@@ -111,6 +111,7 @@ impl StorageEngine {
         // Create shared memory pool.
         let configuration_manager = configuration_manager.read().await;
         let memory_pool = Arc::new(MemoryPool::new(
+            configuration_manager.multivariate_reserved_memory_in_bytes(),
             configuration_manager.uncompressed_reserved_memory_in_bytes(),
             configuration_manager.compressed_reserved_memory_in_bytes(),
         ));
@@ -295,7 +296,7 @@ impl StorageEngine {
     ) -> Result<(), String> {
         // TODO: write to a WAL and use it to ensure termination never duplicates or loses data.
         self.memory_pool
-            .wait_for_uncompressed_memory(multivariate_data_points.get_array_memory_size());
+            .wait_for_multivariate_memory(multivariate_data_points.get_array_memory_size());
 
         self.channels
             .multivariate_data_sender
