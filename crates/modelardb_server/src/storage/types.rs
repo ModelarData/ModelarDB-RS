@@ -73,7 +73,7 @@ impl MemoryPool {
         Self {
             wait_for_multivariate_memory: Condvar::new(),
             remaining_multivariate_memory_in_bytes: Mutex::new(
-                uncompressed_memory_in_bytes.try_into().unwrap(),
+                multivariate_memory_in_bytes.try_into().unwrap(),
             ),
             wait_for_uncompressed_memory: Condvar::new(),
             remaining_uncompressed_memory_in_bytes: Mutex::new(
@@ -96,13 +96,6 @@ impl MemoryPool {
     pub(super) fn remaining_multivariate_memory_in_bytes(&self) -> isize {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         *self.remaining_multivariate_memory_in_bytes.lock().unwrap()
-    }
-
-    /// Reserve `size_in_bytes` bytes of memory for multivariate data. This is a soft limit, thus
-    /// there may temporarily be an over allocation of memory for multivariate data.
-    pub(super) fn reserve_multivariate_memory(&self, size_in_bytes: usize) {
-        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        *self.remaining_multivariate_memory_in_bytes.lock().unwrap() -= size_in_bytes as isize;
     }
 
     /// Wait until `size_in_bytes` bytes of memory is available for multivariate data and then
@@ -142,11 +135,22 @@ impl MemoryPool {
         *self.remaining_uncompressed_memory_in_bytes.lock().unwrap()
     }
 
-    /// Reserve `size_in_bytes` bytes of memory for uncompressed data. This is a soft limit, thus
-    /// there may temporarily be an over allocation of memory for uncompressed data.
-    pub(super) fn reserve_uncompressed_memory(&self, size_in_bytes: usize) {
+    /// Try to reserve `size_in_bytes` bytes of memory for storing uncompressed data. Returns
+    /// [`true`] if the reservation succeeds and [`false`] otherwise.
+    #[must_use]
+    pub(super) fn try_reserve_uncompressed_memory(&self, size_in_bytes: usize) -> bool {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        *self.remaining_uncompressed_memory_in_bytes.lock().unwrap() -= size_in_bytes as isize;
+        let mut remaining_uncompressed_memory_in_bytes =
+            self.remaining_uncompressed_memory_in_bytes.lock().unwrap();
+
+        let size_in_bytes = size_in_bytes as isize;
+
+        if size_in_bytes <= *remaining_uncompressed_memory_in_bytes {
+            *remaining_uncompressed_memory_in_bytes -= size_in_bytes;
+            true
+        } else {
+            false
+        }
     }
 
     /// Wait until `size_in_bytes` bytes of memory is available for uncompressed data and then
@@ -416,31 +420,33 @@ mod tests {
     }
 
     #[test]
-    fn test_reserve_uncompressed_memory_to_zero() {
+    fn test_try_reserve_available_uncompressed_memory() {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
             test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool.reserve_uncompressed_memory(test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES);
+        assert!(memory_pool
+            .try_reserve_uncompressed_memory(test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES));
 
         assert_eq!(memory_pool.remaining_uncompressed_memory_in_bytes(), 0);
     }
 
     #[test]
-    fn test_reserve_uncompressed_memory_decrease_below_zero() {
+    fn test_try_reserve_unavailable_uncompressed_memory() {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
             test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool.reserve_uncompressed_memory(2 * test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES);
+        assert!(!memory_pool
+            .try_reserve_uncompressed_memory(2 * test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES));
 
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            -(test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize)
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
     }
 
@@ -559,6 +565,7 @@ mod tests {
 
     fn create_memory_pool() -> MemoryPool {
         MemoryPool::new(
+            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES,
             test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
             test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         )

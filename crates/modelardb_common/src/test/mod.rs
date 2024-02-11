@@ -35,6 +35,9 @@ pub const UNCOMPRESSED_BUFFER_SIZE: usize = 786432;
 pub const COMPRESSED_SEGMENTS_SIZE: usize = 1335;
 
 /// Number of bytes reserved for uncompressed data in tests.
+pub const MULTIVARIATE_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
+
+/// Number of bytes reserved for uncompressed data in tests.
 pub const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
 
 /// Number of bytes reserved for compressed data in tests.
