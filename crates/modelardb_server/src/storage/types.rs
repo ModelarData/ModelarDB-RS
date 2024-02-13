@@ -86,6 +86,8 @@ impl MemoryPool {
     }
 
     /// Change the amount of memory available for multivariate data by `size_in_bytes`.
+    // TODO: implement support for adjusting multivariate memory.
+    #[allow(dead_code)]
     pub(super) fn adjust_multivariate_memory(&self, size_in_bytes: isize) {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         *self.remaining_multivariate_memory_in_bytes.lock().unwrap() += size_in_bytes;
@@ -93,6 +95,7 @@ impl MemoryPool {
     }
 
     /// Return the amount of memory available for multivariate data in bytes.
+    #[allow(dead_code)]
     pub(super) fn remaining_multivariate_memory_in_bytes(&self) -> isize {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         *self.remaining_multivariate_memory_in_bytes.lock().unwrap()
@@ -237,12 +240,12 @@ pub(super) struct Channels {
     /// time series from the [`UncompressedDataManager`](super::UncompressedDataManager) to the
     /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are compressed into
     /// compressed segments.
-    pub(super) univariate_data_sender: Sender<Message<Box<dyn UncompressedDataBuffer>>>,
+    pub(super) univariate_data_sender: Sender<Message<UncompressedDataBuffer>>,
     /// Receiver of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
     /// time series from the [`UncompressedDataManager`](super::UncompressedDataManager) in the
     /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are compressed into
     /// compressed segments.
-    pub(super) univariate_data_receiver: Receiver<Message<Box<dyn UncompressedDataBuffer>>>,
+    pub(super) univariate_data_receiver: Receiver<Message<UncompressedDataBuffer>>,
     /// Sender of [`CompressedSegmentBatches`](CompressedSegmentBatch) with compressed segments from
     /// the [`UncompressedDataManager`](super::UncompressedDataManager) to the
     /// [`CompressedDataManager`](super::CompressedDataManager) where they are written to a local
