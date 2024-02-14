@@ -625,9 +625,8 @@ impl FlightService for FlightServiceHandler {
 
                     configuration_manager
                         .set_uncompressed_reserved_memory_in_bytes(new_value, storage_engine)
-                        .await;
-
-                    Ok(())
+                        .await
+                        .map_err(|error| Status::internal(error.to_string()))
                 }
                 "compressed_reserved_memory_in_bytes" => {
                     let new_value = new_value.ok_or(invalid_empty_error)?;

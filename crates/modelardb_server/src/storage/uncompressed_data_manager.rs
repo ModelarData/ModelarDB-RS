@@ -503,33 +503,7 @@ impl UncompressedDataManager {
                 self.memory_pool
                     .wait_for_uncompressed_memory(UncompressedInMemoryDataBuffer::memory_size());
             } else {
-                // Extract univariate_id but drop the reference to the map element as remove()
-                // may deadlock if called when holding any sort of reference into the map.
-                let univariate_id = {
-                    // unwrap() is safe as uncompressed_in_memory_data_buffers must contain some
-                    // uncompressed in-memory data buffers for the memory to be exhausted.
-                    *self
-                        .uncompressed_in_memory_data_buffers
-                        .iter()
-                        .next()
-                        .unwrap()
-                        .key()
-                };
-
-                // unwrap() is safe as univariate_id was just extracted from the map.
-                let uncompressed_in_memory_data_buffer = self
-                    .uncompressed_in_memory_data_buffers
-                    .remove(&univariate_id)
-                    .unwrap()
-                    .1;
-
-                let uncompressed_on_disk_buffer = self
-                    .spill_in_memory_data_buffer(uncompressed_in_memory_data_buffer)
-                    .await?;
-
-                self.uncompressed_on_disk_data_buffers
-                    .insert(univariate_id, uncompressed_on_disk_buffer);
-
+                self.spill_an_in_memory_data_buffer().await?;
                 return Ok(true);
             }
         }
@@ -537,17 +511,42 @@ impl UncompressedDataManager {
         Ok(false)
     }
 
-    /// Spill `uncompressed_in_memory_data_buffer` if it is an [`UncompressedInMemoryDataBuffer`]
-    /// and return [`IOError`] if writing fails.
-    async fn spill_in_memory_data_buffer(
-        &self,
-        uncompressed_in_memory_data_buffer: UncompressedInMemoryDataBuffer,
-    ) -> Result<UncompressedOnDiskDataBuffer, IOError> {
-        let uncompressed_in_memory_data_buffer_debug_string =
-            format!("{:?}", uncompressed_in_memory_data_buffer);
-        let uncompressed_on_disk_data_buffer = uncompressed_in_memory_data_buffer
+    /// Spill a random [`UncompressedInMemoryDataBuffer`] and return an [`IOError`] if no data
+    /// buffers are currently in memory or if the writing to disk fails.
+    async fn spill_an_in_memory_data_buffer(&self) -> Result<(), IOError> {
+        // Extract univariate_id but drop the reference to the map element as remove()
+        // may deadlock if called when holding any sort of reference into the map.
+        let univariate_id = {
+            // unwrap() is safe as uncompressed_in_memory_data_buffers must contain some
+            // uncompressed in-memory data buffers for the memory to be exhausted.
+            *self
+                .uncompressed_in_memory_data_buffers
+                .iter()
+                .next()
+                .ok_or_else(|| IOError::new(IOErrorKind::NotFound, "No in-memory data buffer."))?
+                .key()
+        };
+
+        // unwrap() is safe as univariate_id was just extracted from the map.
+        let mut uncompressed_in_memory_data_buffer = self
+            .uncompressed_in_memory_data_buffers
+            .remove(&univariate_id)
+            .unwrap()
+            .1;
+
+        let maybe_uncompressed_on_disk_data_buffer = uncompressed_in_memory_data_buffer
             .spill_to_apache_parquet(self.local_data_folder.as_path())
-            .await?;
+            .await;
+
+        // If an error occurs the in-memory buffer must be re-added to the map before returning.
+        let uncompressed_on_disk_data_buffer = match maybe_uncompressed_on_disk_data_buffer {
+            Ok(uncompressed_on_disk_data_buffer) => uncompressed_on_disk_data_buffer,
+            Err(error) => {
+                self.uncompressed_in_memory_data_buffers
+                    .insert(univariate_id, uncompressed_in_memory_data_buffer);
+                return Err(error);
+            }
+        };
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
@@ -563,16 +562,18 @@ impl UncompressedDataManager {
             .unwrap()
             .append(uncompressed_on_disk_data_buffer.disk_size() as isize, true);
 
+        self.uncompressed_on_disk_data_buffers
+            .insert(univariate_id, uncompressed_on_disk_data_buffer);
+
         // Add the size of the in-memory data buffer back to the remaining reserved bytes.
         self.memory_pool.free_uncompressed_memory(freed_memory);
 
         debug!(
-            "Spilled '{}'. Remaining reserved bytes: {}.",
-            uncompressed_in_memory_data_buffer_debug_string,
+            "Spilled in-memory buffer. Remaining reserved bytes: {}.",
             self.memory_pool.remaining_uncompressed_memory_in_bytes()
         );
 
-        Ok(uncompressed_on_disk_data_buffer)
+        Ok(())
     }
 
     /// Finish active in-memory and on-disk data buffers that are no longer used to free memory and
@@ -795,14 +796,27 @@ impl UncompressedDataManager {
     }
 
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.
-    pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(&self, value_change: isize) {
-        // TODO: disallow setting memory lower than the size of one buffer and flush until there is enough memory.
+    /// Restores the configuration and returns [`IOError`] if an in-memory buffer cannot be spilled.
+    pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(
+        &self,
+        value_change: isize,
+    ) -> Result<(), IOError> {
         self.memory_pool.adjust_uncompressed_memory(value_change);
+
+        while self.memory_pool.remaining_uncompressed_memory_in_bytes() < 0 {
+            if let Err(error) = self.spill_an_in_memory_data_buffer().await {
+                self.memory_pool.adjust_uncompressed_memory(-value_change);
+                return Err(error);
+            }
+        }
+
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
+
     use super::*;
 
     use std::path::Path;
@@ -1270,7 +1284,8 @@ mod tests {
 
         data_manager
             .adjust_uncompressed_remaining_memory_in_bytes(10000)
-            .await;
+            .await
+            .unwrap();
 
         assert_eq!(
             data_manager
@@ -1300,15 +1315,18 @@ mod tests {
 
         data_manager
             .adjust_uncompressed_remaining_memory_in_bytes(
-                -(test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize),
+                -data_manager
+                    .memory_pool
+                    .remaining_uncompressed_memory_in_bytes(),
             )
-            .await;
+            .await
+            .unwrap();
 
         assert_eq!(
             data_manager
                 .memory_pool
                 .remaining_uncompressed_memory_in_bytes(),
-            -(test::UNCOMPRESSED_BUFFER_SIZE as isize)
+            0
         );
 
         // Insert data that should force the existing data to now be spilled.

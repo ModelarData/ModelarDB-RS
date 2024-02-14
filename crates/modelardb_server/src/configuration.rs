@@ -116,7 +116,7 @@ impl ConfigurationManager {
         &mut self,
         new_uncompressed_reserved_memory_in_bytes: usize,
         storage_engine: Arc<RwLock<StorageEngine>>,
-    ) {
+    ) -> Result<(), ModelarDbError> {
         // Since the storage engine only keeps track of the remaining reserved memory, calculate
         // how much the value should change.
         let value_change = new_uncompressed_reserved_memory_in_bytes as isize
@@ -126,9 +126,11 @@ impl ConfigurationManager {
             .write()
             .await
             .adjust_uncompressed_remaining_memory_in_bytes(value_change)
-            .await;
+            .await
+            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
 
         self.uncompressed_reserved_memory_in_bytes = new_uncompressed_reserved_memory_in_bytes;
+        Ok(())
     }
 
     pub(crate) fn compressed_reserved_memory_in_bytes(&self) -> usize {
@@ -240,7 +242,8 @@ mod tests {
             .write()
             .await
             .set_uncompressed_reserved_memory_in_bytes(1024, storage_engine)
-            .await;
+            .await
+            .unwrap();
 
         assert_eq!(
             configuration_manager

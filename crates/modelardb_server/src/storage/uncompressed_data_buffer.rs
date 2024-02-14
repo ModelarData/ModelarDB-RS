@@ -193,7 +193,7 @@ impl UncompressedInMemoryDataBuffer {
     /// Spill the in-memory [`UncompressedInMemoryDataBuffer`] to an Apache Parquet file and return
     /// the [`UncompressedOnDiskDataBuffer`] when finished.
     pub(super) async fn spill_to_apache_parquet(
-        mut self,
+        &mut self,
         local_data_folder: &Path,
     ) -> Result<UncompressedOnDiskDataBuffer, IOError> {
         // Since the schema is constant and the columns are always the same length, creating the
@@ -201,7 +201,7 @@ impl UncompressedInMemoryDataBuffer {
         let batch = self.record_batch().await.unwrap();
         UncompressedOnDiskDataBuffer::try_spill(
             self.univariate_id,
-            self.model_table_metadata,
+            self.model_table_metadata.clone(),
             self.updated_by_batch_index,
             local_data_folder,
             batch,
