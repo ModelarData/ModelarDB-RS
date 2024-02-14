@@ -32,7 +32,7 @@ use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 use crate::context::Context;
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
@@ -228,6 +228,9 @@ impl UncompressedDataManager {
             model_table_metadata.name
         );
 
+        // Track if any buffers have been spilled to print a warning only once.
+        let mut spilled_buffers = false;
+
         // Read the current batch index as it may be updated in parallel.
         let current_batch_index = self.current_batch_index.load(Ordering::Relaxed);
 
@@ -314,15 +317,16 @@ impl UncompressedDataManager {
                 let value = field_column_array.value(index);
 
                 // unwrap() is safe to use since the timestamps array cannot contain null values.
-                self.insert_data_point(
-                    univariate_id,
-                    timestamp.unwrap(),
-                    value,
-                    model_table_metadata.clone(),
-                    current_batch_index,
-                )
-                .await
-                .map_err(|error| error.to_string())?
+                spilled_buffers |= self
+                    .insert_data_point(
+                        univariate_id,
+                        timestamp.unwrap(),
+                        value,
+                        model_table_metadata.clone(),
+                        current_batch_index,
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?
             }
         }
 
@@ -337,14 +341,19 @@ impl UncompressedDataManager {
         self.memory_pool
             .free_multivariate_memory(data_points.get_array_memory_size());
 
+        // Print a single warning if any buffers are spilled so ingestion can be optimized.
+        if spilled_buffers {
+            warn!("Forced to spill uncompressed buffers, reduce buffer size or increase memory");
+        }
+
         Ok(())
     }
 
     /// Insert a single data point into the in-memory buffer for `univariate_id` if one exists. If
     /// the buffer has been spilled, read it back into memory. If no buffer exists for
     /// `univariate_id`, allocate a new buffer that will be compressed within the error bound in
-    /// `model_table_metadata`. Returns [`IOError`] if the error bound cannot be retrieved from the
-    /// [`TableMetadataManager`].
+    /// `model_table_metadata`. Returns [`true`] if a buffer was spilled, [`false`] if not, and
+    /// [`IOError`] if the error bound cannot be retrieved from the [`TableMetadataManager`].
     async fn insert_data_point(
         &self,
         univariate_id: u64,
@@ -352,11 +361,15 @@ impl UncompressedDataManager {
         value: Value,
         model_table_metadata: Arc<ModelTableMetadata>,
         current_batch_index: u64,
-    ) -> Result<(), IOError> {
+    ) -> Result<bool, IOError> {
         debug!(
             "Inserting data point ({}, {}) into uncompressed data buffer for {}.",
             timestamp, value, univariate_id
         );
+
+        // Track if any buffers are spilled during ingestion so this information can be returned to
+        // insert_data_points() and a warning printed once per batch instead of once per data point.
+        let mut spilled_buffers = false;
 
         // Full finished buffers are removed at the end of the function as remove() may deadlock if
         // called when holding any sort of reference into the corresponding map at the same time.
@@ -382,7 +395,8 @@ impl UncompressedDataManager {
             // from disk or create a new one. Memory for this is reserved without holding any
             // references into any of the maps as it may be necessary to spill an in-memory buffer
             // to do so. Thus, a combination of remove() and insert() may be called on the maps.
-            self.reserve_uncompressed_memory_for_in_memory_data_buffer()
+            spilled_buffers |= self
+                .reserve_uncompressed_memory_for_in_memory_data_buffer()
                 .await?;
 
             // Two ifs are needed until if-let chains is implemented in Rust stable, see eRFC 2497.
@@ -463,10 +477,11 @@ impl UncompressedDataManager {
                 .send(Message::Data(UncompressedDataBuffer::InMemory(
                     full_uncompressed_in_memory_data_buffer,
                 )))
+                .map(|_| spilled_buffers)
                 .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error));
         }
 
-        Ok(())
+        Ok(spilled_buffers)
     }
 
     /// Reserve enough memory to allocate a new uncompressed in-memory data buffer. If there is
@@ -477,8 +492,9 @@ impl UncompressedDataManager {
     /// data is used for unfinished uncompressed in-memory data buffers and it is necessary to spill
     /// one before a new buffer can ever be allocated. To keep the implementation simple, it spills
     /// a random buffer and does not check if the last uncompressed in-memory data buffer has been
-    /// read from the channel but is not yet compressed. [`IOError`] is returned if spilling fails.
-    async fn reserve_uncompressed_memory_for_in_memory_data_buffer(&self) -> Result<(), IOError> {
+    /// read from the channel but is not yet compressed. Returns [`true`] if a buffer was spilled,
+    /// [`false`] if not, and [`IOError`] if spilling fails.
+    async fn reserve_uncompressed_memory_for_in_memory_data_buffer(&self) -> Result<bool, IOError> {
         if !self
             .memory_pool
             .try_reserve_uncompressed_memory(UncompressedInMemoryDataBuffer::memory_size())
@@ -513,10 +529,12 @@ impl UncompressedDataManager {
 
                 self.uncompressed_on_disk_data_buffers
                     .insert(univariate_id, uncompressed_on_disk_buffer);
-            }
-        };
 
-        Ok(())
+                return Ok(true);
+            }
+        }
+
+        Ok(false)
     }
 
     /// Spill `uncompressed_in_memory_data_buffer` if it is an [`UncompressedInMemoryDataBuffer`]
