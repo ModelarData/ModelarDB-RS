@@ -105,7 +105,28 @@ impl ConfigurationManager {
     pub(crate) fn multivariate_reserved_memory_in_bytes(&self) -> usize {
         self.multivariate_reserved_memory_in_bytes
     }
-    // TODO: Implement set_multivariate_reserved_memory_in_bytes().
+
+    /// Set the new value and update the amount of memory for multivariate data in the storage engine.
+    pub(crate) async fn set_multivariate_reserved_memory_in_bytes(
+        &mut self,
+        new_multivariate_reserved_memory_in_bytes: usize,
+        storage_engine: Arc<RwLock<StorageEngine>>,
+    ) -> Result<(), ModelarDbError> {
+        // Since the storage engine only keeps track of the remaining reserved memory, calculate
+        // how much the value should change.
+        let value_change = new_multivariate_reserved_memory_in_bytes as isize
+            - self.multivariate_reserved_memory_in_bytes as isize;
+
+        storage_engine
+            .write()
+            .await
+            .adjust_multivariate_remaining_memory_in_bytes(value_change)
+            .await
+            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
+
+        self.multivariate_reserved_memory_in_bytes = new_multivariate_reserved_memory_in_bytes;
+        Ok(())
+    }
 
     pub(crate) fn uncompressed_reserved_memory_in_bytes(&self) -> usize {
         self.uncompressed_reserved_memory_in_bytes

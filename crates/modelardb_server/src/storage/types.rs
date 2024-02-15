@@ -86,19 +86,10 @@ impl MemoryPool {
     }
 
     /// Change the amount of memory available for multivariate data by `size_in_bytes`.
-    // TODO: implement support for adjusting multivariate memory.
-    #[allow(dead_code)]
     pub(super) fn adjust_multivariate_memory(&self, size_in_bytes: isize) {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         *self.remaining_multivariate_memory_in_bytes.lock().unwrap() += size_in_bytes;
         self.wait_for_multivariate_memory.notify_all();
-    }
-
-    /// Return the amount of memory available for multivariate data in bytes.
-    #[allow(dead_code)]
-    pub(super) fn remaining_multivariate_memory_in_bytes(&self) -> isize {
-        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        *self.remaining_multivariate_memory_in_bytes.lock().unwrap()
     }
 
     /// Wait until `size_in_bytes` bytes of memory is available for multivariate data and then

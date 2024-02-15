@@ -620,6 +620,14 @@ impl FlightService for FlightServiceHandler {
                 Status::invalid_argument(format!("New value for {setting} cannot be empty."));
 
             match setting {
+                "multivariate_reserved_memory_in_bytes" => {
+                    let new_value = new_value.ok_or(invalid_empty_error)?;
+
+                    configuration_manager
+                        .set_multivariate_reserved_memory_in_bytes(new_value, storage_engine)
+                        .await
+                        .map_err(|error| Status::internal(error.to_string()))
+                }
                 "uncompressed_reserved_memory_in_bytes" => {
                     let new_value = new_value.ok_or(invalid_empty_error)?;
 
