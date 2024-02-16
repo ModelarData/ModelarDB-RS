@@ -814,6 +814,8 @@ impl UncompressedDataManager {
     }
 }
 
+// TODO: uncompressed_data_manager.rs tests, metric collection for multivariate, and double check
+// metrics are collected for all disk and memory operations throughout the storage engine.
 #[cfg(test)]
 mod tests {
 

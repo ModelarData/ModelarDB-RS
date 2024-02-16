@@ -111,7 +111,7 @@ impl ConfigurationManager {
         &mut self,
         new_multivariate_reserved_memory_in_bytes: usize,
         storage_engine: Arc<RwLock<StorageEngine>>,
-    ) -> Result<(), ModelarDbError> {
+    ) {
         // Since the storage engine only keeps track of the remaining reserved memory, calculate
         // how much the value should change.
         let value_change = new_multivariate_reserved_memory_in_bytes as isize
@@ -121,18 +121,18 @@ impl ConfigurationManager {
             .write()
             .await
             .adjust_multivariate_remaining_memory_in_bytes(value_change)
-            .await
-            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
+            .await;
 
         self.multivariate_reserved_memory_in_bytes = new_multivariate_reserved_memory_in_bytes;
-        Ok(())
     }
 
     pub(crate) fn uncompressed_reserved_memory_in_bytes(&self) -> usize {
         self.uncompressed_reserved_memory_in_bytes
     }
 
-    /// Set the new value and update the amount of memory for uncompressed data in the storage engine.
+    /// Set the new value and update the amount of memory for uncompressed data in the storage
+    /// engine. Returns [`ConfigurationError`](ModelarDbError::ConfigurationError) if the memory
+    /// cannot be updated because a buffer cannot be spilled.
     pub(crate) async fn set_uncompressed_reserved_memory_in_bytes(
         &mut self,
         new_uncompressed_reserved_memory_in_bytes: usize,
@@ -246,6 +246,34 @@ mod tests {
     use crate::storage::StorageEngine;
 
     // Tests for ConfigurationManager.
+    #[tokio::test]
+    async fn test_set_multivariate_reserved_memory_in_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .multivariate_reserved_memory_in_bytes(),
+            512 * 1024 * 1024
+        );
+
+        configuration_manager
+            .write()
+            .await
+            .set_multivariate_reserved_memory_in_bytes(1024, storage_engine)
+            .await;
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .multivariate_reserved_memory_in_bytes(),
+            1024
+        );
+    }
+
     #[tokio::test]
     async fn test_set_uncompressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();

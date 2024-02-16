@@ -365,6 +365,115 @@ mod tests {
 
     // Tests for MemoryPool.
     #[test]
+    fn test_adjust_multivariate_memory_increase() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            memory_pool.remaining_uncompressed_memory_in_bytes(),
+            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool.adjust_multivariate_memory(test::COMPRESSED_SEGMENTS_SIZE as isize);
+
+        assert_eq!(
+            *memory_pool
+                .remaining_multivariate_memory_in_bytes
+                .lock()
+                .unwrap(),
+            (test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
+        );
+    }
+
+    #[test]
+    fn test_adjust_multivariate_memory_decrease_above_zero() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            *memory_pool
+                .remaining_multivariate_memory_in_bytes
+                .lock()
+                .unwrap(),
+            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool.adjust_multivariate_memory(-(test::COMPRESSED_SEGMENTS_SIZE as isize));
+
+        assert_eq!(
+            *memory_pool
+                .remaining_multivariate_memory_in_bytes
+                .lock()
+                .unwrap(),
+            (test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES - test::COMPRESSED_SEGMENTS_SIZE) as isize
+        );
+    }
+
+    #[test]
+    fn test_adjust_multivariate_memory_decrease_below_zero() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            *memory_pool
+                .remaining_multivariate_memory_in_bytes
+                .lock()
+                .unwrap(),
+            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool
+            .adjust_multivariate_memory(-2 * test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize);
+
+        assert_eq!(
+            *memory_pool
+                .remaining_multivariate_memory_in_bytes
+                .lock()
+                .unwrap(),
+            -(test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize)
+        );
+    }
+
+    #[test]
+    fn test_reserve_available_multivariate_memory() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            *memory_pool
+                .remaining_multivariate_memory_in_bytes
+                .lock()
+                .unwrap(),
+            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        // Blocks if memory cannot be allocated, thus forcing the test to never succeed.
+        memory_pool.wait_for_multivariate_memory(test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES);
+
+        assert_eq!(
+            *memory_pool
+                .remaining_multivariate_memory_in_bytes
+                .lock()
+                .unwrap(),
+            0
+        );
+    }
+
+    #[test]
+    fn test_free_multivariate_memory() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            *memory_pool
+                .remaining_multivariate_memory_in_bytes
+                .lock()
+                .unwrap(),
+            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        memory_pool.free_multivariate_memory(test::COMPRESSED_SEGMENTS_SIZE);
+
+        assert_eq!(
+            *memory_pool
+                .remaining_multivariate_memory_in_bytes
+                .lock()
+                .unwrap(),
+            (test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
+        );
+    }
+
+    #[test]
     fn test_adjust_uncompressed_memory_increase() {
         let memory_pool = create_memory_pool();
         assert_eq!(

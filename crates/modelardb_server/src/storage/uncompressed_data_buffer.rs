@@ -566,25 +566,6 @@ mod tests {
 
     // Tests for UncompressedOnDiskDataBuffer.
     #[tokio::test]
-    async fn test_get_on_disk_data_buffer_disk_size() {
-        let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
-            test::model_table_metadata_arc(),
-            CURRENT_BATCH_INDEX,
-        );
-        let capacity = uncompressed_in_memory_buffer.capacity();
-        insert_data_points(capacity, &mut uncompressed_in_memory_buffer);
-
-        let temp_dir = tempfile::tempdir().unwrap();
-        let uncompressed_on_disk_buffer = uncompressed_in_memory_buffer
-            .spill_to_apache_parquet(temp_dir.path())
-            .await
-            .unwrap();
-
-        assert_eq!(uncompressed_on_disk_buffer.disk_size(), 3135)
-    }
-
-    #[tokio::test]
     async fn test_get_record_batch_from_on_disk_data_buffer() {
         let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
@@ -655,6 +636,117 @@ mod tests {
 
         assert_eq!(fs::read_dir(&spilled_buffer_folder).unwrap().count(), 0);
     }
+    }
+
+    #[tokio::test]
+    async fn test_get_on_disk_data_buffer_disk_size() {
+        let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            test::model_table_metadata_arc(),
+            CURRENT_BATCH_INDEX,
+        );
+        let capacity = uncompressed_in_memory_buffer.capacity();
+        insert_data_points(capacity, &mut uncompressed_in_memory_buffer);
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let uncompressed_on_disk_buffer = uncompressed_in_memory_buffer
+            .spill_to_apache_parquet(temp_dir.path())
+            .await
+            .unwrap();
+
+        assert_eq!(uncompressed_on_disk_buffer.disk_size(), 3135)
+    }
+
+    #[test]
+    fn test_check_if_on_disk_data_buffer_is_unused() {
+        // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179
+        let runtime = Runtime::new().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            test::model_table_metadata_arc(),
+            CURRENT_BATCH_INDEX,
+        );
+
+        // Insert the data points as a batch with the index CURRENT_BATCH_INDEX.
+        insert_data_points(
+            uncompressed_in_memory_buffer.capacity(),
+            &mut uncompressed_in_memory_buffer,
+        );
+
+        let record_batch = runtime
+            .block_on(uncompressed_in_memory_buffer.record_batch())
+            .unwrap();
+
+        let uncompressed_on_disk_buffer = UncompressedOnDiskDataBuffer::try_spill(
+            UNIVARIATE_ID,
+            test::model_table_metadata_arc(),
+            CURRENT_BATCH_INDEX,
+            temp_dir.path(),
+            record_batch,
+        )
+        .unwrap();
+
+        assert!(!uncompressed_on_disk_buffer.is_unused(CURRENT_BATCH_INDEX));
+        assert!(uncompressed_on_disk_buffer.is_unused(CURRENT_BATCH_INDEX + 1));
+    }
+
+    #[test]
+    fn test_read_in_memory_data_buffer_from_on_disk_data_buffer() {
+        // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179
+        let runtime = Runtime::new().unwrap();
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        let mut uncompressed_in_memory_buffer_to_be_spilled = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            test::model_table_metadata_arc(),
+            CURRENT_BATCH_INDEX,
+        );
+
+        insert_data_points(
+            uncompressed_in_memory_buffer_to_be_spilled.capacity(),
+            &mut uncompressed_in_memory_buffer_to_be_spilled,
+        );
+
+        let record_batch = runtime
+            .block_on(uncompressed_in_memory_buffer_to_be_spilled.record_batch())
+            .unwrap();
+
+        let uncompressed_on_disk_buffer = UncompressedOnDiskDataBuffer::try_spill(
+            UNIVARIATE_ID,
+            test::model_table_metadata_arc(),
+            CURRENT_BATCH_INDEX,
+            temp_dir.path(),
+            record_batch,
+        )
+        .unwrap();
+
+        let read_uncompressed_in_memory_buffer = runtime
+            .block_on(uncompressed_on_disk_buffer.read_from_apache_parquet(CURRENT_BATCH_INDEX))
+            .unwrap();
+
+        // The creation of record_batch empties uncompressed_in_memory_buffer_to_be_spilled.
+        let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            test::model_table_metadata_arc(),
+            CURRENT_BATCH_INDEX,
+        );
+
+        insert_data_points(
+            uncompressed_in_memory_buffer.capacity(),
+            &mut uncompressed_in_memory_buffer,
+        );
+
+        assert_eq!(
+            uncompressed_in_memory_buffer.timestamps.values_slice(),
+            read_uncompressed_in_memory_buffer.timestamps.values_slice()
+        );
+
+        assert_eq!(
+            uncompressed_in_memory_buffer.values.values_slice(),
+            read_uncompressed_in_memory_buffer.values.values_slice()
+        );
     }
 
     /// Insert `count` generated data points into `uncompressed_buffer`.
