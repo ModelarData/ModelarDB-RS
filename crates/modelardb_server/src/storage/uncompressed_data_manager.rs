@@ -70,6 +70,8 @@ pub(super) struct UncompressedDataManager {
     cluster_mode: ClusterMode,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
+    /// Metric for the used multivariate memory in bytes, updated every time the used memory changes.
+    pub(super) used_multivariate_memory_metric: Arc<Mutex<Metric>>,
     /// Metric for the used uncompressed memory in bytes, updated every time the used memory changes.
     pub(super) used_uncompressed_memory_metric: Mutex<Metric>,
     /// Metric for the amount of ingested data points, updated every time a new batch of data is ingested.
@@ -89,6 +91,7 @@ impl UncompressedDataManager {
         channels: Arc<Channels>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         cluster_mode: ClusterMode,
+        used_multivariate_memory_metric: Arc<Mutex<Metric>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Ensure the folder required by the uncompressed data manager exists.
@@ -104,6 +107,7 @@ impl UncompressedDataManager {
             table_metadata_manager,
             cluster_mode,
             memory_pool,
+            used_multivariate_memory_metric,
             used_uncompressed_memory_metric: Mutex::new(Metric::new()),
             ingested_data_points_metric: Mutex::new(Metric::new()),
             used_disk_space_metric,
@@ -336,6 +340,12 @@ impl UncompressedDataManager {
         self.finish_unused_buffers(current_batch_index)
             .await
             .map_err(|error| error.to_string())?;
+
+        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
+        self.used_multivariate_memory_metric
+            .lock()
+            .unwrap()
+            .append(-(data_points.get_array_memory_size() as isize), true);
 
         // Return the memory used by the data points to the pool right before they are de-allocated.
         self.memory_pool
@@ -814,8 +824,6 @@ impl UncompressedDataManager {
     }
 }
 
-// TODO: uncompressed_data_manager.rs tests, metric collection for multivariate, and double check
-// metrics are collected for all disk and memory operations throughout the storage engine.
 #[cfg(test)]
 mod tests {
 
@@ -923,6 +931,39 @@ mod tests {
                 .values()
                 .len(),
             1
+        );
+    }
+
+    #[tokio::test]
+    async fn test_remaining_memory_decremented_when_processed_multivriate() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_metadata_manager, data_manager, model_table_metadata) =
+            create_managers(temp_dir.path()).await;
+
+        // Simulate StorageEngine incrementing memory usage when multivariate data received.
+        let data = uncompressed_data(2, model_table_metadata.schema.clone());
+        data_manager
+            .used_multivariate_memory_metric
+            .lock()
+            .unwrap()
+            .append(data.get_array_memory_size() as isize, true);
+
+        let uncompressed_data_multivariate =
+            UncompressedDataMultivariate::new(model_table_metadata, data);
+
+        data_manager
+            .insert_data_points(uncompressed_data_multivariate)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            data_manager
+                .used_multivariate_memory_metric
+                .lock()
+                .unwrap()
+                .values()
+                .len(),
+            2
         );
     }
 
@@ -1411,6 +1452,7 @@ mod tests {
             channels,
             metadata_manager.clone(),
             ClusterMode::SingleNode,
+            Arc::new(Mutex::new(Metric::new())),
             Arc::new(Mutex::new(Metric::new())),
         )
         .await

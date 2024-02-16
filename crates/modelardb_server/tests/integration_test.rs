@@ -671,10 +671,11 @@ fn test_can_collect_metrics() {
     // Check that all metrics are present in the response.
     let metrics_array = modelardb_common::array!(metrics, 0, StringArray);
 
-    assert_eq!(metrics_array.value(0), "used_uncompressed_memory");
-    assert_eq!(metrics_array.value(1), "used_compressed_memory");
-    assert_eq!(metrics_array.value(2), "ingested_data_points");
-    assert_eq!(metrics_array.value(3), "used_disk_space");
+    assert_eq!(metrics_array.value(0), "used_multivariate_memory");
+    assert_eq!(metrics_array.value(1), "used_uncompressed_memory");
+    assert_eq!(metrics_array.value(2), "used_compressed_memory");
+    assert_eq!(metrics_array.value(3), "ingested_data_points");
+    assert_eq!(metrics_array.value(4), "used_disk_space");
 
     // Check that the metrics are populated when ingesting and flushing.
     let values_array = modelardb_common::array!(metrics, 2, ListArray);
@@ -683,7 +684,7 @@ fn test_can_collect_metrics() {
     let uncompressed_buffer_size = test::UNCOMPRESSED_BUFFER_SIZE as u32;
     assert_eq!(
         values_array
-            .value(0)
+            .value(1)
             .as_any()
             .downcast_ref::<UInt32Array>()
             .unwrap()
@@ -704,12 +705,12 @@ fn test_can_collect_metrics() {
 
     // The amount of bytes used for compressed memory changes depending on the compression so we
     // can only check that the metric is populated when compressing and when flushing.
-    assert_eq!(values_array.value(1).len(), 10);
+    assert_eq!(values_array.value(2).len(), 10);
 
     // The ingested_data_points metric should record the single request to ingest data points.
     assert_eq!(
         values_array
-            .value(2)
+            .value(3)
             .as_any()
             .downcast_ref::<UInt32Array>()
             .unwrap()
@@ -719,7 +720,7 @@ fn test_can_collect_metrics() {
 
     // The amount of bytes used for disk space changes depending on the compression so we
     // can only check that the metric is populated when initializing and when flushing.
-    assert_eq!(values_array.value(3).len(), 6);
+    assert_eq!(values_array.value(4).len(), 6);
 }
 
 #[test]

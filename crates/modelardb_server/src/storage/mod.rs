@@ -91,6 +91,8 @@ pub struct StorageEngine {
     compressed_data_manager: Arc<CompressedDataManager>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
+    /// Metric for the used multivariate memory in bytes, updated every time the used memory changes.
+    used_multivariate_memory_metric: Arc<Mutex<Metric>>,
     /// Threads used for ingestion, compression, and writing.
     join_handles: Vec<JoinHandle<()>>,
     /// Unbounded channels used by the threads to communicate.
@@ -118,6 +120,7 @@ impl StorageEngine {
 
         // Create shared metrics.
         let used_disk_space_metric = Arc::new(Mutex::new(Metric::new()));
+        let used_multivariate_memory_metric = Arc::new(Mutex::new(Metric::new()));
 
         // Create threads and shared channels.
         let mut join_handles = vec![];
@@ -131,6 +134,7 @@ impl StorageEngine {
                 channels.clone(),
                 table_metadata_manager.clone(),
                 configuration_manager.cluster_mode.clone(),
+                used_multivariate_memory_metric.clone(),
                 used_disk_space_metric.clone(),
             )
             .await?,
@@ -223,6 +227,7 @@ impl StorageEngine {
             uncompressed_data_manager,
             compressed_data_manager,
             memory_pool,
+            used_multivariate_memory_metric,
             join_handles,
             channels,
         };
@@ -297,6 +302,12 @@ impl StorageEngine {
         // TODO: write to a WAL and use it to ensure termination never duplicates or loses data.
         self.memory_pool
             .wait_for_multivariate_memory(multivariate_data_points.get_array_memory_size());
+
+        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
+        self.used_multivariate_memory_metric.lock().unwrap().append(
+            multivariate_data_points.get_array_memory_size() as isize,
+            true,
+        );
 
         self.channels
             .multivariate_data_sender
@@ -404,6 +415,13 @@ impl StorageEngine {
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         vec![
             (
+                MetricType::UsedMultivariateMemory,
+                self.used_multivariate_memory_metric
+                    .lock()
+                    .unwrap()
+                    .finish(),
+            ),
+            (
                 MetricType::UsedUncompressedMemory,
                 self.uncompressed_data_manager
                     .used_uncompressed_memory_metric
@@ -464,7 +482,10 @@ impl StorageEngine {
 
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.
     /// Returns [`IOError`] if the memory cannot be updated because a buffer cannot be spilled.
-    pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(&self, value_change: isize) -> Result<(), IOError> {
+    pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(
+        &self,
+        value_change: isize,
+    ) -> Result<(), IOError> {
         self.uncompressed_data_manager
             .adjust_uncompressed_remaining_memory_in_bytes(value_change)
             .await
