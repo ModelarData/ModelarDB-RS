@@ -24,3 +24,4 @@ pub mod remote;
 pub mod schemas;
 pub mod test;
 pub mod types;
+mod storage;
