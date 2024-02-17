@@ -30,15 +30,15 @@ use datafusion::arrow::array::{Array, ArrayBuilder};
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
-use modelardb_common::metadata;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
 use modelardb_common::types::{
     ErrorBound, Timestamp, TimestampArray, TimestampBuilder, Value, ValueBuilder,
 };
+use modelardb_common::{metadata, storage};
 use tracing::debug;
 
-use crate::storage::{StorageEngine, UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER};
+use crate::storage::{UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER};
 
 /// Number of [`RecordBatches`](RecordBatch) that must be ingested without modifying an
 /// [`UncompressedInMemoryDataBuffer`] before it is considered unused and can be finished.
@@ -299,7 +299,7 @@ impl UncompressedOnDiskDataBuffer {
         let file_name = format!("{}.parquet", timestamps.value(0));
         let file_path = local_file_path.join(file_name);
 
-        StorageEngine::write_batch_to_apache_parquet_file(&data_points, file_path.as_path(), None)?;
+        storage::write_batch_to_apache_parquet_file(&data_points, file_path.as_path(), None)?;
 
         Ok(Self {
             univariate_id,
@@ -343,7 +343,7 @@ impl UncompressedDataBuffer for UncompressedOnDiskDataBuffer {
     /// cannot be read or deleted.
     async fn record_batch(&mut self) -> Result<RecordBatch, ParquetError> {
         let record_batch =
-            StorageEngine::read_batch_from_apache_parquet_file(self.file_path.as_path()).await?;
+            storage::read_batch_from_apache_parquet_file(self.file_path.as_path()).await?;
 
         fs::remove_file(self.file_path.as_path())
             .map_err(|error| ParquetError::General(error.to_string()))?;

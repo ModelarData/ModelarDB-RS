@@ -29,6 +29,7 @@ use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::parser::ValidStatement;
+use modelardb_common::storage;
 use modelardb_common::types::ServerMode;
 use modelardb_common::{metadata, parser};
 use object_store::ObjectStore;
@@ -39,8 +40,8 @@ use tracing::info;
 
 use crate::configuration::ConfigurationManager;
 use crate::query::ModelTable;
-use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER};
-use crate::{optimizer, storage, ClusterMode, DataFolders};
+use crate::storage::{StorageEngine, COMPRESSED_DATA_FOLDER, QUERY_DATA_FOLDER_SCHEME_WITH_HOST};
+use crate::{optimizer, ClusterMode, DataFolders};
 
 /// Provides access to the system's configuration and components.
 pub struct Context {
@@ -116,9 +117,7 @@ impl Context {
         let session_runtime = Arc::new(RuntimeEnv::default());
 
         // unwrap() is safe as storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST is a const containing an URL.
-        let object_store_url = storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST
-            .try_into()
-            .unwrap();
+        let object_store_url = QUERY_DATA_FOLDER_SCHEME_WITH_HOST.try_into().unwrap();
         session_runtime.register_object_store(&object_store_url, query_data_folder);
 
         // Use the add* methods instead of the with* methods as the with* methods replace the built-ins.
@@ -186,7 +185,7 @@ impl Context {
         // Create an empty Apache Parquet file to save the schema.
         let file_path = folder_path.join("empty_for_schema.parquet");
         let empty_batch = RecordBatch::new_empty(Arc::new(schema));
-        StorageEngine::write_batch_to_apache_parquet_file(&empty_batch, &file_path, None)
+        storage::write_batch_to_apache_parquet_file(&empty_batch, &file_path, None)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Save the table in the Apache Arrow Datafusion catalog.

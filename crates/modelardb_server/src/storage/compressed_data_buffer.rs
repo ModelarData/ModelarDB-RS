@@ -24,15 +24,13 @@ use std::sync::Arc;
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::format::SortingColumn;
-use modelardb_common::metadata;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
+use modelardb_common::{metadata, storage};
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
 use uuid::Uuid;
-
-use crate::storage::StorageEngine;
 
 /// Compressed segments representing data points from a column in a model table as one
 /// [`RecordBatch`].
@@ -131,12 +129,8 @@ impl CompressedDataBuffer {
             SortingColumn::new(2, false, false),
         ]);
 
-        StorageEngine::write_batch_to_apache_parquet_file(
-            &batch,
-            file_path.as_path(),
-            sorting_columns,
-        )
-        .map_err(|error| IOError::new(Other, error.to_string()))?;
+        storage::write_batch_to_apache_parquet_file(&batch, file_path.as_path(), sorting_columns)
+            .map_err(|error| IOError::new(Other, error.to_string()))?;
 
         let file_metadata = file_path.metadata()?;
 

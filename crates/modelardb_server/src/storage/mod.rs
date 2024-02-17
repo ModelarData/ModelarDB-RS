@@ -28,27 +28,21 @@ mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
 
 use std::env;
-use std::ffi::OsStr;
-use std::fs::File;
 use std::io::{Error as IOError, ErrorKind};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use datafusion::arrow::array::UInt32Array;
-use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
-use datafusion::parquet::format::SortingColumn;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
-use modelardb_common::storage;
 use modelardb_common::types::{Timestamp, TimestampArray, Value};
 use object_store::{ObjectMeta, ObjectStore};
 use once_cell::sync::Lazy;
 use sqlx::Sqlite;
-use tokio::fs::File as TokioFile;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::Status;
@@ -521,170 +515,5 @@ impl StorageEngine {
                 "Storage engine is not configured to transfer data.".to_owned(),
             ))
         }
-    }
-
-    /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`
-    /// must use the extension '.parquet'. Return [`Ok`] if the file was written successfully,
-    /// otherwise [`ParquetError`].
-    pub(super) fn write_batch_to_apache_parquet_file(
-        batch: &RecordBatch,
-        file_path: &Path,
-        sorting_columns: Option<Vec<SortingColumn>>,
-    ) -> Result<(), ParquetError> {
-        let error = ParquetError::General(format!(
-            "Apache Parquet file at path '{}' could not be created.",
-            file_path.display()
-        ));
-
-        // Check if the extension of the given path is correct.
-        if file_path.extension().and_then(OsStr::to_str) == Some("parquet") {
-            let file = File::create(file_path).map_err(|_e| error)?;
-            let mut writer =
-                storage::create_apache_arrow_writer(file, batch.schema(), sorting_columns)?;
-            writer.write(batch)?;
-            writer.close()?;
-
-            Ok(())
-        } else {
-            Err(error)
-        }
-    }
-
-    /// Read all rows from the Apache Parquet file at the location given by `file_path` and return
-    /// them as a [`RecordBatch`]. If the file could not be read successfully, [`ParquetError`] is
-    /// returned.
-    async fn read_batch_from_apache_parquet_file(
-        file_path: &Path,
-    ) -> Result<RecordBatch, ParquetError> {
-        // Create a stream that can be used to read an Apache Parquet file.
-        let file = TokioFile::open(file_path)
-            .await
-            .map_err(|error| ParquetError::General(error.to_string()))?;
-
-        let record_batches = storage::read_batches_from_apache_parquet_file(file).await?;
-        let schema = record_batches[0].schema();
-        compute::concat_batches(&schema, &record_batches)
-            .map_err(|error| ParquetError::General(error.to_string()))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use std::path::PathBuf;
-    use std::sync::Arc;
-
-    use datafusion::arrow::datatypes::{Field, Schema};
-    use modelardb_common::test;
-    use tempfile::{self, TempDir};
-
-    // Tests for writing and reading Apache Parquet files.
-    #[test]
-    fn test_write_batch_to_apache_parquet_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let batch = test::compressed_segments_record_batch();
-
-        let apache_parquet_path = temp_dir.path().join("test.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(
-            &batch,
-            apache_parquet_path.as_path(),
-            None,
-        )
-        .unwrap();
-
-        assert!(apache_parquet_path.exists());
-    }
-
-    #[test]
-    fn test_write_empty_batch_to_apache_parquet_file() {
-        let fields: Vec<Field> = vec![];
-        let schema = Schema::new(fields);
-        let batch = RecordBatch::new_empty(Arc::new(schema));
-
-        let temp_dir = tempfile::tempdir().unwrap();
-        let apache_parquet_path = temp_dir.path().join("empty.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(
-            &batch,
-            apache_parquet_path.as_path(),
-            None,
-        )
-        .unwrap();
-
-        assert!(apache_parquet_path.exists());
-    }
-
-    #[test]
-    fn test_write_batch_to_file_with_invalid_extension() {
-        write_to_file_and_assert_failed("test.txt".to_owned());
-    }
-
-    #[test]
-    fn test_write_batch_to_file_with_no_extension() {
-        write_to_file_and_assert_failed("test".to_owned());
-    }
-
-    fn write_to_file_and_assert_failed(file_name: String) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let batch = test::compressed_segments_record_batch();
-
-        let apache_parquet_path = temp_dir.path().join(file_name);
-        let result = StorageEngine::write_batch_to_apache_parquet_file(
-            &batch,
-            apache_parquet_path.as_path(),
-            None,
-        );
-
-        assert!(result.is_err());
-        assert!(!apache_parquet_path.exists());
-    }
-
-    #[tokio::test]
-    async fn test_read_entire_apache_parquet_file() {
-        let file_name = "test.parquet".to_owned();
-        let (_temp_dir, path, batch) = create_apache_parquet_file_in_temp_dir(file_name);
-
-        let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path()).await;
-
-        assert!(result.is_ok());
-        assert_eq!(batch, result.unwrap());
-    }
-
-    #[tokio::test]
-    async fn test_read_from_non_apache_parquet_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("test.txt");
-        File::create(path.clone()).unwrap();
-
-        let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path());
-
-        assert!(result.await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_read_from_non_existent_path() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("none.parquet");
-        let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path());
-
-        assert!(result.await.is_err());
-    }
-
-    /// Create an Apache Parquet file in the [`tempfile::TempDir`] from a generated [`RecordBatch`].
-    fn create_apache_parquet_file_in_temp_dir(
-        file_name: String,
-    ) -> (TempDir, PathBuf, RecordBatch) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let batch = test::compressed_segments_record_batch();
-
-        let apache_parquet_path = temp_dir.path().join(file_name);
-        StorageEngine::write_batch_to_apache_parquet_file(
-            &batch,
-            apache_parquet_path.as_path(),
-            None,
-        )
-        .unwrap();
-
-        (temp_dir, apache_parquet_path, batch)
     }
 }

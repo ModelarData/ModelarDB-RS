@@ -46,7 +46,7 @@ use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSeg
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
 use crate::storage::types::{Channels, MemoryPool};
-use crate::storage::{Metric, StorageEngine, COMPRESSED_DATA_FOLDER};
+use crate::storage::{Metric, COMPRESSED_DATA_FOLDER};
 use crate::ClusterMode;
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
@@ -129,7 +129,7 @@ impl CompressedDataManager {
         let file_name = format!("{}.parquet", since_the_epoch.as_millis());
         let file_path = local_file_path.join(file_name);
 
-        StorageEngine::write_batch_to_apache_parquet_file(&record_batch, file_path.as_path(), None)
+        storage::write_batch_to_apache_parquet_file(&record_batch, file_path.as_path(), None)
     }
 
     /// Read and process messages received from the

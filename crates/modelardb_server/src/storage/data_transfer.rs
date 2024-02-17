@@ -338,15 +338,13 @@ mod tests {
 
     use arrow_flight::flight_service_client::FlightServiceClient;
     use chrono::Utc;
-    use modelardb_common::metadata;
     use modelardb_common::test;
+    use modelardb_common::{metadata, storage};
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
     use tokio::sync::RwLock;
     use tonic::transport::Channel;
     use uuid::Uuid;
-
-    use crate::storage::StorageEngine;
 
     const COLUMN_INDEX: u16 = 5;
     const COMPRESSED_FILE_SIZE: usize = 2383;
@@ -555,12 +553,8 @@ mod tests {
         let uuid = Uuid::new_v4();
         let batch = test::compressed_segments_record_batch();
         let apache_parquet_path = path.join(format!("{uuid}.parquet"));
-        StorageEngine::write_batch_to_apache_parquet_file(
-            &batch,
-            apache_parquet_path.as_path(),
-            None,
-        )
-        .unwrap();
+        storage::write_batch_to_apache_parquet_file(&batch, apache_parquet_path.as_path(), None)
+            .unwrap();
 
         let object_meta = ObjectMeta {
             location: ObjectStorePath::from(format!("{folder_path}/{uuid}.parquet")),
