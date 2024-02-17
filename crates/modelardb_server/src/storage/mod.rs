@@ -568,15 +568,7 @@ impl StorageEngine {
             .await
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
-        let mut stream = ParquetRecordBatchStreamBuilder::new(file).await?.build()?;
-
-        // Stream the data from the Apache Parquet file into a single record batch.
-        let mut record_batches = Vec::new();
-        while let Some(maybe_record_batch) = stream.next().await {
-            let record_batch = maybe_record_batch?;
-            record_batches.push(record_batch);
-        }
-
+        let record_batches = Self::read_batches_from_apache_parquet_file(file).await?;
         let schema = record_batches[0].schema();
         compute::concat_batches(&schema, &record_batches)
             .map_err(|error| ParquetError::General(error.to_string()))

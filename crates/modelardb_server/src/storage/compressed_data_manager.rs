@@ -27,14 +27,12 @@ use dashmap::DashMap;
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
-use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::{Timestamp, Value};
 use object_store::{ObjectMeta, ObjectStore};
 use parquet::arrow::async_reader::ParquetObjectReader;
-use parquet::arrow::ParquetRecordBatchStreamBuilder;
 use parquet::format::SortingColumn;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
@@ -470,14 +468,8 @@ impl CompressedDataManager {
         let mut record_batches = Vec::with_capacity(input_files.len());
         for input_file in input_files {
             let reader = ParquetObjectReader::new(input_data_folder.clone(), input_file.clone());
-            let mut stream = ParquetRecordBatchStreamBuilder::new(reader)
-                .await?
-                .build()?;
-
-            while let Some(maybe_record_batch) = stream.next().await {
-                let record_batch = maybe_record_batch?;
-                record_batches.push(record_batch);
-            }
+            record_batches
+                .append(&mut StorageEngine::read_batches_from_apache_parquet_file(reader).await?);
         }
 
         // Merge the record batches into a single concatenated and merged record batch.
@@ -542,6 +534,7 @@ mod tests {
     use std::path::Path;
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
+    use futures::StreamExt;
     use modelardb_common::metadata;
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_common::test;
