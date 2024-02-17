@@ -53,6 +53,7 @@ use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::{Timestamp, TimestampArray, Value};
 use object_store::{ObjectMeta, ObjectStore};
 use once_cell::sync::Lazy;
+use parquet::arrow::async_reader::{AsyncFileReader, ParquetRecordBatchStream};
 use sqlx::Sqlite;
 use tokio::fs::File as TokioFile;
 use tokio::runtime::Runtime;
@@ -579,6 +580,28 @@ impl StorageEngine {
         let schema = record_batches[0].schema();
         compute::concat_batches(&schema, &record_batches)
             .map_err(|error| ParquetError::General(error.to_string()))
+    }
+
+    /// Read each batch of data from the Apache Parquet file given by `reader` and return them as a
+    /// [`Vec`] of [`RecordBatch`]. If the file could not be read successfully, [`ParquetError`] is
+    /// returned.
+    async fn read_batches_from_apache_parquet_file<R>(
+        reader: R,
+    ) -> Result<Vec<RecordBatch>, ParquetError>
+    where
+        R: AsyncFileReader + Send + Unpin + 'static,
+        ParquetRecordBatchStream<R>: StreamExt<Item = Result<RecordBatch, ParquetError>>,
+    {
+        let builder = ParquetRecordBatchStreamBuilder::new(reader).await?;
+        let mut stream = builder.build()?;
+
+        let mut record_batches = Vec::new();
+        while let Some(maybe_record_batch) = stream.next().await {
+            let record_batch = maybe_record_batch?;
+            record_batches.push(record_batch);
+        }
+
+        Ok(record_batches)
     }
 
     /// Create an Apache ArrowWriter that writes to `writer`. If the writer could not be created
