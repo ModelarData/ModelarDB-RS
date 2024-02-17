@@ -92,8 +92,16 @@ impl MemoryPool {
         self.wait_for_multivariate_memory.notify_all();
     }
 
+    /// Return the amount of memory available for multivariate data in bytes.
+    #[cfg(test)]
+    #[must_use]
+    pub(super) fn remaining_multivariate_memory_in_bytes(&self) -> isize {
+        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
+        *self.remaining_multivariate_memory_in_bytes.lock().unwrap()
+    }
+
     /// Wait until `size_in_bytes` bytes of memory is available for multivariate data and then
-    /// reserve it. Thus, this method never over allocates memory for multivariate data.
+    /// reserve it.
     pub(super) fn wait_for_multivariate_memory(&self, size_in_bytes: usize) {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         let mut memory_in_bytes = self.remaining_multivariate_memory_in_bytes.lock().unwrap();
@@ -124,36 +132,33 @@ impl MemoryPool {
     }
 
     /// Return the amount of memory available for uncompressed data in bytes.
+    #[must_use]
     pub(super) fn remaining_uncompressed_memory_in_bytes(&self) -> isize {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         *self.remaining_uncompressed_memory_in_bytes.lock().unwrap()
     }
 
-    /// Try to reserve `size_in_bytes` bytes of memory for storing uncompressed data. Returns
-    /// [`true`] if the reservation succeeds and [`false`] otherwise.
+    /// Wait until `size_in_bytes` bytes of memory is available for uncompressed data or `stop_if`
+    /// returns [`true`]. Note that `stop_if` is never evaluated while the thread is waiting.
+    /// Returns [`true`] if the memory was reserved and [`false`] if not.
     #[must_use]
-    pub(super) fn try_reserve_uncompressed_memory(&self, size_in_bytes: usize) -> bool {
-        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        let mut remaining_uncompressed_memory_in_bytes =
-            self.remaining_uncompressed_memory_in_bytes.lock().unwrap();
-
-        let size_in_bytes = size_in_bytes as isize;
-
-        if size_in_bytes <= *remaining_uncompressed_memory_in_bytes {
-            *remaining_uncompressed_memory_in_bytes -= size_in_bytes;
-            true
-        } else {
-            false
-        }
-    }
-
-    /// Wait until `size_in_bytes` bytes of memory is available for uncompressed data and then
-    /// reserve it. Thus, this method never over allocates memory for uncompressed data.
-    pub(super) fn wait_for_uncompressed_memory(&self, size_in_bytes: usize) {
+    pub(super) fn wait_for_uncompressed_memory_until<F>(
+        &self,
+        size_in_bytes: usize,
+        stop_if: F,
+    ) -> bool
+    where
+        F: Fn() -> bool,
+    {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         let mut memory_in_bytes = self.remaining_uncompressed_memory_in_bytes.lock().unwrap();
 
         while *memory_in_bytes < size_in_bytes as isize {
+            // There is still not enough memory available but it is no longer sensible to wait.
+            if stop_if() {
+                return false;
+            }
+
             // unwrap() is safe as wait() only returns an error if the mutex is poisoned.
             memory_in_bytes = self
                 .wait_for_uncompressed_memory
@@ -162,6 +167,7 @@ impl MemoryPool {
         }
 
         *memory_in_bytes -= size_in_bytes as isize;
+        true
     }
 
     /// Free `size_in_bytes` bytes of memory for storing uncompressed data.
@@ -178,6 +184,7 @@ impl MemoryPool {
     }
 
     /// Return the amount of memory available for storing compressed data in bytes.
+    #[must_use]
     pub(super) fn remaining_compressed_memory_in_bytes(&self) -> isize {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         *self.remaining_compressed_memory_in_bytes.lock().unwrap()
@@ -377,10 +384,7 @@ mod tests {
         memory_pool.adjust_multivariate_memory(test::COMPRESSED_SEGMENTS_SIZE as isize);
 
         assert_eq!(
-            *memory_pool
-                .remaining_multivariate_memory_in_bytes
-                .lock()
-                .unwrap(),
+            memory_pool.remaining_multivariate_memory_in_bytes(),
             (test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
         );
     }
@@ -389,20 +393,14 @@ mod tests {
     fn test_adjust_multivariate_memory_decrease_above_zero() {
         let memory_pool = create_memory_pool();
         assert_eq!(
-            *memory_pool
-                .remaining_multivariate_memory_in_bytes
-                .lock()
-                .unwrap(),
+            memory_pool.remaining_multivariate_memory_in_bytes(),
             test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
         );
 
         memory_pool.adjust_multivariate_memory(-(test::COMPRESSED_SEGMENTS_SIZE as isize));
 
         assert_eq!(
-            *memory_pool
-                .remaining_multivariate_memory_in_bytes
-                .lock()
-                .unwrap(),
+            memory_pool.remaining_multivariate_memory_in_bytes(),
             (test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES - test::COMPRESSED_SEGMENTS_SIZE) as isize
         );
     }
@@ -411,10 +409,7 @@ mod tests {
     fn test_adjust_multivariate_memory_decrease_below_zero() {
         let memory_pool = create_memory_pool();
         assert_eq!(
-            *memory_pool
-                .remaining_multivariate_memory_in_bytes
-                .lock()
-                .unwrap(),
+            memory_pool.remaining_multivariate_memory_in_bytes(),
             test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
         );
 
@@ -422,10 +417,7 @@ mod tests {
             .adjust_multivariate_memory(-2 * test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize);
 
         assert_eq!(
-            *memory_pool
-                .remaining_multivariate_memory_in_bytes
-                .lock()
-                .unwrap(),
+            memory_pool.remaining_multivariate_memory_in_bytes(),
             -(test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize)
         );
     }
@@ -434,43 +426,28 @@ mod tests {
     fn test_reserve_available_multivariate_memory() {
         let memory_pool = create_memory_pool();
         assert_eq!(
-            *memory_pool
-                .remaining_multivariate_memory_in_bytes
-                .lock()
-                .unwrap(),
+            memory_pool.remaining_multivariate_memory_in_bytes(),
             test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        // Blocks if memory cannot be allocated, thus forcing the test to never succeed.
+        // Blocks if memory cannot be reserved, thus forcing the test to never succeed.
         memory_pool.wait_for_multivariate_memory(test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES);
 
-        assert_eq!(
-            *memory_pool
-                .remaining_multivariate_memory_in_bytes
-                .lock()
-                .unwrap(),
-            0
-        );
+        assert_eq!(memory_pool.remaining_multivariate_memory_in_bytes(), 0);
     }
 
     #[test]
     fn test_free_multivariate_memory() {
         let memory_pool = create_memory_pool();
         assert_eq!(
-            *memory_pool
-                .remaining_multivariate_memory_in_bytes
-                .lock()
-                .unwrap(),
+            memory_pool.remaining_multivariate_memory_in_bytes(),
             test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
         );
 
         memory_pool.free_multivariate_memory(test::COMPRESSED_SEGMENTS_SIZE);
 
         assert_eq!(
-            *memory_pool
-                .remaining_multivariate_memory_in_bytes
-                .lock()
-                .unwrap(),
+            memory_pool.remaining_multivariate_memory_in_bytes(),
             (test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
         );
     }
@@ -525,29 +502,49 @@ mod tests {
     }
 
     #[test]
-    fn test_try_reserve_available_uncompressed_memory() {
+    fn test_wait_for_available_uncompressed_memory_with_stop_if_false() {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
             test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        assert!(memory_pool
-            .try_reserve_uncompressed_memory(test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES));
+        assert!(memory_pool.wait_for_uncompressed_memory_until(
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            || false
+        ));
 
         assert_eq!(memory_pool.remaining_uncompressed_memory_in_bytes(), 0);
     }
 
     #[test]
-    fn test_try_reserve_unavailable_uncompressed_memory() {
+    fn test_wait_for_available_uncompressed_memory_with_stop_if_true() {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
             test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        assert!(!memory_pool
-            .try_reserve_uncompressed_memory(2 * test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES));
+        assert!(memory_pool.wait_for_uncompressed_memory_until(
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            || true
+        ));
+
+        assert_eq!(memory_pool.remaining_uncompressed_memory_in_bytes(), 0);
+    }
+
+    #[test]
+    fn test_wait_for_unavailable_uncompressed_memory_with_stop_if_true() {
+        let memory_pool = create_memory_pool();
+        assert_eq!(
+            memory_pool.remaining_uncompressed_memory_in_bytes(),
+            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
+        );
+
+        assert!(!memory_pool.wait_for_uncompressed_memory_until(
+            2 * test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
+            || true
+        ));
 
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),

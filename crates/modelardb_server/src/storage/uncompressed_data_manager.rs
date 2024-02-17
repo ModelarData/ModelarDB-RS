@@ -57,10 +57,13 @@ pub(super) struct UncompressedDataManager {
     /// buffers that are no longer used.
     current_batch_index: AtomicU64,
     /// [`UncompresseInMemoryDataBuffers`](UncompressedInMemoryDataBuffer) that are ready to be
-    /// filled with ingested data points. On disk buffer are stored separately to simplify locking.
+    /// filled with ingested data points. In memory and on disk buffer are stored separately to
+    /// simplify locking during when spilling and reading spilled on disk buffers back into memory.
     uncompressed_in_memory_data_buffers: DashMap<u64, UncompressedInMemoryDataBuffer>,
     /// [`UncompresseOnDiskDataBuffers`](UncompressedOnDiskDataBuffer) that must be ready back into
-    /// memory before they can be filled with ingested data points.
+    /// memory before they can be filled with ingested data points. In memory and on disk buffer are
+    /// stored separately to simplify locking during when spilling and reading spilled on disk
+    /// buffers back into memory.
     uncompressed_on_disk_data_buffers: DashMap<u64, UncompressedOnDiskDataBuffer>,
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
@@ -232,7 +235,7 @@ impl UncompressedDataManager {
             model_table_metadata.name
         );
 
-        // Track if any buffers have been spilled to print a warning only once.
+        // Track if any buffers are spilled so the resulting warning is only printed once per batch.
         let mut spilled_buffers = false;
 
         // Read the current batch index as it may be updated in parallel.
@@ -495,7 +498,7 @@ impl UncompressedDataManager {
     }
 
     /// Reserve enough memory to allocate a new uncompressed in-memory data buffer. If there is
-    /// enough available memory, memory for an uncompressed in-memory data buffer is allocated and
+    /// enough available memory for an uncompressed in-memory data buffer the memory is reserved and
     /// the method returns. Otherwise if there are buffers waiting to be compressed, it is assumed
     /// that some of them are in-memory and the thread is blocked until memory have been returned to
     /// the pool. If there a no buffer waiting to be compressed, all of the memory for uncompressed
@@ -505,20 +508,17 @@ impl UncompressedDataManager {
     /// read from the channel but is not yet compressed. Returns [`true`] if a buffer was spilled,
     /// [`false`] if not, and [`IOError`] if spilling fails.
     async fn reserve_uncompressed_memory_for_in_memory_data_buffer(&self) -> Result<bool, IOError> {
-        if !self
-            .memory_pool
-            .try_reserve_uncompressed_memory(UncompressedInMemoryDataBuffer::memory_size())
-        {
-            if !self.channels.univariate_data_sender.is_empty() {
-                self.memory_pool
-                    .wait_for_uncompressed_memory(UncompressedInMemoryDataBuffer::memory_size());
-            } else {
-                self.spill_an_in_memory_data_buffer().await?;
-                return Ok(true);
-            }
+        // It is not guaranteed that compressing the data buffers in the channel releases any memory
+        // as all of the data buffers that are waiting to be compressed may all be stored on disk.
+        if self.memory_pool.wait_for_uncompressed_memory_until(
+            UncompressedInMemoryDataBuffer::memory_size(),
+            || self.channels.univariate_data_sender.is_empty(),
+        ) {
+            Ok(false)
+        } else {
+            self.spill_an_in_memory_data_buffer().await?;
+            Ok(true)
         }
-
-        Ok(false)
     }
 
     /// Spill a random [`UncompressedInMemoryDataBuffer`] and return an [`IOError`] if no data
@@ -935,13 +935,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remaining_memory_decremented_when_processed_multivriate() {
+    async fn test_remaining_multivariate_memory_increased_after_processing_record_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, data_manager, model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
-        // Simulate StorageEngine incrementing memory usage when multivariate data received.
         let data = uncompressed_data(2, model_table_metadata.schema.clone());
+        let data_size = data.get_array_memory_size();
+
+        // Simulate StorageEngine decrementing multivariate memory when receiving multivariate data.
+        let multivariate_memory_before = data_manager
+            .memory_pool
+            .remaining_multivariate_memory_in_bytes();
+
         data_manager
             .used_multivariate_memory_metric
             .lock()
@@ -955,6 +961,13 @@ mod tests {
             .insert_data_points(uncompressed_data_multivariate)
             .await
             .unwrap();
+
+        assert_eq!(
+            data_manager
+                .memory_pool
+                .remaining_multivariate_memory_in_bytes(),
+            multivariate_memory_before + data_size as isize
+        );
 
         assert_eq!(
             data_manager
@@ -993,7 +1006,7 @@ mod tests {
         let (_metadata_manager, mut data_manager, model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
-        insert_data_points(1, &mut data_manager, model_table_metadata, UNIVARIATE_ID).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
 
         assert!(data_manager
             .uncompressed_in_memory_data_buffers
@@ -1009,12 +1022,49 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_can_insert_data_point_into_existing_uncompressed_data_buffer() {
+    async fn test_can_insert_data_point_into_existing_in_memory_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager, model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
-        insert_data_points(2, &mut data_manager, model_table_metadata, UNIVARIATE_ID).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
+        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
+        assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
+
+        insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
+        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
+        assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
+
+        assert!(data_manager
+            .uncompressed_in_memory_data_buffers
+            .contains_key(&UNIVARIATE_ID));
+        assert_eq!(
+            data_manager
+                .uncompressed_in_memory_data_buffers
+                .get(&UNIVARIATE_ID)
+                .unwrap()
+                .len(),
+            2
+        );
+    }
+
+    #[tokio::test]
+    async fn test_can_insert_data_point_into_existing_on_disk_uncompressed_data_buffer() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (_metadata_manager, mut data_manager, model_table_metadata) =
+            create_managers(temp_dir.path()).await;
+
+        insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
+        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
+        assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
+
+        data_manager.spill_an_in_memory_data_buffer().await.unwrap();
+        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 0);
+        assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 1);
+
+        insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
+        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
+        assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
 
         assert!(data_manager
             .uncompressed_in_memory_data_buffers
@@ -1101,7 +1151,7 @@ mod tests {
         insert_data_points(
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
-            model_table_metadata,
+            &model_table_metadata,
             UNIVARIATE_ID,
         )
         .await;
@@ -1122,7 +1172,7 @@ mod tests {
         insert_data_points(
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY * 2,
             &mut data_manager,
-            model_table_metadata,
+            &model_table_metadata,
             UNIVARIATE_ID,
         )
         .await;
@@ -1132,6 +1182,7 @@ mod tests {
             .univariate_data_receiver
             .try_recv()
             .is_ok());
+
         assert!(data_manager
             .channels
             .univariate_data_receiver
@@ -1169,14 +1220,28 @@ mod tests {
             insert_data_points(
                 1,
                 &mut data_manager,
-                model_table_metadata.clone(),
+                &model_table_metadata.clone(),
                 univariate_id as u64,
             )
             .await;
         }
 
+        // The buffers should be in-memory and there should not be enough memory left for one more.
+        assert_eq!(
+            data_manager.uncompressed_in_memory_data_buffers.len(),
+            number_of_buffers
+        );
+        assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
+        assert_eq!(data_manager.channels.univariate_data_receiver.len(), 0);
+        assert!(
+            data_manager
+                .memory_pool
+                .remaining_uncompressed_memory_in_bytes()
+                < UncompressedInMemoryDataBuffer::memory_size() as isize
+        );
+
         // If there is enough memory to hold n full buffers, n + 1 are needed to spill a buffer.
-        insert_data_points(1, &mut data_manager, model_table_metadata, UNIVARIATE_ID).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
 
         // All but the last buffer should still be in-memory while the last should be spilled.
         assert_eq!(
@@ -1201,7 +1266,7 @@ mod tests {
             .memory_pool
             .remaining_uncompressed_memory_in_bytes();
 
-        insert_data_points(1, &mut data_manager, model_table_metadata, UNIVARIATE_ID).await;
+        insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
 
         assert!(
             reserved_memory
@@ -1221,7 +1286,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remaining_memory_incremented_when_popping_in_memory() {
+    fn test_remaining_memory_incremented_when_processing_in_memory_buffer() {
         // This test purposely does not use tokio::test to prevent multiple Tokio runtimes.
         let temp_dir = tempfile::tempdir().unwrap();
         let runtime = Arc::new(Runtime::new().unwrap());
@@ -1231,7 +1296,7 @@ mod tests {
         runtime.block_on(insert_data_points(
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
-            model_table_metadata,
+            &model_table_metadata,
             UNIVARIATE_ID,
         ));
 
@@ -1264,7 +1329,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remaining_memory_not_incremented_when_popping_spilled() {
+    fn test_remaining_memory_not_incremented_when_processing_on_disk_buffer() {
         // This test purposely does not use tokio::test to prevent multiple Tokio runtimes.
         let temp_dir = tempfile::tempdir().unwrap();
         let runtime = Arc::new(Runtime::new().unwrap());
@@ -1348,7 +1413,7 @@ mod tests {
         insert_data_points(
             1,
             &mut data_manager,
-            model_table_metadata.clone(),
+            &model_table_metadata.clone(),
             UNIVARIATE_ID,
         )
         .await;
@@ -1376,7 +1441,7 @@ mod tests {
         insert_data_points(
             1,
             &mut data_manager,
-            model_table_metadata,
+            &model_table_metadata,
             UNIVARIATE_ID + 1,
         )
         .await;
@@ -1389,7 +1454,7 @@ mod tests {
     async fn insert_data_points(
         count: usize,
         data_manager: &mut UncompressedDataManager,
-        model_table_metadata: Arc<ModelTableMetadata>,
+        model_table_metadata: &Arc<ModelTableMetadata>,
         univariate_id: u64,
     ) {
         let value: Value = 30.0;
