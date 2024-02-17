@@ -30,6 +30,7 @@ use datafusion::parquet::errors::ParquetError;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::TableMetadataManager;
+use modelardb_common::storage;
 use modelardb_common::types::{Timestamp, Value};
 use object_store::{ObjectMeta, ObjectStore};
 use parquet::arrow::async_reader::ParquetObjectReader;
@@ -469,7 +470,7 @@ impl CompressedDataManager {
         for input_file in input_files {
             let reader = ParquetObjectReader::new(input_data_folder.clone(), input_file.clone());
             record_batches
-                .append(&mut StorageEngine::read_batches_from_apache_parquet_file(reader).await?);
+                .append(&mut storage::read_batches_from_apache_parquet_file(reader).await?);
         }
 
         // Merge the record batches into a single concatenated and merged record batch.
@@ -491,7 +492,7 @@ impl CompressedDataManager {
         // Write the concatenated and merged record batch to the output location.
         let mut buf = vec![].writer();
         let mut apache_arrow_writer =
-            StorageEngine::create_apache_arrow_writer(&mut buf, schema, sorting_columns)?;
+            storage::create_apache_arrow_writer(&mut buf, schema, sorting_columns)?;
         apache_arrow_writer.write(&merged)?;
         apache_arrow_writer.close()?;
 
