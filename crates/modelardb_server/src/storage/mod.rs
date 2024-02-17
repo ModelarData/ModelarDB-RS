@@ -36,6 +36,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use datafusion::arrow::array::UInt32Array;
+use datafusion::arrow::compute;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::arrow::async_reader::ParquetRecordBatchStreamBuilder;
@@ -565,16 +566,19 @@ impl StorageEngine {
         let file = TokioFile::open(file_path)
             .await
             .map_err(|error| ParquetError::General(error.to_string()))?;
-        let builder = ParquetRecordBatchStreamBuilder::new(file).await?;
-        let mut stream = builder.with_batch_size(usize::MAX).build()?;
 
-        let record_batch = stream.next().await.ok_or_else(|| {
-            ParquetError::General(format!(
-                "Apache Parquet file at path '{}' could not be read.",
-                file_path.display()
-            ))
-        })??;
-        Ok(record_batch)
+        let mut stream = ParquetRecordBatchStreamBuilder::new(file).await?.build()?;
+
+        // Stream the data from the Apache Parquet file into a single record batch.
+        let mut record_batches = Vec::new();
+        while let Some(maybe_record_batch) = stream.next().await {
+            let record_batch = maybe_record_batch?;
+            record_batches.push(record_batch);
+        }
+
+        let schema = record_batches[0].schema();
+        compute::concat_batches(&schema, &record_batches)
+            .map_err(|error| ParquetError::General(error.to_string()))
     }
 
     /// Create an Apache ArrowWriter that writes to `writer`. If the writer could not be created
