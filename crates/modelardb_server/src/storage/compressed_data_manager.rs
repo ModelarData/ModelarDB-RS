@@ -13,7 +13,8 @@
  * limitations under the License.
  */
 
-//! Support for managing all compressed data that is inserted into the [`StorageEngine`].
+//! Support for managing all compressed data that is inserted into the
+//! [`StorageEngine`](crate::storage::StorageEngine).
 
 use std::fs;
 use std::io::{Error as IOError, ErrorKind};
@@ -54,7 +55,8 @@ use crate::ClusterMode;
 pub(super) struct CompressedDataManager {
     /// Component that transfers saved compressed data to the remote data folder when it is necessary.
     pub(super) data_transfer: Arc<RwLock<Option<DataTransfer>>>,
-    /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
+    /// Path to the folder containing all compressed data managed by the
+    /// [`StorageEngine`](crate::storage::StorageEngine).
     pub(crate) local_data_folder: PathBuf,
     /// The compressed segments before they are saved to persistent storage. The key is the name of
     /// the table and the index of the column the compressed segments represents data points for so
