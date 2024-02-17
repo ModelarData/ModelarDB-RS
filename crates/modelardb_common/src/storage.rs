@@ -102,3 +102,117 @@ pub async fn write_record_batch_to_apache_parquet_file(
         )))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::fs::File;
+    use std::sync::Arc;
+
+    use arrow::datatypes::{Field, Schema};
+    use object_store::local::LocalFileSystem;
+    use tempfile::TempDir;
+
+    use crate::test;
+
+    // Tests for read_record_batch_from_apache_parquet_file().
+    #[tokio::test]
+    async fn test_read_record_batch_from_apache_parquet_file() {
+        let record_batch = test::compressed_segments_record_batch();
+        let apache_parquet_path = Path::from("test.parquet");
+
+        let (temp_dir, _result) =
+            write_record_batch_to_temp_dir(&apache_parquet_path, &record_batch).await;
+
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let result =
+            read_record_batch_from_apache_parquet_file(&apache_parquet_path, object_store).await;
+
+        assert!(result.is_ok());
+        assert_eq!(record_batch, result.unwrap());
+    }
+
+    #[tokio::test]
+    async fn test_read_record_batch_from_non_apache_parquet_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let path_buf = temp_dir.path().join("test.txt");
+        File::create(path_buf.clone()).unwrap();
+
+        let path = Path::from("test.txt");
+        let result = read_record_batch_from_apache_parquet_file(&path, object_store);
+
+        assert!(result.await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_read_record_batch_from_non_existent_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let path = Path::from("test.parquet");
+        let result = read_record_batch_from_apache_parquet_file(&path, object_store);
+
+        assert!(result.await.is_err());
+    }
+
+    // Tests for write_record_batch_to_apache_parquet_file().
+    #[tokio::test]
+    async fn test_write_record_batch_to_apache_parquet_file() {
+        let record_batch = test::compressed_segments_record_batch();
+        let (temp_dir, result) =
+            write_record_batch_to_temp_dir(&Path::from("test.parquet"), &record_batch).await;
+
+        assert!(result.is_ok());
+        assert!(temp_dir.path().join("test.parquet").exists());
+    }
+
+    #[tokio::test]
+    async fn test_write_empty_record_batch_to_apache_parquet_file() {
+        let fields: Vec<Field> = vec![];
+        let schema = Schema::new(fields);
+        let record_batch = RecordBatch::new_empty(Arc::new(schema));
+
+        let (temp_dir, result) =
+            write_record_batch_to_temp_dir(&Path::from("test.parquet"), &record_batch).await;
+
+        assert!(result.is_ok());
+        assert!(temp_dir.path().join("test.parquet").exists());
+    }
+
+    #[tokio::test]
+    async fn test_write_record_batch_to_file_path_with_invalid_extension() {
+        let record_batch = test::compressed_segments_record_batch();
+        let (temp_dir, result) =
+            write_record_batch_to_temp_dir(&Path::from("test.txt"), &record_batch).await;
+
+        assert!(result.is_err());
+        assert!(!temp_dir.path().join("test.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn test_write_record_batch_to_file_path_without_extension() {
+        let record_batch = test::compressed_segments_record_batch();
+        let (temp_dir, result) =
+            write_record_batch_to_temp_dir(&Path::from("test"), &record_batch).await;
+
+        assert!(result.is_err());
+        assert!(!temp_dir.path().join("test").exists());
+    }
+
+    async fn write_record_batch_to_temp_dir(
+        file_path: &Path,
+        record_batch: &RecordBatch,
+    ) -> (TempDir, Result<(), ParquetError>) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        let result =
+            write_record_batch_to_apache_parquet_file(file_path, record_batch, None, &object_store)
+                .await;
+
+        (temp_dir, result)
+    }
+}
