@@ -20,11 +20,15 @@ use std::sync::Arc;
 use arrow::array::RecordBatch;
 use arrow::compute;
 use datafusion::parquet::arrow::async_reader::ParquetObjectReader;
-use datafusion::parquet::arrow::ParquetRecordBatchStreamBuilder;
+use datafusion::parquet::arrow::{AsyncArrowWriter, ParquetRecordBatchStreamBuilder};
+use datafusion::parquet::basic::{Compression, Encoding, ZstdLevel};
 use datafusion::parquet::errors::ParquetError;
+use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
+use datafusion::parquet::format::SortingColumn;
 use futures::StreamExt;
 use object_store::path::Path;
 use object_store::ObjectStore;
+use tonic::codegen::Bytes;
 
 /// Read all rows from the Apache Parquet file at the location given by `file_path` in
 /// `object_store` and return them as a [`RecordBatch`]. If the file could not be read successfully,
@@ -55,4 +59,46 @@ pub async fn read_record_batch_from_apache_parquet_file(
     let schema = record_batches[0].schema();
     compute::concat_batches(&schema, &record_batches)
         .map_err(|error| ParquetError::General(error.to_string()))
+}
+
+/// Write the rows in `record_batch` to an Apache Parquet file at the location given by `file_path`
+/// in `object_store`. `file_path` must use the extension `.parquet`. `sorting_columns` can be
+/// set to control the sorting order of the rows in the written file. Return [`Ok`] if the file
+/// was written successfully, otherwise return [`ParquetError`].
+pub async fn write_record_batch_to_apache_parquet_file(
+    file_path: &Path,
+    record_batch: &RecordBatch,
+    sorting_columns: Option<Vec<SortingColumn>>,
+    object_store: &dyn ObjectStore,
+) -> Result<(), ParquetError> {
+    // Check if the extension of the given path is correct.
+    if file_path.extension() == Some("parquet") {
+        let props = WriterProperties::builder()
+            .set_encoding(Encoding::PLAIN)
+            .set_compression(Compression::ZSTD(ZstdLevel::default()))
+            .set_dictionary_enabled(false)
+            .set_statistics_enabled(EnabledStatistics::None)
+            .set_bloom_filter_enabled(false)
+            .set_sorting_columns(sorting_columns)
+            .build();
+
+        // Write the record batch to the object store.
+        let mut buffer = Vec::new();
+        let mut writer =
+            AsyncArrowWriter::try_new(&mut buffer, record_batch.schema(), 0, Some(props))?;
+        writer.write(record_batch).await?;
+        writer.close().await?;
+
+        object_store
+            .put(file_path, Bytes::from(buffer))
+            .await
+            .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
+
+        Ok(())
+    } else {
+        Err(ParquetError::General(format!(
+            "'{}' is not a valid file path for an Apache Parquet file.",
+            file_path.as_ref()
+        )))
+    }
 }
