@@ -116,7 +116,7 @@ impl Context {
         let session_config = SessionConfig::new();
         let session_runtime = Arc::new(RuntimeEnv::default());
 
-        // unwrap() is safe as storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST is a const containing an URL.
+        // unwrap() is safe as QUERY_DATA_FOLDER_SCHEME_WITH_HOST is a const containing a URL.
         let object_store_url = QUERY_DATA_FOLDER_SCHEME_WITH_HOST.try_into().unwrap();
         session_runtime.register_object_store(&object_store_url, query_data_folder);
 

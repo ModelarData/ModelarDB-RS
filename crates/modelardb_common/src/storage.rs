@@ -121,11 +121,10 @@ pub fn create_apache_arrow_writer<W: Write + Send>(
 mod tests {
     use super::*;
 
-    use std::path::PathBuf;
     use std::sync::Arc;
 
     use datafusion::arrow::datatypes::{Field, Schema};
-    use tempfile::{self, TempDir};
+    use tempfile;
 
     use crate::test;
 
@@ -177,14 +176,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_read_entire_apache_parquet_file() {
-        let file_name = "test.parquet".to_owned();
-        let (_temp_dir, path, batch) = create_apache_parquet_file_in_temp_dir(file_name);
+    async fn test_read_apache_parquet_file_with_one_row_group() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let batch = test::compressed_segments_record_batch();
 
-        let result = read_batch_from_apache_parquet_file(path.as_path()).await;
+        let path = temp_dir.path().join("test.parquet");
+        write_batch_to_apache_parquet_file(&batch, path.as_path(), None).unwrap();
 
-        assert!(result.is_ok());
-        assert_eq!(batch, result.unwrap());
+        let result = read_batch_from_apache_parquet_file(path.as_path())
+            .await
+            .unwrap();
+
+        assert_eq!(batch, result);
+        assert_eq!(3, result.num_rows());
+    }
+
+    #[tokio::test]
+    async fn test_read_apache_parquet_file_with_multiple_row_groups() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let batch = test::compressed_segments_record_batch();
+
+        let path = temp_dir.path().join("test.parquet");
+        let file = File::create(&path).unwrap();
+
+        let props = WriterProperties::builder()
+            .set_max_row_group_size(1)
+            .build();
+
+        let mut writer = ArrowWriter::try_new(file, batch.schema(), Some(props)).unwrap();
+        writer.write(&batch).unwrap();
+        writer.close().unwrap();
+
+        let result = read_batch_from_apache_parquet_file(path.as_path())
+            .await
+            .unwrap();
+
+        assert_eq!(batch, result);
+        assert_eq!(3, result.num_rows());
     }
 
     #[tokio::test]
@@ -205,18 +233,5 @@ mod tests {
         let result = read_batch_from_apache_parquet_file(path.as_path());
 
         assert!(result.await.is_err());
-    }
-
-    /// Create an Apache Parquet file in the [`tempfile::TempDir`] from a generated [`RecordBatch`].
-    fn create_apache_parquet_file_in_temp_dir(
-        file_name: String,
-    ) -> (TempDir, PathBuf, RecordBatch) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let batch = test::compressed_segments_record_batch();
-
-        let apache_parquet_path = temp_dir.path().join(file_name);
-        write_batch_to_apache_parquet_file(&batch, apache_parquet_path.as_path(), None).unwrap();
-
-        (temp_dir, apache_parquet_path, batch)
     }
 }
