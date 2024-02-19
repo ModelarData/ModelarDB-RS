@@ -135,7 +135,7 @@ impl ModelarDbDialect {
                             sequence_options: None,
                             generation_expr: Some(parser.parse_expr()?),
                             generation_expr_mode: None,
-                            generated_keyword: false
+                            generated_keyword: false,
                         };
                         parser.expect_token(&Token::RParen)?;
 

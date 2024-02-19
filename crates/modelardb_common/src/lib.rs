@@ -22,5 +22,6 @@ pub mod metadata;
 pub mod parser;
 pub mod remote;
 pub mod schemas;
+pub mod storage;
 pub mod test;
 pub mod types;
