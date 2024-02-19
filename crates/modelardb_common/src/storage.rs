@@ -105,6 +105,8 @@ pub fn create_apache_arrow_writer<W: Write + Send>(
     sorting_columns: Option<Vec<SortingColumn>>,
 ) -> Result<ArrowWriter<W>, ParquetError> {
     let props = WriterProperties::builder()
+        .set_data_page_size_limit(16384)
+        .set_max_row_group_size(65536)
         .set_encoding(Encoding::PLAIN)
         .set_compression(Compression::ZSTD(ZstdLevel::default()))
         .set_dictionary_enabled(false)

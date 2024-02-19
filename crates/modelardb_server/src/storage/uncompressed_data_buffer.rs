@@ -625,7 +625,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(uncompressed_on_disk_buffer.disk_size(), 722)
+        assert_eq!(uncompressed_on_disk_buffer.disk_size(), 3135)
     }
 
     #[tokio::test]
