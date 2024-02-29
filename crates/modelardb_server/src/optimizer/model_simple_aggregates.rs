@@ -424,12 +424,16 @@ impl Accumulator for ModelCountAccumulator {
     }
 
     /// Return the current state of the [`Accumulator`].
-    fn state(&self) -> Result<Vec<ScalarValue>> {
-        Ok(vec![ScalarValue::Int64(Some(self.count))])
+    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+        // After this, the accumulators state should be equivalent to when it was created.
+        let state = vec![ScalarValue::Int64(Some(self.count))];
+        self.count = 0;
+        Ok(state)
     }
 
     /// Panics as this method should never be called.
-    fn evaluate(&self) -> Result<ScalarValue> {
+    fn evaluate(&mut self) -> Result<ScalarValue> {
+        // After this, the accumulators state should be equivalent to when it was created.
         unreachable!()
     }
 
@@ -538,12 +542,16 @@ impl Accumulator for ModelMinAccumulator {
     }
 
     /// Return the current state of the [`Accumulator`].
-    fn state(&self) -> Result<Vec<ScalarValue>> {
-        Ok(vec![ScalarValue::Float32(Some(self.min))])
+    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+        // After this, the accumulators state should be equivalent to when it was created.
+        let state = vec![ScalarValue::Float32(Some(self.min))];
+        self.min = f32::MAX;
+        Ok(state)
     }
 
     /// Panics as this method should never be called.
-    fn evaluate(&self) -> Result<ScalarValue> {
+    fn evaluate(&mut self) -> Result<ScalarValue> {
+        // After this, the accumulators state should be equivalent to when it was created.
         unreachable!()
     }
 
@@ -652,12 +660,16 @@ impl Accumulator for ModelMaxAccumulator {
     }
 
     /// Return the current state of the [`Accumulator`].
-    fn state(&self) -> Result<Vec<ScalarValue>> {
-        Ok(vec![ScalarValue::Float32(Some(self.max))])
+    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+        // After this, the accumulators state should be equivalent to when it was created.
+        let state = vec![ScalarValue::Float32(Some(self.max))];
+        self.max = f32::MIN;
+        Ok(state)
     }
 
     /// Panics as this method should never be called.
-    fn evaluate(&self) -> Result<ScalarValue> {
+    fn evaluate(&mut self) -> Result<ScalarValue> {
+        // After this, the accumulators state should be equivalent to when it was created.
         unreachable!()
     }
 
@@ -795,12 +807,16 @@ impl Accumulator for ModelSumAccumulator {
 
     /// Return the current state of the [`Accumulator`]. It must match
     /// [SumAccumulator](repository/datafusion/physical-expr/src/aggregate/sum.rs).
-    fn state(&self) -> Result<Vec<ScalarValue>> {
-        Ok(vec![ScalarValue::Float64(Some(self.sum))])
+    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+        // After this, the accumulators state should be equivalent to when it was created.
+        let state = vec![ScalarValue::Float64(Some(self.sum))];
+        self.sum = 0.0;
+        Ok(state)
     }
 
     /// Panics as this method should never be called.
-    fn evaluate(&self) -> Result<ScalarValue> {
+    fn evaluate(&mut self) -> Result<ScalarValue> {
+        // After this, the accumulators state should be equivalent to when it was created.
         unreachable!()
     }
 
@@ -942,15 +958,20 @@ impl Accumulator for ModelAvgAccumulator {
 
     /// Return the current state of the [`Accumulator`]. It must match
     /// [AvgAccumulator](repository/datafusion/physical-expr/src/aggregate/average.rs).
-    fn state(&self) -> Result<Vec<ScalarValue>> {
-        Ok(vec![
+    fn state(&mut self) -> Result<Vec<ScalarValue>> {
+        // After this, the accumulators state should be equivalent to when it was created.
+        let state = vec![
             ScalarValue::UInt64(Some(self.count)),
             ScalarValue::Float64(Some(self.sum)),
-        ])
+        ];
+        self.sum = 0.0;
+        self.count = 0;
+        Ok(state)
     }
 
     /// Panics as this method should never be called.
-    fn evaluate(&self) -> Result<ScalarValue> {
+    fn evaluate(&mut self) -> Result<ScalarValue> {
+        // After this, the accumulators state should be equivalent to when it was created.
         unreachable!()
     }
 
