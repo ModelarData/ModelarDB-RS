@@ -680,7 +680,7 @@ fn test_can_collect_metrics() {
     // Check that the metrics are populated when ingesting and flushing.
     let values_array = modelardb_common::array!(metrics, 2, ListArray);
 
-    // The multivariate_memory metric should be recorded when data is received and ingested.
+    // The used_multivariate_memory metric should record when data is received and ingested.
     let multivariate_data_size = test::MULTIVARIATE_DATA_SIZE as u32;
     assert_eq!(
         values_array

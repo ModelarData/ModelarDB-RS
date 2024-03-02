@@ -511,12 +511,12 @@ impl UncompressedDataManager {
     /// enough available memory for an uncompressed in-memory data buffer the memory is reserved and
     /// the method returns. Otherwise, if there are buffers waiting to be compressed, it is assumed
     /// that some of them are in-memory and the thread is blocked until memory have been returned to
-    /// the pool. If there a no buffers waiting to be compressed, all of the memory for uncompressed
-    /// data is used for unfinished uncompressed in-memory data buffers and it is necessary to spill
-    /// one before a new buffer can ever be allocated. To keep the implementation simple, it spills
-    /// a random buffer and does not check if the last uncompressed in-memory data buffer has been
-    /// read from the channel but is not yet compressed. Returns [`true`] if a buffer was spilled,
-    /// [`false`] if not, and [`IOError`] if spilling fails.
+    /// the pool. If there are no buffers waiting to be compressed, all of the memory for
+    /// uncompressed data is used for unfinished uncompressed in-memory data buffers and it is
+    /// necessary to spill one before a new buffer can ever be allocated. To keep the implementation
+    /// simple, it spills a random buffer and does not check if the last uncompressed in-memory data
+    /// buffer has been read from the channel but is not yet compressed. Returns [`true`] if a
+    /// buffer was spilled, [`false`] if not, and [`IOError`] if spilling fails.
     async fn reserve_uncompressed_memory_for_in_memory_data_buffer(&self) -> Result<bool, IOError> {
         // It is not guaranteed that compressing the data buffers in the channel releases any memory
         // as all of the data buffers that are waiting to be compressed may all be stored on disk.

@@ -31,7 +31,7 @@ use crate::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, Value
 /// Expected size of the multivariate data produced in the tests.
 pub const MULTIVARIATE_DATA_SIZE: usize = 1436344;
 
-/// Expected size of the compressed data buffers produced in the tests.
+/// Expected size of the uncompressed data buffers produced in the tests.
 pub const UNCOMPRESSED_BUFFER_SIZE: usize = 786432;
 
 /// Expected size of the compressed segments produced in the tests.

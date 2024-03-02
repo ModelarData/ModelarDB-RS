@@ -680,7 +680,8 @@ mod tests {
         );
     }
 
-    /// Create an on-disk data buffer at `path` from a full `UncompressedInMemoryDataBuffer`.
+    /// Create an on-disk data buffer in `local_data_folder` from a full
+    /// `UncompressedInMemoryDataBuffer`.
     async fn create_on_disk_data_buffer(local_data_folder: &Path) -> UncompressedOnDiskDataBuffer {
         let mut uncompressed_in_memory_buffer_to_be_spilled = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
