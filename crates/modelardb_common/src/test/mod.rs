@@ -28,13 +28,16 @@ use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::schemas::COMPRESSED_SCHEMA;
 use crate::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray};
 
+/// Expected size of the multivariate data produced in the tests.
+pub const MULTIVARIATE_DATA_SIZE: usize = 1436344;
+
 /// Expected size of the compressed data buffers produced in the tests.
 pub const UNCOMPRESSED_BUFFER_SIZE: usize = 786432;
 
 /// Expected size of the compressed segments produced in the tests.
 pub const COMPRESSED_SEGMENTS_SIZE: usize = 1335;
 
-/// Number of bytes reserved for uncompressed data in tests.
+/// Number of bytes reserved for multivariate data in tests.
 pub const MULTIVARIATE_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
 
 /// Number of bytes reserved for uncompressed data in tests.

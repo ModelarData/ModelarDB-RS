@@ -57,13 +57,14 @@ pub(super) struct UncompressedDataManager {
     /// buffers that are no longer used.
     current_batch_index: AtomicU64,
     /// [`UncompresseInMemoryDataBuffers`](UncompressedInMemoryDataBuffer) that are ready to be
-    /// filled with ingested data points. In memory and on disk buffer are stored separately to
-    /// simplify locking during when spilling and reading spilled on disk buffers back into memory.
+    /// filled with ingested data points. In-memory and on-disk buffers are stored separately to
+    /// simplify locking when spilling in-memory buffers to disk and reading on-disk buffers back
+    /// into memory.
     uncompressed_in_memory_data_buffers: DashMap<u64, UncompressedInMemoryDataBuffer>,
-    /// [`UncompresseOnDiskDataBuffers`](UncompressedOnDiskDataBuffer) that must be ready back into
-    /// memory before they can be filled with ingested data points. In memory and on disk buffer are
-    /// stored separately to simplify locking during when spilling and reading spilled on disk
-    /// buffers back into memory.
+    /// [`UncompresseOnDiskDataBuffers`](UncompressedOnDiskDataBuffer) that must be read back into
+    /// memory before they can be filled with ingested data points. In-memory and on-disk buffers
+    /// are stored separately to simplify locking when spilling in-memory buffers to disk and
+    /// reading on-disk buffers back into memory.
     uncompressed_on_disk_data_buffers: DashMap<u64, UncompressedOnDiskDataBuffer>,
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
@@ -236,7 +237,7 @@ impl UncompressedDataManager {
         );
 
         // Track if any buffers are spilled so the resulting warning is only printed once per batch.
-        let mut spilled_buffers = false;
+        let mut buffers_are_spilled = false;
 
         // Read the current batch index as it may be updated in parallel.
         let current_batch_index = self.current_batch_index.load(Ordering::Relaxed);
@@ -324,7 +325,7 @@ impl UncompressedDataManager {
                 let value = field_column_array.value(index);
 
                 // unwrap() is safe to use since the timestamps array cannot contain null values.
-                spilled_buffers |= self
+                buffers_are_spilled |= self
                     .insert_data_point(
                         univariate_id,
                         timestamp.unwrap(),
@@ -355,8 +356,8 @@ impl UncompressedDataManager {
             .free_multivariate_memory(data_points.get_array_memory_size());
 
         // Print a single warning if any buffers are spilled so ingestion can be optimized.
-        if spilled_buffers {
-            warn!("Forced to spill uncompressed buffers, reduce buffer size or increase memory");
+        if buffers_are_spilled {
+            warn!("Forced to spill uncompressed buffers, reduce buffer size or increase memory.");
         }
 
         Ok(())
@@ -382,14 +383,14 @@ impl UncompressedDataManager {
 
         // Track if any buffers are spilled during ingestion so this information can be returned to
         // insert_data_points() and a warning printed once per batch instead of once per data point.
-        let mut spilled_buffers = false;
+        let mut buffers_are_spilled = false;
 
         // Full finished buffers are removed at the end of the function as remove() may deadlock if
         // called when holding any sort of reference into the corresponding map at the same time.
         let mut buffer_is_full = false;
 
         // Insert the data point into an existing in-memory buffer if one exists.
-        let no_in_memory_data_buffer = if let Some(mut univariate_id_buffer) = self
+        let buffer_is_in_memory = if let Some(mut univariate_id_buffer) = self
             .uncompressed_in_memory_data_buffers
             .get_mut(&univariate_id)
         {
@@ -397,26 +398,42 @@ impl UncompressedDataManager {
             let uncompressed_in_memory_data_buffer = univariate_id_buffer.value_mut();
             uncompressed_in_memory_data_buffer.insert_data(current_batch_index, timestamp, value);
             buffer_is_full = uncompressed_in_memory_data_buffer.is_full();
-            false
-        } else {
             true
+        } else {
+            false
         };
 
         // Insert the data point into an on-disk buffer if one exists or create an in-memory buffer.
-        if no_in_memory_data_buffer {
+        if !buffer_is_in_memory {
             // No in-memory data buffer exists so it is necessary to either read a spilled buffer
             // from disk or create a new one. Memory for this is reserved without holding any
             // references into any of the maps as it may be necessary to spill an in-memory buffer
             // to do so. Thus, a combination of remove() and insert() may be called on the maps.
-            spilled_buffers |= self
+            buffers_are_spilled |= self
                 .reserve_uncompressed_memory_for_in_memory_data_buffer()
                 .await?;
+
+            // unwrap() is safe as lock() only returns an error if the lock is poisoned.
+            let reserved_memory = UncompressedInMemoryDataBuffer::memory_size();
+            self.used_uncompressed_memory_metric
+                .lock()
+                .unwrap()
+                .append(reserved_memory as isize, true);
 
             // Two ifs are needed until if-let chains is implemented in Rust stable, see eRFC 2497.
             if let Some(univariate_id_buffer) =
                 self.uncompressed_on_disk_data_buffers.get(&univariate_id)
             {
                 let uncompressed_on_disk_data_buffer = univariate_id_buffer.value();
+
+                // Reading the buffer into memory deletes the on-disk buffer's file on disk and
+                // read_apache_parquet() cannot take self as an argument due to how it is used.
+                // unwrap() is safe as lock() only returns an error if the lock is poisoned.
+                self.used_disk_space_metric.lock().unwrap().append(
+                    -(uncompressed_on_disk_data_buffer.disk_size() as isize),
+                    true,
+                );
+
                 let mut uncompressed_in_memory_data_buffer = uncompressed_on_disk_data_buffer
                     .read_from_apache_parquet(current_batch_index)
                     .await?;
@@ -447,14 +464,6 @@ impl UncompressedDataManager {
                     current_batch_index,
                 );
 
-                let used_memory = UncompressedInMemoryDataBuffer::memory_size();
-
-                // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-                self.used_uncompressed_memory_metric
-                    .lock()
-                    .unwrap()
-                    .append(used_memory as isize, true);
-
                 debug!(
                     "Created buffer for {}. Remaining reserved bytes: {}.",
                     self.memory_pool.remaining_uncompressed_memory_in_bytes(),
@@ -466,6 +475,7 @@ impl UncompressedDataManager {
                     timestamp,
                     value,
                 );
+
                 self.uncompressed_in_memory_data_buffers
                     .insert(univariate_id, uncompressed_in_memory_data_buffer);
             }
@@ -490,18 +500,18 @@ impl UncompressedDataManager {
                 .send(Message::Data(UncompressedDataBuffer::InMemory(
                     full_uncompressed_in_memory_data_buffer,
                 )))
-                .map(|_| spilled_buffers)
+                .map(|_| buffers_are_spilled)
                 .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error));
         }
 
-        Ok(spilled_buffers)
+        Ok(buffers_are_spilled)
     }
 
     /// Reserve enough memory to allocate a new uncompressed in-memory data buffer. If there is
     /// enough available memory for an uncompressed in-memory data buffer the memory is reserved and
-    /// the method returns. Otherwise if there are buffers waiting to be compressed, it is assumed
+    /// the method returns. Otherwise, if there are buffers waiting to be compressed, it is assumed
     /// that some of them are in-memory and the thread is blocked until memory have been returned to
-    /// the pool. If there a no buffer waiting to be compressed, all of the memory for uncompressed
+    /// the pool. If there a no buffers waiting to be compressed, all of the memory for uncompressed
     /// data is used for unfinished uncompressed in-memory data buffers and it is necessary to spill
     /// one before a new buffer can ever be allocated. To keep the implementation simple, it spills
     /// a random buffer and does not check if the last uncompressed in-memory data buffer has been
@@ -516,19 +526,17 @@ impl UncompressedDataManager {
         ) {
             Ok(false)
         } else {
-            self.spill_an_in_memory_data_buffer().await?;
+            self.spill_in_memory_data_buffer().await?;
             Ok(true)
         }
     }
 
-    /// Spill a random [`UncompressedInMemoryDataBuffer`] and return an [`IOError`] if no data
-    /// buffers are currently in memory or if the writing to disk fails.
-    async fn spill_an_in_memory_data_buffer(&self) -> Result<(), IOError> {
+    /// Spill a random [`UncompressedInMemoryDataBuffer`]. Returns an [`IOError`] if no data buffers
+    /// are currently in memory or if the writing to disk fails.
+    async fn spill_in_memory_data_buffer(&self) -> Result<(), IOError> {
         // Extract univariate_id but drop the reference to the map element as remove()
         // may deadlock if called when holding any sort of reference into the map.
         let univariate_id = {
-            // unwrap() is safe as uncompressed_in_memory_data_buffers must contain some
-            // uncompressed in-memory data buffers for the memory to be exhausted.
             *self
                 .uncompressed_in_memory_data_buffers
                 .iter()
@@ -589,19 +597,19 @@ impl UncompressedDataManager {
     /// Finish active in-memory and on-disk data buffers that are no longer used to free memory and
     /// bound latency.
     async fn finish_unused_buffers(&self, current_batch_index: u64) -> Result<(), IOError> {
-        debug!("Freeing memory by finishing in-memory and on-disk buffers that are no not used.");
+        debug!("Freeing memory by finishing in-memory and on-disk buffers that are not used.");
 
-        // In-memory univariate ids are copied to prevent multiple borrows to the map the same time.
-        let in_memory_univariate_ids_of_unused_buffers = self
+        // In-memory univariate ids are copied to prevent multiple concurrent borrows to the map.
+        let univariate_ids_of_unused_in_memory_buffers = self
             .uncompressed_in_memory_data_buffers
             .iter()
             .filter(|kv| kv.value().is_unused(current_batch_index))
             .map(|kv| *kv.key())
             .collect::<Vec<u64>>();
 
-        for univariate_id in in_memory_univariate_ids_of_unused_buffers {
+        for univariate_id in univariate_ids_of_unused_in_memory_buffers {
             // unwrap() is safe as the univariate_ids were just extracted from the map.
-            let (_univariate_id, uncompressed_in_memory_buffers) = self
+            let (_univariate_id, uncompressed_in_memory_data_buffer) = self
                 .uncompressed_in_memory_data_buffers
                 .remove(&univariate_id)
                 .unwrap();
@@ -609,7 +617,7 @@ impl UncompressedDataManager {
             self.channels
                 .univariate_data_sender
                 .send(Message::Data(UncompressedDataBuffer::InMemory(
-                    uncompressed_in_memory_buffers,
+                    uncompressed_in_memory_data_buffer,
                 )))
                 .map_err(|error| IOError::new(IOErrorKind::InvalidData, error))?;
 
@@ -620,14 +628,14 @@ impl UncompressedDataManager {
         }
 
         // On-disk univariate ids are copied to prevent multiple borrows to the map the same time.
-        let on_disk_univariate_ids_of_unused_buffers = self
+        let univariate_ids_of_unused_on_disk_buffers = self
             .uncompressed_on_disk_data_buffers
             .iter()
             .filter(|kv| kv.value().is_unused(current_batch_index))
             .map(|kv| *kv.key())
             .collect::<Vec<u64>>();
 
-        for univariate_id in on_disk_univariate_ids_of_unused_buffers {
+        for univariate_id in univariate_ids_of_unused_on_disk_buffers {
             // unwrap() is safe as the univariate_ids were just extracted from the map.
             let (_univariate_id, uncompressed_on_disk_data_buffer) = self
                 .uncompressed_on_disk_data_buffers
@@ -665,7 +673,7 @@ impl UncompressedDataManager {
     /// Send the uncompressed data buffers that the [`UncompressedDataManager`] is managing to the
     /// compressor. Returns [`SendError`] if a [`Message`] cannot be sent to the compressor.
     fn flush(&self) -> Result<(), SendError<Message<UncompressedDataBuffer>>> {
-        // In-memory univariate ids are copied to prevent multiple borrows to the map the same time.
+        // In-memory univariate ids are copied to prevent multiple concurrent borrows to the map.
         let in_memory_univariate_ids: Vec<u64> = self
             .uncompressed_in_memory_data_buffers
             .iter()
@@ -683,7 +691,7 @@ impl UncompressedDataManager {
             }
         }
 
-        // On-disk univariate ids are copied to prevent multiple borrows to the map the same time.
+        // On-disk univariate ids are copied to prevent multiple concurrent borrows to the map.
         let on_disk_univariate_ids: Vec<u64> = self
             .uncompressed_on_disk_data_buffers
             .iter()
@@ -747,25 +755,35 @@ impl UncompressedDataManager {
         &self,
         uncompressed_data_buffer: UncompressedDataBuffer,
     ) -> Result<(), SendError<Message<CompressedSegmentBatch>>> {
-        let (maybe_data_points, univariate_id, error_bound, model_table_metadata) =
-            match uncompressed_data_buffer {
-                UncompressedDataBuffer::InMemory(mut uncompressed_in_memory_data_buffer) => (
-                    uncompressed_in_memory_data_buffer.record_batch().await,
-                    uncompressed_in_memory_data_buffer.univariate_id(),
-                    uncompressed_in_memory_data_buffer.error_bound(),
-                    uncompressed_in_memory_data_buffer
-                        .model_table_metadata()
-                        .clone(),
-                ),
-                UncompressedDataBuffer::OnDisk(uncompressed_on_disk_data_buffer) => (
-                    uncompressed_on_disk_data_buffer.record_batch().await,
-                    uncompressed_on_disk_data_buffer.univariate_id(),
-                    uncompressed_on_disk_data_buffer.error_bound(),
-                    uncompressed_on_disk_data_buffer
-                        .model_table_metadata()
-                        .clone(),
-                ),
-            };
+        let (
+            maybe_data_points,
+            univariate_id,
+            error_bound,
+            model_table_metadata,
+            memory_use,
+            disk_use,
+        ) = match uncompressed_data_buffer {
+            UncompressedDataBuffer::InMemory(mut uncompressed_in_memory_data_buffer) => (
+                uncompressed_in_memory_data_buffer.record_batch().await,
+                uncompressed_in_memory_data_buffer.univariate_id(),
+                uncompressed_in_memory_data_buffer.error_bound(),
+                uncompressed_in_memory_data_buffer
+                    .model_table_metadata()
+                    .clone(),
+                UncompressedInMemoryDataBuffer::memory_size(),
+                0,
+            ),
+            UncompressedDataBuffer::OnDisk(uncompressed_on_disk_data_buffer) => (
+                uncompressed_on_disk_data_buffer.record_batch().await,
+                uncompressed_on_disk_data_buffer.univariate_id(),
+                uncompressed_on_disk_data_buffer.error_bound(),
+                uncompressed_on_disk_data_buffer
+                    .model_table_metadata()
+                    .clone(),
+                0,
+                uncompressed_on_disk_data_buffer.disk_size(),
+            ),
+        };
 
         let data_points = maybe_data_points.map_err(|_| {
             SendError(Message::Data(CompressedSegmentBatch::new(
@@ -787,14 +805,19 @@ impl UncompressedDataManager {
         .unwrap();
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        let freed_memory = UncompressedInMemoryDataBuffer::memory_size();
         self.used_uncompressed_memory_metric
             .lock()
             .unwrap()
-            .append(-(freed_memory as isize), true);
+            .append(-(memory_use as isize), true);
 
-        // Add the size of the segment back to the remaining reserved bytes and record the change.
-        self.memory_pool.free_uncompressed_memory(freed_memory);
+        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
+        self.used_disk_space_metric
+            .lock()
+            .unwrap()
+            .append(-(disk_use as isize), true);
+
+        // Add the size of the segment back to the remaining reserved bytes.
+        self.memory_pool.free_uncompressed_memory(memory_use);
 
         self.channels
             .compressed_data_sender
@@ -814,7 +837,7 @@ impl UncompressedDataManager {
         self.memory_pool.adjust_uncompressed_memory(value_change);
 
         while self.memory_pool.remaining_uncompressed_memory_in_bytes() < 0 {
-            if let Err(error) = self.spill_an_in_memory_data_buffer().await {
+            if let Err(error) = self.spill_in_memory_data_buffer().await {
                 self.memory_pool.adjust_uncompressed_memory(-value_change);
                 return Err(error);
             }
@@ -826,7 +849,6 @@ impl UncompressedDataManager {
 
 #[cfg(test)]
 mod tests {
-
     use super::*;
 
     use std::path::Path;
@@ -1058,7 +1080,7 @@ mod tests {
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 0);
 
-        data_manager.spill_an_in_memory_data_buffer().await.unwrap();
+        data_manager.spill_in_memory_data_buffer().await.unwrap();
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 0);
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 1);
 
@@ -1243,7 +1265,7 @@ mod tests {
         // If there is enough memory to hold n full buffers, n + 1 are needed to spill a buffer.
         insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
 
-        // All but the last buffer should still be in-memory while the last should be spilled.
+        // One of the buffers should be spilled due to the memory limit being exceeded.
         assert_eq!(
             data_manager.uncompressed_in_memory_data_buffers.len(),
             number_of_buffers
@@ -1409,7 +1431,7 @@ mod tests {
         let (_metadata_manager, mut data_manager, model_table_metadata) =
             create_managers(temp_dir.path()).await;
 
-        // Insert data that should be spilled when the remaining memory is decreased
+        // Insert data that should be spilled when the remaining memory is decreased.
         insert_data_points(
             1,
             &mut data_manager,

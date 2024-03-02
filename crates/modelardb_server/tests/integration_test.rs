@@ -680,6 +680,18 @@ fn test_can_collect_metrics() {
     // Check that the metrics are populated when ingesting and flushing.
     let values_array = modelardb_common::array!(metrics, 2, ListArray);
 
+    // The multivariate_memory metric should be recorded when data is received and ingested.
+    let multivariate_data_size = test::MULTIVARIATE_DATA_SIZE as u32;
+    assert_eq!(
+        values_array
+            .value(0)
+            .as_any()
+            .downcast_ref::<UInt32Array>()
+            .unwrap()
+            .values(),
+        &[multivariate_data_size, 0]
+    );
+
     // The used_uncompressed_memory metric should record the change when ingesting and when flushing.
     let uncompressed_buffer_size = test::UNCOMPRESSED_BUFFER_SIZE as u32;
     assert_eq!(
@@ -720,7 +732,7 @@ fn test_can_collect_metrics() {
 
     // The amount of bytes used for disk space changes depending on the compression so we
     // can only check that the metric is populated when initializing and when flushing.
-    assert_eq!(values_array.value(4).len(), 6);
+    assert_eq!(values_array.value(4).len(), 11);
 }
 
 #[test]

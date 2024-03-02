@@ -43,7 +43,7 @@ pub(super) struct MemoryPool {
     wait_for_multivariate_memory: Condvar,
     /// How many bytes of memory that are left for storing
     /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) containing multivariate time
-    /// series with metadata
+    /// series with metadata.
     remaining_multivariate_memory_in_bytes: Mutex<isize>,
     /// Condition variable that allow threads to wait for more uncompressed memory to be released.
     wait_for_uncompressed_memory: Condvar,
@@ -56,8 +56,7 @@ pub(super) struct MemoryPool {
     remaining_compressed_memory_in_bytes: Mutex<isize>,
 }
 
-/// The pool of memory the [`StorageEngine`](super::StorageEngine) can use for multivariate data,
-/// the
+/// The pool of memory the [`StorageEngine`](super::StorageEngine) can use for multivariate data, the
 /// [`UncompressedDataManager`](crate::storage::uncompressed_data_manager::UncompressedDataManager)
 /// can use for uncompressed data, and the
 /// [`CompressedDataManager`](crate::storage::CompressedDataManager) can use for compressed data.
@@ -142,14 +141,11 @@ impl MemoryPool {
     /// returns [`true`]. Note that `stop_if` is never evaluated while the thread is waiting.
     /// Returns [`true`] if the memory was reserved and [`false`] if not.
     #[must_use]
-    pub(super) fn wait_for_uncompressed_memory_until<F>(
+    pub(super) fn wait_for_uncompressed_memory_until<F: Fn() -> bool>(
         &self,
         size_in_bytes: usize,
         stop_if: F,
-    ) -> bool
-    where
-        F: Fn() -> bool,
-    {
+    ) -> bool {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
         let mut memory_in_bytes = self.remaining_uncompressed_memory_in_bytes.lock().unwrap();
 

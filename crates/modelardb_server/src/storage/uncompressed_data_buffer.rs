@@ -229,7 +229,7 @@ pub(super) struct UncompressedOnDiskDataBuffer {
     univariate_id: u64,
     /// Metadata of the model table the buffer stores data for.
     model_table_metadata: Arc<ModelTableMetadata>,
-    /// Index of the last batch that caused the buffer to be updated.
+    /// Index of the last batch that added data points to this buffer.
     updated_by_batch_index: u64,
     /// Path to the Apache Parquet file containing the uncompressed data in the
     /// [`UncompressedOnDiskDataBuffer`].
@@ -324,21 +324,20 @@ impl UncompressedOnDiskDataBuffer {
         self.file_path.metadata().unwrap().len() as usize
     }
 
-    /// Return [`true`] if the [`UncompressedOnDiskDataBuffer`] has not been updated by
-    /// [`RECORD_BATCH_OFFSET_REQUIRED_FOR_UNUSED`] [`RecordBatches`](`RecordBatch`) compared to the
-    /// [`RecordBatch`] with index `current_batch_index` ingested by the current process.
+    /// Return [`true`] if all of the data points in the [`UncompressedOnDiskDataBuffer`] are from
+    /// [`RecordBatches`](`RecordBatch`) that are [`RECORD_BATCH_OFFSET_REQUIRED_FOR_UNUSED`] older
+    /// than the [`RecordBatch`] with index `current_batch_index` ingested by the current process.
     pub(super) fn is_unused(&self, current_batch_index: u64) -> bool {
         self.updated_by_batch_index + RECORD_BATCH_OFFSET_REQUIRED_FOR_UNUSED <= current_batch_index
     }
 
-    /// Since both [`UncompressedInMemoryDataBuffers`](UncompressedInMemoryDataBuffer) and
-    /// [`UncompressedOnDiskDataBuffers`](UncompressedOnDiskDataBuffer) are stored together, both
-    /// structs need to implement reading from Apache Parquet, with in-memory buffers returning
-    /// [`IOError`].
+    /// Read the data from the Apache Parquet file, delete the Apache Parquet file, and return the
+    /// data as a [`UncompressedInMemoryDataBuffer`] sorted by time. Return [`ParquetError`] if the
+    /// Apache Parquet file cannot be read or deleted.
     pub(super) async fn read_from_apache_parquet(
         &self,
         current_batch_index: u64,
-    ) -> Result<UncompressedInMemoryDataBuffer, IOError> {
+    ) -> Result<UncompressedInMemoryDataBuffer, ParquetError> {
         let record_batch = self.record_batch().await?;
 
         let timestamps = modelardb_common::array!(record_batch, 0, TimestampArray);
@@ -567,19 +566,9 @@ mod tests {
     // Tests for UncompressedOnDiskDataBuffer.
     #[tokio::test]
     async fn test_get_record_batch_from_on_disk_data_buffer() {
-        let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
-            test::model_table_metadata_arc(),
-            CURRENT_BATCH_INDEX,
-        );
-        let capacity = uncompressed_in_memory_buffer.capacity();
-        insert_data_points(capacity, &mut uncompressed_in_memory_buffer);
-
         let temp_dir = tempfile::tempdir().unwrap();
-        let uncompressed_on_disk_buffer = uncompressed_in_memory_buffer
-            .spill_to_apache_parquet(temp_dir.path())
-            .await
-            .unwrap();
+
+        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(temp_dir.path()).await;
 
         let spilled_buffer_path = temp_dir
             .path()
@@ -591,7 +580,7 @@ mod tests {
         let data = uncompressed_on_disk_buffer.record_batch().await.unwrap();
 
         assert_eq!(data.num_columns(), 2);
-        assert_eq!(data.num_rows(), capacity);
+        assert_eq!(data.num_rows(), *UNCOMPRESSED_DATA_BUFFER_CAPACITY);
 
         let spilled_buffer_path = temp_dir
             .path()
@@ -640,90 +629,32 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_on_disk_data_buffer_disk_size() {
-        let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
-            test::model_table_metadata_arc(),
-            CURRENT_BATCH_INDEX,
-        );
-        let capacity = uncompressed_in_memory_buffer.capacity();
-        insert_data_points(capacity, &mut uncompressed_in_memory_buffer);
-
         let temp_dir = tempfile::tempdir().unwrap();
-        let uncompressed_on_disk_buffer = uncompressed_in_memory_buffer
-            .spill_to_apache_parquet(temp_dir.path())
-            .await
-            .unwrap();
+
+        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(temp_dir.path()).await;
 
         assert_eq!(uncompressed_on_disk_buffer.disk_size(), 3135)
     }
 
-    #[test]
-    fn test_check_if_on_disk_data_buffer_is_unused() {
-        // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179
-        let runtime = Runtime::new().unwrap();
+    #[tokio::test]
+    async fn test_check_if_on_disk_data_buffer_is_unused() {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
-            test::model_table_metadata_arc(),
-            CURRENT_BATCH_INDEX,
-        );
-
-        // Insert the data points as a batch with the index CURRENT_BATCH_INDEX.
-        insert_data_points(
-            uncompressed_in_memory_buffer.capacity(),
-            &mut uncompressed_in_memory_buffer,
-        );
-
-        let record_batch = runtime
-            .block_on(uncompressed_in_memory_buffer.record_batch())
-            .unwrap();
-
-        let uncompressed_on_disk_buffer = UncompressedOnDiskDataBuffer::try_spill(
-            UNIVARIATE_ID,
-            test::model_table_metadata_arc(),
-            CURRENT_BATCH_INDEX,
-            temp_dir.path(),
-            record_batch,
-        )
-        .unwrap();
+        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(temp_dir.path()).await;
 
         assert!(!uncompressed_on_disk_buffer.is_unused(CURRENT_BATCH_INDEX));
         assert!(uncompressed_on_disk_buffer.is_unused(CURRENT_BATCH_INDEX + 1));
     }
 
-    #[test]
-    fn test_read_in_memory_data_buffer_from_on_disk_data_buffer() {
-        // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179
-        let runtime = Runtime::new().unwrap();
+    #[tokio::test]
+    async fn test_read_in_memory_data_buffer_from_on_disk_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        let mut uncompressed_in_memory_buffer_to_be_spilled = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
-            test::model_table_metadata_arc(),
-            CURRENT_BATCH_INDEX,
-        );
+        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(temp_dir.path()).await;
 
-        insert_data_points(
-            uncompressed_in_memory_buffer_to_be_spilled.capacity(),
-            &mut uncompressed_in_memory_buffer_to_be_spilled,
-        );
-
-        let record_batch = runtime
-            .block_on(uncompressed_in_memory_buffer_to_be_spilled.record_batch())
-            .unwrap();
-
-        let uncompressed_on_disk_buffer = UncompressedOnDiskDataBuffer::try_spill(
-            UNIVARIATE_ID,
-            test::model_table_metadata_arc(),
-            CURRENT_BATCH_INDEX,
-            temp_dir.path(),
-            record_batch,
-        )
-        .unwrap();
-
-        let read_uncompressed_in_memory_buffer = runtime
-            .block_on(uncompressed_on_disk_buffer.read_from_apache_parquet(CURRENT_BATCH_INDEX))
+        let read_uncompressed_in_memory_buffer = uncompressed_on_disk_buffer
+            .read_from_apache_parquet(CURRENT_BATCH_INDEX)
+            .await
             .unwrap();
 
         // The creation of record_batch empties uncompressed_in_memory_buffer_to_be_spilled.
@@ -747,6 +678,25 @@ mod tests {
             uncompressed_in_memory_buffer.values.values_slice(),
             read_uncompressed_in_memory_buffer.values.values_slice()
         );
+    }
+
+    /// Create an on-disk data buffer at `path` from a full `UncompressedInMemoryDataBuffer`.
+    async fn create_on_disk_data_buffer(local_data_folder: &Path) -> UncompressedOnDiskDataBuffer {
+        let mut uncompressed_in_memory_buffer_to_be_spilled = UncompressedInMemoryDataBuffer::new(
+            UNIVARIATE_ID,
+            test::model_table_metadata_arc(),
+            CURRENT_BATCH_INDEX,
+        );
+
+        insert_data_points(
+            uncompressed_in_memory_buffer_to_be_spilled.capacity(),
+            &mut uncompressed_in_memory_buffer_to_be_spilled,
+        );
+
+        uncompressed_in_memory_buffer_to_be_spilled
+            .spill_to_apache_parquet(local_data_folder)
+            .await
+            .unwrap()
     }
 
     /// Insert `count` generated data points into `uncompressed_buffer`.
