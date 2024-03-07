@@ -711,7 +711,7 @@ mod tests {
         uncompressed_values: &ValueArray,
         error_bound: f32,
     ) -> RecordBatch {
-        let error_bound = ErrorBound::try_new(error_bound).unwrap();
+        let error_bound = ErrorBound::try_new_relative(error_bound).unwrap();
         try_compress(1, error_bound, uncompressed_timestamps, uncompressed_values).unwrap()
     }
 
@@ -765,7 +765,7 @@ mod tests {
         if error_bound == 0.0 {
             assert_eq!(uncompressed_values, &decompressed_values);
         } else {
-            let error_bound = ErrorBound::try_new(error_bound).unwrap();
+            let error_bound = ErrorBound::try_new_relative(error_bound).unwrap();
             for index in 0..uncompressed_values.len() {
                 let real_value = uncompressed_values.value(index);
                 let approximate_value = decompressed_values.value(index);
@@ -781,7 +781,7 @@ mod tests {
     // Tests for compress_and_store_residuals_in_a_separate_segment().
     #[test]
     fn test_compress_and_store_residuals_in_a_separate_segment() {
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let error_bound = ErrorBound::try_new_relative(0.0).unwrap();
         let uncompressed_timestamps = TimestampArray::from_iter_values((100..=500).step_by(100));
         let uncompressed_values = ValueArray::from(vec![73.0, 37.0, 37.0, 37.0, 73.0]);
         let mut compressed_segment_batch_builder = CompressedSegmentBatchBuilder::new(1);

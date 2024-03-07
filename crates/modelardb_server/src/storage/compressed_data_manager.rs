@@ -933,8 +933,8 @@ mod tests {
                 test::MODEL_TABLE_NAME.to_owned(),
                 query_schema,
                 vec![
-                    ErrorBound::try_new(0.0).unwrap(),
-                    ErrorBound::try_new(0.0).unwrap(),
+                    ErrorBound::try_new_relative(0.0).unwrap(),
+                    ErrorBound::try_new_relative(0.0).unwrap(),
                 ],
                 vec![None, None],
             )

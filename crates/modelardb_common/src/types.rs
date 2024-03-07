@@ -70,41 +70,66 @@ pub struct TagMetadataSchema(pub arrow::datatypes::SchemaRef);
 #[derive(Clone)]
 pub struct CompressedFileMetadataSchema(pub arrow::datatypes::SchemaRef);
 
-/// Error bound in percentage that is guaranteed to be from 0.0% to 100.0%. For both `PMCMean`,
-/// `Swing`, and `Gorilla` the error bound is interpreted as a relative per value error bound.
+/// Absolute or relative per-value error bound.
 #[derive(Debug, Copy, Clone)]
-pub struct ErrorBound(pub f32); // Simpler for the model types to directly work on the f32.
+pub enum ErrorBound {
+    /// Error bound that guarantee each value cannot deviate more than the [`Value`].
+    Absolute(Value),
+    /// Error bound that guarantee each value cannot deviate more than 0.0% to 100.0%.
+    Relative(f32),
+}
 
 impl ErrorBound {
-    /// Return [`ErrorBound`] if `percentage` is a value from 0.0% to 100.0%, otherwise
-    /// [`CompressionError`](ModelarDbError::CompressionError) is returned.
-    pub fn try_new(percentage: f32) -> Result<Self, ModelarDbError> {
-        if !(0.0..=100.0).contains(&percentage) {
+    /// Return an [`ErrorBound::Absolute`] with `value` as its absolute per-value bound. A
+    /// [`ModelarDbError`] is returned if a negative or non-normal value is passed.
+    pub fn try_new_absolute(value: f32) -> Result<Self, ModelarDbError> {
+        if !value.is_finite() || value < 0.0 {
             Err(ModelarDbError::CompressionError(
-                "Error bound must be a value from 0.0% to 100.0%.".to_owned(),
+                "An absolute error bounds must be a finite value..".to_owned(),
             ))
         } else {
-            Ok(Self(percentage))
+            Ok(Self::Absolute(value))
+        }
+    }
+
+    /// Return an [ErrorBound::Relative`] with `percentage` as its relative per-value bound. A
+    /// [`ModelarDbError`] is returned if a value below 0% or a value above 100% is passed.
+    pub fn try_new_relative(percentage: f32) -> Result<Self, ModelarDbError> {
+        if !(0.0..=100.0).contains(&percentage) {
+            Err(ModelarDbError::CompressionError(
+                "An relative error bound must be a value from 0.0% to 100.0%.".to_owned(),
+            ))
+        } else {
+            Ok(Self::Relative(percentage))
         }
     }
 
     /// Consumes `self`, returning the error bound as a [`f32`].
     pub fn into_inner(self) -> f32 {
-        self.0
+        match self {
+            ErrorBound::Absolute(value) => value,
+            ErrorBound::Relative(value) => value,
+        }
     }
 }
 
 /// Enable equal and not equal for [`ErrorBound`] and [`f32`].
 impl PartialEq<ErrorBound> for f32 {
     fn eq(&self, other: &ErrorBound) -> bool {
-        self.eq(&other.0)
+        match other {
+            ErrorBound::Absolute(value) => self.eq(value),
+            ErrorBound::Relative(value) => self.eq(value),
+        }
     }
 }
 
 /// Enable less than and greater than for [`ErrorBound`] and [`f32`].
 impl PartialOrd<ErrorBound> for f32 {
     fn partial_cmp(&self, other: &ErrorBound) -> Option<Ordering> {
-        self.partial_cmp(&other.0)
+        match other {
+            ErrorBound::Absolute(value) => self.partial_cmp(value),
+            ErrorBound::Relative(value) => self.partial_cmp(value),
+        }
     }
 }
 
@@ -145,33 +170,60 @@ mod tests {
 
     // Tests for ErrorBound.
     proptest! {
-    #[test]
-    fn test_error_bound_can_be_positive_if_less_than_one_hundred(percentage in num::f32::POSITIVE) {
-        if percentage <= 100.0 {
-            assert!(ErrorBound::try_new(percentage).is_ok())
-        } else {
-            assert!(ErrorBound::try_new(percentage).is_err())
+        #[test]
+        fn test_absolute_error_bound_can_be_any_positive_value(value in num::f32::POSITIVE) {
+            assert!(ErrorBound::try_new_absolute(value).is_ok())
+        }
+
+        #[test]
+        fn test_absolute_error_bound_cannot_be_negative(value in num::f32::NEGATIVE) {
+            assert!(ErrorBound::try_new_absolute(value).is_err())
         }
     }
 
     #[test]
-    fn test_error_bound_cannot_be_negative(percentage in num::f32::NEGATIVE) {
-        assert!(ErrorBound::try_new(percentage).is_err())
-    }
-    }
-
-    #[test]
-    fn test_error_bound_cannot_be_positive_infinity() {
-        assert!(ErrorBound::try_new(f32::INFINITY).is_err())
+    fn test_absolute_error_bound_cannot_be_positive_infinity() {
+        assert!(ErrorBound::try_new_absolute(f32::INFINITY).is_err())
     }
 
     #[test]
-    fn test_error_bound_cannot_be_negative_infinity() {
-        assert!(ErrorBound::try_new(f32::NEG_INFINITY).is_err())
+    fn test_absolute_error_bound_cannot_be_negative_infinity() {
+        assert!(ErrorBound::try_new_absolute(f32::NEG_INFINITY).is_err())
     }
 
     #[test]
-    fn test_error_bound_cannot_be_nan() {
-        assert!(ErrorBound::try_new(f32::NAN).is_err())
+    fn test_absolute_error_bound_cannot_be_nan() {
+        assert!(ErrorBound::try_new_absolute(f32::NAN).is_err())
+    }
+
+    proptest! {
+        #[test]
+        fn test_relative_error_bound_can_be_positive_if_less_than_one_hundred(percentage in num::f32::POSITIVE) {
+            if percentage <= 100.0 {
+                assert!(ErrorBound::try_new_relative(percentage).is_ok())
+            } else {
+                assert!(ErrorBound::try_new_relative(percentage).is_err())
+            }
+        }
+
+        #[test]
+        fn test_relative_error_bound_cannot_be_negative(percentage in num::f32::NEGATIVE) {
+            assert!(ErrorBound::try_new_relative(percentage).is_err())
+        }
+    }
+
+    #[test]
+    fn test_relative_error_bound_cannot_be_positive_infinity() {
+        assert!(ErrorBound::try_new_relative(f32::INFINITY).is_err())
+    }
+
+    #[test]
+    fn test_relative_error_bound_cannot_be_negative_infinity() {
+        assert!(ErrorBound::try_new_relative(f32::NEG_INFINITY).is_err())
+    }
+
+    #[test]
+    fn test_relative_error_bound_cannot_be_nan() {
+        assert!(ErrorBound::try_new_relative(f32::NAN).is_err())
     }
 }

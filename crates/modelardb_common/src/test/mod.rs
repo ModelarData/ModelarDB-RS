@@ -68,10 +68,10 @@ pub fn model_table_metadata() -> ModelTableMetadata {
     ]));
 
     let error_bounds = vec![
-        ErrorBound::try_new(0.0).unwrap(),
-        ErrorBound::try_new(1.0).unwrap(),
-        ErrorBound::try_new(5.0).unwrap(),
-        ErrorBound::try_new(0.0).unwrap(),
+        ErrorBound::try_new_relative(0.0).unwrap(),
+        ErrorBound::try_new_relative(1.0).unwrap(),
+        ErrorBound::try_new_relative(5.0).unwrap(),
+        ErrorBound::try_new_relative(0.0).unwrap(),
     ];
 
     let generated_columns = vec![None, None, None, None];

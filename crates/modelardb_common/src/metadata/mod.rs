@@ -147,8 +147,8 @@ where
     /// * The model_table_metadata table contains the main metadata for model tables.
     /// * The model_table_hash_table_name contains a mapping from each tag hash to the name of the
     /// model table that contains the time series with that tag hash.
-    /// * The model_table_field_columns table contains the name, index, error bound, and generation
-    /// expression of the field columns in each model table.
+    /// * The model_table_field_columns table contains the name, index, error bound value, if error
+    /// bound is relative, and generation expression of the field columns in each model table.
     /// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
     pub async fn create_metadata_database_tables(&self) -> Result<(), Error> {
         let strict = self.metadata_database_type.strict();
@@ -188,14 +188,16 @@ where
         .execute(&mut *transaction)
         .await?;
 
-        // Create the model_table_field_columns table if it does not exist. Note that column_index will
-        // only use a maximum of 10 bits. generated_column_* is NULL if the fields are stored as segments.
+        // Create the model_table_field_columns table if it does not exist. Note that column_index
+        // will only use a maximum of 10 bits. generated_column_* is NULL if the fields are stored
+        // as segments. error_bound_relative should be a boolean but bind do not accept booleans.
         sqlx::query(&format!(
             "CREATE TABLE IF NOT EXISTS model_table_field_columns (
                  table_name TEXT NOT NULL,
                  column_name TEXT NOT NULL,
                  column_index {integer_type} NOT NULL,
-                 error_bound REAL NOT NULL,
+                 error_bound_value REAL NOT NULL,
+                 error_bound_relative {integer_type} NULL,
                  generated_column_expr TEXT,
                  generated_column_sources {binary_type},
                  PRIMARY KEY (table_name, column_name)
@@ -733,8 +735,8 @@ where
         // Add a row for each field column to the model_table_field_columns table.
         let insert_statement =
             "INSERT INTO model_table_field_columns (table_name, column_name, column_index,
-             error_bound, generated_column_expr, generated_column_sources)
-             VALUES ($1, $2, $3, $4, $5, $6)";
+             error_bound_value, error_bound_relative, generated_column_expr, generated_column_sources)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)";
 
         for (query_schema_index, field) in model_table_metadata
             .query_schema
@@ -765,11 +767,15 @@ where
 
                 // error_bounds matches schema and not query_schema to simplify looking up the error
                 // bound during ingestion as it occurs far more often than creation of model tables.
-                let error_bound =
+                // Bind refused to accept booleans so a simple 0 is used for false and 1 for true.
+                let (error_bound_value, error_bound_relative) =
                     if let Ok(schema_index) = model_table_metadata.schema.index_of(field.name()) {
-                        model_table_metadata.error_bounds[schema_index].into_inner()
+                        match model_table_metadata.error_bounds[schema_index] {
+                            ErrorBound::Absolute(value) => (value, 0),
+                            ErrorBound::Relative(value) => (value, 1),
+                        }
                     } else {
-                        0.0
+                        (0.0, 0)
                     };
 
                 // query_schema_index is simply cast as a model table contains at most 1024 columns.
@@ -777,7 +783,8 @@ where
                     .bind(&model_table_metadata.name)
                     .bind(field.name())
                     .bind(query_schema_index as i64)
-                    .bind(error_bound)
+                    .bind(error_bound_value)
+                    .bind(error_bound_relative)
                     .bind(generated_column_expr)
                     .bind(generated_column_sources)
                     .execute(&mut *transaction)
@@ -851,14 +858,14 @@ where
         query_schema_columns: usize,
     ) -> Result<Vec<ErrorBound>, Error> {
         let mut rows = sqlx::query(
-            "SELECT column_index, error_bound FROM model_table_field_columns
-             WHERE table_name = $1 ORDER BY column_index",
+            "SELECT column_index, error_bound_value, error_bound_relative FROM model_table_field_columns
+                  WHERE table_name = $1 ORDER BY column_index",
         )
         .bind(table_name)
         .fetch(&self.metadata_database_pool);
 
         let mut column_to_error_bound =
-            vec![ErrorBound::try_new(0.0).unwrap(); query_schema_columns];
+            vec![ErrorBound::try_new_relative(0.0).unwrap(); query_schema_columns];
 
         while let Some(row) = rows.try_next().await? {
             // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
@@ -866,9 +873,17 @@ where
             // is stored as an i64 instead of an u64 as a model table has at most 1024 columns.
             let error_bound_index: i64 = row.try_get("column_index")?;
 
+            let error_bound_value: f32 = row.try_get("error_bound_value")?;
+            let error_bound_relative: i64 = row.try_get("error_bound_relative")?;
+            let error_bound = if error_bound_relative == 0 {
+                ErrorBound::try_new_absolute(error_bound_value)
+            } else {
+                ErrorBound::try_new_relative(error_bound_value)
+            }
+            .unwrap();
+
             // unwrap() is safe as the error bounds are checked before they are stored.
-            column_to_error_bound[error_bound_index as usize] =
-                ErrorBound::try_new(row.try_get("error_bound")?).unwrap();
+            column_to_error_bound[error_bound_index as usize] = error_bound;
         }
 
         Ok(column_to_error_bound)
@@ -1201,8 +1216,8 @@ mod tests {
         metadata_manager
             .metadata_database_pool
             .execute(
-                "SELECT table_name, column_name, column_index, error_bound, generated_column_expr,
-                 generated_column_sources FROM model_table_field_columns",
+                "SELECT table_name, column_name, column_index, error_bound_value, error_bound_relative,
+                 generated_column_expr, generated_column_sources FROM model_table_field_columns",
             )
             .await
             .unwrap();
@@ -2015,8 +2030,8 @@ mod tests {
 
         // Retrieve the rows in model_table_field_columns from the metadata database.
         let mut rows = metadata_manager.metadata_database_pool.fetch(
-            "SELECT table_name, column_name, column_index, error_bound, generated_column_expr,
-             generated_column_sources FROM model_table_field_columns",
+            "SELECT table_name, column_name, column_index, error_bound_value, error_bound_relative,
+             generated_column_expr, generated_column_sources FROM model_table_field_columns",
         );
 
         let row = rows.try_next().await.unwrap().unwrap();
@@ -2024,16 +2039,18 @@ mod tests {
         assert_eq!("field_1", row.try_get::<&str, _>(1).unwrap());
         assert_eq!(1, row.try_get::<i32, _>(2).unwrap());
         assert_eq!(1.0, row.try_get::<f32, _>(3).unwrap());
-        assert_eq!(None, row.try_get::<Option<&str>, _>(4).unwrap());
-        assert_eq!(None, row.try_get::<Option<Vec<u8>>, _>(5).unwrap());
+        assert!(row.try_get::<bool, _>(4).unwrap());
+        assert_eq!(None, row.try_get::<Option<&str>, _>(5).unwrap());
+        assert_eq!(None, row.try_get::<Option<Vec<u8>>, _>(6).unwrap());
 
         let row = rows.try_next().await.unwrap().unwrap();
         assert_eq!(test::MODEL_TABLE_NAME, row.try_get::<&str, _>(0).unwrap());
         assert_eq!("field_2", row.try_get::<&str, _>(1).unwrap());
         assert_eq!(2, row.try_get::<i32, _>(2).unwrap());
         assert_eq!(5.0, row.try_get::<f32, _>(3).unwrap());
-        assert_eq!(None, row.try_get::<Option<&str>, _>(4).unwrap());
-        assert_eq!(None, row.try_get::<Option<Vec<u8>>, _>(5).unwrap());
+        assert!(row.try_get::<bool, _>(4).unwrap());
+        assert_eq!(None, row.try_get::<Option<&str>, _>(5).unwrap());
+        assert_eq!(None, row.try_get::<Option<Vec<u8>>, _>(6).unwrap());
 
         assert!(rows.try_next().await.unwrap().is_none());
     }

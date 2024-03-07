@@ -426,7 +426,7 @@ mod tests {
         while index < uncompressed_timestamps.len() {
             let compressed_segments = crate::try_compress(
                 1,
-                ErrorBound::try_new(0.0).unwrap(),
+                ErrorBound::try_new_relative(0.0).unwrap(),
                 &uncompressed_timestamps.slice(index, batch_size),
                 &uncompressed_values.slice(index, batch_size),
             )

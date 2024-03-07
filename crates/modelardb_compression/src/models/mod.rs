@@ -57,22 +57,36 @@ pub fn is_value_within_error_bound(
     real_value: Value,
     approximate_value: Value,
 ) -> bool {
-    // Needed because result becomes NAN and approximate_value is rejected
-    // if approximate_value and real_value are zero, and because NAN != NAN.
-    if equal_or_nan(real_value as f64, approximate_value as f64) {
-        true
-    } else {
-        let difference = real_value - approximate_value;
-        let result = Value::abs(difference / real_value);
-        (result * 100.0) <= error_bound
+    match error_bound {
+        ErrorBound::Absolute(error_bound) => {
+            Value::abs(real_value - approximate_value) <= error_bound
+        },
+        ErrorBound::Relative(error_bound) => {
+            // Needed because result becomes NAN and approximate_value is rejected
+            // if approximate_value and real_value are zero, and because NAN != NAN.
+            if equal_or_nan(real_value as f64, approximate_value as f64) {
+                true
+            } else {
+                let difference = real_value - approximate_value;
+                let result = Value::abs(difference / real_value);
+                (result * 100.0) <= error_bound
+            }
+        }
     }
 }
 
 /// Compute the maximum allowed deviation from `value` within `error bound`.
 pub fn maximum_allowed_deviation(error_bound: ErrorBound, value: f64) -> f64 {
-    // The error bound in percentage is divided by 100.1 instead of 100.0 to ensure the deviation is
-    // below the error bound despite calculations with floating-point values being a bit inaccurate.
-    f64::abs(value * (error_bound.0 as f64 / 100.1))
+    match error_bound {
+        ErrorBound::Absolute(error_bound) => {
+            error_bound as f64
+        },
+        ErrorBound::Relative(error_bound) => {
+            // The error bound in percentage is divided by 100.1 instead of 100.0 to ensure the
+            // deviation is below the error bound despite calculations being a bit inaccurate.
+            f64::abs(value * (error_bound as f64 / 100.1))
+        }
+    }
 }
 
 /// Returns true if `v1` and `v2` are equivalent or both values are NAN.
@@ -411,56 +425,56 @@ mod tests {
     proptest! {
     #[test]
     fn test_same_value_is_always_within_error_bound(value in ProptestValue::ANY) {
-        prop_assert!(is_value_within_error_bound(ErrorBound::try_new(0.0).unwrap(), value, value));
+        prop_assert!(is_value_within_error_bound(ErrorBound::try_new_relative(0.0).unwrap(), value, value));
     }
 
     #[test]
     fn test_other_value_is_never_within_error_bound_of_positive_infinity(value in ProptestValue::ANY) {
         prop_assume!(value != Value::INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(100.0).unwrap(), Value::INFINITY, value));
+            ErrorBound::try_new_relative(100.0).unwrap(), Value::INFINITY, value));
     }
 
     #[test]
     fn test_other_value_is_never_within_error_bound_of_negative_infinity(value in ProptestValue::ANY) {
         prop_assume!(value != Value::NEG_INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(100.0).unwrap(), Value::NEG_INFINITY, value));
+            ErrorBound::try_new_relative(100.0).unwrap(), Value::NEG_INFINITY, value));
     }
 
     #[test]
     fn test_other_value_is_never_within_error_bound_of_nan(value in ProptestValue::ANY) {
         prop_assume!(!value.is_nan());
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(100.0).unwrap(), Value::NAN, value));
+            ErrorBound::try_new_relative(100.0).unwrap(), Value::NAN, value));
     }
 
     #[test]
     fn test_positive_infinity_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
         prop_assume!(value != Value::INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(100.0).unwrap(), value, Value::INFINITY));
+            ErrorBound::try_new_relative(100.0).unwrap(), value, Value::INFINITY));
     }
 
     #[test]
     fn test_negative_infinity_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
         prop_assume!(value != Value::NEG_INFINITY);
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(100.0).unwrap(), value, Value::NEG_INFINITY));
+            ErrorBound::try_new_relative(100.0).unwrap(), value, Value::NEG_INFINITY));
     }
 
     #[test]
     fn test_nan_is_never_within_error_bound_of_other_value(value in ProptestValue::ANY) {
         prop_assume!(!value.is_nan());
         prop_assert!(!is_value_within_error_bound(
-            ErrorBound::try_new(100.0).unwrap(), value, Value::NAN));
+            ErrorBound::try_new_relative(100.0).unwrap(), value, Value::NAN));
     }
     }
 
     #[test]
     fn test_different_value_is_within_non_zero_error_bound() {
         assert!(is_value_within_error_bound(
-            ErrorBound::try_new(10.0).unwrap(),
+            ErrorBound::try_new_relative(10.0).unwrap(),
             10.0,
             11.0
         ));

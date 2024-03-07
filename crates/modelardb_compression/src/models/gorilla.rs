@@ -278,14 +278,14 @@ mod tests {
     // Tests for Gorilla.
     #[test]
     fn test_empty_sequence() {
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let error_bound = ErrorBound::try_new_relative(0.0).unwrap();
         assert!(Gorilla::new(error_bound).model().0.is_empty());
     }
 
     proptest! {
     #[test]
     fn test_append_single_value(value in ProptestValue::ANY) {
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let error_bound = ErrorBound::try_new_relative(0.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
 
         model_type.compress_values(&[value]);
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn test_append_repeated_values(value in ProptestValue::ANY) {
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let error_bound = ErrorBound::try_new_relative(0.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
 
         model_type.compress_values(&[value, value]);
@@ -310,7 +310,7 @@ mod tests {
 
     #[test]
     fn test_append_different_values_with_leading_zero_bits() {
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let error_bound = ErrorBound::try_new_relative(0.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
 
         model_type.compress_values(&[37.0, 73.0]);
@@ -322,7 +322,7 @@ mod tests {
 
     #[test]
     fn test_append_different_values_without_leading_zero_bits() {
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let error_bound = ErrorBound::try_new_relative(0.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
 
         model_type.compress_values(&[37.0, 71.0, 73.0]);
@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn test_append_values_within_error_bound() {
-        let error_bound = ErrorBound::try_new(10.0).unwrap();
+        let error_bound = ErrorBound::try_new_relative(10.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
 
         model_type.compress_values(&[10.0]);
@@ -455,7 +455,7 @@ mod tests {
         values: &[Value],
         maybe_model_last_value: Option<Value>,
     ) -> Vec<u8> {
-        let error_bound = ErrorBound::try_new(0.0).unwrap();
+        let error_bound = ErrorBound::try_new_relative(0.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
         if let Some(model_last_value) = maybe_model_last_value {
             model_type.compress_values_without_first(values, model_last_value);
