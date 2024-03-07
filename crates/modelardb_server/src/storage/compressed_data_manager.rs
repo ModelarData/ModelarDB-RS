@@ -882,6 +882,7 @@ mod tests {
         let channels = Arc::new(Channels::new());
 
         let memory_pool = Arc::new(MemoryPool::new(
+            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES,
             test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
             test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         ));

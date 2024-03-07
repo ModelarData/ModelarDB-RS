@@ -38,6 +38,8 @@ pub struct ConfigurationManager {
     /// The mode of the server used to determine the behaviour when modifying the remote object
     /// store and querying.
     pub(crate) server_mode: ServerMode,
+    /// Amount of memory to reserve for storing multivariate time series.
+    multivariate_reserved_memory_in_bytes: usize,
     /// Amount of memory to reserve for storing uncompressed data buffers.
     uncompressed_reserved_memory_in_bytes: usize,
     /// Amount of memory to reserve for storing compressed data buffers.
@@ -63,6 +65,10 @@ impl ConfigurationManager {
         cluster_mode: ClusterMode,
         server_mode: ServerMode,
     ) -> Self {
+        let multivariate_reserved_memory_in_bytes =
+            env::var("MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES")
+                .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
+
         let uncompressed_reserved_memory_in_bytes =
             env::var("MODELARDBD_UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES")
                 .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
@@ -81,6 +87,7 @@ impl ConfigurationManager {
             local_data_folder: local_data_folder.to_path_buf(),
             cluster_mode,
             server_mode,
+            multivariate_reserved_memory_in_bytes,
             uncompressed_reserved_memory_in_bytes,
             compressed_reserved_memory_in_bytes,
             transfer_batch_size_in_bytes,
@@ -95,16 +102,42 @@ impl ConfigurationManager {
         }
     }
 
+    pub(crate) fn multivariate_reserved_memory_in_bytes(&self) -> usize {
+        self.multivariate_reserved_memory_in_bytes
+    }
+
+    /// Set the new value and update the amount of memory for multivariate data in the storage engine.
+    pub(crate) async fn set_multivariate_reserved_memory_in_bytes(
+        &mut self,
+        new_multivariate_reserved_memory_in_bytes: usize,
+        storage_engine: Arc<RwLock<StorageEngine>>,
+    ) {
+        // Since the storage engine only keeps track of the remaining reserved memory, calculate
+        // how much the value should change.
+        let value_change = new_multivariate_reserved_memory_in_bytes as isize
+            - self.multivariate_reserved_memory_in_bytes as isize;
+
+        storage_engine
+            .write()
+            .await
+            .adjust_multivariate_remaining_memory_in_bytes(value_change)
+            .await;
+
+        self.multivariate_reserved_memory_in_bytes = new_multivariate_reserved_memory_in_bytes;
+    }
+
     pub(crate) fn uncompressed_reserved_memory_in_bytes(&self) -> usize {
         self.uncompressed_reserved_memory_in_bytes
     }
 
-    /// Set the new value and update the amount of memory for uncompressed data in the storage engine.
+    /// Set the new value and update the amount of memory for uncompressed data in the storage
+    /// engine. Returns [`ConfigurationError`](ModelarDbError::ConfigurationError) if the memory
+    /// cannot be updated because a buffer cannot be spilled.
     pub(crate) async fn set_uncompressed_reserved_memory_in_bytes(
         &mut self,
         new_uncompressed_reserved_memory_in_bytes: usize,
         storage_engine: Arc<RwLock<StorageEngine>>,
-    ) {
+    ) -> Result<(), ModelarDbError> {
         // Since the storage engine only keeps track of the remaining reserved memory, calculate
         // how much the value should change.
         let value_change = new_uncompressed_reserved_memory_in_bytes as isize
@@ -114,9 +147,11 @@ impl ConfigurationManager {
             .write()
             .await
             .adjust_uncompressed_remaining_memory_in_bytes(value_change)
-            .await;
+            .await
+            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
 
         self.uncompressed_reserved_memory_in_bytes = new_uncompressed_reserved_memory_in_bytes;
+        Ok(())
     }
 
     pub(crate) fn compressed_reserved_memory_in_bytes(&self) -> usize {
@@ -212,6 +247,34 @@ mod tests {
 
     // Tests for ConfigurationManager.
     #[tokio::test]
+    async fn test_set_multivariate_reserved_memory_in_bytes() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .multivariate_reserved_memory_in_bytes(),
+            512 * 1024 * 1024
+        );
+
+        configuration_manager
+            .write()
+            .await
+            .set_multivariate_reserved_memory_in_bytes(1024, storage_engine)
+            .await;
+
+        assert_eq!(
+            configuration_manager
+                .read()
+                .await
+                .multivariate_reserved_memory_in_bytes(),
+            1024
+        );
+    }
+
+    #[tokio::test]
     async fn test_set_uncompressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
@@ -228,7 +291,8 @@ mod tests {
             .write()
             .await
             .set_uncompressed_reserved_memory_in_bytes(1024, storage_engine)
-            .await;
+            .await
+            .unwrap();
 
         assert_eq!(
             configuration_manager
