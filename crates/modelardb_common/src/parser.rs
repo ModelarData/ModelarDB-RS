@@ -119,11 +119,15 @@ impl ModelarDbDialect {
                         // An error bound is given for the field column.
                         parser.expect_token(&Token::LParen)?;
                         let error_bound = self.parse_positive_literal_f32(parser)?;
+                        let is_relative = parser.consume_token(&Token::Mod);
                         parser.expect_token(&Token::RParen)?;
 
                         // The error bound is zero by default so there is no need to store zero.
                         if error_bound > 0.0 {
-                            options.push(Self::new_error_bound_column_option_def(error_bound));
+                            options.push(Self::new_error_bound_column_option_def(
+                                error_bound,
+                                is_relative,
+                            ));
                         }
                     } else if let Token::Word(_) = parser.peek_nth_token(0).token {
                         // An expression to generate the field is given.
@@ -216,11 +220,15 @@ impl ModelarDbDialect {
     }
 
     /// Create a new [`ColumnOptionDef`] with the provided `error_bound`.
-    fn new_error_bound_column_option_def(error_bound: f32) -> ColumnOptionDef {
-        // An error bound column option does not exist so ColumnOption::Comment is used.
+    fn new_error_bound_column_option_def(error_bound: f32, is_relative: bool) -> ColumnOptionDef {
+        // An error bound column option does not exist so ColumnOption::DialectSpecific and
+        // Token::Number is used. Token::Number's bool should be the number when cast to a bool.
         ColumnOptionDef {
             name: None,
-            option: ColumnOption::Comment(error_bound.to_string()),
+            option: ColumnOption::DialectSpecific(vec![Token::Number(
+                error_bound.to_string(),
+                is_relative,
+            )]),
         }
     }
 
@@ -547,8 +555,12 @@ fn column_defs_to_model_table_query_schema(
                 let mut metadata: HashMap<String, String> = HashMap::with_capacity(2);
                 for column_option_def in column_def.options {
                     match column_option_def.option {
-                        ColumnOption::Comment(error_bound_string) => {
-                            metadata.insert("Error Bound".to_owned(), error_bound_string + "%");
+                        ColumnOption::DialectSpecific(dialect_specific_tokens) => {
+                            let (error_bound, is_relative) =
+                                tokens_to_error_bound(&dialect_specific_tokens)?;
+                            let suffix = if is_relative { "%" } else { "" };
+                            metadata
+                                .insert("Error Bound".to_owned(), error_bound.to_string() + suffix);
                         }
                         ColumnOption::Generated {
                             generated_as: _,
@@ -595,13 +607,17 @@ fn extract_error_bounds_for_all_columns(
 
     for column_def in column_defs {
         let mut error_bound_value = 0.0;
+        let mut is_relative = false;
 
         for column_def_option in &column_def.options {
-            if let ColumnOption::Comment(error_bound_string) = &column_def_option.option {
-                error_bound_value = error_bound_string.parse::<f32>().unwrap();
+            if let ColumnOption::DialectSpecific(dialect_specific_tokens) =
+                &column_def_option.option
+            {
+                (error_bound_value, is_relative) = tokens_to_error_bound(dialect_specific_tokens)?;
             }
         }
 
+        // TOOD: Add relative error bound.
         let error_bound = ErrorBound::try_new(error_bound_value)
             .map_err(|error| ParserError::ParserError(error.to_string()))?;
 
@@ -609,6 +625,28 @@ fn extract_error_bounds_for_all_columns(
     }
 
     Ok(error_bounds)
+}
+
+/// Return the value of an error bound and a [`bool`] indicating if it is relative if it is the only
+/// token in `dialect_specific_tokens`, otherwise [`ParseError`] is returned. Assumes the tokens has
+/// been extracted from a [`ColumnOption::DialectSpecific`].
+fn tokens_to_error_bound(dialect_specific_tokens: &[Token]) -> Result<(f32, bool), ParserError> {
+    if dialect_specific_tokens.len() != 1 {
+        return Err(ParserError::ParserError(
+            "Error bounds are currently the only supported dialect specific options.".to_owned(),
+        ));
+    }
+
+    if let Token::Number(error_bound_string, is_relative) = &dialect_specific_tokens[0] {
+        let error_bound_value = error_bound_string
+            .parse::<f32>()
+            .map_err(|_error| ParserError::ParserError("Error bound is not a float".to_owned()))?;
+        Ok((error_bound_value, *is_relative))
+    } else {
+        Err(ParserError::ParserError(
+            "Dialect specific tokens must be an error bound.".to_owned(),
+        ))
+    }
 }
 
 /// Extract the [`GeneratedColumn`] from the field columns in `column_defs`. The [`GeneratedColumn`]
@@ -746,8 +784,9 @@ mod tests {
 
     #[test]
     fn test_tokenize_parse_semantic_check_create_model_table() {
-        let sql = "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field_one FIELD, field_two FIELD(10.5),
-                         field_three FIELD AS (CAST(SIN(CAST(field_one AS DOUBLE) * PI() / 180.0) AS REAL)),
+        let sql = "CREATE MODEL TABLE table_name(timestamp TIMESTAMP,
+                         field_one FIELD, field_two FIELD(10.5), field_three FIELD(1%),
+                         field_four FIELD AS (CAST(SIN(CAST(field_one AS DOUBLE) * PI() / 180.0) AS REAL)),
                          tag TAG)";
 
         let statement = tokenize_and_parse_sql(sql).unwrap();
@@ -763,10 +802,18 @@ mod tests {
                 ModelarDbDialect::new_column_def(
                     "field_two",
                     SQLDataType::Real,
-                    new_column_option_def_error_bound_and_generation_expr(Some(10.5), None),
+                    new_column_option_def_error_bound_and_generation_expr(
+                        Some((10.5, false)),
+                        None,
+                    ),
                 ),
                 ModelarDbDialect::new_column_def(
                     "field_three",
+                    SQLDataType::Real,
+                    new_column_option_def_error_bound_and_generation_expr(Some((1.0, true)), None),
+                ),
+                ModelarDbDialect::new_column_def(
+                    "field_four",
                     SQLDataType::Real,
                     new_column_option_def_error_bound_and_generation_expr(
                         None,
@@ -789,15 +836,16 @@ mod tests {
     }
 
     fn new_column_option_def_error_bound_and_generation_expr(
-        maybe_error_bound: Option<f32>,
+        maybe_error_bound: Option<(f32, bool)>,
         maybe_sql_expr: Option<&str>,
     ) -> Vec<ColumnOptionDef> {
         let mut column_option_defs = vec![];
 
-        if let Some(error_bound) = maybe_error_bound {
+        if let Some((error_bound, is_relative)) = maybe_error_bound {
+            let dialect_specific_tokens = vec![Token::Number(error_bound.to_string(), is_relative)];
             let error_bound = ColumnOptionDef {
                 name: None,
-                option: ColumnOption::Comment(error_bound.to_string()),
+                option: ColumnOption::DialectSpecific(dialect_specific_tokens),
             };
 
             column_option_defs.push(error_bound);
@@ -841,11 +889,11 @@ mod tests {
 
     #[test]
     fn test_tokenize_and_parse_create_model_table_without_model() {
-        // Checks if sqlparser can parse fields/tags without ModelarDbDialect.
+        // Track if sqlparser at some point can parse fields/tags without ModelarDbDialect.
         assert!(tokenize_and_parse_sql(
-            "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD, field FIELD(10.5), tag TAG)",
+              "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD, field_one FIELD(10.5), field_two FIELD(1%), tag TAG)",
         )
-        .is_ok());
+        .is_err());
     }
 
     #[test]
@@ -946,9 +994,19 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_and_parse_create_model_table_with_generated_fields_with_error_bound() {
+    fn test_tokenize_and_parse_create_model_table_with_generated_fields_with_absolute_error_bound()
+    {
         assert!(tokenize_and_parse_sql(
             "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD(1.0) AS (37), tag TAG)",
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn test_tokenize_and_parse_create_model_table_with_generated_fields_with_relative_error_bound()
+    {
+        assert!(tokenize_and_parse_sql(
+            "CREATE MODEL TABLE table_name(timestamp TIMESTAMP, field FIELD(1.0%) AS (37), tag TAG)",
         )
         .is_err());
     }
