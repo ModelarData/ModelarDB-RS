@@ -221,7 +221,7 @@ impl UncompressedDataManager {
 
     /// Insert `uncompressed_data_multivariate` into in-memory buffers. If the data points are from
     /// a multivariate time series, they are first split into multiple univariate time series. These
-    /// univariate time series are then inserted into the storage engine. Return [`String`] if the
+    /// univariate time series are then inserted into the storage engine. Returns [`String`] if the
     /// channel or the metadata database could not be read from.
     async fn insert_data_points(
         &self,
@@ -357,7 +357,7 @@ impl UncompressedDataManager {
 
         // Print a single warning if any buffers are spilled so ingestion can be optimized.
         if buffers_are_spilled {
-            warn!("Forced to spill uncompressed buffers, reduce buffer size or increase memory.");
+            warn!("Forced to spill uncompressed buffers. Reduce buffer size or increase memory.");
         }
 
         Ok(())

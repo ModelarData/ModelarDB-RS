@@ -39,13 +39,13 @@ use crate::storage::uncompressed_data_buffer::{
 /// additional memory will be rejected while the amount of available memory is negative. Thus,
 /// [`StorageEngine`](crate::storage::StorageEngine) will decrease its memory usage.
 pub(super) struct MemoryPool {
-    /// Condition variable that allow threads to wait for more multivariate memory to be released.
+    /// Condition variable that allows threads to wait for more multivariate memory to be released.
     wait_for_multivariate_memory: Condvar,
     /// How many bytes of memory that are left for storing
     /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) containing multivariate time
     /// series with metadata.
     remaining_multivariate_memory_in_bytes: Mutex<isize>,
-    /// Condition variable that allow threads to wait for more uncompressed memory to be released.
+    /// Condition variable that allows threads to wait for more uncompressed memory to be released.
     wait_for_uncompressed_memory: Condvar,
     /// How many bytes of memory that are left for storing
     /// [`UncompressedDataBuffers`](crate::storage::uncompressed_data_buffer::UncompressedDataBuffer)
