@@ -68,6 +68,13 @@ pub fn is_value_within_error_bound(
     }
 }
 
+/// Compute the maximum allowed deviation from `value` within `error bound`.
+pub fn maximum_allowed_deviation(error_bound: ErrorBound, value: f64) -> f64 {
+    // The error bound in percentage is divided by 100.1 instead of 100.0 to ensure the deviation is
+    // below the error bound despite calculations with floating-point values being a bit inaccurate.
+    f64::abs(value * (error_bound.0 as f64 / 100.1))
+}
+
 /// Returns true if `v1` and `v2` are equivalent or both values are NAN.
 fn equal_or_nan(v1: f64, v2: f64) -> bool {
     v1 == v2 || (v1.is_nan() && v2.is_nan())

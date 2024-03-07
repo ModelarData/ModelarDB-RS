@@ -94,13 +94,7 @@ impl Swing {
     pub fn fit_data_point(&mut self, timestamp: Timestamp, value: Value) -> bool {
         // Simplify the calculations by removing a significant number of casts.
         let value = value as f64;
-        let error_bound = self.error_bound.0 as f64;
-
-        // Compute the maximum allowed deviation within the error bound. The
-        // error bound in percentage is divided by 100.1 instead of 100.0 to
-        // ensure that the approximate value is below the error bound despite
-        // calculations with floating-point values not being fully accurate.
-        let maximum_deviation = f64::abs(value * (error_bound / 100.1));
+        let maximum_deviation = models::maximum_allowed_deviation(self.error_bound, value);
 
         if self.length == 0 {
             // Line 1 - 2 of Algorithm 1 in the Swing and Slide paper.
