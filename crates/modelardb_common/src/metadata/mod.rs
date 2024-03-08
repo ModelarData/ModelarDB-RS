@@ -341,7 +341,7 @@ where
     pub async fn mapping_from_hash_to_tags(
         &self,
         model_table_name: &str,
-        tag_column_names: &Vec<&str>,
+        tag_column_names: &[&str],
     ) -> Result<HashMap<u64, Vec<String>>, Error> {
         // Return an empty HashMap if no tag column names are passed to keep the signature simple.
         if tag_column_names.is_empty() {

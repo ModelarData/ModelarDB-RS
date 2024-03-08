@@ -13,7 +13,8 @@
  * limitations under the License.
  */
 
-//! Support for managing all compressed data that is inserted into the [`StorageEngine`].
+//! Support for managing all compressed data that is inserted into the
+//! [`StorageEngine`](crate::storage::StorageEngine).
 
 use std::fs;
 use std::io::{Error as IOError, ErrorKind};
@@ -27,14 +28,13 @@ use dashmap::DashMap;
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
-use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::TableMetadataManager;
+use modelardb_common::storage;
 use modelardb_common::types::{Timestamp, Value};
 use object_store::{ObjectMeta, ObjectStore};
 use parquet::arrow::async_reader::ParquetObjectReader;
-use parquet::arrow::ParquetRecordBatchStreamBuilder;
 use parquet::format::SortingColumn;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
@@ -47,7 +47,7 @@ use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSeg
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
 use crate::storage::types::{Channels, MemoryPool};
-use crate::storage::{Metric, StorageEngine, COMPRESSED_DATA_FOLDER};
+use crate::storage::{Metric, COMPRESSED_DATA_FOLDER};
 use crate::ClusterMode;
 
 /// Stores data points compressed as models in memory to batch compressed data before saving it to
@@ -55,7 +55,8 @@ use crate::ClusterMode;
 pub(super) struct CompressedDataManager {
     /// Component that transfers saved compressed data to the remote data folder when it is necessary.
     pub(super) data_transfer: Arc<RwLock<Option<DataTransfer>>>,
-    /// Path to the folder containing all compressed data managed by the [`StorageEngine`].
+    /// Path to the folder containing all compressed data managed by the
+    /// [`StorageEngine`](crate::storage::StorageEngine).
     pub(crate) local_data_folder: PathBuf,
     /// The compressed segments before they are saved to persistent storage. The key is the name of
     /// the table and the index of the column the compressed segments represents data points for so
@@ -130,7 +131,7 @@ impl CompressedDataManager {
         let file_name = format!("{}.parquet", since_the_epoch.as_millis());
         let file_path = local_file_path.join(file_name);
 
-        StorageEngine::write_batch_to_apache_parquet_file(&record_batch, file_path.as_path(), None)
+        storage::write_batch_to_apache_parquet_file(&record_batch, file_path.as_path(), None)
     }
 
     /// Read and process messages received from the
@@ -470,14 +471,8 @@ impl CompressedDataManager {
         let mut record_batches = Vec::with_capacity(input_files.len());
         for input_file in input_files {
             let reader = ParquetObjectReader::new(input_data_folder.clone(), input_file.clone());
-            let mut stream = ParquetRecordBatchStreamBuilder::new(reader)
-                .await?
-                .build()?;
-
-            while let Some(maybe_record_batch) = stream.next().await {
-                let record_batch = maybe_record_batch?;
-                record_batches.push(record_batch);
-            }
+            record_batches
+                .append(&mut storage::read_batches_from_apache_parquet_file(reader).await?);
         }
 
         // Merge the record batches into a single concatenated and merged record batch.
@@ -499,7 +494,7 @@ impl CompressedDataManager {
         // Write the concatenated and merged record batch to the output location.
         let mut buf = vec![].writer();
         let mut apache_arrow_writer =
-            StorageEngine::create_apache_arrow_writer(&mut buf, schema, sorting_columns)?;
+            storage::create_apache_arrow_writer(&mut buf, schema, sorting_columns)?;
         apache_arrow_writer.write(&merged)?;
         apache_arrow_writer.close()?;
 
@@ -542,6 +537,7 @@ mod tests {
     use std::path::Path;
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
+    use futures::StreamExt;
     use modelardb_common::metadata;
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_common::test;
@@ -886,6 +882,7 @@ mod tests {
         let channels = Arc::new(Channels::new());
 
         let memory_pool = Arc::new(MemoryPool::new(
+            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES,
             test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
             test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         ));

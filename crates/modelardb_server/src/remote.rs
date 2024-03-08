@@ -620,14 +620,22 @@ impl FlightService for FlightServiceHandler {
                 Status::invalid_argument(format!("New value for {setting} cannot be empty."));
 
             match setting {
+                "multivariate_reserved_memory_in_bytes" => {
+                    let new_value = new_value.ok_or(invalid_empty_error)?;
+
+                    configuration_manager
+                        .set_multivariate_reserved_memory_in_bytes(new_value, storage_engine)
+                        .await;
+
+                    Ok(())
+                }
                 "uncompressed_reserved_memory_in_bytes" => {
                     let new_value = new_value.ok_or(invalid_empty_error)?;
 
                     configuration_manager
                         .set_uncompressed_reserved_memory_in_bytes(new_value, storage_engine)
-                        .await;
-
-                    Ok(())
+                        .await
+                        .map_err(|error| Status::internal(error.to_string()))
                 }
                 "compressed_reserved_memory_in_bytes" => {
                     let new_value = new_value.ok_or(invalid_empty_error)?;
@@ -669,9 +677,7 @@ impl FlightService for FlightServiceHandler {
     ) -> Result<Response<Self::ListActionsStream>, Status> {
         let command_statement_update_action = ActionType {
             r#type: "CommandStatementUpdate".to_owned(),
-            description:
-                "Execute a SQL query containing a single command that produces no results."
-                    .to_owned(),
+            description: "Execute a single SQL statement that produces no results.".to_owned(),
         };
 
         let flush_memory_action = ActionType {
@@ -683,31 +689,31 @@ impl FlightService for FlightServiceHandler {
         let flush_edge_action = ActionType {
             r#type: "FlushEdge".to_owned(),
             description: "Flush uncompressed data to disk by compressing and saving the data and \
-            transfer all compressed data to the remote object store."
+                          transfer all compressed data to the remote object store."
                 .to_owned(),
         };
 
         let kill_edge_action = ActionType {
             r#type: "KillEdge".to_owned(),
             description: "Flush uncompressed data to disk by compressing and saving the data, \
-            transfer all compressed data to the remote object store, and kill the process \
-            running the server."
+                          transfer all compressed data to the remote object store, and kill the \
+                          process running the server."
                 .to_owned(),
         };
 
         let collect_metrics_action = ActionType {
             r#type: "CollectMetrics".to_owned(),
-            description:
-            "Collect internal metrics describing the amount of used memory for uncompressed \
-            and compressed data, used disk space, and ingested data points over time. The metrics are \
-            cleared when collected."
+            description: "Collect internal metrics describing the amount of memory used for \
+                          multivariate data, uncompressed data, compressed data, used disk space, \
+                          and ingested data points over time. The metrics are cleared when \
+                          collected."
                 .to_owned(),
         };
 
         let update_remote_object_store_action = ActionType {
             r#type: "UpdateRemoteObjectStore".to_owned(),
             description: "Update the remote object store, overriding the current remote object \
-            store, if it exists."
+                          store, if it exists."
                 .to_owned(),
         };
 

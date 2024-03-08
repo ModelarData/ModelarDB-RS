@@ -264,6 +264,9 @@ impl ModelarDbDialect {
             on_commit: None,
             on_cluster: None,
             order_by: None,
+            partition_by: None,
+            cluster_by: None,
+            options: None,
             strict: false,
         }
     }
@@ -462,6 +465,9 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
         on_commit,
         on_cluster,
         order_by,
+        partition_by,
+        cluster_by,
+        options,
         strict,
     } = statement
     {
@@ -500,6 +506,9 @@ fn check_unsupported_features_are_disabled(statement: &Statement) -> Result<(), 
         check_unsupported_feature_is_disabled(on_commit.is_some(), "ON COMMIT")?;
         check_unsupported_feature_is_disabled(on_cluster.is_some(), "ON CLUSTER")?;
         check_unsupported_feature_is_disabled(order_by.is_some(), "ORDER BY")?;
+        check_unsupported_feature_is_disabled(partition_by.is_some(), "PARTITION BY")?;
+        check_unsupported_feature_is_disabled(cluster_by.is_some(), "CLUSTER BY")?;
+        check_unsupported_feature_is_disabled(options.is_some(), "NAME=VALUE")?;
         check_unsupported_feature_is_disabled(*strict, "STRICT")?;
         Ok(())
     } else {

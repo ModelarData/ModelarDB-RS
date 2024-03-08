@@ -28,24 +28,14 @@ mod uncompressed_data_buffer;
 mod uncompressed_data_manager;
 
 use std::env;
-use std::ffi::OsStr;
-use std::fs::File;
-use std::io::{Error as IOError, ErrorKind, Write};
-use std::path::{Path, PathBuf};
+use std::io::{Error as IOError, ErrorKind};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use datafusion::arrow::array::UInt32Array;
-use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::arrow::async_reader::ParquetRecordBatchStreamBuilder;
-use datafusion::parquet::arrow::ArrowWriter;
-use datafusion::parquet::basic::ZstdLevel;
-use datafusion::parquet::basic::{Compression, Encoding};
 use datafusion::parquet::errors::ParquetError;
-use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
-use datafusion::parquet::format::SortingColumn;
-use futures::StreamExt;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
@@ -53,7 +43,6 @@ use modelardb_common::types::{Timestamp, TimestampArray, Value};
 use object_store::{ObjectMeta, ObjectStore};
 use once_cell::sync::Lazy;
 use sqlx::Sqlite;
-use tokio::fs::File as TokioFile;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::Status;
@@ -102,6 +91,8 @@ pub struct StorageEngine {
     compressed_data_manager: Arc<CompressedDataManager>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
+    /// Metric for the used multivariate memory in bytes, updated every time the used memory changes.
+    used_multivariate_memory_metric: Arc<Mutex<Metric>>,
     /// Threads used for ingestion, compression, and writing.
     join_handles: Vec<JoinHandle<()>>,
     /// Unbounded channels used by the threads to communicate.
@@ -122,12 +113,14 @@ impl StorageEngine {
         // Create shared memory pool.
         let configuration_manager = configuration_manager.read().await;
         let memory_pool = Arc::new(MemoryPool::new(
+            configuration_manager.multivariate_reserved_memory_in_bytes(),
             configuration_manager.uncompressed_reserved_memory_in_bytes(),
             configuration_manager.compressed_reserved_memory_in_bytes(),
         ));
 
         // Create shared metrics.
         let used_disk_space_metric = Arc::new(Mutex::new(Metric::new()));
+        let used_multivariate_memory_metric = Arc::new(Mutex::new(Metric::new()));
 
         // Create threads and shared channels.
         let mut join_handles = vec![];
@@ -141,6 +134,7 @@ impl StorageEngine {
                 channels.clone(),
                 table_metadata_manager.clone(),
                 configuration_manager.cluster_mode.clone(),
+                used_multivariate_memory_metric.clone(),
                 used_disk_space_metric.clone(),
             )
             .await?,
@@ -233,6 +227,7 @@ impl StorageEngine {
             uncompressed_data_manager,
             compressed_data_manager,
             memory_pool,
+            used_multivariate_memory_metric,
             join_handles,
             channels,
         };
@@ -306,7 +301,13 @@ impl StorageEngine {
     ) -> Result<(), String> {
         // TODO: write to a WAL and use it to ensure termination never duplicates or loses data.
         self.memory_pool
-            .wait_for_uncompressed_memory(multivariate_data_points.get_array_memory_size());
+            .wait_for_multivariate_memory(multivariate_data_points.get_array_memory_size());
+
+        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
+        self.used_multivariate_memory_metric.lock().unwrap().append(
+            multivariate_data_points.get_array_memory_size() as isize,
+            true,
+        );
 
         self.channels
             .multivariate_data_sender
@@ -414,6 +415,13 @@ impl StorageEngine {
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         vec![
             (
+                MetricType::UsedMultivariateMemory,
+                self.used_multivariate_memory_metric
+                    .lock()
+                    .unwrap()
+                    .finish(),
+            ),
+            (
                 MetricType::UsedUncompressedMemory,
                 self.uncompressed_data_manager
                     .used_uncompressed_memory_metric
@@ -467,11 +475,20 @@ impl StorageEngine {
         }
     }
 
+    /// Change the amount of memory for multivariate data in bytes according to `value_change`.
+    pub(super) async fn adjust_multivariate_remaining_memory_in_bytes(&self, value_change: isize) {
+        self.memory_pool.adjust_multivariate_memory(value_change)
+    }
+
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.
-    pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(&self, value_change: isize) {
+    /// Returns [`IOError`] if the memory cannot be updated because a buffer cannot be spilled.
+    pub(super) async fn adjust_uncompressed_remaining_memory_in_bytes(
+        &self,
+        value_change: isize,
+    ) -> Result<(), IOError> {
         self.uncompressed_data_manager
             .adjust_uncompressed_remaining_memory_in_bytes(value_change)
-            .await;
+            .await
     }
 
     /// Change the amount of memory for compressed data in bytes according to `value_change`. If
@@ -526,195 +543,5 @@ impl StorageEngine {
                 "Storage engine is not configured to transfer data.".to_owned(),
             ))
         }
-    }
-
-    /// Write `batch` to an Apache Parquet file at the location given by `file_path`. `file_path`
-    /// must use the extension '.parquet'. Return [`Ok`] if the file was written successfully,
-    /// otherwise [`ParquetError`].
-    pub(super) fn write_batch_to_apache_parquet_file(
-        batch: &RecordBatch,
-        file_path: &Path,
-        sorting_columns: Option<Vec<SortingColumn>>,
-    ) -> Result<(), ParquetError> {
-        let error = ParquetError::General(format!(
-            "Apache Parquet file at path '{}' could not be created.",
-            file_path.display()
-        ));
-
-        // Check if the extension of the given path is correct.
-        if file_path.extension().and_then(OsStr::to_str) == Some("parquet") {
-            let file = File::create(file_path).map_err(|_e| error)?;
-            let mut writer =
-                Self::create_apache_arrow_writer(file, batch.schema(), sorting_columns)?;
-            writer.write(batch)?;
-            writer.close()?;
-
-            Ok(())
-        } else {
-            Err(error)
-        }
-    }
-
-    /// Read all rows from the Apache Parquet file at the location given by `file_path` and return
-    /// them as a [`RecordBatch`]. If the file could not be read successfully, [`ParquetError`] is
-    /// returned.
-    async fn read_batch_from_apache_parquet_file(
-        file_path: &Path,
-    ) -> Result<RecordBatch, ParquetError> {
-        // Create a stream that can be used to read an Apache Parquet file.
-        let file = TokioFile::open(file_path)
-            .await
-            .map_err(|error| ParquetError::General(error.to_string()))?;
-        let builder = ParquetRecordBatchStreamBuilder::new(file).await?;
-        let mut stream = builder.with_batch_size(usize::MAX).build()?;
-
-        let record_batch = stream.next().await.ok_or_else(|| {
-            ParquetError::General(format!(
-                "Apache Parquet file at path '{}' could not be read.",
-                file_path.display()
-            ))
-        })??;
-        Ok(record_batch)
-    }
-
-    /// Create an Apache ArrowWriter that writes to `writer`. If the writer could not be created
-    /// return [`ParquetError`].
-    fn create_apache_arrow_writer<W: Write + Send>(
-        writer: W,
-        schema: SchemaRef,
-        sorting_columns: Option<Vec<SortingColumn>>,
-    ) -> Result<ArrowWriter<W>, ParquetError> {
-        let props = WriterProperties::builder()
-            .set_encoding(Encoding::PLAIN)
-            .set_compression(Compression::ZSTD(ZstdLevel::default()))
-            .set_dictionary_enabled(false)
-            .set_statistics_enabled(EnabledStatistics::None)
-            .set_bloom_filter_enabled(false)
-            .set_sorting_columns(sorting_columns)
-            .build();
-
-        let writer = ArrowWriter::try_new(writer, schema, Some(props))?;
-        Ok(writer)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use std::path::PathBuf;
-    use std::sync::Arc;
-
-    use datafusion::arrow::datatypes::{Field, Schema};
-    use modelardb_common::test;
-    use tempfile::{self, TempDir};
-
-    // Tests for writing and reading Apache Parquet files.
-    #[test]
-    fn test_write_batch_to_apache_parquet_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let batch = test::compressed_segments_record_batch();
-
-        let apache_parquet_path = temp_dir.path().join("test.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(
-            &batch,
-            apache_parquet_path.as_path(),
-            None,
-        )
-        .unwrap();
-
-        assert!(apache_parquet_path.exists());
-    }
-
-    #[test]
-    fn test_write_empty_batch_to_apache_parquet_file() {
-        let fields: Vec<Field> = vec![];
-        let schema = Schema::new(fields);
-        let batch = RecordBatch::new_empty(Arc::new(schema));
-
-        let temp_dir = tempfile::tempdir().unwrap();
-        let apache_parquet_path = temp_dir.path().join("empty.parquet");
-        StorageEngine::write_batch_to_apache_parquet_file(
-            &batch,
-            apache_parquet_path.as_path(),
-            None,
-        )
-        .unwrap();
-
-        assert!(apache_parquet_path.exists());
-    }
-
-    #[test]
-    fn test_write_batch_to_file_with_invalid_extension() {
-        write_to_file_and_assert_failed("test.txt".to_owned());
-    }
-
-    #[test]
-    fn test_write_batch_to_file_with_no_extension() {
-        write_to_file_and_assert_failed("test".to_owned());
-    }
-
-    fn write_to_file_and_assert_failed(file_name: String) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let batch = test::compressed_segments_record_batch();
-
-        let apache_parquet_path = temp_dir.path().join(file_name);
-        let result = StorageEngine::write_batch_to_apache_parquet_file(
-            &batch,
-            apache_parquet_path.as_path(),
-            None,
-        );
-
-        assert!(result.is_err());
-        assert!(!apache_parquet_path.exists());
-    }
-
-    #[tokio::test]
-    async fn test_read_entire_apache_parquet_file() {
-        let file_name = "test.parquet".to_owned();
-        let (_temp_dir, path, batch) = create_apache_parquet_file_in_temp_dir(file_name);
-
-        let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path()).await;
-
-        assert!(result.is_ok());
-        assert_eq!(batch, result.unwrap());
-    }
-
-    #[tokio::test]
-    async fn test_read_from_non_apache_parquet_file() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("test.txt");
-        File::create(path.clone()).unwrap();
-
-        let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path());
-
-        assert!(result.await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_read_from_non_existent_path() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let path = temp_dir.path().join("none.parquet");
-        let result = StorageEngine::read_batch_from_apache_parquet_file(path.as_path());
-
-        assert!(result.await.is_err());
-    }
-
-    /// Create an Apache Parquet file in the [`tempfile::TempDir`] from a generated [`RecordBatch`].
-    fn create_apache_parquet_file_in_temp_dir(
-        file_name: String,
-    ) -> (TempDir, PathBuf, RecordBatch) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let batch = test::compressed_segments_record_batch();
-
-        let apache_parquet_path = temp_dir.path().join(file_name);
-        StorageEngine::write_batch_to_apache_parquet_file(
-            &batch,
-            apache_parquet_path.as_path(),
-            None,
-        )
-        .unwrap();
-
-        (temp_dir, apache_parquet_path, batch)
     }
 }
