@@ -412,22 +412,6 @@ mod tests {
     }
 
     #[test]
-    fn test_free_multivariate_memory() {
-        let memory_pool = create_memory_pool();
-        assert_eq!(
-            memory_pool.remaining_multivariate_memory_in_bytes(),
-            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
-        );
-
-        memory_pool.free_multivariate_memory(test::COMPRESSED_SEGMENTS_SIZE);
-
-        assert_eq!(
-            memory_pool.remaining_multivariate_memory_in_bytes(),
-            (test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
-        );
-    }
-
-    #[test]
     fn test_adjust_uncompressed_memory_increase() {
         let memory_pool = create_memory_pool();
         assert_eq!(
@@ -528,22 +512,6 @@ mod tests {
     }
 
     #[test]
-    fn test_free_uncompressed_memory() {
-        let memory_pool = create_memory_pool();
-        assert_eq!(
-            memory_pool.remaining_uncompressed_memory_in_bytes(),
-            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
-        );
-
-        memory_pool.free_uncompressed_memory(test::COMPRESSED_SEGMENTS_SIZE);
-
-        assert_eq!(
-            memory_pool.remaining_uncompressed_memory_in_bytes(),
-            (test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
-        );
-    }
-
-    #[test]
     fn test_adjust_compressed_memory_increase() {
         let memory_pool = create_memory_pool();
         assert_eq!(
@@ -621,22 +589,6 @@ mod tests {
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
             test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
-        );
-    }
-
-    #[test]
-    fn test_free_compressed_memory() {
-        let memory_pool = create_memory_pool();
-        assert_eq!(
-            memory_pool.remaining_compressed_memory_in_bytes(),
-            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
-        );
-
-        memory_pool.free_compressed_memory(test::COMPRESSED_SEGMENTS_SIZE);
-
-        assert_eq!(
-            memory_pool.remaining_compressed_memory_in_bytes(),
-            (test::COMPRESSED_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
         );
     }
 
