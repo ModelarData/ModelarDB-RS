@@ -77,13 +77,10 @@ pub fn is_value_within_error_bound(
 
 /// Compute the maximum allowed deviation from `value` within `error bound`.
 pub fn maximum_allowed_deviation(error_bound: ErrorBound, value: f64) -> f64 {
+    // The allowed deviation is lower than the bound to account for inaccurate floating point math.
     match error_bound {
-        ErrorBound::Absolute(error_bound) => error_bound as f64,
-        ErrorBound::Relative(error_bound) => {
-            // The error bound in percentage is divided by 100.1 instead of 100.0 to ensure the
-            // deviation is below the error bound despite calculations being a bit inaccurate.
-            f64::abs(value * (error_bound as f64 / 100.1))
-        }
+        ErrorBound::Absolute(error_bound) => error_bound as f64 * 0.99,
+        ErrorBound::Relative(error_bound) => f64::abs(value * (error_bound as f64 / 100.1)),
     }
 }
 

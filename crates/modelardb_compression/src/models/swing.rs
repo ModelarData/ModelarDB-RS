@@ -193,11 +193,11 @@ impl Swing {
     /// only require `size_of::<Value>` while the slope and intercept generally
     /// must be [`f64`] to be precise enough.
     pub fn model(self) -> (Value, Value) {
-        // TODO: Use the method in the Slide and Swing paper to select the
-        // linear function within the lower and upper that minimizes error
-        let first_value =
-            self.upper_bound_slope * self.start_time as f64 + self.upper_bound_intercept;
-        let last_value = self.upper_bound_slope * self.end_time as f64 + self.upper_bound_intercept;
+        // TODO: use the function with the minimum error as specified in the Swing and Slide paper.
+        let average_slope = (self.lower_bound_slope + self.upper_bound_slope) / 2.0;
+        let average_intercept = (self.lower_bound_intercept + self.upper_bound_intercept) / 2.0;
+        let first_value = average_slope * self.start_time as f64 + average_intercept;
+        let last_value = average_slope * self.end_time as f64 + average_intercept;
         (first_value as Value, last_value as Value)
     }
 }
