@@ -767,7 +767,7 @@ where
 
                 // error_bounds matches schema and not query_schema to simplify looking up the error
                 // bound during ingestion as it occurs far more often than creation of model tables.
-                // Bind refused to accept booleans so a simple 0 is used for false and 1 for true.
+                // Bind refuses to accept booleans so a simple 0 is used for false and 1 for true.
                 let (error_bound_value, error_bound_relative) =
                     if let Ok(schema_index) = model_table_metadata.schema.index_of(field.name()) {
                         match model_table_metadata.error_bounds[schema_index] {
@@ -2039,7 +2039,7 @@ mod tests {
         assert_eq!("field_1", row.try_get::<&str, _>(1).unwrap());
         assert_eq!(1, row.try_get::<i32, _>(2).unwrap());
         assert_eq!(1.0, row.try_get::<f32, _>(3).unwrap());
-        assert!(row.try_get::<bool, _>(4).unwrap());
+        assert_eq!(0, row.try_get::<i32, _>(4).unwrap());
         assert_eq!(None, row.try_get::<Option<&str>, _>(5).unwrap());
         assert_eq!(None, row.try_get::<Option<Vec<u8>>, _>(6).unwrap());
 
@@ -2048,7 +2048,7 @@ mod tests {
         assert_eq!("field_2", row.try_get::<&str, _>(1).unwrap());
         assert_eq!(2, row.try_get::<i32, _>(2).unwrap());
         assert_eq!(5.0, row.try_get::<f32, _>(3).unwrap());
-        assert!(row.try_get::<bool, _>(4).unwrap());
+        assert_eq!(1, row.try_get::<i32, _>(4).unwrap());
         assert_eq!(None, row.try_get::<Option<&str>, _>(5).unwrap());
         assert_eq!(None, row.try_get::<Option<Vec<u8>>, _>(6).unwrap());
 
@@ -2117,12 +2117,15 @@ mod tests {
             .error_bounds(test::MODEL_TABLE_NAME, 4)
             .await
             .unwrap();
-        let percentages: Vec<f32> = error_bounds
+        let values: Vec<f32> = error_bounds
             .iter()
-            .map(|error_bound| error_bound.into_inner())
+            .map(|error_bound| match error_bound {
+                ErrorBound::Absolute(value) => *value,
+                ErrorBound::Relative(value) => *value,
+            })
             .collect();
 
-        assert_eq!(percentages, &[0.0, 1.0, 5.0, 0.0]);
+        assert_eq!(values, &[0.0, 1.0, 5.0, 0.0]);
     }
 
     #[tokio::test]

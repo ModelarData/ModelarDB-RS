@@ -77,6 +77,16 @@ pub enum ValuesStructure {
     Random(Range<f32>),
 }
 
+impl ValuesStructure {
+    /// Return a [`ValuesStructure::Random`] with the largest value range that can be used in
+    /// [`Uniform`] without overflowing as described in GitHub issue [rand #1380].
+    ///
+    /// [rand #1380]: https://github.com/rust-random/rand/issues/1380
+    pub fn largest_random_without_overflow() -> Self {
+        ValuesStructure::Random(f32::MIN / 2.0..f32::MAX / 2.0)
+    }
+}
+
 /// Return a [`StdRng`] with [`RANDOM_NUMBER_SEED`] as the seed. [`StdRng`] is used instead of
 /// [`ThreadRng`](rand::rngs::ThreadRng) as [`ThreadRng`](rand::rngs::ThreadRng) automatically
 /// reseeds. A new [`StdRng`] with `RANDOM_NUMBER_SEED` as the seed is created each time the
@@ -90,7 +100,7 @@ fn create_random_number_generator() -> StdRng {
 /// [`ValuesStructure`]. The time series will have `length` data points in sequences of
 /// `segment_length_range` (except possibly for the last as it may be truncated to match `length`)
 /// and the timestamps will be regular or irregular depending on the value of
-/// `generate_irregular_timestamps`. If `multiply_noise_range` is [`Some`], random values will be
+/// `generate_irregular_timestamps`. If `add_noise_range` is [`Some`], random values will be
 /// generated in the [`Range<f32>`] and multiplied with each value in the sequences with constant
 /// and linear values. Sequences with random values are generated in the range specified as
 /// `random_value_range`.
@@ -98,7 +108,7 @@ pub fn generate_univariate_time_series(
     length: usize,
     segment_length_range: Range<usize>,
     generate_irregular_timestamps: bool,
-    multiply_noise_range: Option<Range<f32>>,
+    add_noise_range: Option<Range<f32>>,
     random_value_range: Range<f32>,
 ) -> (TimestampArray, ValueArray) {
     let (uncompressed_timestamps, mut uncompressed_values) = generate_multivariate_time_series(
@@ -106,7 +116,7 @@ pub fn generate_univariate_time_series(
         1,
         segment_length_range,
         generate_irregular_timestamps,
-        multiply_noise_range,
+        add_noise_range,
         random_value_range,
     );
 
@@ -117,21 +127,21 @@ pub fn generate_univariate_time_series(
 /// [`ValuesStructure`]. The time series will have `field_columns` columns containing `length` data
 /// points in sequences of `segment_length_range` (except possibly for the last as it may be
 /// truncated to match `length`) and the timestamps will be regular or irregular depending on the
-/// value of `generate_irregular_timestamps`. If `multiply_noise_range` is [`Some`], random values
-/// will be generated in the [`Range<f32>`] and multiplied with each value in the sequences with
-/// constant and linear values. Sequences with random values are generated in the range specified as
+/// value of `generate_irregular_timestamps`. If `add_noise_range` is [`Some`], random values will
+/// be generated in the [`Range<f32>`] and multiplied with each value in the sequences with constant
+/// and linear values. Sequences with random values are generated in the range specified as
 /// `random_value_range`.
 pub fn generate_multivariate_time_series(
     length: usize,
     field_columns: usize,
     segment_length_range: Range<usize>,
     generate_irregular_timestamps: bool,
-    multiply_noise_range: Option<Range<f32>>,
+    add_noise_range: Option<Range<f32>>,
     random_value_range: Range<f32>,
 ) -> (TimestampArray, Vec<ValueArray>) {
     let values_structures = &[
-        ValuesStructure::Constant(multiply_noise_range.clone()),
-        ValuesStructure::Linear(multiply_noise_range),
+        ValuesStructure::Constant(add_noise_range.clone()),
+        ValuesStructure::Linear(add_noise_range),
         ValuesStructure::Random(random_value_range),
     ];
 
@@ -225,12 +235,12 @@ pub fn generate_values(
     let mut std_rng = create_random_number_generator();
     match values_structure {
         // Generates constant values.
-        ValuesStructure::Constant(maybe_multiply_noise_range) => {
+        ValuesStructure::Constant(maybe_add_noise_range) => {
             let mut values = iter::repeat(std_rng.gen()).take(uncompressed_timestamps.len());
-            randomize_and_collect_iterator(maybe_multiply_noise_range, &mut values)
+            randomize_and_collect_iterator(maybe_add_noise_range, &mut values)
         }
         // Generates linear values.
-        ValuesStructure::Linear(maybe_multiply_noise_range) => {
+        ValuesStructure::Linear(maybe_add_noise_range) => {
             // The variable slope is regenerated if it is 0, to avoid generating constant data.
             let mut slope: i64 = 0;
             while slope == 0 {
@@ -242,7 +252,7 @@ pub fn generate_values(
                 .iter()
                 .map(|timestamp| (slope * timestamp + intercept) as f32);
 
-            randomize_and_collect_iterator(maybe_multiply_noise_range, &mut values)
+            randomize_and_collect_iterator(maybe_add_noise_range, &mut values)
         }
         // Generates random values.
         ValuesStructure::Random(min_max) => {
@@ -255,8 +265,8 @@ pub fn generate_values(
     }
 }
 
-/// Multiple the value in `maybe_noise_range` with each value in `values` if `maybe_noise_range` is
-/// not [`None`] and collect it to a [`Vec<f32>`] which is returned.
+/// Add the value in `maybe_noise_range` to each value in `values` if `maybe_noise_range` is not
+/// [`None`] and collect it to a [`Vec<f32>`] which is returned.
 fn randomize_and_collect_iterator(
     maybe_noise_range: Option<Range<f32>>,
     values: &mut dyn Iterator<Item = f32>,
@@ -264,7 +274,7 @@ fn randomize_and_collect_iterator(
     let mut std_rng = create_random_number_generator();
     if let Some(noise_range) = maybe_noise_range {
         let distr = Uniform::from(noise_range);
-        values.map(|value| value * std_rng.sample(distr)).collect()
+        values.map(|value| value + std_rng.sample(distr)).collect()
     } else {
         values.collect()
     }

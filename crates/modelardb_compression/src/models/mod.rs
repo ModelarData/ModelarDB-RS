@@ -39,10 +39,10 @@ pub const PMC_MEAN_ID: u8 = 0;
 pub const SWING_ID: u8 = 1;
 pub const GORILLA_ID: u8 = 2;
 
-// Number of implemented model types. It is usize instead of u8 as it is used as an array length.
+/// Number of implemented model types. It is usize instead of u8 as it is used as an array length.
 pub const MODEL_TYPE_COUNT: usize = 3;
 
-// Mapping of model type ids to names.
+/// Mapping of model type ids to names.
 pub const MODEL_TYPE_NAMES: [&str; MODEL_TYPE_COUNT] = ["pmc_mean", "swing", "gorilla"];
 
 /// Size of [`Value`] in bytes.
@@ -60,7 +60,7 @@ pub fn is_value_within_error_bound(
     match error_bound {
         ErrorBound::Absolute(error_bound) => {
             Value::abs(real_value - approximate_value) <= error_bound
-        },
+        }
         ErrorBound::Relative(error_bound) => {
             // Needed because result becomes NAN and approximate_value is rejected
             // if approximate_value and real_value are zero, and because NAN != NAN.
@@ -78,9 +78,7 @@ pub fn is_value_within_error_bound(
 /// Compute the maximum allowed deviation from `value` within `error bound`.
 pub fn maximum_allowed_deviation(error_bound: ErrorBound, value: f64) -> f64 {
     match error_bound {
-        ErrorBound::Absolute(error_bound) => {
-            error_bound as f64
-        },
+        ErrorBound::Absolute(error_bound) => error_bound as f64,
         ErrorBound::Relative(error_bound) => {
             // The error bound in percentage is divided by 100.1 instead of 100.0 to ensure the
             // deviation is below the error bound despite calculations being a bit inaccurate.

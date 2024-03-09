@@ -894,7 +894,8 @@ mod tests {
     fn test_tokenize_and_parse_create_model_table_without_model() {
         // Track if sqlparser at some point can parse fields/tags without ModelarDbDialect.
         assert!(tokenize_and_parse_sql(
-              "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD, field_one FIELD(10.5), field_two FIELD(1%), tag TAG)",
+            "CREATE TABLE table_name(timestamp TIMESTAMP, field FIELD, field_one FIELD(10.5),
+                                     field_two FIELD(1%), tag TAG)",
         )
         .is_err());
     }

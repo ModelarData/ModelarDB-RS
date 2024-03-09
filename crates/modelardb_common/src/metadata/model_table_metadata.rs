@@ -259,7 +259,7 @@ mod test {
         ModelTableMetadata::try_new(
             "table_name".to_owned(),
             Arc::new(query_schema),
-            vec![ErrorBound::try_new_relative(0.0).unwrap()],
+            vec![ErrorBound::try_new_absolute(0.0).unwrap()],
             vec![None],
         )
     }
@@ -332,11 +332,11 @@ mod test {
                 Field::new("temperature", ArrowValue::DATA_TYPE, false),
             ])),
             vec![
+                ErrorBound::try_new_absolute(0.0).unwrap(),
+                ErrorBound::try_new_absolute(0.0).unwrap(),
                 ErrorBound::try_new_relative(0.0).unwrap(),
-                ErrorBound::try_new_relative(0.0).unwrap(),
-                ErrorBound::try_new_relative(0.0).unwrap(),
-                ErrorBound::try_new_relative(0.0).unwrap(),
-                ErrorBound::try_new_relative(0.0).unwrap(),
+                ErrorBound::try_new_absolute(0.0).unwrap(),
+                ErrorBound::try_new_absolute(0.0).unwrap(),
                 ErrorBound::try_new_relative(0.0).unwrap(),
                 ErrorBound::try_new_relative(0.0).unwrap(),
             ],
@@ -352,8 +352,8 @@ mod test {
             .collect::<Vec<Field>>();
 
         let error_bounds = vec![
-            ErrorBound::try_new_relative(0.0).unwrap(),
-            ErrorBound::try_new_relative(0.0).unwrap(),
+            ErrorBound::try_new_absolute(0.0).unwrap(),
+            ErrorBound::try_new_absolute(0.0).unwrap(),
             ErrorBound::try_new_relative(0.0).unwrap(),
         ];
 

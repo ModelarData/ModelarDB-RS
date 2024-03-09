@@ -68,8 +68,8 @@ pub fn model_table_metadata() -> ModelTableMetadata {
     ]));
 
     let error_bounds = vec![
-        ErrorBound::try_new_relative(0.0).unwrap(),
-        ErrorBound::try_new_relative(1.0).unwrap(),
+        ErrorBound::try_new_absolute(0.0).unwrap(),
+        ErrorBound::try_new_absolute(1.0).unwrap(),
         ErrorBound::try_new_relative(5.0).unwrap(),
         ErrorBound::try_new_relative(0.0).unwrap(),
     ];

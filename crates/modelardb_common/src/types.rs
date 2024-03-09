@@ -19,7 +19,6 @@
 //! incorrect aliases if types from different modules use the same name. It is assumed that each set
 //! of aliases are all for the same underlying type.
 
-use std::cmp::Ordering;
 use std::fmt;
 use std::str::FromStr;
 
@@ -73,9 +72,9 @@ pub struct CompressedFileMetadataSchema(pub arrow::datatypes::SchemaRef);
 /// Absolute or relative per-value error bound.
 #[derive(Debug, Copy, Clone)]
 pub enum ErrorBound {
-    /// Error bound that guarantee each value cannot deviate more than the [`Value`].
+    /// An error bound that guarantees each value cannot deviate more than the [`Value`].
     Absolute(Value),
-    /// Error bound that guarantee each value cannot deviate more than 0.0% to 100.0%.
+    /// An error bound that guarantees each value cannot deviate more than 0.0% to 100.0%.
     Relative(f32),
 }
 
@@ -101,34 +100,6 @@ impl ErrorBound {
             ))
         } else {
             Ok(Self::Relative(percentage))
-        }
-    }
-
-    /// Consumes `self`, returning the error bound as a [`f32`].
-    pub fn into_inner(self) -> f32 {
-        match self {
-            ErrorBound::Absolute(value) => value,
-            ErrorBound::Relative(value) => value,
-        }
-    }
-}
-
-/// Enable equal and not equal for [`ErrorBound`] and [`f32`].
-impl PartialEq<ErrorBound> for f32 {
-    fn eq(&self, other: &ErrorBound) -> bool {
-        match other {
-            ErrorBound::Absolute(value) => self.eq(value),
-            ErrorBound::Relative(value) => self.eq(value),
-        }
-    }
-}
-
-/// Enable less than and greater than for [`ErrorBound`] and [`f32`].
-impl PartialOrd<ErrorBound> for f32 {
-    fn partial_cmp(&self, other: &ErrorBound) -> Option<Ordering> {
-        match other {
-            ErrorBound::Absolute(value) => self.partial_cmp(value),
-            ErrorBound::Relative(value) => self.partial_cmp(value),
         }
     }
 }
@@ -169,6 +140,11 @@ mod tests {
     use proptest::proptest;
 
     // Tests for ErrorBound.
+    #[test]
+    fn test_absolute_error_bound_can_be_zero() {
+        assert!(ErrorBound::try_new_absolute(0.0).is_ok())
+    }
+
     proptest! {
         #[test]
         fn test_absolute_error_bound_can_be_any_positive_value(value in num::f32::POSITIVE) {
@@ -194,6 +170,11 @@ mod tests {
     #[test]
     fn test_absolute_error_bound_cannot_be_nan() {
         assert!(ErrorBound::try_new_absolute(f32::NAN).is_err())
+    }
+
+    #[test]
+    fn test_relative_error_bound_can_be_zero() {
+        assert!(ErrorBound::try_new_relative(0.0).is_ok())
     }
 
     proptest! {
