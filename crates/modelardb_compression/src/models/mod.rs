@@ -59,11 +59,16 @@ pub fn is_value_within_error_bound(
 ) -> bool {
     match error_bound {
         ErrorBound::Absolute(error_bound) => {
-            Value::abs(real_value - approximate_value) <= error_bound
+            // Needed to allow +INFINITY, -INFINITY, and NAN values to be stored lossless.
+            if equal_or_nan(real_value as f64, approximate_value as f64) {
+                true
+            } else {
+                Value::abs(real_value - approximate_value) <= error_bound
+            }
         }
         ErrorBound::Relative(error_bound) => {
-            // Needed because result becomes NAN and approximate_value is rejected
-            // if approximate_value and real_value are zero, and because NAN != NAN.
+            // Needed because result becomes NAN and approximate_value is rejected if
+            // approximate_value and real_value are zero, and because NAN != NAN.
             if equal_or_nan(real_value as f64, approximate_value as f64) {
                 true
             } else {
