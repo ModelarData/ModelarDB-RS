@@ -275,17 +275,26 @@ mod tests {
 
     use crate::models;
 
+    const ERROR_BOUND_ZERO: f32 = 0.0;
+    const ERROR_BOUND_TEN: f32 = 10.0;
+
     // Tests for Gorilla.
     #[test]
-    fn test_empty_sequence() {
-        let error_bound = ErrorBound::try_new_relative(0.0).unwrap();
+    fn test_empty_sequence_with_absolute_error_bound_zero() {
+        let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
+        assert!(Gorilla::new(error_bound).model().0.is_empty());
+    }
+
+    #[test]
+    fn test_empty_sequence_with_relative_error_bound_zero() {
+        let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
         assert!(Gorilla::new(error_bound).model().0.is_empty());
     }
 
     proptest! {
     #[test]
-    fn test_append_single_value(value in ProptestValue::ANY) {
-        let error_bound = ErrorBound::try_new_relative(0.0).unwrap();
+    fn test_append_single_value_with_absolute_error_bound_zero(value in ProptestValue::ANY) {
+        let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
         let mut model_type = Gorilla::new(error_bound);
 
         model_type.compress_values(&[value]);
@@ -296,8 +305,32 @@ mod tests {
     }
 
     #[test]
-    fn test_append_repeated_values(value in ProptestValue::ANY) {
-        let error_bound = ErrorBound::try_new_relative(0.0).unwrap();
+    fn test_append_single_value_with_relative_error_bound_zero(value in ProptestValue::ANY) {
+        let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
+        let mut model_type = Gorilla::new(error_bound);
+
+        model_type.compress_values(&[value]);
+
+        prop_assert!(models::equal_or_nan(value as f64, model_type.last_value as f64));
+        prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
+        prop_assert_eq!(model_type.last_trailing_zero_bits, 0);
+    }
+
+    #[test]
+    fn test_append_repeated_values_with_absolute_error_bound_zero(value in ProptestValue::ANY) {
+        let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
+        let mut model_type = Gorilla::new(error_bound);
+
+        model_type.compress_values(&[value, value]);
+
+        prop_assert!(models::equal_or_nan(value as f64, model_type.last_value as f64));
+        prop_assert_eq!(model_type.last_leading_zero_bits, u8::MAX);
+        prop_assert_eq!(model_type.last_trailing_zero_bits, 0);
+    }
+
+    #[test]
+    fn test_append_repeated_values_with_relative_error_bound_zero(value in ProptestValue::ANY) {
+        let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
         let mut model_type = Gorilla::new(error_bound);
 
         model_type.compress_values(&[value, value]);
@@ -309,8 +342,8 @@ mod tests {
     }
 
     #[test]
-    fn test_append_different_values_with_leading_zero_bits() {
-        let error_bound = ErrorBound::try_new_relative(0.0).unwrap();
+    fn test_append_different_values_with_leading_zero_bits_with_absolute_error_bound_zero() {
+        let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
         let mut model_type = Gorilla::new(error_bound);
 
         model_type.compress_values(&[37.0, 73.0]);
@@ -321,8 +354,20 @@ mod tests {
     }
 
     #[test]
-    fn test_append_different_values_without_leading_zero_bits() {
-        let error_bound = ErrorBound::try_new_relative(0.0).unwrap();
+    fn test_append_different_values_with_leading_zero_bits_with_relative_error_bound_zero() {
+        let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
+        let mut model_type = Gorilla::new(error_bound);
+
+        model_type.compress_values(&[37.0, 73.0]);
+
+        assert!(models::equal_or_nan(73.0, model_type.last_value as f64));
+        assert_eq!(model_type.last_leading_zero_bits, 8);
+        assert_eq!(model_type.last_trailing_zero_bits, 17);
+    }
+
+    #[test]
+    fn test_append_different_values_without_leading_zero_bits_with_absolute_error_bound_zero() {
+        let error_bound = ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap();
         let mut model_type = Gorilla::new(error_bound);
 
         model_type.compress_values(&[37.0, 71.0, 73.0]);
@@ -333,8 +378,31 @@ mod tests {
     }
 
     #[test]
-    fn test_append_values_within_error_bound() {
-        let error_bound = ErrorBound::try_new_relative(10.0).unwrap();
+    fn test_append_different_values_without_leading_zero_bits_with_relative_error_bound_zero() {
+        let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
+        let mut model_type = Gorilla::new(error_bound);
+
+        model_type.compress_values(&[37.0, 71.0, 73.0]);
+
+        assert!(models::equal_or_nan(73.0, model_type.last_value as f64));
+        assert_eq!(model_type.last_leading_zero_bits, 8);
+        assert_eq!(model_type.last_trailing_zero_bits, 17);
+    }
+
+    #[test]
+    fn test_append_values_within_error_bound_with_absolute_error_bound_zero() {
+        test_append_values_within_error_bound(
+            ErrorBound::try_new_absolute(ERROR_BOUND_TEN).unwrap(),
+        );
+    }
+    #[test]
+    fn test_append_values_within_error_bound_with_relative_error_bound_zero() {
+        test_append_values_within_error_bound(
+            ErrorBound::try_new_relative(ERROR_BOUND_TEN).unwrap(),
+        );
+    }
+
+    fn test_append_values_within_error_bound(error_bound: ErrorBound) {
         let mut model_type = Gorilla::new(error_bound);
 
         model_type.compress_values(&[10.0]);
@@ -359,26 +427,70 @@ mod tests {
     // Tests for sum().
     proptest! {
     #[test]
-    fn test_sum(values in collection::vec(ProptestValue::ANY, 0..50)) {
+    fn test_sum_with_absolute_error_bound(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
         let expected_sum = values.iter().sum::<f32>();
-        let compressed_values = compress_values_using_gorilla(&values, None);
+        let compressed_values = compress_values_using_gorilla(
+            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            &values, None);
+        let sum = sum(values.len(), &compressed_values, None);
+        prop_assert!(models::equal_or_nan(expected_sum as f64, sum as f64));
+    }
+
+    #[test]
+    fn test_sum_with_relative_error_bound(values in collection::vec(ProptestValue::ANY, 0..50)) {
+        prop_assume!(!values.is_empty());
+        let expected_sum = values.iter().sum::<f32>();
+        let compressed_values = compress_values_using_gorilla(
+            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            &values, None);
         let sum = sum(values.len(), &compressed_values, None);
         prop_assert!(models::equal_or_nan(expected_sum as f64, sum as f64));
     }
     }
 
     #[test]
-    fn test_sum_model_single_value() {
-        let compressed_values = compress_values_using_gorilla(&[37.0], None);
+    fn test_sum_model_single_value_with_absolute_error_bound() {
+        let compressed_values = compress_values_using_gorilla(
+            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            &[37.0],
+            None,
+        );
         let sum = sum(1, &compressed_values, None);
         assert_eq!(sum, 37.0);
     }
 
     #[test]
-    fn test_sum_residuals_single_value() {
+    fn test_sum_model_single_value_with_relative_error_bound() {
+        let compressed_values = compress_values_using_gorilla(
+            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            &[37.0],
+            None,
+        );
+        let sum = sum(1, &compressed_values, None);
+        assert_eq!(sum, 37.0);
+    }
+
+    #[test]
+    fn test_sum_residuals_single_value_with_absolute_error_bound() {
         let maybe_model_last_value = Some(37.0);
-        let compressed_values = compress_values_using_gorilla(&[37.0], maybe_model_last_value);
+        let compressed_values = compress_values_using_gorilla(
+            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            &[37.0],
+            maybe_model_last_value,
+        );
+        let sum = sum(1, &compressed_values, maybe_model_last_value);
+        assert_eq!(sum, 37.0);
+    }
+
+    #[test]
+    fn test_sum_residuals_single_value_with_relative_error_bound() {
+        let maybe_model_last_value = Some(37.0);
+        let compressed_values = compress_values_using_gorilla(
+            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            &[37.0],
+            maybe_model_last_value,
+        );
         let sum = sum(1, &compressed_values, maybe_model_last_value);
         assert_eq!(sum, 37.0);
     }
@@ -386,12 +498,27 @@ mod tests {
     // Tests for grid().
     proptest! {
     #[test]
-    fn test_grid(values in collection::vec(ProptestValue::ANY, 0..50)) {
+    fn test_grid_with_absolute_error_bound(values in collection::vec(ProptestValue::ANY, 0..50)) {
         prop_assume!(!values.is_empty());
-        let compressed_values = compress_values_using_gorilla(&values, None);
+        test_grid_with_error_bound(
+            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            &values);
+    }
+
+    #[test]
+    fn test_grid_with_relative_error_bound(values in collection::vec(ProptestValue::ANY, 0..50)) {
+        prop_assume!(!values.is_empty());
+        test_grid_with_error_bound(
+            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            &values);
+    }
+    }
+
+    fn test_grid_with_error_bound(error_bound: ErrorBound, values: &[Value]) {
+        let compressed_values = compress_values_using_gorilla(error_bound, &values, None);
 
         let mut univariate_id_builder = UnivariateIdBuilder::with_capacity(values.len());
-        let timestamps: Vec<Timestamp> = (1 ..= values.len() as i64).step_by(1).collect();
+        let timestamps: Vec<Timestamp> = (1..=values.len() as i64).step_by(1).collect();
         let mut value_builder = ValueBuilder::with_capacity(values.len());
         grid(
             1,
@@ -405,31 +532,55 @@ mod tests {
         let univariate_ids_array = univariate_id_builder.finish();
         let values_array = value_builder.finish();
 
-        prop_assert!(
+        assert!(
             univariate_ids_array.len() == values.len()
-            && univariate_ids_array.len() == timestamps.len()
-            && univariate_ids_array.len() == values_array.len()
+                && univariate_ids_array.len() == timestamps.len()
+                && univariate_ids_array.len() == values_array.len()
         );
-        prop_assert!(univariate_ids_array
-             .iter()
-             .all(|maybe_univariate_id| maybe_univariate_id.unwrap() == 1));
-        prop_assert!(timestamps.windows(2).all(|window| window[1] - window[0] == 1));
-        prop_assert!(slice_of_value_equal(values_array.values(), &values));
-    }
-    }
-
-    #[test]
-    fn test_grid_model_single_value() {
-        assert_grid_single(None);
+        assert!(univariate_ids_array
+            .iter()
+            .all(|maybe_univariate_id| maybe_univariate_id.unwrap() == 1));
+        assert!(timestamps
+            .windows(2)
+            .all(|window| window[1] - window[0] == 1));
+        assert!(slice_of_value_equal(values_array.values(), &values));
     }
 
     #[test]
-    fn test_grid_residuals_single_value() {
-        assert_grid_single(Some(37.0));
+    fn test_grid_model_single_value_with_absolute_error_bound() {
+        assert_grid_single(
+            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            None,
+        );
     }
 
-    fn assert_grid_single(maybe_model_last_value: Option<Value>) {
-        let compressed_values = compress_values_using_gorilla(&[37.0], maybe_model_last_value);
+    #[test]
+    fn test_grid_model_single_value_with_relative_error_bound() {
+        assert_grid_single(
+            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            None,
+        );
+    }
+
+    #[test]
+    fn test_grid_residuals_single_value_with_absolute_error_bound() {
+        assert_grid_single(
+            ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+            Some(37.0),
+        );
+    }
+
+    #[test]
+    fn test_grid_residuals_single_value_with_relative_error_bound() {
+        assert_grid_single(
+            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+            Some(37.0),
+        );
+    }
+
+    fn assert_grid_single(error_bound: ErrorBound, maybe_model_last_value: Option<Value>) {
+        let compressed_values =
+            compress_values_using_gorilla(error_bound, &[37.0], maybe_model_last_value);
         let mut univariate_id_builder = UnivariateIdBuilder::new();
         let mut value_builder = ValueBuilder::new();
 
@@ -452,10 +603,10 @@ mod tests {
     }
 
     fn compress_values_using_gorilla(
+        error_bound: ErrorBound,
         values: &[Value],
         maybe_model_last_value: Option<Value>,
     ) -> Vec<u8> {
-        let error_bound = ErrorBound::try_new_relative(0.0).unwrap();
         let mut model_type = Gorilla::new(error_bound);
         if let Some(model_last_value) = maybe_model_last_value {
             model_type.compress_values_without_first(values, model_last_value);
