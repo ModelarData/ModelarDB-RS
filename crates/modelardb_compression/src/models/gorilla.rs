@@ -274,9 +274,7 @@ mod tests {
     use proptest::{bool, collection, prop_assert, prop_assert_eq, prop_assume, proptest};
 
     use crate::models;
-
-    const ERROR_BOUND_ZERO: f32 = 0.0;
-    const ERROR_BOUND_TEN: f32 = 10.0;
+    use crate::tests::{ERROR_BOUND_TEN, ERROR_BOUND_ZERO};
 
     // Tests for Gorilla.
     #[test]
@@ -515,7 +513,7 @@ mod tests {
     }
 
     fn test_grid_with_error_bound(error_bound: ErrorBound, values: &[Value]) {
-        let compressed_values = compress_values_using_gorilla(error_bound, &values, None);
+        let compressed_values = compress_values_using_gorilla(error_bound, values, None);
 
         let mut univariate_id_builder = UnivariateIdBuilder::with_capacity(values.len());
         let timestamps: Vec<Timestamp> = (1..=values.len() as i64).step_by(1).collect();
@@ -543,7 +541,7 @@ mod tests {
         assert!(timestamps
             .windows(2)
             .all(|window| window[1] - window[0] == 1));
-        assert!(slice_of_value_equal(values_array.values(), &values));
+        assert!(slice_of_value_equal(values_array.values(), values));
     }
 
     #[test]

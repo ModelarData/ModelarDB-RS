@@ -337,17 +337,15 @@ mod tests {
     use proptest::{num, prop_assert, prop_assert_eq, prop_assume, proptest};
 
     use crate::models::SWING_ID;
+    use crate::tests::{
+        ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_FIVE, ERROR_BOUND_RELATIVE_MAX, ERROR_BOUND_ZERO,
+    };
 
     // Tests constants chosen to be realistic while minimizing the testing time.
     const SAMPLING_INTERVAL: Timestamp = 1000;
     const START_TIME: Timestamp = 1658671178037;
     const END_TIME: Timestamp = START_TIME + SAMPLING_INTERVAL;
     const SEGMENT_LENGTH: Timestamp = 5; // Timestamp is used to remove casts.
-
-    const ERROR_BOUND_ZERO: f32 = 0.0;
-    const ERROR_BOUND_FIVE: f32 = 5.0;
-    const ERROR_BOUND_ABSOLUTE_MAX: f32 = f32::MAX;
-    const ERROR_BOUND_RELATIVE_MAX: f32 = 100.0;
 
     // Tests for Swing.
     proptest! {

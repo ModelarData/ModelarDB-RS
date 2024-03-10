@@ -499,8 +499,8 @@ mod tests {
     use modelardb_common::types::{TimestampArray, ValueArray};
 
     use crate::compression;
+    use crate::tests::ERROR_BOUND_ZERO;
 
-    const ERROR_BOUND_ZERO: f32 = 0.0;
     const UNCOMPRESSED_TIMESTAMPS: &[Timestamp] = &[100, 200, 300, 400, 500];
 
     // Tests for CompressedSegmentBuilder.

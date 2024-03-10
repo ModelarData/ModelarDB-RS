@@ -123,10 +123,9 @@ mod tests {
     use proptest::num::f32 as ProptestValue;
     use proptest::{prop_assert, prop_assume, proptest};
 
-    const ERROR_BOUND_ZERO: f32 = 0.0;
-    const ERROR_BOUND_FIVE: f32 = 5.0;
-    const ERROR_BOUND_ABSOLUTE_MAX: f32 = f32::MAX;
-    const ERROR_BOUND_RELATIVE_MAX: f32 = 100.0;
+    use crate::tests::{
+        ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_FIVE, ERROR_BOUND_RELATIVE_MAX, ERROR_BOUND_ZERO,
+    };
 
     // Tests for PMCMean.
     proptest! {

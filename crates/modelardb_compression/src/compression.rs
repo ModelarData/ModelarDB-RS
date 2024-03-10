@@ -268,11 +268,10 @@ mod tests {
     use modelardb_common::test::data_generation::{self, ValuesStructure};
     use modelardb_common::types::{TimestampBuilder, ValueBuilder};
 
+    use crate::tests::{ERROR_BOUND_FIVE, ERROR_BOUND_ZERO};
     use crate::{models, MODEL_TYPE_NAMES};
 
     const UNIVARIATE_ID: u64 = 1;
-    const ERROR_BOUND_ZERO: f32 = 0.0;
-    const ERROR_BOUND_FIVE: f32 = 5.0;
     const ADD_NOISE_RANGE: Option<Range<f32>> = Some(1.0..1.05);
     const TRY_COMPRESS_TEST_LENGTH: usize = 50;
 
