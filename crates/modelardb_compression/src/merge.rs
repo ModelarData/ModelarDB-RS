@@ -330,6 +330,7 @@ mod tests {
     use arrow::array::{UInt64Builder, UInt8Array};
     use arrow::compute;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
+    use modelardb_common::test::ERROR_BOUND_ZERO;
     use modelardb_common::types::{ErrorBound, ValueBuilder};
 
     // Tests for try_merge_segments().
@@ -426,7 +427,7 @@ mod tests {
         while index < uncompressed_timestamps.len() {
             let compressed_segments = crate::try_compress(
                 1,
-                ErrorBound::try_new_relative(0.0).unwrap(),
+                ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
                 &uncompressed_timestamps.slice(index, batch_size),
                 &uncompressed_values.slice(index, batch_size),
             )

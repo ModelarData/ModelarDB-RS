@@ -47,6 +47,7 @@ use crate::errors::ModelarDbError;
 use crate::metadata::compressed_file::CompressedFile;
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::parser;
+use crate::test::ERROR_BOUND_ZERO;
 use crate::types::{ErrorBound, Timestamp, UnivariateId, Value};
 
 /// Name used for the file containing the SQLite database storing the metadata.
@@ -190,14 +191,14 @@ where
 
         // Create the model_table_field_columns table if it does not exist. Note that column_index
         // will only use a maximum of 10 bits. generated_column_* is NULL if the fields are stored
-        // as segments. error_bound_relative should be a boolean but bind do not accept booleans.
+        // as segments. error_bound_is_relative should be a boolean but bind do not accept booleans.
         sqlx::query(&format!(
             "CREATE TABLE IF NOT EXISTS model_table_field_columns (
                  table_name TEXT NOT NULL,
                  column_name TEXT NOT NULL,
                  column_index {integer_type} NOT NULL,
                  error_bound_value REAL NOT NULL,
-                 error_bound_relative {integer_type} NULL,
+                 error_bound_is_relative {integer_type} NOT NULL,
                  generated_column_expr TEXT,
                  generated_column_sources {binary_type},
                  PRIMARY KEY (table_name, column_name)
@@ -735,7 +736,7 @@ where
         // Add a row for each field column to the model_table_field_columns table.
         let insert_statement =
             "INSERT INTO model_table_field_columns (table_name, column_name, column_index,
-             error_bound_value, error_bound_relative, generated_column_expr, generated_column_sources)
+             error_bound_value, error_bound_is_relative, generated_column_expr, generated_column_sources)
              VALUES ($1, $2, $3, $4, $5, $6, $7)";
 
         for (query_schema_index, field) in model_table_metadata
@@ -768,7 +769,7 @@ where
                 // error_bounds matches schema and not query_schema to simplify looking up the error
                 // bound during ingestion as it occurs far more often than creation of model tables.
                 // Bind refuses to accept booleans so a simple 0 is used for false and 1 for true.
-                let (error_bound_value, error_bound_relative) =
+                let (error_bound_value, error_bound_is_relative) =
                     if let Ok(schema_index) = model_table_metadata.schema.index_of(field.name()) {
                         match model_table_metadata.error_bounds[schema_index] {
                             ErrorBound::Absolute(value) => (value, 0),
@@ -784,7 +785,7 @@ where
                     .bind(field.name())
                     .bind(query_schema_index as i64)
                     .bind(error_bound_value)
-                    .bind(error_bound_relative)
+                    .bind(error_bound_is_relative)
                     .bind(generated_column_expr)
                     .bind(generated_column_sources)
                     .execute(&mut *transaction)
@@ -858,14 +859,14 @@ where
         query_schema_columns: usize,
     ) -> Result<Vec<ErrorBound>, Error> {
         let mut rows = sqlx::query(
-            "SELECT column_index, error_bound_value, error_bound_relative FROM model_table_field_columns
-                  WHERE table_name = $1 ORDER BY column_index",
+            "SELECT column_index, error_bound_value, error_bound_is_relative
+                  FROM model_table_field_columns WHERE table_name = $1 ORDER BY column_index",
         )
         .bind(table_name)
         .fetch(&self.metadata_database_pool);
 
         let mut column_to_error_bound =
-            vec![ErrorBound::try_new_relative(0.0).unwrap(); query_schema_columns];
+            vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(); query_schema_columns];
 
         while let Some(row) = rows.try_next().await? {
             // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
@@ -874,8 +875,8 @@ where
             let error_bound_index: i64 = row.try_get("column_index")?;
 
             let error_bound_value: f32 = row.try_get("error_bound_value")?;
-            let error_bound_relative: i64 = row.try_get("error_bound_relative")?;
-            let error_bound = if error_bound_relative == 0 {
+            let error_bound_is_relative: i64 = row.try_get("error_bound_is_relative")?;
+            let error_bound = if error_bound_is_relative == 0 {
                 ErrorBound::try_new_absolute(error_bound_value)
             } else {
                 ErrorBound::try_new_relative(error_bound_value)
@@ -1216,7 +1217,7 @@ mod tests {
         metadata_manager
             .metadata_database_pool
             .execute(
-                "SELECT table_name, column_name, column_index, error_bound_value, error_bound_relative,
+                "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
                  generated_column_expr, generated_column_sources FROM model_table_field_columns",
             )
             .await
@@ -2030,7 +2031,7 @@ mod tests {
 
         // Retrieve the rows in model_table_field_columns from the metadata database.
         let mut rows = metadata_manager.metadata_database_pool.fetch(
-            "SELECT table_name, column_name, column_index, error_bound_value, error_bound_relative,
+            "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
              generated_column_expr, generated_column_sources FROM model_table_field_columns",
         );
 

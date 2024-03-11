@@ -128,8 +128,8 @@ pub fn generate_univariate_time_series(
 /// points in sequences of `segment_length_range` (except possibly for the last as it may be
 /// truncated to match `length`) and the timestamps will be regular or irregular depending on the
 /// value of `generate_irregular_timestamps`. If `add_noise_range` is [`Some`], random values will
-/// be generated in the [`Range<f32>`] and multiplied with each value in the sequences with constant
-/// and linear values. Sequences with random values are generated in the range specified as
+/// be generated in the [`Range<f32>`] and added to each value in the sequences with constant and
+/// linear values. Sequences with random values are generated in the range specified as
 /// `random_value_range`.
 pub fn generate_multivariate_time_series(
     length: usize,

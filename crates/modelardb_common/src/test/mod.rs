@@ -46,6 +46,24 @@ pub const UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 M
 /// Number of bytes reserved for compressed data in tests.
 pub const COMPRESSED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
 
+/// Named error bound with the value 0.0 to make tests more readable.
+pub const ERROR_BOUND_ZERO: f32 = 0.0;
+
+/// Named error bound with the value 1.0 to make tests more readable.
+pub const ERROR_BOUND_ONE: f32 = 1.0;
+
+/// Named error bound with the value 5.0 to make tests more readable.
+pub const ERROR_BOUND_FIVE: f32 = 5.0;
+
+/// Named error bound with the value 10.0 to make tests more readable.
+pub const ERROR_BOUND_TEN: f32 = 10.0;
+
+/// Named error bound with the value f32::MAX to make tests more readable.
+pub const ERROR_BOUND_ABSOLUTE_MAX: f32 = f32::MAX;
+
+/// Named error bound with the value 100.0 to make tests more readable.
+pub const ERROR_BOUND_RELATIVE_MAX: f32 = 100.0;
+
 /// SQL to create a table with a timestamp column and two floating point columns.
 pub const TABLE_SQL: &str =
     "CREATE TABLE table_name(timestamp TIMESTAMP, values REAL, metadata REAL)";
@@ -68,10 +86,10 @@ pub fn model_table_metadata() -> ModelTableMetadata {
     ]));
 
     let error_bounds = vec![
-        ErrorBound::try_new_absolute(0.0).unwrap(),
-        ErrorBound::try_new_absolute(1.0).unwrap(),
-        ErrorBound::try_new_relative(5.0).unwrap(),
-        ErrorBound::try_new_relative(0.0).unwrap(),
+        ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
+        ErrorBound::try_new_absolute(ERROR_BOUND_ONE).unwrap(),
+        ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
+        ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
     ];
 
     let generated_columns = vec![None, None, None, None];

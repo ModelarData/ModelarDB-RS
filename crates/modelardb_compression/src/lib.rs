@@ -33,13 +33,3 @@ pub use models::len;
 pub use models::sum;
 pub use models::timestamps::are_compressed_timestamps_regular;
 pub use models::{MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
-
-// Named error bound values to make tests more readable.
-#[cfg(test)]
-mod tests {
-    pub(crate) const ERROR_BOUND_ZERO: f32 = 0.0;
-    pub(crate) const ERROR_BOUND_FIVE: f32 = 5.0;
-    pub(crate) const ERROR_BOUND_TEN: f32 = 10.0;
-    pub(crate) const ERROR_BOUND_ABSOLUTE_MAX: f32 = f32::MAX;
-    pub(crate) const ERROR_BOUND_RELATIVE_MAX: f32 = 100.0;
-}

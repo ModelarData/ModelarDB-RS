@@ -119,14 +119,14 @@ impl ModelarDbDialect {
                         // An error bound is given for the field column.
                         parser.expect_token(&Token::LParen)?;
                         let error_bound = self.parse_positive_literal_f32(parser)?;
-                        let relative = parser.consume_token(&Token::Mod);
+                        let is_relative = parser.consume_token(&Token::Mod);
                         parser.expect_token(&Token::RParen)?;
 
                         // The error bound is zero by default so there is no need to store zero.
                         if error_bound > 0.0 {
                             options.push(Self::new_error_bound_column_option_def(
                                 error_bound,
-                                relative,
+                                is_relative,
                             ));
                         }
                     } else if let Token::Word(_) = parser.peek_nth_token(0).token {
@@ -220,14 +220,14 @@ impl ModelarDbDialect {
     }
 
     /// Create a new [`ColumnOptionDef`] with the provided `error_bound`.
-    fn new_error_bound_column_option_def(error_bound: f32, relative: bool) -> ColumnOptionDef {
+    fn new_error_bound_column_option_def(error_bound: f32, is_relative: bool) -> ColumnOptionDef {
         // An error bound column option does not exist so ColumnOption::DialectSpecific and
         // Token::Number is used. Token::Number's bool should be the number when cast to a bool.
         ColumnOptionDef {
             name: None,
             option: ColumnOption::DialectSpecific(vec![Token::Number(
                 error_bound.to_string(),
-                relative,
+                is_relative,
             )]),
         }
     }
@@ -556,9 +556,9 @@ fn column_defs_to_model_table_query_schema(
                 for column_option_def in column_def.options {
                     match column_option_def.option {
                         ColumnOption::DialectSpecific(dialect_specific_tokens) => {
-                            let (error_bound, relative) =
+                            let (error_bound, is_relative) =
                                 tokens_to_error_bound(&dialect_specific_tokens)?;
-                            let suffix = if relative { "%" } else { "" };
+                            let suffix = if is_relative { "%" } else { "" };
                             metadata
                                 .insert("Error Bound".to_owned(), error_bound.to_string() + suffix);
                         }
@@ -607,17 +607,17 @@ fn extract_error_bounds_for_all_columns(
 
     for column_def in column_defs {
         let mut error_bound_value = 0.0;
-        let mut relative = false;
+        let mut is_relative = false;
 
         for column_def_option in &column_def.options {
             if let ColumnOption::DialectSpecific(dialect_specific_tokens) =
                 &column_def_option.option
             {
-                (error_bound_value, relative) = tokens_to_error_bound(dialect_specific_tokens)?;
+                (error_bound_value, is_relative) = tokens_to_error_bound(dialect_specific_tokens)?;
             }
         }
 
-        let error_bound = if !relative {
+        let error_bound = if !is_relative {
             ErrorBound::try_new_absolute(error_bound_value)
         } else {
             ErrorBound::try_new_relative(error_bound_value)
@@ -631,8 +631,8 @@ fn extract_error_bounds_for_all_columns(
 }
 
 /// Return the value of an error bound and a [`bool`] indicating if it is relative if it is the only
-/// token in `dialect_specific_tokens`, otherwise [`ParseError`] is returned. Assumes the tokens has
-/// been extracted from a [`ColumnOption::DialectSpecific`].
+/// token in `dialect_specific_tokens`, otherwise [`ParserError`] is returned. Assumes the tokens
+/// have been extracted from a [`ColumnOption::DialectSpecific`].
 fn tokens_to_error_bound(dialect_specific_tokens: &[Token]) -> Result<(f32, bool), ParserError> {
     if dialect_specific_tokens.len() != 1 {
         return Err(ParserError::ParserError(
@@ -640,11 +640,11 @@ fn tokens_to_error_bound(dialect_specific_tokens: &[Token]) -> Result<(f32, bool
         ));
     }
 
-    if let Token::Number(error_bound_string, relative) = &dialect_specific_tokens[0] {
+    if let Token::Number(error_bound_string, is_relative) = &dialect_specific_tokens[0] {
         let error_bound_value = error_bound_string
             .parse::<f32>()
             .map_err(|_error| ParserError::ParserError("Error bound is not a float".to_owned()))?;
-        Ok((error_bound_value, *relative))
+        Ok((error_bound_value, *is_relative))
     } else {
         Err(ParserError::ParserError(
             "Dialect specific tokens must be an error bound.".to_owned(),
@@ -844,8 +844,8 @@ mod tests {
     ) -> Vec<ColumnOptionDef> {
         let mut column_option_defs = vec![];
 
-        if let Some((error_bound, relative)) = maybe_error_bound {
-            let dialect_specific_tokens = vec![Token::Number(error_bound.to_string(), relative)];
+        if let Some((error_bound, is_relative)) = maybe_error_bound {
+            let dialect_specific_tokens = vec![Token::Number(error_bound.to_string(), is_relative)];
             let error_bound = ColumnOptionDef {
                 name: None,
                 option: ColumnOption::DialectSpecific(dialect_specific_tokens),

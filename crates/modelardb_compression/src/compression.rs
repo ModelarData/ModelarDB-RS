@@ -266,9 +266,9 @@ mod tests {
     };
     use modelardb_common::array;
     use modelardb_common::test::data_generation::{self, ValuesStructure};
+    use modelardb_common::test::{ERROR_BOUND_FIVE, ERROR_BOUND_ZERO};
     use modelardb_common::types::{TimestampBuilder, ValueBuilder};
 
-    use crate::tests::{ERROR_BOUND_FIVE, ERROR_BOUND_ZERO};
     use crate::{models, MODEL_TYPE_NAMES};
 
     const UNIVARIATE_ID: u64 = 1;
@@ -277,7 +277,7 @@ mod tests {
 
     // Tests for try_compress().
     #[test]
-    fn test_try_compress_absolute_empty_time_series() {
+    fn test_try_compress_empty_time_series_within_absolute_error_bound_zero() {
         let compressed_record_batch = try_compress(
             UNIVARIATE_ID,
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
@@ -289,7 +289,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_empty_time_series() {
+    fn test_try_compress_empty_time_series_within_relative_error_bound_zero() {
         let compressed_record_batch = try_compress(
             UNIVARIATE_ID,
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
@@ -301,7 +301,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_regular_constant_time_series() {
+    fn test_try_compress_regular_constant_time_series_within_absolute_error_bound_zero() {
         generate_compress_and_assert_known_segment(
             false,
             ValuesStructure::Constant(None),
@@ -311,7 +311,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_regular_constant_time_series() {
+    fn test_try_compress_regular_constant_time_series_within_relative_error_bound_zero() {
         generate_compress_and_assert_known_segment(
             false,
             ValuesStructure::Constant(None),
@@ -321,7 +321,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_irregular_constant_time_series() {
+    fn test_try_compress_irregular_constant_time_series_within_absolute_error_bound_zero() {
         generate_compress_and_assert_known_segment(
             true,
             ValuesStructure::Constant(None),
@@ -331,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_irregular_constant_time_series() {
+    fn test_try_compress_irregular_constant_time_series_within_relative_error_bound_zero() {
         generate_compress_and_assert_known_segment(
             true,
             ValuesStructure::Constant(None),
@@ -341,7 +341,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_regular_almost_constant_time_series() {
+    fn test_try_compress_regular_almost_constant_time_series_within_absolute_error_bound_five() {
         generate_compress_and_assert_known_segment(
             false,
             ValuesStructure::Random(9.8..10.2),
@@ -351,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_regular_almost_constant_time_series() {
+    fn test_try_compress_regular_almost_constant_time_series_within_relative_error_bound_five() {
         generate_compress_and_assert_known_segment(
             false,
             ValuesStructure::Random(9.8..10.2),
@@ -361,7 +361,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_irregular_almost_constant_time_series() {
+    fn test_try_compress_irregular_almost_constant_time_series_within_absolute_error_bound_five() {
         generate_compress_and_assert_known_segment(
             true,
             ValuesStructure::Random(9.8..10.2),
@@ -371,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_irregular_almost_constant_time_series() {
+    fn test_try_compress_irregular_almost_constant_time_serie_within_relative_error_bound_five() {
         generate_compress_and_assert_known_segment(
             true,
             ValuesStructure::Random(9.8..10.2),
@@ -381,7 +381,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_regular_linear_time_series() {
+    fn test_try_compress_regular_linear_time_series_within_absolute_error_bound_zero() {
         generate_compress_and_assert_known_segment(
             false,
             ValuesStructure::Linear(None),
@@ -391,7 +391,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_regular_linear_time_series() {
+    fn test_try_compress_regular_linear_time_series_within_relative_error_bound_zero() {
         generate_compress_and_assert_known_segment(
             false,
             ValuesStructure::Linear(None),
@@ -401,7 +401,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_irregular_linear_time_series() {
+    fn test_try_compress_irregular_linear_time_series_within_absolute_error_bound_zero() {
         generate_compress_and_assert_known_segment(
             true,
             ValuesStructure::Linear(None),
@@ -411,7 +411,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relatively_irregular_linear_time_series() {
+    fn test_try_compress_irregular_linear_time_series_within_relative_error_bound_zero() {
         generate_compress_and_assert_known_segment(
             true,
             ValuesStructure::Linear(None),
@@ -421,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_regular_almost_linear_time_series() {
+    fn test_try_compress_regular_almost_linear_time_series_within_absolute_error_bound_five() {
         generate_compress_and_assert_known_segment(
             false,
             ValuesStructure::Linear(ADD_NOISE_RANGE),
@@ -431,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_regular_almost_linear_time_series() {
+    fn test_try_compress_regular_almost_linear_time_series_within_relative_error_bound_five() {
         generate_compress_and_assert_known_segment(
             false,
             ValuesStructure::Linear(ADD_NOISE_RANGE),
@@ -441,7 +441,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_irregular_almost_linear_time_series() {
+    fn test_try_compress_irregular_almost_linear_time_series_within_absolute_error_bound_five() {
         generate_compress_and_assert_known_segment(
             true,
             ValuesStructure::Linear(ADD_NOISE_RANGE),
@@ -451,7 +451,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_irregular_almost_linear_time_series() {
+    fn test_try_compress_irregular_almost_linear_time_series_within_relative_error_bound_five() {
         generate_compress_and_assert_known_segment(
             true,
             ValuesStructure::Linear(ADD_NOISE_RANGE),
@@ -461,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_regular_random_time_series() {
+    fn test_try_compress_regular_random_time_series_within_absolute_error_bound_zero() {
         generate_compress_and_assert_known_segment(
             false,
             ValuesStructure::largest_random_without_overflow(),
@@ -471,7 +471,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_regular_random_time_series() {
+    fn test_try_compress_regular_random_time_series_within_relative_error_bound_zero() {
         generate_compress_and_assert_known_segment(
             false,
             ValuesStructure::largest_random_without_overflow(),
@@ -481,7 +481,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_irregular_random_time_series() {
+    fn test_try_compress_irregular_random_time_series_within_absolute_error_bound_zero() {
         generate_compress_and_assert_known_segment(
             true,
             ValuesStructure::largest_random_without_overflow(),
@@ -491,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_irregular_random_time_series() {
+    fn test_try_compress_irregular_random_time_series_within_relative_error_bound_zero() {
         generate_compress_and_assert_known_segment(
             true,
             ValuesStructure::largest_random_without_overflow(),
@@ -528,7 +528,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_regular_random_linear_constant_time_series() {
+    fn test_try_compress_regular_random_linear_constant_time_series_within_absolute_error_bound_zero(
+    ) {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             false,
@@ -538,7 +539,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_regular_random_linear_constant_time_series() {
+    fn test_try_compress_regular_random_linear_constant_time_series_within_relative_error_bound_zero(
+    ) {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             false,
@@ -548,7 +550,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_irregular_random_linear_constant_time_series() {
+    fn test_try_compress_irregular_random_linear_constant_time_series_within_absolute_error_bound_zero(
+    ) {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -558,7 +561,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_irregular_random_linear_constant_time_series() {
+    fn test_try_compress_irregular_random_linear_constant_time_series_within_relative_error_bound_zero(
+    ) {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -568,7 +572,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_regular_constant_linear_random_time_series() {
+    fn test_try_compress_regular_constant_linear_random_time_series_within_absolute_error_bound_zero(
+    ) {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             false,
@@ -578,7 +583,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_regular_constant_linear_random_time_series() {
+    fn test_try_compress_regular_constant_linear_random_time_series_within_relative_error_bound_zero(
+    ) {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             false,
@@ -588,7 +594,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_irregular_constant_linear_random_time_series() {
+    fn test_try_compress_irregular_constant_linear_random_time_series_within_absolute_error_bound_zero(
+    ) {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -598,7 +605,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relativ_irregular_constant_linear_random_time_series() {
+    fn test_try_compress_irregular_constant_linear_random_time_series_within_relative_error_bound_zero(
+    ) {
         generate_compress_and_assert_known_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -691,7 +699,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_regular_synthetic_time_series_without_noise_lossless() {
+    fn test_try_compress_regular_synthetic_time_series_without_noise_within_absolute_error_bound_zero(
+    ) {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             false,
@@ -700,7 +709,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_regular_synthetic_time_series_without_noise_lossless() {
+    fn test_try_compress_regular_synthetic_time_series_without_noise_within_relative_error_bound_zero(
+    ) {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             false,
@@ -709,7 +719,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_regular_synthetic_time_series_without_noise_lossy() {
+    fn test_try_compress_regular_synthetic_time_series_without_noise_within_absolute_error_bound_five(
+    ) {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_FIVE).unwrap(),
             false,
@@ -718,7 +729,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_regular_synthetic_time_series_without_noise_lossy() {
+    fn test_try_compress_regular_synthetic_time_series_without_noise_within_relative_error_bound_five(
+    ) {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
             false,
@@ -727,7 +739,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_regular_synthetic_time_series_with_noise_lossless() {
+    fn test_try_compress_regular_synthetic_time_series_with_noise_within_absolute_error_bound_zero()
+    {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             false,
@@ -736,7 +749,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_regular_synthetic_time_series_with_noise_lossless() {
+    fn test_try_compress_regular_synthetic_time_series_with_noise_within_relative_error_bound_zero()
+    {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             false,
@@ -745,7 +759,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_regular_synthetic_time_series_with_noise_lossy() {
+    fn test_try_compress_regular_synthetic_time_series_with_noise_within_absolute_error_bound_five()
+    {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_FIVE).unwrap(),
             false,
@@ -754,7 +769,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_regular_synthetic_time_series_with_noise_lossy() {
+    fn test_try_compress_regular_synthetic_time_series_with_noise_within_relative_error_bound_five()
+    {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
             false,
@@ -763,7 +779,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_irregular_synthetic_time_series_without_noise_lossless() {
+    fn test_try_compress_irregular_synthetic_time_series_without_noise_within_absolute_error_bound_zero(
+    ) {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -772,7 +789,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_irregular_synthetic_time_series_without_noise_lossless() {
+    fn test_try_compress_irregular_synthetic_time_series_without_noise_within_relative_error_bound_zero(
+    ) {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -781,7 +799,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_irregular_synthetic_time_series_without_noise_lossy() {
+    fn test_try_compress_irregular_synthetic_time_series_without_noise_within_absolute_error_bound_five(
+    ) {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_FIVE).unwrap(),
             true,
@@ -790,7 +809,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_irregular_synthetic_time_series_without_noise_lossy() {
+    fn test_try_compress_irregular_synthetic_time_series_without_noise_within_relative_error_bound_five(
+    ) {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
             true,
@@ -799,7 +819,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_irregular_synthetic_time_series_with_noise_lossless() {
+    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_absolute_error_bound_zero(
+    ) {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -808,7 +829,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_irregular_synthetic_time_series_with_noise_lossless() {
+    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_relative_error_bound_zero(
+    ) {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             true,
@@ -817,7 +839,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_absolute_irregular_synthetic_time_series_with_noise_lossy() {
+    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_absolute_error_bound_five(
+    ) {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_absolute(ERROR_BOUND_FIVE).unwrap(),
             true,
@@ -826,7 +849,8 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_relative_irregular_synthetic_time_series_with_noise_lossy() {
+    fn test_try_compress_irregular_synthetic_time_series_with_noise_within_relative_error_bound_five(
+    ) {
         generate_compress_and_assert_time_series(
             ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
             true,
@@ -929,7 +953,7 @@ mod tests {
 
             assert!(
                 models::is_value_within_error_bound(error_bound, real_value, approximate_value),
-                "{approximate_value} from {model_type_name} is outside {error_bound:?} of {real_value}",
+                "{approximate_value} from {model_type_name} is outside {error_bound:?} of {real_value}.",
             );
         }
     }
@@ -937,7 +961,7 @@ mod tests {
     // Tests for compress_and_store_residuals_in_a_separate_segment().
     #[test]
     fn test_compress_and_store_residuals_in_a_separate_segment() {
-        let error_bound = ErrorBound::try_new_relative(0.0).unwrap();
+        let error_bound = ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap();
         let uncompressed_timestamps = TimestampArray::from_iter_values((100..=500).step_by(100));
         let uncompressed_values = ValueArray::from(vec![73.0, 37.0, 37.0, 37.0, 73.0]);
         let mut compressed_segment_batch_builder = CompressedSegmentBatchBuilder::new(1);

@@ -84,7 +84,7 @@ impl ErrorBound {
     pub fn try_new_absolute(value: f32) -> Result<Self, ModelarDbError> {
         if !value.is_finite() || value < 0.0 {
             Err(ModelarDbError::CompressionError(
-                "An absolute error bounds must be a finite value..".to_owned(),
+                "An absolute error bound must be a positive finite value.".to_owned(),
             ))
         } else {
             Ok(Self::Absolute(value))
@@ -96,7 +96,7 @@ impl ErrorBound {
     pub fn try_new_relative(percentage: f32) -> Result<Self, ModelarDbError> {
         if !(0.0..=100.0).contains(&percentage) {
             Err(ModelarDbError::CompressionError(
-                "An relative error bound must be a value from 0.0% to 100.0%.".to_owned(),
+                "A relative error bound must be a value from 0.0% to 100.0%.".to_owned(),
             ))
         } else {
             Ok(Self::Relative(percentage))
@@ -139,10 +139,12 @@ mod tests {
     use proptest::num;
     use proptest::proptest;
 
+    use crate::test::ERROR_BOUND_ZERO;
+
     // Tests for ErrorBound.
     #[test]
     fn test_absolute_error_bound_can_be_zero() {
-        assert!(ErrorBound::try_new_absolute(0.0).is_ok())
+        assert!(ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).is_ok())
     }
 
     proptest! {
@@ -174,7 +176,7 @@ mod tests {
 
     #[test]
     fn test_relative_error_bound_can_be_zero() {
-        assert!(ErrorBound::try_new_relative(0.0).is_ok())
+        assert!(ErrorBound::try_new_relative(ERROR_BOUND_ZERO).is_ok())
     }
 
     proptest! {
