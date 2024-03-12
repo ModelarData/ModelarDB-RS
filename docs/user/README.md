@@ -148,24 +148,26 @@ MODELARDBD_PORT=8889
 ```
 
 ### Ingest Data
-Before time series can be ingested into `modelardbd`, a model table must be created. From a user's perspective a model
-table functions like any other table and can be queried using SQL. However, the implementation of model table is highly
+Before time series can be ingested into `modelardbd`, a model table must be created. From a user's perspective, a model
+table functions like any other table and can be queried using SQL. However, the implementation of a model table is highly
 optimized for time series and a model table must contain a single column with timestamps, one or more columns with
 fields (measurements as floating-point values), and zero or more columns with tags (metadata as strings). Model tables
 can be created using `CREATE MODEL TABLE` statements with the column types `TIMESTAMP`, `FIELD`, and `TAG`. For `FIELD`
-an error bound can optionally be specified in parentheses to enable lossy compression with a relative per value error
-bound, e.g., `FIELD(1.0)` creates a column with a one percent error bound. `FIELD` columns default to an error bound of
-zero when none is specified. If the values in a `FIELD` column can be computed from other columns they need not be stored.
-Instead, if a `FIELD` column is defined using the syntax `FIELD AS expression`, e.g., `FIELD AS column_one + column_two`,
-the values of the `FIELD` column will be the result of the expression. As these generated `FIELD` columns do not store any
-data, an error bound cannot be defined. `modelardb` also supports normal tables created through `CREATE TABLE` statements.
+an error bound can optionally be specified in parentheses to enable lossy compression with a per-value error bound.
+The error bound can be absolute or relative, e.g., `FIELD(1.0)` creates a column with an absolute per-value error bound that
+allows each value to deviate by at most 1.0 while `FIELD(1.0%)` creates a column with a relative per-value error bound that
+allows each value to deviate by at most 1.0%. `FIELD` columns default to an error bound of zero when none is specified.
+If the values in a `FIELD` column can be computed from other columns they need not be stored. Instead, if a `FIELD` column
+is defined using the syntax `FIELD AS expression`, e.g., `FIELD AS column_one + column_two`, the values of the `FIELD` column
+will be the result of the expression. As these generated `FIELD` columns do not store any data, an error bound cannot be
+defined. `modelardb` also supports normal tables created through `CREATE TABLE` statements.
 
 As both `CREATE MODEL TABLE` and `CREATE TABLE` are just SQL statements, both types of tables can be created using
 `modelardb` or programmatically using Apache Arrow Flight. For example, a model table storing a simple multivariate
 time series with weather data collected at different wind turbines can be created as follows:
 
 ```shell
-CREATE MODEL TABLE wind_turbine(timestamp TIMESTAMP, wind_turbine TAG, wind_direction FIELD, wind_speed FIELD(1.0))
+CREATE MODEL TABLE wind_turbine(timestamp TIMESTAMP, wind_turbine TAG, wind_direction FIELD, wind_speed FIELD(1.0%))
 ```
 
 The following example shows how to create the same model table in Python using Apache Arrow Flight:

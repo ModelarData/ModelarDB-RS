@@ -1010,7 +1010,7 @@ fn assert_ne_query_plans_and_eq_result(segment_query: String, error_bound: f32) 
         let segment_query_result = array!(segment_query_result_set, 0, Float64Array);
 
         let within_error_bound = modelardb_compression::is_value_within_error_bound(
-            ErrorBound::try_new(error_bound).unwrap(),
+            ErrorBound::try_new_relative(error_bound).unwrap(),
             data_point_query_result.value(0) as f32,
             segment_query_result.value(0) as f32,
         );
