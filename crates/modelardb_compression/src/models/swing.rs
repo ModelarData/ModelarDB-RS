@@ -472,7 +472,7 @@ mod tests {
     }
 
     #[test]
-        fn test_cannot_fit_other_value_and_positive_infinity_with_absolute_error_bound_max(value in ProptestValue::ANY) {
+    fn test_cannot_fit_other_value_and_positive_infinity_with_absolute_error_bound_max(value in ProptestValue::ANY) {
         prop_assume!(value != Value::INFINITY);
         let error_bound_max = ErrorBound::try_new_absolute(ERROR_BOUND_ABSOLUTE_MAX).unwrap();
         let mut model_type = Swing::new(error_bound_max);
