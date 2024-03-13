@@ -47,8 +47,7 @@ pub(super) struct MemoryPool {
     remaining_multivariate_memory_in_bytes: Mutex<isize>,
     /// Condition variable that allows threads to wait for more uncompressed memory to be released.
     wait_for_uncompressed_memory: Condvar,
-    /// How many bytes of memory that are left for storing
-    /// [`UncompressedDataBuffers`](crate::storage::uncompressed_data_buffer::UncompressedDataBuffer)
+    /// How many bytes of memory that are left for storing [`UncompressedDataBuffers`](UncompressedDataBuffer)
     /// containing univariate time series without metadata.
     remaining_uncompressed_memory_in_bytes: Mutex<isize>,
     /// How many bytes of memory that are left for storing
@@ -116,13 +115,6 @@ impl MemoryPool {
         *memory_in_bytes -= size_in_bytes as isize;
     }
 
-    /// Free `size_in_bytes` bytes of memory for storing multivariate data.
-    pub(super) fn free_multivariate_memory(&self, size_in_bytes: usize) {
-        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        *self.remaining_multivariate_memory_in_bytes.lock().unwrap() += size_in_bytes as isize;
-        self.wait_for_multivariate_memory.notify_all();
-    }
-
     /// Change the amount of memory available for uncompressed data by `size_in_bytes`.
     pub(super) fn adjust_uncompressed_memory(&self, size_in_bytes: isize) {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
@@ -166,13 +158,6 @@ impl MemoryPool {
         true
     }
 
-    /// Free `size_in_bytes` bytes of memory for storing uncompressed data.
-    pub(super) fn free_uncompressed_memory(&self, size_in_bytes: usize) {
-        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        *self.remaining_uncompressed_memory_in_bytes.lock().unwrap() += size_in_bytes as isize;
-        self.wait_for_uncompressed_memory.notify_all();
-    }
-
     /// Change the amount of memory available for storing compressed data by `size_in_bytes`.
     pub(super) fn adjust_compressed_memory(&self, size_in_bytes: isize) {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
@@ -202,12 +187,6 @@ impl MemoryPool {
         } else {
             false
         }
-    }
-
-    /// Free `size_in_bytes` bytes of memory for storing compressed data.
-    pub(super) fn free_compressed_memory(&self, size_in_bytes: usize) {
-        // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        *self.remaining_compressed_memory_in_bytes.lock().unwrap() += size_in_bytes as isize;
     }
 }
 
@@ -433,22 +412,6 @@ mod tests {
     }
 
     #[test]
-    fn test_free_multivariate_memory() {
-        let memory_pool = create_memory_pool();
-        assert_eq!(
-            memory_pool.remaining_multivariate_memory_in_bytes(),
-            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
-        );
-
-        memory_pool.free_multivariate_memory(test::COMPRESSED_SEGMENTS_SIZE);
-
-        assert_eq!(
-            memory_pool.remaining_multivariate_memory_in_bytes(),
-            (test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
-        );
-    }
-
-    #[test]
     fn test_adjust_uncompressed_memory_increase() {
         let memory_pool = create_memory_pool();
         assert_eq!(
@@ -549,22 +512,6 @@ mod tests {
     }
 
     #[test]
-    fn test_free_uncompressed_memory() {
-        let memory_pool = create_memory_pool();
-        assert_eq!(
-            memory_pool.remaining_uncompressed_memory_in_bytes(),
-            test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
-        );
-
-        memory_pool.free_uncompressed_memory(test::COMPRESSED_SEGMENTS_SIZE);
-
-        assert_eq!(
-            memory_pool.remaining_uncompressed_memory_in_bytes(),
-            (test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
-        );
-    }
-
-    #[test]
     fn test_adjust_compressed_memory_increase() {
         let memory_pool = create_memory_pool();
         assert_eq!(
@@ -642,22 +589,6 @@ mod tests {
         assert_eq!(
             memory_pool.remaining_compressed_memory_in_bytes(),
             test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
-        );
-    }
-
-    #[test]
-    fn test_free_compressed_memory() {
-        let memory_pool = create_memory_pool();
-        assert_eq!(
-            memory_pool.remaining_compressed_memory_in_bytes(),
-            test::COMPRESSED_RESERVED_MEMORY_IN_BYTES as isize
-        );
-
-        memory_pool.free_compressed_memory(test::COMPRESSED_SEGMENTS_SIZE);
-
-        assert_eq!(
-            memory_pool.remaining_compressed_memory_in_bytes(),
-            (test::COMPRESSED_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
         );
     }
 

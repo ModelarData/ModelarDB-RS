@@ -433,7 +433,8 @@ impl CompressedDataManager {
         }
 
         // Update the remaining memory for compressed data.
-        self.memory_pool.free_compressed_memory(freed_memory);
+        self.memory_pool
+            .adjust_compressed_memory(freed_memory as isize);
 
         debug!(
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",

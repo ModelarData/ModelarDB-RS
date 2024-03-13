@@ -353,7 +353,7 @@ impl UncompressedDataManager {
 
         // Return the memory used by the data points to the pool right before they are de-allocated.
         self.memory_pool
-            .free_multivariate_memory(data_points.get_array_memory_size());
+            .adjust_multivariate_memory(data_points.get_array_memory_size() as isize);
 
         // Print a single warning if any buffers are spilled so ingestion can be optimized.
         if buffers_are_spilled {
@@ -584,7 +584,8 @@ impl UncompressedDataManager {
             .insert(univariate_id, uncompressed_on_disk_data_buffer);
 
         // Add the size of the in-memory data buffer back to the remaining reserved bytes.
-        self.memory_pool.free_uncompressed_memory(freed_memory);
+        self.memory_pool
+            .adjust_uncompressed_memory(freed_memory as isize);
 
         debug!(
             "Spilled in-memory buffer. Remaining reserved bytes: {}.",
@@ -817,7 +818,8 @@ impl UncompressedDataManager {
             .append(-(disk_use as isize), true);
 
         // Add the size of the segment back to the remaining reserved bytes.
-        self.memory_pool.free_uncompressed_memory(memory_use);
+        self.memory_pool
+            .adjust_uncompressed_memory(memory_use as isize);
 
         self.channels
             .compressed_data_sender
