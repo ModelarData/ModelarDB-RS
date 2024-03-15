@@ -433,7 +433,8 @@ impl CompressedDataManager {
         }
 
         // Update the remaining memory for compressed data.
-        self.memory_pool.free_compressed_memory(freed_memory);
+        self.memory_pool
+            .adjust_compressed_memory(freed_memory as isize);
 
         debug!(
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
@@ -549,6 +550,7 @@ mod tests {
     use tempfile::{self, TempDir};
 
     const COLUMN_INDEX: u16 = 5;
+    const ERROR_BOUND_ZERO: f32 = 0.0;
 
     // Tests for insert_record_batch().
     #[tokio::test]
@@ -933,8 +935,8 @@ mod tests {
                 test::MODEL_TABLE_NAME.to_owned(),
                 query_schema,
                 vec![
-                    ErrorBound::try_new(0.0).unwrap(),
-                    ErrorBound::try_new(0.0).unwrap(),
+                    ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
+                    ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
                 ],
                 vec![None, None],
             )

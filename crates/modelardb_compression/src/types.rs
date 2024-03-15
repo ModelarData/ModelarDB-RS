@@ -496,11 +496,11 @@ mod tests {
 
     use arrow::array::BinaryArray;
     use modelardb_common::test::data_generation::{self, ValuesStructure};
+    use modelardb_common::test::{ERROR_BOUND_TEN, ERROR_BOUND_ZERO};
     use modelardb_common::types::{TimestampArray, ValueArray};
 
     use crate::compression;
 
-    const ERROR_BOUND_ZERO: f32 = 0.0;
     const UNCOMPRESSED_TIMESTAMPS: &[Timestamp] = &[100, 200, 300, 400, 500];
 
     // Tests for CompressedSegmentBuilder.
@@ -775,7 +775,7 @@ mod tests {
 
         let model = compression::fit_next_model(
             0,
-            ErrorBound::try_new(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             &uncompressed_timestamps,
             uncompressed_values,
         );
@@ -797,7 +797,7 @@ mod tests {
 
         model.finish(
             0,
-            ErrorBound::try_new(ERROR_BOUND_ZERO).unwrap(),
+            ErrorBound::try_new_relative(ERROR_BOUND_ZERO).unwrap(),
             residuals_end_index,
             &uncompressed_timestamps,
             uncompressed_values,
@@ -846,7 +846,7 @@ mod tests {
 
         let model = compression::fit_next_model(
             0,
-            ErrorBound::try_new(10.0).unwrap(),
+            ErrorBound::try_new_relative(ERROR_BOUND_TEN).unwrap(),
             &uncompressed_timestamps,
             &uncompressed_values.finish(),
         );
