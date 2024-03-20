@@ -32,6 +32,8 @@ use modelardb_common::parser::ValidStatement;
 use modelardb_common::storage;
 use modelardb_common::types::ServerMode;
 use modelardb_common::{metadata, parser};
+use object_store::local::LocalFileSystem;
+use object_store::path::Path;
 use object_store::ObjectStore;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
@@ -182,11 +184,21 @@ impl Context {
         fs::create_dir_all(&folder_path)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // Create an empty Apache Parquet file to save the schema.
-        let file_path = folder_path.join("empty_for_schema.parquet");
-        let empty_batch = RecordBatch::new_empty(Arc::new(schema));
-        storage::write_batch_to_apache_parquet_file(&empty_batch, &file_path, None)
+        let object_store = LocalFileSystem::new_with_prefix(&folder_path)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        // Create an empty Apache Parquet file to save the schema.
+        let file_path = Path::from("empty_for_schema.parquet");
+        let empty_batch = RecordBatch::new_empty(Arc::new(schema));
+
+        storage::write_record_batch_to_apache_parquet_file(
+            &file_path,
+            &empty_batch,
+            None,
+            &object_store,
+        )
+        .await
+        .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Save the table in the Apache Arrow Datafusion catalog.
         self.session
