@@ -400,8 +400,9 @@ impl CompressedDataManager {
 
         let folder_path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}");
 
-        let compressed_file =
-            compressed_data_buffer.save_to_apache_parquet(&self.local_data_folder, &folder_path)?;
+        let compressed_file = compressed_data_buffer
+            .save_to_apache_parquet(&self.local_data_folder, &folder_path)
+            .await?;
 
         // Save the metadata of the compressed file to the metadata database.
         self.table_metadata_manager
