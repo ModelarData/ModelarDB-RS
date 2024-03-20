@@ -886,6 +886,8 @@ mod tests {
     async fn test_can_find_existing_on_disk_data_buffers() {
         // Spill an uncompressed buffer to disk.
         let temp_dir = tempfile::tempdir().unwrap();
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
         let model_table_metadata = Arc::new(test::model_table_metadata());
         let mut buffer = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
@@ -893,10 +895,7 @@ mod tests {
             CURRENT_BATCH_INDEX,
         );
         buffer.insert_data(CURRENT_BATCH_INDEX, 100, 10.0);
-        buffer
-            .spill_to_apache_parquet(temp_dir.path())
-            .await
-            .unwrap();
+        buffer.spill_to_apache_parquet(object_store).await.unwrap();
 
         // The uncompressed data buffer should be referenced by the uncompressed data manager.
         let (_metadata_manager, _data_manager, _model_table_metadata) =
@@ -1367,6 +1366,8 @@ mod tests {
     fn test_remaining_memory_not_incremented_when_processing_on_disk_buffer() {
         // This test purposely does not use tokio::test to prevent multiple Tokio runtimes.
         let temp_dir = tempfile::tempdir().unwrap();
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
         let runtime = Arc::new(Runtime::new().unwrap());
         let (_metadata_manager, data_manager, model_table_metadata) =
             runtime.block_on(create_managers(temp_dir.path()));
@@ -1386,7 +1387,7 @@ mod tests {
                 0,
                 model_table_metadata,
                 0,
-                temp_dir.path(),
+                object_store,
                 uncompressed_data,
             ))
             .unwrap();
