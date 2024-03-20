@@ -30,6 +30,7 @@ use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
+use object_store::local::LocalFileSystem;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tracing::{debug, error, warn};
@@ -128,6 +129,8 @@ impl UncompressedDataManager {
         let local_uncompressed_data_folder = local_data_folder.join(UNCOMPRESSED_DATA_FOLDER);
         let mut initial_disk_space = 0;
 
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(&self.local_data_folder)?);
+
         for maybe_folder_dir_entry in local_uncompressed_data_folder.read_dir()? {
             let folder_dir_entry = maybe_folder_dir_entry?;
 
@@ -157,10 +160,16 @@ impl UncompressedDataManager {
                     univariate_id,
                     model_table_metadata.clone(),
                     self.current_batch_index.load(Ordering::Relaxed),
-                    maybe_file_dir_entry?.path(),
+                    object_store.clone(),
+                    maybe_file_dir_entry?
+                        .path()
+                        .file_name()
+                        .unwrap()
+                        .to_str()
+                        .unwrap(),
                 )?;
 
-                initial_disk_space += buffer.disk_size();
+                initial_disk_space += buffer.disk_size().await;
 
                 self.channels
                     .univariate_data_sender
@@ -430,7 +439,7 @@ impl UncompressedDataManager {
                 // read_apache_parquet() cannot take self as an argument due to how it is used.
                 // unwrap() is safe as lock() only returns an error if the lock is poisoned.
                 self.used_disk_space_metric.lock().unwrap().append(
-                    -(uncompressed_on_disk_data_buffer.disk_size() as isize),
+                    -(uncompressed_on_disk_data_buffer.disk_size().await as isize),
                     true,
                 );
 
@@ -552,8 +561,9 @@ impl UncompressedDataManager {
             .unwrap()
             .1;
 
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(&self.local_data_folder)?);
         let maybe_uncompressed_on_disk_data_buffer = uncompressed_in_memory_data_buffer
-            .spill_to_apache_parquet(self.local_data_folder.as_path())
+            .spill_to_apache_parquet(object_store)
             .await;
 
         // If an error occurs the in-memory buffer must be re-added to the map before returning.
@@ -575,10 +585,11 @@ impl UncompressedDataManager {
 
         // Record the used disk space of the spilled finished buffer.
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
+        let disk_size = uncompressed_on_disk_data_buffer.disk_size().await;
         self.used_disk_space_metric
             .lock()
             .unwrap()
-            .append(uncompressed_on_disk_data_buffer.disk_size() as isize, true);
+            .append(disk_size as isize, true);
 
         self.uncompressed_on_disk_data_buffers
             .insert(univariate_id, uncompressed_on_disk_data_buffer);
@@ -782,7 +793,7 @@ impl UncompressedDataManager {
                     .model_table_metadata()
                     .clone(),
                 0,
-                uncompressed_on_disk_data_buffer.disk_size(),
+                uncompressed_on_disk_data_buffer.disk_size().await,
             ),
         };
 
