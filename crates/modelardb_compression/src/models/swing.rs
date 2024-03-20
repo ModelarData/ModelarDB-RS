@@ -350,7 +350,8 @@ fn compute_slope_and_intercept(
     }
 }
 
-/// Computes numerator and denominator for Equation 6 in Section 3.2 of Swing and Slide paper.
+/// Computes numerator and denominator for Equation 6 
+/// in Section 3.2 of [Swing and Slide paper](https://dl.acm.org/doi/10.14778/1687627.1687645).
 /// It is a part of recording mechanism for finding the optimal slope with minimum MSE.
 fn compute_local_optimal_slope(
     start_time: Timestamp,
