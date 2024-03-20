@@ -46,9 +46,25 @@ pub async fn read_record_batch_from_apache_parquet_file(
     let reader = ParquetObjectReader::new(object_store, file_metadata);
 
     // Stream the data from the Apache Parquet file into a single record batch.
-    let mut stream = ParquetRecordBatchStreamBuilder::new(reader)
-        .await?
-        .build()?;
+    let record_batches = read_batches_from_apache_parquet_file(reader).await?;
+
+    let schema = record_batches[0].schema();
+    compute::concat_batches(&schema, &record_batches)
+        .map_err(|error| ParquetError::General(error.to_string()))
+}
+
+/// Read each batch of data from the Apache Parquet file given by `reader` and return them as a
+/// [`Vec`] of [`RecordBatch`]. If the file could not be read successfully, [`ParquetError`] is
+/// returned.
+pub async fn read_batches_from_apache_parquet_file<R>(
+    reader: R,
+) -> Result<Vec<RecordBatch>, ParquetError>
+    where
+        R: AsyncFileReader + Send + Unpin + 'static,
+        ParquetRecordBatchStream<R>: StreamExt<Item = Result<RecordBatch, ParquetError>>,
+{
+    let builder = ParquetRecordBatchStreamBuilder::new(reader).await?;
+    let mut stream = builder.build()?;
 
     let mut record_batches = Vec::new();
     while let Some(maybe_record_batch) = stream.next().await {
@@ -56,9 +72,7 @@ pub async fn read_record_batch_from_apache_parquet_file(
         record_batches.push(record_batch);
     }
 
-    let schema = record_batches[0].schema();
-    compute::concat_batches(&schema, &record_batches)
-        .map_err(|error| ParquetError::General(error.to_string()))
+    Ok(record_batches)
 }
 
 /// Write the rows in `record_batch` to an Apache Parquet file at the location given by `file_path`
