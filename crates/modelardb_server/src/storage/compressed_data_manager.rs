@@ -33,6 +33,8 @@ use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::storage;
 use modelardb_common::types::{Timestamp, Value};
+use object_store::local::LocalFileSystem;
+use object_store::path::Path;
 use object_store::{ObjectMeta, ObjectStore};
 use parquet::arrow::async_reader::ParquetObjectReader;
 use parquet::format::SortingColumn;
@@ -124,14 +126,21 @@ impl CompressedDataManager {
         // Create the folder structure if it does not already exist.
         fs::create_dir_all(local_file_path.as_path())?;
 
+        let object_store = LocalFileSystem::new_with_prefix(&local_file_path)
+            .map_err(|error| ParquetError::General(error.to_string()))?;
+
         // Create a path that uses the current timestamp as the filename.
         let since_the_epoch = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| ParquetError::General(error.to_string()))?;
-        let file_name = format!("{}.parquet", since_the_epoch.as_millis());
-        let file_path = local_file_path.join(file_name);
 
-        storage::write_batch_to_apache_parquet_file(&record_batch, file_path.as_path(), None)
+        storage::write_record_batch_to_apache_parquet_file(
+            &Path::from(format!("{}.parquet", since_the_epoch.as_millis())),
+            &record_batch,
+            None,
+            &object_store,
+        )
+        .await
     }
 
     /// Read and process messages received from the
