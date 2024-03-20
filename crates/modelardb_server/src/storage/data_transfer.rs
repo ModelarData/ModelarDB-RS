@@ -547,17 +547,25 @@ mod tests {
             "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}",
             test::MODEL_TABLE_NAME
         );
-        let path = local_data_folder_path.join(folder_path.clone());
-        fs::create_dir_all(path.clone()).unwrap();
 
-        let uuid = Uuid::new_v4();
+        let full_folder_path = local_data_folder_path.join(folder_path.clone());
+        fs::create_dir_all(&full_folder_path).unwrap();
+
+        let object_store = LocalFileSystem::new_with_prefix(&full_folder_path).unwrap();
         let batch = test::compressed_segments_record_batch();
-        let apache_parquet_path = path.join(format!("{uuid}.parquet"));
-        storage::write_batch_to_apache_parquet_file(&batch, apache_parquet_path.as_path(), None)
-            .unwrap();
+        let file_name = format!("{}.parquet", Uuid::new_v4());
+
+        storage::write_record_batch_to_apache_parquet_file(
+            &ObjectStorePath::from(file_name.clone()),
+            &batch,
+            None,
+            &object_store,
+        )
+        .await
+        .unwrap();
 
         let object_meta = ObjectMeta {
-            location: ObjectStorePath::from(format!("{folder_path}/{uuid}.parquet")),
+            location: ObjectStorePath::from(format!("{folder_path}/{file_name}")),
             last_modified: Utc::now(),
             size: COMPRESSED_FILE_SIZE,
             e_tag: None,
@@ -576,7 +584,7 @@ mod tests {
             .await
             .unwrap();
 
-        (compressed_file, apache_parquet_path)
+        (compressed_file, full_folder_path.join(&file_name))
     }
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
