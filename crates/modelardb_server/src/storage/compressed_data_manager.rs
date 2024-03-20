@@ -22,7 +22,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use bytes::BufMut;
 use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::compute;
@@ -41,7 +40,6 @@ use parquet::format::SortingColumn;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
-use tonic::codegen::Bytes;
 use tracing::{debug, error, info};
 use uuid::Uuid;
 
@@ -503,19 +501,13 @@ impl CompressedDataManager {
         ]);
 
         // Write the concatenated and merged record batch to the output location.
-        let mut buf = vec![].writer();
-        let mut apache_arrow_writer =
-            storage::create_apache_arrow_writer(&mut buf, schema, sorting_columns)?;
-        apache_arrow_writer.write(&merged)?;
-        apache_arrow_writer.close()?;
-
-        output_data_folder
-            .put(
-                &output_file_path.clone().into(),
-                Bytes::from(buf.into_inner()),
-            )
-            .await
-            .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
+        storage::write_record_batch_to_apache_parquet_file(
+            &Path::from(output_file_path.clone()),
+            &merged,
+            sorting_columns,
+            output_data_folder,
+        )
+        .await?;
 
         // Delete the input files as the output file has been written.
         for input_file in input_files {
@@ -533,7 +525,7 @@ impl CompressedDataManager {
 
         // Return a CompressedFile that represents the successfully merged and written file.
         let object_meta = output_data_folder
-            .head(&output_file_path.clone().into())
+            .head(&output_file_path.into())
             .await
             .map_err(|error| ParquetError::General(error.to_string()))?;
 

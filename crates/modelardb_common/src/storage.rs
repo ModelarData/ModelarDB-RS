@@ -19,7 +19,9 @@ use std::sync::Arc;
 
 use arrow::array::RecordBatch;
 use arrow::compute;
-use datafusion::parquet::arrow::async_reader::ParquetObjectReader;
+use datafusion::parquet::arrow::async_reader::{
+    AsyncFileReader, ParquetObjectReader, ParquetRecordBatchStream,
+};
 use datafusion::parquet::arrow::{AsyncArrowWriter, ParquetRecordBatchStreamBuilder};
 use datafusion::parquet::basic::{Compression, Encoding, ZstdLevel};
 use datafusion::parquet::errors::ParquetError;
@@ -59,9 +61,9 @@ pub async fn read_record_batch_from_apache_parquet_file(
 pub async fn read_batches_from_apache_parquet_file<R>(
     reader: R,
 ) -> Result<Vec<RecordBatch>, ParquetError>
-    where
-        R: AsyncFileReader + Send + Unpin + 'static,
-        ParquetRecordBatchStream<R>: StreamExt<Item = Result<RecordBatch, ParquetError>>,
+where
+    R: AsyncFileReader + Send + Unpin + 'static,
+    ParquetRecordBatchStream<R>: StreamExt<Item = Result<RecordBatch, ParquetError>>,
 {
     let builder = ParquetRecordBatchStreamBuilder::new(reader).await?;
     let mut stream = builder.build()?;
