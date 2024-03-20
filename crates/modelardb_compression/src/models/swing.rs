@@ -56,9 +56,9 @@ pub struct Swing {
     /// Intercept for the linear function specifying the lower bound for the
     /// current model.
     lower_bound_intercept: f64,
-    /// Computation of the slope to minimize MSE for the current model 
-    /// and holds the numenator and denominator of Equation 6 
-    /// described in Section 3.2 of [Swing and Slide paper].
+    /// Computation of the slope to minimize MSE for the current model.
+    /// Specifically, it is the numerator and denominator of Equation 6
+    /// described in Section 3.2 of Swing and Slide paper.
     slope_with_minimum_mse: (f64, f64),
     /// The number of data points the current model has been fitted to.
     length: usize,
@@ -88,12 +88,12 @@ impl Swing {
     /// - (1) When the first data point is received, it is stored in memory.
     /// - (2) When the second data point is received, two linear functions that
     /// intersect with the first data point are computed to designate the upper
-    /// and lower bounds for the linear functions Swing can fit to the segment. 
-    /// From the second data point, the recording mechanism that is used to 
+    /// and lower bounds for the linear functions Swing can fit to the segment.
+    /// From the second data point, the recording mechanism that is used to
     /// find the slope with minimum MSE is updated.    
     /// - (3) Then for each subsequent data point, Swing determines if the data
     /// point can be represented by a linear function in the space delimited by
-    /// the upper and lower bounds and updates these bounds if necessary. 
+    /// the upper and lower bounds and updates these bounds if necessary.
     /// If not, the recording mechanism is used to find the best slope.
     ///
     /// For more detail see Algorithm 1 in the [Swing and Slide paper].
@@ -177,17 +177,17 @@ impl Swing {
                             value - maximum_deviation,
                         );
                 }
-        
-                // Incremental computation of Equation 6 in Section 3.2 in the Swing and Slide paper
+
+                // Incremental computation of Equation 6 in Section 3.2 in the Swing and Slide paper.
                 let local_optimal_slope = compute_local_optimal_slope(
                     self.start_time,
                     self.first_value,
                     timestamp,
-                    value
+                    value,
                 );
                 self.slope_with_minimum_mse = (
                     self.slope_with_minimum_mse.0 + local_optimal_slope.0,
-                    self.slope_with_minimum_mse.1 + local_optimal_slope.1
+                    self.slope_with_minimum_mse.1 + local_optimal_slope.1,
                 );
                 self.length += 1;
                 true
@@ -214,11 +214,14 @@ impl Swing {
     /// must be [`f64`] to be precise enough.
     pub fn model(self) -> (Value, Value) {
         // Implementation of the function with the minimized MSE as specified in the Swing and Slide paper.
-        // Equation 5 and 6
+        // Equation 5 and 6 in the Swing and Slide paper.
         let projected_slope = self.slope_with_minimum_mse.0 / self.slope_with_minimum_mse.1;
-        let optimal_slope =  self.lower_bound_slope.max(projected_slope.min(self.upper_bound_slope));
-        // Equation 2
-        let last_value = optimal_slope * (self.end_time - self.start_time) as f64 + self.first_value;
+        let optimal_slope = self
+            .lower_bound_slope
+            .max(projected_slope.min(self.upper_bound_slope));
+        // Equation 2 in the Swing and Slide paper.
+        let last_value =
+            optimal_slope * (self.end_time - self.start_time) as f64 + self.first_value;
         (self.first_value as Value, last_value as Value)
     }
 }
@@ -347,7 +350,7 @@ fn compute_slope_and_intercept(
     }
 }
 
-/// Computes numenator and denominator for Equation 6 in Section 3.2 of Swing and Slide paper.
+/// Computes numerator and denominator for Equation 6 in Section 3.2 of Swing and Slide paper.
 /// It is a part of recording mechanism for finding the optimal slope with minimum MSE.
 fn compute_local_optimal_slope(
     start_time: Timestamp,
@@ -360,9 +363,9 @@ fn compute_local_optimal_slope(
     } else {
         debug_assert!(first_value.is_finite(), "First value is not finite.");
         debug_assert!(last_value.is_finite(), "Last value is not finite.");
-        let numenator =  (last_value - first_value) * (end_time - start_time) as f64;
+        let numerator = (last_value - first_value) * (end_time - start_time) as f64;
         let denominator = ((end_time - start_time) as f64).powi(2);
-        (numenator, denominator)
+        (numerator, denominator)
     }
 }
 
