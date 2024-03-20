@@ -74,6 +74,8 @@ pub async fn write_record_batch_to_apache_parquet_file(
     // Check if the extension of the given path is correct.
     if file_path.extension() == Some("parquet") {
         let props = WriterProperties::builder()
+            .set_data_page_size_limit(16384)
+            .set_max_row_group_size(65536)
             .set_encoding(Encoding::PLAIN)
             .set_compression(Compression::ZSTD(ZstdLevel::default()))
             .set_dictionary_enabled(false)

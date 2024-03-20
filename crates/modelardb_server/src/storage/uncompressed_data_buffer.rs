@@ -34,6 +34,8 @@ use modelardb_common::types::{
     ErrorBound, Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
 use modelardb_common::{metadata, storage};
+use object_store::local::LocalFileSystem;
+use object_store::path::Path as ObjectStorePath;
 use tracing::debug;
 
 use crate::storage::{UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER};
@@ -206,6 +208,7 @@ impl UncompressedInMemoryDataBuffer {
             local_data_folder,
             batch,
         )
+        .await
     }
 }
 
@@ -240,7 +243,7 @@ impl UncompressedOnDiskDataBuffer {
     /// Spill the in-memory `data_points` from the time series with `univariate_id` to an Apache
     /// Parquet file in `local_data_folder`. If the Apache Parquet file is written successfully,
     /// return an [`UncompressedOnDiskDataBuffer`], otherwise return [`IOError`].
-    pub(super) fn try_spill(
+    pub(super) async fn try_spill(
         univariate_id: u64,
         model_table_metadata: Arc<ModelTableMetadata>,
         updated_by_batch_index: u64,
@@ -254,12 +257,20 @@ impl UncompressedOnDiskDataBuffer {
         // Create the folder structure if it does not already exist.
         fs::create_dir_all(local_file_path.as_path())?;
 
+        let object_store = LocalFileSystem::new_with_prefix(&local_file_path)?;
+
         // Create a path that uses the first timestamp as the filename.
         let timestamps = modelardb_common::array!(data_points, 0, TimestampArray);
         let file_name = format!("{}.parquet", timestamps.value(0));
-        let file_path = local_file_path.join(file_name);
+        let file_path = local_file_path.join(&file_name);
 
-        storage::write_batch_to_apache_parquet_file(&data_points, file_path.as_path(), None)?;
+        storage::write_record_batch_to_apache_parquet_file(
+            &ObjectStorePath::from(file_name),
+            &data_points,
+            None,
+            &object_store,
+        )
+        .await?;
 
         Ok(Self {
             univariate_id,

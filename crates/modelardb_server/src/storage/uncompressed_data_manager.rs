@@ -1370,14 +1370,15 @@ mod tests {
         )
         .unwrap();
 
-        let spilled_buffer = UncompressedOnDiskDataBuffer::try_spill(
-            0,
-            model_table_metadata,
-            0,
-            temp_dir.path(),
-            uncompressed_data,
-        )
-        .unwrap();
+        let spilled_buffer = runtime
+            .block_on(UncompressedOnDiskDataBuffer::try_spill(
+                0,
+                model_table_metadata,
+                0,
+                temp_dir.path(),
+                uncompressed_data,
+            ))
+            .unwrap();
 
         data_manager
             .channels
