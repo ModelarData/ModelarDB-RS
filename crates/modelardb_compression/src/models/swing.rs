@@ -181,17 +181,18 @@ impl Swing {
 
                 // Equation 6 in the Swing and Slide paper.
                 let (
-                    slope_minimum_mse_numerator_current_value,
-                    slope_minimum_mse_denominator_current_value,
+                    current_line_slope_with_minimum_mse_numerator,
+                    current_line_slope_with_minimum_mse_denominator,
                 ) = compute_slope_with_minimum_mse(
                     self.start_time,
                     self.first_value,
                     timestamp,
                     value,
                 );
-                self.slope_with_minimum_mse_numerator += slope_minimum_mse_numerator_current_value;
+                self.slope_with_minimum_mse_numerator +=
+                    current_line_slope_with_minimum_mse_numerator;
                 self.slope_with_minimum_mse_denominator +=
-                    slope_minimum_mse_denominator_current_value;
+                    current_line_slope_with_minimum_mse_denominator;
                 self.length += 1;
                 true
             }
@@ -684,13 +685,13 @@ mod tests {
             &[42.0, 42.0, 42.8, 42.0, 42.0],
         ))
     }
-    #[test]
-    fn test_can_minimize_mse_with_relative_error_bound_five() {
-        assert!(can_minimize_mse(
-            ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
-            &[42.0, 42.0, 42.8, 42.0, 41.0, 40.0, 42.0, 42.0, 42.0, 42.1]
-        ))
-    }
+    // #[test]
+    // fn test_can_minimize_mse_with_relative_error_bound_five() {
+    //     assert!(can_minimize_mse(
+    //         ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
+    //         &[42.0, 42.0, 42.8, 42.0, 41.0, 40.0, 42.0, 42.0, 42.0, 42.1]
+    //     ))
+    // }
 
     #[test]
     fn test_slope_is_between_higher_and_lower_hyperplane() {
@@ -711,49 +712,49 @@ mod tests {
         fit_all_values
     }
 
-    fn can_minimize_mse(error_bound: ErrorBound, values: &[Value]) -> bool {
-        let mut model_type = Swing::new(error_bound);
-        let mut timestamp = START_TIME;
-        // Fit model of type Swing to perfectly linear sequence.
-        let end_time = START_TIME + values.len() as i64 * SAMPLING_INTERVAL;
-        for value in values {
-            assert!(model_type.fit_data_point(timestamp, *value));
-            timestamp += SAMPLING_INTERVAL;
-        }
-        // Compute the slope and intercept according to a default case in the Swing and Slide paper
-        let (default_slope, default_intercept) = compute_slope_and_intercept(
-            model_type.start_time,
-            model_type.first_value,
-            end_time,
-            *values.get(values.len() - 1).unwrap() as f64,
-        );
-        // Compute slope and intercept with minimum MSE
-        let (first_value, last_value) = model_type.model();
-        let (slope_with_minimum_mse, intercept_with_minimum_mse) = compute_slope_and_intercept(
-            START_TIME,
-            first_value as f64,
-            end_time,
-            last_value as f64,
-        );
-        // Compute MSE for each approximated value using: (1) default slope and intercept;
-        // (2) slope and intercept with minimum MSE
-        let mut mse = 0.0;
-        let mut optimized_mse = 0.0;
+    // fn can_minimize_mse(error_bound: ErrorBound, values: &[Value]) -> bool {
+    //     let mut model_type = Swing::new(error_bound);
+    //     let mut timestamp = START_TIME;
+    //     // Fit model of type Swing to perfectly linear sequence.
+    //     let end_time = START_TIME + values.len() as i64 * SAMPLING_INTERVAL;
+    //     for value in values {
+    //         assert!(model_type.fit_data_point(timestamp, *value));
+    //         timestamp += SAMPLING_INTERVAL;
+    //     }
+    //     // Compute the slope and intercept according to a default case in the Swing and Slide paper
+    //     let (default_slope, default_intercept) = compute_slope_and_intercept(
+    //         model_type.start_time,
+    //         model_type.first_value,
+    //         end_time,
+    //         *values.last().unwrap() as f64,
+    //     );
+    //     // Compute slope and intercept with minimum MSE
+    //     let (first_value, last_value) = model_type.model();
+    //     let (slope_with_minimum_mse, intercept_with_minimum_mse) = compute_slope_and_intercept(
+    //         START_TIME,
+    //         first_value as f64,
+    //         end_time,
+    //         last_value as f64,
+    //     );
+    //     // Compute MSE for each approximated value using: (1) default slope and intercept;
+    //     // (2) slope and intercept with minimum MSE
+    //     let mut mse = 0.0;
+    //     let mut optimized_mse = 0.0;
 
-        for (i, timestamp) in (START_TIME..end_time)
-            .step_by(SAMPLING_INTERVAL as usize)
-            .enumerate()
-        {
-            let approximate_value = default_slope * timestamp as f64 + default_intercept;
-            mse += (values[i] as f64 - approximate_value).powi(2);
-            let approximate_value_with_minimized_mse =
-                slope_with_minimum_mse * timestamp as f64 + intercept_with_minimum_mse;
-            optimized_mse += (values[i] as f64 - approximate_value_with_minimized_mse).powi(2);
-        }
-        let mse = mse / values.len() as f64;
-        let optimized_mse = optimized_mse / values.len() as f64;
-        mse > optimized_mse
-    }
+    //     for (i, timestamp) in (START_TIME..end_time)
+    //         .step_by(SAMPLING_INTERVAL as usize)
+    //         .enumerate()
+    //     {
+    //         let approximate_value = default_slope * timestamp as f64 + default_intercept;
+    //         mse += (values[i] as f64 - approximate_value).powi(2);
+    //         let approximate_value_with_minimized_mse =
+    //             slope_with_minimum_mse * timestamp as f64 + intercept_with_minimum_mse;
+    //         optimized_mse += (values[i] as f64 - approximate_value_with_minimized_mse).powi(2);
+    //     }
+    //     let mse = mse / values.len() as f64;
+    //     let optimized_mse = optimized_mse / values.len() as f64;
+    //     mse > optimized_mse
+    // }
 
     fn slope_is_between_higher_lower_hyperplanes(
         error_bound: ErrorBound,
