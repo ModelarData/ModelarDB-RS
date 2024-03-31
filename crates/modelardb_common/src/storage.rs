@@ -278,6 +278,36 @@ mod tests {
         let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
         let compressed_segments = test::compressed_segments_record_batch();
 
+        let result = write_compressed_segments_to_apache_parquet_file(
+            &Path::from("compressed"),
+            &compressed_segments,
+            &object_store,
+        )
+        .await;
+
+        assert!(result.is_ok());
+
+        // Check that the columns are sorted by univariate_id and then by start_time.
+        let file_metadata = object_store.head(&result.unwrap()).await.unwrap();
+        let reader = ParquetObjectReader::new(Arc::new(object_store), file_metadata);
+        let builder = ParquetRecordBatchStreamBuilder::new(reader).await.unwrap();
+
+        let expected_sorting_columns = Some(vec![
+            SortingColumn::new(0, false, false),
+            SortingColumn::new(2, false, false),
+        ]);
+
+        for row_group in builder.metadata().row_groups() {
+            assert_eq!(row_group.sorting_columns(), expected_sorting_columns.as_ref());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_write_compressed_segments_to_unique_apache_parquet_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+        let compressed_segments = test::compressed_segments_record_batch();
+
         let result_1 = write_compressed_segments_to_apache_parquet_file(
             &Path::from("compressed"),
             &compressed_segments,
@@ -293,12 +323,9 @@ mod tests {
         )
         .await;
 
-        let result_1_path = result_1.unwrap();
-        let result_2_path = result_2.unwrap();
-
-        assert_ne!(result_1_path, result_2_path);
-        assert!(temp_dir.path().join(result_1_path.to_string()).exists());
-        assert!(temp_dir.path().join(result_2_path.to_string()).exists());
+        assert!(result_1.is_ok());
+        assert!(result_2.is_ok());
+        assert_ne!(result_1.unwrap(), result_2.unwrap());
     }
 
     #[tokio::test]
