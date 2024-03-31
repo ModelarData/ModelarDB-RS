@@ -31,6 +31,9 @@ use futures::StreamExt;
 use object_store::path::Path;
 use object_store::ObjectStore;
 use tonic::codegen::Bytes;
+use uuid::Uuid;
+
+use crate::schemas::COMPRESSED_SCHEMA;
 
 /// Read all rows from the Apache Parquet file at the location given by `file_path` in
 /// `object_store` and return them as a [`RecordBatch`]. If the file could not be read successfully,
@@ -118,6 +121,40 @@ pub async fn write_record_batch_to_apache_parquet_file(
             "'{}' is not a valid file path for an Apache Parquet file.",
             file_path.as_ref()
         )))
+    }
+}
+
+/// Write `compressed_segments` to an Apache Parquet file with a unique file name in `folder_path`.
+/// Return the path to the file if the file was written successfully, otherwise return [`ParquetError`].
+pub async fn write_compressed_segments_to_apache_parquet_file(
+    folder_path: &str,
+    compressed_segments: &RecordBatch,
+    object_store: &dyn ObjectStore,
+) -> Result<Path, ParquetError> {
+    if compressed_segments.schema() == COMPRESSED_SCHEMA.0 {
+        // Use a UUID for the file name to ensure the name is unique.
+        let uuid = Uuid::new_v4();
+        let output_file_path = Path::from(format!("{folder_path}/{uuid}.parquet"));
+
+        // Specify that the file must be sorted by univariate_id and then by start_time.
+        let sorting_columns = Some(vec![
+            SortingColumn::new(0, false, false),
+            SortingColumn::new(2, false, false),
+        ]);
+
+        write_record_batch_to_apache_parquet_file(
+            &output_file_path,
+            compressed_segments,
+            sorting_columns,
+            object_store,
+        )
+        .await?;
+
+        Ok(output_file_path)
+    } else {
+        Err(ParquetError::General(
+            "The data in the record batch is not compressed segments.".to_string(),
+        ))
     }
 }
 
