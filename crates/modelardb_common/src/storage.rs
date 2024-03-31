@@ -278,13 +278,7 @@ mod tests {
         let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
         let compressed_segments = test::compressed_segments_record_batch();
 
-        let result = write_compressed_segments_to_apache_parquet_file(
-            &Path::from("compressed"),
-            &compressed_segments,
-            &object_store,
-        )
-        .await;
-
+        let result = write_compressed_segments_to_temp_dir(&temp_dir, &compressed_segments).await;
         assert!(result.is_ok());
 
         // Check that the columns are sorted by univariate_id and then by start_time.
@@ -298,30 +292,21 @@ mod tests {
         ]);
 
         for row_group in builder.metadata().row_groups() {
-            assert_eq!(row_group.sorting_columns(), expected_sorting_columns.as_ref());
+            assert_eq!(
+                row_group.sorting_columns(),
+                expected_sorting_columns.as_ref()
+            );
         }
     }
 
     #[tokio::test]
     async fn test_write_compressed_segments_to_unique_apache_parquet_file() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
         let compressed_segments = test::compressed_segments_record_batch();
 
-        let result_1 = write_compressed_segments_to_apache_parquet_file(
-            &Path::from("compressed"),
-            &compressed_segments,
-            &object_store,
-        )
-        .await;
-
-        // Write the compressed segments to the same folder again to ensure the created file name is unique.
-        let result_2 = write_compressed_segments_to_apache_parquet_file(
-            &Path::from("compressed"),
-            &compressed_segments,
-            &object_store,
-        )
-        .await;
+        // Write the compressed segments to the same folder twice to ensure the created file name is unique.
+        let result_1 = write_compressed_segments_to_temp_dir(&temp_dir, &compressed_segments).await;
+        let result_2 = write_compressed_segments_to_temp_dir(&temp_dir, &compressed_segments).await;
 
         assert!(result_1.is_ok());
         assert!(result_2.is_ok());
@@ -331,19 +316,26 @@ mod tests {
     #[tokio::test]
     async fn test_write_non_compressed_segments_to_apache_parquet_file() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
 
         let fields: Vec<Field> = vec![];
         let schema = Schema::new(fields);
         let record_batch = RecordBatch::new_empty(Arc::new(schema));
 
-        let result = write_compressed_segments_to_apache_parquet_file(
+        let result = write_compressed_segments_to_temp_dir(&temp_dir, &record_batch).await;
+        assert!(result.is_err());
+    }
+
+    async fn write_compressed_segments_to_temp_dir(
+        temp_dir: &TempDir,
+        compressed_segments: &RecordBatch,
+    ) -> Result<Path, ParquetError> {
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        write_compressed_segments_to_apache_parquet_file(
             &Path::from("compressed"),
-            &record_batch,
+            compressed_segments,
             &object_store,
         )
-        .await;
-
-        assert!(result.is_err());
+        .await
     }
 }
