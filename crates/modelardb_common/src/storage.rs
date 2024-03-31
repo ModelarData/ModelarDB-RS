@@ -127,7 +127,7 @@ pub async fn write_record_batch_to_apache_parquet_file(
 /// Write `compressed_segments` to an Apache Parquet file with a unique file name in `folder_path`.
 /// Return the path to the file if the file was written successfully, otherwise return [`ParquetError`].
 pub async fn write_compressed_segments_to_apache_parquet_file(
-    folder_path: &str,
+    folder_path: &Path,
     compressed_segments: &RecordBatch,
     object_store: &dyn ObjectStore,
 ) -> Result<Path, ParquetError> {
@@ -279,7 +279,7 @@ mod tests {
         let compressed_segments = test::compressed_segments_record_batch();
 
         let result_1 = write_compressed_segments_to_apache_parquet_file(
-            "compressed",
+            &Path::from("compressed"),
             &compressed_segments,
             &object_store,
         )
@@ -287,16 +287,18 @@ mod tests {
 
         // Write the compressed segments to the same folder again to ensure the created file name is unique.
         let result_2 = write_compressed_segments_to_apache_parquet_file(
-            "compressed",
+            &Path::from("compressed"),
             &compressed_segments,
             &object_store,
         )
         .await;
 
-        assert!(result_1.is_ok());
-        assert!(result_2.is_ok());
-        assert!(temp_dir.path().join(result_1.unwrap().to_string()).exists());
-        assert!(temp_dir.path().join(result_2.unwrap().to_string()).exists());
+        let result_1_path = result_1.unwrap();
+        let result_2_path = result_2.unwrap();
+
+        assert_ne!(result_1_path, result_2_path);
+        assert!(temp_dir.path().join(result_1_path.to_string()).exists());
+        assert!(temp_dir.path().join(result_2_path.to_string()).exists());
     }
 
     #[tokio::test]
@@ -309,7 +311,7 @@ mod tests {
         let record_batch = RecordBatch::new_empty(Arc::new(schema));
 
         let result = write_compressed_segments_to_apache_parquet_file(
-            "compressed",
+            &Path::from("compressed"),
             &record_batch,
             &object_store,
         )
