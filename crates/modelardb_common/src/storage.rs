@@ -270,4 +270,51 @@ mod tests {
 
         (temp_dir, result)
     }
+
+    // Tests for write_compressed_segments_to_apache_parquet_file().
+    #[tokio::test]
+    async fn test_write_compressed_segments_to_apache_parquet_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+        let compressed_segments = test::compressed_segments_record_batch();
+
+        let result_1 = write_compressed_segments_to_apache_parquet_file(
+            "compressed",
+            &compressed_segments,
+            &object_store,
+        )
+        .await;
+
+        // Write the compressed segments to the same folder again to ensure the created file name is unique.
+        let result_2 = write_compressed_segments_to_apache_parquet_file(
+            "compressed",
+            &compressed_segments,
+            &object_store,
+        )
+        .await;
+
+        assert!(result_1.is_ok());
+        assert!(result_2.is_ok());
+        assert!(temp_dir.path().join(result_1.unwrap().to_string()).exists());
+        assert!(temp_dir.path().join(result_2.unwrap().to_string()).exists());
+    }
+
+    #[tokio::test]
+    async fn test_write_non_compressed_segments_to_apache_parquet_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        let fields: Vec<Field> = vec![];
+        let schema = Schema::new(fields);
+        let record_batch = RecordBatch::new_empty(Arc::new(schema));
+
+        let result = write_compressed_segments_to_apache_parquet_file(
+            "compressed",
+            &record_batch,
+            &object_store,
+        )
+        .await;
+
+        assert!(result.is_err());
+    }
 }
