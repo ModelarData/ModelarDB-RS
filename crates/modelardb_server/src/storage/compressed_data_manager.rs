@@ -36,12 +36,10 @@ use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::{ObjectMeta, ObjectStore};
 use parquet::arrow::async_reader::ParquetObjectReader;
-use parquet::format::SortingColumn;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
-use uuid::Uuid;
 
 use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSegmentBatch};
 use crate::storage::data_transfer::DataTransfer;
@@ -490,21 +488,9 @@ impl CompressedDataManager {
         let merged = modelardb_compression::try_merge_segments(concatenated)
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
-        // Use an UUID for the file name to ensure the name is unique.
-        let uuid = Uuid::new_v4();
-        let output_file_path = format!("{output_folder}/{uuid}.parquet");
-
-        // Specify that the file must be sorted by univariate_id and then by start_time.
-        let sorting_columns = Some(vec![
-            SortingColumn::new(0, false, false),
-            SortingColumn::new(2, false, false),
-        ]);
-
-        // Write the concatenated and merged record batch to the output location.
-        storage::write_record_batch_to_apache_parquet_file(
-            &Path::from(output_file_path.clone()),
+        let output_file_path = storage::write_compressed_segments_to_apache_parquet_file(
+            &Path::from(output_folder),
             &merged,
-            sorting_columns,
             output_data_folder,
         )
         .await?;
