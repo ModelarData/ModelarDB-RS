@@ -333,11 +333,9 @@ impl DataTransfer {
 mod tests {
     use super::*;
 
-    use std::fs;
     use std::path::Path;
 
     use arrow_flight::flight_service_client::FlightServiceClient;
-    use chrono::Utc;
     use modelardb_common::test;
     use modelardb_common::{metadata, storage};
     use ringbuf::Rb;
@@ -347,7 +345,7 @@ mod tests {
     use uuid::Uuid;
 
     const COLUMN_INDEX: u16 = 5;
-    const COMPRESSED_FILE_SIZE: usize = 2383;
+    const COMPRESSED_FILE_SIZE: usize = 2395;
 
     // Tests for path_is_compressed_file().
     #[test]
@@ -543,35 +541,24 @@ mod tests {
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         local_data_folder_path: &Path,
     ) -> CompressedFile {
+        let object_store = LocalFileSystem::new_with_prefix(&local_data_folder_path).unwrap();
+
         let folder_path = format!(
             "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}",
             test::MODEL_TABLE_NAME
         );
 
-        let full_folder_path = local_data_folder_path.join(folder_path.clone());
-        fs::create_dir_all(&full_folder_path).unwrap();
-
-        let object_store = LocalFileSystem::new_with_prefix(&full_folder_path).unwrap();
         let batch = test::compressed_segments_record_batch();
-        let file_name = format!("{}.parquet", Uuid::new_v4());
 
-        storage::write_record_batch_to_apache_parquet_file(
-            &ObjectStorePath::from(file_name.clone()),
+        let file_path = storage::write_compressed_segments_to_apache_parquet_file(
+            &ObjectStorePath::from(folder_path),
             &batch,
-            None,
             &object_store,
         )
         .await
         .unwrap();
 
-        let object_meta = ObjectMeta {
-            location: ObjectStorePath::from(format!("{folder_path}/{file_name}")),
-            last_modified: Utc::now(),
-            size: COMPRESSED_FILE_SIZE,
-            e_tag: None,
-            version: None,
-        };
-
+        let object_meta = object_store.head(&file_path).await.unwrap();
         let compressed_file = CompressedFile::from_compressed_data(object_meta, &batch);
 
         // Save the metadata of the compressed file to the metadata database.
