@@ -430,7 +430,7 @@ mod tests {
 
         let (_target_dir, data_transfer) =
             create_data_transfer_component(metadata_manager.clone(), temp_dir.path()).await;
-        let (compressed_file, _) = create_compressed_file(metadata_manager, temp_dir.path()).await;
+        let compressed_file = create_compressed_file(metadata_manager, temp_dir.path()).await;
 
         assert!(data_transfer
             .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
@@ -453,7 +453,7 @@ mod tests {
 
         let (_target_dir, data_transfer) =
             create_data_transfer_component(metadata_manager.clone(), temp_dir.path()).await;
-        let (compressed_file, _) = create_compressed_file(metadata_manager, temp_dir.path()).await;
+        let compressed_file = create_compressed_file(metadata_manager, temp_dir.path()).await;
 
         data_transfer
             .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
@@ -538,11 +538,11 @@ mod tests {
     }
 
     /// Set up a data folder with a table folder that has a single compressed file in it. Return the
-    /// [`CompressedFile`] representing the created Apache Parquet file and the path to the file.
+    /// [`CompressedFile`] representing the created Apache Parquet file.
     async fn create_compressed_file(
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         local_data_folder_path: &Path,
-    ) -> (CompressedFile, PathBuf) {
+    ) -> CompressedFile {
         let folder_path = format!(
             "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}",
             test::MODEL_TABLE_NAME
@@ -584,7 +584,7 @@ mod tests {
             .await
             .unwrap();
 
-        (compressed_file, full_folder_path.join(&file_name))
+        compressed_file
     }
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
