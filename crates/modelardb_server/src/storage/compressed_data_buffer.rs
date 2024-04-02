@@ -15,23 +15,19 @@
 
 //! Buffer for compressed segments from the same table.
 
-use std::fs;
 use std::io::Error as IOError;
-use std::io::ErrorKind::Other;
 use std::path::Path;
 use std::sync::Arc;
 
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::format::SortingColumn;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use modelardb_common::{metadata, storage};
 use object_store::local::LocalFileSystem;
 use object_store::path::Path as ObjectStorePath;
-use object_store::ObjectMeta;
-use uuid::Uuid;
+use object_store::ObjectStore;
 
 /// Compressed segments representing data points from a column in a model table as one
 /// [`RecordBatch`].
@@ -115,42 +111,16 @@ impl CompressedDataBuffer {
         let batch =
             compute::concat_batches(&COMPRESSED_SCHEMA.0, &self.compressed_segments).unwrap();
 
-        let full_folder_path = local_data_folder.join(folder_path);
+        let object_store = LocalFileSystem::new_with_prefix(&local_data_folder)?;
 
-        // Create the folder structure if it does not already exist.
-        fs::create_dir_all(&full_folder_path)?;
-
-        let object_store = LocalFileSystem::new_with_prefix(&full_folder_path)?;
-
-        // Use an UUID for the file name to ensure the name is unique.
-        let file_name = format!("{}.parquet", Uuid::new_v4());
-        let file_path = full_folder_path.join(&file_name);
-
-        // Specify that the file must be sorted by univariate_id and then by start_time.
-        let sorting_columns = Some(vec![
-            SortingColumn::new(0, false, false),
-            SortingColumn::new(2, false, false),
-        ]);
-
-        storage::write_record_batch_to_apache_parquet_file(
-            &ObjectStorePath::from(file_name.clone()),
+        let file_path = storage::write_compressed_segments_to_apache_parquet_file(
+            &ObjectStorePath::from(folder_path),
             &batch,
-            sorting_columns,
             &object_store,
         )
-        .await
-        .map_err(|error| IOError::new(Other, error.to_string()))?;
+        .await?;
 
-        let file_metadata = file_path.metadata()?;
-
-        let object_meta = ObjectMeta {
-            location: ObjectStorePath::from(format!("{folder_path}/{file_name}")),
-            last_modified: file_metadata.modified()?.into(),
-            size: file_metadata.len() as usize,
-            e_tag: None,
-            version: None,
-        };
-
+        let object_meta = object_store.head(&file_path).await?;
         Ok(CompressedFile::from_compressed_data(object_meta, &batch))
     }
 
