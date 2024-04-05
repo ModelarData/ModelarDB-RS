@@ -1883,10 +1883,11 @@ checksum = "b87248edafb776e59e6ee64a79086f65890d3510f2c656c000bf2a7e8a0aea40"
 
 [[package]]
 name = "md-5"
-version = "0.10.5"
+version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6365506850d44bff6e2fbcb5176cf63650e48bd45ef2fe2665ae1570e0f4b9ca"
+checksum = "d89e7ee0cfbedfc4da3340218492196241d89eefb6dab27de5df917a6d2e78cf"
 dependencies = [
+ "cfg-if",
  "digest",
 ]
 
@@ -2199,9 +2200,9 @@ dependencies = [
 
 [[package]]
 name = "object_store"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d139f545f64630e2e3688fd9f81c470888ab01edeb72d13b4e86c566f1130000"
+checksum = "b8718f8b65fdf67a45108d1548347d4af7d71fb81ce727bbf9e3b2535e079db3"
 dependencies = [
  "async-trait",
  "base64",
@@ -2211,6 +2212,7 @@ dependencies = [
  "humantime",
  "hyper",
  "itertools 0.12.0",
+ "md-5",
  "parking_lot",
  "percent-encoding",
  "quick-xml",
