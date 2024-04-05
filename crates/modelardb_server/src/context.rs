@@ -16,7 +16,6 @@
 //! Implementation of a [`Context`] that provides access to the system's configuration and
 //! components.
 
-use std::fs;
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
@@ -66,6 +65,9 @@ impl Context {
         cluster_mode: ClusterMode,
         server_mode: ServerMode,
     ) -> Result<Self, ModelarDbError> {
+        let local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(&data_folders.local_data_folder).unwrap());
+
         let table_metadata_manager = Arc::new(
             metadata::try_new_sqlite_table_metadata_manager(&data_folders.local_data_folder)
                 .await
@@ -77,7 +79,7 @@ impl Context {
         );
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            &data_folders.local_data_folder,
+            local_data_folder,
             cluster_mode,
             server_mode,
         )));
@@ -176,35 +178,32 @@ impl Context {
     ) -> Result<(), ModelarDbError> {
         // Ensure the folder for storing the table data exists.
         let configuration_manager = self.configuration_manager.read().await;
-        let folder_path = configuration_manager
-            .local_data_folder
-            .join(COMPRESSED_DATA_FOLDER)
-            .join(table_name);
-
-        fs::create_dir_all(&folder_path)
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
-
-        let object_store = LocalFileSystem::new_with_prefix(&folder_path)
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Create an empty Apache Parquet file to save the schema.
-        let file_path = Path::from("empty_for_schema.parquet");
+        let folder_path = Path::from(format!("{COMPRESSED_DATA_FOLDER}/{table_name}"));
+        let file_path = Path::from(format!("{folder_path}/empty_for_schema.parquet"));
         let empty_batch = RecordBatch::new_empty(Arc::new(schema));
 
         storage::write_record_batch_to_apache_parquet_file(
             &file_path,
             &empty_batch,
             None,
-            &object_store,
+            &(configuration_manager.local_data_folder.clone() as Arc<dyn ObjectStore>),
         )
         .await
         .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        // unwrap() is safe since the folder is created when the empty Apache Parquet file is written.
+        let table_path = configuration_manager
+            .local_data_folder
+            .path_to_filesystem(&folder_path)
+            .unwrap();
 
         // Save the table in the Apache Arrow Datafusion catalog.
         self.session
             .register_parquet(
                 table_name,
-                folder_path.to_str().unwrap(),
+                table_path.to_str().unwrap(),
                 ParquetReadOptions::default(),
             )
             .await
@@ -265,10 +264,13 @@ impl Context {
 
         for table_name in table_names {
             // Compute the path to the folder containing data for the table.
+            let folder_path = Path::from(format!("{COMPRESSED_DATA_FOLDER}/{table_name}"));
+
+            // unwrap() is safe since all tables have a corresponding folder.
             let table_folder_path = configuration_manager
                 .local_data_folder
-                .join(COMPRESSED_DATA_FOLDER)
-                .join(&table_name);
+                .path_to_filesystem(&folder_path)
+                .unwrap();
 
             // unwrap() is safe since the path is created from the table name which is valid UTF-8.
             self.session
