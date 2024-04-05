@@ -18,7 +18,6 @@
 
 use std::io::Error as IOError;
 use std::io::ErrorKind::Other;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -48,7 +47,7 @@ use crate::storage::COMPRESSED_DATA_FOLDER;
 pub struct DataTransfer {
     /// The object store containing all compressed data managed by the
     /// [`StorageEngine`](crate::storage::StorageEngine).
-    local_data_folder: Arc<dyn ObjectStore>,
+    local_data_folder: Arc<LocalFileSystem>,
     /// The object store that the data should be transferred to.
     pub remote_data_folder: Arc<dyn ObjectStore>,
     /// Management of metadata for deleting file metadata after transferring.
@@ -73,7 +72,7 @@ impl DataTransfer {
     /// existing in `local_data_folder_path`. If `local_data_folder_path` or a path within
     /// `local_data_folder_path` could not be read, return [`IOError`].
     pub async fn try_new(
-        local_data_folder: PathBuf,
+        local_data_folder: Arc<LocalFileSystem>,
         remote_data_folder: Arc<dyn ObjectStore>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         manager: Manager,
@@ -81,7 +80,6 @@ impl DataTransfer {
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, IOError> {
         // Parse through the data folder to retrieve already existing files that should be transferred.
-        let local_data_folder = Arc::new(LocalFileSystem::new_with_prefix(local_data_folder)?);
         let list_stream = local_data_folder.list(None);
 
         let compressed_files = list_stream
@@ -265,7 +263,7 @@ impl DataTransfer {
         // Merge the files and transfer them to the remote object store by setting the remote data
         // folder as the output data folder for the merged file.
         let compressed_file = CompressedDataManager::merge_compressed_apache_parquet_files(
-            &self.local_data_folder,
+            &(self.local_data_folder.clone() as Arc<dyn ObjectStore>),
             &object_metas,
             &self.remote_data_folder,
             &format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"),
@@ -579,6 +577,9 @@ mod tests {
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         local_data_folder_path: &Path,
     ) -> (TempDir, DataTransfer) {
+        let local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(local_data_folder_path).unwrap());
+
         let target_dir = tempfile::tempdir().unwrap();
 
         // Create the target object store.
@@ -596,7 +597,7 @@ mod tests {
         );
 
         let data_transfer = DataTransfer::try_new(
-            local_data_folder_path.to_path_buf(),
+            local_data_folder,
             remote_data_folder_object_store,
             table_metadata_manager,
             manager,
