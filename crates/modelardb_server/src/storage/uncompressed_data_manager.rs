@@ -17,10 +17,10 @@
 //! [`StorageEngine`](crate::storage::StorageEngine).
 
 use std::io::{Error as IOError, ErrorKind as IOErrorKind};
+use std::mem;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::{fs, mem};
 
 use crossbeam_channel::SendError;
 use dashmap::DashMap;
@@ -52,17 +52,16 @@ use crate::ClusterMode;
 pub(super) struct UncompressedDataManager {
     /// Path to the folder containing all uncompressed data managed by the
     /// [`StorageEngine`](crate::storage::StorageEngine).
-    local_data_folder: PathBuf,
-    /// Counter incremented for each [`datafusion::arrow::record_batch::RecordBatch`] of data points
-    /// ingested. The value is assigned to buffers that are created or updated and is used to flush
-    /// buffers that are no longer used.
+    local_data_folder: Arc<LocalFileSystem>,
+    /// Counter incremented for each [`RecordBatch`] of data points ingested. The value is assigned
+    /// to buffers that are created or updated and is used to flush buffers that are no longer used.
     current_batch_index: AtomicU64,
-    /// [`UncompresseInMemoryDataBuffers`](UncompressedInMemoryDataBuffer) that are ready to be
+    /// [`UncompressedInMemoryDataBuffers`](UncompressedInMemoryDataBuffer) that are ready to be
     /// filled with ingested data points. In-memory and on-disk buffers are stored separately to
     /// simplify locking when spilling in-memory buffers to disk and reading on-disk buffers back
     /// into memory.
     uncompressed_in_memory_data_buffers: DashMap<u64, UncompressedInMemoryDataBuffer>,
-    /// [`UncompresseOnDiskDataBuffers`](UncompressedOnDiskDataBuffer) that must be read back into
+    /// [`UncompressedOnDiskDataBuffers`](UncompressedOnDiskDataBuffer) that must be read back into
     /// memory before they can be filled with ingested data points. In-memory and on-disk buffers
     /// are stored separately to simplify locking when spilling in-memory buffers to disk and
     /// reading on-disk buffers back into memory.
@@ -86,24 +85,16 @@ pub(super) struct UncompressedDataManager {
 }
 
 impl UncompressedDataManager {
-    /// Return an [`UncompressedDataManager`] if the required folder can be created in
-    /// `local_data_folder` and an [`UncompressedOnDiskDataBuffer`] can be initialized for all
-    /// Apache Parquet files containing uncompressed data points in `local_data_store`, otherwise
-    /// [`IOError`] is returned.
-    pub(super) async fn try_new(
-        local_data_folder: PathBuf,
+    pub(super) fn new(
+        local_data_folder: Arc<LocalFileSystem>,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         cluster_mode: ClusterMode,
         used_multivariate_memory_metric: Arc<Mutex<Metric>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
-    ) -> Result<Self, IOError> {
-        // Ensure the folder required by the uncompressed data manager exists.
-        let local_uncompressed_data_folder = local_data_folder.join(UNCOMPRESSED_DATA_FOLDER);
-        fs::create_dir_all(local_uncompressed_data_folder)?;
-
-        Ok(Self {
+    ) -> Self {
+        Self {
             local_data_folder,
             current_batch_index: AtomicU64::new(0),
             uncompressed_in_memory_data_buffers: DashMap::new(),
@@ -116,7 +107,7 @@ impl UncompressedDataManager {
             used_uncompressed_memory_metric: Mutex::new(Metric::new()),
             ingested_data_points_metric: Mutex::new(Metric::new()),
             used_disk_space_metric,
-        })
+        }
     }
 
     /// Add references to the [`UncompressedDataBuffers`](UncompressedDataBuffer) currently on disk
@@ -128,8 +119,6 @@ impl UncompressedDataManager {
     ) -> Result<(), IOError> {
         let local_uncompressed_data_folder = local_data_folder.join(UNCOMPRESSED_DATA_FOLDER);
         let mut initial_disk_space = 0;
-
-        let object_store = Arc::new(LocalFileSystem::new_with_prefix(&self.local_data_folder)?);
 
         for maybe_folder_dir_entry in local_uncompressed_data_folder.read_dir()? {
             let folder_dir_entry = maybe_folder_dir_entry?;
@@ -160,7 +149,7 @@ impl UncompressedDataManager {
                     univariate_id,
                     model_table_metadata.clone(),
                     self.current_batch_index.load(Ordering::Relaxed),
-                    object_store.clone(),
+                    self.local_data_folder.clone(),
                     maybe_file_dir_entry?
                         .path()
                         .file_name()
@@ -561,9 +550,8 @@ impl UncompressedDataManager {
             .unwrap()
             .1;
 
-        let object_store = Arc::new(LocalFileSystem::new_with_prefix(&self.local_data_folder)?);
         let maybe_uncompressed_on_disk_data_buffer = uncompressed_in_memory_data_buffer
-            .spill_to_apache_parquet(object_store)
+            .spill_to_apache_parquet(self.local_data_folder.clone())
             .await;
 
         // If an error occurs the in-memory buffer must be re-added to the map before returning.
@@ -870,10 +858,13 @@ mod tests {
     use datafusion::arrow::array::StringBuilder;
     use datafusion::arrow::datatypes::SchemaRef;
     use datafusion::arrow::record_batch::RecordBatch;
+    use futures::StreamExt;
     use modelardb_common::metadata;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_common::test;
     use modelardb_common::types::{TimestampBuilder, ValueBuilder};
+    use object_store::path::Path as ObjectStorePath;
+    use object_store::ObjectStore;
     use ringbuf::Rb;
 
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
@@ -1286,9 +1277,13 @@ mod tests {
         assert_eq!(data_manager.channels.univariate_data_receiver.len(), 0);
 
         // The UncompressedDataBuffer should be spilled to univariate id in the uncompressed folder.
-        let local_data_folder = Path::new(&data_manager.local_data_folder);
-        let uncompressed_path = local_data_folder.join(UNCOMPRESSED_DATA_FOLDER);
-        assert_eq!(fs::read_dir(uncompressed_path).unwrap().count(), 1);
+        let spilled_buffers = data_manager
+            .local_data_folder
+            .list(Some(&ObjectStorePath::from(UNCOMPRESSED_DATA_FOLDER)))
+            .collect::<Vec<_>>()
+            .await;
+
+        assert_eq!(spilled_buffers.len(), 1);
     }
 
     #[tokio::test]
@@ -1522,7 +1517,7 @@ mod tests {
     ) {
         let object_store = Arc::new(LocalFileSystem::new_with_prefix(path).unwrap());
         let metadata_manager = Arc::new(
-            metadata::try_new_sqlite_table_metadata_manager(object_store)
+            metadata::try_new_sqlite_table_metadata_manager(object_store.clone())
                 .await
                 .unwrap(),
         );
@@ -1549,17 +1544,15 @@ mod tests {
         let channels = Arc::new(Channels::new());
 
         // UncompressedDataManager::try_new() lookup the error bounds for each univariate_id.
-        let uncompressed_data_manager = UncompressedDataManager::try_new(
-            path.to_path_buf(),
+        let uncompressed_data_manager = UncompressedDataManager::new(
+            object_store,
             memory_pool,
             channels,
             metadata_manager.clone(),
             ClusterMode::SingleNode,
             Arc::new(Mutex::new(Metric::new())),
             Arc::new(Mutex::new(Metric::new())),
-        )
-        .await
-        .unwrap();
+        );
 
         (
             metadata_manager,

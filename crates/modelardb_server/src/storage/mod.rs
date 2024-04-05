@@ -40,6 +40,7 @@ use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::{Timestamp, TimestampArray, Value};
+use object_store::local::LocalFileSystem;
 use object_store::{ObjectMeta, ObjectStore};
 use once_cell::sync::Lazy;
 use sqlx::Sqlite;
@@ -110,6 +111,9 @@ impl StorageEngine {
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     ) -> Result<Self, IOError> {
+        let temp_local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(local_data_folder.clone()).unwrap());
+
         // Create shared memory pool.
         let configuration_manager = configuration_manager.read().await;
         let memory_pool = Arc::new(MemoryPool::new(
@@ -127,18 +131,15 @@ impl StorageEngine {
         let channels = Arc::new(Channels::new());
 
         // Create the uncompressed data manager.
-        let uncompressed_data_manager = Arc::new(
-            UncompressedDataManager::try_new(
-                local_data_folder.clone(),
-                memory_pool.clone(),
-                channels.clone(),
-                table_metadata_manager.clone(),
-                configuration_manager.cluster_mode.clone(),
-                used_multivariate_memory_metric.clone(),
-                used_disk_space_metric.clone(),
-            )
-            .await?,
-        );
+        let uncompressed_data_manager = Arc::new(UncompressedDataManager::new(
+            temp_local_data_folder.clone(),
+            memory_pool.clone(),
+            channels.clone(),
+            table_metadata_manager.clone(),
+            configuration_manager.cluster_mode.clone(),
+            used_multivariate_memory_metric.clone(),
+            used_disk_space_metric.clone(),
+        ));
 
         {
             let runtime = runtime.clone();
@@ -183,7 +184,7 @@ impl StorageEngine {
         ) {
             Some(
                 DataTransfer::try_new(
-                    local_data_folder.clone(),
+                    temp_local_data_folder,
                     remote_data_folder,
                     table_metadata_manager.clone(),
                     manager.clone(),

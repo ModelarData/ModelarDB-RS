@@ -79,7 +79,7 @@ impl Context {
         );
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            local_data_folder,
+            local_data_folder.clone(),
             cluster_mode,
             server_mode,
         )));
