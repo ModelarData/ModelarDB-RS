@@ -866,6 +866,7 @@ mod tests {
     /// and a metadata manager with a single model table.
     async fn create_compressed_data_manager() -> (TempDir, CompressedDataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
         let local_data_folder = temp_dir.path().to_path_buf();
 
@@ -879,7 +880,7 @@ mod tests {
 
         // Create a metadata manager and save a single model table to the metadata database.
         let metadata_manager = Arc::new(
-            metadata::try_new_sqlite_table_metadata_manager(temp_dir.path())
+            metadata::try_new_sqlite_table_metadata_manager(object_store)
                 .await
                 .unwrap(),
         );

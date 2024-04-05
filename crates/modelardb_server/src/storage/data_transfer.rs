@@ -614,10 +614,12 @@ mod tests {
     async fn create_metadata_manager(
         local_data_folder_path: &Path,
     ) -> Arc<TableMetadataManager<Sqlite>> {
-        let metadata_manager =
-            metadata::try_new_sqlite_table_metadata_manager(local_data_folder_path)
-                .await
-                .unwrap();
+        let local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(local_data_folder_path).unwrap());
+
+        let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(local_data_folder)
+            .await
+            .unwrap();
 
         let model_table_metadata = test::model_table_metadata();
         metadata_manager

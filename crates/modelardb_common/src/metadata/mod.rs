@@ -34,6 +34,7 @@ use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use datafusion::common::{DFSchema, ToDFSchema};
 use futures::TryStreamExt;
+use object_store::local::LocalFileSystem;
 use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
 use sqlx::database::HasArguments;
@@ -949,15 +950,21 @@ pub async fn try_new_postgres_table_metadata_manager(
 /// Create a SQLite [`TableMetadataManager`] and initialize the metadata database with the tables used
 /// for table and model table metadata. If the tables could not be created, [`Error`] is returned.
 pub async fn try_new_sqlite_table_metadata_manager(
-    local_data_folder: &Path,
+    local_data_folder: Arc<LocalFileSystem>,
 ) -> Result<TableMetadataManager<Sqlite>, Error> {
-    if !is_path_a_data_folder(local_data_folder) {
-        warn!("The data folder is not empty and does not contain data from ModelarDB");
+    // unwrap() is safe since the folder path cannot contain invalid characters.
+    let database_path = local_data_folder
+        .path_to_filesystem(&ObjectStorePath::from(METADATA_DATABASE_NAME))
+        .unwrap();
+
+    // unwrap() is safe since the path is created with at least one component above.
+    if !is_path_a_data_folder(database_path.parent().unwrap()) {
+        warn!("The data folder is not empty and does not contain data from ModelarDB.");
     }
 
     // Specify the metadata database's path and that it should be created if it does not exist.
     let options = SqliteConnectOptions::new()
-        .filename(local_data_folder.join(METADATA_DATABASE_NAME))
+        .filename(database_path)
         .create_if_missing(true);
 
     let metadata_database_pool = SqlitePoolOptions::new()
@@ -1191,7 +1198,9 @@ mod tests {
     #[tokio::test]
     async fn test_create_metadata_database_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
             .await
             .unwrap();
 
@@ -1227,7 +1236,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_new_tag_hash() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
             .await
             .unwrap();
 
@@ -1266,7 +1277,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_existing_tag_hash() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
             .await
             .unwrap();
 
@@ -1317,7 +1330,9 @@ mod tests {
     #[tokio::test]
     async fn test_compute_univariate_ids_using_fields_and_tags_for_missing_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
             .await
             .unwrap();
 
@@ -1344,7 +1359,9 @@ mod tests {
     #[tokio::test]
     async fn test_compute_univariate_ids_using_no_fields_and_tags_for_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let mut metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
             .await
             .unwrap();
 
@@ -1364,7 +1381,9 @@ mod tests {
     async fn test_compute_univariate_ids_for_the_fallback_column_using_only_a_tag_column_for_model_table(
     ) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let mut metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
             .await
             .unwrap();
 
@@ -1388,7 +1407,9 @@ mod tests {
     #[tokio::test]
     async fn test_compute_the_univariate_ids_for_a_specific_field_column_for_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let mut metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
             .await
             .unwrap();
 
@@ -1422,7 +1443,9 @@ mod tests {
     #[tokio::test]
     async fn test_compute_the_univariate_ids_for_a_specific_tag_value_for_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let mut metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
             .await
             .unwrap();
 
@@ -1957,7 +1980,9 @@ mod tests {
     #[tokio::test]
     async fn test_save_table_metadata() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
             .await
             .unwrap();
 
@@ -1986,7 +2011,9 @@ mod tests {
     #[tokio::test]
     async fn test_save_model_table_metadata() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
             .await
             .unwrap();
 
@@ -2059,7 +2086,9 @@ mod tests {
     #[tokio::test]
     async fn test_table_names() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
             .await
             .unwrap();
 
@@ -2088,7 +2117,8 @@ mod tests {
     async fn create_metadata_manager_and_save_model_table(
         temp_dir: &Path,
     ) -> TableMetadataManager<Sqlite> {
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir)
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir).unwrap());
+        let metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
             .await
             .unwrap();
 
@@ -2104,7 +2134,9 @@ mod tests {
     #[tokio::test]
     async fn test_error_bound() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
             .await
             .unwrap();
 
@@ -2132,7 +2164,9 @@ mod tests {
     #[tokio::test]
     async fn test_generated_columns() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
             .await
             .unwrap();
 

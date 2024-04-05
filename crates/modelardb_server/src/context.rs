@@ -69,7 +69,7 @@ impl Context {
             Arc::new(LocalFileSystem::new_with_prefix(&data_folders.local_data_folder).unwrap());
 
         let table_metadata_manager = Arc::new(
-            metadata::try_new_sqlite_table_metadata_manager(&data_folders.local_data_folder)
+            metadata::try_new_sqlite_table_metadata_manager(local_data_folder.clone())
                 .await
                 .map_err(|error| {
                     ModelarDbError::ConfigurationError(format!(
@@ -193,7 +193,7 @@ impl Context {
         .await
         .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // unwrap() is safe since the folder is created when the empty Apache Parquet file is written.
+        // unwrap() is safe since the folder path cannot contain invalid characters.
         let table_path = configuration_manager
             .local_data_folder
             .path_to_filesystem(&folder_path)
@@ -266,7 +266,7 @@ impl Context {
             // Compute the path to the folder containing data for the table.
             let folder_path = Path::from(format!("{COMPRESSED_DATA_FOLDER}/{table_name}"));
 
-            // unwrap() is safe since all tables have a corresponding folder.
+            // unwrap() is safe since the folder path cannot contain invalid characters.
             let table_folder_path = configuration_manager
                 .local_data_folder
                 .path_to_filesystem(&folder_path)
