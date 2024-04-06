@@ -90,8 +90,8 @@ impl Swing {
     /// - (2) When the second data point is received, two linear functions that
     /// intersect with the first data point are computed to designate the upper
     /// and lower bounds for the linear functions Swing can fit to the segment.
-    /// From the second data point, the recording mechanism that is used to
-    /// find the slope with minimum MSE is updated.    
+    /// From the second data point, the nominator and denominator of
+    /// the slope with minimum MSE is updated.    
     /// - (3) Then for each subsequent data point, Swing determines if the data
     /// point can be represented by a linear function in the space delimited by
     /// the upper and lower bounds and updates these bounds if necessary.
@@ -183,7 +183,7 @@ impl Swing {
                 let (
                     current_line_slope_with_minimum_mse_numerator,
                     current_line_slope_with_minimum_mse_denominator,
-                ) = compute_slope_with_minimum_mse(
+                ) = self.compute_slope_with_minimum_mse(
                     self.start_time,
                     self.first_value,
                     timestamp,
@@ -196,6 +196,36 @@ impl Swing {
                 self.length += 1;
                 true
             }
+        }
+    }
+
+    /// Compute the slope that minimizes the MSE for the current line segment based on
+    /// the first value (`start_time`, `first_value`) and (`end_time`, `last_value`).
+    /// Return numerator and denominator of the best slope.
+    ///
+    /// After the second data point, Swing starts computing the best slope for
+    /// each current line segment. Once the data point that exceeds the error bound arrives,
+    /// Swing compares the summation of the slopes with minimum MSE to the upper and lower
+    /// bounds to find the best slope.
+    ///
+    /// For more detail see Equations 1-6 in the [Swing and Slide paper].
+    ///
+    /// [Swing and Slide paper]: https://dl.acm.org/doi/10.14778/1687627.1687645
+    fn compute_slope_with_minimum_mse(
+        &mut self,
+        start_time: Timestamp,
+        first_value: f64,
+        end_time: Timestamp,
+        last_value: f64,
+    ) -> (f64, f64) {
+        if models::equal_or_nan(first_value, last_value) {
+            (0.0, 0.0)
+        } else {
+            debug_assert!(first_value.is_finite(), "First value is not finite.");
+            debug_assert!(last_value.is_finite(), "Last value is not finite.");
+            let numerator = (last_value - first_value) * (end_time - start_time) as f64;
+            let denominator = ((end_time - start_time) as f64).powi(2);
+            (numerator, denominator)
         }
     }
 
@@ -218,9 +248,10 @@ impl Swing {
     /// must be [`f64`] to be precise enough.
     pub fn model(self) -> (Value, Value) {
         // Implementation of the Equations for minimizing MSE as specified in the Swing and Slide paper.
-        // Equations 5 and 6 in the Swing and Slide paper.
+        // Equation 6 in the Swing and Slide paper.
         let projected_slope =
             self.slope_with_minimum_mse_numerator / self.slope_with_minimum_mse_denominator;
+        // Equation 5 in the Swing and Slide paper.
         let slope_with_minimum_mse = self
             .lower_bound_slope
             .max(projected_slope.min(self.upper_bound_slope));
@@ -228,35 +259,6 @@ impl Swing {
         let last_value =
             slope_with_minimum_mse * (self.end_time - self.start_time) as f64 + self.first_value;
         (self.first_value as Value, last_value as Value)
-    }
-}
-
-/// Compute the slope that minimizes the MSE for the current line segment based on
-/// the first value (`start_time`, `first_value`) and (`end_time`, `last_value`).
-/// Return numerator and denominator of the best slope.
-///
-/// After the second data point, Swing starts computing the best slope for
-/// each current line segment. Once the data point that exceeds the error bound arrives,
-/// Swing compares the summation of the slopes with minimum MSE to the upper and lower
-/// bounds to find the best slope.
-///
-/// For more detail see Equations 1-6 in the [Swing and Slide paper].
-///
-/// [Swing and Slide paper]: https://dl.acm.org/doi/10.14778/1687627.1687645
-fn compute_slope_with_minimum_mse(
-    start_time: Timestamp,
-    first_value: f64,
-    end_time: Timestamp,
-    last_value: f64,
-) -> (f64, f64) {
-    if models::equal_or_nan(first_value, last_value) {
-        (0.0, 0.0)
-    } else {
-        debug_assert!(first_value.is_finite(), "First value is not finite.");
-        debug_assert!(last_value.is_finite(), "Last value is not finite.");
-        let numerator = (last_value - first_value) * (end_time - start_time) as f64;
-        let denominator = ((end_time - start_time) as f64).powi(2);
-        (numerator, denominator)
     }
 }
 
@@ -685,17 +687,18 @@ mod tests {
             &[42.0, 42.0, 42.8, 42.0, 42.0],
         ))
     }
-    // #[test]
-    // fn test_can_minimize_mse_with_relative_error_bound_five() {
-    //     assert!(can_minimize_mse(
-    //         ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
-    //         &[42.0, 42.0, 42.8, 42.0, 41.0, 40.0, 42.0, 42.0, 42.0, 42.1]
-    //     ))
-    // }
 
     #[test]
     fn test_slope_is_between_higher_and_lower_hyperplane() {
         assert!(slope_is_between_higher_lower_hyperplanes(
+            ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
+            &[42.0, 42.0, 42.8, 42.0, 41.0, 40.0, 42.0, 42.0, 42.0, 42.1]
+        ))
+    }
+
+    #[test]
+    fn test_can_minimize_mse_with_relative_error_bound_five() {
+        assert!(can_minimize_mse(
             ErrorBound::try_new_relative(ERROR_BOUND_FIVE).unwrap(),
             &[42.0, 42.0, 42.8, 42.0, 41.0, 40.0, 42.0, 42.0, 42.0, 42.1]
         ))
@@ -712,49 +715,50 @@ mod tests {
         fit_all_values
     }
 
-    // fn can_minimize_mse(error_bound: ErrorBound, values: &[Value]) -> bool {
-    //     let mut model_type = Swing::new(error_bound);
-    //     let mut timestamp = START_TIME;
-    //     // Fit model of type Swing to perfectly linear sequence.
-    //     let end_time = START_TIME + values.len() as i64 * SAMPLING_INTERVAL;
-    //     for value in values {
-    //         assert!(model_type.fit_data_point(timestamp, *value));
-    //         timestamp += SAMPLING_INTERVAL;
-    //     }
-    //     // Compute the slope and intercept according to a default case in the Swing and Slide paper
-    //     let (default_slope, default_intercept) = compute_slope_and_intercept(
-    //         model_type.start_time,
-    //         model_type.first_value,
-    //         end_time,
-    //         *values.last().unwrap() as f64,
-    //     );
-    //     // Compute slope and intercept with minimum MSE
-    //     let (first_value, last_value) = model_type.model();
-    //     let (slope_with_minimum_mse, intercept_with_minimum_mse) = compute_slope_and_intercept(
-    //         START_TIME,
-    //         first_value as f64,
-    //         end_time,
-    //         last_value as f64,
-    //     );
-    //     // Compute MSE for each approximated value using: (1) default slope and intercept;
-    //     // (2) slope and intercept with minimum MSE
-    //     let mut mse = 0.0;
-    //     let mut optimized_mse = 0.0;
+    fn can_minimize_mse(error_bound: ErrorBound, values: &[Value]) -> bool {
+        let mut model_type = Swing::new(error_bound);
+        let mut timestamp = START_TIME;
+        // Fit model of type Swing to a linear sequence.
+        let end_time = START_TIME + values.len() as i64 * SAMPLING_INTERVAL;
+        for value in values {
+            assert!(model_type.fit_data_point(timestamp, *value));
+            timestamp += SAMPLING_INTERVAL;
+        }
+        // Compute the slope and intercept according to a default case in the Swing and Slide paper
+        // which is computing the slope from the first and the last value in a segment
+        let (default_slope, default_intercept) = compute_slope_and_intercept(
+            model_type.start_time,
+            model_type.first_value,
+            end_time,
+            *values.last().unwrap() as f64,
+        );
+        // Compute slope and intercept with minimum MSE
+        let (first_value, last_value) = model_type.model();
+        let (slope_with_minimum_mse, intercept_with_minimum_mse) = compute_slope_and_intercept(
+            START_TIME,
+            first_value as f64,
+            end_time,
+            last_value as f64,
+        );
+        // Compute MSE for each approximated value using: (1) default slope and intercept;
+        // (2) slope and intercept with minimum MSE
+        let mut mse = 0.0;
+        let mut optimized_mse = 0.0;
 
-    //     for (i, timestamp) in (START_TIME..end_time)
-    //         .step_by(SAMPLING_INTERVAL as usize)
-    //         .enumerate()
-    //     {
-    //         let approximate_value = default_slope * timestamp as f64 + default_intercept;
-    //         mse += (values[i] as f64 - approximate_value).powi(2);
-    //         let approximate_value_with_minimized_mse =
-    //             slope_with_minimum_mse * timestamp as f64 + intercept_with_minimum_mse;
-    //         optimized_mse += (values[i] as f64 - approximate_value_with_minimized_mse).powi(2);
-    //     }
-    //     let mse = mse / values.len() as f64;
-    //     let optimized_mse = optimized_mse / values.len() as f64;
-    //     mse > optimized_mse
-    // }
+        for (i, timestamp) in (START_TIME..end_time)
+            .step_by(SAMPLING_INTERVAL as usize)
+            .enumerate()
+        {
+            let approximate_value = default_slope * timestamp as f64 + default_intercept;
+            mse += (values[i] as f64 - approximate_value).powi(2);
+            let approximate_value_with_minimized_mse =
+                slope_with_minimum_mse * timestamp as f64 + intercept_with_minimum_mse;
+            optimized_mse += (values[i] as f64 - approximate_value_with_minimized_mse).powi(2);
+        }
+        let mse = mse / values.len() as f64;
+        let optimized_mse = optimized_mse / values.len() as f64;
+        mse > optimized_mse
+    }
 
     fn slope_is_between_higher_lower_hyperplanes(
         error_bound: ErrorBound,

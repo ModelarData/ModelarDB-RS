@@ -15,7 +15,7 @@
 
 //! Implementation of ModelarDB's main function.
 
-#![allow(clippy::too_many_arguments, clippy::unconditional_recursion)]
+#![allow(clippy::too_many_arguments)]
 
 mod configuration;
 mod context;
