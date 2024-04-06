@@ -16,7 +16,6 @@
 //! Buffer for compressed segments from the same table.
 
 use std::io::Error as IOError;
-use std::path::Path;
 use std::sync::Arc;
 
 use datafusion::arrow::compute;
@@ -26,7 +25,7 @@ use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use modelardb_common::{metadata, storage};
 use object_store::local::LocalFileSystem;
-use object_store::path::Path as ObjectStorePath;
+use object_store::path::Path;
 use object_store::ObjectStore;
 
 /// Compressed segments representing data points from a column in a model table as one
@@ -99,8 +98,8 @@ impl CompressedDataBuffer {
     /// [`CompressedFile`] representing the saved file, otherwise return [`IOError`].
     pub(super) async fn save_to_apache_parquet(
         &mut self,
-        local_data_folder: &Path,
-        folder_path: &str,
+        local_data_folder: &Arc<LocalFileSystem>,
+        folder_path: &Path,
     ) -> Result<CompressedFile, IOError> {
         debug_assert!(
             !self.compressed_segments.is_empty(),
@@ -111,16 +110,14 @@ impl CompressedDataBuffer {
         let batch =
             compute::concat_batches(&COMPRESSED_SCHEMA.0, &self.compressed_segments).unwrap();
 
-        let object_store = LocalFileSystem::new_with_prefix(&local_data_folder)?;
-
         let file_path = storage::write_compressed_segments_to_apache_parquet_file(
-            &ObjectStorePath::from(folder_path),
+            folder_path,
             &batch,
-            &object_store,
+            &(local_data_folder.clone() as Arc<dyn ObjectStore>),
         )
         .await?;
 
-        let object_meta = object_store.head(&file_path).await?;
+        let object_meta = local_data_folder.head(&file_path).await?;
         Ok(CompressedFile::from_compressed_data(object_meta, &batch))
     }
 
@@ -170,8 +167,10 @@ mod tests {
         compressed_data_buffer.append_compressed_segments(segment.clone());
 
         let temp_dir = tempfile::tempdir().unwrap();
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
         compressed_data_buffer
-            .save_to_apache_parquet(temp_dir.path(), "")
+            .save_to_apache_parquet(&object_store, &Path::from(""))
             .await
             .unwrap();
 
@@ -182,10 +181,11 @@ mod tests {
     #[cfg(debug_assertions)]
     #[should_panic(expected = "Cannot save CompressedDataBuffer with no data.")]
     async fn test_panic_if_saving_empty_compressed_data_buffer_to_apache_parquet() {
+        let object_store = Arc::new(LocalFileSystem::new());
         let mut empty_compressed_data_buffer = CompressedDataBuffer::new();
 
         empty_compressed_data_buffer
-            .save_to_apache_parquet(Path::new("table"), "")
+            .save_to_apache_parquet(&object_store, &Path::from(""))
             .await
             .unwrap();
     }

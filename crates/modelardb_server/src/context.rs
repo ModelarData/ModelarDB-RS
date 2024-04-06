@@ -89,7 +89,7 @@ impl Context {
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(
                 runtime,
-                data_folders.local_data_folder.clone(),
+                local_data_folder,
                 data_folders.remote_data_folder.clone(),
                 &configuration_manager,
                 table_metadata_manager.clone(),

@@ -414,7 +414,7 @@ mod tests {
         );
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            local_data_folder,
+            local_data_folder.clone(),
             ClusterMode::MultiNode(manager),
             ServerMode::Edge,
         )));
@@ -425,7 +425,7 @@ mod tests {
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(
                 Arc::new(Runtime::new().unwrap()),
-                path.to_owned(),
+                local_data_folder,
                 Some(Arc::new(target_fs)),
                 &configuration_manager,
                 Arc::new(metadata_manager),

@@ -27,7 +27,7 @@ use futures::StreamExt;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::TableMetadataManager;
 use object_store::local::LocalFileSystem;
-use object_store::path::{Path as ObjectStorePath, PathPart};
+use object_store::path::{Path, PathPart};
 use object_store::{ObjectMeta, ObjectStore};
 use sqlx::Sqlite;
 use tokio::sync::RwLock;
@@ -266,7 +266,7 @@ impl DataTransfer {
             &(self.local_data_folder.clone() as Arc<dyn ObjectStore>),
             &object_metas,
             &self.remote_data_folder,
-            &format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"),
+            &Path::from(format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}")),
         )
         .await?;
 
@@ -305,7 +305,7 @@ impl DataTransfer {
 
     /// Return the table name and column index if `path` is an Apache Parquet file with compressed
     /// data, otherwise [`None`].
-    fn path_is_compressed_file(path: ObjectStorePath) -> Option<(String, u16)> {
+    fn path_is_compressed_file(path: Path) -> Option<(String, u16)> {
         let path_parts: Vec<PathPart> = path.parts().collect();
 
         if Some(&PathPart::from(COMPRESSED_DATA_FOLDER)) == path_parts.first() {
@@ -336,6 +336,7 @@ mod tests {
     use arrow_flight::flight_service_client::FlightServiceClient;
     use modelardb_common::test;
     use modelardb_common::{metadata, storage};
+    use object_store::path::Path as ObjectStorePath;
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
     use tokio::sync::RwLock;

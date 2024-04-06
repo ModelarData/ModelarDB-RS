@@ -106,14 +106,11 @@ impl StorageEngine {
     /// `remote_data_folder` is given but [`DataTransfer`] cannot not be created.
     pub(super) async fn try_new(
         runtime: Arc<Runtime>,
-        local_data_folder: PathBuf,
+        local_data_folder: Arc<LocalFileSystem>,
         maybe_remote_data_folder: Option<Arc<dyn ObjectStore>>,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     ) -> Result<Self, IOError> {
-        let temp_local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(local_data_folder.clone()).unwrap());
-
         // Create shared memory pool.
         let configuration_manager = configuration_manager.read().await;
         let memory_pool = Arc::new(MemoryPool::new(
@@ -132,7 +129,7 @@ impl StorageEngine {
 
         // Create the uncompressed data manager.
         let uncompressed_data_manager = Arc::new(UncompressedDataManager::new(
-            temp_local_data_folder.clone(),
+            local_data_folder.clone(),
             memory_pool.clone(),
             channels.clone(),
             table_metadata_manager.clone(),
@@ -184,7 +181,7 @@ impl StorageEngine {
         ) {
             Some(
                 DataTransfer::try_new(
-                    temp_local_data_folder,
+                    local_data_folder.clone(),
                     remote_data_folder,
                     table_metadata_manager.clone(),
                     manager.clone(),
@@ -198,14 +195,14 @@ impl StorageEngine {
         };
 
         let data_transfer_is_some = data_transfer.is_some();
-        let compressed_data_manager = Arc::new(CompressedDataManager::try_new(
+        let compressed_data_manager = Arc::new(CompressedDataManager::new(
             Arc::new(RwLock::new(data_transfer)),
             local_data_folder,
             channels.clone(),
             memory_pool.clone(),
             table_metadata_manager,
             used_disk_space_metric,
-        )?);
+        ));
 
         {
             let runtime = runtime.clone();

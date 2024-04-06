@@ -16,9 +16,7 @@
 //! Support for managing all compressed data that is inserted into the
 //! [`StorageEngine`](crate::storage::StorageEngine).
 
-use std::fs;
 use std::io::{Error as IOError, ErrorKind};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -55,7 +53,7 @@ pub(super) struct CompressedDataManager {
     pub(super) data_transfer: Arc<RwLock<Option<DataTransfer>>>,
     /// Path to the folder containing all compressed data managed by the
     /// [`StorageEngine`](crate::storage::StorageEngine).
-    pub(crate) local_data_folder: PathBuf,
+    pub(crate) local_data_folder: Arc<LocalFileSystem>,
     /// The compressed segments before they are saved to persistent storage. The key is the name of
     /// the table and the index of the column the compressed segments represents data points for so
     /// the Apache Parquet files can be partitioned by table and then column.
@@ -77,20 +75,15 @@ pub(super) struct CompressedDataManager {
 }
 
 impl CompressedDataManager {
-    /// Return a [`CompressedDataManager`] if the required folder can be created in
-    /// `local_data_folder`, otherwise [`IOError`] is returned.
-    pub(super) fn try_new(
+    pub(super) fn new(
         data_transfer: Arc<RwLock<Option<DataTransfer>>>,
-        local_data_folder: PathBuf,
+        local_data_folder: Arc<LocalFileSystem>,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
-    ) -> Result<Self, IOError> {
-        // Ensure the folder required by the compressed data manager exists.
-        fs::create_dir_all(local_data_folder.join(COMPRESSED_DATA_FOLDER))?;
-
-        Ok(Self {
+    ) -> Self {
+        Self {
             data_transfer,
             local_data_folder,
             compressed_data_buffers: DashMap::new(),
@@ -100,7 +93,7 @@ impl CompressedDataManager {
             memory_pool,
             used_compressed_memory_metric: Mutex::new(Metric::new()),
             used_disk_space_metric,
-        })
+        }
     }
 
     /// Write `record_batch` to the table with `table_name` as a compressed Apache Parquet file.
@@ -114,27 +107,22 @@ impl CompressedDataManager {
             record_batch.num_rows(),
             table_name
         );
-        let local_file_path = self
-            .local_data_folder
-            .join(COMPRESSED_DATA_FOLDER)
-            .join(table_name);
-
-        // Create the folder structure if it does not already exist.
-        fs::create_dir_all(local_file_path.as_path())?;
-
-        let object_store = LocalFileSystem::new_with_prefix(&local_file_path)
-            .map_err(|error| ParquetError::General(error.to_string()))?;
 
         // Create a path that uses the current timestamp as the filename.
         let since_the_epoch = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
+        let file_path = Path::from(format!(
+            "{COMPRESSED_DATA_FOLDER}/{table_name}/{}.parquet",
+            since_the_epoch.as_millis()
+        ));
+
         storage::write_record_batch_to_apache_parquet_file(
-            &Path::from(format!("{}.parquet", since_the_epoch.as_millis())),
+            &file_path,
             &record_batch,
             None,
-            &object_store,
+            &(self.local_data_folder.clone() as Arc<dyn ObjectStore>),
         )
         .await
     }
@@ -300,7 +288,7 @@ impl CompressedDataManager {
                 query_data_folder,
                 &relevant_object_metas,
                 query_data_folder,
-                &format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"),
+                &Path::from(format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}")),
             )
                 .await
                 .map_err(|error| {
@@ -403,7 +391,9 @@ impl CompressedDataManager {
             .remove(&(table_name.to_owned(), column_index))
             .unwrap();
 
-        let folder_path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}");
+        let folder_path = Path::from(format!(
+            "{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"
+        ));
 
         let compressed_file = compressed_data_buffer
             .save_to_apache_parquet(&self.local_data_folder, &folder_path)
@@ -472,7 +462,7 @@ impl CompressedDataManager {
         input_data_folder: &Arc<dyn ObjectStore>,
         input_files: &[ObjectMeta],
         output_data_folder: &Arc<dyn ObjectStore>,
-        output_folder: &str,
+        output_folder_path: &Path,
     ) -> Result<CompressedFile, ParquetError> {
         // Read input files, for_each is not used so errors can be returned with ?.
         let mut record_batches = Vec::with_capacity(input_files.len());
@@ -489,7 +479,7 @@ impl CompressedDataManager {
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
         let output_file_path = storage::write_compressed_segments_to_apache_parquet_file(
-            &Path::from(output_folder),
+            output_folder_path,
             &merged,
             output_data_folder,
         )
@@ -522,8 +512,6 @@ impl CompressedDataManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use std::path::Path;
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
     use futures::StreamExt;
@@ -644,12 +632,16 @@ mod tests {
         }
 
         // The compressed data should be saved to the table_name folder in the compressed folder.
-        let local_data_folder = Path::new(&data_manager.local_data_folder);
-        let compressed_path = local_data_folder.join(format!(
-            "{COMPRESSED_DATA_FOLDER}/{}",
-            test::MODEL_TABLE_NAME
-        ));
-        assert_eq!(compressed_path.read_dir().unwrap().count(), 1);
+        let parquet_files = data_manager
+            .local_data_folder
+            .list(Some(&ObjectStorePath::from(format!(
+                "{COMPRESSED_DATA_FOLDER}/{}",
+                test::MODEL_TABLE_NAME
+            ))))
+            .collect::<Vec<_>>()
+            .await;
+
+        assert_eq!(parquet_files.len(), 1);
 
         // The metadata of the compressed data should be saved to the metadata database.
         let compressed_files = data_manager
@@ -868,8 +860,6 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
-        let local_data_folder = temp_dir.path().to_path_buf();
-
         let channels = Arc::new(Channels::new());
 
         let memory_pool = Arc::new(MemoryPool::new(
@@ -880,7 +870,7 @@ mod tests {
 
         // Create a metadata manager and save a single model table to the metadata database.
         let metadata_manager = Arc::new(
-            metadata::try_new_sqlite_table_metadata_manager(object_store)
+            metadata::try_new_sqlite_table_metadata_manager(object_store.clone())
                 .await
                 .unwrap(),
         );
@@ -893,15 +883,14 @@ mod tests {
 
         (
             temp_dir,
-            CompressedDataManager::try_new(
+            CompressedDataManager::new(
                 Arc::new(RwLock::new(None)),
-                local_data_folder,
+                object_store,
                 channels,
                 memory_pool,
                 metadata_manager,
                 Arc::new(Mutex::new(Metric::new())),
-            )
-            .unwrap(),
+            ),
         )
     }
 
