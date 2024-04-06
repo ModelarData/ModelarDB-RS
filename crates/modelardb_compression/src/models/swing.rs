@@ -90,7 +90,7 @@ impl Swing {
     /// - (2) When the second data point is received, two linear functions that
     /// intersect with the first data point are computed to designate the upper
     /// and lower bounds for the linear functions Swing can fit to the segment.
-    /// From the second data point, the nominator and denominator of
+    /// From the second data point, the numerator and denominator of
     /// the slope with minimum MSE is updated.    
     /// - (3) Then for each subsequent data point, Swing determines if the data
     /// point can be represented by a linear function in the space delimited by
