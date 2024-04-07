@@ -17,6 +17,8 @@
 //! reconstructed values from a single column without filtering so they are computed directly from
 //! segments instead of the reconstructed values.
 
+#![allow(clippy::unconditional_recursion)]
+
 use std::any::Any;
 use std::cmp::PartialEq;
 use std::fmt::{Display, Formatter};
