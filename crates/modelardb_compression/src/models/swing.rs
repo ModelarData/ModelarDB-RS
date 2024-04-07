@@ -725,14 +725,14 @@ mod tests {
             timestamp += SAMPLING_INTERVAL;
         }
         // Compute the slope and intercept according to a default case in the Swing and Slide paper
-        // which is computing the slope from the first and the last value in a segment
+        // which is computing the slope from the first and the last value in a segment.
         let (default_slope, default_intercept) = compute_slope_and_intercept(
             model_type.start_time,
             model_type.first_value,
             end_time,
             *values.last().unwrap() as f64,
         );
-        // Compute slope and intercept with minimum MSE
+        // Compute slope and intercept with minimum MSE.
         let (first_value, last_value) = model_type.model();
         let (slope_with_minimum_mse, intercept_with_minimum_mse) = compute_slope_and_intercept(
             START_TIME,
@@ -741,7 +741,7 @@ mod tests {
             last_value as f64,
         );
         // Compute MSE for each approximated value using: (1) default slope and intercept;
-        // (2) slope and intercept with minimum MSE
+        // (2) slope and intercept with minimum MSE.
         let mut mse = 0.0;
         let mut optimized_mse = 0.0;
 
