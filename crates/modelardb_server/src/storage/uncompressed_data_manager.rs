@@ -748,7 +748,7 @@ impl UncompressedDataManager {
     }
 
     /// Compress `uncompressed_data_buffer` and send the compressed segments to the
-    /// [`CompressedDataManager`]()super::CompressedDataManager over a channel. Returns
+    /// [`CompressedDataManager`](super::CompressedDataManager) over a channel. Returns
     /// [`SendError`] if a [`Message`] cannot be sent to
     /// [`CompressedDataManager`](super::CompressedDataManager).
     async fn compress_finished_buffer(
@@ -862,45 +862,70 @@ mod tests {
     use modelardb_common::metadata;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_common::test;
-    use modelardb_common::types::{TimestampBuilder, ValueBuilder};
+    use modelardb_common::types::{ServerMode, TimestampBuilder, ValueBuilder};
     use object_store::path::Path as ObjectStorePath;
     use object_store::ObjectStore;
     use ringbuf::Rb;
 
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
+    use crate::DataFolders;
 
-    const CURRENT_BATCH_INDEX: u64 = 0;
     const UNIVARIATE_ID: u64 = 9674644176454356993;
 
     // Tests for UncompressedDataManager.
     #[tokio::test]
-    async fn test_can_find_existing_on_disk_data_buffers() {
-        // Spill an uncompressed buffer to disk.
+    async fn test_can_compress_existing_on_disk_data_buffers_when_initializing() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
-        let model_table_metadata = Arc::new(test::model_table_metadata());
-        let mut buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
-            model_table_metadata,
-            CURRENT_BATCH_INDEX,
+        // Create a context with a storage engine.
+        let context = Arc::new(
+            Context::try_new(
+                Arc::new(Runtime::new().unwrap()),
+                &DataFolders {
+                    local_data_folder: temp_dir.path().to_path_buf(),
+                    remote_data_folder: None,
+                    query_data_folder: Arc::new(
+                        LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap(),
+                    ),
+                },
+                ClusterMode::SingleNode,
+                ServerMode::Edge,
+            )
+            .await
+            .unwrap(),
         );
-        buffer.insert_data(CURRENT_BATCH_INDEX, 100, 10.0);
-        buffer.spill_to_apache_parquet(object_store).await.unwrap();
 
-        // The uncompressed data buffer should be referenced by the uncompressed data manager.
-        let (_metadata_manager, _data_manager, _model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+        // Create a table in the context.
+        context
+            .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
+            .await
+            .unwrap();
 
-        // TODO: refactor tests to use a shared context with enough information for initialize().
-        //data_manager.initialize(context);
+        // Spill an uncompressed buffer to disk.
+        let storage_engine = context.storage_engine.read().await;
+        let model_table_metadata = Arc::new(test::model_table_metadata());
+        let data = uncompressed_data(1, model_table_metadata.schema.clone());
+        let uncompressed_data_multivariate =
+            UncompressedDataMultivariate::new(model_table_metadata, data);
 
-        // Emulate data_manager.initialize(context) by counting files in UNCOMPRESSED_DATA_FOLDER.
-        let local_uncompressed_data_folder = temp_dir.path().join(UNCOMPRESSED_DATA_FOLDER);
-        assert_eq!(
-            local_uncompressed_data_folder.read_dir().unwrap().count(),
-            1
-        )
+        storage_engine
+            .uncompressed_data_manager
+            .insert_data_points(uncompressed_data_multivariate)
+            .await
+            .unwrap();
+
+        storage_engine
+            .uncompressed_data_manager
+            .spill_in_memory_data_buffer()
+            .await
+            .unwrap();
+
+        let result = storage_engine
+            .initialize(temp_dir.path().to_path_buf(), &context)
+            .await;
+
+        // TODO: Add another assert here.
+        assert!(result.is_err());
     }
 
     #[tokio::test]
