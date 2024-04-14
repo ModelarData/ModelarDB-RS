@@ -18,7 +18,6 @@
 
 use std::io::{Error as IOError, ErrorKind as IOErrorKind};
 use std::mem;
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -31,8 +30,11 @@ use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
 use object_store::local::LocalFileSystem;
+use object_store::path::{Path, PathPart};
+use object_store::ObjectStore;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
+use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
 
 use crate::context::Context;
@@ -112,21 +114,24 @@ impl UncompressedDataManager {
 
     /// Add references to the [`UncompressedDataBuffers`](UncompressedDataBuffer) currently on disk
     /// to [`UncompressedDataManager`] which immediately will start compressing them.
-    pub(super) async fn initialize(
-        &self,
-        local_data_folder: PathBuf,
-        context: &Context,
-    ) -> Result<(), IOError> {
-        let local_uncompressed_data_folder = local_data_folder.join(UNCOMPRESSED_DATA_FOLDER);
+    pub(super) async fn initialize(&self, context: &Context) -> Result<(), IOError> {
         let mut initial_disk_space = 0;
 
-        for maybe_folder_dir_entry in local_uncompressed_data_folder.read_dir()? {
-            let folder_dir_entry = maybe_folder_dir_entry?;
+        for maybe_spilled_buffer in self
+            .local_data_folder
+            .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
+            .collect::<Vec<_>>()
+            .await
+        {
+            let spilled_buffer = maybe_spilled_buffer?;
+            let path_parts: Vec<PathPart> = spilled_buffer.location.parts().collect();
 
-            let univariate_id = folder_dir_entry
-                .file_name()
-                .to_str()
-                .ok_or_else(|| IOError::new(IOErrorKind::InvalidData, "Path is not valid UTF-8."))?
+            // unwrap() is safe since all spilled buffers are saved in a three part folder structure.
+            let file_name = path_parts.get(2).unwrap().as_ref();
+            let univariate_id = path_parts
+                .get(1)
+                .unwrap()
+                .as_ref()
                 .parse::<u64>()
                 .map_err(|error| IOError::new(IOErrorKind::InvalidData, error))?;
 
@@ -144,27 +149,20 @@ impl UncompressedDataManager {
                 .unwrap()
                 .unwrap();
 
-            for maybe_file_dir_entry in folder_dir_entry.path().read_dir()? {
-                let buffer = UncompressedOnDiskDataBuffer::try_new(
-                    univariate_id,
-                    model_table_metadata.clone(),
-                    self.current_batch_index.load(Ordering::Relaxed),
-                    self.local_data_folder.clone(),
-                    maybe_file_dir_entry?
-                        .path()
-                        .file_name()
-                        .unwrap()
-                        .to_str()
-                        .unwrap(),
-                )?;
+            let buffer = UncompressedOnDiskDataBuffer::try_new(
+                univariate_id,
+                model_table_metadata,
+                self.current_batch_index.load(Ordering::Relaxed),
+                self.local_data_folder.clone(),
+                file_name,
+            )?;
 
-                initial_disk_space += buffer.disk_size().await;
+            initial_disk_space += buffer.disk_size().await;
 
-                self.channels
-                    .univariate_data_sender
-                    .send(Message::Data(UncompressedDataBuffer::OnDisk(buffer)))
-                    .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
-            }
+            self.channels
+                .univariate_data_sender
+                .send(Message::Data(UncompressedDataBuffer::OnDisk(buffer)))
+                .map_err(|error| IOError::new(IOErrorKind::BrokenPipe, error))?;
         }
 
         // Record the used disk space of the uncompressed data buffers currently on disk.

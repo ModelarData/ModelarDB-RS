@@ -142,7 +142,7 @@ fn main() -> Result<(), String> {
                 .storage_engine
                 .read()
                 .await
-                .initialize(data_folders.local_data_folder, &context)
+                .initialize(&context)
                 .await
         })
         .map_err(|error| error.to_string())?;

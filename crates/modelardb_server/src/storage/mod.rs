@@ -29,7 +29,6 @@ mod uncompressed_data_manager;
 
 use std::env;
 use std::io::{Error as IOError, ErrorKind};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
@@ -268,14 +267,8 @@ impl StorageEngine {
     /// Add references to the
     /// [`UncompressedDataBuffers`](uncompressed_data_buffer::UncompressedDataBuffer) currently on
     /// disk to [`UncompressedDataManager`] which immediately will start compressing them.
-    pub(super) async fn initialize(
-        &self,
-        local_data_folder: PathBuf,
-        context: &Context,
-    ) -> Result<(), IOError> {
-        self.uncompressed_data_manager
-            .initialize(local_data_folder, context)
-            .await
+    pub(super) async fn initialize(&self, context: &Context) -> Result<(), IOError> {
+        self.uncompressed_data_manager.initialize(context).await
     }
 
     /// Pass `record_batch` to [`CompressedDataManager`]. Return [`Ok`] if `record_batch` was
