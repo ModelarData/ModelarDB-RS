@@ -31,7 +31,6 @@ use modelardb_common::parser::ValidStatement;
 use modelardb_common::storage;
 use modelardb_common::types::ServerMode;
 use modelardb_common::{metadata, parser};
-use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::ObjectStore;
 use sqlx::Sqlite;
@@ -65,11 +64,8 @@ impl Context {
         cluster_mode: ClusterMode,
         server_mode: ServerMode,
     ) -> Result<Self, ModelarDbError> {
-        let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(&data_folders.local_data_folder).unwrap());
-
         let table_metadata_manager = Arc::new(
-            metadata::try_new_sqlite_table_metadata_manager(local_data_folder.clone())
+            metadata::try_new_sqlite_table_metadata_manager(data_folders.local_data_folder.clone())
                 .await
                 .map_err(|error| {
                     ModelarDbError::ConfigurationError(format!(
@@ -79,7 +75,7 @@ impl Context {
         );
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            local_data_folder.clone(),
+            data_folders.local_data_folder.clone(),
             cluster_mode,
             server_mode,
         )));
@@ -89,7 +85,7 @@ impl Context {
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(
                 runtime,
-                local_data_folder,
+                data_folders.local_data_folder.clone(),
                 data_folders.remote_data_folder.clone(),
                 &configuration_manager,
                 table_metadata_manager.clone(),
