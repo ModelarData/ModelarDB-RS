@@ -850,7 +850,7 @@ impl UncompressedDataManager {
 mod tests {
     use super::*;
 
-    use std::path::Path;
+    use std::path::Path as StdPath;
     use std::sync::Arc;
 
     use datafusion::arrow::array::StringBuilder;
@@ -861,7 +861,6 @@ mod tests {
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_common::test;
     use modelardb_common::types::{ServerMode, TimestampBuilder, ValueBuilder};
-    use object_store::path::Path as ObjectStorePath;
     use object_store::ObjectStore;
     use ringbuf::Rb;
     use tokio::time::{sleep, Duration};
@@ -929,7 +928,7 @@ mod tests {
         let spilled_buffers = storage_engine
             .uncompressed_data_manager
             .local_data_folder
-            .list(Some(&ObjectStorePath::from(UNCOMPRESSED_DATA_FOLDER)))
+            .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
             .collect::<Vec<_>>()
             .await;
 
@@ -1322,7 +1321,7 @@ mod tests {
         // The UncompressedDataBuffer should be spilled to univariate id in the uncompressed folder.
         let spilled_buffers = data_manager
             .local_data_folder
-            .list(Some(&ObjectStorePath::from(UNCOMPRESSED_DATA_FOLDER)))
+            .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
             .collect::<Vec<_>>()
             .await;
 
@@ -1552,7 +1551,7 @@ mod tests {
     /// Create a [`MetadataManager`] with a model table saved to it and an [`UncompressedDataManager`]
     /// with a folder that is deleted once the test is finished.
     async fn create_managers(
-        path: &Path,
+        path: &StdPath,
     ) -> (
         Arc<TableMetadataManager<Sqlite>>,
         UncompressedDataManager,

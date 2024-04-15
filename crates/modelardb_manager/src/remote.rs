@@ -43,8 +43,8 @@ use modelardb_common::parser::ValidStatement;
 use modelardb_common::schemas::{COMPRESSED_FILE_METADATA_SCHEMA, TAG_METADATA_SCHEMA};
 use modelardb_common::types::{ServerMode, TimestampArray, ValueArray};
 use modelardb_common::{metadata, parser, remote};
-use object_store::path::Path as ObjectStorePath;
 use object_store::ObjectMeta;
+use object_store::path::Path;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
 use tonic::{Request, Response, Status, Streaming};
@@ -259,7 +259,7 @@ impl FlightServiceHandler {
                     .unwrap();
 
                 let file_metadata = ObjectMeta {
-                    location: ObjectStorePath::from(file_path_array.value(row_index)),
+                    location: Path::from(file_path_array.value(row_index)),
                     last_modified,
                     size: size_array.value(row_index) as usize,
                     e_tag: None,

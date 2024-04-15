@@ -112,7 +112,7 @@ mod tests {
     use super::*;
 
     use chrono::Utc;
-    use object_store::path::Path as ObjectStorePath;
+    use object_store::path::Path;
     use uuid::Uuid;
 
     use crate::test::compressed_segments_record_batch;
@@ -121,7 +121,7 @@ mod tests {
     fn test_compressed_file_from_compressed_data() {
         let uuid = Uuid::new_v4();
         let object_meta = ObjectMeta {
-            location: ObjectStorePath::from(format!("test/{uuid}.parquet")),
+            location: Path::from(format!("test/{uuid}.parquet")),
             size: 0,
             last_modified: Utc::now(),
             e_tag: None,

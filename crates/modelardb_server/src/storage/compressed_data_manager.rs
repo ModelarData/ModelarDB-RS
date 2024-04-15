@@ -520,7 +520,6 @@ mod tests {
     use modelardb_common::test;
     use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
     use object_store::local::LocalFileSystem;
-    use object_store::path::Path as ObjectStorePath;
     use object_store::ObjectStore;
     use ringbuf::Rb;
     use tempfile::{self, TempDir};
@@ -535,7 +534,7 @@ mod tests {
         let (temp_dir, data_manager) = create_compressed_data_manager().await;
 
         let local_data_folder = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-        let table_folder = ObjectStorePath::parse(format!(
+        let table_folder = Path::parse(format!(
             "{COMPRESSED_DATA_FOLDER}/{}/",
             test::MODEL_TABLE_NAME
         ))
@@ -634,7 +633,7 @@ mod tests {
         // The compressed data should be saved to the table_name folder in the compressed folder.
         let parquet_files = data_manager
             .local_data_folder
-            .list(Some(&ObjectStorePath::from(format!(
+            .list(Some(&Path::from(format!(
                 "{COMPRESSED_DATA_FOLDER}/{}",
                 test::MODEL_TABLE_NAME
             ))))

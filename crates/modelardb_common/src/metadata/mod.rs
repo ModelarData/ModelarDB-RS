@@ -23,7 +23,7 @@ pub mod model_table_metadata;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::Hasher;
-use std::path::Path;
+use std::path::Path as StdPath;
 use std::sync::Arc;
 use std::{fs, mem};
 
@@ -35,7 +35,7 @@ use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use datafusion::common::{DFSchema, ToDFSchema};
 use futures::TryStreamExt;
 use object_store::local::LocalFileSystem;
-use object_store::path::Path as ObjectStorePath;
+use object_store::path::Path;
 use object_store::ObjectMeta;
 use sqlx::database::HasArguments;
 use sqlx::postgres::PgQueryResult;
@@ -954,7 +954,7 @@ pub async fn try_new_sqlite_table_metadata_manager(
 ) -> Result<TableMetadataManager<Sqlite>, Error> {
     // unwrap() is safe since the folder path cannot contain invalid characters.
     let database_path = local_data_folder
-        .path_to_filesystem(&ObjectStorePath::from(METADATA_DATABASE_NAME))
+        .path_to_filesystem(&Path::from(METADATA_DATABASE_NAME))
         .unwrap();
 
     // unwrap() is safe since the path is created with at least one component above.
@@ -992,7 +992,7 @@ pub fn new_table_metadata_manager<DB: Database + MetadataDatabase>(
 }
 
 /// Return [`true`] if `path` is a data folder, otherwise [`false`].
-fn is_path_a_data_folder(path: &Path) -> bool {
+fn is_path_a_data_folder(path: &StdPath) -> bool {
     if let Ok(files_and_folders) = fs::read_dir(path) {
         files_and_folders.count() == 0 || path.join(METADATA_DATABASE_NAME).exists()
     } else {
@@ -1100,7 +1100,7 @@ where
     let size: i64 = row.try_get("size")?;
 
     Ok(ObjectMeta {
-        location: ObjectStorePath::from(file_path),
+        location: Path::from(file_path),
         last_modified,
         size: size as usize,
         e_tag: None,
@@ -1853,7 +1853,7 @@ mod tests {
         max_value: Value,
     ) -> CompressedFile {
         let file_metadata = ObjectMeta {
-            location: ObjectStorePath::from(format!("test/{}.parquet", Uuid::new_v4())),
+            location: Path::from(format!("test/{}.parquet", Uuid::new_v4())),
             last_modified: Utc::now().round_subsecs(3),
             size: 0,
             e_tag: None,
@@ -2115,7 +2115,7 @@ mod tests {
     }
 
     async fn create_metadata_manager_and_save_model_table(
-        temp_dir: &Path,
+        temp_dir: &StdPath,
     ) -> TableMetadataManager<Sqlite> {
         let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir).unwrap());
         let metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
@@ -2239,7 +2239,7 @@ mod tests {
         assert!(is_path_a_data_folder(temp_dir.path()));
     }
 
-    fn create_empty_folder(path: &Path, name: &str) -> PathBuf {
+    fn create_empty_folder(path: &StdPath, name: &str) -> PathBuf {
         let path_buf = path.join(name);
         fs::create_dir(&path_buf).unwrap();
         path_buf
