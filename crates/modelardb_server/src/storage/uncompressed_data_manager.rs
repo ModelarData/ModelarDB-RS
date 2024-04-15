@@ -754,32 +754,32 @@ impl UncompressedDataManager {
         uncompressed_data_buffer: UncompressedDataBuffer,
     ) -> Result<(), SendError<Message<CompressedSegmentBatch>>> {
         let (
+            memory_use,
+            disk_use,
             maybe_data_points,
             univariate_id,
             error_bound,
             model_table_metadata,
-            memory_use,
-            disk_use,
         ) = match uncompressed_data_buffer {
             UncompressedDataBuffer::InMemory(mut uncompressed_in_memory_data_buffer) => (
+                UncompressedInMemoryDataBuffer::memory_size(),
+                0,
                 uncompressed_in_memory_data_buffer.record_batch().await,
                 uncompressed_in_memory_data_buffer.univariate_id(),
                 uncompressed_in_memory_data_buffer.error_bound(),
                 uncompressed_in_memory_data_buffer
                     .model_table_metadata()
                     .clone(),
-                UncompressedInMemoryDataBuffer::memory_size(),
-                0,
             ),
             UncompressedDataBuffer::OnDisk(uncompressed_on_disk_data_buffer) => (
+                0,
+                uncompressed_on_disk_data_buffer.disk_size().await,
                 uncompressed_on_disk_data_buffer.record_batch().await,
                 uncompressed_on_disk_data_buffer.univariate_id(),
                 uncompressed_on_disk_data_buffer.error_bound(),
                 uncompressed_on_disk_data_buffer
                     .model_table_metadata()
                     .clone(),
-                0,
-                uncompressed_on_disk_data_buffer.disk_size().await,
             ),
         };
 
