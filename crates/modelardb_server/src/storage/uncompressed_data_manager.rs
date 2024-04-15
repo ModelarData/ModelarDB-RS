@@ -864,6 +864,7 @@ mod tests {
     use object_store::path::Path as ObjectStorePath;
     use object_store::ObjectStore;
     use ringbuf::Rb;
+    use tokio::time::{sleep, Duration};
 
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
     use crate::DataFolders;
@@ -899,31 +900,50 @@ mod tests {
             .await
             .unwrap();
 
-        // Spill an uncompressed buffer to disk.
-        let storage_engine = context.storage_engine.read().await;
+        // Ingest a single data point and sleep to allow ingestion thread to finish.
+        let mut storage_engine = context.storage_engine.write().await;
         let model_table_metadata = Arc::new(test::model_table_metadata());
         let data = uncompressed_data(1, model_table_metadata.schema.clone());
-        let uncompressed_data_multivariate =
-            UncompressedDataMultivariate::new(model_table_metadata, data);
 
         storage_engine
-            .uncompressed_data_manager
-            .insert_data_points(uncompressed_data_multivariate)
+            .insert_data_points(model_table_metadata, data)
             .await
             .unwrap();
 
-        storage_engine
-            .uncompressed_data_manager
-            .spill_in_memory_data_buffer()
-            .await
-            .unwrap();
+        sleep(Duration::from_millis(250)).await;
 
-        let result = storage_engine
-            .initialize(temp_dir.path().to_path_buf(), &context)
+        for _ in 0..2 {
+            storage_engine
+                .uncompressed_data_manager
+                .spill_in_memory_data_buffer()
+                .await
+                .unwrap();
+        }
+
+        // Compress the spilled buffers and sleep to allow the compression thread to finish.
+        let result = storage_engine.initialize(&context).await;
+        assert!(result.is_ok());
+        sleep(Duration::from_millis(250)).await;
+
+        // The two spilled buffers should be deleted and the content should be compressed.
+        let spilled_buffers = storage_engine
+            .uncompressed_data_manager
+            .local_data_folder
+            .list(Some(&ObjectStorePath::from(UNCOMPRESSED_DATA_FOLDER)))
+            .collect::<Vec<_>>()
             .await;
 
-        // TODO: Add another assert here.
-        assert!(result.is_err());
+        assert_eq!(spilled_buffers.len(), 0);
+        assert_eq!(
+            storage_engine
+                .compressed_data_manager
+                .used_compressed_memory_metric
+                .lock()
+                .unwrap()
+                .values()
+                .len(),
+            2
+        );
     }
 
     #[tokio::test]
