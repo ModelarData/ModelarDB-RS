@@ -425,10 +425,11 @@ impl UncompressedDataManager {
                 // Reading the buffer into memory deletes the on-disk buffer's file on disk and
                 // read_apache_parquet() cannot take self as an argument due to how it is used.
                 // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-                self.used_disk_space_metric.lock().unwrap().append(
-                    -(uncompressed_on_disk_data_buffer.disk_size().await as isize),
-                    true,
-                );
+                let disk_size = uncompressed_on_disk_data_buffer.disk_size().await;
+                self.used_disk_space_metric
+                    .lock()
+                    .unwrap()
+                    .append(-(disk_size as isize), true);
 
                 let mut uncompressed_in_memory_data_buffer = uncompressed_on_disk_data_buffer
                     .read_from_apache_parquet(current_batch_index)

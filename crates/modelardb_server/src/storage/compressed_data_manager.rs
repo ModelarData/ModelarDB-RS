@@ -501,7 +501,7 @@ impl CompressedDataManager {
 
         // Return a CompressedFile that represents the successfully merged and written file.
         let object_meta = output_data_folder
-            .head(&output_file_path.into())
+            .head(&output_file_path)
             .await
             .map_err(|error| ParquetError::General(error.to_string()))?;
 

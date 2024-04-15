@@ -193,7 +193,10 @@ mod tests {
         let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
         let path = Path::from("test.txt");
-        object_store.put(&path, Bytes::from(Vec::new())).await.unwrap();
+        object_store
+            .put(&path, Bytes::from(Vec::new()))
+            .await
+            .unwrap();
 
         let result = read_record_batch_from_apache_parquet_file(&path, object_store);
         assert!(result.await.is_err());
