@@ -395,8 +395,7 @@ impl fmt::Debug for UncompressedOnDiskDataBuffer {
 mod tests {
     use super::*;
 
-    use std::fs;
-
+    use futures::StreamExt;
     use modelardb_common::test;
     use proptest::num::u64 as ProptestTimestamp;
     use proptest::{collection, proptest};
@@ -635,22 +634,19 @@ mod tests {
         let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
         let uncompressed_on_disk_buffer = runtime.block_on(uncompressed_in_memory_buffer
-            .spill_to_apache_parquet(object_store))
+            .spill_to_apache_parquet(object_store.clone()))
             .unwrap();
 
-        let spilled_buffer_folder = temp_dir
-            .path()
-            .join(UNCOMPRESSED_DATA_FOLDER)
-            .join("1");
-
-        assert_eq!(fs::read_dir(&spilled_buffer_folder).unwrap().count(), 1);
+        let spilled_buffers = runtime.block_on(object_store.list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER))).collect::<Vec<_>>());
+        assert_eq!(spilled_buffers.len(), 1);
 
         let data = runtime.block_on(uncompressed_on_disk_buffer.record_batch()).unwrap();
         assert_eq!(data.num_columns(), 2);
         let timestamps = modelardb_common::array!(data, 0, TimestampArray);
         assert!(timestamps.values().windows(2).all(|pair| pair[0] <= pair[1]));
 
-        assert_eq!(fs::read_dir(&spilled_buffer_folder).unwrap().count(), 0);
+        let spilled_buffers = runtime.block_on(object_store.list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER))).collect::<Vec<_>>());
+        assert_eq!(spilled_buffers.len(), 0);
     }
     }
 

@@ -162,7 +162,6 @@ pub async fn write_compressed_segments_to_apache_parquet_file(
 mod tests {
     use super::*;
 
-    use std::fs::File;
     use std::sync::Arc;
 
     use arrow::datatypes::{Field, Schema};
@@ -193,12 +192,10 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
-        let path_buf = temp_dir.path().join("test.txt");
-        File::create(path_buf.clone()).unwrap();
-
         let path = Path::from("test.txt");
-        let result = read_record_batch_from_apache_parquet_file(&path, object_store);
+        object_store.put(&path, Bytes::from(Vec::new())).await.unwrap();
 
+        let result = read_record_batch_from_apache_parquet_file(&path, object_store);
         assert!(result.await.is_err());
     }
 
@@ -208,8 +205,8 @@ mod tests {
         let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
         let path = Path::from("test.parquet");
-        let result = read_record_batch_from_apache_parquet_file(&path, object_store);
 
+        let result = read_record_batch_from_apache_parquet_file(&path, object_store);
         assert!(result.await.is_err());
     }
 
