@@ -1098,14 +1098,16 @@ mod tests {
         path: &Path,
         query: &str,
     ) -> Arc<dyn ExecutionPlan> {
+        let local_data_folder = Arc::new(LocalFileSystem::new_with_prefix(path).unwrap());
+
         // Create a simple context.
         let context = Arc::new(
             Context::try_new(
                 Arc::new(Runtime::new().unwrap()),
                 &DataFolders {
-                    local_data_folder: path.to_path_buf(),
+                    local_data_folder: local_data_folder.clone(),
                     remote_data_folder: None,
-                    query_data_folder: Arc::new(LocalFileSystem::new_with_prefix(path).unwrap()),
+                    query_data_folder: local_data_folder,
                 },
                 ClusterMode::SingleNode,
                 ServerMode::Edge,

@@ -875,17 +875,17 @@ mod tests {
     #[tokio::test]
     async fn test_can_compress_existing_on_disk_data_buffers_when_initializing() {
         let temp_dir = tempfile::tempdir().unwrap();
+        let local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
         // Create a context with a storage engine.
         let context = Arc::new(
             Context::try_new(
                 Arc::new(Runtime::new().unwrap()),
                 &DataFolders {
-                    local_data_folder: temp_dir.path().to_path_buf(),
+                    local_data_folder: local_data_folder.clone(),
                     remote_data_folder: None,
-                    query_data_folder: Arc::new(
-                        LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap(),
-                    ),
+                    query_data_folder: local_data_folder,
                 },
                 ClusterMode::SingleNode,
                 ServerMode::Edge,

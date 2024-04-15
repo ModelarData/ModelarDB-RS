@@ -257,7 +257,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        assert_single_edge_without_remote_data_folder(temp_dir_str, &["edge", temp_dir_str]).await;
+        assert_single_edge_without_remote_data_folder(&["edge", temp_dir_str]).await;
     }
 
     #[tokio::test]
@@ -265,16 +265,15 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        assert_single_edge_without_remote_data_folder(temp_dir_str, &[temp_dir_str]).await;
+        assert_single_edge_without_remote_data_folder(&[temp_dir_str]).await;
     }
 
-    async fn assert_single_edge_without_remote_data_folder(temp_dir_str: &str, input: &[&str]) {
+    async fn assert_single_edge_without_remote_data_folder(input: &[&str]) {
         let (server_mode, cluster_mode, data_folders) =
             parse_command_line_arguments(input).await.unwrap();
 
         assert_eq!(server_mode, ServerMode::Edge);
         assert_eq!(cluster_mode, ClusterMode::SingleNode);
-        assert_eq!(data_folders.local_data_folder, PathBuf::from(temp_dir_str));
         assert!(data_folders.remote_data_folder.is_none());
     }
 
