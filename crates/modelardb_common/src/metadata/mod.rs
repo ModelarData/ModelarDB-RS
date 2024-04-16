@@ -1000,7 +1000,7 @@ async fn is_local_file_system_a_data_folder(local_file_system: &LocalFileSystem)
         .await
         .is_ok();
 
-    files_and_folders.len() == 0 || metadata_database_exists
+    files_and_folders.is_empty() || metadata_database_exists
 }
 
 /// Extract the first 54-bits from `univariate_id` which is a hash computed from tags.

@@ -851,7 +851,6 @@ impl UncompressedDataManager {
 mod tests {
     use super::*;
 
-    use std::path::Path as StdPath;
     use std::sync::Arc;
 
     use datafusion::arrow::array::StringBuilder;
@@ -864,6 +863,7 @@ mod tests {
     use modelardb_common::types::{ServerMode, TimestampBuilder, ValueBuilder};
     use object_store::ObjectStore;
     use ringbuf::Rb;
+    use tempfile::TempDir;
     use tokio::time::{sleep, Duration};
 
     use crate::storage::UNCOMPRESSED_DATA_BUFFER_CAPACITY;
@@ -950,7 +950,7 @@ mod tests {
     async fn test_can_insert_record_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, data_manager, model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            create_managers(&temp_dir).await;
 
         let data = uncompressed_data(1, model_table_metadata.schema.clone());
         let uncompressed_data_multivariate =
@@ -978,7 +978,7 @@ mod tests {
     async fn test_can_insert_record_batch_with_multiple_data_points() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, data_manager, model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            create_managers(&temp_dir).await;
 
         let data = uncompressed_data(2, model_table_metadata.schema.clone());
         let uncompressed_data_multivariate =
@@ -1006,7 +1006,7 @@ mod tests {
     async fn test_remaining_multivariate_memory_increased_after_processing_record_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, data_manager, model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            create_managers(&temp_dir).await;
 
         let data = uncompressed_data(2, model_table_metadata.schema.clone());
         let data_size = data.get_array_memory_size();
@@ -1072,7 +1072,7 @@ mod tests {
     async fn test_can_insert_data_point_into_new_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            create_managers(&temp_dir).await;
 
         insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
 
@@ -1093,7 +1093,7 @@ mod tests {
     async fn test_can_insert_data_point_into_existing_in_memory_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            create_managers(&temp_dir).await;
 
         insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
@@ -1120,7 +1120,7 @@ mod tests {
     async fn test_can_insert_data_point_into_existing_on_disk_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            create_managers(&temp_dir).await;
 
         insert_data_points(1, &mut data_manager, &model_table_metadata, UNIVARIATE_ID).await;
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
@@ -1151,7 +1151,7 @@ mod tests {
     async fn test_will_finish_unused_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, data_manager, model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            create_managers(&temp_dir).await;
 
         // Insert using insert_data_points() to increment the batch counter.
         let mut timestamp = TimestampBuilder::new();
@@ -1215,7 +1215,7 @@ mod tests {
     async fn test_can_get_finished_uncompressed_data_buffer_when_finished() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            create_managers(&temp_dir).await;
         insert_data_points(
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
             &mut data_manager,
@@ -1235,7 +1235,7 @@ mod tests {
     async fn test_can_get_multiple_finished_uncompressed_data_buffers_when_multiple_finished() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            create_managers(&temp_dir).await;
 
         insert_data_points(
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY * 2,
@@ -1262,7 +1262,7 @@ mod tests {
     async fn test_cannot_get_finished_uncompressed_data_buffers_when_none_are_finished() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, data_manager, _model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            create_managers(&temp_dir).await;
 
         assert!(data_manager
             .channels
@@ -1275,7 +1275,7 @@ mod tests {
     async fn test_spill_random_uncompressed_data_buffer_to_disk_if_out_of_memory() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            create_managers(&temp_dir).await;
         let reserved_memory = data_manager
             .memory_pool
             .remaining_uncompressed_memory_in_bytes() as usize;
@@ -1333,7 +1333,7 @@ mod tests {
     async fn test_remaining_memory_decremented_when_creating_new_uncompressed_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            create_managers(&temp_dir).await;
         let reserved_memory = data_manager
             .memory_pool
             .remaining_uncompressed_memory_in_bytes();
@@ -1363,7 +1363,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let runtime = Arc::new(Runtime::new().unwrap());
         let (_metadata_manager, mut data_manager, model_table_metadata) =
-            runtime.block_on(create_managers(temp_dir.path()));
+            runtime.block_on(create_managers(&temp_dir));
 
         runtime.block_on(insert_data_points(
             *UNCOMPRESSED_DATA_BUFFER_CAPACITY,
@@ -1408,7 +1408,7 @@ mod tests {
 
         let runtime = Arc::new(Runtime::new().unwrap());
         let (_metadata_manager, data_manager, model_table_metadata) =
-            runtime.block_on(create_managers(temp_dir.path()));
+            runtime.block_on(create_managers(&temp_dir));
 
         // Add the spilled buffer.
         let uncompressed_data = RecordBatch::try_new(
@@ -1463,7 +1463,7 @@ mod tests {
     async fn test_increase_uncompressed_remaining_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, data_manager, _model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            create_managers(&temp_dir).await;
 
         data_manager
             .adjust_uncompressed_remaining_memory_in_bytes(10000)
@@ -1482,7 +1482,7 @@ mod tests {
     async fn test_decrease_uncompressed_remaining_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, mut data_manager, model_table_metadata) =
-            create_managers(temp_dir.path()).await;
+            create_managers(&temp_dir).await;
 
         // Insert data that should be spilled when the remaining memory is decreased.
         insert_data_points(
@@ -1552,13 +1552,13 @@ mod tests {
     /// Create a [`MetadataManager`] with a model table saved to it and an [`UncompressedDataManager`]
     /// with a folder that is deleted once the test is finished.
     async fn create_managers(
-        path: &StdPath,
+        temp_dir: &TempDir,
     ) -> (
         Arc<TableMetadataManager<Sqlite>>,
         UncompressedDataManager,
         Arc<ModelTableMetadata>,
     ) {
-        let object_store = Arc::new(LocalFileSystem::new_with_prefix(path).unwrap());
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let metadata_manager = Arc::new(
             metadata::try_new_sqlite_table_metadata_manager(object_store.clone())
                 .await
