@@ -1170,7 +1170,7 @@ pub fn normalize_name(name: &str) -> String {
 mod tests {
     use super::*;
 
-    use std::path::PathBuf;
+    use std::path::Path as StdPath;
     use std::sync::Arc;
 
     use chrono::SubsecRound;
@@ -1180,6 +1180,7 @@ mod tests {
     use once_cell::sync::Lazy;
     use proptest::{collection, num, prop_assert_eq, proptest};
     use sqlx::Row;
+    use tonic::codegen::Bytes;
     use uuid::Uuid;
 
     use crate::test;
@@ -2220,32 +2221,47 @@ mod tests {
         }
     }
 
-    // Tests for is_path_a_data_folder().
-    #[test]
-    fn test_a_non_empty_folder_without_metadata_is_not_a_data_folder() {
+    // Tests for is_local_file_system_a_data_folder().
+    #[tokio::test]
+    async fn test_a_non_empty_local_file_system_without_metadata_database_is_not_a_data_folder() {
         let temp_dir = tempfile::tempdir().unwrap();
-        create_empty_folder(temp_dir.path(), "folder");
-        assert!(!is_path_a_data_folder(temp_dir.path()));
+        let local_file_system = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        local_file_system
+            .put(&Path::from("folder/test.parquet"), Bytes::from(Vec::new()))
+            .await
+            .unwrap();
+
+        assert!(!is_local_file_system_a_data_folder(&local_file_system).await);
     }
 
-    #[test]
-    fn test_an_empty_folder_is_a_data_folder() {
+    #[tokio::test]
+    async fn test_an_empty_local_file_system_is_a_data_folder() {
         let temp_dir = tempfile::tempdir().unwrap();
-        assert!(is_path_a_data_folder(temp_dir.path()));
+        let local_file_system = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        assert!(is_local_file_system_a_data_folder(&local_file_system).await);
     }
 
-    #[test]
-    fn test_a_non_empty_folder_with_metadata_is_a_data_folder() {
+    #[tokio::test]
+    async fn test_a_non_empty_local_file_system_with_metadata_database_is_a_data_folder() {
         let temp_dir = tempfile::tempdir().unwrap();
-        create_empty_folder(temp_dir.path(), "table_folder");
-        fs::create_dir(temp_dir.path().join(METADATA_DATABASE_NAME)).unwrap();
-        assert!(is_path_a_data_folder(temp_dir.path()));
-    }
+        let local_file_system =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
-    fn create_empty_folder(path: &StdPath, name: &str) -> PathBuf {
-        let path_buf = path.join(name);
-        fs::create_dir(&path_buf).unwrap();
-        path_buf
+        local_file_system
+            .put(
+                &Path::from("table_folder/test.parquet"),
+                Bytes::from(Vec::new()),
+            )
+            .await
+            .unwrap();
+
+        try_new_sqlite_table_metadata_manager(local_file_system.clone())
+            .await
+            .unwrap();
+
+        assert!(is_local_file_system_a_data_folder(&local_file_system).await);
     }
 
     // Tests for normalize_name().
