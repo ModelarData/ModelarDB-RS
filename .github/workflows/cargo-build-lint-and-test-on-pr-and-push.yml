@@ -39,7 +39,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Ast-grep Scan
-      uses: ast-grep/action@latest
+      uses: ast-grep/action@v1.4
 
     - name: Rustup Update
       run: rustup update
