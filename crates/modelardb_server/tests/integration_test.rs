@@ -195,7 +195,7 @@ impl TestContext {
         }
     }
 
-    /// Return a Apache Arrow Flight client to access the remote methods provided by the server.
+    /// Return an Apache Arrow Flight client to access the remote methods provided by the server.
     fn create_apache_arrow_flight_service_client(
         runtime: &Runtime,
         host: &str,

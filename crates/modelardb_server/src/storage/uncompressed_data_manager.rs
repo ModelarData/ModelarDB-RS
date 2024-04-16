@@ -50,7 +50,7 @@ use crate::storage::{Metric, UNCOMPRESSED_DATA_FOLDER};
 use crate::ClusterMode;
 
 /// Stores uncompressed data points temporarily in an in-memory buffer that spills to Apache Parquet
-/// files. When a uncompressed data buffer is finished the data is made available for compression.
+/// files. When an uncompressed data buffer is finished the data is made available for compression.
 pub(super) struct UncompressedDataManager {
     /// Path to the folder containing all uncompressed data managed by the
     /// [`StorageEngine`](crate::storage::StorageEngine).
