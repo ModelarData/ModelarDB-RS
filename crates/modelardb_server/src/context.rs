@@ -387,15 +387,14 @@ impl Context {
 mod tests {
     use super::*;
 
-    use std::path::Path;
-
     use modelardb_common::test;
     use object_store::local::LocalFileSystem;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_parse_and_create_table_with_invalid_sql() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         assert!(context
             .parse_and_create_table("TABLE CREATE table_name(timestamp TIMESTAMP)", &context)
@@ -406,7 +405,7 @@ mod tests {
     #[tokio::test]
     async fn test_parse_and_create_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         context
             .parse_and_create_table(test::TABLE_SQL, &context)
@@ -433,7 +432,7 @@ mod tests {
     #[tokio::test]
     async fn test_parse_and_create_existing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         assert!(context
             .parse_and_create_table(test::TABLE_SQL, &context)
@@ -449,7 +448,7 @@ mod tests {
     #[tokio::test]
     async fn test_parse_and_create_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         context
             .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
@@ -478,7 +477,7 @@ mod tests {
     #[tokio::test]
     async fn test_parse_and_create_existing_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         assert!(context
             .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
@@ -497,7 +496,7 @@ mod tests {
 
         // Save a table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         context
             .parse_and_create_table(test::TABLE_SQL, &context)
@@ -505,7 +504,7 @@ mod tests {
             .unwrap();
 
         // Create a new context to clear the Apache Arrow Datafusion catalog.
-        let context_2 = create_context(temp_dir.path()).await;
+        let context_2 = create_context(&temp_dir).await;
 
         // Register the table with Apache Arrow DataFusion.
         context_2.register_tables().await.unwrap();
@@ -517,7 +516,7 @@ mod tests {
 
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         let model_table_metadata = test::model_table_metadata();
         context
@@ -533,7 +532,7 @@ mod tests {
     #[tokio::test]
     async fn test_model_table_metadata_from_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         context
             .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
@@ -552,7 +551,7 @@ mod tests {
     #[tokio::test]
     async fn test_table_model_table_metadata_from_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         context
             .parse_and_create_table(test::TABLE_SQL, &context)
@@ -569,7 +568,7 @@ mod tests {
     #[tokio::test]
     async fn test_non_existent_model_table_metadata_from_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         assert!(context
             .model_table_metadata_from_default_database_schema(test::MODEL_TABLE_NAME)
@@ -580,7 +579,7 @@ mod tests {
     #[tokio::test]
     async fn test_check_if_existing_table_exists() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         context
             .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
@@ -596,7 +595,7 @@ mod tests {
     #[tokio::test]
     async fn test_check_if_non_existent_table_exists() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         assert!(context
             .check_if_table_exists(test::MODEL_TABLE_NAME)
@@ -607,7 +606,7 @@ mod tests {
     #[tokio::test]
     async fn test_schema_of_table_in_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         context
             .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
@@ -625,7 +624,7 @@ mod tests {
     #[tokio::test]
     async fn test_schema_of_non_existent_table_in_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         assert!(context
             .schema_of_table_in_default_database_schema(test::MODEL_TABLE_NAME)
@@ -634,8 +633,9 @@ mod tests {
     }
 
     /// Create a simple [`Context`] that uses `path` as the local data folder and query data folder.
-    async fn create_context(path: &Path) -> Arc<Context> {
-        let local_data_folder = Arc::new(LocalFileSystem::new_with_prefix(path).unwrap());
+    async fn create_context(temp_dir: &TempDir) -> Arc<Context> {
+        let local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
         Arc::new(
             Context::try_new(
