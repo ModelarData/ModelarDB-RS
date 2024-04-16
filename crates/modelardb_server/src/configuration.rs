@@ -230,13 +230,13 @@ impl ConfigurationManager {
 mod tests {
     use super::*;
 
-    use std::path::Path;
     use std::sync::Arc;
 
     use arrow_flight::flight_service_client::FlightServiceClient;
     use modelardb_common::metadata;
     use modelardb_common::types::ServerMode;
     use object_store::local::LocalFileSystem;
+    use tempfile::TempDir;
     use tokio::runtime::Runtime;
     use tokio::sync::RwLock;
     use tonic::transport::Channel;
@@ -249,7 +249,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_multivariate_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -277,7 +277,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_uncompressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -306,7 +306,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_compressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -335,7 +335,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_transfer_batch_size_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -364,7 +364,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_transfer_time_in_seconds() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -392,12 +392,13 @@ mod tests {
 
     /// Create a [`StorageEngine`] and a [`ConfigurationManager`].
     async fn create_components(
-        path: &Path,
+        temp_dir: &TempDir,
     ) -> (
         Arc<RwLock<StorageEngine>>,
         Arc<RwLock<ConfigurationManager>>,
     ) {
-        let local_data_folder = Arc::new(LocalFileSystem::new_with_prefix(path).unwrap());
+        let local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
         let metadata_manager =
             metadata::try_new_sqlite_table_metadata_manager(local_data_folder.clone())
