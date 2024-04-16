@@ -1,5 +1,5 @@
 id: leftover_debugging
-message: Leftover debug constructs or inforamtion.
+message: Leftover debug constructs or information.
 severity: error
 language: Rust
 rule:
