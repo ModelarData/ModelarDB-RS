@@ -38,6 +38,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Ast-grep Scan
+      uses: ast-grep/action@latest
+
     - name: Rustup Update
       run: rustup update
     - name: Rustup Add llvm-tools

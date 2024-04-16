@@ -1,0 +1,6 @@
+id: leftover_debugging
+message: Leftover debug constructs or inforamtion.
+severity: error
+language: Rust
+rule:
+  pattern: dbg!($$$_)
