@@ -1170,7 +1170,6 @@ pub fn normalize_name(name: &str) -> String {
 mod tests {
     use super::*;
 
-    use std::path::Path as StdPath;
     use std::sync::Arc;
 
     use chrono::SubsecRound;
@@ -1180,6 +1179,7 @@ mod tests {
     use once_cell::sync::Lazy;
     use proptest::{collection, num, prop_assert_eq, proptest};
     use sqlx::Row;
+    use tempfile::TempDir;
     use tonic::codegen::Bytes;
     use uuid::Uuid;
 
@@ -1349,7 +1349,7 @@ mod tests {
     #[tokio::test]
     async fn test_compute_univariate_ids_using_fields_and_tags_for_empty_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
+        let metadata_manager = create_metadata_manager_and_save_model_table(&temp_dir).await;
 
         // Lookup univariate ids using fields and tags for an empty table.
         let univariate_ids = metadata_manager
@@ -1612,7 +1612,7 @@ mod tests {
         // create_metadata_manager_with_named_model_table_and_save_files() is not reused as dropping
         // the TempDir which created the folder containing the database leaves it in read-only mode.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
+        let metadata_manager = create_metadata_manager_and_save_model_table(&temp_dir).await;
 
         for compressed_file in compressed_files {
             metadata_manager
@@ -1661,7 +1661,7 @@ mod tests {
         // create_metadata_manager_with_named_model_table_and_save_files() is not reused as dropping
         // the TempDir which created the folder containing the database leaves it in read-only mode.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
+        let metadata_manager = create_metadata_manager_and_save_model_table(&temp_dir).await;
 
         let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
         for compressed_file in &compressed_files {
@@ -1970,7 +1970,7 @@ mod tests {
         compressed_files: &[CompressedFile],
     ) -> Result<TableMetadataManager<Sqlite>, Error> {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
+        let metadata_manager = create_metadata_manager_and_save_model_table(&temp_dir).await;
 
         for compressed_file in compressed_files {
             metadata_manager
@@ -2108,7 +2108,7 @@ mod tests {
     #[tokio::test]
     async fn test_model_table_metadata() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
+        let metadata_manager = create_metadata_manager_and_save_model_table(&temp_dir).await;
 
         let model_table_metadata = metadata_manager.model_table_metadata().await.unwrap();
 
@@ -2119,9 +2119,9 @@ mod tests {
     }
 
     async fn create_metadata_manager_and_save_model_table(
-        temp_dir: &StdPath,
+        temp_dir: &TempDir,
     ) -> TableMetadataManager<Sqlite> {
-        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir).unwrap());
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let metadata_manager = try_new_sqlite_table_metadata_manager(object_store)
             .await
             .unwrap();
