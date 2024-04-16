@@ -988,7 +988,6 @@ mod tests {
     use super::*;
 
     use std::any::TypeId;
-    use std::path::Path;
 
     use datafusion::datasource::physical_plan::parquet::ParquetExec;
     use datafusion::physical_plan::aggregates::AggregateExec;
@@ -998,6 +997,7 @@ mod tests {
     use modelardb_common::test;
     use modelardb_common::types::ServerMode;
     use object_store::local::LocalFileSystem;
+    use tempfile::TempDir;
     use tokio::runtime::Runtime;
 
     use crate::context::Context;
@@ -1010,7 +1010,7 @@ mod tests {
     async fn test_rewrite_aggregate_on_one_column_without_predicates() {
         let temp_dir = tempfile::tempdir().unwrap();
         let query = &format!("SELECT COUNT(field_1) FROM {}", test::MODEL_TABLE_NAME);
-        let physical_plan = query_optimized_physical_query_plan(temp_dir.path(), query).await;
+        let physical_plan = query_optimized_physical_query_plan(&temp_dir, query).await;
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -1042,7 +1042,7 @@ mod tests {
         for query in [query_no_avg, query_only_avg] {
             let temp_dir = tempfile::tempdir().unwrap();
 
-            let physical_plan = query_optimized_physical_query_plan(temp_dir.path(), query).await;
+            let physical_plan = query_optimized_physical_query_plan(&temp_dir, query).await;
             assert_eq_physical_plan_expected(physical_plan, &expected_plan);
         }
     }
@@ -1054,7 +1054,7 @@ mod tests {
             "SELECT COUNT(field_1) FROM {} WHERE field_1 = 37.0",
             test::MODEL_TABLE_NAME
         );
-        let physical_plan = query_optimized_physical_query_plan(temp_dir.path(), query).await;
+        let physical_plan = query_optimized_physical_query_plan(&temp_dir, query).await;
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -1078,7 +1078,7 @@ mod tests {
             "SELECT COUNT(field_1), COUNT(field_2) FROM {}",
             test::MODEL_TABLE_NAME
         );
-        let physical_plan = query_optimized_physical_query_plan(temp_dir.path(), query).await;
+        let physical_plan = query_optimized_physical_query_plan(&temp_dir, query).await;
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -1095,10 +1095,11 @@ mod tests {
 
     /// Parse, plan, and optimize the `query` for execution on data in `path`.
     async fn query_optimized_physical_query_plan(
-        path: &Path,
+        temp_dir: &TempDir,
         query: &str,
     ) -> Arc<dyn ExecutionPlan> {
-        let local_data_folder = Arc::new(LocalFileSystem::new_with_prefix(path).unwrap());
+        let local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
         // Create a simple context.
         let context = Arc::new(
