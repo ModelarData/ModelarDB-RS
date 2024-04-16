@@ -21,7 +21,6 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::env::{self, Args};
 use std::error::Error;
-use std::fs::{self, File};
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::process;
 use std::result::Result;
@@ -29,13 +28,16 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use arrow::array::ArrayRef;
-use arrow::datatypes::{Schema, SchemaRef};
+use arrow::datatypes::{Schema, SchemaRef, ToByteSlice};
 use arrow::error::ArrowError;
 use arrow::ipc::convert;
 use arrow::util::pretty;
 use arrow_flight::flight_service_client::FlightServiceClient;
 use arrow_flight::{utils, Action, Criteria, FlightData, FlightDescriptor, Ticket};
 use bytes::Bytes;
+use object_store::local::LocalFileSystem;
+use object_store::path::Path;
+use object_store::ObjectStore;
 use rustyline::history::FileHistory;
 use rustyline::Editor;
 use tonic::transport::Channel;
@@ -61,6 +63,9 @@ const TRANSPORT_ERROR: &str = "transport error: no messages received.";
 /// read.
 #[tokio::main]
 async fn main() -> Result<(), String> {
+    let local_file_system = LocalFileSystem::new_with_prefix(env::current_dir().unwrap())
+        .map_err(|error| error.to_string())?;
+
     // Parse the command line arguments.
     let args = env::args();
     if args.len() > 3 {
@@ -72,7 +77,8 @@ async fn main() -> Result<(), String> {
             binary_name.to_str().unwrap()
         ))?;
     }
-    let (maybe_host, maybe_port, maybe_query_file_path) = parse_command_line_arguments(args);
+    let (maybe_host, maybe_port, maybe_query_file_path) =
+        parse_command_line_arguments(args, &local_file_system).await;
 
     // Connect to the server.
     let host = maybe_host.unwrap_or_else(|| DEFAULT_HOST.to_owned());
@@ -83,7 +89,7 @@ async fn main() -> Result<(), String> {
 
     // Execute the queries.
     if let Some(query_file) = maybe_query_file_path {
-        execute_queries_from_a_file(flight_service_client, &query_file).await
+        execute_queries_from_a_file(flight_service_client, &query_file, &local_file_system).await
     } else {
         execute_queries_from_a_repl(flight_service_client).await
     }
@@ -93,7 +99,10 @@ async fn main() -> Result<(), String> {
 /// Parse the command line arguments in `args` and return a triple with the host of the server to
 /// connect to, the port to connect to, and the file containing the queries to execute on the
 /// server. If one of these command line arguments is not provided it is replaced with [`None`].
-fn parse_command_line_arguments(mut args: Args) -> (Option<String>, Option<u16>, Option<String>) {
+async fn parse_command_line_arguments(
+    mut args: Args,
+    local_file_system: &LocalFileSystem,
+) -> (Option<String>, Option<u16>, Option<String>) {
     // Drop the path of the executable.
     args.next();
 
@@ -103,8 +112,11 @@ fn parse_command_line_arguments(mut args: Args) -> (Option<String>, Option<u16>,
     let mut query_file = None;
 
     for arg in args {
-        let metadata = fs::metadata(&arg);
-        if metadata.is_ok() && metadata.unwrap().is_file() {
+        if local_file_system
+            .head(&Path::from(arg.as_str()))
+            .await
+            .is_ok()
+        {
             // Assumes all files contains queries.
             query_file = Some(arg);
         } else if arg.contains(':') {
@@ -137,9 +149,11 @@ async fn connect(host: &str, port: u16) -> Result<FlightServiceClient<Channel>, 
 async fn execute_queries_from_a_file(
     mut flight_service_client: FlightServiceClient<Channel>,
     query_file_path: &str,
+    local_file_system: &LocalFileSystem,
 ) -> Result<(), Box<dyn Error>> {
-    let file = File::open(query_file_path)?;
-    let lines = io::BufReader::new(file).lines();
+    let file = local_file_system.get(&Path::from(query_file_path)).await?;
+    let bytes = file.bytes().await?;
+    let lines = io::BufReader::new(bytes.to_byte_slice()).lines();
 
     for line in lines {
         // Remove any comments.
