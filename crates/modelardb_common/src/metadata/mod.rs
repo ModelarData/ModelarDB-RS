@@ -23,9 +23,8 @@ pub mod model_table_metadata;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::Hasher;
-use std::path::Path as StdPath;
+use std::mem;
 use std::sync::Arc;
-use std::{fs, mem};
 
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use chrono::{TimeZone, Utc};
@@ -33,10 +32,11 @@ use dashmap::DashMap;
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use datafusion::common::{DFSchema, ToDFSchema};
+use futures::StreamExt;
 use futures::TryStreamExt;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
-use object_store::ObjectMeta;
+use object_store::{ObjectMeta, ObjectStore};
 use sqlx::database::HasArguments;
 use sqlx::postgres::PgQueryResult;
 use sqlx::query::Query;
@@ -958,7 +958,7 @@ pub async fn try_new_sqlite_table_metadata_manager(
         .unwrap();
 
     // unwrap() is safe since the path is created with at least one component above.
-    if !is_path_a_data_folder(database_path.parent().unwrap()) {
+    if !is_local_file_system_a_data_folder(&local_data_folder).await {
         warn!("The data folder is not empty and does not contain data from ModelarDB.");
     }
 
@@ -991,13 +991,16 @@ pub fn new_table_metadata_manager<DB: Database + MetadataDatabase>(
     }
 }
 
-/// Return [`true`] if `path` is a data folder, otherwise [`false`].
-fn is_path_a_data_folder(path: &StdPath) -> bool {
-    if let Ok(files_and_folders) = fs::read_dir(path) {
-        files_and_folders.count() == 0 || path.join(METADATA_DATABASE_NAME).exists()
-    } else {
-        false
-    }
+/// Return [`true`] if `local_file_system` is a data folder, otherwise [`false`].
+async fn is_local_file_system_a_data_folder(local_file_system: &LocalFileSystem) -> bool {
+    let files_and_folders = local_file_system.list(None).collect::<Vec<_>>().await;
+
+    let metadata_database_exists = local_file_system
+        .head(&Path::from(METADATA_DATABASE_NAME))
+        .await
+        .is_ok();
+
+    files_and_folders.len() == 0 || metadata_database_exists
 }
 
 /// Extract the first 54-bits from `univariate_id` which is a hash computed from tags.
