@@ -178,7 +178,7 @@ fn segments_can_be_merged(
         return true;
     }
 
-    // Only segments from the same time series can be merged
+    // Only segments from the same time series can be merged.
     if univariate_ids.value(previous_index) != univariate_ids.value(current_index) {
         return false;
     }

@@ -498,7 +498,7 @@ mod tests {
     proptest! {
     #[test]
     fn test_record_batch_from_in_memory_data_buffer_is_sorted(timestamps in collection::vec(ProptestTimestamp::ANY, 1..50)) {
-        // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179
+        // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179.
         let runtime = Runtime::new().unwrap();
 
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
@@ -592,7 +592,7 @@ mod tests {
 
     proptest! {
     #[test] fn test_record_batch_from_on_disk_data_buffer_is_sorted(timestamps in collection::vec(ProptestTimestamp::ANY, 1..50)) {
-        // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179
+        // tokio::test is not supported in proptest! due to proptest-rs/proptest/issues/179.
         let runtime = Runtime::new().unwrap();
 
         let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
