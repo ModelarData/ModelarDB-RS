@@ -342,7 +342,7 @@ mod tests {
     fn test_compress_and_decompress_bucket_sized_1_timestamps_for_an_irregular_time_series() {
         compress_and_decompress_timestamps_for_a_time_series(
             &[
-                100, 100, // 0
+                100, 100, // 0.
                 200,
             ],
             Some(1),
@@ -353,8 +353,8 @@ mod tests {
     fn test_compress_and_decompress_bucket_sized_7_timestamps_for_an_irregular_time_series() {
         compress_and_decompress_timestamps_for_a_time_series(
             &[
-                100, 37, // -63
-                38, //  64
+                100, 37, // -63.
+                38, //  64.
                 200,
             ],
             Some(3),
@@ -365,8 +365,8 @@ mod tests {
     fn test_compress_and_decompress_bucket_sized_9_timestamps_for_an_irregular_time_series() {
         compress_and_decompress_timestamps_for_a_time_series(
             &[
-                500, 245, // -255
-                246, //  256
+                500, 245, // -255.
+                246, //  256.
                 500,
             ],
             Some(4),
@@ -377,8 +377,8 @@ mod tests {
     fn test_compress_and_decompress_bucket_sized_12_timestamps_for_an_irregular_time_series() {
         compress_and_decompress_timestamps_for_a_time_series(
             &[
-                5000, 2953, // -2047
-                2954, //  2048
+                5000, 2953, // -2047.
+                2954, //  2048.
                 5000,
             ],
             Some(5),
@@ -389,8 +389,8 @@ mod tests {
     fn test_compress_and_decompress_bucket_sized_32_timestamps_for_an_irregular_time_series() {
         compress_and_decompress_timestamps_for_a_time_series(
             &[
-                5000000000, 2852516353, // -2147483647
-                2852516354, //  2147483648
+                5000000000, 2852516353, // -2147483647.
+                2852516354, //  2147483648.
                 5000000000,
             ],
             Some(10),

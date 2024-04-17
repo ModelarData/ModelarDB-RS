@@ -463,7 +463,7 @@ where
             field_columns.push(fallback_field_column);
         }
 
-        // Retrieve the hashes and compute the univariate ids;
+        // Retrieve the hashes and compute the univariate ids.
         let mut rows = sqlx::query(query_hashes).fetch(&self.metadata_database_pool);
 
         let mut univariate_ids = vec![];
