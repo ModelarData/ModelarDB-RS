@@ -142,7 +142,7 @@ async fn connect(host: &str, port: u16) -> Result<FlightServiceClient<Channel>, 
     Ok(FlightServiceClient::connect(address).await?)
 }
 
-/// Execute the actions, commands, and queries in the file at `query_file_path`.
+/// Execute the actions, commands, and queries in `query_file`.
 async fn execute_queries_from_a_file(
     mut flight_service_client: FlightServiceClient<Channel>,
     query_file: &ObjectMeta,

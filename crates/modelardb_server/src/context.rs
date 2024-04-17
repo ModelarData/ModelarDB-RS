@@ -172,7 +172,6 @@ impl Context {
         sql: &str,
         schema: Schema,
     ) -> Result<(), ModelarDbError> {
-        // Ensure the folder for storing the table data exists.
         let configuration_manager = self.configuration_manager.read().await;
 
         // Create an empty Apache Parquet file to save the schema.

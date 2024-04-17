@@ -900,7 +900,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Ingest a single data point and sleep to allow ingestion thread to finish.
+        // Ingest a single data point and sleep to allow the ingestion thread to finish.
         let mut storage_engine = context.storage_engine.write().await;
         let model_table_metadata = Arc::new(test::model_table_metadata());
         let data = uncompressed_data(1, model_table_metadata.schema.clone());

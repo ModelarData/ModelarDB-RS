@@ -485,7 +485,7 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// Perform a specific action based on the type of the action in `request`. Currently the
+    /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
     /// * `InitializeDatabase`: Given a list of existing table names, respond with the SQL required
     /// to create the tables and model tables that are missing in the list. The list of table names
@@ -604,7 +604,7 @@ impl FlightService for FlightServiceHandler {
             let valid_statement = parser::semantic_checks_for_create_table(statement)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            // Create the table or model table if it does not already exists.
+            // Create the table or model table if it does not already exist.
             match valid_statement {
                 ValidStatement::CreateTable { name, .. } => {
                     self.check_if_table_exists(&name).await?;

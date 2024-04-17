@@ -957,7 +957,6 @@ pub async fn try_new_sqlite_table_metadata_manager(
         .path_to_filesystem(&Path::from(METADATA_DATABASE_NAME))
         .unwrap();
 
-    // unwrap() is safe since the path is created with at least one component above.
     if !is_local_file_system_a_data_folder(&local_data_folder).await {
         warn!("The data folder is not empty and does not contain data from ModelarDB.");
     }

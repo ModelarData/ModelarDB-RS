@@ -392,16 +392,13 @@ mod tests {
     #[tokio::test]
     async fn test_include_existing_files_on_start_up() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let metadata_manager = create_metadata_manager(&temp_dir).await;
 
-        let metadata_manager = create_metadata_manager(local_data_folder.clone()).await;
-
-        create_compressed_file(local_data_folder.clone(), metadata_manager.clone()).await;
-        create_compressed_file(local_data_folder.clone(), metadata_manager.clone()).await;
+        create_compressed_file(&temp_dir, metadata_manager.clone()).await;
+        create_compressed_file(&temp_dir, metadata_manager.clone()).await;
 
         let (_target_dir, data_transfer) =
-            create_data_transfer_component(local_data_folder, metadata_manager).await;
+            create_data_transfer_component(&temp_dir, metadata_manager).await;
 
         assert_eq!(
             *data_transfer
@@ -425,15 +422,11 @@ mod tests {
     #[tokio::test]
     async fn test_add_compressed_file_for_new_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-
-        let metadata_manager = create_metadata_manager(local_data_folder.clone()).await;
+        let metadata_manager = create_metadata_manager(&temp_dir).await;
 
         let (_target_dir, data_transfer) =
-            create_data_transfer_component(local_data_folder.clone(), metadata_manager.clone())
-                .await;
-        let compressed_file = create_compressed_file(local_data_folder, metadata_manager).await;
+            create_data_transfer_component(&temp_dir, metadata_manager.clone()).await;
+        let compressed_file = create_compressed_file(&temp_dir, metadata_manager).await;
 
         assert!(data_transfer
             .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
@@ -452,15 +445,11 @@ mod tests {
     #[tokio::test]
     async fn test_add_compressed_file_for_existing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-
-        let metadata_manager = create_metadata_manager(local_data_folder.clone()).await;
+        let metadata_manager = create_metadata_manager(&temp_dir).await;
 
         let (_target_dir, data_transfer) =
-            create_data_transfer_component(local_data_folder.clone(), metadata_manager.clone())
-                .await;
-        let compressed_file = create_compressed_file(local_data_folder, metadata_manager).await;
+            create_data_transfer_component(&temp_dir, metadata_manager.clone()).await;
+        let compressed_file = create_compressed_file(&temp_dir, metadata_manager).await;
 
         data_transfer
             .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
@@ -483,16 +472,13 @@ mod tests {
     #[tokio::test]
     async fn test_increase_transfer_batch_size_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let metadata_manager = create_metadata_manager(&temp_dir).await;
 
-        let metadata_manager = create_metadata_manager(local_data_folder.clone()).await;
-
-        create_compressed_file(local_data_folder.clone(), metadata_manager.clone()).await;
-        create_compressed_file(local_data_folder.clone(), metadata_manager.clone()).await;
+        create_compressed_file(&temp_dir, metadata_manager.clone()).await;
+        create_compressed_file(&temp_dir, metadata_manager.clone()).await;
 
         let (_, mut data_transfer) =
-            create_data_transfer_component(local_data_folder, metadata_manager).await;
+            create_data_transfer_component(&temp_dir, metadata_manager).await;
 
         data_transfer
             .set_transfer_batch_size_in_bytes(Some(COMPRESSED_FILE_SIZE * 10))
@@ -517,16 +503,13 @@ mod tests {
     #[tokio::test]
     async fn test_set_transfer_batch_size_in_bytes_to_none() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let metadata_manager = create_metadata_manager(&temp_dir).await;
 
-        let metadata_manager = create_metadata_manager(local_data_folder.clone()).await;
-
-        create_compressed_file(local_data_folder.clone(), metadata_manager.clone()).await;
-        create_compressed_file(local_data_folder.clone(), metadata_manager.clone()).await;
+        create_compressed_file(&temp_dir, metadata_manager.clone()).await;
+        create_compressed_file(&temp_dir, metadata_manager.clone()).await;
 
         let (_, mut data_transfer) =
-            create_data_transfer_component(local_data_folder, metadata_manager).await;
+            create_data_transfer_component(&temp_dir, metadata_manager).await;
 
         assert_eq!(
             data_transfer.transfer_batch_size_in_bytes,
@@ -553,9 +536,12 @@ mod tests {
     /// Set up a data folder with a table folder that has a single compressed file in it. Return the
     /// [`CompressedFile`] representing the created Apache Parquet file.
     async fn create_compressed_file(
-        local_data_folder: Arc<LocalFileSystem>,
+        temp_dir: &TempDir,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     ) -> CompressedFile {
+        let local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
         let folder_path = format!(
             "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}",
             test::MODEL_TABLE_NAME
@@ -589,9 +575,12 @@ mod tests {
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
     async fn create_data_transfer_component(
-        local_data_folder: Arc<LocalFileSystem>,
+        temp_dir: &TempDir,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     ) -> (TempDir, DataTransfer) {
+        let local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
         let target_dir = tempfile::tempdir().unwrap();
 
         // Create the target object store.
@@ -623,9 +612,10 @@ mod tests {
     }
 
     /// Create a table metadata manager and save a single model table to the metadata database.
-    async fn create_metadata_manager(
-        local_data_folder: Arc<LocalFileSystem>,
-    ) -> Arc<TableMetadataManager<Sqlite>> {
+    async fn create_metadata_manager(temp_dir: &TempDir) -> Arc<TableMetadataManager<Sqlite>> {
+        let local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
         let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(local_data_folder)
             .await
             .unwrap();
