@@ -2011,7 +2011,6 @@ dependencies = [
  "arrow-flight",
  "async-trait",
  "bytes",
- "chrono",
  "crossbeam-channel",
  "crossbeam-queue",
  "dashmap",
