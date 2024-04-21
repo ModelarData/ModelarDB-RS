@@ -18,15 +18,18 @@
 //! through this metadata manager, while it only supports a subset of the manager metadata deltalake.
 
 use dashmap::DashMap;
+use datafusion::prelude::SessionContext;
+use deltalake::DeltaTable;
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata deltalake.
-#[derive(Clone, Debug)]
 pub struct TableMetadataManager {
+    /// Map from metadata deltalake table names to [`DeltaTables`](DeltaTable).
+    metadata_tables: DashMap<String, DeltaTable>,
+    /// Session used to read from the metadata deltalake using Apache Arrow DataFusion.
+    session: SessionContext,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
     tag_value_hashes: DashMap<String, u64>,
 }
 
-impl TableMetadataManager {
-
-}
+impl TableMetadataManager {}
