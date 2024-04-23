@@ -34,7 +34,7 @@ const METADATA_FOLDER: &str = "metadata";
 /// The data that needs to be persisted is stored in the metadata deltalake.
 pub struct TableMetadataManager {
     /// Map from metadata deltalake table names to [`DeltaTables`](DeltaTable).
-    metadata_tables: DashMap<String, DeltaTable>,
+    metadata_tables: DashMap<String, Arc<DeltaTable>>,
     /// Session used to read from the metadata deltalake using Apache Arrow DataFusion.
     session: SessionContext,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
@@ -103,24 +103,44 @@ impl TableMetadataManager {
         url_scheme: &str,
         storage_options: HashMap<String, String>,
     ) -> Result<(), DeltaTableError> {
-        let base_create_builder = CreateBuilder::new()
-            .with_save_mode(SaveMode::Ignore)
-            .with_storage_options(storage_options);
-
         // Create the table_metadata table if it does not exist.
-        let table = base_create_builder
-            .with_table_name("table_metadata")
-            .with_location(format!(
-                "{url_scheme}/{METADATA_FOLDER}/table_metadata"
-            ))
-            .with_columns(vec![
+        self.create_deltalake_table(
+            "table_metadata",
+            vec![
                 StructField::new("table_name", DataType::STRING, false),
                 StructField::new("sql", DataType::STRING, false),
-            ])
-            .await?;
+            ],
+            url_scheme,
+            storage_options,
+        )
+        .await?;
 
-        self.metadata_tables.insert("table_metadata".to_owned(), table.clone());
-        self.session.register_table("table_metadata", Arc::new(table))?;
+        Ok(())
+    }
+
+    /// Use `table_name` to create a deltalake table with `columns` in the location given by
+    /// `url_scheme` and `storage_options` if it does not already exist. The created table is saved
+    /// in the metadata tables and registered in the Apache Arrow Datafusion session. If the table
+    /// could not be created or registered, return [`DeltaTableError`].
+    async fn create_deltalake_table(
+        &self,
+        table_name: &str,
+        columns: Vec<StructField>,
+        url_scheme: &str,
+        storage_options: HashMap<String, String>,
+    ) -> Result<(), DeltaTableError> {
+        let table = Arc::new(
+            CreateBuilder::new()
+                .with_save_mode(SaveMode::Ignore)
+                .with_storage_options(storage_options)
+                .with_table_name(table_name)
+                .with_location(format!("{url_scheme}/{METADATA_FOLDER}/{table_name}"))
+                .with_columns(columns)
+                .await?,
+        );
+
+        self.session.register_table(table_name, table.clone())?;
+        self.metadata_tables.insert(table_name.to_owned(), table);
 
         Ok(())
     }
