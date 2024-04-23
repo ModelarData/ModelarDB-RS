@@ -17,9 +17,23 @@
 //! and the manager metadata deltalake. Note that the entire server metadata deltalake can be accessed
 //! through this metadata manager, while it only supports a subset of the manager metadata deltalake.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use arrow::array::StringArray;
+use arrow::datatypes::DataType::Utf8;
+use arrow::datatypes::{Field, Schema};
+use arrow::record_batch::RecordBatch;
+
 use dashmap::DashMap;
 use datafusion::prelude::SessionContext;
-use deltalake::DeltaTable;
+use deltalake::kernel::{DataType, StructField};
+use deltalake::operations::create::CreateBuilder;
+use deltalake::protocol::SaveMode;
+use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
+
+/// The folder storing metadata in the data folders.
+const METADATA_FOLDER: &str = "metadata";
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata deltalake.
@@ -33,3 +47,50 @@ pub struct TableMetadataManager {
 }
 
 impl TableMetadataManager {}
+impl TableMetadataManager {
+    /// Create a new table metadata manager that saves the metadata to [`METADATA_FOLDER`] under
+    /// `folder_path` and initialize the metadata tables. If the metadata tables could not be
+    /// created, return [`DeltaTableError`].
+    pub async fn try_new_local_table_metadata_manager(
+    ) -> Result<TableMetadataManager, DeltaTableError> {
+        let table_metadata_manager = TableMetadataManager {
+            metadata_tables: DashMap::new(),
+            session: SessionContext::new(),
+            tag_value_hashes: DashMap::new(),
+        };
+
+        table_metadata_manager
+            .create_metadata_deltalake_tables("data", HashMap::new())
+            .await?;
+
+        Ok(table_metadata_manager)
+    }
+
+    /// Create a new table metadata manager that saves the metadata to [`METADATA_FOLDER`] in a S3
+    /// bucket and initialize the metadata tables. If the metadata tables could not be created,
+    /// return [`DeltaTableError`].
+    pub async fn try_new_s3_table_metadata_manager() -> Result<TableMetadataManager, DeltaTableError>
+    {
+        deltalake::aws::register_handlers(None);
+        let storage_options: HashMap<String, String> = HashMap::from([
+            ("REGION".to_owned(), "".to_owned()),
+            ("ALLOW_HTTP".to_owned(), "true".to_owned()),
+            ("ENDPOINT".to_owned(), "http://localhost:9000".to_owned()),
+            ("BUCKET_NAME".to_owned(), "modelardb".to_owned()),
+            ("ACCESS_KEY_ID".to_owned(), "minioadmin".to_owned()),
+            ("SECRET_ACCESS_KEY".to_owned(), "minioadmin".to_owned()),
+            ("AWS_S3_ALLOW_UNSAFE_RENAME".to_owned(), "true".to_owned()),
+        ]);
+
+        let table_metadata_manager = TableMetadataManager {
+            metadata_tables: DashMap::new(),
+            session: SessionContext::new(),
+            tag_value_hashes: DashMap::new(),
+        };
+
+        table_metadata_manager
+            .create_metadata_deltalake_tables("s3://modelardb", storage_options)
+            .await?;
+
+        Ok(table_metadata_manager)
+    }
