@@ -20,17 +20,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow::array::StringArray;
-use arrow::datatypes::DataType::Utf8;
-use arrow::datatypes::{Field, Schema};
-use arrow::record_batch::RecordBatch;
-
 use dashmap::DashMap;
 use datafusion::prelude::SessionContext;
 use deltalake::kernel::{DataType, StructField};
 use deltalake::operations::create::CreateBuilder;
 use deltalake::protocol::SaveMode;
-use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
+use deltalake::{DeltaTable, DeltaTableError};
 
 /// The folder storing metadata in the data folders.
 const METADATA_FOLDER: &str = "metadata";
@@ -43,10 +38,9 @@ pub struct TableMetadataManager {
     /// Session used to read from the metadata deltalake using Apache Arrow DataFusion.
     session: SessionContext,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
-    tag_value_hashes: DashMap<String, u64>,
+    _tag_value_hashes: DashMap<String, u64>,
 }
 
-impl TableMetadataManager {}
 impl TableMetadataManager {
     /// Create a new table metadata manager that saves the metadata to [`METADATA_FOLDER`] under
     /// `folder_path` and initialize the metadata tables. If the metadata tables could not be
@@ -56,7 +50,7 @@ impl TableMetadataManager {
         let table_metadata_manager = TableMetadataManager {
             metadata_tables: DashMap::new(),
             session: SessionContext::new(),
-            tag_value_hashes: DashMap::new(),
+            _tag_value_hashes: DashMap::new(),
         };
 
         table_metadata_manager
@@ -85,7 +79,7 @@ impl TableMetadataManager {
         let table_metadata_manager = TableMetadataManager {
             metadata_tables: DashMap::new(),
             session: SessionContext::new(),
-            tag_value_hashes: DashMap::new(),
+            _tag_value_hashes: DashMap::new(),
         };
 
         table_metadata_manager
@@ -94,3 +88,40 @@ impl TableMetadataManager {
 
         Ok(table_metadata_manager)
     }
+
+    /// If they do not already exist, create the tables in the metadata deltalake used for table and
+    /// model table metadata.
+    /// * The table_metadata table contains the metadata for tables.
+    /// * The model_table_metadata table contains the main metadata for model tables.
+    /// * The model_table_hash_table_name contains a mapping from each tag hash to the name of the
+    /// model table that contains the time series with that tag hash.
+    /// * The model_table_field_columns table contains the name, index, error bound value, whether
+    /// error bound is relative, and generation expression of the field columns in each model table.
+    /// If the tables exist or were created, return [`Ok`], otherwise return [`DeltaTableError`].
+    async fn create_metadata_deltalake_tables(
+        &self,
+        url_scheme: &str,
+        storage_options: HashMap<String, String>,
+    ) -> Result<(), DeltaTableError> {
+        let base_create_builder = CreateBuilder::new()
+            .with_save_mode(SaveMode::Ignore)
+            .with_storage_options(storage_options);
+
+        // Create the table_metadata table if it does not exist.
+        let table = base_create_builder
+            .with_table_name("table_metadata")
+            .with_location(format!(
+                "{url_scheme}/{METADATA_FOLDER}/table_metadata"
+            ))
+            .with_columns(vec![
+                StructField::new("table_name", DataType::STRING, false),
+                StructField::new("sql", DataType::STRING, false),
+            ])
+            .await?;
+
+        self.metadata_tables.insert("table_metadata".to_owned(), table.clone());
+        self.session.register_table("table_metadata", Arc::new(table))?;
+
+        Ok(())
+    }
+}
