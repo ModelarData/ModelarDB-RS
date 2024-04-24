@@ -30,6 +30,8 @@ use deltalake::{DeltaTable, DeltaTableError};
 /// The folder storing metadata in the data folders.
 const METADATA_FOLDER: &str = "metadata";
 
+// TODO: Create a initialization function that can parse arguments from manager into table metadata manager.
+
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata deltalake.
 pub struct TableMetadataManager {
@@ -109,6 +111,50 @@ impl TableMetadataManager {
             vec![
                 StructField::new("table_name", DataType::STRING, false),
                 StructField::new("sql", DataType::STRING, false),
+            ],
+            url_scheme,
+            storage_options.clone(),
+        )
+        .await?;
+
+        // Create the model_table_metadata table if it does not exist.
+        self.create_deltalake_table(
+            "model_table_metadata",
+            vec![
+                StructField::new("table_name", DataType::STRING, false),
+                StructField::new("query_schema", DataType::BINARY, false),
+                StructField::new("sql", DataType::STRING, false),
+            ],
+            url_scheme,
+            storage_options.clone(),
+        )
+        .await?;
+
+        // Create the model_table_hash_table_name table if it does not exist.
+        self.create_deltalake_table(
+            "model_table_hash_table_name",
+            vec![
+                StructField::new("hash", DataType::LONG, false),
+                StructField::new("table_name", DataType::STRING, false),
+            ],
+            url_scheme,
+            storage_options.clone(),
+        )
+        .await?;
+
+        // Create the model_table_field_columns table if it does not exist. Note that column_index
+        // will only use a maximum of 10 bits. generated_column_* is NULL if the fields are stored
+        // as segments.
+        self.create_deltalake_table(
+            "model_table_field_columns",
+            vec![
+                StructField::new("table_name", DataType::STRING, false),
+                StructField::new("column_name", DataType::STRING, false),
+                StructField::new("column_index", DataType::SHORT, false),
+                StructField::new("error_bound_value", DataType::FLOAT, false),
+                StructField::new("error_bound_is_relative", DataType::BOOLEAN, false),
+                StructField::new("generated_column_expr", DataType::STRING, true),
+                StructField::new("generated_column_sources", DataType::BINARY, true),
             ],
             url_scheme,
             storage_options,
