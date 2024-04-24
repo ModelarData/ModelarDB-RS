@@ -26,6 +26,7 @@ use deltalake::kernel::{DataType, StructField};
 use deltalake::operations::create::CreateBuilder;
 use deltalake::protocol::SaveMode;
 use deltalake::{DeltaTable, DeltaTableError};
+use object_store::path::Path;
 
 /// The folder storing metadata in the data folders.
 const METADATA_FOLDER: &str = "metadata";
@@ -48,6 +49,7 @@ impl TableMetadataManager {
     /// `folder_path` and initialize the metadata tables. If the metadata tables could not be
     /// created, return [`DeltaTableError`].
     pub async fn try_new_local_table_metadata_manager(
+        folder_path: Path,
     ) -> Result<TableMetadataManager, DeltaTableError> {
         let table_metadata_manager = TableMetadataManager {
             metadata_tables: DashMap::new(),
@@ -56,7 +58,7 @@ impl TableMetadataManager {
         };
 
         table_metadata_manager
-            .create_metadata_deltalake_tables("data", HashMap::new())
+            .create_metadata_deltalake_tables(folder_path.as_ref(), HashMap::new())
             .await?;
 
         Ok(table_metadata_manager)
@@ -189,5 +191,59 @@ impl TableMetadataManager {
         self.metadata_tables.insert(table_name.to_owned(), table);
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Tests for TableMetadataManager.
+    #[tokio::test]
+    async fn test_create_metadata_deltalake_tables() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
+            Path::from_absolute_path(temp_dir.path()).unwrap()
+        )
+        .await
+        .unwrap();
+
+        // Verify that the tables were created, registered, and has the expected columns.
+        assert!(metadata_manager
+            .metadata_tables
+            .contains_key("table_metadata"));
+        assert!(metadata_manager
+            .session
+            .sql("SELECT table_name, sql FROM table_metadata")
+            .await
+            .is_ok());
+
+        assert!(metadata_manager
+            .metadata_tables
+            .contains_key("model_table_metadata"));
+        assert!(metadata_manager
+            .session
+            .sql("SELECT table_name, query_schema, sql FROM model_table_metadata")
+            .await
+            .is_ok());
+
+        assert!(metadata_manager
+            .metadata_tables
+            .contains_key("model_table_hash_table_name"));
+        assert!(metadata_manager
+            .session
+            .sql("SELECT hash, table_name FROM model_table_hash_table_name")
+            .await
+            .is_ok());
+
+        assert!(metadata_manager
+            .metadata_tables
+            .contains_key("model_table_field_columns"));
+        assert!(metadata_manager
+            .session
+            .sql("SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
+                 generated_column_expr, generated_column_sources FROM model_table_field_columns")
+            .await
+            .is_ok());
     }
 }
