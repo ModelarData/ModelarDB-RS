@@ -20,18 +20,26 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use arrow::array::StringArray;
+use arrow::record_batch::RecordBatch;
 use dashmap::DashMap;
 use datafusion::prelude::SessionContext;
 use deltalake::kernel::{DataType, StructField};
 use deltalake::operations::create::CreateBuilder;
 use deltalake::protocol::SaveMode;
-use deltalake::{DeltaTable, DeltaTableError};
+use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use object_store::path::Path;
 
 /// The folder storing metadata in the data folders.
 const METADATA_FOLDER: &str = "metadata";
 
 // TODO: Create a initialization function that can parse arguments from manager into table metadata manager.
+// TODO: Add function to save model table metadata.
+// TODO: Add tests for these functions.
+// TODO: Look into adding primary key (and maybe unique) constraints to all the tables.
+// TODO: Check if this actually results in an error when trying to add duplicates.
+// TODO: Look into using merge builder to save tag hashes if they do not already exist.
+// TODO: Look into using save mode on the write builder instead. It seems much simpler.
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata deltalake.
@@ -41,7 +49,7 @@ pub struct TableMetadataManager {
     /// Session used to read from the metadata deltalake using Apache Arrow DataFusion.
     session: SessionContext,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
-    _tag_value_hashes: DashMap<String, u64>,
+    tag_value_hashes: DashMap<String, u64>,
 }
 
 impl TableMetadataManager {
@@ -54,7 +62,7 @@ impl TableMetadataManager {
         let table_metadata_manager = TableMetadataManager {
             metadata_tables: DashMap::new(),
             session: SessionContext::new(),
-            _tag_value_hashes: DashMap::new(),
+            tag_value_hashes: DashMap::new(),
         };
 
         table_metadata_manager
@@ -83,7 +91,7 @@ impl TableMetadataManager {
         let table_metadata_manager = TableMetadataManager {
             metadata_tables: DashMap::new(),
             session: SessionContext::new(),
-            _tag_value_hashes: DashMap::new(),
+            tag_value_hashes: DashMap::new(),
         };
 
         table_metadata_manager
@@ -192,6 +200,31 @@ impl TableMetadataManager {
 
         Ok(())
     }
+
+    /// Save the created table to the metadata deltalake. This consists of adding a row to the
+    /// table_metadata table with the `name` of the table and the `sql` used to create the table.
+    /// If the table metadata was saved, return the updated [`DeltaTable`], otherwise return [`DeltaTableError`].
+    pub async fn save_table_metadata(
+        &self,
+        name: &str,
+        sql: &str,
+    ) -> Result<DeltaTable, DeltaTableError> {
+        // unwrap() is safe since the "table_metadata" table is registered when the table metadata manager is created.
+        let table_provider = self.session.table_provider("table_metadata").await.unwrap();
+        let table: &DeltaTable = table_provider.as_any().downcast_ref().unwrap();
+
+        let ops = DeltaOps::from(table.clone());
+        let batch = RecordBatch::try_new(
+            table_provider.schema(),
+            vec![
+                Arc::new(StringArray::from(vec![name])),
+                Arc::new(StringArray::from(vec![sql])),
+            ],
+        )
+        .unwrap();
+
+        ops.write(vec![batch]).await
+    }
 }
 
 #[cfg(test)]
@@ -203,7 +236,7 @@ mod tests {
     async fn test_create_metadata_deltalake_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
-            Path::from_absolute_path(temp_dir.path()).unwrap()
+            Path::from_absolute_path(temp_dir.path()).unwrap(),
         )
         .await
         .unwrap();
