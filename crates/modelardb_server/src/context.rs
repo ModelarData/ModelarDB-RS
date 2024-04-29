@@ -327,10 +327,9 @@ impl Context {
         let table = database_schema
             .table(table_name)
             .await
-            .map_err(|e| {
+            .map_err(|error| {
                 ModelarDbError::DataRetrievalError(format!(
-                    "Failed to retrieve metadata for '{table_name}' due to: {}",
-                    e
+                    "Failed to retrieve metadata for '{table_name}' due to: {error}"
                 ))
             })?
             .ok_or_else(|| {
@@ -368,10 +367,9 @@ impl Context {
         let table = database_schema
             .table(table_name)
             .await
-            .map_err(|e| {
+            .map_err(|error| {
                 ModelarDbError::DataRetrievalError(format!(
-                    "Failed to retrieve schema for '{table_name}' due to: {}",
-                    e
+                    "Failed to retrieve schema for '{table_name}' due to: {error}",
                 ))
             })?
             .ok_or_else(|| {

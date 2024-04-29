@@ -79,7 +79,7 @@ impl GridExec {
         let schema = QUERY_SCHEMA.0.clone();
 
         // The global order for the data points produced by the set of GridExec instances producing
-        // input for an SortedJoinExec must be the same. This is needed because SortedJoinExec
+        // input for a SortedJoinExec must be the same. This is needed because SortedJoinExec
         // assumes the data it receives from all of its inputs uses the same global sort order.
         let equivalence_properties = EquivalenceProperties::new_with_orderings(
             schema.clone(),
