@@ -29,7 +29,6 @@ mod uncompressed_data_manager;
 
 use std::env;
 use std::io::{Error as IOError, ErrorKind};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
@@ -40,6 +39,7 @@ use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::{Timestamp, TimestampArray, Value};
+use object_store::local::LocalFileSystem;
 use object_store::{ObjectMeta, ObjectStore};
 use once_cell::sync::Lazy;
 use sqlx::Sqlite;
@@ -105,7 +105,7 @@ impl StorageEngine {
     /// `remote_data_folder` is given but [`DataTransfer`] cannot not be created.
     pub(super) async fn try_new(
         runtime: Arc<Runtime>,
-        local_data_folder: PathBuf,
+        local_data_folder: Arc<LocalFileSystem>,
         maybe_remote_data_folder: Option<Arc<dyn ObjectStore>>,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
@@ -127,18 +127,15 @@ impl StorageEngine {
         let channels = Arc::new(Channels::new());
 
         // Create the uncompressed data manager.
-        let uncompressed_data_manager = Arc::new(
-            UncompressedDataManager::try_new(
-                local_data_folder.clone(),
-                memory_pool.clone(),
-                channels.clone(),
-                table_metadata_manager.clone(),
-                configuration_manager.cluster_mode.clone(),
-                used_multivariate_memory_metric.clone(),
-                used_disk_space_metric.clone(),
-            )
-            .await?,
-        );
+        let uncompressed_data_manager = Arc::new(UncompressedDataManager::new(
+            local_data_folder.clone(),
+            memory_pool.clone(),
+            channels.clone(),
+            table_metadata_manager.clone(),
+            configuration_manager.cluster_mode.clone(),
+            used_multivariate_memory_metric.clone(),
+            used_disk_space_metric.clone(),
+        ));
 
         {
             let runtime = runtime.clone();
@@ -197,14 +194,14 @@ impl StorageEngine {
         };
 
         let data_transfer_is_some = data_transfer.is_some();
-        let compressed_data_manager = Arc::new(CompressedDataManager::try_new(
+        let compressed_data_manager = Arc::new(CompressedDataManager::new(
             Arc::new(RwLock::new(data_transfer)),
             local_data_folder,
             channels.clone(),
             memory_pool.clone(),
             table_metadata_manager,
             used_disk_space_metric,
-        )?);
+        ));
 
         {
             let runtime = runtime.clone();
@@ -270,14 +267,8 @@ impl StorageEngine {
     /// Add references to the
     /// [`UncompressedDataBuffers`](uncompressed_data_buffer::UncompressedDataBuffer) currently on
     /// disk to [`UncompressedDataManager`] which immediately will start compressing them.
-    pub(super) async fn initialize(
-        &self,
-        local_data_folder: PathBuf,
-        context: &Context,
-    ) -> Result<(), IOError> {
-        self.uncompressed_data_manager
-            .initialize(local_data_folder, context)
-            .await
+    pub(super) async fn initialize(&self, context: &Context) -> Result<(), IOError> {
+        self.uncompressed_data_manager.initialize(context).await
     }
 
     /// Pass `record_batch` to [`CompressedDataManager`]. Return [`Ok`] if `record_batch` was

@@ -23,9 +23,8 @@ pub mod model_table_metadata;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
 use std::hash::Hasher;
-use std::path::Path;
+use std::mem;
 use std::sync::Arc;
-use std::{fs, mem};
 
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use chrono::{TimeZone, Utc};
@@ -33,9 +32,11 @@ use dashmap::DashMap;
 use datafusion::arrow::datatypes::Schema;
 use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use datafusion::common::{DFSchema, ToDFSchema};
+use futures::StreamExt;
 use futures::TryStreamExt;
-use object_store::path::Path as ObjectStorePath;
-use object_store::ObjectMeta;
+use object_store::local::LocalFileSystem;
+use object_store::path::Path;
+use object_store::{ObjectMeta, ObjectStore};
 use sqlx::database::HasArguments;
 use sqlx::postgres::PgQueryResult;
 use sqlx::query::Query;
@@ -949,15 +950,20 @@ pub async fn try_new_postgres_table_metadata_manager(
 /// Create a SQLite [`TableMetadataManager`] and initialize the metadata database with the tables used
 /// for table and model table metadata. If the tables could not be created, [`Error`] is returned.
 pub async fn try_new_sqlite_table_metadata_manager(
-    local_data_folder: &Path,
+    local_data_folder: &LocalFileSystem,
 ) -> Result<TableMetadataManager<Sqlite>, Error> {
-    if !is_path_a_data_folder(local_data_folder) {
-        warn!("The data folder is not empty and does not contain data from ModelarDB");
+    if !is_local_file_system_a_data_folder(local_data_folder).await {
+        warn!("The local data folder is not empty and does not contain data from ModelarDB.");
     }
+
+    // unwrap() is safe since METADATA_DATABASE_NAME does not contain invalid characters.
+    let database_path = local_data_folder
+        .path_to_filesystem(&Path::from(METADATA_DATABASE_NAME))
+        .unwrap();
 
     // Specify the metadata database's path and that it should be created if it does not exist.
     let options = SqliteConnectOptions::new()
-        .filename(local_data_folder.join(METADATA_DATABASE_NAME))
+        .filename(database_path)
         .create_if_missing(true);
 
     let metadata_database_pool = SqlitePoolOptions::new()
@@ -984,13 +990,16 @@ pub fn new_table_metadata_manager<DB: Database + MetadataDatabase>(
     }
 }
 
-/// Return [`true`] if `path` is a data folder, otherwise [`false`].
-fn is_path_a_data_folder(path: &Path) -> bool {
-    if let Ok(files_and_folders) = fs::read_dir(path) {
-        files_and_folders.count() == 0 || path.join(METADATA_DATABASE_NAME).exists()
-    } else {
-        false
-    }
+/// Return [`true`] if `local_file_system` is a data folder, otherwise [`false`].
+async fn is_local_file_system_a_data_folder(local_file_system: &LocalFileSystem) -> bool {
+    let files_and_folders = local_file_system.list(None).collect::<Vec<_>>().await;
+
+    let metadata_database_exists = local_file_system
+        .head(&Path::from(METADATA_DATABASE_NAME))
+        .await
+        .is_ok();
+
+    files_and_folders.is_empty() || metadata_database_exists
 }
 
 /// Extract the first 54-bits from `univariate_id` which is a hash computed from tags.
@@ -1093,7 +1102,7 @@ where
     let size: i64 = row.try_get("size")?;
 
     Ok(ObjectMeta {
-        location: ObjectStorePath::from(file_path),
+        location: Path::from(file_path),
         last_modified,
         size: size as usize,
         e_tag: None,
@@ -1160,7 +1169,6 @@ pub fn normalize_name(name: &str) -> String {
 mod tests {
     use super::*;
 
-    use std::path::PathBuf;
     use std::sync::Arc;
 
     use chrono::SubsecRound;
@@ -1170,6 +1178,8 @@ mod tests {
     use once_cell::sync::Lazy;
     use proptest::{collection, num, prop_assert_eq, proptest};
     use sqlx::Row;
+    use tempfile::TempDir;
+    use tonic::codegen::Bytes;
     use uuid::Uuid;
 
     use crate::test;
@@ -1191,7 +1201,9 @@ mod tests {
     #[tokio::test]
     async fn test_create_metadata_database_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -1227,7 +1239,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_new_tag_hash() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -1266,7 +1280,9 @@ mod tests {
     #[tokio::test]
     async fn test_get_existing_tag_hash() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -1317,7 +1333,9 @@ mod tests {
     #[tokio::test]
     async fn test_compute_univariate_ids_using_fields_and_tags_for_missing_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -1330,7 +1348,7 @@ mod tests {
     #[tokio::test]
     async fn test_compute_univariate_ids_using_fields_and_tags_for_empty_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
+        let metadata_manager = create_metadata_manager_and_save_model_table(&temp_dir).await;
 
         // Lookup univariate ids using fields and tags for an empty table.
         let univariate_ids = metadata_manager
@@ -1344,7 +1362,9 @@ mod tests {
     #[tokio::test]
     async fn test_compute_univariate_ids_using_no_fields_and_tags_for_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        let mut metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -1364,7 +1384,9 @@ mod tests {
     async fn test_compute_univariate_ids_for_the_fallback_column_using_only_a_tag_column_for_model_table(
     ) {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        let mut metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -1388,7 +1410,9 @@ mod tests {
     #[tokio::test]
     async fn test_compute_the_univariate_ids_for_a_specific_field_column_for_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        let mut metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -1422,7 +1446,9 @@ mod tests {
     #[tokio::test]
     async fn test_compute_the_univariate_ids_for_a_specific_tag_value_for_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let mut metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        let mut metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -1585,7 +1611,7 @@ mod tests {
         // create_metadata_manager_with_named_model_table_and_save_files() is not reused as dropping
         // the TempDir which created the folder containing the database leaves it in read-only mode.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
+        let metadata_manager = create_metadata_manager_and_save_model_table(&temp_dir).await;
 
         for compressed_file in compressed_files {
             metadata_manager
@@ -1634,7 +1660,7 @@ mod tests {
         // create_metadata_manager_with_named_model_table_and_save_files() is not reused as dropping
         // the TempDir which created the folder containing the database leaves it in read-only mode.
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
+        let metadata_manager = create_metadata_manager_and_save_model_table(&temp_dir).await;
 
         let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
         for compressed_file in &compressed_files {
@@ -1830,7 +1856,7 @@ mod tests {
         max_value: Value,
     ) -> CompressedFile {
         let file_metadata = ObjectMeta {
-            location: ObjectStorePath::from(format!("test/{}.parquet", Uuid::new_v4())),
+            location: Path::from(format!("test/{}.parquet", Uuid::new_v4())),
             last_modified: Utc::now().round_subsecs(3),
             size: 0,
             e_tag: None,
@@ -1943,7 +1969,7 @@ mod tests {
         compressed_files: &[CompressedFile],
     ) -> Result<TableMetadataManager<Sqlite>, Error> {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
+        let metadata_manager = create_metadata_manager_and_save_model_table(&temp_dir).await;
 
         for compressed_file in compressed_files {
             metadata_manager
@@ -1957,7 +1983,9 @@ mod tests {
     #[tokio::test]
     async fn test_save_table_metadata() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -1986,7 +2014,9 @@ mod tests {
     #[tokio::test]
     async fn test_save_model_table_metadata() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -2059,7 +2089,9 @@ mod tests {
     #[tokio::test]
     async fn test_table_names() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -2075,7 +2107,7 @@ mod tests {
     #[tokio::test]
     async fn test_model_table_metadata() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(temp_dir.path()).await;
+        let metadata_manager = create_metadata_manager_and_save_model_table(&temp_dir).await;
 
         let model_table_metadata = metadata_manager.model_table_metadata().await.unwrap();
 
@@ -2086,9 +2118,10 @@ mod tests {
     }
 
     async fn create_metadata_manager_and_save_model_table(
-        temp_dir: &Path,
+        temp_dir: &TempDir,
     ) -> TableMetadataManager<Sqlite> {
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir)
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -2104,7 +2137,9 @@ mod tests {
     #[tokio::test]
     async fn test_error_bound() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -2132,7 +2167,9 @@ mod tests {
     #[tokio::test]
     async fn test_generated_columns() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(temp_dir.path())
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -2183,32 +2220,46 @@ mod tests {
         }
     }
 
-    // Tests for is_path_a_data_folder().
-    #[test]
-    fn test_a_non_empty_folder_without_metadata_is_not_a_data_folder() {
+    // Tests for is_local_file_system_a_data_folder().
+    #[tokio::test]
+    async fn test_a_non_empty_local_file_system_without_metadata_database_is_not_a_data_folder() {
         let temp_dir = tempfile::tempdir().unwrap();
-        create_empty_folder(temp_dir.path(), "folder");
-        assert!(!is_path_a_data_folder(temp_dir.path()));
+        let local_file_system = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        local_file_system
+            .put(&Path::from("folder/test.parquet"), Bytes::from(Vec::new()))
+            .await
+            .unwrap();
+
+        assert!(!is_local_file_system_a_data_folder(&local_file_system).await);
     }
 
-    #[test]
-    fn test_an_empty_folder_is_a_data_folder() {
+    #[tokio::test]
+    async fn test_an_empty_local_file_system_is_a_data_folder() {
         let temp_dir = tempfile::tempdir().unwrap();
-        assert!(is_path_a_data_folder(temp_dir.path()));
+        let local_file_system = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
+        assert!(is_local_file_system_a_data_folder(&local_file_system).await);
     }
 
-    #[test]
-    fn test_a_non_empty_folder_with_metadata_is_a_data_folder() {
+    #[tokio::test]
+    async fn test_a_non_empty_local_file_system_with_metadata_database_is_a_data_folder() {
         let temp_dir = tempfile::tempdir().unwrap();
-        create_empty_folder(temp_dir.path(), "table_folder");
-        fs::create_dir(temp_dir.path().join(METADATA_DATABASE_NAME)).unwrap();
-        assert!(is_path_a_data_folder(temp_dir.path()));
-    }
+        let local_file_system = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
 
-    fn create_empty_folder(path: &Path, name: &str) -> PathBuf {
-        let path_buf = path.join(name);
-        fs::create_dir(&path_buf).unwrap();
-        path_buf
+        local_file_system
+            .put(
+                &Path::from("table_folder/test.parquet"),
+                Bytes::from(Vec::new()),
+            )
+            .await
+            .unwrap();
+
+        try_new_sqlite_table_metadata_manager(&local_file_system)
+            .await
+            .unwrap();
+
+        assert!(is_local_file_system_a_data_folder(&local_file_system).await);
     }
 
     // Tests for normalize_name().

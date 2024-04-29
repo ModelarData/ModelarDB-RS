@@ -20,7 +20,6 @@ use std::error::Error;
 use std::io::Read;
 use std::iter::repeat;
 use std::ops::Range;
-use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::str;
 use std::string::String;
@@ -96,7 +95,7 @@ impl TestContext {
         let runtime = Runtime::new().unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
         let port = PORT.fetch_add(1, Ordering::Relaxed);
-        let mut server = Self::create_server(temp_dir.path(), port);
+        let mut server = Self::create_server(&temp_dir, port);
         let client = Self::create_client(&runtime, &mut server, port);
 
         Self {
@@ -111,17 +110,17 @@ impl TestContext {
     /// Restart the server and reconnect the client.
     fn restart_server(&mut self) {
         Self::kill_child(&mut self.server);
-        self.server = Self::create_server(self.temp_dir.path(), self.port);
+        self.server = Self::create_server(&self.temp_dir, self.port);
         self.client = Self::create_client(&self.runtime, &mut self.server, self.port);
     }
 
     /// Create a server that stores data in `local_data_folder` and listens on `port` and ensure it
     /// is ready to receive requests.
-    fn create_server(local_data_folder: &Path, port: u16) -> Child {
+    fn create_server(local_data_folder: &TempDir, port: u16) -> Child {
         // The server's stdout and stderr is piped so the log messages (stdout) and expected errors
         // (stderr) are not printed when all of the tests are run using the "cargo test" command.
         // modelardbd is run using dev-release so the tests can use larger more realistic data sets.
-        let local_data_folder = local_data_folder.to_str().unwrap();
+        let local_data_folder = local_data_folder.path().to_str().unwrap();
         let mut server = Command::new("cargo")
             .env("MODELARDBD_PORT", port.to_string())
             .args([
@@ -196,7 +195,7 @@ impl TestContext {
         }
     }
 
-    /// Return a Apache Arrow Flight client to access the remote methods provided by the server.
+    /// Return an Apache Arrow Flight client to access the remote methods provided by the server.
     fn create_apache_arrow_flight_service_client(
         runtime: &Runtime,
         host: &str,

@@ -15,22 +15,18 @@
 
 //! Buffer for compressed segments from the same table.
 
-use std::fs;
 use std::io::Error as IOError;
-use std::io::ErrorKind::Other;
-use std::path::Path;
 use std::sync::Arc;
 
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::format::SortingColumn;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use modelardb_common::{metadata, storage};
-use object_store::path::Path as ObjectStorePath;
-use object_store::ObjectMeta;
-use uuid::Uuid;
+use object_store::local::LocalFileSystem;
+use object_store::path::Path;
+use object_store::ObjectStore;
 
 /// Compressed segments representing data points from a column in a model table as one
 /// [`RecordBatch`].
@@ -100,10 +96,10 @@ impl CompressedDataBuffer {
 
     /// If the compressed segments are successfully saved to an Apache Parquet file return a
     /// [`CompressedFile`] representing the saved file, otherwise return [`IOError`].
-    pub(super) fn save_to_apache_parquet(
+    pub(super) async fn save_to_apache_parquet(
         &mut self,
-        local_data_folder: &Path,
-        folder_path: &str,
+        local_data_folder: &LocalFileSystem,
+        folder_path: &Path,
     ) -> Result<CompressedFile, IOError> {
         debug_assert!(
             !self.compressed_segments.is_empty(),
@@ -114,34 +110,14 @@ impl CompressedDataBuffer {
         let batch =
             compute::concat_batches(&COMPRESSED_SCHEMA.0, &self.compressed_segments).unwrap();
 
-        let full_folder_path = local_data_folder.join(folder_path);
+        let file_path = storage::write_compressed_segments_to_apache_parquet_file(
+            folder_path,
+            &batch,
+            local_data_folder,
+        )
+        .await?;
 
-        // Create the folder structure if it does not already exist.
-        fs::create_dir_all(&full_folder_path)?;
-
-        // Use an UUID for the file name to ensure the name is unique.
-        let uuid = Uuid::new_v4();
-        let file_path = full_folder_path.join(format!("{uuid}.parquet"));
-
-        // Specify that the file must be sorted by univariate_id and then by start_time.
-        let sorting_columns = Some(vec![
-            SortingColumn::new(0, false, false),
-            SortingColumn::new(2, false, false),
-        ]);
-
-        storage::write_batch_to_apache_parquet_file(&batch, file_path.as_path(), sorting_columns)
-            .map_err(|error| IOError::new(Other, error.to_string()))?;
-
-        let file_metadata = file_path.metadata()?;
-
-        let object_meta = ObjectMeta {
-            location: ObjectStorePath::from(format!("{folder_path}/{uuid}.parquet")),
-            last_modified: file_metadata.modified()?.into(),
-            size: file_metadata.len() as usize,
-            e_tag: None,
-            version: None,
-        };
-
+        let object_meta = local_data_folder.head(&file_path).await?;
         Ok(CompressedFile::from_compressed_data(object_meta, &batch))
     }
 
@@ -184,28 +160,33 @@ mod tests {
         assert!(compressed_data_buffer.size_in_bytes > 0);
     }
 
-    #[test]
-    fn test_can_save_compressed_data_buffer_to_apache_parquet() {
+    #[tokio::test]
+    async fn test_can_save_compressed_data_buffer_to_apache_parquet() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
         let segment = test::compressed_segments_record_batch();
         compressed_data_buffer.append_compressed_segments(segment.clone());
 
         let temp_dir = tempfile::tempdir().unwrap();
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+
         compressed_data_buffer
-            .save_to_apache_parquet(temp_dir.path(), "")
+            .save_to_apache_parquet(&object_store, &Path::from(""))
+            .await
             .unwrap();
 
         assert_eq!(temp_dir.path().read_dir().unwrap().count(), 1);
     }
 
-    #[test]
+    #[tokio::test]
     #[cfg(debug_assertions)]
     #[should_panic(expected = "Cannot save CompressedDataBuffer with no data.")]
-    fn test_panic_if_saving_empty_compressed_data_buffer_to_apache_parquet() {
+    async fn test_panic_if_saving_empty_compressed_data_buffer_to_apache_parquet() {
+        let object_store = LocalFileSystem::new();
         let mut empty_compressed_data_buffer = CompressedDataBuffer::new();
 
         empty_compressed_data_buffer
-            .save_to_apache_parquet(Path::new("table"), "")
+            .save_to_apache_parquet(&object_store, &Path::from(""))
+            .await
             .unwrap();
     }
 
