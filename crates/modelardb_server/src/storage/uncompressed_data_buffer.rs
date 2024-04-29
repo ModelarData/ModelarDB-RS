@@ -399,6 +399,7 @@ mod tests {
     use modelardb_common::test;
     use proptest::num::u64 as ProptestTimestamp;
     use proptest::{collection, proptest};
+    use tempfile::TempDir;
     use tokio::runtime::Runtime;
 
     const CURRENT_BATCH_INDEX: u64 = 1;
@@ -591,8 +592,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_record_batch_from_on_disk_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(object_store).await;
+        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(&temp_dir).await;
 
         let spilled_buffer_path = temp_dir
             .path()
@@ -653,9 +653,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_on_disk_data_buffer_disk_size() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-
-        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(object_store).await;
+        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(&temp_dir).await;
 
         assert_eq!(uncompressed_on_disk_buffer.disk_size().await, 3135)
     }
@@ -663,9 +661,7 @@ mod tests {
     #[tokio::test]
     async fn test_check_if_on_disk_data_buffer_is_unused() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-
-        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(object_store).await;
+        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(&temp_dir).await;
 
         assert!(!uncompressed_on_disk_buffer.is_unused(CURRENT_BATCH_INDEX));
         assert!(uncompressed_on_disk_buffer.is_unused(CURRENT_BATCH_INDEX + 1));
@@ -674,9 +670,7 @@ mod tests {
     #[tokio::test]
     async fn test_read_in_memory_data_buffer_from_on_disk_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-
-        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(object_store).await;
+        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(&temp_dir).await;
 
         let read_uncompressed_in_memory_buffer = uncompressed_on_disk_buffer
             .read_from_apache_parquet(CURRENT_BATCH_INDEX)
@@ -706,11 +700,11 @@ mod tests {
         );
     }
 
-    /// Create an on-disk data buffer in `local_data_folder` from a full
-    /// `UncompressedInMemoryDataBuffer`.
-    async fn create_on_disk_data_buffer(
-        local_data_folder: Arc<LocalFileSystem>,
-    ) -> UncompressedOnDiskDataBuffer {
+    /// Create an on-disk data buffer in `temp_dir` from a full `UncompressedInMemoryDataBuffer`.
+    async fn create_on_disk_data_buffer(temp_dir: &TempDir) -> UncompressedOnDiskDataBuffer {
+        let local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
         let mut uncompressed_in_memory_buffer_to_be_spilled = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
             test::model_table_metadata_arc(),

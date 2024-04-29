@@ -613,10 +613,9 @@ mod tests {
 
     /// Create a table metadata manager and save a single model table to the metadata database.
     async fn create_metadata_manager(temp_dir: &TempDir) -> Arc<TableMetadataManager<Sqlite>> {
-        let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let local_data_folder = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
 
-        let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(local_data_folder)
+        let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(&local_data_folder)
             .await
             .unwrap();
 

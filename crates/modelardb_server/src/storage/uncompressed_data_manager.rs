@@ -1560,7 +1560,7 @@ mod tests {
     ) {
         let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let metadata_manager = Arc::new(
-            metadata::try_new_sqlite_table_metadata_manager(object_store.clone())
+            metadata::try_new_sqlite_table_metadata_manager(&object_store)
                 .await
                 .unwrap(),
         );

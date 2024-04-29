@@ -400,10 +400,9 @@ mod tests {
         let local_data_folder =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
-        let metadata_manager =
-            metadata::try_new_sqlite_table_metadata_manager(local_data_folder.clone())
-                .await
-                .unwrap();
+        let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(&local_data_folder)
+            .await
+            .unwrap();
 
         let channel = Channel::builder("grpc://server:9999".parse().unwrap()).connect_lazy();
         let lazy_flight_client = FlightServiceClient::new(channel);

@@ -65,7 +65,7 @@ impl Context {
         server_mode: ServerMode,
     ) -> Result<Self, ModelarDbError> {
         let table_metadata_manager = Arc::new(
-            metadata::try_new_sqlite_table_metadata_manager(data_folders.local_data_folder.clone())
+            metadata::try_new_sqlite_table_metadata_manager(&data_folders.local_data_folder)
                 .await
                 .map_err(|error| {
                     ModelarDbError::ConfigurationError(format!(
@@ -188,7 +188,7 @@ impl Context {
         .await
         .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // unwrap() is safe since the folder path cannot contain invalid characters.
+        // unwrap() is safe since the path is generated internally and cannot contain invalid characters.
         let table_path = configuration_manager
             .local_data_folder
             .path_to_filesystem(&folder_path)
@@ -261,7 +261,7 @@ impl Context {
             // Compute the path to the folder containing data for the table.
             let folder_path = Path::from(format!("{COMPRESSED_DATA_FOLDER}/{table_name}"));
 
-            // unwrap() is safe since the folder path cannot contain invalid characters.
+            // unwrap() is safe since the path is generated internally and cannot contain invalid characters.
             let table_folder_path = configuration_manager
                 .local_data_folder
                 .path_to_filesystem(&folder_path)
@@ -631,7 +631,7 @@ mod tests {
             .is_err())
     }
 
-    /// Create a simple [`Context`] that uses `path` as the local data folder and query data folder.
+    /// Create a simple [`Context`] that uses `temp_dir` as the local data folder and query data folder.
     async fn create_context(temp_dir: &TempDir) -> Arc<Context> {
         let local_data_folder =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());

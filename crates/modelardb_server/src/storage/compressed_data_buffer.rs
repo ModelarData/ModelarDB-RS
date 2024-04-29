@@ -98,7 +98,7 @@ impl CompressedDataBuffer {
     /// [`CompressedFile`] representing the saved file, otherwise return [`IOError`].
     pub(super) async fn save_to_apache_parquet(
         &mut self,
-        local_data_folder: &Arc<LocalFileSystem>,
+        local_data_folder: &LocalFileSystem,
         folder_path: &Path,
     ) -> Result<CompressedFile, IOError> {
         debug_assert!(
@@ -113,7 +113,7 @@ impl CompressedDataBuffer {
         let file_path = storage::write_compressed_segments_to_apache_parquet_file(
             folder_path,
             &batch,
-            &(local_data_folder.clone() as Arc<dyn ObjectStore>),
+            local_data_folder,
         )
         .await?;
 
@@ -167,7 +167,7 @@ mod tests {
         compressed_data_buffer.append_compressed_segments(segment.clone());
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
 
         compressed_data_buffer
             .save_to_apache_parquet(&object_store, &Path::from(""))
@@ -181,7 +181,7 @@ mod tests {
     #[cfg(debug_assertions)]
     #[should_panic(expected = "Cannot save CompressedDataBuffer with no data.")]
     async fn test_panic_if_saving_empty_compressed_data_buffer_to_apache_parquet() {
-        let object_store = Arc::new(LocalFileSystem::new());
+        let object_store = LocalFileSystem::new();
         let mut empty_compressed_data_buffer = CompressedDataBuffer::new();
 
         empty_compressed_data_buffer
