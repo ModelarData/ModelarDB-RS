@@ -681,7 +681,7 @@ fn extract_generation_exprs_for_all_columns(
                 generated_keyword: _,
             } = &column_def_option.option
             {
-                // The expression is saved as a string so it can be stored in the metadata database,
+                // The expression is saved as a string, so it can be stored in the metadata database,
                 // it is not stored in ModelTableMetadata as it not used for during query execution.
                 let sql_expr = generation_expr.as_ref().unwrap();
                 let original_expr = Some(sql_expr.to_string());
@@ -1140,7 +1140,7 @@ mod tests {
             let mut parser = Parser::new(&dialect).try_with_sql(generation_expr).unwrap();
             assert_eq!(generation_expr, parser.parse_expr().unwrap().to_string());
 
-            // Assert that the expression can be parsed to a Apache Arrow DataFusion expression.
+            // Assert that the expression can be parsed to an Apache Arrow DataFusion expression.
             parse_sql_expression(&df_schema, generation_expr).unwrap();
         }
     }

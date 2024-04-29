@@ -200,7 +200,7 @@ impl FlightServiceHandler {
                 &self.dictionaries_by_id,
             )?;
 
-            // Extract the columns of the record batch so they can be accessed by row.
+            // Extract the columns of the record batch, so they can be accessed by row.
             let table_name_array = modelardb_common::array!(metadata, 0, StringArray);
             let tag_hash_array = modelardb_common::array!(metadata, 1, UInt64Array);
             let tag_columns_array = modelardb_common::array!(metadata, 2, StringArray);
@@ -240,7 +240,7 @@ impl FlightServiceHandler {
                 &self.dictionaries_by_id,
             )?;
 
-            // Extract the columns of the record batch so they can be accessed by row.
+            // Extract the columns of the record batch, so they can be accessed by row.
             let table_name_array = modelardb_common::array!(metadata, 0, StringArray);
             let field_column_array = modelardb_common::array!(metadata, 1, UInt64Array);
             let file_path_array = modelardb_common::array!(metadata, 2, StringArray);
@@ -531,7 +531,7 @@ impl FlightService for FlightServiceHandler {
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 
-            // Check that all of the nodes tables exist in the clusters database schema already.
+            // Check that all the node's tables exist in the clusters database schema already.
             let invalid_node_tables: Vec<&str> = node_tables
                 .iter()
                 .filter(|table| !cluster_tables.contains(&table.to_string()))

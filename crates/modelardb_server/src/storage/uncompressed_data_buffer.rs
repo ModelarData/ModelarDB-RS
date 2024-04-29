@@ -76,7 +76,7 @@ pub(super) enum UncompressedDataBuffer {
 /// consists of an ordered sequence of timestamps and values being built using
 /// [`PrimitiveBuilder`](datafusion::arrow::array::PrimitiveBuilder).
 pub(super) struct UncompressedInMemoryDataBuffer {
-    /// Id that uniquely identifies the time series the buffer stores data points for.
+    /// ID that uniquely identifies the time series the buffer stores data points for.
     univariate_id: u64,
     /// Metadata of the model table the buffer stores data for.
     model_table_metadata: Arc<ModelTableMetadata>,
@@ -228,7 +228,7 @@ impl fmt::Debug for UncompressedInMemoryDataBuffer {
 /// A read only uncompressed buffer that has been spilled to disk as an Apache Parquet file due to
 /// memory constraints.
 pub(super) struct UncompressedOnDiskDataBuffer {
-    /// Id that uniquely identifies the time series the buffer stores data points for.
+    /// ID that uniquely identifies the time series the buffer stores data points for.
     univariate_id: u64,
     /// Metadata of the model table the buffer stores data for.
     model_table_metadata: Arc<ModelTableMetadata>,
@@ -344,7 +344,7 @@ impl UncompressedOnDiskDataBuffer {
             .size
     }
 
-    /// Return [`true`] if all of the data points in the [`UncompressedOnDiskDataBuffer`] are from
+    /// Return [`true`] if all the data points in the [`UncompressedOnDiskDataBuffer`] are from
     /// [`RecordBatches`](`RecordBatch`) that are [`RECORD_BATCH_OFFSET_REQUIRED_FOR_UNUSED`] older
     /// than the [`RecordBatch`] with index `current_batch_index` ingested by the current process.
     pub(super) fn is_unused(&self, current_batch_index: u64) -> bool {

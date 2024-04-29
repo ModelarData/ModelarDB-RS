@@ -100,7 +100,7 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Return the partitioning of the first execution plan batches of segments are read from as all
-    /// of the execution plans compressed segments are read from are equivalent.
+    /// the execution plans compressed segments are read from are equivalent.
     fn output_partitioning(&self) -> Partitioning {
         self.inputs[0].output_partitioning()
     }
@@ -280,7 +280,7 @@ impl SortedJoinStream {
     fn sorted_join(&self) -> Poll<Option<Result<RecordBatch>>> {
         let mut columns: Vec<ArrayRef> = Vec::with_capacity(self.schema.fields.len());
 
-        // Compute the requested tag columns so they can be assigned to the batch by index.
+        // Compute the requested tag columns, so they can be assigned to the batch by index.
         // unwrap() is safe as a record batch is read from each input before this method is called.
         let batch = self.batches[0].as_ref().unwrap();
         let univariate_ids = modelardb_common::array!(batch, 0, UInt64Array);
@@ -307,7 +307,7 @@ impl SortedJoinStream {
             vec![]
         };
 
-        // The batches and tags columns are already in the correct order so they can be appended.
+        // The batches and tags columns are already in the correct order, so they can be appended.
         let mut field_index = 0;
         let mut tag_index = 0;
 

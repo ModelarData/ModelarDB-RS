@@ -177,7 +177,7 @@ fn store_compressed_segments_with_model_and_or_residuals(
                 compressed_segment_batch_builder,
             );
         } else {
-            // Many residuals exists so the model and residuals are put into two segments.
+            // Many residuals exist, so the model and residuals are put into two segments.
             let model_end_index = model.end_index;
 
             model.finish(
@@ -371,7 +371,7 @@ mod tests {
     }
 
     #[test]
-    fn test_try_compress_irregular_almost_constant_time_serie_within_relative_error_bound_five() {
+    fn test_try_compress_irregular_almost_constant_time_series_within_relative_error_bound_five() {
         generate_compress_and_assert_known_segment(
             true,
             ValuesStructure::Random(9.8..10.2),

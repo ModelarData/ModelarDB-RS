@@ -15,7 +15,7 @@
 
 //! Implementation of [`ModelTable`] which allows model tables to be queried through Apache Arrow
 //! DataFusion. It takes the projection, filters as [`Exprs`](Expr), and limit of a query as input
-//! and returns a physical query plan that produces all of the data points required for the query.
+//! and returns a physical query plan that produces all the data points required for the query.
 
 // Public so the rules added to Apache Arrow DataFusion's physical optimizer can access GridExec.
 pub mod generated_as_exec;

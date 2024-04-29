@@ -142,7 +142,7 @@ impl MemoryPool {
         let mut memory_in_bytes = self.remaining_uncompressed_memory_in_bytes.lock().unwrap();
 
         while *memory_in_bytes < size_in_bytes as isize {
-            // There is still not enough memory available but it is no longer sensible to wait.
+            // There is still not enough memory available, but it is no longer sensible to wait.
             if stop_if() {
                 return false;
             }
@@ -209,12 +209,12 @@ pub(super) struct Channels {
     /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are split into
     /// univariate time series of bounded length.
     pub(super) multivariate_data_receiver: Receiver<Message<UncompressedDataMultivariate>>,
-    /// Sender of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
+    /// Sender of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of a univariate
     /// time series from the [`UncompressedDataManager`](super::UncompressedDataManager) to the
     /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are compressed into
     /// compressed segments.
     pub(super) univariate_data_sender: Sender<Message<UncompressedDataBuffer>>,
-    /// Receiver of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
+    /// Receiver of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of a univariate
     /// time series from the [`UncompressedDataManager`](super::UncompressedDataManager) in the
     /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are compressed into
     /// compressed segments.
@@ -608,7 +608,7 @@ mod tests {
         metric.append(30, false);
 
         // timestamp is measured just before metric.append() to minimize the chance that enough time
-        // has passed that the timestamp written to metric is different than what the test expects.
+        // has passed that the timestamp written to metric is different from what the test expects.
         let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let timestamp = since_the_epoch.as_millis() as Timestamp;
         metric.append(30, false);

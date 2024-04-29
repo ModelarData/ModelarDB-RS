@@ -410,7 +410,7 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// Perform a specific action based on the type of the action in `request`. Currently the
+    /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
     /// * `CommandStatementUpdate`: Execute a SQL query containing a command that does not
     /// return a result. These commands can be `CREATE TABLE table_name(...` which creates a

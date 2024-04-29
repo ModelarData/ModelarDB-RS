@@ -89,7 +89,7 @@ fn main() -> Result<(), String> {
     let stdout_log = tracing_subscriber::fmt::layer();
     tracing_subscriber::registry().with(stdout_log).init();
 
-    // Create a Tokio runtime for executing asynchronous tasks. The runtime is not in the context so
+    // Create a Tokio runtime for executing asynchronous tasks. The runtime is not in the context, so
     // it can be passed to the components in the context.
     let runtime = Arc::new(
         Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {error}"))?,

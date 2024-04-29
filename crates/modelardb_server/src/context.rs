@@ -146,7 +146,7 @@ impl Context {
         let valid_statement = parser::semantic_checks_for_create_table(statement)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // Create the table or model table if it does not already exists.
+        // Create the table or model table if it does not already exist.
         match valid_statement {
             ValidStatement::CreateTable { name, schema } => {
                 self.check_if_table_exists(&name).await?;
@@ -317,7 +317,7 @@ impl Context {
     /// * [`ModelTableMetadata`] if a model table with the name `table_name` exists.
     /// * [`None`] if a table with the name `table_name` exists.
     /// * [`ModelarDbError`] if the default catalog, the default schema, a table with the name
-    /// `table_name`, or a model table with the name `table_name` does not exists.
+    /// `table_name`, or a model table with the name `table_name` does not exist.
     pub async fn model_table_metadata_from_default_database_schema(
         &self,
         table_name: &str,

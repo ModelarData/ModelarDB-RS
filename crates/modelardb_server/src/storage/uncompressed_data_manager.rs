@@ -401,7 +401,7 @@ impl UncompressedDataManager {
 
         // Insert the data point into an on-disk buffer if one exists or create an in-memory buffer.
         if !buffer_is_in_memory {
-            // No in-memory data buffer exists so it is necessary to either read a spilled buffer
+            // No in-memory data buffer exists, so it is necessary to either read a spilled buffer
             // from disk or create a new one. Memory for this is reserved without holding any
             // references into any of the maps as it may be necessary to spill an in-memory buffer
             // to do so. Thus, a combination of remove() and insert() may be called on the maps.
@@ -508,15 +508,15 @@ impl UncompressedDataManager {
     /// enough available memory for an uncompressed in-memory data buffer the memory is reserved and
     /// the method returns. Otherwise, if there are buffers waiting to be compressed, it is assumed
     /// that some of them are in-memory and the thread is blocked until memory have been returned to
-    /// the pool. If there are no buffers waiting to be compressed, all of the memory for
-    /// uncompressed data is used for unfinished uncompressed in-memory data buffers and it is
+    /// the pool. If there are no buffers waiting to be compressed, all the memory for
+    /// uncompressed data is used for unfinished uncompressed in-memory data buffers, and it is
     /// necessary to spill one before a new buffer can ever be allocated. To keep the implementation
     /// simple, it spills a random buffer and does not check if the last uncompressed in-memory data
     /// buffer has been read from the channel but is not yet compressed. Returns [`true`] if a
     /// buffer was spilled, [`false`] if not, and [`IOError`] if spilling fails.
     async fn reserve_uncompressed_memory_for_in_memory_data_buffer(&self) -> Result<bool, IOError> {
         // It is not guaranteed that compressing the data buffers in the channel releases any memory
-        // as all of the data buffers that are waiting to be compressed may all be stored on disk.
+        // as all the data buffers that are waiting to be compressed may all be stored on disk.
         if self.memory_pool.wait_for_uncompressed_memory_until(
             UncompressedInMemoryDataBuffer::memory_size(),
             || self.channels.univariate_data_sender.is_empty(),
@@ -1280,7 +1280,7 @@ mod tests {
             .memory_pool
             .remaining_uncompressed_memory_in_bytes() as usize;
 
-        // Insert messages into the storage engine until all of the memory is used and the next
+        // Insert messages into the storage engine until all the memory is used and the next
         // message inserted would block the thread until the data messages have been processed.
         let number_of_buffers = reserved_memory / UncompressedInMemoryDataBuffer::memory_size();
         for univariate_id in 0..number_of_buffers {

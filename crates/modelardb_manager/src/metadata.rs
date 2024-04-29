@@ -164,7 +164,7 @@ impl MetadataManager {
     }
 
     /// Return the SQL query used to create the table with the name `table_name`. If a table with
-    /// that name does not exists, return [`sqlx::Error`].
+    /// that name does not exist, return [`sqlx::Error`].
     pub async fn table_sql(&self, table_name: &str) -> Result<String, sqlx::Error> {
         let row = sqlx::query(
             "SELECT sql FROM table_metadata WHERE table_name = $1

@@ -14,7 +14,7 @@
  */
 
 //! Implementation of a physical optimizer rule that rewrites aggregates that are computed from
-//! reconstructed values from a single column without filtering so they are computed directly from
+//! reconstructed values from a single column without filtering, so they are computed directly from
 //! segments instead of the reconstructed values.
 
 #![allow(clippy::unconditional_recursion)]
@@ -48,7 +48,7 @@ use modelardb_common::types::{ArrowValue, TimestampArray, Value, ValueArray};
 use crate::query::sorted_join_exec::SortedJoinExec;
 
 /// Rewrite aggregates that are computed from reconstructed values from a single column without
-/// filtering so they are computed directly from segments instead of the reconstructed values.
+/// filtering, so they are computed directly from segments instead of the reconstructed values.
 pub struct ModelSimpleAggregatesPhysicalOptimizerRule {}
 
 impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
@@ -80,7 +80,7 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
 fn rewrite_aggregates_to_use_segments(
     execution_plan: Arc<dyn ExecutionPlan>,
 ) -> Result<Transformed<Arc<dyn ExecutionPlan>>> {
-    // The rule tries to match the sub-tree of execution_plan so execution_plan can be updated.
+    // The rule tries to match the subtree of execution_plan so execution_plan can be updated.
     let execution_plan_children = execution_plan.children();
 
     if execution_plan_children.len() == 1 {
