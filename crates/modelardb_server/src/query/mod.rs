@@ -33,6 +33,7 @@ use datafusion::arrow::datatypes::{
     ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit,
 };
 use datafusion::common::ToDFSchema;
+use datafusion::config::TableParquetOptions;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::datasource::physical_plan::parquet::ParquetExec;
@@ -257,9 +258,14 @@ impl ModelTable {
             };
 
         let apache_parquet_exec = Arc::new(
-            ParquetExec::new(file_scan_config, maybe_physical_parquet_predicates, None)
-                .with_pushdown_filters(true)
-                .with_reorder_filters(true),
+            ParquetExec::new(
+                file_scan_config,
+                maybe_physical_parquet_predicates,
+                None,
+                TableParquetOptions::default(),
+            )
+            .with_pushdown_filters(true)
+            .with_reorder_filters(true),
         );
 
         // Create the gridding operator.

@@ -36,13 +36,13 @@ use datafusion::common::cast::as_boolean_array;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
 use datafusion::physical_expr::{EquivalenceProperties, PhysicalSortRequirement};
-use datafusion::physical_plan::expressions::PhysicalSortExpr;
 use datafusion::physical_plan::metrics::{
     BaselineMetrics, Count, ExecutionPlanMetricsSet, MetricBuilder, MetricsSet,
 };
 use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, Distribution, ExecutionPlan, Partitioning, PhysicalExpr,
-    RecordBatchStream, SendableRecordBatchStream, Statistics,
+    DisplayAs, DisplayFormatType, Distribution, ExecutionMode, ExecutionPlan,
+    ExecutionPlanProperties, PhysicalExpr, PlanProperties, RecordBatchStream,
+    SendableRecordBatchStream, Statistics,
 };
 use futures::stream::{Stream, StreamExt};
 use modelardb_common::schemas::QUERY_SCHEMA;
@@ -64,6 +64,8 @@ pub struct GridExec {
     limit: Option<usize>,
     /// Execution plan to read batches of segments from.
     input: Arc<dyn ExecutionPlan>,
+    /// Properties about the plan used in query optimization.
+    plan_properties: PlanProperties,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
     metrics: ExecutionPlanMetricsSet,
 }
@@ -76,11 +78,26 @@ impl GridExec {
     ) -> Arc<Self> {
         let schema = QUERY_SCHEMA.0.clone();
 
+        // The global order for the data points produced by the set of GridExec instances producing
+        // input for an SortedJoinExec must be the same. This is needed because SortedJoinExec
+        // assumes the data it receives from all of its inputs uses the same global sort order.
+        let equivalence_properties = EquivalenceProperties::new_with_orderings(
+            schema.clone(),
+            &[QUERY_ORDER_DATA_POINT.clone()],
+        );
+
+        let plan_properties = PlanProperties::new(
+            equivalence_properties,
+            input.output_partitioning().clone(),
+            ExecutionMode::Bounded,
+        );
+
         Arc::new(GridExec {
             maybe_predicate,
             schema,
             limit,
             input,
+            plan_properties,
             metrics: ExecutionPlanMetricsSet::new(),
         })
     }
@@ -98,16 +115,9 @@ impl ExecutionPlan for GridExec {
         self.schema.clone()
     }
 
-    /// Return the partitioning of the single execution plan batches of segments are read from.
-    fn output_partitioning(&self) -> Partitioning {
-        self.input.output_partitioning()
-    }
-
-    /// Specify that the global order for the data points produced by all [`GridExec`] will be the
-    /// same. This is needed because [`crate::query::sorted_join_exec::SortedJoinExec`] assumes the
-    /// data it receives from all of its inputs uses the same global sort order.
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        Some(&QUERY_ORDER_DATA_POINT)
+    /// Return properties of the output of the plan.
+    fn properties(&self) -> &PlanProperties {
+        &self.plan_properties
     }
 
     /// Return the single execution plan batches of rows are read from.
@@ -175,14 +185,6 @@ impl ExecutionPlan for GridExec {
         let physical_sort_requirements =
             PhysicalSortRequirement::from_sort_exprs(QUERY_ORDER_SEGMENT.iter());
         vec![Some(physical_sort_requirements)]
-    }
-
-    /// Return an [`EquivalenceProperties`] to specify how the output of [`GridExec`] is ordered.
-    /// This is required in addition to [`ExecutionPlan::output_partitioning()`] and
-    /// [`ExecutionPlan::output_ordering()`] as it is used by some physical optimizer rules included
-    /// with Apache Arrow DataFusion to check the correct sort order is preserved.
-    fn equivalence_properties(&self) -> EquivalenceProperties {
-        EquivalenceProperties::new_with_orderings(self.schema(), &[QUERY_ORDER_DATA_POINT.clone()])
     }
 
     /// Return a snapshot of the set of metrics being collected by the execution plain.

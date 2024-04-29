@@ -25,7 +25,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crossbeam_channel::{Receiver, Sender};
 use datafusion::arrow::array::UInt32Array;
 use modelardb_common::types::{Timestamp, TimestampArray};
-use ringbuf::{HeapRb, Rb};
+// rustc 1.77.2 warns about Observer being unused but ringbuf 0.4.0 require it to be imported.
+#[allow(unused_imports)]
+use ringbuf::traits::Observer;
+use ringbuf::traits::{Consumer, RingBuffer};
+use ringbuf::HeapRb;
 
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
 use crate::storage::uncompressed_data_buffer::{
@@ -649,7 +653,7 @@ mod tests {
         assert_eq!(values.value(1), 0);
 
         // Ensure that the builders in the metric has been reset.
-        assert_eq!(metric.timestamps.len(), 0);
-        assert_eq!(metric.values.len(), 0);
+        assert_eq!(metric.timestamps.occupied_len(), 0);
+        assert_eq!(metric.values.occupied_len(), 0);
     }
 }

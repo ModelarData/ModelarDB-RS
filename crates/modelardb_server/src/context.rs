@@ -324,11 +324,20 @@ impl Context {
     ) -> Result<Option<Arc<ModelTableMetadata>>, ModelarDbError> {
         let database_schema = self.default_database_schema()?;
 
-        let table = database_schema.table(table_name).await.ok_or_else(|| {
-            ModelarDbError::DataRetrievalError(format!(
-                "Table with name '{table_name}' does not exist."
-            ))
-        })?;
+        let table = database_schema
+            .table(table_name)
+            .await
+            .map_err(|e| {
+                ModelarDbError::DataRetrievalError(format!(
+                    "Failed to retrieve metadata for '{table_name}' due to: {}",
+                    e
+                ))
+            })?
+            .ok_or_else(|| {
+                ModelarDbError::DataRetrievalError(format!(
+                    "Table with name '{table_name}' does not exist."
+                ))
+            })?;
 
         if let Some(model_table) = table.as_any().downcast_ref::<ModelTable>() {
             Ok(Some(model_table.model_table_metadata()))
@@ -356,11 +365,20 @@ impl Context {
     ) -> Result<SchemaRef, ModelarDbError> {
         let database_schema = self.default_database_schema()?;
 
-        let table = database_schema.table(table_name).await.ok_or_else(|| {
-            ModelarDbError::DataRetrievalError(format!(
-                "Table with name '{table_name}' does not exist."
-            ))
-        })?;
+        let table = database_schema
+            .table(table_name)
+            .await
+            .map_err(|e| {
+                ModelarDbError::DataRetrievalError(format!(
+                    "Failed to retrieve schema for '{table_name}' due to: {}",
+                    e
+                ))
+            })?
+            .ok_or_else(|| {
+                ModelarDbError::DataRetrievalError(format!(
+                    "Table with name '{table_name}' does not exist."
+                ))
+            })?;
 
         Ok(table.schema())
     }

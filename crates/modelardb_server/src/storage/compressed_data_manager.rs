@@ -521,7 +521,7 @@ mod tests {
     use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
     use object_store::local::LocalFileSystem;
     use object_store::ObjectStore;
-    use ringbuf::Rb;
+    use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
 
     const COLUMN_INDEX: u16 = 5;
@@ -684,7 +684,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .values()
-                .len(),
+                .occupied_len(),
             1
         );
     }
@@ -723,7 +723,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .values()
-                .len(),
+                .occupied_len(),
             2
         );
         assert_eq!(
@@ -732,7 +732,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .values()
-                .len(),
+                .occupied_len(),
             1
         );
     }
