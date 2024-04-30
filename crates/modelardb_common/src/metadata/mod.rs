@@ -253,7 +253,7 @@ where
             // Save the tag hash in the cache and in the metadata database model_table_tags table.
             self.tag_value_hashes.insert(cache_key, tag_hash);
 
-            // tag_column_indices are computed with from the schema, so they can be used with input.
+            // tag_column_indices are computed from the schema, so they can be used with input.
             let tag_columns: String = model_table_metadata
                 .tag_column_indices
                 .iter()

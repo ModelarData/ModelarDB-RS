@@ -298,7 +298,7 @@ fn merge_segments(
                 let residuals = residuals.value(segment_index);
                 let values = models::merge(model_type_id, min_value, max_value, values);
 
-                // The metadata shared for all segments are read from the last segment. In
+                // The metadata is the same for all segments, so it is read from the last segment. In
                 // addition, since only the last segment may contain residuals, they are copied.
                 merged_compressed_segments.append_compressed_segment(
                     univariate_ids.value(segment_index),

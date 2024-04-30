@@ -531,7 +531,7 @@ impl FlightService for FlightServiceHandler {
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 
-            // Check that all the node's tables exist in the clusters database schema already.
+            // Check that all the node's tables exist in the cluster's database schema already.
             let invalid_node_tables: Vec<&str> = node_tables
                 .iter()
                 .filter(|table| !cluster_tables.contains(&table.to_string()))

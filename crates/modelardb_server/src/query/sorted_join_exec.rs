@@ -99,8 +99,8 @@ impl ExecutionPlan for SortedJoinExec {
         self.schema.clone()
     }
 
-    /// Return the partitioning of the first execution plan batches of segments are read from as all
-    /// the execution plans compressed segments are read from are equivalent.
+    /// Return the partitioning of the first execution plan batches of segments are read from.
+    /// Note that all the execution plans compressed segments are read from are equivalent.
     fn output_partitioning(&self) -> Partitioning {
         self.inputs[0].output_partitioning()
     }
