@@ -336,7 +336,7 @@ mod tests {
     use arrow_flight::flight_service_client::FlightServiceClient;
     use modelardb_common::test;
     use modelardb_common::{metadata, storage};
-    use ringbuf::Rb;
+    use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
     use tokio::sync::RwLock;
     use tonic::transport::Channel;
@@ -414,7 +414,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .values()
-                .len(),
+                .occupied_len(),
             1
         );
     }

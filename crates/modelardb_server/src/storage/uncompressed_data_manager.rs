@@ -862,7 +862,7 @@ mod tests {
     use modelardb_common::test;
     use modelardb_common::types::{ServerMode, TimestampBuilder, ValueBuilder};
     use object_store::ObjectStore;
-    use ringbuf::Rb;
+    use ringbuf::traits::observer::Observer;
     use tempfile::TempDir;
     use tokio::time::{sleep, Duration};
 
@@ -941,7 +941,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .values()
-                .len(),
+                .occupied_len(),
             2
         );
     }
@@ -969,7 +969,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .values()
-                .len(),
+                .occupied_len(),
             1
         );
     }
@@ -997,7 +997,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .values()
-                .len(),
+                .occupied_len(),
             1
         );
     }
@@ -1043,7 +1043,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .values()
-                .len(),
+                .occupied_len(),
             2
         );
     }
@@ -1352,7 +1352,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .values()
-                .len(),
+                .occupied_len(),
             1
         );
     }
@@ -1395,7 +1395,7 @@ mod tests {
                 .lock()
                 .unwrap()
                 .values()
-                .len(),
+                .occupied_len(),
             2
         );
     }

@@ -59,7 +59,9 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
         execution_plan: Arc<dyn ExecutionPlan>,
         _config: &ConfigOptions,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        execution_plan.transform_down(&rewrite_aggregates_to_use_segments)
+        execution_plan
+            .transform_down(&rewrite_aggregates_to_use_segments)
+            .map(|transformed| transformed.data)
     }
 
     /// Return the name of the [`PhysicalOptimizerRule`].
@@ -116,7 +118,7 @@ fn rewrite_aggregates_to_use_segments(
                         try_new_aggregate_exec(aggregate_exec, sorted_join_exec.children())
                     {
                         // unwrap() is safe as the inputs are constructed from sorted_join_exec.
-                        return Ok(Transformed::Yes(
+                        return Ok(Transformed::yes(
                             execution_plan.with_new_children(vec![input]).unwrap(),
                         ));
                     };
@@ -125,7 +127,7 @@ fn rewrite_aggregates_to_use_segments(
         }
     }
 
-    Ok(Transformed::No(execution_plan))
+    Ok(Transformed::no(execution_plan))
 }
 
 /// Return an [`AggregateExec`] that computes the same aggregates as `aggregate_exec` if no
