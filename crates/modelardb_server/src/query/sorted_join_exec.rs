@@ -32,13 +32,12 @@ use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_expr::PhysicalSortRequirement;
-use datafusion::physical_plan::expressions::PhysicalSortExpr;
+use datafusion::physical_expr::{EquivalenceProperties, PhysicalSortRequirement};
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
-use datafusion::physical_plan::Distribution;
 use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, RecordBatchStream,
-    SendableRecordBatchStream, Statistics,
+    DisplayAs, DisplayFormatType, Distribution, ExecutionMode, ExecutionPlan,
+    ExecutionPlanProperties, PlanProperties, RecordBatchStream, SendableRecordBatchStream,
+    Statistics,
 };
 use futures::stream::{Stream, StreamExt};
 use modelardb_common::metadata;
@@ -67,6 +66,8 @@ pub struct SortedJoinExec {
     hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
     /// Execution plans to read batches of data points from.
     inputs: Vec<Arc<dyn ExecutionPlan>>,
+    /// Properties about the plan used in query optimization.
+    plan_properties: PlanProperties,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
     metrics: ExecutionPlanMetricsSet,
 }
@@ -78,11 +79,22 @@ impl SortedJoinExec {
         hash_to_tags: Arc<HashMap<u64, Vec<String>>>,
         inputs: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Arc<Self> {
+        // Specify that the record batches produced by the execution plan will have an unknown order
+        // as the output from SortedJoinExec does not include the univariate_id but instead tags.
+        let equivalence_properties = EquivalenceProperties::new(schema.clone());
+
+        let plan_properties = PlanProperties::new(
+            equivalence_properties,
+            inputs[0].output_partitioning().clone(),
+            ExecutionMode::Bounded,
+        );
+
         Arc::new(SortedJoinExec {
             schema,
             return_order,
             hash_to_tags,
             inputs,
+            plan_properties,
             metrics: ExecutionPlanMetricsSet::new(),
         })
     }
@@ -99,17 +111,9 @@ impl ExecutionPlan for SortedJoinExec {
         self.schema.clone()
     }
 
-    /// Return the partitioning of the first execution plan batches of segments are read from as all
-    /// of the execution plans compressed segments are read from are equivalent.
-    fn output_partitioning(&self) -> Partitioning {
-        self.inputs[0].output_partitioning()
-    }
-
-    /// Specify that the record batches produced by the execution plan will have an unknown order as
-    /// the output from [`crate::query::sorted_join_exec::SortedJoinExec`] does not include the
-    /// `univariate_id` but instead tags.
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        None
+    /// Return properties of the output of the plan.
+    fn properties(&self) -> &PlanProperties {
+        &self.plan_properties
     }
 
     /// Return the single execution plan batches of rows are read from.

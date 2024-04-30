@@ -106,7 +106,7 @@ pub async fn write_record_batch_to_apache_parquet_file(
         // Write the record batch to the object store.
         let mut buffer = Vec::new();
         let mut writer =
-            AsyncArrowWriter::try_new(&mut buffer, record_batch.schema(), 0, Some(props))?;
+            AsyncArrowWriter::try_new(&mut buffer, record_batch.schema(), Some(props))?;
         writer.write(record_batch).await?;
         writer.close().await?;
 

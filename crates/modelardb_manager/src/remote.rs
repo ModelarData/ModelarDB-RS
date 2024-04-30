@@ -31,7 +31,7 @@ use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightEndpoint, FlightInfo,
-    HandshakeRequest, HandshakeResponse, Location, PutResult, Result as FlightResult, SchemaAsIpc,
+    HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
 use chrono::{TimeZone, Utc};
@@ -365,12 +365,9 @@ impl FlightService for FlightServiceHandler {
         );
 
         // All data in the query result should be retrieved using a single endpoint.
-        let endpoint = FlightEndpoint {
-            ticket: Some(Ticket::new(query)),
-            location: vec![Location {
-                uri: cloud_node.url,
-            }],
-        };
+        let endpoint = FlightEndpoint::new()
+            .with_ticket(Ticket::new(query))
+            .with_location(cloud_node.url);
 
         // schema is empty and total_records and total_bytes are -1 since we do not know anything
         // about the result of the query at this point.
@@ -380,6 +377,14 @@ impl FlightService for FlightServiceHandler {
             .with_ordered(true);
 
         Ok(Response::new(flight_info))
+    }
+
+    /// Not implemented.
+    async fn poll_flight_info(
+        &self,
+        _request: Request<FlightDescriptor>,
+    ) -> Result<Response<PollInfo>, Status> {
+        Err(Status::unimplemented("Not implemented."))
     }
 
     /// Provide the schema of a table in the catalog. The name of the table must be provided as the
