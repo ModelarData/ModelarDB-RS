@@ -39,7 +39,7 @@ use futures::stream::Stream;
 use futures::StreamExt;
 use modelardb_common::types::{TimestampArray, ValueArray};
 
-///  A column the [`GeneratedAsExec`] must add to each of the [`RecordBatches`](RecordBatch) using
+/// A column the [`GeneratedAsExec`] must add to each of the [`RecordBatches`](RecordBatch) using
 /// [`GeneratedAsStream`] with the location it must be at and the [`PhysicalExpr`] that compute it.
 #[derive(Debug, Clone)]
 pub struct ColumnToGenerate {
