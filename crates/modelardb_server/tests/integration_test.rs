@@ -54,7 +54,7 @@ const TABLE_NAME: &str = "table_name";
 const HOST: &str = "127.0.0.1";
 
 /// The next port to be used for the server in an integration test. Each test uses a unique port and
-/// local data folder, so they can run in parallel and so that any failing tests does not cascade.
+/// local data folder, so they can run in parallel and so that any failing tests do not cascade.
 static PORT: AtomicU16 = AtomicU16::new(9999);
 
 /// Number of times to try to create the client and kill child processes.
@@ -117,7 +117,7 @@ impl TestContext {
     /// Create a server that stores data in `local_data_folder` and listens on `port` and ensure it
     /// is ready to receive requests.
     fn create_server(local_data_folder: &TempDir, port: u16) -> Child {
-        // The server's stdout and stderr is piped so the log messages (stdout) and expected errors
+        // The server's stdout and stderr are piped so the log messages (stdout) and expected errors
         // (stderr) are not printed when all the tests are run using the "cargo test" command.
         // modelardbd is run using dev-release so the tests can use larger more realistic data sets.
         let local_data_folder = local_data_folder.path().to_str().unwrap();
@@ -183,7 +183,7 @@ impl TestContext {
         while let Some(_process) = system.process(Pid::from_u32(child.id())) {
             system.refresh_all();
 
-            // Microsoft Windows often fail to kill the process and then succeed afterward.
+            // Microsoft Windows often fails to kill the process and then succeed afterward.
             let mut attempts = ATTEMPTS;
             while child.kill().is_err() && attempts > 0 {
                 thread::sleep(ATTEMPT_SLEEP_IN_SECONDS);

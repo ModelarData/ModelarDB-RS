@@ -317,7 +317,7 @@ impl StorageEngine {
             .send(Message::Flush)
             .map_err(|error| format!("Unable to flush data in storage engine due to: {}", error))?;
 
-        // Wait until all the data in the storage engine have been flushed.
+        // Wait until all the data in the storage engine has been flushed.
         self.channels
             .result_receiver
             .recv()
@@ -347,7 +347,7 @@ impl StorageEngine {
             .send(Message::Stop)
             .map_err(|error| format!("Unable to stop the storage engine due to: {}", error))?;
 
-        // Wait until all the data in the storage engine have been flushed.
+        // Wait until all the data in the storage engine has been flushed.
         self.channels
             .result_receiver
             .recv()
