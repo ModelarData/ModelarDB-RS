@@ -18,6 +18,7 @@
 //! through this metadata manager, while it only supports a subset of the manager metadata database.
 
 pub mod compressed_file;
+pub mod delta_metadata;
 pub mod model_table_metadata;
 
 use std::collections::hash_map::DefaultHasher;

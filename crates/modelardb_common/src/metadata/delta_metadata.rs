@@ -13,9 +13,9 @@
  * limitations under the License.
  */
 
-//! Table metadata manager that includes functionality used to access both the server metadata deltalake
-//! and the manager metadata deltalake. Note that the entire server metadata deltalake can be accessed
-//! through this metadata manager, while it only supports a subset of the manager metadata deltalake.
+//! Table metadata manager that includes functionality used to access both the server metadata delta lake
+//! and the manager metadata delta lake. Note that the entire server metadata delta lake can be accessed
+//! through this metadata manager, while it only supports a subset of the manager metadata delta lake.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -42,11 +42,11 @@ const METADATA_FOLDER: &str = "metadata";
 // TODO: Look into using save mode on the write builder instead. It seems much simpler.
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
-/// The data that needs to be persisted is stored in the metadata deltalake.
+/// The data that needs to be persisted is stored in the metadata delta lake.
 pub struct TableMetadataManager {
-    /// Map from metadata deltalake table names to [`DeltaTables`](DeltaTable).
+    /// Map from metadata delta lake table names to [`DeltaTables`](DeltaTable).
     metadata_tables: DashMap<String, Arc<DeltaTable>>,
-    /// Session used to read from the metadata deltalake using Apache Arrow DataFusion.
+    /// Session used to read from the metadata delta lake using Apache Arrow DataFusion.
     session: SessionContext,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
     tag_value_hashes: DashMap<String, u64>,
@@ -66,7 +66,7 @@ impl TableMetadataManager {
         };
 
         table_metadata_manager
-            .create_metadata_deltalake_tables(folder_path.as_ref(), HashMap::new())
+            .create_metadata_delta_lake_tables(folder_path.as_ref(), HashMap::new())
             .await?;
 
         Ok(table_metadata_manager)
@@ -95,13 +95,13 @@ impl TableMetadataManager {
         };
 
         table_metadata_manager
-            .create_metadata_deltalake_tables("s3://modelardb", storage_options)
+            .create_metadata_delta_lake_tables("s3://modelardb", storage_options)
             .await?;
 
         Ok(table_metadata_manager)
     }
 
-    /// If they do not already exist, create the tables in the metadata deltalake used for table and
+    /// If they do not already exist, create the tables in the metadata delta lake used for table and
     /// model table metadata.
     /// * The table_metadata table contains the metadata for tables.
     /// * The model_table_metadata table contains the main metadata for model tables.
@@ -110,13 +110,13 @@ impl TableMetadataManager {
     /// * The model_table_field_columns table contains the name, index, error bound value, whether
     /// error bound is relative, and generation expression of the field columns in each model table.
     /// If the tables exist or were created, return [`Ok`], otherwise return [`DeltaTableError`].
-    async fn create_metadata_deltalake_tables(
+    async fn create_metadata_delta_lake_tables(
         &self,
         url_scheme: &str,
         storage_options: HashMap<String, String>,
     ) -> Result<(), DeltaTableError> {
         // Create the table_metadata table if it does not exist.
-        self.create_deltalake_table(
+        self.create_delta_lake_table(
             "table_metadata",
             vec![
                 StructField::new("table_name", DataType::STRING, false),
@@ -128,7 +128,7 @@ impl TableMetadataManager {
         .await?;
 
         // Create the model_table_metadata table if it does not exist.
-        self.create_deltalake_table(
+        self.create_delta_lake_table(
             "model_table_metadata",
             vec![
                 StructField::new("table_name", DataType::STRING, false),
@@ -141,7 +141,7 @@ impl TableMetadataManager {
         .await?;
 
         // Create the model_table_hash_table_name table if it does not exist.
-        self.create_deltalake_table(
+        self.create_delta_lake_table(
             "model_table_hash_table_name",
             vec![
                 StructField::new("hash", DataType::LONG, false),
@@ -155,7 +155,7 @@ impl TableMetadataManager {
         // Create the model_table_field_columns table if it does not exist. Note that column_index
         // will only use a maximum of 10 bits. generated_column_* is NULL if the fields are stored
         // as segments.
-        self.create_deltalake_table(
+        self.create_delta_lake_table(
             "model_table_field_columns",
             vec![
                 StructField::new("table_name", DataType::STRING, false),
@@ -174,11 +174,11 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Use `table_name` to create a deltalake table with `columns` in the location given by
+    /// Use `table_name` to create a delta lake table with `columns` in the location given by
     /// `url_scheme` and `storage_options` if it does not already exist. The created table is saved
     /// in the metadata tables and registered in the Apache Arrow Datafusion session. If the table
     /// could not be created or registered, return [`DeltaTableError`].
-    async fn create_deltalake_table(
+    async fn create_delta_lake_table(
         &self,
         table_name: &str,
         columns: Vec<StructField>,
@@ -201,7 +201,7 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Save the created table to the metadata deltalake. This consists of adding a row to the
+    /// Save the created table to the metadata delta lake. This consists of adding a row to the
     /// table_metadata table with the `name` of the table and the `sql` used to create the table.
     /// If the table metadata was saved, return the updated [`DeltaTable`], otherwise return [`DeltaTableError`].
     pub async fn save_table_metadata(
@@ -233,7 +233,7 @@ mod tests {
 
     // Tests for TableMetadataManager.
     #[tokio::test]
-    async fn test_create_metadata_deltalake_tables() {
+    async fn test_create_metadata_delta_lake_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
             Path::from_absolute_path(temp_dir.path()).unwrap(),
