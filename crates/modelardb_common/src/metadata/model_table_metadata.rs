@@ -179,7 +179,7 @@ pub struct GeneratedColumn {
     pub expr: Expr,
     /// Indices of the stored columns used by `expr` to compute the column's values.
     pub source_columns: Vec<usize>,
-    /// Original representation of `expr`. It is copied from the SQL statement so it can be stored
+    /// Original representation of `expr`. It is copied from the SQL statement, so it can be stored
     /// in the metadata database as `expr` does not implement serialization and deserialization.
     pub original_expr: Option<String>,
 }

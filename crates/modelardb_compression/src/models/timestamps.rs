@@ -60,7 +60,7 @@ pub fn compress_residual_timestamps(uncompressed_timestamps: &[Timestamp]) -> Ve
         // an integer with all the prefix zeros stripped from the integer.
         compress_regular_residual_timestamps(uncompressed_timestamps)
     } else {
-        // The timestamps are irregular so they are compressed as
+        // The timestamps are irregular, so they are compressed as
         // delta-of-deltas stored using a variable length binary encoding.
         compress_irregular_residual_timestamps(uncompressed_timestamps)
     }

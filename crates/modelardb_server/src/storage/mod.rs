@@ -83,7 +83,7 @@ pub static UNCOMPRESSED_DATA_BUFFER_CAPACITY: Lazy<usize> = Lazy::new(|| {
 });
 
 /// Manages all uncompressed and compressed data, both while being stored in memory during ingestion
-/// and when persisted to disk afterwards.
+/// and when persisted to disk afterward.
 pub struct StorageEngine {
     /// Manager that contains and controls all uncompressed data.
     uncompressed_data_manager: Arc<UncompressedDataManager>,
@@ -309,15 +309,15 @@ impl StorageEngine {
             .map_err(|error| error.to_string())
     }
 
-    /// Flush all of the data the [`StorageEngine`] is currently storing in memory to disk. If all
-    /// of the data is successfully flushed to disk, return [`Ok`], otherwise return [`String`].
+    /// Flush all the data the [`StorageEngine`] is currently storing in memory to disk. If all
+    /// the data is successfully flushed to disk, return [`Ok`], otherwise return [`String`].
     pub(super) async fn flush(&self) -> Result<(), String> {
         self.channels
             .multivariate_data_sender
             .send(Message::Flush)
             .map_err(|error| format!("Unable to flush data in storage engine due to: {}", error))?;
 
-        // Wait until all of the data in the storage engine have been flushed.
+        // Wait until all the data in the storage engine has been flushed.
         self.channels
             .result_receiver
             .recv()
@@ -325,8 +325,7 @@ impl StorageEngine {
             .map_err(|error| format!("Failed to flush data in storage engine due to: {}", error))
     }
 
-    /// Transfer all of the compressed data the [`StorageEngine`] is managing to the remote object
-    /// store.
+    /// Transfer all the compressed data the [`StorageEngine`] is managing to the remote object store.
     pub(super) async fn transfer(&mut self) -> Result<(), Status> {
         if let Some(data_transfer) = &*self.compressed_data_manager.data_transfer.read().await {
             data_transfer
@@ -338,17 +337,17 @@ impl StorageEngine {
         }
     }
 
-    /// Flush all of the data the [`StorageEngine`] is currently storing in memory to disk and stop
-    /// all of the threads. If all of the data is successfully flushed to disk and all of the
-    /// threads stopped, return [`Ok`], otherwise return [`String`]. This method is purposely `&mut
-    /// self` instead of `self` so it can be called through an Arc.
+    /// Flush all the data the [`StorageEngine`] is currently storing in memory to disk and stop
+    /// all the threads. If all the data is successfully flushed to disk and all the threads stopped,
+    /// return [`Ok`], otherwise return [`String`]. This method is purposely `&mut self` instead of
+    /// `self` so it can be called through an Arc.
     pub(super) fn close(&mut self) -> Result<(), String> {
         self.channels
             .multivariate_data_sender
             .send(Message::Stop)
             .map_err(|error| format!("Unable to stop the storage engine due to: {}", error))?;
 
-        // Wait until all of the data in the storage engine have been flushed.
+        // Wait until all the data in the storage engine has been flushed.
         self.channels
             .result_receiver
             .recv()
@@ -494,7 +493,7 @@ impl StorageEngine {
     }
 
     /// Set the transfer batch size in the data transfer component to `new_value` if it exists. If
-    /// a data transfer component does not exists, or the value could not be changed,
+    /// a data transfer component does not exist, or the value could not be changed,
     /// return [`ModelarDbError`].
     pub(super) async fn set_transfer_batch_size_in_bytes(
         &self,
@@ -515,7 +514,7 @@ impl StorageEngine {
     }
 
     /// Set the transfer time in the data transfer component to `new_value` if it exists. If
-    /// a data transfer component does not exists, return [`ModelarDbError`].
+    /// a data transfer component does not exist, return [`ModelarDbError`].
     pub(super) async fn set_transfer_time_in_seconds(
         &mut self,
         new_value: Option<usize>,

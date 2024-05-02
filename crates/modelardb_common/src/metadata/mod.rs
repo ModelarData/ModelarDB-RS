@@ -93,7 +93,7 @@ impl MetadataDatabase for Sqlite {
     }
 }
 
-/// SQLx does not provide a trait for query results so we have to provide one ourselves to
+/// SQLx does not provide a trait for query results, so we have to provide one ourselves to
 /// ensure the `rows_affected()` method is available for each supported RDBMS.
 pub trait MetadataDatabaseQueryResult {
     /// The number of rows that were affected by the query being executed.
@@ -236,7 +236,7 @@ where
         // one and save it both in the cache and in the model_table_tags table. There is a minor
         // race condition because the check if a tag hash is in the cache and the addition of the
         // hash is done without taking a lock on the tag_value_hashes. However, by allowing a hash
-        // to possible be computed more than once, the cache can be used without an explicit lock.
+        // to possibly be computed more than once, the cache can be used without an explicit lock.
         if let Some(tag_hash) = self.tag_value_hashes.get(&cache_key) {
             Ok((*tag_hash, false))
         } else {
@@ -253,7 +253,7 @@ where
             // Save the tag hash in the cache and in the metadata database model_table_tags table.
             self.tag_value_hashes.insert(cache_key, tag_hash);
 
-            // tag_column_indices are computed with from the schema so they can be used with input.
+            // tag_column_indices are computed from the schema, so they can be used with input.
             let tag_columns: String = model_table_metadata
                 .tag_column_indices
                 .iter()
@@ -366,7 +366,7 @@ where
             let signed_tag_hash: i64 = row.try_get("hash")?;
             let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
 
-            // Add all of the tags in order so they can be directly appended to each row.
+            // Add all the tags in order, so they can be directly appended to each row.
             let mut tags = Vec::with_capacity(tag_column_names.len());
             for tag_column_index in 1..=tag_column_names.len() {
                 tags.push(row.try_get(tag_column_index)?);
@@ -677,7 +677,7 @@ where
         let integer_type = self.metadata_database_type.integer_type();
         let strict = self.metadata_database_type.strict();
 
-        // Convert the query schema to bytes so it can be saved as a BLOB in the metadata database.
+        // Convert the query schema to bytes, so it can be saved as a BLOB in the metadata database.
         let query_schema_bytes = try_convert_schema_to_blob(&model_table_metadata.query_schema)?;
 
         // Create a transaction to ensure the database state is consistent across tables.

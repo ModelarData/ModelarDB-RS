@@ -181,7 +181,7 @@ impl Manager {
         tag_hash: u64,
         tag_values: &[String],
     ) -> Result<(), ModelarDbError> {
-        // Convert the tag columns and tag values to strings so they can be inserted into a record batch.
+        // Convert the tag columns and tag values to strings, so they can be inserted into a record batch.
         let tag_columns: String = model_table_metadata
             .tag_column_indices
             .iter()
@@ -222,7 +222,7 @@ impl Manager {
         let flight_descriptor = FlightDescriptor::new_path(vec![metadata_table_name.to_owned()]);
         let mut flight_data = vec![FlightData::new().with_descriptor(flight_descriptor)];
 
-        // Convert the metadata in the record batch to the Arrow IPC format so it can be transferred.
+        // Convert the metadata in the record batch to the Arrow IPC format, so it can be transferred.
         let data_generator = IpcDataGenerator::default();
         let writer_options = IpcWriteOptions::default();
         let mut dictionary_tracker = DictionaryTracker::new(false);

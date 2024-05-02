@@ -185,7 +185,7 @@ fn segments_can_be_merged(
 
     // Segments with overlapping time intervals occurs when data points are being ingested
     // out-of-order across different batches. Such segments cannot be merged as the query engine
-    // assumes all columns in a model table has the same sort order and it would change the order
+    // assumes all columns in a model table has the same sort order, and it would change the order
     // for a single column in the table if segments with out-of-order data points are merged.
     if end_times.value(previous_index) >= start_times.value(current_index) {
         return false;
@@ -298,7 +298,7 @@ fn merge_segments(
                 let residuals = residuals.value(segment_index);
                 let values = models::merge(model_type_id, min_value, max_value, values);
 
-                // The metadata shared for all segment's are read from the last segment. In
+                // The metadata is the same for all segments, so it is read from the last segment. In
                 // addition, since only the last segment may contain residuals, they are copied.
                 merged_compressed_segments.append_compressed_segment(
                     univariate_ids.value(segment_index),

@@ -92,7 +92,7 @@ impl RemoteMetadataManager {
                 ))
             })?;
 
-        // Encode the connection information so it can be transferred over Apache Arrow Flight.
+        // Encode the connection information, so it can be transferred over Apache Arrow Flight.
         let connection_info: Vec<u8> = [
             username.as_str(),
             password.as_str(),
