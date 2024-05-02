@@ -27,7 +27,7 @@ use datafusion::prelude::SessionContext;
 use deltalake::kernel::{DataType, StructField};
 use deltalake::operations::create::CreateBuilder;
 use deltalake::protocol::SaveMode;
-use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
+use deltalake::{open_table, DeltaOps, DeltaTable, DeltaTableError};
 use object_store::path::Path;
 
 /// The folder storing metadata in the data folders.
@@ -44,6 +44,8 @@ const METADATA_FOLDER: &str = "metadata";
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata delta lake.
 pub struct TableMetadataManager {
+    /// URL to access the base folder of the location where the metadata tables are stored.
+    url_scheme: String,
     /// Map from metadata delta lake table names to [`DeltaTables`](DeltaTable).
     metadata_tables: DashMap<String, Arc<DeltaTable>>,
     /// Session used to read from the metadata delta lake using Apache Arrow DataFusion.
@@ -60,13 +62,14 @@ impl TableMetadataManager {
         folder_path: Path,
     ) -> Result<TableMetadataManager, DeltaTableError> {
         let table_metadata_manager = TableMetadataManager {
+            url_scheme: folder_path.to_string(),
             metadata_tables: DashMap::new(),
             session: SessionContext::new(),
             tag_value_hashes: DashMap::new(),
         };
 
         table_metadata_manager
-            .create_metadata_delta_lake_tables(folder_path.as_ref(), HashMap::new())
+            .create_metadata_delta_lake_tables(HashMap::new())
             .await?;
 
         Ok(table_metadata_manager)
@@ -89,13 +92,14 @@ impl TableMetadataManager {
         ]);
 
         let table_metadata_manager = TableMetadataManager {
+            url_scheme: "s3://modelardb".to_owned(),
             metadata_tables: DashMap::new(),
             session: SessionContext::new(),
             tag_value_hashes: DashMap::new(),
         };
 
         table_metadata_manager
-            .create_metadata_delta_lake_tables("s3://modelardb", storage_options)
+            .create_metadata_delta_lake_tables(storage_options)
             .await?;
 
         Ok(table_metadata_manager)
@@ -112,7 +116,6 @@ impl TableMetadataManager {
     /// If the tables exist or were created, return [`Ok`], otherwise return [`DeltaTableError`].
     async fn create_metadata_delta_lake_tables(
         &self,
-        url_scheme: &str,
         storage_options: HashMap<String, String>,
     ) -> Result<(), DeltaTableError> {
         // Create the table_metadata table if it does not exist.
@@ -122,7 +125,6 @@ impl TableMetadataManager {
                 StructField::new("table_name", DataType::STRING, false),
                 StructField::new("sql", DataType::STRING, false),
             ],
-            url_scheme,
             storage_options.clone(),
         )
         .await?;
@@ -135,7 +137,6 @@ impl TableMetadataManager {
                 StructField::new("query_schema", DataType::BINARY, false),
                 StructField::new("sql", DataType::STRING, false),
             ],
-            url_scheme,
             storage_options.clone(),
         )
         .await?;
@@ -147,7 +148,6 @@ impl TableMetadataManager {
                 StructField::new("hash", DataType::LONG, false),
                 StructField::new("table_name", DataType::STRING, false),
             ],
-            url_scheme,
             storage_options.clone(),
         )
         .await?;
@@ -166,7 +166,6 @@ impl TableMetadataManager {
                 StructField::new("generated_column_expr", DataType::STRING, true),
                 StructField::new("generated_column_sources", DataType::BINARY, true),
             ],
-            url_scheme,
             storage_options,
         )
         .await?;
@@ -182,7 +181,6 @@ impl TableMetadataManager {
         &self,
         table_name: &str,
         columns: Vec<StructField>,
-        url_scheme: &str,
         storage_options: HashMap<String, String>,
     ) -> Result<(), DeltaTableError> {
         let table = Arc::new(
@@ -190,7 +188,10 @@ impl TableMetadataManager {
                 .with_save_mode(SaveMode::Ignore)
                 .with_storage_options(storage_options)
                 .with_table_name(table_name)
-                .with_location(format!("{url_scheme}/{METADATA_FOLDER}/{table_name}"))
+                .with_location(format!(
+                    "{}/{METADATA_FOLDER}/{table_name}",
+                    self.url_scheme
+                ))
                 .with_columns(columns)
                 .await?,
         );
@@ -211,9 +212,12 @@ impl TableMetadataManager {
     ) -> Result<DeltaTable, DeltaTableError> {
         // unwrap() is safe since the "table_metadata" table is registered when the table metadata manager is created.
         let table_provider = self.session.table_provider("table_metadata").await.unwrap();
-        let table: &DeltaTable = table_provider.as_any().downcast_ref().unwrap();
+        let table = open_table(format!(
+            "{}/{METADATA_FOLDER}/table_metadata",
+            self.url_scheme
+        ))
+        .await?;
 
-        let ops = DeltaOps::from(table.clone());
         let batch = RecordBatch::try_new(
             table_provider.schema(),
             vec![
@@ -223,6 +227,7 @@ impl TableMetadataManager {
         )
         .unwrap();
 
+        let ops = DeltaOps::from(table.clone());
         ops.write(vec![batch]).await
     }
 }
