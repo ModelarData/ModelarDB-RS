@@ -66,7 +66,7 @@ impl TableMetadataManager {
         folder_path: Path,
     ) -> Result<TableMetadataManager, DeltaTableError> {
         let table_metadata_manager = TableMetadataManager {
-            url_scheme: folder_path.to_string(),
+            url_scheme: format!("{folder_path}/{METADATA_FOLDER}"),
             storage_options: HashMap::new(),
             metadata_tables: DashMap::new(),
             session: SessionContext::new(),
@@ -97,7 +97,7 @@ impl TableMetadataManager {
         ]);
 
         let table_metadata_manager = TableMetadataManager {
-            url_scheme: "s3://modelardb".to_owned(),
+            url_scheme: format!("s3://modelardb/{METADATA_FOLDER}"),
             storage_options,
             metadata_tables: DashMap::new(),
             session: SessionContext::new(),
@@ -186,10 +186,7 @@ impl TableMetadataManager {
                 .with_save_mode(SaveMode::Ignore)
                 .with_storage_options(self.storage_options.clone())
                 .with_table_name(table_name)
-                .with_location(format!(
-                    "{}/{METADATA_FOLDER}/{table_name}",
-                    self.url_scheme
-                ))
+                .with_location(format!("{}/{table_name}", self.url_scheme))
                 .with_columns(columns)
                 .await?,
         );
@@ -211,7 +208,7 @@ impl TableMetadataManager {
         // unwrap() is safe since the "table_metadata" table is registered when the table metadata manager is created.
         let table_provider = self.session.table_provider("table_metadata").await.unwrap();
         let table = open_table_with_storage_options(
-            format!("{}/{METADATA_FOLDER}/table_metadata", self.url_scheme),
+            format!("{}/table_metadata", self.url_scheme),
             self.storage_options.clone(),
         )
         .await?;
