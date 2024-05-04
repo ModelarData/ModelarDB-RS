@@ -31,7 +31,7 @@ use arrow::ipc::writer::IpcWriteOptions;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightEndpoint, FlightInfo,
-    HandshakeRequest, HandshakeResponse, Location, PutResult, Result as FlightResult, SchemaAsIpc,
+    HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
 use chrono::{TimeZone, Utc};
@@ -43,7 +43,7 @@ use modelardb_common::parser::ValidStatement;
 use modelardb_common::schemas::{COMPRESSED_FILE_METADATA_SCHEMA, TAG_METADATA_SCHEMA};
 use modelardb_common::types::{ServerMode, TimestampArray, ValueArray};
 use modelardb_common::{metadata, parser, remote};
-use object_store::path::Path as ObjectStorePath;
+use object_store::path::Path;
 use object_store::ObjectMeta;
 use tokio::runtime::Runtime;
 use tonic::transport::Server;
@@ -200,7 +200,7 @@ impl FlightServiceHandler {
                 &self.dictionaries_by_id,
             )?;
 
-            // Extract the columns of the record batch so they can be accessed by row.
+            // Extract the columns of the record batch, so they can be accessed by row.
             let table_name_array = modelardb_common::array!(metadata, 0, StringArray);
             let tag_hash_array = modelardb_common::array!(metadata, 1, UInt64Array);
             let tag_columns_array = modelardb_common::array!(metadata, 2, StringArray);
@@ -240,7 +240,7 @@ impl FlightServiceHandler {
                 &self.dictionaries_by_id,
             )?;
 
-            // Extract the columns of the record batch so they can be accessed by row.
+            // Extract the columns of the record batch, so they can be accessed by row.
             let table_name_array = modelardb_common::array!(metadata, 0, StringArray);
             let field_column_array = modelardb_common::array!(metadata, 1, UInt64Array);
             let file_path_array = modelardb_common::array!(metadata, 2, StringArray);
@@ -259,7 +259,7 @@ impl FlightServiceHandler {
                     .unwrap();
 
                 let file_metadata = ObjectMeta {
-                    location: ObjectStorePath::from(file_path_array.value(row_index)),
+                    location: Path::from(file_path_array.value(row_index)),
                     last_modified,
                     size: size_array.value(row_index) as usize,
                     e_tag: None,
@@ -365,12 +365,9 @@ impl FlightService for FlightServiceHandler {
         );
 
         // All data in the query result should be retrieved using a single endpoint.
-        let endpoint = FlightEndpoint {
-            ticket: Some(Ticket::new(query)),
-            location: vec![Location {
-                uri: cloud_node.url,
-            }],
-        };
+        let endpoint = FlightEndpoint::new()
+            .with_ticket(Ticket::new(query))
+            .with_location(cloud_node.url);
 
         // schema is empty and total_records and total_bytes are -1 since we do not know anything
         // about the result of the query at this point.
@@ -380,6 +377,14 @@ impl FlightService for FlightServiceHandler {
             .with_ordered(true);
 
         Ok(Response::new(flight_info))
+    }
+
+    /// Not implemented.
+    async fn poll_flight_info(
+        &self,
+        _request: Request<FlightDescriptor>,
+    ) -> Result<Response<PollInfo>, Status> {
+        Err(Status::unimplemented("Not implemented."))
     }
 
     /// Provide the schema of a table in the catalog. The name of the table must be provided as the
@@ -485,7 +490,7 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// Perform a specific action based on the type of the action in `request`. Currently the
+    /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
     /// * `InitializeDatabase`: Given a list of existing table names, respond with the SQL required
     /// to create the tables and model tables that are missing in the list. The list of table names
@@ -531,7 +536,7 @@ impl FlightService for FlightServiceHandler {
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
 
-            // Check that all of the nodes tables exist in the clusters database schema already.
+            // Check that all the node's tables exist in the cluster's database schema already.
             let invalid_node_tables: Vec<&str> = node_tables
                 .iter()
                 .filter(|table| !cluster_tables.contains(&table.to_string()))
@@ -604,7 +609,7 @@ impl FlightService for FlightServiceHandler {
             let valid_statement = parser::semantic_checks_for_create_table(statement)
                 .map_err(|error| Status::invalid_argument(error.to_string()))?;
 
-            // Create the table or model table if it does not already exists.
+            // Create the table or model table if it does not already exist.
             match valid_statement {
                 ValidStatement::CreateTable { name, .. } => {
                     self.check_if_table_exists(&name).await?;

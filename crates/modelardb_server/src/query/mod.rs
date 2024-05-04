@@ -15,7 +15,7 @@
 
 //! Implementation of [`ModelTable`] which allows model tables to be queried through Apache Arrow
 //! DataFusion. It takes the projection, filters as [`Exprs`](Expr), and limit of a query as input
-//! and returns a physical query plan that produces all of the data points required for the query.
+//! and returns a physical query plan that produces all the data points required for the query.
 
 // Public so the rules added to Apache Arrow DataFusion's physical optimizer can access GridExec.
 pub mod generated_as_exec;
@@ -33,6 +33,7 @@ use datafusion::arrow::datatypes::{
     ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit,
 };
 use datafusion::common::ToDFSchema;
+use datafusion::config::TableParquetOptions;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::datasource::physical_plan::parquet::ParquetExec;
@@ -257,9 +258,14 @@ impl ModelTable {
             };
 
         let apache_parquet_exec = Arc::new(
-            ParquetExec::new(file_scan_config, maybe_physical_parquet_predicates, None)
-                .with_pushdown_filters(true)
-                .with_reorder_filters(true),
+            ParquetExec::new(
+                file_scan_config,
+                maybe_physical_parquet_predicates,
+                None,
+                TableParquetOptions::default(),
+            )
+            .with_pushdown_filters(true)
+            .with_reorder_filters(true),
         );
 
         // Create the gridding operator.

@@ -26,7 +26,7 @@ use std::sync::Arc;
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
     Action, ActionType, Criteria, Empty, FlightData, FlightDescriptor, FlightInfo,
-    HandshakeRequest, HandshakeResponse, PutResult, Result as FlightResult, SchemaAsIpc,
+    HandshakeRequest, HandshakeResponse, PollInfo, PutResult, Result as FlightResult, SchemaAsIpc,
     SchemaResult, Ticket,
 };
 use datafusion::arrow::array::{
@@ -286,6 +286,14 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
+    /// Not implemented.
+    async fn poll_flight_info(
+        &self,
+        _request: Request<FlightDescriptor>,
+    ) -> Result<Response<PollInfo>, Status> {
+        Err(Status::unimplemented("Not implemented."))
+    }
+
     /// Provide the schema of a table in the catalog. The name of the table must be provided as the
     /// first element in `FlightDescriptor.path`.
     async fn get_schema(
@@ -410,7 +418,7 @@ impl FlightService for FlightServiceHandler {
         Err(Status::unimplemented("Not implemented."))
     }
 
-    /// Perform a specific action based on the type of the action in `request`. Currently the
+    /// Perform a specific action based on the type of the action in `request`. Currently, the
     /// following actions are supported:
     /// * `CommandStatementUpdate`: Execute a SQL query containing a command that does not
     /// return a result. These commands can be `CREATE TABLE table_name(...` which creates a

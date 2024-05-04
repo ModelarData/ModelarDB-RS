@@ -14,7 +14,7 @@
  */
 
 //! Implementation of a physical optimizer rule that rewrites aggregates that are computed from
-//! reconstructed values from a single column without filtering so they are computed directly from
+//! reconstructed values from a single column without filtering, so they are computed directly from
 //! segments instead of the reconstructed values.
 
 #![allow(clippy::unconditional_recursion)]
@@ -48,7 +48,7 @@ use modelardb_common::types::{ArrowValue, TimestampArray, Value, ValueArray};
 use crate::query::sorted_join_exec::SortedJoinExec;
 
 /// Rewrite aggregates that are computed from reconstructed values from a single column without
-/// filtering so they are computed directly from segments instead of the reconstructed values.
+/// filtering, so they are computed directly from segments instead of the reconstructed values.
 pub struct ModelSimpleAggregatesPhysicalOptimizerRule {}
 
 impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
@@ -59,7 +59,9 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
         execution_plan: Arc<dyn ExecutionPlan>,
         _config: &ConfigOptions,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        execution_plan.transform_down(&rewrite_aggregates_to_use_segments)
+        execution_plan
+            .transform_down(&rewrite_aggregates_to_use_segments)
+            .map(|transformed| transformed.data)
     }
 
     /// Return the name of the [`PhysicalOptimizerRule`].
@@ -80,7 +82,7 @@ impl PhysicalOptimizerRule for ModelSimpleAggregatesPhysicalOptimizerRule {
 fn rewrite_aggregates_to_use_segments(
     execution_plan: Arc<dyn ExecutionPlan>,
 ) -> Result<Transformed<Arc<dyn ExecutionPlan>>> {
-    // The rule tries to match the sub-tree of execution_plan so execution_plan can be updated.
+    // The rule tries to match the subtree of execution_plan so execution_plan can be updated.
     let execution_plan_children = execution_plan.children();
 
     if execution_plan_children.len() == 1 {
@@ -116,7 +118,7 @@ fn rewrite_aggregates_to_use_segments(
                         try_new_aggregate_exec(aggregate_exec, sorted_join_exec.children())
                     {
                         // unwrap() is safe as the inputs are constructed from sorted_join_exec.
-                        return Ok(Transformed::Yes(
+                        return Ok(Transformed::yes(
                             execution_plan.with_new_children(vec![input]).unwrap(),
                         ));
                     };
@@ -125,7 +127,7 @@ fn rewrite_aggregates_to_use_segments(
         }
     }
 
-    Ok(Transformed::No(execution_plan))
+    Ok(Transformed::no(execution_plan))
 }
 
 /// Return an [`AggregateExec`] that computes the same aggregates as `aggregate_exec` if no
@@ -988,7 +990,6 @@ mod tests {
     use super::*;
 
     use std::any::TypeId;
-    use std::path::Path;
 
     use datafusion::datasource::physical_plan::parquet::ParquetExec;
     use datafusion::physical_plan::aggregates::AggregateExec;
@@ -998,6 +999,7 @@ mod tests {
     use modelardb_common::test;
     use modelardb_common::types::ServerMode;
     use object_store::local::LocalFileSystem;
+    use tempfile::TempDir;
     use tokio::runtime::Runtime;
 
     use crate::context::Context;
@@ -1010,7 +1012,7 @@ mod tests {
     async fn test_rewrite_aggregate_on_one_column_without_predicates() {
         let temp_dir = tempfile::tempdir().unwrap();
         let query = &format!("SELECT COUNT(field_1) FROM {}", test::MODEL_TABLE_NAME);
-        let physical_plan = query_optimized_physical_query_plan(temp_dir.path(), query).await;
+        let physical_plan = query_optimized_physical_query_plan(&temp_dir, query).await;
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -1042,7 +1044,7 @@ mod tests {
         for query in [query_no_avg, query_only_avg] {
             let temp_dir = tempfile::tempdir().unwrap();
 
-            let physical_plan = query_optimized_physical_query_plan(temp_dir.path(), query).await;
+            let physical_plan = query_optimized_physical_query_plan(&temp_dir, query).await;
             assert_eq_physical_plan_expected(physical_plan, &expected_plan);
         }
     }
@@ -1054,7 +1056,7 @@ mod tests {
             "SELECT COUNT(field_1) FROM {} WHERE field_1 = 37.0",
             test::MODEL_TABLE_NAME
         );
-        let physical_plan = query_optimized_physical_query_plan(temp_dir.path(), query).await;
+        let physical_plan = query_optimized_physical_query_plan(&temp_dir, query).await;
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -1078,7 +1080,7 @@ mod tests {
             "SELECT COUNT(field_1), COUNT(field_2) FROM {}",
             test::MODEL_TABLE_NAME
         );
-        let physical_plan = query_optimized_physical_query_plan(temp_dir.path(), query).await;
+        let physical_plan = query_optimized_physical_query_plan(&temp_dir, query).await;
 
         let expected_plan = vec![
             vec![TypeId::of::<AggregateExec>()],
@@ -1095,17 +1097,20 @@ mod tests {
 
     /// Parse, plan, and optimize the `query` for execution on data in `path`.
     async fn query_optimized_physical_query_plan(
-        path: &Path,
+        temp_dir: &TempDir,
         query: &str,
     ) -> Arc<dyn ExecutionPlan> {
+        let local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
         // Create a simple context.
         let context = Arc::new(
             Context::try_new(
                 Arc::new(Runtime::new().unwrap()),
                 &DataFolders {
-                    local_data_folder: path.to_path_buf(),
+                    local_data_folder: local_data_folder.clone(),
                     remote_data_folder: None,
-                    query_data_folder: Arc::new(LocalFileSystem::new_with_prefix(path).unwrap()),
+                    query_data_folder: local_data_folder,
                 },
                 ClusterMode::SingleNode,
                 ServerMode::Edge,

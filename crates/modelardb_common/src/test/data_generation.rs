@@ -256,10 +256,10 @@ pub fn generate_values(
         }
         // Generates random values.
         ValuesStructure::Random(min_max) => {
-            let distr = Uniform::from(min_max);
+            let distribution = Uniform::from(min_max);
             uncompressed_timestamps
                 .iter()
-                .map(|_| std_rng.sample(distr))
+                .map(|_| std_rng.sample(distribution))
                 .collect()
         }
     }
@@ -273,8 +273,8 @@ fn randomize_and_collect_iterator(
 ) -> ValueArray {
     let mut std_rng = create_random_number_generator();
     if let Some(noise_range) = maybe_noise_range {
-        let distr = Uniform::from(noise_range);
-        values.map(|value| value + std_rng.sample(distr)).collect()
+        let distribution = Uniform::from(noise_range);
+        values.map(|value| value + std_rng.sample(distribution)).collect()
     } else {
         values.collect()
     }

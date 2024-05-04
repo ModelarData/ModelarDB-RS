@@ -29,17 +29,17 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::arrow::temporal_conversions;
 use datafusion::error::{DataFusionError, Result};
 use datafusion::execution::context::TaskContext;
-use datafusion::physical_plan::expressions::PhysicalSortExpr;
+use datafusion::physical_expr::EquivalenceProperties;
 use datafusion::physical_plan::metrics::{BaselineMetrics, ExecutionPlanMetricsSet, MetricsSet};
 use datafusion::physical_plan::{
-    DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PhysicalExpr, RecordBatchStream,
-    SendableRecordBatchStream, Statistics,
+    DisplayAs, DisplayFormatType, ExecutionMode, ExecutionPlan, ExecutionPlanProperties,
+    PhysicalExpr, PlanProperties, RecordBatchStream, SendableRecordBatchStream, Statistics,
 };
 use futures::stream::Stream;
 use futures::StreamExt;
 use modelardb_common::types::{TimestampArray, ValueArray};
 
-///  A column the [`GeneratedAsExec`] must add to each of the [`RecordBatches`](RecordBatch) using
+/// A column the [`GeneratedAsExec`] must add to each of the [`RecordBatches`](RecordBatch) using
 /// [`GeneratedAsStream`] with the location it must be at and the [`PhysicalExpr`] that compute it.
 #[derive(Debug, Clone)]
 pub struct ColumnToGenerate {
@@ -68,6 +68,8 @@ pub struct GeneratedAsExec {
     columns_to_generate: Vec<ColumnToGenerate>,
     /// Execution plan to read batches of segments from.
     input: Arc<dyn ExecutionPlan>,
+    /// Properties about the plan used in query optimization.
+    plan_properties: PlanProperties,
     /// Metrics collected during execution for use by EXPLAIN ANALYZE.
     metrics: ExecutionPlanMetricsSet,
 }
@@ -78,10 +80,21 @@ impl GeneratedAsExec {
         columns_to_generate: Vec<ColumnToGenerate>,
         input: Arc<dyn ExecutionPlan>,
     ) -> Arc<Self> {
+        // Specify that the record batches produced by the execution plan will have an unknown order
+        // as the output from its input (SortedJoinExec) does not guarantee a specific output order.
+        let equivalence_properties = EquivalenceProperties::new(schema.clone());
+
+        let plan_properties = PlanProperties::new(
+            equivalence_properties,
+            input.output_partitioning().clone(),
+            ExecutionMode::Bounded,
+        );
+
         Arc::new(GeneratedAsExec {
             schema,
             columns_to_generate,
             input,
+            plan_properties,
             metrics: ExecutionPlanMetricsSet::new(),
         })
     }
@@ -98,16 +111,9 @@ impl ExecutionPlan for GeneratedAsExec {
         self.schema.clone()
     }
 
-    /// Return the partitioning for this execution plan. This is always the same as the input
-    /// execution plan as it is never changed by [`GeneratedAsExec`].
-    fn output_partitioning(&self) -> Partitioning {
-        self.input.output_partitioning()
-    }
-
-    /// Return the output ordering for this execution plan. This is always the same as the input
-    /// execution plan as it is never changed by [`GeneratedAsExec`].
-    fn output_ordering(&self) -> Option<&[PhysicalSortExpr]> {
-        self.input.output_ordering()
+    /// Return properties of the output of the plan.
+    fn properties(&self) -> &PlanProperties {
+        &self.plan_properties
     }
 
     /// Return the single execution plan batches of rows are read from.

@@ -20,9 +20,8 @@
 
 use std::fmt::Formatter;
 use std::io::Error as IOError;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::{fmt, fs, mem};
+use std::{fmt, mem};
 
 use datafusion::arrow::array::{Array, ArrayBuilder};
 use datafusion::arrow::compute;
@@ -34,6 +33,9 @@ use modelardb_common::types::{
     ErrorBound, Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
 use modelardb_common::{metadata, storage};
+use object_store::local::LocalFileSystem;
+use object_store::path::Path;
+use object_store::ObjectStore;
 use tracing::debug;
 
 use crate::storage::{UNCOMPRESSED_DATA_BUFFER_CAPACITY, UNCOMPRESSED_DATA_FOLDER};
@@ -74,7 +76,7 @@ pub(super) enum UncompressedDataBuffer {
 /// consists of an ordered sequence of timestamps and values being built using
 /// [`PrimitiveBuilder`](datafusion::arrow::array::PrimitiveBuilder).
 pub(super) struct UncompressedInMemoryDataBuffer {
-    /// Id that uniquely identifies the time series the buffer stores data points for.
+    /// ID that uniquely identifies the time series the buffer stores data points for.
     univariate_id: u64,
     /// Metadata of the model table the buffer stores data for.
     model_table_metadata: Arc<ModelTableMetadata>,
@@ -194,7 +196,7 @@ impl UncompressedInMemoryDataBuffer {
     /// the [`UncompressedOnDiskDataBuffer`] when finished.
     pub(super) async fn spill_to_apache_parquet(
         &mut self,
-        local_data_folder: &Path,
+        local_data_folder: Arc<LocalFileSystem>,
     ) -> Result<UncompressedOnDiskDataBuffer, IOError> {
         // Since the schema is constant and the columns are always the same length, creating the
         // RecordBatch should never fail and unwrap() is therefore safe to use.
@@ -206,6 +208,7 @@ impl UncompressedInMemoryDataBuffer {
             local_data_folder,
             batch,
         )
+        .await
     }
 }
 
@@ -225,46 +228,50 @@ impl fmt::Debug for UncompressedInMemoryDataBuffer {
 /// A read only uncompressed buffer that has been spilled to disk as an Apache Parquet file due to
 /// memory constraints.
 pub(super) struct UncompressedOnDiskDataBuffer {
-    /// Id that uniquely identifies the time series the buffer stores data points for.
+    /// ID that uniquely identifies the time series the buffer stores data points for.
     univariate_id: u64,
     /// Metadata of the model table the buffer stores data for.
     model_table_metadata: Arc<ModelTableMetadata>,
     /// Index of the last batch that added data points to this buffer.
     updated_by_batch_index: u64,
+    /// Folder for storing spilled buffers on the local file system.
+    local_data_folder: Arc<LocalFileSystem>,
     /// Path to the Apache Parquet file containing the uncompressed data in the
     /// [`UncompressedOnDiskDataBuffer`].
-    file_path: PathBuf,
+    file_path: Path,
 }
 
 impl UncompressedOnDiskDataBuffer {
     /// Spill the in-memory `data_points` from the time series with `univariate_id` to an Apache
     /// Parquet file in `local_data_folder`. If the Apache Parquet file is written successfully,
     /// return an [`UncompressedOnDiskDataBuffer`], otherwise return [`IOError`].
-    pub(super) fn try_spill(
+    pub(super) async fn try_spill(
         univariate_id: u64,
         model_table_metadata: Arc<ModelTableMetadata>,
         updated_by_batch_index: u64,
-        local_data_folder: &Path,
+        local_data_folder: Arc<LocalFileSystem>,
         data_points: RecordBatch,
     ) -> Result<Self, IOError> {
-        let local_file_path = local_data_folder
-            .join(UNCOMPRESSED_DATA_FOLDER)
-            .join(univariate_id.to_string());
-
-        // Create the folder structure if it does not already exist.
-        fs::create_dir_all(local_file_path.as_path())?;
-
         // Create a path that uses the first timestamp as the filename.
         let timestamps = modelardb_common::array!(data_points, 0, TimestampArray);
-        let file_name = format!("{}.parquet", timestamps.value(0));
-        let file_path = local_file_path.join(file_name);
+        let file_path = Path::from(format!(
+            "{UNCOMPRESSED_DATA_FOLDER}/{univariate_id}/{}.parquet",
+            timestamps.value(0)
+        ));
 
-        storage::write_batch_to_apache_parquet_file(&data_points, file_path.as_path(), None)?;
+        storage::write_record_batch_to_apache_parquet_file(
+            &file_path,
+            &data_points,
+            None,
+            &(local_data_folder.clone() as Arc<dyn ObjectStore>),
+        )
+        .await?;
 
         Ok(Self {
             univariate_id,
             model_table_metadata,
             updated_by_batch_index,
+            local_data_folder,
             file_path,
         })
     }
@@ -275,14 +282,18 @@ impl UncompressedOnDiskDataBuffer {
         univariate_id: u64,
         model_table_metadata: Arc<ModelTableMetadata>,
         updated_by_batch_index: u64,
-        file_path: PathBuf,
+        local_data_folder: Arc<LocalFileSystem>,
+        file_name: &str,
     ) -> Result<Self, IOError> {
-        file_path.try_exists()?;
+        let file_path = Path::from(format!(
+            "{UNCOMPRESSED_DATA_FOLDER}/{univariate_id}/{file_name}",
+        ));
 
         Ok(Self {
             univariate_id,
             model_table_metadata,
             updated_by_batch_index,
+            local_data_folder,
             file_path,
         })
     }
@@ -291,10 +302,15 @@ impl UncompressedOnDiskDataBuffer {
     /// data as a [`RecordBatch`] sorted by time. Return [`ParquetError`] if the Apache Parquet file
     /// cannot be read or deleted.
     pub(super) async fn record_batch(&self) -> Result<RecordBatch, ParquetError> {
-        let record_batch =
-            storage::read_batch_from_apache_parquet_file(self.file_path.as_path()).await?;
+        let record_batch = storage::read_record_batch_from_apache_parquet_file(
+            &self.file_path,
+            self.local_data_folder.clone(),
+        )
+        .await?;
 
-        fs::remove_file(self.file_path.as_path())
+        self.local_data_folder
+            .delete(&self.file_path)
+            .await
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
         Ok(record_batch)
@@ -319,12 +335,16 @@ impl UncompressedOnDiskDataBuffer {
     }
 
     /// Return the total size of the Apache Parquet file containing the uncompressed data buffer.
-    pub(super) fn disk_size(&self) -> usize {
+    pub(super) async fn disk_size(&self) -> usize {
         // unwrap() is safe since the path is created internally.
-        self.file_path.metadata().unwrap().len() as usize
+        self.local_data_folder
+            .head(&self.file_path)
+            .await
+            .unwrap()
+            .size
     }
 
-    /// Return [`true`] if all of the data points in the [`UncompressedOnDiskDataBuffer`] are from
+    /// Return [`true`] if all the data points in the [`UncompressedOnDiskDataBuffer`] are from
     /// [`RecordBatches`](`RecordBatch`) that are [`RECORD_BATCH_OFFSET_REQUIRED_FOR_UNUSED`] older
     /// than the [`RecordBatch`] with index `current_batch_index` ingested by the current process.
     pub(super) fn is_unused(&self, current_batch_index: u64) -> bool {
@@ -366,8 +386,7 @@ impl fmt::Debug for UncompressedOnDiskDataBuffer {
         write!(
             f,
             "UncompressedOnDiskDataBuffer({}, {})",
-            self.univariate_id,
-            self.file_path.display()
+            self.univariate_id, self.file_path
         )
     }
 }
@@ -376,9 +395,11 @@ impl fmt::Debug for UncompressedOnDiskDataBuffer {
 mod tests {
     use super::*;
 
+    use futures::StreamExt;
     use modelardb_common::test;
     use proptest::num::u64 as ProptestTimestamp;
     use proptest::{collection, proptest};
+    use tempfile::TempDir;
     use tokio::runtime::Runtime;
 
     const CURRENT_BATCH_INDEX: u64 = 1;
@@ -530,8 +551,10 @@ mod tests {
         assert!(!uncompressed_buffer.is_full());
 
         let temp_dir = tempfile::tempdir().unwrap();
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
         uncompressed_buffer
-            .spill_to_apache_parquet(temp_dir.path())
+            .spill_to_apache_parquet(object_store)
             .await
             .unwrap();
 
@@ -552,8 +575,10 @@ mod tests {
         assert!(uncompressed_buffer.is_full());
 
         let temp_dir = tempfile::tempdir().unwrap();
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
         uncompressed_buffer
-            .spill_to_apache_parquet(temp_dir.path())
+            .spill_to_apache_parquet(object_store)
             .await
             .unwrap();
 
@@ -567,8 +592,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_record_batch_from_on_disk_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-
-        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(temp_dir.path()).await;
+        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(&temp_dir).await;
 
         let spilled_buffer_path = temp_dir
             .path()
@@ -607,40 +631,37 @@ mod tests {
         }
 
         let temp_dir = tempfile::tempdir().unwrap();
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
         let uncompressed_on_disk_buffer = runtime.block_on(uncompressed_in_memory_buffer
-            .spill_to_apache_parquet(temp_dir.path()))
+            .spill_to_apache_parquet(object_store.clone()))
             .unwrap();
 
-        let spilled_buffer_folder = temp_dir
-            .path()
-            .join(UNCOMPRESSED_DATA_FOLDER)
-            .join("1");
-
-        assert_eq!(fs::read_dir(&spilled_buffer_folder).unwrap().count(), 1);
+        let spilled_buffers = runtime.block_on(object_store.list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER))).collect::<Vec<_>>());
+        assert_eq!(spilled_buffers.len(), 1);
 
         let data = runtime.block_on(uncompressed_on_disk_buffer.record_batch()).unwrap();
         assert_eq!(data.num_columns(), 2);
         let timestamps = modelardb_common::array!(data, 0, TimestampArray);
         assert!(timestamps.values().windows(2).all(|pair| pair[0] <= pair[1]));
 
-        assert_eq!(fs::read_dir(&spilled_buffer_folder).unwrap().count(), 0);
+        let spilled_buffers = runtime.block_on(object_store.list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER))).collect::<Vec<_>>());
+        assert_eq!(spilled_buffers.len(), 0);
     }
     }
 
     #[tokio::test]
     async fn test_get_on_disk_data_buffer_disk_size() {
         let temp_dir = tempfile::tempdir().unwrap();
+        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(&temp_dir).await;
 
-        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(temp_dir.path()).await;
-
-        assert_eq!(uncompressed_on_disk_buffer.disk_size(), 3135)
+        assert_eq!(uncompressed_on_disk_buffer.disk_size().await, 3135)
     }
 
     #[tokio::test]
     async fn test_check_if_on_disk_data_buffer_is_unused() {
         let temp_dir = tempfile::tempdir().unwrap();
-
-        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(temp_dir.path()).await;
+        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(&temp_dir).await;
 
         assert!(!uncompressed_on_disk_buffer.is_unused(CURRENT_BATCH_INDEX));
         assert!(uncompressed_on_disk_buffer.is_unused(CURRENT_BATCH_INDEX + 1));
@@ -649,8 +670,7 @@ mod tests {
     #[tokio::test]
     async fn test_read_in_memory_data_buffer_from_on_disk_data_buffer() {
         let temp_dir = tempfile::tempdir().unwrap();
-
-        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(temp_dir.path()).await;
+        let uncompressed_on_disk_buffer = create_on_disk_data_buffer(&temp_dir).await;
 
         let read_uncompressed_in_memory_buffer = uncompressed_on_disk_buffer
             .read_from_apache_parquet(CURRENT_BATCH_INDEX)
@@ -680,9 +700,11 @@ mod tests {
         );
     }
 
-    /// Create an on-disk data buffer in `local_data_folder` from a full
-    /// `UncompressedInMemoryDataBuffer`.
-    async fn create_on_disk_data_buffer(local_data_folder: &Path) -> UncompressedOnDiskDataBuffer {
+    /// Create an on-disk data buffer in `temp_dir` from a full `UncompressedInMemoryDataBuffer`.
+    async fn create_on_disk_data_buffer(temp_dir: &TempDir) -> UncompressedOnDiskDataBuffer {
+        let local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
         let mut uncompressed_in_memory_buffer_to_be_spilled = UncompressedInMemoryDataBuffer::new(
             UNIVARIATE_ID,
             test::model_table_metadata_arc(),

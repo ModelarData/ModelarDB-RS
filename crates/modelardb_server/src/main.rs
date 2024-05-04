@@ -25,9 +25,8 @@ mod query;
 mod remote;
 mod storage;
 
-use std::path::PathBuf;
+use std::env;
 use std::sync::Arc;
-use std::{env, fs};
 
 use modelardb_common::arguments::{collect_command_line_arguments, validate_remote_data_folder};
 use modelardb_common::metadata::TableMetadataManager;
@@ -70,7 +69,7 @@ impl ClusterMode {
 /// Folders for storing metadata and Apache Parquet files.
 pub struct DataFolders {
     /// Folder for storing metadata and Apache Parquet files on the local file system.
-    pub local_data_folder: PathBuf, // PathBuf to support complex operations.
+    pub local_data_folder: Arc<LocalFileSystem>,
     /// Folder for storing Apache Parquet files in a remote object store.
     pub remote_data_folder: Option<Arc<dyn ObjectStore>>,
     /// Folder from which Apache Parquet files will be read during query execution. It is equivalent
@@ -90,7 +89,7 @@ fn main() -> Result<(), String> {
     let stdout_log = tracing_subscriber::fmt::layer();
     tracing_subscriber::registry().with(stdout_log).init();
 
-    // Create a Tokio runtime for executing asynchronous tasks. The runtime is not in the context so
+    // Create a Tokio runtime for executing asynchronous tasks. The runtime is not in the context, so
     // it can be passed to the components in the context.
     let runtime = Arc::new(
         Runtime::new().map_err(|error| format!("Unable to create a Tokio Runtime: {error}"))?,
@@ -142,7 +141,7 @@ fn main() -> Result<(), String> {
                 .storage_engine
                 .read()
                 .await
-                .initialize(data_folders.local_data_folder, &context)
+                .initialize(&context)
                 .await
         })
         .map_err(|error| error.to_string())?;
@@ -162,15 +161,19 @@ async fn parse_command_line_arguments(
 ) -> Result<(ServerMode, ClusterMode, DataFolders), String> {
     // Match the provided command line arguments to the supported inputs.
     match arguments {
-        &["edge", local_data_folder] | &[local_data_folder] => Ok((
-            ServerMode::Edge,
-            ClusterMode::SingleNode,
-            DataFolders {
-                local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
-                remote_data_folder: None,
-                query_data_folder: argument_to_local_object_store(local_data_folder)?,
-            },
-        )),
+        &["edge", local_data_folder] | &[local_data_folder] => {
+            let local_object_store = argument_to_local_object_store(local_data_folder)?;
+
+            Ok((
+                ServerMode::Edge,
+                ClusterMode::SingleNode,
+                DataFolders {
+                    local_data_folder: local_object_store.clone(),
+                    remote_data_folder: None,
+                    query_data_folder: local_object_store,
+                },
+            ))
+        }
         &["cloud", local_data_folder, manager_url] => {
             let (manager, remote_object_store) =
                 Manager::register_node(manager_url, ServerMode::Cloud)
@@ -181,13 +184,14 @@ async fn parse_command_line_arguments(
                 ServerMode::Cloud,
                 ClusterMode::MultiNode(manager),
                 DataFolders {
-                    local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
+                    local_data_folder: argument_to_local_object_store(local_data_folder)?,
                     remote_data_folder: Some(remote_object_store.clone()),
                     query_data_folder: remote_object_store,
                 },
             ))
         }
         &["edge", local_data_folder, manager_url] | &[local_data_folder, manager_url] => {
+            let local_object_store = argument_to_local_object_store(local_data_folder)?;
             let (manager, remote_object_store) =
                 Manager::register_node(manager_url, ServerMode::Edge)
                     .await
@@ -197,9 +201,9 @@ async fn parse_command_line_arguments(
                 ServerMode::Edge,
                 ClusterMode::MultiNode(manager),
                 DataFolders {
-                    local_data_folder: argument_to_local_data_folder_path_buf(local_data_folder)?,
+                    local_data_folder: local_object_store.clone(),
                     remote_data_folder: Some(remote_object_store),
-                    query_data_folder: argument_to_local_object_store(local_data_folder)?,
+                    query_data_folder: local_object_store,
                 },
             ))
         }
@@ -214,26 +218,8 @@ async fn parse_command_line_arguments(
     }
 }
 
-/// Create a [`PathBuf`] that represents the path to the local data folder in `argument` and ensure
-/// that the folder exists.
-fn argument_to_local_data_folder_path_buf(argument: &str) -> Result<PathBuf, String> {
-    let local_data_folder = PathBuf::from(argument);
-
-    // Ensure the local data folder can be accessed as LocalFileSystem cannot
-    // canonicalize the folder to the filesystem root if it does not exist.
-    fs::create_dir_all(&local_data_folder).map_err(|error| {
-        format!(
-            "Unable to create {}: {}",
-            local_data_folder.to_string_lossy(),
-            error
-        )
-    })?;
-
-    Ok(local_data_folder)
-}
-
 /// Create an [`ObjectStore`] that represents the local path in `argument`.
-fn argument_to_local_object_store(argument: &str) -> Result<Arc<dyn ObjectStore>, String> {
+fn argument_to_local_object_store(argument: &str) -> Result<Arc<LocalFileSystem>, String> {
     let object_store =
         LocalFileSystem::new_with_prefix(argument).map_err(|error| error.to_string())?;
     Ok(Arc::new(object_store))
@@ -271,7 +257,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        assert_single_edge_without_remote_data_folder(temp_dir_str, &["edge", temp_dir_str]).await;
+        assert_single_edge_without_remote_data_folder(&["edge", temp_dir_str]).await;
     }
 
     #[tokio::test]
@@ -279,16 +265,15 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let temp_dir_str = temp_dir.path().to_str().unwrap();
 
-        assert_single_edge_without_remote_data_folder(temp_dir_str, &[temp_dir_str]).await;
+        assert_single_edge_without_remote_data_folder(&[temp_dir_str]).await;
     }
 
-    async fn assert_single_edge_without_remote_data_folder(temp_dir_str: &str, input: &[&str]) {
+    async fn assert_single_edge_without_remote_data_folder(input: &[&str]) {
         let (server_mode, cluster_mode, data_folders) =
             parse_command_line_arguments(input).await.unwrap();
 
         assert_eq!(server_mode, ServerMode::Edge);
         assert_eq!(cluster_mode, ClusterMode::SingleNode);
-        assert_eq!(data_folders.local_data_folder, PathBuf::from(temp_dir_str));
         assert!(data_folders.remote_data_folder.is_none());
     }
 

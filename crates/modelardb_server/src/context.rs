@@ -16,7 +16,6 @@
 //! Implementation of a [`Context`] that provides access to the system's configuration and
 //! components.
 
-use std::fs;
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::{Schema, SchemaRef};
@@ -32,6 +31,7 @@ use modelardb_common::parser::ValidStatement;
 use modelardb_common::storage;
 use modelardb_common::types::ServerMode;
 use modelardb_common::{metadata, parser};
+use object_store::path::Path;
 use object_store::ObjectStore;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
@@ -75,7 +75,7 @@ impl Context {
         );
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            &data_folders.local_data_folder,
+            data_folders.local_data_folder.clone(),
             cluster_mode,
             server_mode,
         )));
@@ -146,7 +146,7 @@ impl Context {
         let valid_statement = parser::semantic_checks_for_create_table(statement)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        // Create the table or model table if it does not already exists.
+        // Create the table or model table if it does not already exist.
         match valid_statement {
             ValidStatement::CreateTable { name, schema } => {
                 self.check_if_table_exists(&name).await?;
@@ -172,27 +172,33 @@ impl Context {
         sql: &str,
         schema: Schema,
     ) -> Result<(), ModelarDbError> {
-        // Ensure the folder for storing the table data exists.
         let configuration_manager = self.configuration_manager.read().await;
-        let folder_path = configuration_manager
-            .local_data_folder
-            .join(COMPRESSED_DATA_FOLDER)
-            .join(table_name);
-
-        fs::create_dir_all(&folder_path)
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Create an empty Apache Parquet file to save the schema.
-        let file_path = folder_path.join("empty_for_schema.parquet");
+        let folder_path = Path::from(format!("{COMPRESSED_DATA_FOLDER}/{table_name}"));
+        let file_path = Path::from(format!("{folder_path}/empty_for_schema.parquet"));
         let empty_batch = RecordBatch::new_empty(Arc::new(schema));
-        storage::write_batch_to_apache_parquet_file(&empty_batch, &file_path, None)
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        storage::write_record_batch_to_apache_parquet_file(
+            &file_path,
+            &empty_batch,
+            None,
+            &(configuration_manager.local_data_folder.clone() as Arc<dyn ObjectStore>),
+        )
+        .await
+        .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        // unwrap() is safe since the path is generated internally and cannot contain invalid characters.
+        let table_path = configuration_manager
+            .local_data_folder
+            .path_to_filesystem(&folder_path)
+            .unwrap();
 
         // Save the table in the Apache Arrow Datafusion catalog.
         self.session
             .register_parquet(
                 table_name,
-                folder_path.to_str().unwrap(),
+                table_path.to_str().unwrap(),
                 ParquetReadOptions::default(),
             )
             .await
@@ -253,10 +259,13 @@ impl Context {
 
         for table_name in table_names {
             // Compute the path to the folder containing data for the table.
+            let folder_path = Path::from(format!("{COMPRESSED_DATA_FOLDER}/{table_name}"));
+
+            // unwrap() is safe since the path is generated internally and cannot contain invalid characters.
             let table_folder_path = configuration_manager
                 .local_data_folder
-                .join(COMPRESSED_DATA_FOLDER)
-                .join(&table_name);
+                .path_to_filesystem(&folder_path)
+                .unwrap();
 
             // unwrap() is safe since the path is created from the table name which is valid UTF-8.
             self.session
@@ -308,18 +317,26 @@ impl Context {
     /// * [`ModelTableMetadata`] if a model table with the name `table_name` exists.
     /// * [`None`] if a table with the name `table_name` exists.
     /// * [`ModelarDbError`] if the default catalog, the default schema, a table with the name
-    /// `table_name`, or a model table with the name `table_name` does not exists.
+    /// `table_name`, or a model table with the name `table_name` does not exist.
     pub async fn model_table_metadata_from_default_database_schema(
         &self,
         table_name: &str,
     ) -> Result<Option<Arc<ModelTableMetadata>>, ModelarDbError> {
         let database_schema = self.default_database_schema()?;
 
-        let table = database_schema.table(table_name).await.ok_or_else(|| {
-            ModelarDbError::DataRetrievalError(format!(
-                "Table with name '{table_name}' does not exist."
-            ))
-        })?;
+        let table = database_schema
+            .table(table_name)
+            .await
+            .map_err(|error| {
+                ModelarDbError::DataRetrievalError(format!(
+                    "Failed to retrieve metadata for '{table_name}' due to: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                ModelarDbError::DataRetrievalError(format!(
+                    "Table with name '{table_name}' does not exist."
+                ))
+            })?;
 
         if let Some(model_table) = table.as_any().downcast_ref::<ModelTable>() {
             Ok(Some(model_table.model_table_metadata()))
@@ -347,11 +364,19 @@ impl Context {
     ) -> Result<SchemaRef, ModelarDbError> {
         let database_schema = self.default_database_schema()?;
 
-        let table = database_schema.table(table_name).await.ok_or_else(|| {
-            ModelarDbError::DataRetrievalError(format!(
-                "Table with name '{table_name}' does not exist."
-            ))
-        })?;
+        let table = database_schema
+            .table(table_name)
+            .await
+            .map_err(|error| {
+                ModelarDbError::DataRetrievalError(format!(
+                    "Failed to retrieve schema for '{table_name}' due to: {error}",
+                ))
+            })?
+            .ok_or_else(|| {
+                ModelarDbError::DataRetrievalError(format!(
+                    "Table with name '{table_name}' does not exist."
+                ))
+            })?;
 
         Ok(table.schema())
     }
@@ -377,15 +402,14 @@ impl Context {
 mod tests {
     use super::*;
 
-    use std::path::Path;
-
     use modelardb_common::test;
     use object_store::local::LocalFileSystem;
+    use tempfile::TempDir;
 
     #[tokio::test]
     async fn test_parse_and_create_table_with_invalid_sql() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         assert!(context
             .parse_and_create_table("TABLE CREATE table_name(timestamp TIMESTAMP)", &context)
@@ -396,7 +420,7 @@ mod tests {
     #[tokio::test]
     async fn test_parse_and_create_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         context
             .parse_and_create_table(test::TABLE_SQL, &context)
@@ -423,7 +447,7 @@ mod tests {
     #[tokio::test]
     async fn test_parse_and_create_existing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         assert!(context
             .parse_and_create_table(test::TABLE_SQL, &context)
@@ -439,7 +463,7 @@ mod tests {
     #[tokio::test]
     async fn test_parse_and_create_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         context
             .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
@@ -468,7 +492,7 @@ mod tests {
     #[tokio::test]
     async fn test_parse_and_create_existing_model_table() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         assert!(context
             .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
@@ -487,7 +511,7 @@ mod tests {
 
         // Save a table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         context
             .parse_and_create_table(test::TABLE_SQL, &context)
@@ -495,7 +519,7 @@ mod tests {
             .unwrap();
 
         // Create a new context to clear the Apache Arrow Datafusion catalog.
-        let context_2 = create_context(temp_dir.path()).await;
+        let context_2 = create_context(&temp_dir).await;
 
         // Register the table with Apache Arrow DataFusion.
         context_2.register_tables().await.unwrap();
@@ -507,7 +531,7 @@ mod tests {
 
         // Save a model table to the metadata database.
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         let model_table_metadata = test::model_table_metadata();
         context
@@ -523,7 +547,7 @@ mod tests {
     #[tokio::test]
     async fn test_model_table_metadata_from_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         context
             .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
@@ -542,7 +566,7 @@ mod tests {
     #[tokio::test]
     async fn test_table_model_table_metadata_from_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         context
             .parse_and_create_table(test::TABLE_SQL, &context)
@@ -559,7 +583,7 @@ mod tests {
     #[tokio::test]
     async fn test_non_existent_model_table_metadata_from_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         assert!(context
             .model_table_metadata_from_default_database_schema(test::MODEL_TABLE_NAME)
@@ -570,7 +594,7 @@ mod tests {
     #[tokio::test]
     async fn test_check_if_existing_table_exists() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         context
             .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
@@ -586,7 +610,7 @@ mod tests {
     #[tokio::test]
     async fn test_check_if_non_existent_table_exists() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         assert!(context
             .check_if_table_exists(test::MODEL_TABLE_NAME)
@@ -597,7 +621,7 @@ mod tests {
     #[tokio::test]
     async fn test_schema_of_table_in_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         context
             .parse_and_create_table(test::MODEL_TABLE_SQL, &context)
@@ -615,7 +639,7 @@ mod tests {
     #[tokio::test]
     async fn test_schema_of_non_existent_table_in_default_database_schema() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let context = create_context(temp_dir.path()).await;
+        let context = create_context(&temp_dir).await;
 
         assert!(context
             .schema_of_table_in_default_database_schema(test::MODEL_TABLE_NAME)
@@ -623,15 +647,18 @@ mod tests {
             .is_err())
     }
 
-    /// Create a simple [`Context`] that uses `path` as the local data folder and query data folder.
-    async fn create_context(path: &Path) -> Arc<Context> {
+    /// Create a simple [`Context`] that uses `temp_dir` as the local data folder and query data folder.
+    async fn create_context(temp_dir: &TempDir) -> Arc<Context> {
+        let local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
         Arc::new(
             Context::try_new(
                 Arc::new(Runtime::new().unwrap()),
                 &DataFolders {
-                    local_data_folder: path.to_path_buf(),
+                    local_data_folder: local_data_folder.clone(),
                     remote_data_folder: None,
-                    query_data_folder: Arc::new(LocalFileSystem::new_with_prefix(path).unwrap()),
+                    query_data_folder: local_data_folder,
                 },
                 ClusterMode::SingleNode,
                 ServerMode::Edge,

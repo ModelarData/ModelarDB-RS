@@ -20,7 +20,6 @@ use std::error::Error;
 use std::io::Read;
 use std::iter::repeat;
 use std::ops::Range;
-use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::str;
 use std::string::String;
@@ -55,7 +54,7 @@ const TABLE_NAME: &str = "table_name";
 const HOST: &str = "127.0.0.1";
 
 /// The next port to be used for the server in an integration test. Each test uses a unique port and
-/// local data folder so they can run in parallel and so that any failing tests does not cascade.
+/// local data folder, so they can run in parallel and so that any failing tests do not cascade.
 static PORT: AtomicU16 = AtomicU16::new(9999);
 
 /// Number of times to try to create the client and kill child processes.
@@ -96,7 +95,7 @@ impl TestContext {
         let runtime = Runtime::new().unwrap();
         let temp_dir = tempfile::tempdir().unwrap();
         let port = PORT.fetch_add(1, Ordering::Relaxed);
-        let mut server = Self::create_server(temp_dir.path(), port);
+        let mut server = Self::create_server(&temp_dir, port);
         let client = Self::create_client(&runtime, &mut server, port);
 
         Self {
@@ -111,17 +110,17 @@ impl TestContext {
     /// Restart the server and reconnect the client.
     fn restart_server(&mut self) {
         Self::kill_child(&mut self.server);
-        self.server = Self::create_server(self.temp_dir.path(), self.port);
+        self.server = Self::create_server(&self.temp_dir, self.port);
         self.client = Self::create_client(&self.runtime, &mut self.server, self.port);
     }
 
     /// Create a server that stores data in `local_data_folder` and listens on `port` and ensure it
     /// is ready to receive requests.
-    fn create_server(local_data_folder: &Path, port: u16) -> Child {
-        // The server's stdout and stderr is piped so the log messages (stdout) and expected errors
-        // (stderr) are not printed when all of the tests are run using the "cargo test" command.
+    fn create_server(local_data_folder: &TempDir, port: u16) -> Child {
+        // The server's stdout and stderr are piped so the log messages (stdout) and expected errors
+        // (stderr) are not printed when all the tests are run using the "cargo test" command.
         // modelardbd is run using dev-release so the tests can use larger more realistic data sets.
-        let local_data_folder = local_data_folder.to_str().unwrap();
+        let local_data_folder = local_data_folder.path().to_str().unwrap();
         let mut server = Command::new("cargo")
             .env("MODELARDBD_PORT", port.to_string())
             .args([
@@ -184,7 +183,7 @@ impl TestContext {
         while let Some(_process) = system.process(Pid::from_u32(child.id())) {
             system.refresh_all();
 
-            // Microsoft Windows often fail to kill the process and then succeed afterwards.
+            // Microsoft Windows often fails to kill the process and then succeed afterward.
             let mut attempts = ATTEMPTS;
             while child.kill().is_err() && attempts > 0 {
                 thread::sleep(ATTEMPT_SLEEP_IN_SECONDS);
@@ -196,7 +195,7 @@ impl TestContext {
         }
     }
 
-    /// Return a Apache Arrow Flight client to access the remote methods provided by the server.
+    /// Return an Apache Arrow Flight client to access the remote methods provided by the server.
     fn create_apache_arrow_flight_service_client(
         runtime: &Runtime,
         host: &str,
@@ -715,7 +714,7 @@ fn test_can_collect_metrics() {
         ]
     );
 
-    // The amount of bytes used for compressed memory changes depending on the compression so we
+    // The amount of bytes used for compressed memory changes depending on the compression, so we
     // can only check that the metric is populated when compressing and when flushing.
     assert_eq!(values_array.value(2).len(), 10);
 
@@ -730,7 +729,7 @@ fn test_can_collect_metrics() {
         &[TIME_SERIES_TEST_LENGTH as u32]
     );
 
-    // The amount of bytes used for disk space changes depending on the compression so we
+    // The amount of bytes used for disk space changes depending on the compression, so we
     // can only check that the metric is populated when initializing and when flushing.
     assert_eq!(values_array.value(4).len(), 11);
 }
@@ -964,7 +963,7 @@ fn ingest_time_series_and_flush_data(
 /// Asserts that the query executed on segments in `segment_query` returns a result within
 /// `error_bound` of an equivalent query executed on data points reconstructed from the segments by:
 /// 1. Generating a multivariate time series with one tag and ingesting it into a model table.
-/// 2. Creating an equivalent query from `segment_query` that the optimizer cannot rewrite so it is
+/// 2. Creating an equivalent query from `segment_query` that the optimizer cannot rewrite, so it is
 /// executed on segments.
 /// 3. Executing `segment_query` and the new equivalent query against the model table containing the
 /// generated time series.

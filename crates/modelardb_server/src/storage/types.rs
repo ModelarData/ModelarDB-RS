@@ -25,7 +25,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crossbeam_channel::{Receiver, Sender};
 use datafusion::arrow::array::UInt32Array;
 use modelardb_common::types::{Timestamp, TimestampArray};
-use ringbuf::{HeapRb, Rb};
+// rustc 1.77.2 warns about Observer being unused but ringbuf 0.4.0 requires it to be imported.
+#[allow(unused_imports)]
+use ringbuf::traits::Observer;
+use ringbuf::traits::{Consumer, RingBuffer};
+use ringbuf::HeapRb;
 
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
 use crate::storage::uncompressed_data_buffer::{
@@ -142,7 +146,7 @@ impl MemoryPool {
         let mut memory_in_bytes = self.remaining_uncompressed_memory_in_bytes.lock().unwrap();
 
         while *memory_in_bytes < size_in_bytes as isize {
-            // There is still not enough memory available but it is no longer sensible to wait.
+            // There is still not enough memory available, but it is no longer sensible to wait.
             if stop_if() {
                 return false;
             }
@@ -209,12 +213,12 @@ pub(super) struct Channels {
     /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are split into
     /// univariate time series of bounded length.
     pub(super) multivariate_data_receiver: Receiver<Message<UncompressedDataMultivariate>>,
-    /// Sender of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
+    /// Sender of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of a univariate
     /// time series from the [`UncompressedDataManager`](super::UncompressedDataManager) to the
     /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are compressed into
     /// compressed segments.
     pub(super) univariate_data_sender: Sender<Message<UncompressedDataBuffer>>,
-    /// Receiver of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of an univariate
+    /// Receiver of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of a univariate
     /// time series from the [`UncompressedDataManager`](super::UncompressedDataManager) in the
     /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are compressed into
     /// compressed segments.
@@ -608,7 +612,7 @@ mod tests {
         metric.append(30, false);
 
         // timestamp is measured just before metric.append() to minimize the chance that enough time
-        // has passed that the timestamp written to metric is different than what the test expects.
+        // has passed that the timestamp written to metric is different from what the test expects.
         let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         let timestamp = since_the_epoch.as_millis() as Timestamp;
         metric.append(30, false);
@@ -649,7 +653,7 @@ mod tests {
         assert_eq!(values.value(1), 0);
 
         // Ensure that the builders in the metric has been reset.
-        assert_eq!(metric.timestamps.len(), 0);
-        assert_eq!(metric.values.len(), 0);
+        assert_eq!(metric.timestamps.occupied_len(), 0);
+        assert_eq!(metric.values.occupied_len(), 0);
     }
 }

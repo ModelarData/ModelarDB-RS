@@ -213,7 +213,7 @@ pub fn sum(length: usize, values: &[u8], maybe_model_last_value: Option<Value>) 
     sum
 }
 
-/// Decompress all of the values in `values` for the `timestamps` without matching values in
+/// Decompress all the values in `values` for the `timestamps` without matching values in
 /// `value_builder`. The values in `values` are compressed using Gorilla's compression method for
 /// floating-point values. `univariate_ids` and `values` are appended to `univariate_id_builder` and
 /// `value_builder`. If `maybe_model_last_value` is provided, it is assumed the first value in

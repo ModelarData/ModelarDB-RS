@@ -60,7 +60,7 @@ pub fn compress_residual_timestamps(uncompressed_timestamps: &[Timestamp]) -> Ve
         // an integer with all the prefix zeros stripped from the integer.
         compress_regular_residual_timestamps(uncompressed_timestamps)
     } else {
-        // The timestamps are irregular so they are compressed as
+        // The timestamps are irregular, so they are compressed as
         // delta-of-deltas stored using a variable length binary encoding.
         compress_irregular_residual_timestamps(uncompressed_timestamps)
     }
@@ -354,7 +354,7 @@ mod tests {
         compress_and_decompress_timestamps_for_a_time_series(
             &[
                 100, 37, // -63.
-                38, //  64.
+                38, // 64.
                 200,
             ],
             Some(3),
@@ -366,7 +366,7 @@ mod tests {
         compress_and_decompress_timestamps_for_a_time_series(
             &[
                 500, 245, // -255.
-                246, //  256.
+                246, // 256.
                 500,
             ],
             Some(4),
@@ -378,7 +378,7 @@ mod tests {
         compress_and_decompress_timestamps_for_a_time_series(
             &[
                 5000, 2953, // -2047.
-                2954, //  2048.
+                2954, // 2048.
                 5000,
             ],
             Some(5),
@@ -390,7 +390,7 @@ mod tests {
         compress_and_decompress_timestamps_for_a_time_series(
             &[
                 5000000000, 2852516353, // -2147483647.
-                2852516354, //  2147483648.
+                2852516354, // 2147483648.
                 5000000000,
             ],
             Some(10),

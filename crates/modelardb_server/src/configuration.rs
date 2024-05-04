@@ -17,11 +17,11 @@
 //! the amount of reserved memory for uncompressed and compressed data.
 
 use std::env;
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::types::ServerMode;
+use object_store::local::LocalFileSystem;
 use tokio::sync::RwLock;
 
 use crate::storage::StorageEngine;
@@ -31,7 +31,7 @@ use crate::ClusterMode;
 #[derive(Clone)]
 pub struct ConfigurationManager {
     /// Folder for storing metadata and Apache Parquet files on the local file system.
-    pub(crate) local_data_folder: PathBuf,
+    pub(crate) local_data_folder: Arc<LocalFileSystem>,
     /// The mode of the cluster used to determine the behaviour when starting the server,
     /// creating tables, updating the remote object store, and querying.
     pub(crate) cluster_mode: ClusterMode,
@@ -61,7 +61,7 @@ pub struct ConfigurationManager {
 
 impl ConfigurationManager {
     pub fn new(
-        local_data_folder: &Path,
+        local_data_folder: Arc<LocalFileSystem>,
         cluster_mode: ClusterMode,
         server_mode: ServerMode,
     ) -> Self {
@@ -84,7 +84,7 @@ impl ConfigurationManager {
             .map_or(None, |value| Some(value.parse().unwrap()));
 
         Self {
-            local_data_folder: local_data_folder.to_path_buf(),
+            local_data_folder,
             cluster_mode,
             server_mode,
             multivariate_reserved_memory_in_bytes,
@@ -230,13 +230,13 @@ impl ConfigurationManager {
 mod tests {
     use super::*;
 
-    use std::path::Path;
     use std::sync::Arc;
 
     use arrow_flight::flight_service_client::FlightServiceClient;
     use modelardb_common::metadata;
     use modelardb_common::types::ServerMode;
     use object_store::local::LocalFileSystem;
+    use tempfile::TempDir;
     use tokio::runtime::Runtime;
     use tokio::sync::RwLock;
     use tonic::transport::Channel;
@@ -249,7 +249,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_multivariate_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -277,7 +277,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_uncompressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -306,7 +306,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_compressed_reserved_memory_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -335,7 +335,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_transfer_batch_size_in_bytes() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -364,7 +364,7 @@ mod tests {
     #[tokio::test]
     async fn test_set_transfer_time_in_seconds() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let (storage_engine, configuration_manager) = create_components(temp_dir.path()).await;
+        let (storage_engine, configuration_manager) = create_components(&temp_dir).await;
 
         assert_eq!(
             configuration_manager
@@ -392,12 +392,15 @@ mod tests {
 
     /// Create a [`StorageEngine`] and a [`ConfigurationManager`].
     async fn create_components(
-        path: &Path,
+        temp_dir: &TempDir,
     ) -> (
         Arc<RwLock<StorageEngine>>,
         Arc<RwLock<ConfigurationManager>>,
     ) {
-        let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(path)
+        let local_data_folder =
+            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+
+        let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(&local_data_folder)
             .await
             .unwrap();
 
@@ -411,7 +414,7 @@ mod tests {
         );
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            path,
+            local_data_folder.clone(),
             ClusterMode::MultiNode(manager),
             ServerMode::Edge,
         )));
@@ -422,7 +425,7 @@ mod tests {
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(
                 Arc::new(Runtime::new().unwrap()),
-                path.to_owned(),
+                local_data_folder,
                 Some(Arc::new(target_fs)),
                 &configuration_manager,
                 Arc::new(metadata_manager),

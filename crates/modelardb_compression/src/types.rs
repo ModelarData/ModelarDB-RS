@@ -144,7 +144,7 @@ impl ModelBuilder {
 
 /// A compressed segment being built from metadata and a model.
 pub(crate) struct CompressedSegmentBuilder {
-    /// Id of the model type that created the model in this segment.
+    /// ID of the model type that created the model in this segment.
     pub model_type_id: u8,
     /// Index of the first data point in the `UncompressedDataBuffer` that this segment represents.
     pub start_index: usize,
@@ -519,7 +519,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encoding_decoding_for_pmc_mean_with_residuals_with_new_mininum() {
+    fn test_encoding_decoding_for_pmc_mean_with_residuals_with_new_minimum() {
         let uncompressed_values = ValueArray::from(vec![10.0, 10.0, 10.0, 10.0, Value::MIN]);
         assert_encoding_and_decoding_are_valid_for_pmc_mean(
             uncompressed_values,
@@ -612,7 +612,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encoding_decoding_for_increasing_swing_with_residuals_with_new_mininum() {
+    fn test_encoding_decoding_for_increasing_swing_with_residuals_with_new_minimum() {
         let uncompressed_values = ValueArray::from(vec![10.0, 20.0, 30.0, 40.0, Value::MIN]);
         assert_encoding_and_decoding_are_valid_for_swing(
             uncompressed_values,
@@ -672,7 +672,7 @@ mod tests {
     }
 
     #[test]
-    fn test_encoding_decoding_for_decreasing_swing_with_residuals_with_new_mininum() {
+    fn test_encoding_decoding_for_decreasing_swing_with_residuals_with_new_minimum() {
         let uncompressed_values = ValueArray::from(vec![50.0, 40.0, 30.0, 20.0, Value::MIN]);
         assert_encoding_and_decoding_are_valid_for_swing(
             uncompressed_values,
