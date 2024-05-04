@@ -231,6 +231,8 @@ impl TableMetadataManager {
 mod tests {
     use super::*;
 
+    use arrow::compute::concat_batches;
+
     // Tests for TableMetadataManager.
     #[tokio::test]
     async fn test_create_metadata_delta_lake_tables() {
@@ -278,5 +280,51 @@ mod tests {
                  generated_column_expr, generated_column_sources FROM model_table_field_columns")
             .await
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_save_table_metadata() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
+            Path::from_absolute_path(temp_dir.path()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        metadata_manager
+            .save_table_metadata("table_1", "CREATE TABLE table_1")
+            .await
+            .unwrap();
+
+        let table = metadata_manager
+            .save_table_metadata("table_2", "CREATE TABLE table_2")
+            .await
+            .unwrap();
+
+        // Retrieve the table from the metadata delta lake.
+        let ctx = SessionContext::new();
+        ctx.register_table("table_metadata", Arc::new(table))
+            .unwrap();
+        let dataframe = ctx
+            .sql("SELECT table_name, sql FROM table_metadata ORDER BY table_name")
+            .await
+            .unwrap();
+
+        let table_provider = metadata_manager
+            .session
+            .table_provider("table_metadata")
+            .await
+            .unwrap();
+        let batches = dataframe.collect().await.unwrap();
+        let batch = concat_batches(&table_provider.schema(), batches.as_slice()).unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            StringArray::from(vec!["table_1", "table_2"])
+        );
+        assert_eq!(
+            **batch.column(1),
+            StringArray::from(vec!["CREATE TABLE table_1", "CREATE TABLE table_2"])
+        );
     }
 }
