@@ -50,8 +50,6 @@ pub struct TableMetadataManager {
     // TODO: Look into using dash map or StorageOptions.
     /// Storage options used to access delta lake tables in remote object stores.
     storage_options: HashMap<String, String>,
-    /// Map from metadata delta lake table names to [`DeltaTables`](DeltaTable).
-    metadata_tables: DashMap<String, Arc<DeltaTable>>,
     /// Session used to read from the metadata delta lake using Apache Arrow DataFusion.
     session: SessionContext,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
@@ -68,7 +66,6 @@ impl TableMetadataManager {
         let table_metadata_manager = TableMetadataManager {
             url_scheme: format!("{folder_path}/{METADATA_FOLDER}"),
             storage_options: HashMap::new(),
-            metadata_tables: DashMap::new(),
             session: SessionContext::new(),
             tag_value_hashes: DashMap::new(),
         };
@@ -99,7 +96,6 @@ impl TableMetadataManager {
         let table_metadata_manager = TableMetadataManager {
             url_scheme: format!("s3://modelardb/{METADATA_FOLDER}"),
             storage_options,
-            metadata_tables: DashMap::new(),
             session: SessionContext::new(),
             tag_value_hashes: DashMap::new(),
         };
@@ -173,9 +169,9 @@ impl TableMetadataManager {
     }
 
     /// Use `table_name` to create a delta lake table with `columns` in the location given by
-    /// `url_scheme` and `storage_options` if it does not already exist. The created table is saved
-    /// in the metadata tables and registered in the Apache Arrow Datafusion session. If the table
-    /// could not be created or registered, return [`DeltaTableError`].
+    /// `url_scheme` and `storage_options` if it does not already exist. The created table is
+    /// registered in the Apache Arrow Datafusion session. If the table could not be created or
+    /// registered, return [`DeltaTableError`].
     async fn create_delta_lake_table(
         &self,
         table_name: &str,
@@ -192,7 +188,6 @@ impl TableMetadataManager {
         );
 
         self.session.register_table(table_name, table.clone())?;
-        self.metadata_tables.insert(table_name.to_owned(), table);
 
         Ok(())
     }
@@ -245,17 +240,11 @@ mod tests {
 
         // Verify that the tables were created, registered, and has the expected columns.
         assert!(metadata_manager
-            .metadata_tables
-            .contains_key("table_metadata"));
-        assert!(metadata_manager
             .session
             .sql("SELECT table_name, sql FROM table_metadata")
             .await
             .is_ok());
 
-        assert!(metadata_manager
-            .metadata_tables
-            .contains_key("model_table_metadata"));
         assert!(metadata_manager
             .session
             .sql("SELECT table_name, query_schema, sql FROM model_table_metadata")
@@ -263,17 +252,11 @@ mod tests {
             .is_ok());
 
         assert!(metadata_manager
-            .metadata_tables
-            .contains_key("model_table_hash_table_name"));
-        assert!(metadata_manager
             .session
             .sql("SELECT hash, table_name FROM model_table_hash_table_name")
             .await
             .is_ok());
 
-        assert!(metadata_manager
-            .metadata_tables
-            .contains_key("model_table_field_columns"));
         assert!(metadata_manager
             .session
             .sql("SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
