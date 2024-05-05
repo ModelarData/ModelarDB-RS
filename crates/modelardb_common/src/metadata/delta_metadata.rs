@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow::array::{ArrayRef, StringArray};
+use arrow::array::{ArrayRef, BinaryArray, StringArray};
 use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
 use arrow::ipc::writer::IpcWriteOptions;
@@ -236,6 +236,16 @@ impl TableMetadataManager {
         )
         .await?;
 
+        // Convert the query schema to bytes, so it can be saved in the metadata delta lake.
+        let query_schema_bytes = try_convert_schema_to_bytes(&model_table_metadata.query_schema)?;
+
+        // Add a new row in the model_table_metadata table to persist the model table.
+        self.append_to_table("model_table_metadata", vec![
+            Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
+            Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
+            Arc::new(StringArray::from(vec![sql])),
+        ]).await?;
+
         Ok(())
     }
 
@@ -285,7 +295,7 @@ impl TableMetadataManager {
 }
 
 /// Convert a [`Schema`] to [`Vec<u8>`].
-pub fn try_convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, DeltaTableError> {
+pub fn try_convert_schema_to_bytes(schema: &Schema) -> Result<Vec<u8>, DeltaTableError> {
     let options = IpcWriteOptions::default();
     let schema_as_ipc = SchemaAsIpc::new(schema, &options);
 
