@@ -21,7 +21,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow::array::StringArray;
+use arrow::datatypes::Schema;
+use arrow::error::ArrowError;
+use arrow::ipc::writer::IpcWriteOptions;
 use arrow::record_batch::RecordBatch;
+use arrow_flight::{IpcMessage, SchemaAsIpc};
 use dashmap::DashMap;
 use datafusion::prelude::SessionContext;
 use deltalake::kernel::{DataType, StructField};
@@ -29,18 +33,19 @@ use deltalake::operations::create::CreateBuilder;
 use deltalake::protocol::SaveMode;
 use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
 use object_store::path::Path;
+use sqlx::Error;
+
+use crate::metadata::model_table_metadata::ModelTableMetadata;
 
 /// The folder storing metadata in the data folders.
 const METADATA_FOLDER: &str = "metadata";
 
 // TODO: Create a initialization function that can parse arguments from manager into table metadata manager.
 // TODO: Look into optimizing the way we store and access tables in the struct fields (avoid open_table() every time).
+// TODO: Look into avoiding having to register the table every time we want to read from it.
 // TODO: Add function to save model table metadata.
 // TODO: Add tests for these functions.
-// TODO: Look into adding primary key (and maybe unique) constraints to all the tables.
-// TODO: Check if this actually results in an error when trying to add duplicates.
 // TODO: Look into using merge builder to save tag hashes if they do not already exist.
-// TODO: Look into using save mode on the write builder instead. It seems much simpler.
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata delta lake.
@@ -168,30 +173,6 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    /// Use `table_name` to create a delta lake table with `columns` in the location given by
-    /// `url_scheme` and `storage_options` if it does not already exist. The created table is
-    /// registered in the Apache Arrow Datafusion session. If the table could not be created or
-    /// registered, return [`DeltaTableError`].
-    async fn create_delta_lake_table(
-        &self,
-        table_name: &str,
-        columns: Vec<StructField>,
-    ) -> Result<(), DeltaTableError> {
-        let table = Arc::new(
-            CreateBuilder::new()
-                .with_save_mode(SaveMode::Ignore)
-                .with_storage_options(self.storage_options.clone())
-                .with_table_name(table_name)
-                .with_location(format!("{}/{table_name}", self.url_scheme))
-                .with_columns(columns)
-                .await?,
-        );
-
-        self.session.register_table(table_name, table.clone())?;
-
-        Ok(())
-    }
-
     /// Save the created table to the metadata delta lake. This consists of adding a row to the
     /// table_metadata table with the `name` of the table and the `sql` used to create the table.
     /// If the table metadata was saved, return the updated [`DeltaTable`], otherwise return [`DeltaTableError`].
@@ -220,6 +201,64 @@ impl TableMetadataManager {
         let ops = DeltaOps::from(table.clone());
         ops.write(vec![batch]).await
     }
+
+    /// Save the created model table to the metadata delta lake. This includes creating a tags table
+    /// for the model table, creating a compressed files table for the model table, adding a row to
+    /// the model_table_metadata table, and adding a row to the model_table_field_columns table for
+    /// each field column.
+    pub async fn save_model_table_metadata(
+        &self,
+        model_table_metadata: &ModelTableMetadata,
+        sql: &str,
+    ) -> Result<(), DeltaTableError> {
+        // Create a table_name_tags table to save the 54-bit tag hashes when ingesting data.
+        let mut table_name_tags_columns = vec![StructField::new("hash", DataType::LONG, false)];
+
+        // Add a column definition for each tag column in the query schema.
+        let mut tag_columns: Vec<StructField> = model_table_metadata
+            .tag_column_indices
+            .iter()
+            .map(|index| {
+                let field = model_table_metadata.query_schema.field(*index);
+                StructField::new(field.name(), DataType::STRING, false)
+            })
+            .collect();
+
+        table_name_tags_columns.append(&mut tag_columns);
+        self.create_delta_lake_table(
+            format!("{}_tags", model_table_metadata.name).as_str(),
+            table_name_tags_columns,
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Use `table_name` to create a delta lake table with `columns` in the location given by
+    /// `url_scheme` and `storage_options` if it does not already exist. The created table is
+    /// registered in the Apache Arrow Datafusion session. If the table could not be created or
+    /// registered, return [`DeltaTableError`].
+    async fn create_delta_lake_table(
+        &self,
+        table_name: &str,
+        columns: Vec<StructField>,
+    ) -> Result<(), DeltaTableError> {
+        let table = Arc::new(
+            CreateBuilder::new()
+                .with_save_mode(SaveMode::Ignore)
+                .with_storage_options(self.storage_options.clone())
+                .with_table_name(table_name)
+                .with_location(format!("{}/{table_name}", self.url_scheme))
+                .with_columns(columns)
+                .await?,
+        );
+
+        self.session.register_table(table_name, table.clone())?;
+
+        Ok(())
+    }
+}
+
 /// Convert a [`Schema`] to [`Vec<u8>`].
 pub fn try_convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
     let options = IpcWriteOptions::default();
