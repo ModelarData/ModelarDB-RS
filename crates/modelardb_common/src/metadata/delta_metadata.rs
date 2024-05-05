@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow::array::StringArray;
+use arrow::array::{ArrayRef, StringArray};
 use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
 use arrow::ipc::writer::IpcWriteOptions;
@@ -180,25 +180,14 @@ impl TableMetadataManager {
         name: &str,
         sql: &str,
     ) -> Result<DeltaTable, DeltaTableError> {
-        // unwrap() is safe since the "table_metadata" table is registered when the table metadata manager is created.
-        let table_provider = self.session.table_provider("table_metadata").await.unwrap();
-        let table = open_table_with_storage_options(
-            format!("{}/table_metadata", self.url_scheme),
-            self.storage_options.clone(),
-        )
-        .await?;
-
-        let batch = RecordBatch::try_new(
-            table_provider.schema(),
+        self.append_to_table(
+            "table_metadata",
             vec![
                 Arc::new(StringArray::from(vec![name])),
                 Arc::new(StringArray::from(vec![sql])),
             ],
         )
-        .unwrap();
-
-        let ops = DeltaOps::from(table.clone());
-        ops.write(vec![batch]).await
+        .await
     }
 
     /// Save the created model table to the metadata delta lake. This includes creating a tags table
@@ -272,6 +261,26 @@ impl TableMetadataManager {
         self.session.register_table(table_name, table.clone())?;
 
         Ok(())
+    }
+
+    /// Append the columns to the table with the given `table_name`. If the columns are appended to
+    /// the table, return the updated [`DeltaTable`], otherwise return [`DeltaTableError`].
+    async fn append_to_table(
+        &self,
+        table_name: &str,
+        columns: Vec<ArrayRef>,
+    ) -> Result<DeltaTable, DeltaTableError> {
+        let table = open_table_with_storage_options(
+            format!("{}/{table_name}", self.url_scheme),
+            self.storage_options.clone(),
+        )
+        .await?;
+
+        let table_provider = self.session.table_provider(table_name).await?;
+        let batch = RecordBatch::try_new(table_provider.schema(), columns).unwrap();
+
+        let ops = DeltaOps::from(table);
+        ops.write(vec![batch]).await
     }
 }
 
