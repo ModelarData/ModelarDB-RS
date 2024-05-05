@@ -231,6 +231,22 @@ impl TableMetadataManager {
         )
         .await?;
 
+        // Create a table_name_compressed_files table to save the metadata of the table's files.
+        self.create_delta_lake_table(
+            format!("{}_compressed_files", model_table_metadata.name).as_str(),
+            vec![
+                StructField::new("file_path", DataType::STRING, false),
+                StructField::new("field_column", DataType::SHORT, false),
+                StructField::new("size", DataType::LONG, false),
+                StructField::new("created_at", DataType::LONG, false),
+                StructField::new("start_time", DataType::LONG, false),
+                StructField::new("end_time", DataType::LONG, false),
+                StructField::new("min_value", DataType::FLOAT, false),
+                StructField::new("max_value", DataType::FLOAT, false),
+            ],
+        )
+        .await?;
+
         Ok(())
     }
 
