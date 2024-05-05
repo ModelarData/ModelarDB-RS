@@ -220,6 +220,25 @@ impl TableMetadataManager {
         let ops = DeltaOps::from(table.clone());
         ops.write(vec![batch]).await
     }
+/// Convert a [`Schema`] to [`Vec<u8>`].
+pub fn try_convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
+    let options = IpcWriteOptions::default();
+    let schema_as_ipc = SchemaAsIpc::new(schema, &options);
+
+    let ipc_message: IpcMessage =
+        schema_as_ipc
+            .try_into()
+            .map_err(|error: ArrowError| Error::ColumnDecode {
+                index: "query_schema".to_owned(),
+                source: Box::new(error),
+            })?;
+
+    Ok(ipc_message.0.to_vec())
+}
+
+/// Convert a [`&[usize]`] to a [`Vec<u8>`].
+pub fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
+    usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 
 #[cfg(test)]
