@@ -214,16 +214,17 @@ impl TableMetadataManager {
         let mut table_name_tags_columns = vec![StructField::new("hash", DataType::LONG, false)];
 
         // Add a column definition for each tag column in the query schema.
-        let mut tag_columns: Vec<StructField> = model_table_metadata
-            .tag_column_indices
-            .iter()
-            .map(|index| {
-                let field = model_table_metadata.query_schema.field(*index);
-                StructField::new(field.name(), DataType::STRING, false)
-            })
-            .collect();
+        table_name_tags_columns.append(
+            &mut model_table_metadata
+                .tag_column_indices
+                .iter()
+                .map(|index| {
+                    let field = model_table_metadata.query_schema.field(*index);
+                    StructField::new(field.name(), DataType::STRING, false)
+                })
+                .collect::<Vec<StructField>>(),
+        );
 
-        table_name_tags_columns.append(&mut tag_columns);
         self.create_delta_lake_table(
             format!("{}_tags", model_table_metadata.name).as_str(),
             table_name_tags_columns,
