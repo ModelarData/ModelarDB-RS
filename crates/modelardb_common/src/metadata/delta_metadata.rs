@@ -20,7 +20,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow::array::{ArrayRef, BinaryArray, StringArray};
+use arrow::array::{ArrayRef, BinaryArray, BooleanArray, Float32Array, Int16Array, StringArray};
 use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
 use arrow::ipc::writer::IpcWriteOptions;
@@ -35,6 +35,7 @@ use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTabl
 use object_store::path::Path;
 
 use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::types::ErrorBound;
 
 /// The folder storing metadata in the data folders.
 const METADATA_FOLDER: &str = "metadata";
@@ -240,11 +241,74 @@ impl TableMetadataManager {
         let query_schema_bytes = try_convert_schema_to_bytes(&model_table_metadata.query_schema)?;
 
         // Add a new row in the model_table_metadata table to persist the model table.
-        self.append_to_table("model_table_metadata", vec![
-            Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
-            Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
-            Arc::new(StringArray::from(vec![sql])),
-        ]).await?;
+        self.append_to_table(
+            "model_table_metadata",
+            vec![
+                Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
+                Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
+                Arc::new(StringArray::from(vec![sql])),
+            ],
+        )
+        .await?;
+
+        // Add a row for each field column to the model_table_field_columns table.
+        for (query_schema_index, field) in model_table_metadata
+            .query_schema
+            .fields()
+            .iter()
+            .enumerate()
+        {
+            // Only add a row for the field if it is not the timestamp or a tag.
+            let is_timestamp = query_schema_index == model_table_metadata.timestamp_column_index;
+            let in_tag_indices = model_table_metadata
+                .tag_column_indices
+                .contains(&query_schema_index);
+
+            if !is_timestamp && !in_tag_indices {
+                let (generated_column_expr, generated_column_sources) =
+                    if let Some(generated_column) =
+                        &model_table_metadata.generated_columns[query_schema_index]
+                    {
+                        (
+                            generated_column.original_expr.clone(),
+                            Some(convert_slice_usize_to_vec_u8(
+                                &generated_column.source_columns,
+                            )),
+                        )
+                    } else {
+                        (None, None)
+                    };
+
+                // error_bounds matches schema and not query_schema to simplify looking up the error
+                // bound during ingestion as it occurs far more often than creation of model tables.
+                let (error_bound_value, error_bound_is_relative) =
+                    if let Ok(schema_index) = model_table_metadata.schema.index_of(field.name()) {
+                        match model_table_metadata.error_bounds[schema_index] {
+                            ErrorBound::Absolute(value) => (value, false),
+                            ErrorBound::Relative(value) => (value, true),
+                        }
+                    } else {
+                        (0.0, false)
+                    };
+
+                // query_schema_index is simply cast as a model table contains at most 1024 columns.
+                self.append_to_table(
+                    "model_table_field_columns",
+                    vec![
+                        Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
+                        Arc::new(StringArray::from(vec![field.name().clone()])),
+                        Arc::new(Int16Array::from(vec![query_schema_index as i16])),
+                        Arc::new(Float32Array::from(vec![error_bound_value])),
+                        Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
+                        Arc::new(StringArray::from(vec![generated_column_expr])),
+                        Arc::new(BinaryArray::from_opt_vec(vec![
+                            generated_column_sources.as_deref()
+                        ])),
+                    ],
+                )
+                .await?;
+            }
+        }
 
         Ok(())
     }
