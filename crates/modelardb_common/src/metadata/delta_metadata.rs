@@ -406,6 +406,8 @@ pub fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
 mod tests {
     use super::*;
 
+    use crate::test;
+
     // Tests for TableMetadataManager.
     #[tokio::test]
     async fn test_create_metadata_delta_lake_tables() {
@@ -479,5 +481,94 @@ mod tests {
             **batch.column(1),
             StringArray::from(vec!["CREATE TABLE table_1", "CREATE TABLE table_2"])
         );
+    }
+
+    #[tokio::test]
+    async fn test_save_model_table_metadata() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
+            Path::from_absolute_path(temp_dir.path()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        // Save a model table to the metadata database.
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        // Verify that the tables were created, and has the expected columns.
+        assert!(metadata_manager
+            .session
+            .sql(&format!(
+                "SELECT hash, tag FROM {}_tags",
+                test::MODEL_TABLE_NAME
+            ))
+            .await
+            .is_ok());
+
+        assert!(metadata_manager
+            .session
+            .sql(&format!(
+                "SELECT file_path, field_column, size, created_at, start_time, end_time, min_value,
+                 max_value FROM {}_compressed_files",
+                test::MODEL_TABLE_NAME
+            ))
+            .await
+            .is_ok());
+
+        // Check that a row has been added to the model_table_metadata table.
+        let batch = metadata_manager
+            .query_table(
+                "model_table_metadata",
+                "SELECT table_name, query_schema, sql FROM model_table_metadata",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            StringArray::from(vec![test::MODEL_TABLE_NAME])
+        );
+        assert_eq!(
+            **batch.column(1),
+            BinaryArray::from_vec(vec![&try_convert_schema_to_bytes(
+                &model_table_metadata.query_schema
+            )
+            .unwrap()])
+        );
+        assert_eq!(
+            **batch.column(2),
+            StringArray::from(vec![test::MODEL_TABLE_SQL])
+        );
+
+        // Check that a row has been added to the model_table_field_columns table for each field column.
+        let batch = metadata_manager
+            .query_table(
+                "model_table_field_columns",
+                "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
+                 generated_column_expr, generated_column_sources FROM model_table_field_columns ORDER BY column_name",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            StringArray::from(vec![test::MODEL_TABLE_NAME, test::MODEL_TABLE_NAME])
+        );
+        assert_eq!(
+            **batch.column(1),
+            StringArray::from(vec!["field_1", "field_2"])
+        );
+        assert_eq!(**batch.column(2), Int16Array::from(vec![1, 2]));
+        assert_eq!(**batch.column(3), Float32Array::from(vec![1.0, 5.0]));
+        assert_eq!(**batch.column(4), BooleanArray::from(vec![false, true]));
+        assert_eq!(
+            **batch.column(5),
+            StringArray::from(vec![None, None] as Vec<Option<&str>>)
+        );
+        assert_eq!(**batch.column(6), BinaryArray::from(vec![None, None]));
     }
 }
