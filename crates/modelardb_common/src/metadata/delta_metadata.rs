@@ -21,6 +21,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow::array::{ArrayRef, BinaryArray, BooleanArray, Float32Array, Int16Array, StringArray};
+use arrow::compute::concat_batches;
 use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
 use arrow::ipc::writer::IpcWriteOptions;
@@ -41,10 +42,6 @@ use crate::types::ErrorBound;
 const METADATA_FOLDER: &str = "metadata";
 
 // TODO: Create a initialization function that can parse arguments from manager into table metadata manager.
-// TODO: Look into optimizing the way we store and access tables in the struct fields (avoid open_table() every time).
-// TODO: Look into avoiding having to register the table every time we want to read from it.
-// TODO: Add function to save model table metadata.
-// TODO: Add tests for these functions.
 // TODO: Look into using merge builder to save tag hashes if they do not already exist.
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
@@ -337,6 +334,7 @@ impl TableMetadataManager {
         Ok(())
     }
 
+    // TODO: Look into optimizing the way we store and access tables in the struct fields (avoid open_table() every time).
     /// Append the columns to the table with the given `table_name`. If the columns are appended to
     /// the table, return the updated [`DeltaTable`], otherwise return [`DeltaTableError`].
     async fn append_to_table(
@@ -355,6 +353,32 @@ impl TableMetadataManager {
 
         let ops = DeltaOps::from(table);
         ops.write(vec![batch]).await
+    }
+
+    // TODO: Find a way to avoid having to register the table every time we want to read from it.
+    /// Query the table with the given `table_name` using the given `query`. If the table is queried,
+    /// return a [`RecordBatch`] with the query result, otherwise return [`DeltaTableError`].
+    async fn query_table(
+        &self,
+        table_name: &str,
+        query: &str,
+    ) -> Result<RecordBatch, DeltaTableError> {
+        let table = open_table_with_storage_options(
+            format!("{}/{table_name}", self.url_scheme),
+            self.storage_options.clone(),
+        )
+        .await?;
+
+        let session = SessionContext::new();
+        session.register_table(table_name, Arc::new(table))?;
+
+        let dataframe = session.sql(query).await?;
+        let batches = dataframe.collect().await?;
+
+        let table_provider = session.table_provider(table_name).await?;
+        let batch = concat_batches(&table_provider.schema(), batches.as_slice())?;
+
+        Ok(batch)
     }
 }
 
@@ -381,8 +405,6 @@ pub fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use arrow::compute::concat_batches;
 
     // Tests for TableMetadataManager.
     #[tokio::test]
@@ -435,27 +457,19 @@ mod tests {
             .await
             .unwrap();
 
-        let table = metadata_manager
+        metadata_manager
             .save_table_metadata("table_2", "CREATE TABLE table_2")
             .await
             .unwrap();
 
         // Retrieve the table from the metadata delta lake.
-        let ctx = SessionContext::new();
-        ctx.register_table("table_metadata", Arc::new(table))
-            .unwrap();
-        let dataframe = ctx
-            .sql("SELECT table_name, sql FROM table_metadata ORDER BY table_name")
+        let batch = metadata_manager
+            .query_table(
+                "table_metadata",
+                "SELECT table_name, sql FROM table_metadata ORDER BY table_name",
+            )
             .await
             .unwrap();
-
-        let table_provider = metadata_manager
-            .session
-            .table_provider("table_metadata")
-            .await
-            .unwrap();
-        let batches = dataframe.collect().await.unwrap();
-        let batch = concat_batches(&table_provider.schema(), batches.as_slice()).unwrap();
 
         assert_eq!(
             **batch.column(0),
