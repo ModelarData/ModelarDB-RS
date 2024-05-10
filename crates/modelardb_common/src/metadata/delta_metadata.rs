@@ -794,7 +794,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_model_table_metadata() {
-        let (temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let model_table_metadata = metadata_manager.model_table_metadata().await.unwrap();
 
@@ -806,7 +806,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_error_bound() {
-        let (temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let error_bounds = metadata_manager
             .error_bounds(test::MODEL_TABLE_NAME, 4)
@@ -826,7 +826,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_generated_columns() {
-        let (temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let model_table_metadata = test::model_table_metadata();
         let df_schema = model_table_metadata.query_schema.to_dfschema().unwrap();
@@ -856,6 +856,26 @@ mod tests {
             .unwrap();
 
         (temp_dir, metadata_manager)
+    }
+
+    #[tokio::test]
+    async fn test_univariate_id_to_table_name() {
+        // TODO: Implement this.
+    }
+
+    #[tokio::test]
+    async fn test_invalid_univariate_id_to_table_name() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
+            Path::from_absolute_path(temp_dir.path()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        assert!(metadata_manager
+            .univariate_id_to_table_name(0)
+            .await
+            .is_err());
     }
 
     // Tests for conversion functions.
