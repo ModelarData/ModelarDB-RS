@@ -577,7 +577,11 @@ pub fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>, Del
 mod tests {
     use super::*;
 
+    use arrow::datatypes::{ArrowPrimitiveType, Field};
+    use proptest::{collection, num, prop_assert_eq, proptest};
+
     use crate::test;
+    use crate::types::ArrowValue;
 
     // Tests for TableMetadataManager.
     #[tokio::test]
@@ -764,5 +768,35 @@ mod tests {
             StringArray::from(vec![None, None] as Vec<Option<&str>>)
         );
         assert_eq!(**batch.column(6), BinaryArray::from(vec![None, None]));
+    }
+
+    // Tests for conversion functions.
+    #[test]
+    fn test_invalid_bytes_to_schema() {
+        assert!(try_convert_bytes_to_schema(vec!(1, 2, 4, 8)).is_err());
+    }
+
+    #[test]
+    fn test_schema_to_bytes_and_bytes_to_schema() {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("field_1", ArrowValue::DATA_TYPE, false),
+            Field::new("field_2", ArrowValue::DATA_TYPE, false),
+        ]));
+
+        // Serialize the schema to bytes.
+        let bytes = try_convert_schema_to_bytes(&schema).unwrap();
+
+        // Deserialize the bytes to the schema.
+        let bytes_schema = try_convert_bytes_to_schema(bytes).unwrap();
+        assert_eq!(*schema, bytes_schema);
+    }
+
+    proptest! {
+        #[test]
+        fn test_slice_usize_to_vec_u8_and_slice_u8_to_vec_usize(values in collection::vec(num::usize::ANY, 0..50)) {
+            let bytes = convert_slice_usize_to_vec_u8(&values);
+            let usizes = try_convert_slice_u8_to_vec_usize(&bytes).unwrap();
+            prop_assert_eq!(values, usizes);
+        }
     }
 }
