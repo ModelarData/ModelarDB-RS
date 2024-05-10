@@ -794,6 +794,38 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn test_error_bound() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
+            Path::from_absolute_path(temp_dir.path()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        // Save a model table to the metadata database.
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        let error_bounds = metadata_manager
+            .error_bounds(test::MODEL_TABLE_NAME, 4)
+            .await
+            .unwrap();
+
+        let values: Vec<f32> = error_bounds
+            .iter()
+            .map(|error_bound| match error_bound {
+                ErrorBound::Absolute(value) => *value,
+                ErrorBound::Relative(value) => *value,
+            })
+            .collect();
+
+        assert_eq!(values, &[0.0, 1.0, 5.0, 0.0]);
+    }
+
     // Tests for conversion functions.
     #[test]
     fn test_invalid_bytes_to_schema() {
