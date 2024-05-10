@@ -39,10 +39,10 @@ use deltalake::protocol::SaveMode;
 use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
 use object_store::path::Path;
 
-use crate::array;
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::test::ERROR_BOUND_ZERO;
 use crate::types::ErrorBound;
+use crate::{array, parser};
 
 /// The folder storing metadata in the data folders.
 const METADATA_FOLDER: &str = "metadata";
@@ -373,7 +373,7 @@ impl TableMetadataManager {
     }
 
     /// Return the error bounds for the columns in the model table with `table_name`. If a model
-    /// table with `table_name` does not exist, [`Error`] is returned.
+    /// table with `table_name` does not exist, [`DeltaTableError`] is returned.
     async fn error_bounds(
         &self,
         table_name: &str,
@@ -413,13 +413,46 @@ impl TableMetadataManager {
     }
 
     /// Return the generated columns for the model table with `table_name` and `df_schema`.
-    /// If a model table with `table_name` does not exist, [`Error`] is returned.
+    /// If a model table with `table_name` does not exist, [`DeltaTableError`] is returned.
     async fn generated_columns(
         &self,
-        _table_name: &str,
-        _df_schema: &DFSchema,
+        table_name: &str,
+        df_schema: &DFSchema,
     ) -> Result<Vec<Option<GeneratedColumn>>, DeltaTableError> {
-        Err(DeltaTableError::Generic("Unimplemented".to_owned()))
+        let batch = self
+            .query_table(
+                "model_table_field_columns",
+                &format!("SELECT * FROM model_table_field_columns WHERE table_name = {table_name} ORDER BY column_index"),
+            )
+            .await?;
+
+        let mut generated_columns = vec![None; df_schema.fields().len()];
+
+        let column_index_array = array!(batch, 2, Int16Array);
+        let generated_column_expr_array = array!(batch, 5, StringArray);
+        let generated_column_sources_array = array!(batch, 6, BinaryArray);
+
+        for row_index in 0..batch.num_rows() {
+            let generated_column_index = column_index_array.value(row_index);
+            let generated_column_expr = generated_column_expr_array.value(row_index);
+            let generated_column_sources = generated_column_sources_array.value(row_index);
+
+            // If generated_column_expr is null, it is saved as an empty string in the column values.
+            if !generated_column_expr.is_empty() {
+                // unwrap() is safe as the expression is checked before it is written to the database.
+                let expr = parser::parse_sql_expression(df_schema, generated_column_expr).unwrap();
+
+                let generated_column = GeneratedColumn {
+                    expr,
+                    source_columns: try_convert_slice_u8_to_vec_usize(generated_column_sources)?,
+                    original_expr: None,
+                };
+
+                generated_columns[generated_column_index as usize] = Some(generated_column);
+            }
+        }
+
+        Ok(generated_columns)
     }
 
     /// Use `table_name` to create a delta lake table with `columns` in the location given by
