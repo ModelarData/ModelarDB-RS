@@ -20,7 +20,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use arrow::array::{ArrayRef, BinaryArray, BooleanArray, Float32Array, Int16Array, StringArray};
+use arrow::array::{
+    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Int16Array, StringArray,
+};
 use arrow::compute::concat_batches;
 use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
@@ -35,6 +37,7 @@ use deltalake::protocol::SaveMode;
 use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
 use object_store::path::Path;
 
+use crate::array;
 use crate::metadata::model_table_metadata::ModelTableMetadata;
 use crate::types::ErrorBound;
 
@@ -186,6 +189,17 @@ impl TableMetadataManager {
             ],
         )
         .await
+    }
+
+    /// Return the name of each table currently in the metadata delta lake. Note that this does not
+    /// include model tables. If the table names cannot be retrieved, [`DeltaTableError`] is returned.
+    pub async fn table_names(&self) -> Result<Vec<String>, DeltaTableError> {
+        let batch = self
+            .query_table("table_metadata", "SELECT table_name FROM table_metadata")
+            .await?;
+
+        let table_names = array!(batch, 0, StringArray);
+        Ok(table_names.iter().flatten().map(String::from).collect())
     }
 
     /// Save the created model table to the metadata delta lake. This includes creating a tags table
