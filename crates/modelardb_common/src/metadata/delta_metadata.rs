@@ -18,6 +18,7 @@
 //! through this metadata manager, while it only supports a subset of the manager metadata delta lake.
 
 use std::collections::HashMap;
+use std::mem;
 use std::sync::Arc;
 
 use arrow::array::{
@@ -521,6 +522,22 @@ pub fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema, Delt
 /// Convert a [`&[usize]`] to a [`Vec<u8>`].
 pub fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
     usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+/// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides evenly by
+/// [`mem::size_of::<usize>()`], otherwise [`DeltaTableError`] is returned.
+pub fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>, DeltaTableError> {
+    if bytes.len() % mem::size_of::<usize>() != 0 {
+        Err(DeltaTableError::InvalidData {
+            violations: vec!["Bytes is not a vector of usizes".to_owned()],
+        })
+    } else {
+        // unwrap() is safe as bytes divides evenly by mem::size_of::<usize>().
+        Ok(bytes
+            .chunks(mem::size_of::<usize>())
+            .map(|byte_slice| usize::from_le_bytes(byte_slice.try_into().unwrap()))
+            .collect())
+    }
 }
 
 #[cfg(test)]
