@@ -579,6 +579,7 @@ mod tests {
 
     use arrow::datatypes::{ArrowPrimitiveType, Field};
     use proptest::{collection, num, prop_assert_eq, proptest};
+    use tempfile::TempDir;
 
     use crate::test;
     use crate::types::ArrowValue;
@@ -683,19 +684,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_model_table_metadata() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
-            Path::from_absolute_path(temp_dir.path()).unwrap(),
-        )
-        .await
-        .unwrap();
-
-        // Save a model table to the metadata database.
-        let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
+        let (temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         // Verify that the tables were created, and has the expected columns.
         assert!(metadata_manager
@@ -733,7 +722,7 @@ mod tests {
         assert_eq!(
             **batch.column(1),
             BinaryArray::from_vec(vec![&try_convert_schema_to_bytes(
-                &model_table_metadata.query_schema
+                &test::model_table_metadata().query_schema
             )
             .unwrap()])
         );
@@ -772,43 +761,19 @@ mod tests {
 
     #[tokio::test]
     async fn test_model_table_metadata() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
-            Path::from_absolute_path(temp_dir.path()).unwrap(),
-        )
-        .await
-        .unwrap();
+        let (temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
-        // Save a model table to the metadata database.
-        let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
-
-        let retrieved_model_table_metadata = metadata_manager.model_table_metadata().await.unwrap();
+        let model_table_metadata = metadata_manager.model_table_metadata().await.unwrap();
 
         assert_eq!(
-            retrieved_model_table_metadata.first().unwrap().name,
-            model_table_metadata.name,
+            model_table_metadata.first().unwrap().name,
+            test::model_table_metadata().name,
         );
     }
 
     #[tokio::test]
     async fn test_error_bound() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
-            Path::from_absolute_path(temp_dir.path()).unwrap(),
-        )
-        .await
-        .unwrap();
-
-        // Save a model table to the metadata database.
-        let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
+        let (temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let error_bounds = metadata_manager
             .error_bounds(test::MODEL_TABLE_NAME, 4)
@@ -828,20 +793,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_generated_columns() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
-            Path::from_absolute_path(temp_dir.path()).unwrap(),
-        )
-        .await
-        .unwrap();
+        let (temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
-        // Save a model table to the metadata database.
         let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
-
         let df_schema = model_table_metadata.query_schema.to_dfschema().unwrap();
         let generated_columns = metadata_manager
             .generated_columns(test::MODEL_TABLE_NAME, &df_schema)
@@ -851,6 +805,24 @@ mod tests {
         for generated_column in generated_columns {
             assert!(generated_column.is_none());
         }
+    }
+
+    async fn create_metadata_manager_and_save_model_table() -> (TempDir, TableMetadataManager) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
+            Path::from_absolute_path(temp_dir.path()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        // Save a model table to the metadata delta lake.
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        (temp_dir, metadata_manager)
     }
 
     // Tests for conversion functions.
