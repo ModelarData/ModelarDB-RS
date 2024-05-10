@@ -382,7 +382,7 @@ impl TableMetadataManager {
         let batch = self
             .query_table(
                 "model_table_field_columns",
-                &format!("SELECT * FROM model_table_field_columns WHERE table_name = {table_name} ORDER BY column_index"),
+                &format!("SELECT * FROM model_table_field_columns WHERE table_name = '{table_name}' ORDER BY column_index"),
             )
             .await?;
 
@@ -422,7 +422,7 @@ impl TableMetadataManager {
         let batch = self
             .query_table(
                 "model_table_field_columns",
-                &format!("SELECT * FROM model_table_field_columns WHERE table_name = {table_name} ORDER BY column_index"),
+                &format!("SELECT * FROM model_table_field_columns WHERE table_name = '{table_name}' ORDER BY column_index"),
             )
             .await?;
 
@@ -768,6 +768,30 @@ mod tests {
             StringArray::from(vec![None, None] as Vec<Option<&str>>)
         );
         assert_eq!(**batch.column(6), BinaryArray::from(vec![None, None]));
+    }
+
+    #[tokio::test]
+    async fn test_model_table_metadata() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
+            Path::from_absolute_path(temp_dir.path()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        // Save a model table to the metadata database.
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        let retrieved_model_table_metadata = metadata_manager.model_table_metadata().await.unwrap();
+
+        assert_eq!(
+            retrieved_model_table_metadata.first().unwrap().name,
+            model_table_metadata.name,
+        );
     }
 
     // Tests for conversion functions.
