@@ -455,6 +455,34 @@ impl TableMetadataManager {
         Ok(generated_columns)
     }
 
+    /// Return the name of the table that contains the time series with `univariate_id`. Returns a
+    /// [`DeltaTableError`] if the necessary data cannot be retrieved from the metadata delta lake.
+    pub async fn univariate_id_to_table_name(
+        &self,
+        univariate_id: u64,
+    ) -> Result<String, DeltaTableError> {
+        let tag_hash = univariate_id_to_tag_hash(univariate_id);
+        let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
+
+        let batch = self
+            .query_table(
+                "model_table_hash_table_name",
+                &format!(
+                    "SELECT * FROM model_table_hash_table_name WHERE hash = '{signed_tag_hash}' LIMIT 1"
+                ),
+            )
+            .await?;
+
+        let table_names = array!(batch, 1, StringArray);
+        if table_names.is_empty() {
+            Err(DeltaTableError::Generic(format!(
+                "No table contains a time series with univariate ID '{univariate_id}'."
+            )))
+        } else {
+            Ok(table_names.value(0).to_owned())
+        }
+    }
+
     /// Use `table_name` to create a delta lake table with `columns` in the location given by
     /// `url_scheme` and `storage_options` if it does not already exist. The created table is
     /// registered in the Apache Arrow Datafusion session. If the table could not be created or
@@ -571,6 +599,11 @@ pub fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>, Del
             .map(|byte_slice| usize::from_le_bytes(byte_slice.try_into().unwrap()))
             .collect())
     }
+}
+
+/// Extract the first 54-bits from `univariate_id` which is a hash computed from tags.
+pub fn univariate_id_to_tag_hash(univariate_id: u64) -> u64 {
+    univariate_id & 18446744073709550592
 }
 
 #[cfg(test)]
