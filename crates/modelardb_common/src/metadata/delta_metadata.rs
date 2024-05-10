@@ -40,6 +40,7 @@ use object_store::path::Path;
 
 use crate::array;
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
+use crate::test::ERROR_BOUND_ZERO;
 use crate::types::ErrorBound;
 
 /// The folder storing metadata in the data folders.
@@ -374,10 +375,40 @@ impl TableMetadataManager {
     /// table with `table_name` does not exist, [`Error`] is returned.
     async fn error_bounds(
         &self,
-        _table_name: &str,
-        _query_schema_columns: usize,
+        table_name: &str,
+        query_schema_columns: usize,
     ) -> Result<Vec<ErrorBound>, DeltaTableError> {
-        Err(DeltaTableError::Generic("Unimplemented".to_owned()))
+        let batch = self
+            .query_table(
+                "model_table_field_columns",
+                &format!("SELECT * FROM model_table_field_columns WHERE table_name = {table_name} ORDER BY column_index"),
+            )
+            .await?;
+
+        let mut column_to_error_bound =
+            vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(); query_schema_columns];
+
+        let column_index_array = array!(batch, 2, Int16Array);
+        let error_bound_value_array = array!(batch, 3, Float32Array);
+        let error_bound_is_relative_array = array!(batch, 4, BooleanArray);
+
+        for row_index in 0..batch.num_rows() {
+            let error_bound_index = column_index_array.value(row_index);
+            let error_bound_value = error_bound_value_array.value(row_index);
+            let error_bound_is_relative = error_bound_is_relative_array.value(row_index);
+
+            // unwrap() is safe as the error bounds are checked before they are stored.
+            let error_bound = if error_bound_is_relative {
+                ErrorBound::try_new_relative(error_bound_value)
+            } else {
+                ErrorBound::try_new_absolute(error_bound_value)
+            }
+            .unwrap();
+
+            column_to_error_bound[error_bound_index as usize] = error_bound;
+        }
+
+        Ok(column_to_error_bound)
     }
 
     /// Return the generated columns for the model table with `table_name` and `df_schema`.
