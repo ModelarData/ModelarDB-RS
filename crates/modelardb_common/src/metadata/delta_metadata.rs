@@ -195,7 +195,7 @@ impl TableMetadataManager {
     /// include model tables. If the table names cannot be retrieved, [`DeltaTableError`] is returned.
     pub async fn table_names(&self) -> Result<Vec<String>, DeltaTableError> {
         let batch = self
-            .query_table("table_metadata", "SELECT table_name FROM table_metadata")
+            .query_table("table_metadata", "SELECT * FROM table_metadata")
             .await?;
 
         let table_names = array!(batch, 0, StringArray);
@@ -370,6 +370,7 @@ impl TableMetadataManager {
     }
 
     // TODO: Find a way to avoid having to register the table every time we want to read from it.
+    // TODO: Look into issue where we have to always query all columns to match the full schema.
     /// Query the table with the given `table_name` using the given `query`. If the table is queried,
     /// return a [`RecordBatch`] with the query result, otherwise return [`DeltaTableError`].
     async fn query_table(
@@ -495,6 +496,29 @@ mod tests {
             **batch.column(1),
             StringArray::from(vec!["CREATE TABLE table_1", "CREATE TABLE table_2"])
         );
+    }
+
+    #[tokio::test]
+    async fn test_table_names() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
+            Path::from_absolute_path(temp_dir.path()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        metadata_manager
+            .save_table_metadata("table_1", "CREATE TABLE table_1")
+            .await
+            .unwrap();
+
+        metadata_manager
+            .save_table_metadata("table_2", "CREATE TABLE table_2")
+            .await
+            .unwrap();
+
+        let table_names = metadata_manager.table_names().await.unwrap();
+        assert_eq!(table_names, vec!["table_2", "table_1"]);
     }
 
     #[tokio::test]
