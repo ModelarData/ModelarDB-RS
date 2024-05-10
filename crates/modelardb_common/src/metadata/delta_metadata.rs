@@ -826,6 +826,33 @@ mod tests {
         assert_eq!(values, &[0.0, 1.0, 5.0, 0.0]);
     }
 
+    #[tokio::test]
+    async fn test_generated_columns() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
+            Path::from_absolute_path(temp_dir.path()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        // Save a model table to the metadata database.
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        let df_schema = model_table_metadata.query_schema.to_dfschema().unwrap();
+        let generated_columns = metadata_manager
+            .generated_columns(test::MODEL_TABLE_NAME, &df_schema)
+            .await
+            .unwrap();
+
+        for generated_column in generated_columns {
+            assert!(generated_column.is_none());
+        }
+    }
+
     // Tests for conversion functions.
     #[test]
     fn test_invalid_bytes_to_schema() {
