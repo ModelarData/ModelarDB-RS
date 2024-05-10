@@ -412,6 +412,15 @@ pub fn try_convert_schema_to_bytes(schema: &Schema) -> Result<Vec<u8>, DeltaTabl
     Ok(ipc_message.0.to_vec())
 }
 
+/// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
+/// [`DeltaTableError`].
+pub fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema, DeltaTableError> {
+    let ipc_message = IpcMessage(schema_bytes.into());
+    Schema::try_from(ipc_message).map_err(|error| DeltaTableError::InvalidData {
+        violations: vec![error.to_string()],
+    })
+}
+
 /// Convert a [`&[usize]`] to a [`Vec<u8>`].
 pub fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
     usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
