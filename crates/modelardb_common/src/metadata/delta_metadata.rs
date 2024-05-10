@@ -30,6 +30,7 @@ use arrow::ipc::writer::IpcWriteOptions;
 use arrow::record_batch::RecordBatch;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use dashmap::DashMap;
+use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::prelude::SessionContext;
 use deltalake::kernel::{DataType, StructField};
 use deltalake::operations::create::CreateBuilder;
@@ -38,7 +39,7 @@ use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTabl
 use object_store::path::Path;
 
 use crate::array;
-use crate::metadata::model_table_metadata::ModelTableMetadata;
+use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::types::ErrorBound;
 
 /// The folder storing metadata in the data folders.
@@ -58,7 +59,7 @@ pub struct TableMetadataManager {
     /// Session used to read from the metadata delta lake using Apache Arrow DataFusion.
     session: SessionContext,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
-    tag_value_hashes: DashMap<String, u64>,
+    _tag_value_hashes: DashMap<String, u64>,
 }
 
 impl TableMetadataManager {
@@ -72,7 +73,7 @@ impl TableMetadataManager {
             url_scheme: format!("{folder_path}/{METADATA_FOLDER}"),
             storage_options: HashMap::new(),
             session: SessionContext::new(),
-            tag_value_hashes: DashMap::new(),
+            _tag_value_hashes: DashMap::new(),
         };
 
         table_metadata_manager
@@ -102,7 +103,7 @@ impl TableMetadataManager {
             url_scheme: format!("s3://modelardb/{METADATA_FOLDER}"),
             storage_options,
             session: SessionContext::new(),
-            tag_value_hashes: DashMap::new(),
+            _tag_value_hashes: DashMap::new(),
         };
 
         table_metadata_manager
@@ -322,6 +323,71 @@ impl TableMetadataManager {
         }
 
         Ok(())
+    }
+
+    /// Return the [`ModelTableMetadata`] of each model table currently in the metadata delta lake.
+    /// If the [`ModelTableMetadata`] cannot be retrieved, [`Error`] is returned.
+    pub async fn model_table_metadata(
+        &self,
+    ) -> Result<Vec<Arc<ModelTableMetadata>>, DeltaTableError> {
+        let batch = self
+            .query_table("model_table_metadata", "SELECT * FROM model_table_metadata")
+            .await?;
+
+        let mut model_table_metadata: Vec<Arc<ModelTableMetadata>> = vec![];
+        let table_name_array = array!(batch, 0, StringArray);
+        let query_schema_bytes_array = array!(batch, 1, BinaryArray);
+
+        for row_index in 0..batch.num_rows() {
+            let table_name = table_name_array.value(row_index);
+
+            // Convert the bytes to the concrete types.
+            let query_schema_bytes = query_schema_bytes_array.value(row_index);
+            let query_schema = try_convert_bytes_to_schema(query_schema_bytes.into())?;
+
+            let error_bounds = self
+                .error_bounds(table_name, query_schema.fields().len())
+                .await?;
+
+            // unwrap() is safe as the schema is checked before it is written to the metadata delta lake.
+            let df_query_schema = query_schema.clone().to_dfschema().unwrap();
+            let generated_columns = self.generated_columns(table_name, &df_query_schema).await?;
+
+            // Create model table metadata.
+            let metadata = Arc::new(
+                ModelTableMetadata::try_new(
+                    table_name.to_owned(),
+                    Arc::new(query_schema),
+                    error_bounds,
+                    generated_columns,
+                )
+                .map_err(|error| DeltaTableError::Generic(error.to_string()))?,
+            );
+
+            model_table_metadata.push(metadata)
+        }
+
+        Ok(model_table_metadata)
+    }
+
+    /// Return the error bounds for the columns in the model table with `table_name`. If a model
+    /// table with `table_name` does not exist, [`Error`] is returned.
+    async fn error_bounds(
+        &self,
+        _table_name: &str,
+        _query_schema_columns: usize,
+    ) -> Result<Vec<ErrorBound>, DeltaTableError> {
+        Err(DeltaTableError::Generic("Unimplemented".to_owned()))
+    }
+
+    /// Return the generated columns for the model table with `table_name` and `df_schema`.
+    /// If a model table with `table_name` does not exist, [`Error`] is returned.
+    async fn generated_columns(
+        &self,
+        _table_name: &str,
+        _df_schema: &DFSchema,
+    ) -> Result<Vec<Option<GeneratedColumn>>, DeltaTableError> {
+        Err(DeltaTableError::Generic("Unimplemented".to_owned()))
     }
 
     /// Use `table_name` to create a delta lake table with `columns` in the location given by
