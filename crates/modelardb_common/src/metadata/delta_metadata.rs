@@ -22,7 +22,7 @@ use std::mem;
 use std::sync::Arc;
 
 use arrow::array::{
-    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Int16Array, StringArray,
+    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Int16Array, Int64Array, StringArray,
 };
 use arrow::compute::concat_batches;
 use arrow::datatypes::Schema;
@@ -481,6 +481,61 @@ impl TableMetadataManager {
         } else {
             Ok(table_names.value(0).to_owned())
         }
+    }
+
+    /// Return a mapping from tag hashes to the tags in the columns with the names in
+    /// `tag_column_names` for the time series in the model table with the name `model_table_name`.
+    /// Returns a [`DeltaTableError`] if the necessary data cannot be retrieved from the metadata
+    /// delta lake.
+    pub async fn mapping_from_hash_to_tags(
+        &self,
+        model_table_name: &str,
+        tag_column_names: &[&str],
+    ) -> Result<HashMap<u64, Vec<String>>, DeltaTableError> {
+        // Return an empty HashMap if no tag column names are passed to keep the signature simple.
+        if tag_column_names.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let batch = self
+            .query_table(
+                &format!("{model_table_name}_tags"),
+                &format!("SELECT * FROM {model_table_name}_tags",),
+            )
+            .await?;
+
+        let hash_array = array!(batch, 0, Int64Array);
+
+        // For each tag column name, get the corresponding column array by name.
+        let mut tag_arrays: Vec<&StringArray> = Vec::with_capacity(tag_column_names.len());
+        for tag_column_name in tag_column_names {
+            tag_arrays.push(
+                batch
+                    .column_by_name(tag_column_name)
+                    .ok_or(DeltaTableError::Generic(format!(
+                        "{tag_column_name} is not a valid tag column."
+                    )))?
+                    .as_any()
+                    .downcast_ref()
+                    .unwrap(),
+            )
+        }
+
+        let mut hash_to_tags = HashMap::new();
+        for row_index in 0..batch.num_rows() {
+            let signed_tag_hash = hash_array.value(row_index);
+            let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
+
+            // For each tag array, add the row index value to the tags for this tag hash.
+            let mut tags = Vec::with_capacity(tag_column_names.len());
+            for tag_array in &tag_arrays {
+                tags.push(tag_array.value(row_index).to_owned())
+            }
+
+            hash_to_tags.insert(tag_hash, tags);
+        }
+
+        Ok(hash_to_tags)
     }
 
     /// Use `table_name` to create a delta lake table with `columns` in the location given by
