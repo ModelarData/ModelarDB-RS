@@ -505,12 +505,44 @@ impl TableMetadataManager {
                     insert = insert.set(&tag_column, col(format!("source.{tag_column}")))
                 }
 
-                insert.set("hash", "source.hash")
+                insert.set("hash", col("source.hash"))
             })?
             .await?;
 
         // Save the tag hash metadata to the model_table_hash_table_name table if it does not
         // already contain it.
+        let table = open_table_with_storage_options(
+            format!("{}/model_table_hash_table_name", self.url_scheme),
+            self.storage_options.clone(),
+        )
+        .await?;
+
+        let table_provider = self
+            .session
+            .table_provider("model_table_hash_table_name")
+            .await?;
+
+        let batch = RecordBatch::try_new(
+            table_provider.schema(),
+            vec![
+                Arc::new(Int64Array::from(vec![signed_tag_hash])),
+                Arc::new(StringArray::from(vec![table_name])),
+            ],
+        )
+        .unwrap();
+        let source = self.session.read_batch(batch)?;
+
+        let ops = DeltaOps::from(table);
+        let (_table, insert_into_hash_table_name_metrics) = ops
+            .merge(source, col("target.hash").eq(col("source.hash")))
+            .with_source_alias("source")
+            .with_target_alias("target")
+            .when_not_matched_insert(|insert| {
+                insert
+                    .set("hash", col("source.hash"))
+                    .set("table_name", col("source.table_name"))
+            })?
+            .await?;
 
         Ok(true)
     }
