@@ -544,7 +544,8 @@ impl TableMetadataManager {
             })?
             .await?;
 
-        Ok(true)
+        Ok(insert_into_tags_metrics.num_target_rows_inserted > 0
+            || insert_into_hash_table_name_metrics.num_target_rows_inserted > 0)
     }
 
     /// Return the name of the table that contains the time series with `univariate_id`. Returns a
