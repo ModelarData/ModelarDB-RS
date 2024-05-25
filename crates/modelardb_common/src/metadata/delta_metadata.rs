@@ -455,7 +455,6 @@ impl TableMetadataManager {
         Ok(generated_columns)
     }
 
-    // TODO: Maybe add function to get delta ops for a table.
     /// Save the given tag hash metadata to the model_table_tags table if it does not already
     /// contain it, and to the model_table_hash_table_name table if it does not already contain it.
     /// If the tables did not contain the tag hash, meaning it is a new tag combination, return
@@ -471,12 +470,6 @@ impl TableMetadataManager {
         let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
         // Save the tag hash metadata to the model_table_tags table if it does not already contain it.
-        let table = open_table_with_storage_options(
-            format!("{}/{table_name}_tags", self.url_scheme),
-            self.storage_options.clone(),
-        )
-        .await?;
-
         let table_provider = self
             .session
             .table_provider(format!("{table_name}_tags"))
@@ -495,7 +488,10 @@ impl TableMetadataManager {
         let batch = RecordBatch::try_new(table_provider.schema(), table_name_tags_columns).unwrap();
         let source = self.session.read_batch(batch)?;
 
-        let ops = DeltaOps::from(table);
+        let ops = self
+            .metadata_table_delta_ops(&format!("{table_name}_tags"))
+            .await?;
+
         let (_table, insert_into_tags_metrics) = ops
             .merge(source, col("target.hash").eq(col("source.hash")))
             .with_source_alias("source")
@@ -511,12 +507,6 @@ impl TableMetadataManager {
 
         // Save the tag hash metadata to the model_table_hash_table_name table if it does not
         // already contain it.
-        let table = open_table_with_storage_options(
-            format!("{}/model_table_hash_table_name", self.url_scheme),
-            self.storage_options.clone(),
-        )
-        .await?;
-
         let table_provider = self
             .session
             .table_provider("model_table_hash_table_name")
@@ -532,7 +522,10 @@ impl TableMetadataManager {
         .unwrap();
         let source = self.session.read_batch(batch)?;
 
-        let ops = DeltaOps::from(table);
+        let ops = self
+            .metadata_table_delta_ops("model_table_hash_table_name")
+            .await?;
+
         let (_table, insert_into_hash_table_name_metrics) = ops
             .merge(source, col("target.hash").eq(col("source.hash")))
             .with_source_alias("source")
@@ -655,7 +648,6 @@ impl TableMetadataManager {
         Ok(())
     }
 
-    // TODO: Look into optimizing the way we store and access tables in the struct fields (avoid open_table() every time).
     /// Append the columns to the table with the given `table_name`. If the columns are appended to
     /// the table, return the updated [`DeltaTable`], otherwise return [`DeltaTableError`].
     async fn append_to_table(
@@ -663,17 +655,27 @@ impl TableMetadataManager {
         table_name: &str,
         columns: Vec<ArrayRef>,
     ) -> Result<DeltaTable, DeltaTableError> {
+        let table_provider = self.session.table_provider(table_name).await?;
+        let batch = RecordBatch::try_new(table_provider.schema(), columns).unwrap();
+
+        let ops = self.metadata_table_delta_ops(table_name).await?;
+        ops.write(vec![batch]).await
+    }
+
+    // TODO: Look into optimizing the way we store and access tables in the struct fields (avoid open_table() every time).
+    /// Return the [DeltaOps] for the metadata table with the given `table_name`. If the [DeltaOps]
+    /// cannot be retrieved, return [DeltaTableError].
+    async fn metadata_table_delta_ops(
+        &self,
+        table_name: &str,
+    ) -> Result<DeltaOps, DeltaTableError> {
         let table = open_table_with_storage_options(
             format!("{}/{table_name}", self.url_scheme),
             self.storage_options.clone(),
         )
         .await?;
 
-        let table_provider = self.session.table_provider(table_name).await?;
-        let batch = RecordBatch::try_new(table_provider.schema(), columns).unwrap();
-
-        let ops = DeltaOps::from(table);
-        ops.write(vec![batch]).await
+        Ok(DeltaOps::from(table))
     }
 
     // TODO: Find a way to avoid having to register the table every time we want to read from it.
