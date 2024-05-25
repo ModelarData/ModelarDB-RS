@@ -18,6 +18,7 @@
 //! through this metadata manager, while it only supports a subset of the manager metadata delta lake.
 
 use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hasher};
 use std::mem;
 use std::sync::Arc;
 
@@ -61,7 +62,7 @@ pub struct TableMetadataManager {
     /// Session used to read from the metadata delta lake using Apache Arrow DataFusion.
     session: SessionContext,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
-    _tag_value_hashes: DashMap<String, u64>,
+    tag_value_hashes: DashMap<String, u64>,
 }
 
 impl TableMetadataManager {
@@ -75,7 +76,7 @@ impl TableMetadataManager {
             url_scheme: format!("{folder_path}/{METADATA_FOLDER}"),
             storage_options: HashMap::new(),
             session: SessionContext::new(),
-            _tag_value_hashes: DashMap::new(),
+            tag_value_hashes: DashMap::new(),
         };
 
         table_metadata_manager
@@ -105,7 +106,7 @@ impl TableMetadataManager {
             url_scheme: format!("s3://modelardb/{METADATA_FOLDER}"),
             storage_options,
             session: SessionContext::new(),
-            _tag_value_hashes: DashMap::new(),
+            tag_value_hashes: DashMap::new(),
         };
 
         table_metadata_manager
@@ -469,7 +470,52 @@ impl TableMetadataManager {
         model_table_metadata: &ModelTableMetadata,
         tag_values: &[String],
     ) -> Result<(u64, bool), DeltaTableError> {
-        Ok((1, true))
+        let cache_key = {
+            let mut cache_key_list = tag_values.to_vec();
+            cache_key_list.push(model_table_metadata.name.clone());
+
+            cache_key_list.join(";")
+        };
+
+        // Check if the tag hash is in the cache. If it is, retrieve it. If it is not, create a new
+        // one and save it both in the cache and in the model_table_tags table. There is a minor
+        // race condition because the check if a tag hash is in the cache and the addition of the
+        // hash is done without taking a lock on the tag_value_hashes. However, by allowing a hash
+        // to possibly be computed more than once, the cache can be used without an explicit lock.
+        if let Some(tag_hash) = self.tag_value_hashes.get(&cache_key) {
+            Ok((*tag_hash, false))
+        } else {
+            // Generate the 54-bit tag hash based on the tag values of the record batch and model
+            // table name.
+            let tag_hash = {
+                let mut hasher = DefaultHasher::new();
+                hasher.write(cache_key.as_bytes());
+
+                // The 64-bit hash is shifted to make the 10 least significant bits 0.
+                hasher.finish() << 10
+            };
+
+            // Save the tag hash in the cache and in the metadata delta lake.
+            self.tag_value_hashes.insert(cache_key, tag_hash);
+
+            // tag_column_indices are computed from the schema, so they can be used with input.
+            let tag_columns = model_table_metadata
+                .tag_column_indices
+                .iter()
+                .map(|index| model_table_metadata.schema.field(*index).name().clone())
+                .collect::<Vec<String>>();
+
+            let tag_hash_is_saved = self
+                .save_tag_hash_metadata(
+                    &model_table_metadata.name,
+                    tag_hash,
+                    &tag_columns,
+                    tag_values,
+                )
+                .await?;
+
+            Ok((tag_hash, tag_hash_is_saved))
+        }
     }
 
     /// Save the given tag hash metadata to the `model_table_tags` table if it does not already
@@ -481,8 +527,8 @@ impl TableMetadataManager {
         &self,
         table_name: &str,
         tag_hash: u64,
-        tag_columns: Vec<String>,
-        tag_values: Vec<String>,
+        tag_columns: &[String],
+        tag_values: &[String],
     ) -> Result<bool, DeltaTableError> {
         let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
@@ -492,8 +538,8 @@ impl TableMetadataManager {
 
         table_name_tags_columns.append(
             &mut tag_values
-                .into_iter()
-                .map(|tag_value| Arc::new(StringArray::from(vec![tag_value])) as ArrayRef)
+                .iter()
+                .map(|tag_value| Arc::new(StringArray::from(vec![tag_value.clone()])) as ArrayRef)
                 .collect::<Vec<ArrayRef>>(),
         );
 
@@ -515,7 +561,7 @@ impl TableMetadataManager {
             .with_target_alias("target")
             .when_not_matched_insert(|mut insert| {
                 for tag_column in tag_columns {
-                    insert = insert.set(&tag_column, col(format!("source.{tag_column}")))
+                    insert = insert.set(tag_column, col(format!("source.{tag_column}")))
                 }
 
                 insert.set("hash", col("source.hash"))
