@@ -470,11 +470,6 @@ impl TableMetadataManager {
         let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
         // Save the tag hash metadata to the model_table_tags table if it does not already contain it.
-        let table_provider = self
-            .session
-            .table_provider(format!("{table_name}_tags"))
-            .await?;
-
         let mut table_name_tags_columns: Vec<ArrayRef> =
             vec![Arc::new(Int64Array::from(vec![signed_tag_hash]))];
 
@@ -485,8 +480,13 @@ impl TableMetadataManager {
                 .collect::<Vec<ArrayRef>>(),
         );
 
-        let batch = RecordBatch::try_new(table_provider.schema(), table_name_tags_columns).unwrap();
-        let source = self.session.read_batch(batch)?;
+        let source = self.session.read_batch(
+            self.metadata_table_record_batch(
+                &format!("{table_name}_tags"),
+                table_name_tags_columns,
+            )
+            .await?,
+        )?;
 
         let ops = self
             .metadata_table_delta_ops(&format!("{table_name}_tags"))
@@ -507,20 +507,16 @@ impl TableMetadataManager {
 
         // Save the tag hash metadata to the model_table_hash_table_name table if it does not
         // already contain it.
-        let table_provider = self
-            .session
-            .table_provider("model_table_hash_table_name")
-            .await?;
-
-        let batch = RecordBatch::try_new(
-            table_provider.schema(),
-            vec![
-                Arc::new(Int64Array::from(vec![signed_tag_hash])),
-                Arc::new(StringArray::from(vec![table_name])),
-            ],
-        )
-        .unwrap();
-        let source = self.session.read_batch(batch)?;
+        let source = self.session.read_batch(
+            self.metadata_table_record_batch(
+                "model_table_hash_table_name",
+                vec![
+                    Arc::new(Int64Array::from(vec![signed_tag_hash])),
+                    Arc::new(StringArray::from(vec![table_name])),
+                ],
+            )
+            .await?,
+        )?;
 
         let ops = self
             .metadata_table_delta_ops("model_table_hash_table_name")
@@ -655,16 +651,29 @@ impl TableMetadataManager {
         table_name: &str,
         columns: Vec<ArrayRef>,
     ) -> Result<DeltaTable, DeltaTableError> {
-        let table_provider = self.session.table_provider(table_name).await?;
-        let batch = RecordBatch::try_new(table_provider.schema(), columns).unwrap();
+        let batch = self
+            .metadata_table_record_batch(table_name, columns)
+            .await?;
 
         let ops = self.metadata_table_delta_ops(table_name).await?;
         ops.write(vec![batch]).await
     }
 
+    /// Return a [`RecordBatch`] with the given `columns` for the metadata table with the given
+    /// `table_name`. If the table does not exist or the [`RecordBatch`] cannot be created, return
+    /// [`DeltaTableError`].
+    async fn metadata_table_record_batch(
+        &self,
+        table_name: &str,
+        columns: Vec<ArrayRef>,
+    ) -> Result<RecordBatch, DeltaTableError> {
+        let table_provider = self.session.table_provider(table_name).await?;
+        Ok(RecordBatch::try_new(table_provider.schema(), columns)?)
+    }
+
     // TODO: Look into optimizing the way we store and access tables in the struct fields (avoid open_table() every time).
-    /// Return the [DeltaOps] for the metadata table with the given `table_name`. If the [DeltaOps]
-    /// cannot be retrieved, return [DeltaTableError].
+    /// Return the [`DeltaOps`] for the metadata table with the given `table_name`. If the
+    /// [`DeltaOps`] cannot be retrieved, return [`DeltaTableError`].
     async fn metadata_table_delta_ops(
         &self,
         table_name: &str,
