@@ -49,7 +49,6 @@ use crate::{array, parser};
 const METADATA_FOLDER: &str = "metadata";
 
 // TODO: Create a initialization function that can parse arguments from manager into table metadata manager.
-// TODO: Look into using merge builder to save tag hashes if they do not already exist.
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata delta lake.
@@ -830,14 +829,14 @@ pub fn univariate_id_to_tag_hash(univariate_id: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use arrow::datatypes::{ArrowPrimitiveType, Field};
     use proptest::{collection, num, prop_assert_eq, proptest};
     use tempfile::TempDir;
 
     use crate::test;
     use crate::types::ArrowValue;
-
-    use super::*;
 
     // Tests for TableMetadataManager.
     #[tokio::test]
@@ -1081,6 +1080,15 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_compute_new_tag_hash() {}
+
+    #[tokio::test]
+    async fn test_lookup_existing_tag_hash() {}
+
+    #[tokio::test]
+    async fn test_compute_tag_hash_with_no_tag_values() {}
+
+    #[tokio::test]
     async fn test_univariate_id_to_table_name() {
         // TODO: Implement this.
     }
@@ -1099,6 +1107,15 @@ mod tests {
             .await
             .is_err());
     }
+
+    #[tokio::test]
+    async fn test_mapping_from_hash_to_tags() {}
+
+    #[tokio::test]
+    async fn test_mapping_from_hash_to_tags_with_invalid_table() {}
+
+    #[tokio::test]
+    async fn test_mapping_from_hash_to_tags_with_invalid_tag_column() {}
 
     // Tests for conversion functions.
     #[test]
