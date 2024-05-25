@@ -32,7 +32,7 @@ use arrow::record_batch::RecordBatch;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use dashmap::DashMap;
 use datafusion::common::{DFSchema, ToDFSchema};
-use datafusion::prelude::SessionContext;
+use datafusion::prelude::{col, SessionContext};
 use deltalake::kernel::{DataType, StructField};
 use deltalake::operations::create::CreateBuilder;
 use deltalake::protocol::SaveMode;
@@ -455,6 +455,66 @@ impl TableMetadataManager {
         Ok(generated_columns)
     }
 
+    // TODO: Maybe add function to get delta ops for a table.
+    /// Save the given tag hash metadata to the model_table_tags table if it does not already
+    /// contain it, and to the model_table_hash_table_name table if it does not already contain it.
+    /// If the tables did not contain the tag hash, meaning it is a new tag combination, return
+    /// [`true`]. If the metadata cannot be inserted into either model_table_tags or
+    /// model_table_hash_table_name, [`DeltaTableError`] is returned.
+    pub async fn save_tag_hash_metadata(
+        &self,
+        table_name: &str,
+        tag_hash: u64,
+        tag_columns: Vec<String>,
+        tag_values: Vec<String>,
+    ) -> Result<bool, DeltaTableError> {
+        let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
+
+        // Save the tag hash metadata to the model_table_tags table if it does not already contain it.
+        let table = open_table_with_storage_options(
+            format!("{}/{table_name}_tags", self.url_scheme),
+            self.storage_options.clone(),
+        )
+        .await?;
+
+        let table_provider = self
+            .session
+            .table_provider(format!("{table_name}_tags"))
+            .await?;
+
+        let mut table_name_tags_columns: Vec<ArrayRef> =
+            vec![Arc::new(Int64Array::from(vec![signed_tag_hash]))];
+
+        table_name_tags_columns.append(
+            &mut tag_values
+                .into_iter()
+                .map(|tag_value| Arc::new(StringArray::from(vec![tag_value])) as ArrayRef)
+                .collect::<Vec<ArrayRef>>(),
+        );
+
+        let batch = RecordBatch::try_new(table_provider.schema(), table_name_tags_columns).unwrap();
+        let source = self.session.read_batch(batch)?;
+
+        let ops = DeltaOps::from(table);
+        let (_table, insert_into_tags_metrics) = ops
+            .merge(source, col("target.hash").eq(col("source.hash")))
+            .with_source_alias("source")
+            .with_target_alias("target")
+            .when_not_matched_insert(|mut insert| {
+                for tag_column in tag_columns {
+                    insert = insert.set(&tag_column, col(format!("source.{tag_column}")))
+                }
+
+                insert.set("hash", "source.hash")
+            })?
+            .await?;
+
+        // Save the tag hash metadata to the model_table_hash_table_name table if it does not
+        // already contain it.
+
+        Ok(true)
+    }
+
     /// Return the name of the table that contains the time series with `univariate_id`. Returns a
     /// [`DeltaTableError`] if the necessary data cannot be retrieved from the metadata delta lake.
     pub async fn univariate_id_to_table_name(
@@ -663,14 +723,14 @@ pub fn univariate_id_to_tag_hash(univariate_id: u64) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use arrow::datatypes::{ArrowPrimitiveType, Field};
     use proptest::{collection, num, prop_assert_eq, proptest};
     use tempfile::TempDir;
 
     use crate::test;
     use crate::types::ArrowValue;
+
+    use super::*;
 
     // Tests for TableMetadataManager.
     #[tokio::test]
