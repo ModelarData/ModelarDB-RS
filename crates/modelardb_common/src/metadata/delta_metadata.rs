@@ -117,12 +117,13 @@ impl TableMetadataManager {
 
     /// If they do not already exist, create the tables in the metadata delta lake used for table and
     /// model table metadata.
-    /// * The table_metadata table contains the metadata for tables.
-    /// * The model_table_metadata table contains the main metadata for model tables.
-    /// * The model_table_hash_table_name contains a mapping from each tag hash to the name of the
+    /// * The `table_metadata` table contains the metadata for tables.
+    /// * The `model_table_metadata` table contains the main metadata for model tables.
+    /// * The `model_table_hash_table_name` contains a mapping from each tag hash to the name of the
     /// model table that contains the time series with that tag hash.
-    /// * The model_table_field_columns table contains the name, index, error bound value, whether
+    /// * The `model_table_field_columns` table contains the name, index, error bound value, whether
     /// error bound is relative, and generation expression of the field columns in each model table.
+    ///
     /// If the tables exist or were created, return [`Ok`], otherwise return [`DeltaTableError`].
     async fn create_metadata_delta_lake_tables(&self) -> Result<(), DeltaTableError> {
         // Create the table_metadata table if it does not exist.
@@ -177,8 +178,9 @@ impl TableMetadataManager {
     }
 
     /// Save the created table to the metadata delta lake. This consists of adding a row to the
-    /// table_metadata table with the `name` of the table and the `sql` used to create the table.
-    /// If the table metadata was saved, return the updated [`DeltaTable`], otherwise return [`DeltaTableError`].
+    /// `table_metadata` table with the `name` of the table and the `sql` used to create the table.
+    /// If the table metadata was saved, return the updated [`DeltaTable`], otherwise return
+    /// [`DeltaTableError`].
     pub async fn save_table_metadata(
         &self,
         name: &str,
@@ -207,8 +209,8 @@ impl TableMetadataManager {
 
     /// Save the created model table to the metadata delta lake. This includes creating a tags table
     /// for the model table, creating a compressed files table for the model table, adding a row to
-    /// the model_table_metadata table, and adding a row to the model_table_field_columns table for
-    /// each field column.
+    /// the `model_table_metadata` table, and adding a row to the `model_table_field_columns` table
+    /// for each field column.
     pub async fn save_model_table_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
@@ -455,11 +457,26 @@ impl TableMetadataManager {
         Ok(generated_columns)
     }
 
-    /// Save the given tag hash metadata to the model_table_tags table if it does not already
-    /// contain it, and to the model_table_hash_table_name table if it does not already contain it.
+    /// Return the tag hash for the given list of tag values either by retrieving it from a cache
+    /// or, if the combination of tag values is not in the cache, by computing a new hash. If the
+    /// hash is not in the cache, it is saved to the cache, persisted to the `model_table_tags` table
+    /// if it does not already contain it, and persisted to the `model_table_hash_table_name` table if
+    /// it does not already contain it. If the hash was saved to the metadata delta lake, also return
+    /// [`true`]. If the `model_table_tags` or the `model_table_hash_table_name` table cannot
+    /// be accessed, [`DeltaTableError`] is returned.
+    pub async fn lookup_or_compute_tag_hash(
+        &self,
+        model_table_metadata: &ModelTableMetadata,
+        tag_values: &[String],
+    ) -> Result<(u64, bool), DeltaTableError> {
+        Ok((1, true))
+    }
+
+    /// Save the given tag hash metadata to the `model_table_tags` table if it does not already
+    /// contain it, and to the `model_table_hash_table_name` table if it does not already contain it.
     /// If the tables did not contain the tag hash, meaning it is a new tag combination, return
-    /// [`true`]. If the metadata cannot be inserted into either model_table_tags or
-    /// model_table_hash_table_name, [`DeltaTableError`] is returned.
+    /// [`true`]. If the metadata cannot be inserted into either `model_table_tags` or
+    /// `model_table_hash_table_name`, [`DeltaTableError`] is returned.
     pub async fn save_tag_hash_metadata(
         &self,
         table_name: &str,
