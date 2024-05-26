@@ -1122,7 +1122,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_lookup_existing_tag_hash() {}
+    async fn test_lookup_existing_tag_hash() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        let (tag_hash_compute, tag_hash_compute_is_saved) = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
+        assert!(tag_hash_compute_is_saved);
+        assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
+
+        // When getting the same tag hash again, it should be retrieved from the cache.
+        let (tag_hash_lookup, tag_hash_lookup_is_saved) = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
+        assert!(!tag_hash_lookup_is_saved);
+        assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
+
+        assert_eq!(tag_hash_compute, tag_hash_lookup);
+    }
 
     #[tokio::test]
     async fn test_compute_tag_hash_with_no_tag_values() {}
