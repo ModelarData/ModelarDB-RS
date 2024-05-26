@@ -1223,7 +1223,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_mapping_from_hash_to_tags() {}
+    async fn test_mapping_from_hash_to_tags() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        let (tag_hash_1, _tag_hash_is_saved) = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
+        let (tag_hash_2, _tag_hash_is_saved) = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag2".to_owned()])
+            .await
+            .unwrap();
+
+        let mapping_from_hash_to_tags = metadata_manager
+            .mapping_from_hash_to_tags(test::MODEL_TABLE_NAME, &["tag"])
+            .await
+            .unwrap();
+
+        assert_eq!(mapping_from_hash_to_tags.len(), 2);
+        assert_eq!(mapping_from_hash_to_tags.get(&tag_hash_1).unwrap(), &vec!["tag1".to_owned()]);
+        assert_eq!(mapping_from_hash_to_tags.get(&tag_hash_2).unwrap(), &vec!["tag2".to_owned()]);
+    }
 
     #[tokio::test]
     async fn test_mapping_from_hash_to_tags_with_invalid_table() {}
