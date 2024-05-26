@@ -1243,15 +1243,43 @@ mod tests {
             .unwrap();
 
         assert_eq!(mapping_from_hash_to_tags.len(), 2);
-        assert_eq!(mapping_from_hash_to_tags.get(&tag_hash_1).unwrap(), &vec!["tag1".to_owned()]);
-        assert_eq!(mapping_from_hash_to_tags.get(&tag_hash_2).unwrap(), &vec!["tag2".to_owned()]);
+        assert_eq!(
+            mapping_from_hash_to_tags.get(&tag_hash_1).unwrap(),
+            &vec!["tag1".to_owned()]
+        );
+        assert_eq!(
+            mapping_from_hash_to_tags.get(&tag_hash_2).unwrap(),
+            &vec!["tag2".to_owned()]
+        );
     }
 
     #[tokio::test]
-    async fn test_mapping_from_hash_to_tags_with_invalid_table() {}
+    async fn test_mapping_from_hash_to_tags_with_invalid_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let result = metadata_manager
+            .mapping_from_hash_to_tags("invalid_table_name", &["tag"])
+            .await;
+
+        assert!(result.is_err());
+    }
 
     #[tokio::test]
-    async fn test_mapping_from_hash_to_tags_with_invalid_tag_column() {}
+    async fn test_mapping_from_hash_to_tags_with_invalid_tag_column() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
+        let result = metadata_manager
+            .mapping_from_hash_to_tags(test::MODEL_TABLE_NAME, &["invalid_tag"])
+            .await;
+
+        assert!(result.is_err());
+    }
 
     async fn create_metadata_manager_and_save_model_table() -> (TempDir, TableMetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
