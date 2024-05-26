@@ -494,9 +494,7 @@ impl TableMetadataManager {
                 hasher.finish() << 10
             };
 
-            // Save the tag hash in the cache and in the metadata delta lake.
-            self.tag_value_hashes.insert(cache_key, tag_hash);
-
+            // Save the tag hash in the metadata delta lake and in the cache.
             // tag_column_indices are computed from the schema, so they can be used with input.
             let tag_columns = model_table_metadata
                 .tag_column_indices
@@ -512,6 +510,8 @@ impl TableMetadataManager {
                     tag_values,
                 )
                 .await?;
+
+            self.tag_value_hashes.insert(cache_key, tag_hash);
 
             Ok((tag_hash, tag_hash_is_saved))
         }
@@ -1078,10 +1078,10 @@ mod tests {
 
         assert!(tag_hash_1_is_saved && tag_hash_2_is_saved);
 
-        // The tags should be saved in the cache.
+        // The tag hashes should be saved in the cache.
         assert_eq!(metadata_manager.tag_value_hashes.len(), 2);
 
-        // The tags should be saved in the model_table_tags table.
+        // The tag hashes should be saved in the model_table_tags table.
         let batch = metadata_manager
             .query_table(
                 &format!("{}_tags", test::MODEL_TABLE_NAME),
@@ -1099,7 +1099,7 @@ mod tests {
         );
         assert_eq!(**batch.column(1), StringArray::from(vec!["tag2", "tag1"]));
 
-        // The tags should be saved in the model_table_hash_table_name table.
+        // The tag hashes should be saved in the model_table_hash_table_name table.
         let batch = metadata_manager
             .query_table(
                 "model_table_hash_table_name",
@@ -1147,10 +1147,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_compute_tag_hash_with_no_tag_values() {}
+    async fn test_compute_tag_hash_with_invalid_tag_values() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
-    #[tokio::test]
-    async fn test_compute_tag_hash_with_too_many_tag_values() {}
+        let model_table_metadata = test::model_table_metadata();
+        let zero_tags_result = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &[])
+            .await;
+
+        let two_tags_result = metadata_manager
+            .lookup_or_compute_tag_hash(
+                &model_table_metadata,
+                &["tag1".to_owned(), "tag2".to_owned()],
+            )
+            .await;
+
+        assert!(zero_tags_result.is_err());
+        assert!(two_tags_result.is_err());
+
+        // The tag hashes should not be saved in either the cache or the metadata delta lake.
+        assert_eq!(metadata_manager.tag_value_hashes.len(), 0);
+
+        let batch = metadata_manager
+            .query_table(
+                &format!("{}_tags", test::MODEL_TABLE_NAME),
+                &format!("SELECT * FROM {}_tags", test::MODEL_TABLE_NAME),
+            )
+            .await
+            .unwrap();
+
+        assert!(batch.column(0).is_empty());
+
+        let batch = metadata_manager
+            .query_table(
+                "model_table_hash_table_name",
+                "SELECT * FROM model_table_hash_table_name",
+            )
+            .await
+            .unwrap();
+
+        assert!(batch.column(0).is_empty());
+    }
 
     #[tokio::test]
     async fn test_univariate_id_to_table_name() {
