@@ -477,7 +477,7 @@ impl TableMetadataManager {
         };
 
         // Check if the tag hash is in the cache. If it is, retrieve it. If it is not, create a new
-        // one and save it both in the cache and in the model_table_tags table. There is a minor
+        // one and save it both in the cache and in the metadata delta lake. There is a minor
         // race condition because the check if a tag hash is in the cache and the addition of the
         // hash is done without taking a lock on the tag_value_hashes. However, by allowing a hash
         // to possibly be computed more than once, the cache can be used without an explicit lock.
@@ -1061,32 +1061,66 @@ mod tests {
         }
     }
 
-    async fn create_metadata_manager_and_save_model_table() -> (TempDir, TableMetadataManager) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
-            Path::from_absolute_path(temp_dir.path()).unwrap(),
-        )
-        .await
-        .unwrap();
+    #[tokio::test]
+    async fn test_compute_new_tag_hash() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
-        // Save a model table to the metadata delta lake.
         let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+        let (tag_hash, tag_hash_is_saved) = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
             .await
             .unwrap();
 
-        (temp_dir, metadata_manager)
-    }
+        assert!(tag_hash_is_saved);
 
-    #[tokio::test]
-    async fn test_compute_new_tag_hash() {}
+        // When a new tag hash is retrieved, the hash should be saved in the cache.
+        assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
+
+        // The tag should be saved in the model_table_tags table.
+        let batch = metadata_manager
+            .query_table(
+                &format!("{}_tags", test::MODEL_TABLE_NAME),
+                &format!("SELECT * FROM {}_tags", test::MODEL_TABLE_NAME),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            Int64Array::from(vec![i64::from_ne_bytes(tag_hash.to_ne_bytes())])
+        );
+        assert_eq!(
+            **batch.column(1),
+            StringArray::from(vec!["tag1"])
+        );
+
+        // The tag should be saved in the model_table_hash_table_name table.
+        let batch = metadata_manager
+            .query_table(
+                "model_table_hash_table_name",
+                "SELECT * FROM model_table_hash_table_name",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            Int64Array::from(vec![i64::from_ne_bytes(tag_hash.to_ne_bytes())])
+        );
+        assert_eq!(
+            **batch.column(1),
+            StringArray::from(vec![test::MODEL_TABLE_NAME])
+        );
+    }
 
     #[tokio::test]
     async fn test_lookup_existing_tag_hash() {}
 
     #[tokio::test]
     async fn test_compute_tag_hash_with_no_tag_values() {}
+
+    #[tokio::test]
+    async fn test_compute_tag_hash_with_too_many_tag_values() {}
 
     #[tokio::test]
     async fn test_univariate_id_to_table_name() {
@@ -1116,6 +1150,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_mapping_from_hash_to_tags_with_invalid_tag_column() {}
+
+    async fn create_metadata_manager_and_save_model_table() -> (TempDir, TableMetadataManager) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
+            Path::from_absolute_path(temp_dir.path()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        // Save a model table to the metadata delta lake.
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        (temp_dir, metadata_manager)
+    }
 
     // Tests for conversion functions.
     #[test]
