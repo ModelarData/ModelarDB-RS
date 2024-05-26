@@ -938,7 +938,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_model_table_metadata() {
-        let (temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         // Verify that the tables were created, and has the expected columns.
         assert!(metadata_manager
@@ -1066,17 +1066,22 @@ mod tests {
         let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let model_table_metadata = test::model_table_metadata();
-        let (tag_hash, tag_hash_is_saved) = metadata_manager
+        let (tag_hash_1, tag_hash_1_is_saved) = metadata_manager
             .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
             .await
             .unwrap();
 
-        assert!(tag_hash_is_saved);
+        let (tag_hash_2, tag_hash_2_is_saved) = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag2".to_owned()])
+            .await
+            .unwrap();
 
-        // When a new tag hash is retrieved, the hash should be saved in the cache.
-        assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
+        assert!(tag_hash_1_is_saved && tag_hash_2_is_saved);
 
-        // The tag should be saved in the model_table_tags table.
+        // The tags should be saved in the cache.
+        assert_eq!(metadata_manager.tag_value_hashes.len(), 2);
+
+        // The tags should be saved in the model_table_tags table.
         let batch = metadata_manager
             .query_table(
                 &format!("{}_tags", test::MODEL_TABLE_NAME),
@@ -1087,14 +1092,14 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            Int64Array::from(vec![i64::from_ne_bytes(tag_hash.to_ne_bytes())])
+            Int64Array::from(vec![
+                i64::from_ne_bytes(tag_hash_2.to_ne_bytes()),
+                i64::from_ne_bytes(tag_hash_1.to_ne_bytes()),
+            ])
         );
-        assert_eq!(
-            **batch.column(1),
-            StringArray::from(vec!["tag1"])
-        );
+        assert_eq!(**batch.column(1), StringArray::from(vec!["tag2", "tag1"]));
 
-        // The tag should be saved in the model_table_hash_table_name table.
+        // The tags should be saved in the model_table_hash_table_name table.
         let batch = metadata_manager
             .query_table(
                 "model_table_hash_table_name",
@@ -1105,11 +1110,14 @@ mod tests {
 
         assert_eq!(
             **batch.column(0),
-            Int64Array::from(vec![i64::from_ne_bytes(tag_hash.to_ne_bytes())])
+            Int64Array::from(vec![
+                i64::from_ne_bytes(tag_hash_2.to_ne_bytes()),
+                i64::from_ne_bytes(tag_hash_1.to_ne_bytes()),
+            ])
         );
         assert_eq!(
             **batch.column(1),
-            StringArray::from(vec![test::MODEL_TABLE_NAME])
+            StringArray::from(vec![test::MODEL_TABLE_NAME, test::MODEL_TABLE_NAME])
         );
     }
 
