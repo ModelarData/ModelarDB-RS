@@ -1191,7 +1191,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_univariate_id_to_table_name() {
-        // TODO: Implement this.
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        let (tag_hash, _tag_hash_is_saved) = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
+        let table_name = metadata_manager
+            .univariate_id_to_table_name(tag_hash)
+            .await
+            .unwrap();
+
+        assert_eq!(table_name, test::MODEL_TABLE_NAME);
     }
 
     #[tokio::test]
