@@ -1094,7 +1094,7 @@ mod tests {
         let batch = metadata_manager
             .query_table(
                 &format!("{}_tags", test::MODEL_TABLE_NAME),
-                &format!("SELECT * FROM {}_tags", test::MODEL_TABLE_NAME),
+                &format!("SELECT hash, tag FROM {}_tags", test::MODEL_TABLE_NAME),
             )
             .await
             .unwrap();
@@ -1112,7 +1112,7 @@ mod tests {
         let batch = metadata_manager
             .query_table(
                 "model_table_hash_table_name",
-                "SELECT * FROM model_table_hash_table_name",
+                "SELECT hash, table_name FROM model_table_hash_table_name",
             )
             .await
             .unwrap();
@@ -1180,7 +1180,7 @@ mod tests {
         let batch = metadata_manager
             .query_table(
                 &format!("{}_tags", test::MODEL_TABLE_NAME),
-                &format!("SELECT * FROM {}_tags", test::MODEL_TABLE_NAME),
+                &format!("SELECT hash FROM {}_tags", test::MODEL_TABLE_NAME),
             )
             .await
             .unwrap();
@@ -1190,7 +1190,7 @@ mod tests {
         let batch = metadata_manager
             .query_table(
                 "model_table_hash_table_name",
-                "SELECT * FROM model_table_hash_table_name",
+                "SELECT hash FROM model_table_hash_table_name",
             )
             .await
             .unwrap();
