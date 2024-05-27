@@ -658,26 +658,21 @@ impl TableMetadataManager {
         let batch = self
             .query_table(
                 &format!("{model_table_name}_tags"),
-                &format!("SELECT * FROM {model_table_name}_tags",),
+                &format!(
+                    "SELECT hash, {} FROM {model_table_name}_tags",
+                    tag_column_names.join(","),
+                ),
             )
             .await?;
 
         let hash_array = array!(batch, 0, Int64Array);
 
-        // For each tag column name, get the corresponding column array by name.
-        let mut tag_arrays: Vec<&StringArray> = Vec::with_capacity(tag_column_names.len());
-        for tag_column_name in tag_column_names {
-            tag_arrays.push(
-                batch
-                    .column_by_name(tag_column_name)
-                    .ok_or(DeltaTableError::Generic(format!(
-                        "{tag_column_name} is not a valid tag column."
-                    )))?
-                    .as_any()
-                    .downcast_ref()
-                    .unwrap(),
-            )
-        }
+        // For each tag column, get the corresponding column array.
+        let tag_arrays: Vec<&StringArray> = tag_column_names
+            .iter()
+            .enumerate()
+            .map(|(index, _tag_column)| array!(batch, index + 1, StringArray))
+            .collect();
 
         let mut hash_to_tags = HashMap::new();
         for row_index in 0..batch.num_rows() {
@@ -685,10 +680,10 @@ impl TableMetadataManager {
             let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
 
             // For each tag array, add the row index value to the tags for this tag hash.
-            let mut tags = Vec::with_capacity(tag_column_names.len());
-            for tag_array in &tag_arrays {
-                tags.push(tag_array.value(row_index).to_owned())
-            }
+            let tags: Vec<String> = tag_arrays
+                .iter()
+                .map(|tag_array| tag_array.value(row_index).to_owned())
+                .collect();
 
             hash_to_tags.insert(tag_hash, tags);
         }
