@@ -759,7 +759,7 @@ impl TableMetadataManager {
         Ok(DeltaOps::from(table))
     }
 
-    // TODO: Find a way to avoid having to register the table every time we want to read from it.
+    // TODO: Find a way to avoid having to re-register the table every time we want to read from it.
     /// Query the table with the given `table_name` using the given `query`. If the table is queried,
     /// return a [`RecordBatch`] with the query result, otherwise return [`DeltaTableError`].
     async fn query_table(
@@ -773,10 +773,10 @@ impl TableMetadataManager {
         )
         .await?;
 
-        let session = SessionContext::new();
-        session.register_table(table_name, Arc::new(table))?;
+        self.session.deregister_table(table_name)?;
+        self.session.register_table(table_name, Arc::new(table))?;
 
-        let dataframe = session.sql(query).await?;
+        let dataframe = self.session.sql(query).await?;
         let schema = Schema::from(dataframe.schema());
 
         let batches = dataframe.collect().await?;
