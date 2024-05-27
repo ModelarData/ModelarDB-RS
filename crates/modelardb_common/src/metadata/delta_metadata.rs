@@ -201,7 +201,7 @@ impl TableMetadataManager {
     /// include model tables. If the table names cannot be retrieved, [`DeltaTableError`] is returned.
     pub async fn table_names(&self) -> Result<Vec<String>, DeltaTableError> {
         let batch = self
-            .query_table("table_metadata", "SELECT * FROM table_metadata")
+            .query_table("table_metadata", "SELECT table_name FROM table_metadata")
             .await?;
 
         let table_names = array!(batch, 0, StringArray);
@@ -385,16 +385,21 @@ impl TableMetadataManager {
         let batch = self
             .query_table(
                 "model_table_field_columns",
-                &format!("SELECT * FROM model_table_field_columns WHERE table_name = '{table_name}' ORDER BY column_index"),
+                &format!(
+                    "SELECT column_index, error_bound_value, error_bound_is_relative
+                     FROM model_table_field_columns
+                     WHERE table_name = '{table_name}'
+                     ORDER BY column_index"
+                ),
             )
             .await?;
 
         let mut column_to_error_bound =
             vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(); query_schema_columns];
 
-        let column_index_array = array!(batch, 2, Int16Array);
-        let error_bound_value_array = array!(batch, 3, Float32Array);
-        let error_bound_is_relative_array = array!(batch, 4, BooleanArray);
+        let column_index_array = array!(batch, 0, Int16Array);
+        let error_bound_value_array = array!(batch, 1, Float32Array);
+        let error_bound_is_relative_array = array!(batch, 2, BooleanArray);
 
         for row_index in 0..batch.num_rows() {
             let error_bound_index = column_index_array.value(row_index);
@@ -425,15 +430,20 @@ impl TableMetadataManager {
         let batch = self
             .query_table(
                 "model_table_field_columns",
-                &format!("SELECT * FROM model_table_field_columns WHERE table_name = '{table_name}' ORDER BY column_index"),
+                &format!(
+                    "SELECT column_index, generated_column_expr, generated_column_sources
+                     FROM model_table_field_columns
+                     WHERE table_name = '{table_name}'
+                     ORDER BY column_index"
+                ),
             )
             .await?;
 
         let mut generated_columns = vec![None; df_schema.fields().len()];
 
-        let column_index_array = array!(batch, 2, Int16Array);
-        let generated_column_expr_array = array!(batch, 5, StringArray);
-        let generated_column_sources_array = array!(batch, 6, BinaryArray);
+        let column_index_array = array!(batch, 0, Int16Array);
+        let generated_column_expr_array = array!(batch, 1, StringArray);
+        let generated_column_sources_array = array!(batch, 2, BinaryArray);
 
         for row_index in 0..batch.num_rows() {
             let generated_column_index = column_index_array.value(row_index);
@@ -613,12 +623,15 @@ impl TableMetadataManager {
             .query_table(
                 "model_table_hash_table_name",
                 &format!(
-                    "SELECT * FROM model_table_hash_table_name WHERE hash = '{signed_tag_hash}' LIMIT 1"
+                    "SELECT table_name
+                     FROM model_table_hash_table_name
+                     WHERE hash = '{signed_tag_hash}'
+                     LIMIT 1"
                 ),
             )
             .await?;
 
-        let table_names = array!(batch, 1, StringArray);
+        let table_names = array!(batch, 0, StringArray);
         if table_names.is_empty() {
             Err(DeltaTableError::Generic(format!(
                 "No table contains a time series with univariate ID '{univariate_id}'."
