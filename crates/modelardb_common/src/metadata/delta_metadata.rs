@@ -38,11 +38,13 @@ use deltalake::kernel::{DataType, StructField};
 use deltalake::operations::create::CreateBuilder;
 use deltalake::protocol::SaveMode;
 use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
+use object_store::ObjectMeta;
 use object_store::path::Path;
 
+use crate::metadata::compressed_file::CompressedFile;
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::test::ERROR_BOUND_ZERO;
-use crate::types::ErrorBound;
+use crate::types::{ErrorBound, Timestamp, Value};
 use crate::{array, parser};
 
 /// The folder storing metadata in the data folders.
@@ -783,6 +785,40 @@ impl TableMetadataManager {
         let batch = concat_batches(&schema.into(), batches.as_slice())?;
 
         Ok(batch)
+    }
+
+    // TODO: Remove placeholder method.
+    pub async fn save_compressed_file(
+        &self,
+        _model_table_name: &str,
+        _query_schema_index: usize,
+        _compressed_file: &CompressedFile,
+    ) -> Result<(), DeltaTableError> {
+        Err(DeltaTableError::Generic("Unimplemented.".to_owned()))
+    }
+
+    // TODO: Remove placeholder method.
+    pub async fn replace_compressed_files(
+        &self,
+        _model_table_name: &str,
+        _query_schema_index: usize,
+        _compressed_files_to_delete: &[ObjectMeta],
+        _replacement_compressed_file: Option<&CompressedFile>,
+    ) -> Result<(), DeltaTableError> {
+        Err(DeltaTableError::Generic("Unimplemented.".to_owned()))
+    }
+
+    // TODO: Remove placeholder method.
+    pub async fn compressed_files(
+        &self,
+        _model_table_name: &str,
+        _query_schema_index: usize,
+        _start_time: Option<Timestamp>,
+        _end_time: Option<Timestamp>,
+        _min_value: Option<Value>,
+        _max_value: Option<Value>,
+    ) -> Result<Vec<ObjectMeta>, DeltaTableError> {
+        Err(DeltaTableError::Generic("Unimplemented.".to_owned()))
     }
 }
 
