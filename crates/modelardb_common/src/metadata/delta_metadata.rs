@@ -49,6 +49,7 @@ use crate::{array, parser};
 const METADATA_FOLDER: &str = "metadata";
 
 // TODO: Create a initialization function that can parse arguments from manager into table metadata manager.
+// TODO: Look into adding placeholder functions for compressed file metadata so we can use this now.
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata delta lake.
@@ -734,6 +735,7 @@ impl TableMetadataManager {
     }
 
     // TODO: Look into optimizing the way we store and access tables in the struct fields (avoid open_table() every time).
+    // TODO: Maybe we need to use the return value every time we do a table action to update the table.
     /// Return the [`DeltaOps`] for the metadata table with the given `table_name`. If the
     /// [`DeltaOps`] cannot be retrieved, return [`DeltaTableError`].
     async fn metadata_table_delta_ops(
@@ -750,7 +752,6 @@ impl TableMetadataManager {
     }
 
     // TODO: Find a way to avoid having to register the table every time we want to read from it.
-    // TODO: Look into issue where we have to always query all columns to match the full schema.
     /// Query the table with the given `table_name` using the given `query`. If the table is queried,
     /// return a [`RecordBatch`] with the query result, otherwise return [`DeltaTableError`].
     async fn query_table(
@@ -768,10 +769,10 @@ impl TableMetadataManager {
         session.register_table(table_name, Arc::new(table))?;
 
         let dataframe = session.sql(query).await?;
-        let batches = dataframe.collect().await?;
+        let schema = Schema::from(dataframe.schema());
 
-        let table_provider = session.table_provider(table_name).await?;
-        let batch = concat_batches(&table_provider.schema(), batches.as_slice())?;
+        let batches = dataframe.collect().await?;
+        let batch = concat_batches(&schema.into(), batches.as_slice())?;
 
         Ok(batch)
     }
