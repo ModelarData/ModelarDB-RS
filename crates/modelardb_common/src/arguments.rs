@@ -145,13 +145,50 @@ pub async fn parse_object_store_arguments(
 ) -> Result<(Arc<dyn ObjectStore>, &[u8]), Status> {
     let (object_store_type, offset_data) = decode_argument(data)?;
 
-    match object_store_type {
-        "s3" => Ok(parse_s3_arguments(offset_data).await),
-        "azureblobstorage" => Ok(parse_azure_blob_storage_arguments(offset_data).await),
+    let (object_store, offset_data) = match object_store_type {
+        "s3" => {
+            let (endpoint, bucket_name, access_key_id, secret_access_key, offset_data) =
+                parse_s3_arguments(offset_data).await?;
+
+            let s3: Arc<dyn ObjectStore> = Arc::new(
+                AmazonS3Builder::new()
+                    .with_region("")
+                    .with_allow_http(true)
+                    .with_endpoint(endpoint)
+                    .with_bucket_name(bucket_name)
+                    .with_access_key_id(access_key_id)
+                    .with_secret_access_key(secret_access_key)
+                    .build()
+                    .map_err(|error| Status::invalid_argument(error.to_string()))?,
+            );
+
+            Ok((s3, offset_data))
+        }
+        "azureblobstorage" => {
+            let (account, access_key, container_name, offset_data) =
+                parse_azure_blob_storage_arguments(offset_data).await?;
+
+            let azure_blob_storage: Arc<dyn ObjectStore> = Arc::new(
+                MicrosoftAzureBuilder::new()
+                    .with_account(account)
+                    .with_access_key(access_key)
+                    .with_container_name(container_name)
+                    .build()
+                    .map_err(|error| Status::invalid_argument(error.to_string()))?,
+            );
+
+            Ok((azure_blob_storage, offset_data))
+        }
         _ => Err(Status::unimplemented(format!(
             "{object_store_type} is currently not supported."
         ))),
-    }?
+    }?;
+
+    validate_remote_data_folder(&object_store)
+        .await
+        .map_err(Status::invalid_argument)?;
+
+    Ok((object_store, offset_data))
 }
 
 /// Parse the arguments in `data` and return the arguments to connect to an
