@@ -98,7 +98,7 @@ impl TableMetadataManager {
         let (object_store_type, offset_data) = decode_argument(connection_info)
             .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
-        let table_metadata_manager = match object_store_type {
+        let (url_scheme, storage_options) = match object_store_type {
             "s3" => {
                 let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
                     extract_s3_arguments(offset_data)
@@ -115,12 +115,10 @@ impl TableMetadataManager {
                     ("AWS_S3_ALLOW_UNSAFE_RENAME".to_owned(), "true".to_owned()),
                 ]);
 
-                Ok(TableMetadataManager {
-                    url_scheme: format!("s3://{bucket_name}/{METADATA_FOLDER}"),
+                Ok((
+                    format!("s3://{bucket_name}/{METADATA_FOLDER}"),
                     storage_options,
-                    session: SessionContext::new(),
-                    tag_value_hashes: DashMap::new(),
-                })
+                ))
             }
             // TODO: Needs to be tested.
             "azureblobstorage" => {
@@ -135,17 +133,22 @@ impl TableMetadataManager {
                     ("CONTAINER_NAME".to_owned(), container_name.to_owned()),
                 ]);
 
-                Ok(TableMetadataManager {
-                    url_scheme: format!("az://{container_name}/{METADATA_FOLDER}"),
+                Ok((
+                    format!("az://{container_name}/{METADATA_FOLDER}"),
                     storage_options,
-                    session: SessionContext::new(),
-                    tag_value_hashes: DashMap::new(),
-                })
+                ))
             }
             _ => Err(DeltaTableError::Generic(format!(
                 "{object_store_type} is currently not supported."
             ))),
         }?;
+
+        let table_metadata_manager = TableMetadataManager {
+            url_scheme,
+            storage_options,
+            session: SessionContext::new(),
+            tag_value_hashes: DashMap::new(),
+        };
 
         table_metadata_manager
             .create_metadata_delta_lake_tables()
