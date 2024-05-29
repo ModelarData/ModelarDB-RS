@@ -223,22 +223,6 @@ pub async fn extract_azure_blob_storage_arguments(
     Ok((account, access_key, container_name, offset_data))
 }
 
-/// Parse the arguments in `data` and return a [`PgPool`] of connections to a PostgreSQL database
-/// and what is remaining of `data` after parsing. If `data` is missing arguments or if the
-/// connection information is invalid, [`Status`] is returned.
-pub async fn parse_postgres_arguments(data: &[u8]) -> Result<(PgPool, &[u8]), Status> {
-    let (username, offset_data) = decode_argument(data)?;
-    let (password, offset_data) = decode_argument(offset_data)?;
-    let (host, offset_data) = decode_argument(offset_data)?;
-    let (metadata_database, offset_data) = decode_argument(offset_data)?;
-
-    let connection = connect_to_postgres(username, password, host, metadata_database)
-        .await
-        .map_err(|error| Status::invalid_argument(error.to_string()))?;
-
-    Ok((connection, offset_data))
-}
-
 /// Return a [`PgPool`] of connections to a PostgreSQL database using the given connection
 /// information. If the connection information is invalid, return [`sqlx::Error`].
 pub async fn connect_to_postgres(

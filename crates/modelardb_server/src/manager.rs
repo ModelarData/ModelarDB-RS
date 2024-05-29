@@ -31,9 +31,8 @@ use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::schemas::TAG_METADATA_SCHEMA;
 use modelardb_common::types::ServerMode;
-use modelardb_common::{arguments, metadata};
+use modelardb_common::arguments;
 use object_store::ObjectStore;
-use sqlx::Postgres;
 use tokio::sync::RwLock;
 use tonic::metadata::MetadataMap;
 use tonic::transport::Channel;
@@ -51,7 +50,7 @@ pub struct Manager {
     /// only allowed to come from the manager.
     key: String,
     /// Metadata for the tables and model tables in the remote data folder. Note that only cloud
-    /// nodes have access to the remote metadata database.
+    /// nodes have access to the remote data folder metadata.
     pub(crate) table_metadata_manager: Option<Arc<TableMetadataManager>>,
 }
 
@@ -98,29 +97,26 @@ impl Manager {
 
         let message = do_action_and_extract_result(&flight_client, action).await?;
 
-        // Extract the key, the connection information for the remote object store, and if the node
-        // is a cloud node, the connection information for the metadata database, from the response.
+        // Extract the key and the connection information for the remote object store from the response.
         let (key, offset_data) = arguments::decode_argument(&message.body)
             .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
-        let (remote_object_store, offset_data) =
-            arguments::parse_object_store_arguments(offset_data)
-                .await
-                .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
-
-        // Use the connection information to create a metadata manager for the remote metadata
-        // database if the node is a cloud node.
+        // Use the connection information to create a metadata manager for the remote object store
+        // if the node is a cloud node.
         let maybe_table_metadata_manager = if server_mode == ServerMode::Cloud {
-            let (connection, _offset_data) = arguments::parse_postgres_arguments(offset_data)
-                .await
-                .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
-
-            Some(Arc::new(metadata::new_table_metadata_manager(
-                Postgres, connection,
-            )))
+            Some(Arc::new(
+                TableMetadataManager::try_from_connection_info(offset_data.clone())
+                    .await
+                    .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?,
+            ))
         } else {
             None
         };
+
+        let (remote_object_store, _offset_data) =
+            arguments::parse_object_store_arguments(offset_data)
+                .await
+                .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
         let manager = Manager::new(flight_client, key.to_owned(), maybe_table_metadata_manager);
 
