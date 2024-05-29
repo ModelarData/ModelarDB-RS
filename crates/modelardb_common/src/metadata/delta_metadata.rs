@@ -38,9 +38,12 @@ use deltalake::kernel::{DataType, StructField};
 use deltalake::operations::create::CreateBuilder;
 use deltalake::protocol::SaveMode;
 use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
-use object_store::ObjectMeta;
 use object_store::path::Path;
+use object_store::ObjectMeta;
 
+use crate::arguments::{
+    decode_argument, extract_azure_blob_storage_arguments, extract_s3_arguments,
+};
 use crate::metadata::compressed_file::CompressedFile;
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
 use crate::test::ERROR_BOUND_ZERO;
@@ -49,9 +52,6 @@ use crate::{array, parser};
 
 /// The folder storing metadata in the data folders.
 const METADATA_FOLDER: &str = "metadata";
-
-// TODO: Create a initialization function that can parse arguments from manager into table metadata manager.
-// TODO: Look into adding placeholder functions for compressed file metadata so we can use this now.
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata delta lake.
@@ -80,6 +80,72 @@ impl TableMetadataManager {
             session: SessionContext::new(),
             tag_value_hashes: DashMap::new(),
         };
+
+        table_metadata_manager
+            .create_metadata_delta_lake_tables()
+            .await?;
+
+        Ok(table_metadata_manager)
+    }
+
+    /// Create a new table metadata manager that saves the metadata to [`METADATA_FOLDER`] in a
+    /// remote object store given by `connection_info` and initialize the metadata tables. If
+    /// `connection_info` could not be parsed or the metadata tables could not be created,
+    /// return [`DeltaTableError`].
+    pub async fn try_from_connection_info(
+        connection_info: &[u8],
+    ) -> Result<TableMetadataManager, DeltaTableError> {
+        let (object_store_type, offset_data) = decode_argument(connection_info)
+            .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+
+        let table_metadata_manager = match object_store_type {
+            "s3" => {
+                let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
+                    extract_s3_arguments(offset_data)
+                        .await
+                        .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+
+                let storage_options = HashMap::from([
+                    ("REGION".to_owned(), "".to_owned()),
+                    ("ALLOW_HTTP".to_owned(), "true".to_owned()),
+                    ("ENDPOINT".to_owned(), endpoint.to_owned()),
+                    ("BUCKET_NAME".to_owned(), bucket_name.to_owned()),
+                    ("ACCESS_KEY_ID".to_owned(), access_key_id.to_owned()),
+                    ("SECRET_ACCESS_KEY".to_owned(), secret_access_key.to_owned()),
+                    ("AWS_S3_ALLOW_UNSAFE_RENAME".to_owned(), "true".to_owned()),
+                ]);
+
+                Ok(TableMetadataManager {
+                    url_scheme: format!("s3://{bucket_name}/{METADATA_FOLDER}"),
+                    storage_options,
+                    session: SessionContext::new(),
+                    tag_value_hashes: DashMap::new(),
+                })
+            }
+            // TODO: Needs to be tested.
+            "azureblobstorage" => {
+                let (account, access_key, container_name, _offset_data) =
+                    extract_azure_blob_storage_arguments(offset_data)
+                        .await
+                        .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+
+                let storage_options = HashMap::from([
+                    ("ACCOUNT_NAME".to_owned(), account.to_owned()),
+                    ("ACCESS_KEY".to_owned(), access_key.to_owned()),
+                    ("CONTAINER_NAME".to_owned(), container_name.to_owned()),
+                ]);
+
+                Ok(TableMetadataManager {
+                    url_scheme: format!("az://{container_name}/{METADATA_FOLDER}"),
+                    storage_options,
+                    session: SessionContext::new(),
+                    tag_value_hashes: DashMap::new(),
+                })
+            }
+            _ => Err(DeltaTableError::Generic(format!(
+                "{object_store_type} is currently not supported."
+            ))),
+        }?;
 
         table_metadata_manager
             .create_metadata_delta_lake_tables()
