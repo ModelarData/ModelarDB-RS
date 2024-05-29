@@ -154,60 +154,36 @@ pub async fn parse_object_store_arguments(
     }?
 }
 
-/// Parse the arguments in `data` and return an [`Amazon S3`](object_store::aws::AmazonS3) object
-/// store and what is remaining of `data` after parsing. If `data` is missing arguments or if the
-/// created [`Amazon S3`](object_store::aws::AmazonS3) object store connection is invalid,
-/// [`Status`] is returned.
-pub async fn parse_s3_arguments(data: &[u8]) -> Result<(Arc<dyn ObjectStore>, &[u8]), Status> {
+/// Parse the arguments in `data` and return the arguments to connect to an
+/// [`Amazon S3`](object_store::aws::AmazonS3) object store and what is remaining of `data`
+/// after parsing. If `data` is missing arguments, [`Status`] is returned.
+async fn parse_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str, &[u8]), Status> {
     let (endpoint, offset_data) = decode_argument(data)?;
     let (bucket_name, offset_data) = decode_argument(offset_data)?;
     let (access_key_id, offset_data) = decode_argument(offset_data)?;
     let (secret_access_key, offset_data) = decode_argument(offset_data)?;
 
-    let s3: Arc<dyn ObjectStore> = Arc::new(
-        AmazonS3Builder::new()
-            .with_region("")
-            .with_allow_http(true)
-            .with_endpoint(endpoint)
-            .with_bucket_name(bucket_name)
-            .with_access_key_id(access_key_id)
-            .with_secret_access_key(secret_access_key)
-            .build()
-            .map_err(|error| Status::invalid_argument(error.to_string()))?,
-    );
-
-    validate_remote_data_folder(&s3)
-        .await
-        .map_err(Status::invalid_argument)?;
-
-    Ok((s3, offset_data))
+    Ok((
+        endpoint,
+        bucket_name,
+        access_key_id,
+        secret_access_key,
+        offset_data,
+    ))
 }
 
-/// Parse the arguments in `data` and return an [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
-/// object store and what is remaining of `data` after parsing. If `data` is missing arguments or
-/// if the created [`Azure Blob Storage`](object_store::azure::MicrosoftAzure) object store
-/// connection is invalid, [`Status`] is returned.
-pub async fn parse_azure_blob_storage_arguments(
+/// Parse the arguments in `data` and return the arguments to connect to an
+/// [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
+/// object store and what is remaining of `data` after parsing. If `data` is missing arguments,
+/// [`Status`] is returned.
+async fn parse_azure_blob_storage_arguments(
     data: &[u8],
-) -> Result<(Arc<dyn ObjectStore>, &[u8]), Status> {
+) -> Result<(&str, &str, &str, &[u8]), Status> {
     let (account, offset_data) = decode_argument(data)?;
     let (access_key, offset_data) = decode_argument(offset_data)?;
     let (container_name, offset_data) = decode_argument(offset_data)?;
 
-    let azure_blob_storage: Arc<dyn ObjectStore> = Arc::new(
-        MicrosoftAzureBuilder::new()
-            .with_account(account)
-            .with_access_key(access_key)
-            .with_container_name(container_name)
-            .build()
-            .map_err(|error| Status::invalid_argument(error.to_string()))?,
-    );
-
-    validate_remote_data_folder(&azure_blob_storage)
-        .await
-        .map_err(Status::invalid_argument)?;
-
-    Ok((azure_blob_storage, offset_data))
+    Ok((account, access_key, container_name, offset_data))
 }
 
 /// Parse the arguments in `data` and return a [`PgPool`] of connections to a PostgreSQL database
