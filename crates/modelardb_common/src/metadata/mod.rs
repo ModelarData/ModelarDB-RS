@@ -13,734 +13,336 @@
  * limitations under the License.
  */
 
-//! Table metadata manager that includes functionality used to access both the server metadata database
-//! and the manager metadata database. Note that the entire server metadata database can be accessed
-//! through this metadata manager, while it only supports a subset of the manager metadata database.
+//! Table metadata manager that includes functionality used to access both the server metadata delta lake
+//! and the manager metadata delta lake. Note that the entire server metadata delta lake can be accessed
+//! through this metadata manager, while it only supports a subset of the manager metadata delta lake.
 
 pub mod compressed_file;
-pub mod delta_metadata;
 pub mod model_table_metadata;
 
-use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
-use std::hash::Hasher;
+use std::hash::{DefaultHasher, Hasher};
 use std::mem;
 use std::sync::Arc;
 
+use arrow::array::{
+    Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Int16Array, Int64Array, StringArray,
+};
+use arrow::compute::concat_batches;
+use arrow::datatypes::Schema;
+use arrow::error::ArrowError;
+use arrow::ipc::writer::IpcWriteOptions;
+use arrow::record_batch::RecordBatch;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
-use chrono::{TimeZone, Utc};
 use dashmap::DashMap;
-use datafusion::arrow::datatypes::Schema;
-use datafusion::arrow::{error::ArrowError, ipc::writer::IpcWriteOptions};
 use datafusion::common::{DFSchema, ToDFSchema};
-use futures::StreamExt;
-use futures::TryStreamExt;
-use object_store::local::LocalFileSystem;
+use datafusion::prelude::{col, SessionContext};
+use deltalake::kernel::{DataType, StructField};
+use deltalake::operations::create::CreateBuilder;
+use deltalake::protocol::SaveMode;
+use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
 use object_store::path::Path;
-use object_store::{ObjectMeta, ObjectStore};
-use sqlx::database::HasArguments;
-use sqlx::postgres::PgQueryResult;
-use sqlx::query::Query;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteQueryResult};
-use sqlx::{Database, Error, Executor, IntoArguments, Pool, Postgres, Row, Sqlite};
-use tracing::warn;
+use object_store::ObjectMeta;
 
-use crate::errors::ModelarDbError;
+use crate::arguments::{
+    decode_argument, extract_azure_blob_storage_arguments, extract_s3_arguments,
+};
 use crate::metadata::compressed_file::CompressedFile;
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
-use crate::parser;
 use crate::test::ERROR_BOUND_ZERO;
-use crate::types::{ErrorBound, Timestamp, UnivariateId, Value};
+use crate::types::{ErrorBound, Timestamp, Value};
+use crate::{array, parser};
 
-/// Name used for the file containing the SQLite database storing the metadata.
-const METADATA_DATABASE_NAME: &str = "metadata.sqlite3";
-
-/// The RDBMSs that are currently supported by the metadata manager. This trait is also used to
-/// handle small differences in the SQL syntax between RDBMSs.
-pub trait MetadataDatabase {
-    /// Syntax added after a CREATE TABLE statement to specify that the table should use strict types.
-    fn strict(&self) -> &str;
-    /// Type used for 64-bit integer columns in CREATE TABLE statements.
-    fn integer_type(&self) -> &str;
-    /// Type used for binary columns in CREATE TABLE statements.
-    fn binary_type(&self) -> &str;
-}
-
-impl MetadataDatabase for Postgres {
-    fn strict(&self) -> &str {
-        ""
-    }
-
-    fn integer_type(&self) -> &str {
-        "BIGINT"
-    }
-
-    fn binary_type(&self) -> &str {
-        "BYTEA"
-    }
-}
-
-impl MetadataDatabase for Sqlite {
-    fn strict(&self) -> &str {
-        "STRICT"
-    }
-
-    fn integer_type(&self) -> &str {
-        "INTEGER"
-    }
-
-    fn binary_type(&self) -> &str {
-        "BLOB"
-    }
-}
-
-/// SQLx does not provide a trait for query results, so we have to provide one ourselves to
-/// ensure the `rows_affected()` method is available for each supported RDBMS.
-pub trait MetadataDatabaseQueryResult {
-    /// The number of rows that were affected by the query being executed.
-    fn rows_affected(&self) -> u64;
-}
-
-impl MetadataDatabaseQueryResult for PgQueryResult {
-    fn rows_affected(&self) -> u64 {
-        self.rows_affected()
-    }
-}
-
-impl MetadataDatabaseQueryResult for SqliteQueryResult {
-    fn rows_affected(&self) -> u64 {
-        self.rows_affected()
-    }
-}
+/// The folder storing metadata in the data folders.
+const METADATA_FOLDER: &str = "metadata";
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
-/// The data that needs to be persisted is stored in the metadata database.
-#[derive(Clone, Debug)]
-pub struct TableMetadataManager<DB: Database> {
-    /// The type of the database, used to handle small differences in SQL syntax between providers.
-    metadata_database_type: DB,
-    /// Pool of connections to the metadata database.
-    metadata_database_pool: Pool<DB>,
+/// The data that needs to be persisted is stored in the metadata delta lake.
+pub struct TableMetadataManager {
+    /// URL to access the base folder of the location where the metadata tables are stored.
+    url_scheme: String,
+    // TODO: Look into using dash map or StorageOptions.
+    /// Storage options used to access delta lake tables in remote object stores.
+    storage_options: HashMap<String, String>,
+    /// Session used to read from the metadata delta lake using Apache Arrow DataFusion.
+    session: SessionContext,
     /// Cache of tag value hashes used to signify when to persist new unsaved tag combinations.
     tag_value_hashes: DashMap<String, u64>,
 }
 
-impl<DB> TableMetadataManager<DB>
-where
-    DB: Database + MetadataDatabase,
-    usize: sqlx::ColumnIndex<<DB as Database>::Row>,
-    for<'a> <DB as HasArguments<'a>>::Arguments: IntoArguments<'a, DB>,
-    for<'a> &'a mut <DB as Database>::Connection: Executor<'a, Database = DB>,
-    for<'a> <DB as Database>::QueryResult: MetadataDatabaseQueryResult,
-    for<'a> String: sqlx::Type<DB> + sqlx::Encode<'a, DB> + sqlx::Decode<'a, DB>,
-    for<'a> Vec<u8>: sqlx::Type<DB> + sqlx::Encode<'a, DB> + sqlx::Decode<'a, DB>,
-    for<'a> &'a [u8]: sqlx::Type<DB> + sqlx::Decode<'a, DB>,
-    for<'a> f32: sqlx::Type<DB> + sqlx::Encode<'a, DB> + sqlx::Decode<'a, DB>,
-    for<'a> i64: sqlx::Type<DB> + sqlx::Encode<'a, DB> + sqlx::Decode<'a, DB>,
-    for<'a> Option<Option<String>>: sqlx::Encode<'a, DB>,
-    for<'a> Option<Vec<u8>>: sqlx::Encode<'a, DB>,
-    for<'a> &'a str: sqlx::ColumnIndex<<DB as Database>::Row>
-        + sqlx::Type<DB>
-        + sqlx::Encode<'a, DB>
-        + sqlx::Decode<'a, DB>,
-{
-    /// If they do not already exist, create the tables in the metadata database used for table and
+impl TableMetadataManager {
+    /// Create a new table metadata manager that saves the metadata to [`METADATA_FOLDER`] under
+    /// `folder_path` and initialize the metadata tables. If the metadata tables could not be
+    /// created, return [`DeltaTableError`].
+    pub async fn try_new_local_table_metadata_manager(
+        folder_path: Path,
+    ) -> Result<TableMetadataManager, DeltaTableError> {
+        let table_metadata_manager = TableMetadataManager {
+            url_scheme: format!("{folder_path}/{METADATA_FOLDER}"),
+            storage_options: HashMap::new(),
+            session: SessionContext::new(),
+            tag_value_hashes: DashMap::new(),
+        };
+
+        table_metadata_manager
+            .create_metadata_delta_lake_tables()
+            .await?;
+
+        Ok(table_metadata_manager)
+    }
+
+    /// Create a new table metadata manager that saves the metadata to [`METADATA_FOLDER`] in a
+    /// remote object store given by `connection_info` and initialize the metadata tables. If
+    /// `connection_info` could not be parsed or the metadata tables could not be created,
+    /// return [`DeltaTableError`].
+    pub async fn try_from_connection_info(
+        connection_info: &[u8],
+    ) -> Result<TableMetadataManager, DeltaTableError> {
+        let (object_store_type, offset_data) = decode_argument(connection_info)
+            .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+
+        let (url_scheme, storage_options) = match object_store_type {
+            "s3" => {
+                let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
+                    extract_s3_arguments(offset_data)
+                        .await
+                        .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+
+                let storage_options = HashMap::from([
+                    ("REGION".to_owned(), "".to_owned()),
+                    ("ALLOW_HTTP".to_owned(), "true".to_owned()),
+                    ("ENDPOINT".to_owned(), endpoint.to_owned()),
+                    ("BUCKET_NAME".to_owned(), bucket_name.to_owned()),
+                    ("ACCESS_KEY_ID".to_owned(), access_key_id.to_owned()),
+                    ("SECRET_ACCESS_KEY".to_owned(), secret_access_key.to_owned()),
+                    ("AWS_S3_ALLOW_UNSAFE_RENAME".to_owned(), "true".to_owned()),
+                ]);
+
+                Ok((
+                    format!("s3://{bucket_name}/{METADATA_FOLDER}"),
+                    storage_options,
+                ))
+            }
+            // TODO: Needs to be tested.
+            "azureblobstorage" => {
+                let (account, access_key, container_name, _offset_data) =
+                    extract_azure_blob_storage_arguments(offset_data)
+                        .await
+                        .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+
+                let storage_options = HashMap::from([
+                    ("ACCOUNT_NAME".to_owned(), account.to_owned()),
+                    ("ACCESS_KEY".to_owned(), access_key.to_owned()),
+                    ("CONTAINER_NAME".to_owned(), container_name.to_owned()),
+                ]);
+
+                Ok((
+                    format!("az://{container_name}/{METADATA_FOLDER}"),
+                    storage_options,
+                ))
+            }
+            _ => Err(DeltaTableError::Generic(format!(
+                "{object_store_type} is currently not supported."
+            ))),
+        }?;
+
+        let table_metadata_manager = TableMetadataManager {
+            url_scheme,
+            storage_options,
+            session: SessionContext::new(),
+            tag_value_hashes: DashMap::new(),
+        };
+
+        table_metadata_manager
+            .create_metadata_delta_lake_tables()
+            .await?;
+
+        Ok(table_metadata_manager)
+    }
+
+    /// Create a new table metadata manager that saves the metadata to [`METADATA_FOLDER`] in a S3
+    /// bucket and initialize the metadata tables. If the metadata tables could not be created,
+    /// return [`DeltaTableError`].
+    pub async fn try_new_s3_table_metadata_manager() -> Result<TableMetadataManager, DeltaTableError>
+    {
+        deltalake::aws::register_handlers(None);
+        let storage_options: HashMap<String, String> = HashMap::from([
+            ("REGION".to_owned(), "".to_owned()),
+            ("ALLOW_HTTP".to_owned(), "true".to_owned()),
+            ("ENDPOINT".to_owned(), "http://localhost:9000".to_owned()),
+            ("BUCKET_NAME".to_owned(), "modelardb".to_owned()),
+            ("ACCESS_KEY_ID".to_owned(), "minioadmin".to_owned()),
+            ("SECRET_ACCESS_KEY".to_owned(), "minioadmin".to_owned()),
+            ("AWS_S3_ALLOW_UNSAFE_RENAME".to_owned(), "true".to_owned()),
+        ]);
+
+        let table_metadata_manager = TableMetadataManager {
+            url_scheme: format!("s3://modelardb/{METADATA_FOLDER}"),
+            storage_options,
+            session: SessionContext::new(),
+            tag_value_hashes: DashMap::new(),
+        };
+
+        table_metadata_manager
+            .create_metadata_delta_lake_tables()
+            .await?;
+
+        Ok(table_metadata_manager)
+    }
+
+    /// If they do not already exist, create the tables in the metadata delta lake used for table and
     /// model table metadata.
-    /// * The table_metadata table contains the metadata for tables.
-    /// * The model_table_metadata table contains the main metadata for model tables.
-    /// * The model_table_hash_table_name contains a mapping from each tag hash to the name of the
+    /// * The `table_metadata` table contains the metadata for tables.
+    /// * The `model_table_metadata` table contains the main metadata for model tables.
+    /// * The `model_table_hash_table_name` contains a mapping from each tag hash to the name of the
     /// model table that contains the time series with that tag hash.
-    /// * The model_table_field_columns table contains the name, index, error bound value, whether
+    /// * The `model_table_field_columns` table contains the name, index, error bound value, whether
     /// error bound is relative, and generation expression of the field columns in each model table.
-    /// If the tables exist or were created, return [`Ok`], otherwise return [`Error`].
-    pub async fn create_metadata_database_tables(&self) -> Result<(), Error> {
-        let strict = self.metadata_database_type.strict();
-        let integer_type = self.metadata_database_type.integer_type();
-        let binary_type = self.metadata_database_type.binary_type();
-
-        let mut transaction = self.metadata_database_pool.begin().await?;
-
+    ///
+    /// If the tables exist or were created, return [`Ok`], otherwise return [`DeltaTableError`].
+    async fn create_metadata_delta_lake_tables(&self) -> Result<(), DeltaTableError> {
         // Create the table_metadata table if it does not exist.
-        sqlx::query(&format!(
-            "CREATE TABLE IF NOT EXISTS table_metadata (
-                 table_name TEXT PRIMARY KEY,
-                 sql TEXT NOT NULL
-             ) {strict}"
-        ))
-        .execute(&mut *transaction)
+        self.create_delta_lake_table(
+            "table_metadata",
+            vec![
+                StructField::new("table_name", DataType::STRING, false),
+                StructField::new("sql", DataType::STRING, false),
+            ],
+        )
         .await?;
 
         // Create the model_table_metadata table if it does not exist.
-        sqlx::query(&format!(
-            "CREATE TABLE IF NOT EXISTS model_table_metadata (
-                 table_name TEXT PRIMARY KEY,
-                 query_schema {binary_type} NOT NULL,
-                 sql TEXT NOT NULL
-             ) {strict}"
-        ))
-        .execute(&mut *transaction)
+        self.create_delta_lake_table(
+            "model_table_metadata",
+            vec![
+                StructField::new("table_name", DataType::STRING, false),
+                StructField::new("query_schema", DataType::BINARY, false),
+                StructField::new("sql", DataType::STRING, false),
+            ],
+        )
         .await?;
 
         // Create the model_table_hash_table_name table if it does not exist.
-        sqlx::query(&format!(
-            "CREATE TABLE IF NOT EXISTS model_table_hash_table_name (
-                 hash {integer_type} PRIMARY KEY,
-                 table_name TEXT
-             ) {strict}"
-        ))
-        .execute(&mut *transaction)
+        self.create_delta_lake_table(
+            "model_table_hash_table_name",
+            vec![
+                StructField::new("hash", DataType::LONG, false),
+                StructField::new("table_name", DataType::STRING, false),
+            ],
+        )
         .await?;
 
         // Create the model_table_field_columns table if it does not exist. Note that column_index
         // will only use a maximum of 10 bits. generated_column_* is NULL if the fields are stored
-        // as segments. error_bound_is_relative should be a boolean but bind do not accept booleans.
-        sqlx::query(&format!(
-            "CREATE TABLE IF NOT EXISTS model_table_field_columns (
-                 table_name TEXT NOT NULL,
-                 column_name TEXT NOT NULL,
-                 column_index {integer_type} NOT NULL,
-                 error_bound_value REAL NOT NULL,
-                 error_bound_is_relative {integer_type} NOT NULL,
-                 generated_column_expr TEXT,
-                 generated_column_sources {binary_type},
-                 PRIMARY KEY (table_name, column_name)
-             ) {strict}"
-        ))
-        .execute(&mut *transaction)
+        // as segments.
+        self.create_delta_lake_table(
+            "model_table_field_columns",
+            vec![
+                StructField::new("table_name", DataType::STRING, false),
+                StructField::new("column_name", DataType::STRING, false),
+                StructField::new("column_index", DataType::SHORT, false),
+                StructField::new("error_bound_value", DataType::FLOAT, false),
+                StructField::new("error_bound_is_relative", DataType::BOOLEAN, false),
+                StructField::new("generated_column_expr", DataType::STRING, true),
+                StructField::new("generated_column_sources", DataType::BINARY, true),
+            ],
+        )
         .await?;
-
-        transaction.commit().await?;
 
         Ok(())
     }
 
-    /// Return the tag hash for the given list of tag values either by retrieving it from a cache
-    /// or, if the combination of tag values is not in the cache, by computing a new hash. If the
-    /// hash is not in the cache, it is both saved to the cache, persisted to the model_table_tags
-    /// table if it does not already contain it, and persisted to the model_table_hash_table_name if
-    /// it does not already contain it. If the hash was saved to the metadata database, also return
-    /// [`true`]. If the model_table_tags or the model_table_hash_table_name table cannot
-    /// be accessed, [`Error`] is returned.
-    pub async fn lookup_or_compute_tag_hash(
+    /// Save the created table to the metadata delta lake. This consists of adding a row to the
+    /// `table_metadata` table with the `name` of the table and the `sql` used to create the table.
+    /// If the table metadata was saved, return the updated [`DeltaTable`], otherwise return
+    /// [`DeltaTableError`].
+    pub async fn save_table_metadata(
         &self,
-        model_table_metadata: &ModelTableMetadata,
-        tag_values: &[String],
-    ) -> Result<(u64, bool), Error> {
-        let cache_key = {
-            let mut cache_key_list = tag_values.to_vec();
-            cache_key_list.push(model_table_metadata.name.clone());
-
-            cache_key_list.join(";")
-        };
-
-        // Check if the tag hash is in the cache. If it is, retrieve it. If it is not, create a new
-        // one and save it both in the cache and in the model_table_tags table. There is a minor
-        // race condition because the check if a tag hash is in the cache and the addition of the
-        // hash is done without taking a lock on the tag_value_hashes. However, by allowing a hash
-        // to possibly be computed more than once, the cache can be used without an explicit lock.
-        if let Some(tag_hash) = self.tag_value_hashes.get(&cache_key) {
-            Ok((*tag_hash, false))
-        } else {
-            // Generate the 54-bit tag hash based on the tag values of the record batch and model
-            // table name.
-            let tag_hash = {
-                let mut hasher = DefaultHasher::new();
-                hasher.write(cache_key.as_bytes());
-
-                // The 64-bit hash is shifted to make the 10 least significant bits 0.
-                hasher.finish() << 10
-            };
-
-            // Save the tag hash in the cache and in the metadata database model_table_tags table.
-            self.tag_value_hashes.insert(cache_key, tag_hash);
-
-            // tag_column_indices are computed from the schema, so they can be used with input.
-            let tag_columns: String = model_table_metadata
-                .tag_column_indices
-                .iter()
-                .map(|index| model_table_metadata.schema.field(*index).name().clone())
-                .collect::<Vec<String>>()
-                .join(",");
-
-            let values = tag_values
-                .iter()
-                .map(|value| format!("'{value}'"))
-                .collect::<Vec<String>>()
-                .join(",");
-
-            let tag_hash_is_saved = self
-                .save_tag_hash_metadata(&model_table_metadata.name, tag_hash, &tag_columns, &values)
-                .await?;
-
-            Ok((tag_hash, tag_hash_is_saved))
-        }
-    }
-
-    /// Save the given tag hash metadata to the model_table_tags table if it does not already
-    /// contain it, and to the model_table_hash_table_name table if it does not already contain it.
-    /// If the tables did not contain the tag hash, meaning it is a new tag combination, return
-    /// [`true`]. If the metadata cannot be inserted into either model_table_tags or
-    /// model_table_hash_table_name, [`Error`] is returned.
-    pub async fn save_tag_hash_metadata(
-        &self,
-        table_name: &str,
-        tag_hash: u64,
-        tag_columns: &str,
-        tag_values: &str,
-    ) -> Result<bool, Error> {
-        // Create a transaction to ensure the database state is consistent across tables.
-        let mut transaction = self.metadata_database_pool.begin().await?;
-
-        // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
-        // (https://www.sqlite.org/datatype3.html) both use signed integers.
-        let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
-        let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
-
-        // ON CONFLICT DO NOTHING is used to silently fail when trying to insert an already
-        // existing hash. This purposely occurs if the hash has already been written to the
-        // metadata database but is no longer stored in the cache, e.g., if the system has
-        // been restarted.
-        let insert_into_tags_result = sqlx::query(&format!(
-            "INSERT INTO {table_name}_tags (hash{maybe_separator}{tag_columns})
-             VALUES ($1{maybe_separator}{tag_values})
-             ON CONFLICT DO NOTHING",
-        ))
-        .bind(signed_tag_hash)
-        .execute(&mut *transaction)
-        .await?;
-
-        let insert_into_hash_table_name_result = sqlx::query(
-            "INSERT INTO model_table_hash_table_name (hash, table_name)
-             VALUES ($1, $2)
-             ON CONFLICT DO NOTHING",
-        )
-        .bind(signed_tag_hash)
-        .bind(table_name)
-        .execute(&mut *transaction)
-        .await?;
-
-        transaction.commit().await?;
-
-        Ok(insert_into_tags_result.rows_affected() > 0
-            || insert_into_hash_table_name_result.rows_affected() > 0)
-    }
-
-    /// Return the name of the table that contains the time series with `univariate_id`. Returns an
-    /// [`Error`] if the necessary data cannot be retrieved from the metadata database.
-    pub async fn univariate_id_to_table_name(&self, univariate_id: u64) -> Result<String, Error> {
-        // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
-        // (https://www.sqlite.org/datatype3.html) both use signed integers.
-        let tag_hash = univariate_id_to_tag_hash(univariate_id);
-        let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
-
-        sqlx::query("SELECT table_name FROM model_table_hash_table_name WHERE hash = $1")
-            .bind(signed_tag_hash)
-            .fetch_one(&self.metadata_database_pool)
-            .await?
-            .try_get("table_name")
-    }
-
-    /// Return a mapping from tag hashes to the tags in the columns with the names in
-    /// `tag_column_names` for the time series in the model table with the name `model_table_name`.
-    /// Returns an [`Error`] if the necessary data cannot be retrieved from the metadata database.
-    pub async fn mapping_from_hash_to_tags(
-        &self,
-        model_table_name: &str,
-        tag_column_names: &[&str],
-    ) -> Result<HashMap<u64, Vec<String>>, Error> {
-        // Return an empty HashMap if no tag column names are passed to keep the signature simple.
-        if tag_column_names.is_empty() {
-            return Ok(HashMap::new());
-        }
-
-        let select_statement = format!(
-            "SELECT hash,{} FROM {model_table_name}_tags",
-            tag_column_names.join(","),
-        );
-
-        let mut rows = sqlx::query(&select_statement).fetch(&self.metadata_database_pool);
-
-        let mut hash_to_tags = HashMap::new();
-        while let Some(row) = rows.try_next().await? {
-            // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
-            // (https://www.sqlite.org/datatype3.html) both use signed integers.
-            let signed_tag_hash: i64 = row.try_get("hash")?;
-            let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
-
-            // Add all the tags in order, so they can be directly appended to each row.
-            let mut tags = Vec::with_capacity(tag_column_names.len());
-            for tag_column_index in 1..=tag_column_names.len() {
-                tags.push(row.try_get(tag_column_index)?);
-            }
-
-            hash_to_tags.insert(tag_hash, tags);
-        }
-
-        Ok(hash_to_tags)
-    }
-
-    /// Compute the 64-bit univariate ids of the univariate time series to retrieve from the storage
-    /// engine using the field columns, tag names, and tag values in the query. Returns a [`Error`]
-    /// if the necessary data cannot be retrieved from the metadata database.
-    #[allow(dead_code)]
-    pub async fn compute_univariate_ids_using_fields_and_tags(
-        &self,
-        table_name: &str,
-        columns: Option<&Vec<usize>>,
-        fallback_field_column: u64,
-        tag_predicates: &[(&str, &str)],
-    ) -> Result<Vec<UnivariateId>, Error> {
-        // Construct a query that extracts the field columns in the table being queried which
-        // overlaps with the columns being requested by the query.
-        let query_field_columns = if let Some(columns) = columns {
-            let column_predicates: Vec<String> = columns
-                .iter()
-                .map(|column| format!("column_index = {column}"))
-                .collect();
-
-            format!(
-                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{table_name}' AND {}",
-                column_predicates.join(" OR ")
-            )
-        } else {
-            format!(
-                "SELECT column_index FROM model_table_field_columns WHERE table_name = '{table_name}'"
-            )
-        };
-
-        // Construct a query that extracts the hashes of the multivariate time series in the table
-        // with tag values that match those in the query.
-        let query_hashes = {
-            if tag_predicates.is_empty() {
-                format!("SELECT hash FROM {table_name}_tags")
-            } else {
-                let predicates: Vec<String> = tag_predicates
-                    .iter()
-                    .map(|(tag, tag_value)| format!("{tag} = '{tag_value}'"))
-                    .collect();
-
-                format!(
-                    "SELECT hash FROM {table_name}_tags WHERE {}",
-                    predicates.join(" AND ")
-                )
-            }
-        };
-
-        // Retrieve the hashes using the queries and reconstruct the univariate ids.
-        self.compute_univariate_ids_using_metadata_database(
-            &query_field_columns,
-            fallback_field_column,
-            &query_hashes,
+        name: &str,
+        sql: &str,
+    ) -> Result<DeltaTable, DeltaTableError> {
+        self.append_to_table(
+            "table_metadata",
+            vec![
+                Arc::new(StringArray::from(vec![name])),
+                Arc::new(StringArray::from(vec![sql])),
+            ],
         )
         .await
     }
 
-    /// Compute the 64-bit univariate ids of the univariate time series to retrieve from the storage
-    /// engine using the two queries constructed from the fields, tag names, and tag values in the
-    /// user's query. Returns the univariate ids if successful, otherwise, if the data cannot be
-    /// retrieved from the metadata database, [`Error`] is returned.
-    async fn compute_univariate_ids_using_metadata_database(
-        &self,
-        query_field_columns: &str,
-        fallback_field_column: u64,
-        query_hashes: &str,
-    ) -> Result<Vec<u64>, Error> {
-        // Retrieve the field columns.
-        let mut rows = sqlx::query(query_field_columns).fetch(&self.metadata_database_pool);
-
-        let mut field_columns = vec![];
-        while let Some(row) = rows.try_next().await? {
-            // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
-            // (https://www.sqlite.org/datatype3.html) both use signed integers.
-            let signed_field_column: i64 = row.try_get("column_index")?;
-            let field_column = u64::from_ne_bytes(signed_field_column.to_ne_bytes());
-
-            field_columns.push(field_column);
-        }
-
-        // Add the fallback field column if the query did not request data for
-        // any fields as the storage engine otherwise does not return any data.
-        if field_columns.is_empty() {
-            field_columns.push(fallback_field_column);
-        }
-
-        // Retrieve the hashes and compute the univariate ids.
-        let mut rows = sqlx::query(query_hashes).fetch(&self.metadata_database_pool);
-
-        let mut univariate_ids = vec![];
-        while let Some(row) = rows.try_next().await? {
-            // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
-            // (https://www.sqlite.org/datatype3.html) both use signed integers.
-            let signed_tag_hash: i64 = row.try_get("hash")?;
-            let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
-
-            for field_column in &field_columns {
-                univariate_ids.push(tag_hash | field_column);
-            }
-        }
-
-        Ok(univariate_ids)
-    }
-
-    /// Store information about `compressed_file` which contains compressed segments for the column
-    /// at `query_schema_index` in the model table with `model_table_name`. An [`Error`] is returned
-    /// if:
-    /// * The end time is before the start time in `compressed_file`.
-    /// * The max value is smaller than the min value in `compressed_file`.
-    /// * The metadata database could not be modified.
-    /// * A model table with `model_table_name` does not exist.
-    pub async fn save_compressed_file(
-        &self,
-        model_table_name: &str,
-        query_schema_index: usize,
-        compressed_file: &CompressedFile,
-    ) -> Result<(), Error> {
-        validate_compressed_file(compressed_file)?;
-
-        let insert_statement = format!(
-            "INSERT INTO {model_table_name}_compressed_files VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
-        );
-
-        create_insert_compressed_file_query(&insert_statement, query_schema_index, compressed_file)
-            .execute(&self.metadata_database_pool)
+    /// Return the name of each table currently in the metadata delta lake. Note that this does not
+    /// include model tables. If the table names cannot be retrieved, [`DeltaTableError`] is returned.
+    pub async fn table_names(&self) -> Result<Vec<String>, DeltaTableError> {
+        let batch = self
+            .query_table("table_metadata", "SELECT table_name FROM table_metadata")
             .await?;
 
-        Ok(())
+        let table_names = array!(batch, 0, StringArray);
+        Ok(table_names.iter().flatten().map(String::from).collect())
     }
 
-    /// Replace the `compressed_files_to_delete` with `replacement_compressed_file` (or nothing if
-    /// [`None`] is passed) in the column at `query_schema_index` for the model table with
-    /// `model_table_name`. Returns [`Error`] if:
-    /// * `compressed_files_to_delete` is empty.
-    /// * The end time is before the start time in `replacement_compressed_file`.
-    /// * The max value is smaller than the min value in `replacement_compressed_file`.
-    /// * Less than the number of files in `compressed_files_to_delete` was deleted.
-    /// * The metadata database could not be modified.
-    /// * A model table with `model_table_name` does not exist.
-    pub async fn replace_compressed_files(
-        &self,
-        model_table_name: &str,
-        query_schema_index: usize,
-        compressed_files_to_delete: &[ObjectMeta],
-        replacement_compressed_file: Option<&CompressedFile>,
-    ) -> Result<(), Error> {
-        if compressed_files_to_delete.is_empty() {
-            return Err(Error::Configuration(Box::new(
-                ModelarDbError::DataRetrievalError(
-                    "At least one file to delete must be provided.".to_owned(),
-                ),
-            )));
-        }
-
-        if let Some(compressed_file) = replacement_compressed_file {
-            validate_compressed_file(compressed_file)?;
-        }
-
-        let mut transaction = self.metadata_database_pool.begin().await?;
-
-        let file_paths_to_delete: Vec<String> = compressed_files_to_delete
-            .iter()
-            .map(|object_meta| format!("'{}'", object_meta.location))
-            .collect();
-
-        let compressed_files_to_delete_in = file_paths_to_delete.join(",");
-
-        // sqlx does not yet support binding arrays to IN (...) and recommends generating them.
-        // https://github.com/launchbadge/sqlx/blob/main/FAQ.md#how-can-i-do-a-select--where-foo-in--query
-        // query_schema_index is simply cast as a model table contains at most 1024 columns.
-        let delete_from_result = sqlx::query(&format!(
-            "DELETE FROM {model_table_name}_compressed_files
-             WHERE field_column = $1
-             AND file_path IN ({compressed_files_to_delete_in})",
-        ))
-        .bind(query_schema_index as i64)
-        .execute(&mut *transaction)
-        .await?;
-
-        // The cast to usize is safe as only compressed_files_to_delete.len() can be deleted.
-        if compressed_files_to_delete.len() != delete_from_result.rows_affected() as usize {
-            return Err(Error::Configuration(Box::new(
-                ModelarDbError::ImplementationError(
-                    "Less than the expected number of files were deleted from the metadata database.".to_owned(),
-                ),
-            )));
-        }
-
-        if let Some(compressed_file) = replacement_compressed_file {
-            let insert_statement = format!(
-                "INSERT INTO {model_table_name}_compressed_files VALUES ($1, $2, $3, $4, $5, $6, $7, $8)"
-            );
-
-            create_insert_compressed_file_query(
-                &insert_statement,
-                query_schema_index,
-                compressed_file,
-            )
-            .execute(&mut *transaction)
-            .await?;
-        }
-
-        transaction.commit().await
-    }
-
-    /// Return an [`ObjectMeta`] for each compressed file that belongs to the column at `query_schema_index`
-    /// in the model table with `model_table_name` within the given range of time and value. The
-    /// files are returned in sorted order by their start time. If no files belong to the column at
-    /// `query_schema_index` for the table with `model_table_name` an empty [`Vec`] is returned,
-    /// while an [`Error`] is returned if:
-    /// * The end time is before the start time.
-    /// * The max value is smaller than the min value.
-    /// * The metadata database could not be accessed.
-    /// * A model table with `model_table_name` does not exist.
-    pub async fn compressed_files(
-        &self,
-        model_table_name: &str,
-        query_schema_index: usize,
-        start_time: Option<Timestamp>,
-        end_time: Option<Timestamp>,
-        min_value: Option<Value>,
-        max_value: Option<Value>,
-    ) -> Result<Vec<ObjectMeta>, Error> {
-        // Set default values for the parts of the time and value range that are not defined.
-        let start_time = start_time.unwrap_or(0);
-        let end_time = end_time.unwrap_or(Timestamp::MAX);
-
-        if start_time > end_time {
-            return Err(Error::Configuration(Box::new(
-                ModelarDbError::DataRetrievalError(format!(
-                    "Start time '{start_time}' cannot be after end time '{end_time}'."
-                )),
-            )));
-        };
-
-        let min_value = min_value.unwrap_or(Value::NEG_INFINITY);
-        let max_value = max_value.unwrap_or(Value::INFINITY);
-
-        if min_value > max_value {
-            return Err(Error::Configuration(Box::new(
-                ModelarDbError::DataRetrievalError(format!(
-                    "Min value '{min_value}' cannot be larger than max value '{max_value}'."
-                )),
-            )));
-        };
-
-        let min_value = rewrite_special_value_to_normal_value(min_value);
-        let max_value = rewrite_special_value_to_normal_value(max_value);
-
-        let select_statement = format!(
-            "SELECT * FROM {model_table_name}_compressed_files
-             WHERE field_column = ($1)
-             AND ($2) <= end_time AND start_time <= ($3)
-             AND ($4) <= max_value AND min_value <= ($5)
-             ORDER BY start_time",
-        );
-
-        // query_schema_index is simply cast as a model table contains at most 1024 columns.
-        let mut rows = sqlx::query(&select_statement)
-            .bind(query_schema_index as i64)
-            .bind(start_time)
-            .bind(end_time)
-            .bind(min_value)
-            .bind(max_value)
-            .fetch(&self.metadata_database_pool);
-
-        let mut files = vec![];
-        while let Some(row) = rows.try_next().await? {
-            let object_meta =
-                convert_compressed_file_row_to_object_meta::<<DB as Database>::Row>(row)?;
-            files.push(object_meta);
-        }
-
-        Ok(files)
-    }
-
-    /// Save the created table to the metadata database. This consists of adding a row to the
-    /// table_metadata table with the `name` of the table and the `sql` used to create the table.
-    pub async fn save_table_metadata(&self, name: &str, sql: &str) -> Result<(), Error> {
-        sqlx::query("INSERT INTO table_metadata (table_name, sql) VALUES ($1, $2)")
-            .bind(name)
-            .bind(sql)
-            .execute(&self.metadata_database_pool)
-            .await?;
-
-        Ok(())
-    }
-
-    /// Save the created model table to the metadata database. This includes creating a tags table
+    /// Save the created model table to the metadata delta lake. This includes creating a tags table
     /// for the model table, creating a compressed files table for the model table, adding a row to
-    /// the model_table_metadata table, and adding a row to the model_table_field_columns table for
-    /// each field column.
+    /// the `model_table_metadata` table, and adding a row to the `model_table_field_columns` table
+    /// for each field column.
     pub async fn save_model_table_metadata(
         &self,
         model_table_metadata: &ModelTableMetadata,
         sql: &str,
-    ) -> Result<(), Error> {
-        let integer_type = self.metadata_database_type.integer_type();
-        let strict = self.metadata_database_type.strict();
-
-        // Convert the query schema to bytes, so it can be saved as a BLOB in the metadata database.
-        let query_schema_bytes = try_convert_schema_to_blob(&model_table_metadata.query_schema)?;
-
-        // Create a transaction to ensure the database state is consistent across tables.
-        let mut transaction = self.metadata_database_pool.begin().await?;
+    ) -> Result<(), DeltaTableError> {
+        // Create a table_name_tags table to save the 54-bit tag hashes when ingesting data.
+        let mut table_name_tags_columns = vec![StructField::new("hash", DataType::LONG, false)];
 
         // Add a column definition for each tag column in the query schema.
-        let tag_columns: String = model_table_metadata
-            .tag_column_indices
-            .iter()
-            .map(|index| {
-                let field = model_table_metadata.query_schema.field(*index);
-                format!("{} TEXT NOT NULL", field.name())
-            })
-            .collect::<Vec<String>>()
-            .join(",");
+        table_name_tags_columns.append(
+            &mut model_table_metadata
+                .tag_column_indices
+                .iter()
+                .map(|index| {
+                    let field = model_table_metadata.query_schema.field(*index);
+                    StructField::new(field.name(), DataType::STRING, false)
+                })
+                .collect::<Vec<StructField>>(),
+        );
 
-        let maybe_separator = if tag_columns.is_empty() { "" } else { ", " };
-
-        // Create a table_name_tags table to save the 54-bit tag hashes when ingesting data.
-        sqlx::query(&format!(
-            "CREATE TABLE {}_tags (
-                 hash {integer_type} PRIMARY KEY{maybe_separator}
-                 {tag_columns}
-             ) {strict}",
-            model_table_metadata.name
-        ))
-        .execute(&mut *transaction)
+        self.create_delta_lake_table(
+            format!("{}_tags", model_table_metadata.name).as_str(),
+            table_name_tags_columns,
+        )
         .await?;
 
         // Create a table_name_compressed_files table to save the metadata of the table's files.
-        sqlx::query(&format!(
-            "CREATE TABLE {}_compressed_files (
-                 file_path TEXT PRIMARY KEY,
-                 field_column {integer_type},
-                 size {integer_type},
-                 created_at {integer_type},
-                 start_time {integer_type},
-                 end_time {integer_type},
-                 min_value REAL,
-                 max_value REAL
-             ) {strict}",
-            model_table_metadata.name
-        ))
-        .execute(&mut *transaction)
+        self.create_delta_lake_table(
+            format!("{}_compressed_files", model_table_metadata.name).as_str(),
+            vec![
+                StructField::new("file_path", DataType::STRING, false),
+                StructField::new("field_column", DataType::SHORT, false),
+                StructField::new("size", DataType::LONG, false),
+                StructField::new("created_at", DataType::LONG, false),
+                StructField::new("start_time", DataType::LONG, false),
+                StructField::new("end_time", DataType::LONG, false),
+                StructField::new("min_value", DataType::FLOAT, false),
+                StructField::new("max_value", DataType::FLOAT, false),
+            ],
+        )
         .await?;
 
+        // Convert the query schema to bytes, so it can be saved in the metadata delta lake.
+        let query_schema_bytes = try_convert_schema_to_bytes(&model_table_metadata.query_schema)?;
+
         // Add a new row in the model_table_metadata table to persist the model table.
-        sqlx::query(
-            "INSERT INTO model_table_metadata (table_name, query_schema, sql) VALUES ($1, $2, $3)",
+        self.append_to_table(
+            "model_table_metadata",
+            vec![
+                Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
+                Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
+                Arc::new(StringArray::from(vec![sql])),
+            ],
         )
-        .bind(&model_table_metadata.name)
-        .bind(query_schema_bytes)
-        .bind(sql)
-        .execute(&mut *transaction)
         .await?;
 
         // Add a row for each field column to the model_table_field_columns table.
-        let insert_statement =
-            "INSERT INTO model_table_field_columns (table_name, column_name, column_index,
-             error_bound_value, error_bound_is_relative, generated_column_expr, generated_column_sources)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)";
-
         for (query_schema_index, field) in model_table_metadata
             .query_schema
             .fields()
@@ -759,7 +361,7 @@ where
                         &model_table_metadata.generated_columns[query_schema_index]
                     {
                         (
-                            Some(generated_column.original_expr.clone()),
+                            generated_column.original_expr.clone(),
                             Some(convert_slice_usize_to_vec_u8(
                                 &generated_column.source_columns,
                             )),
@@ -770,69 +372,63 @@ where
 
                 // error_bounds matches schema and not query_schema to simplify looking up the error
                 // bound during ingestion as it occurs far more often than creation of model tables.
-                // Bind refuses to accept booleans so a simple 0 is used for false and 1 for true.
                 let (error_bound_value, error_bound_is_relative) =
                     if let Ok(schema_index) = model_table_metadata.schema.index_of(field.name()) {
                         match model_table_metadata.error_bounds[schema_index] {
-                            ErrorBound::Absolute(value) => (value, 0),
-                            ErrorBound::Relative(value) => (value, 1),
+                            ErrorBound::Absolute(value) => (value, false),
+                            ErrorBound::Relative(value) => (value, true),
                         }
                     } else {
-                        (0.0, 0)
+                        (0.0, false)
                     };
 
                 // query_schema_index is simply cast as a model table contains at most 1024 columns.
-                sqlx::query(insert_statement)
-                    .bind(&model_table_metadata.name)
-                    .bind(field.name())
-                    .bind(query_schema_index as i64)
-                    .bind(error_bound_value)
-                    .bind(error_bound_is_relative)
-                    .bind(generated_column_expr)
-                    .bind(generated_column_sources)
-                    .execute(&mut *transaction)
-                    .await?;
+                self.append_to_table(
+                    "model_table_field_columns",
+                    vec![
+                        Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
+                        Arc::new(StringArray::from(vec![field.name().clone()])),
+                        Arc::new(Int16Array::from(vec![query_schema_index as i16])),
+                        Arc::new(Float32Array::from(vec![error_bound_value])),
+                        Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
+                        Arc::new(StringArray::from(vec![generated_column_expr])),
+                        Arc::new(BinaryArray::from_opt_vec(vec![
+                            generated_column_sources.as_deref()
+                        ])),
+                    ],
+                )
+                .await?;
             }
         }
 
-        transaction.commit().await
+        Ok(())
     }
 
-    /// Return the table name of each table currently in the metadata database. If the table names
-    /// cannot be retrieved, [`Error`] is returned.
-    pub async fn table_names(&self) -> Result<Vec<String>, Error> {
-        let mut table_names: Vec<String> = vec![];
-
-        let mut rows = sqlx::query("SELECT table_name FROM table_metadata")
-            .fetch(&self.metadata_database_pool);
-
-        while let Some(row) = rows.try_next().await? {
-            table_names.push(row.try_get("table_name")?)
-        }
-
-        Ok(table_names)
-    }
-
-    /// Return the [`ModelTableMetadata`] of each model table currently in the metadata database.
+    /// Return the [`ModelTableMetadata`] of each model table currently in the metadata delta lake.
     /// If the [`ModelTableMetadata`] cannot be retrieved, [`Error`] is returned.
-    pub async fn model_table_metadata(&self) -> Result<Vec<Arc<ModelTableMetadata>>, Error> {
+    pub async fn model_table_metadata(
+        &self,
+    ) -> Result<Vec<Arc<ModelTableMetadata>>, DeltaTableError> {
+        let batch = self
+            .query_table("model_table_metadata", "SELECT * FROM model_table_metadata")
+            .await?;
+
         let mut model_table_metadata: Vec<Arc<ModelTableMetadata>> = vec![];
+        let table_name_array = array!(batch, 0, StringArray);
+        let query_schema_bytes_array = array!(batch, 1, BinaryArray);
 
-        let mut rows =
-            sqlx::query("SELECT * FROM model_table_metadata").fetch(&self.metadata_database_pool);
+        for row_index in 0..batch.num_rows() {
+            let table_name = table_name_array.value(row_index);
 
-        while let Some(row) = rows.try_next().await? {
-            let table_name: &str = row.try_get("table_name")?;
-
-            // Convert the BLOBs to the concrete types.
-            let query_schema_bytes = row.try_get("query_schema")?;
-            let query_schema = try_convert_blob_to_schema(query_schema_bytes)?;
+            // Convert the bytes to the concrete types.
+            let query_schema_bytes = query_schema_bytes_array.value(row_index);
+            let query_schema = try_convert_bytes_to_schema(query_schema_bytes.into())?;
 
             let error_bounds = self
                 .error_bounds(table_name, query_schema.fields().len())
                 .await?;
 
-            // unwrap() is safe as the schema is checked before it is written to the metadata database.
+            // unwrap() is safe as the schema is checked before it is written to the metadata delta lake.
             let df_query_schema = query_schema.clone().to_dfschema().unwrap();
             let generated_columns = self.generated_columns(table_name, &df_query_schema).await?;
 
@@ -844,7 +440,7 @@ where
                     error_bounds,
                     generated_columns,
                 )
-                .map_err(|error| Error::Configuration(Box::new(error)))?,
+                .map_err(|error| DeltaTableError::Generic(error.to_string()))?,
             );
 
             model_table_metadata.push(metadata)
@@ -854,38 +450,44 @@ where
     }
 
     /// Return the error bounds for the columns in the model table with `table_name`. If a model
-    /// table with `table_name` does not exist, [`Error`] is returned.
+    /// table with `table_name` does not exist, [`DeltaTableError`] is returned.
     async fn error_bounds(
         &self,
         table_name: &str,
         query_schema_columns: usize,
-    ) -> Result<Vec<ErrorBound>, Error> {
-        let mut rows = sqlx::query(
-            "SELECT column_index, error_bound_value, error_bound_is_relative
-                  FROM model_table_field_columns WHERE table_name = $1 ORDER BY column_index",
-        )
-        .bind(table_name)
-        .fetch(&self.metadata_database_pool);
+    ) -> Result<Vec<ErrorBound>, DeltaTableError> {
+        let batch = self
+            .query_table(
+                "model_table_field_columns",
+                &format!(
+                    "SELECT column_index, error_bound_value, error_bound_is_relative
+                     FROM model_table_field_columns
+                     WHERE table_name = '{table_name}'
+                     ORDER BY column_index"
+                ),
+            )
+            .await?;
 
         let mut column_to_error_bound =
             vec![ErrorBound::try_new_absolute(ERROR_BOUND_ZERO).unwrap(); query_schema_columns];
 
-        while let Some(row) = rows.try_next().await? {
-            // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
-            // (https://www.sqlite.org/datatype3.html) both use signed integers and column_index
-            // is stored as an i64 instead of an u64 as a model table has at most 1024 columns.
-            let error_bound_index: i64 = row.try_get("column_index")?;
+        let column_index_array = array!(batch, 0, Int16Array);
+        let error_bound_value_array = array!(batch, 1, Float32Array);
+        let error_bound_is_relative_array = array!(batch, 2, BooleanArray);
 
-            let error_bound_value: f32 = row.try_get("error_bound_value")?;
-            let error_bound_is_relative: i64 = row.try_get("error_bound_is_relative")?;
-            let error_bound = if error_bound_is_relative == 0 {
-                ErrorBound::try_new_absolute(error_bound_value)
-            } else {
+        for row_index in 0..batch.num_rows() {
+            let error_bound_index = column_index_array.value(row_index);
+            let error_bound_value = error_bound_value_array.value(row_index);
+            let error_bound_is_relative = error_bound_is_relative_array.value(row_index);
+
+            // unwrap() is safe as the error bounds are checked before they are stored.
+            let error_bound = if error_bound_is_relative {
                 ErrorBound::try_new_relative(error_bound_value)
+            } else {
+                ErrorBound::try_new_absolute(error_bound_value)
             }
             .unwrap();
 
-            // unwrap() is safe as the error bounds are checked before they are stored.
             column_to_error_bound[error_bound_index as usize] = error_bound;
         }
 
@@ -893,114 +495,448 @@ where
     }
 
     /// Return the generated columns for the model table with `table_name` and `df_schema`.
-    /// If a model table with `table_name` does not exist, [`Error`] is returned.
+    /// If a model table with `table_name` does not exist, [`DeltaTableError`] is returned.
     async fn generated_columns(
         &self,
         table_name: &str,
         df_schema: &DFSchema,
-    ) -> Result<Vec<Option<GeneratedColumn>>, Error> {
-        let mut rows = sqlx::query(
-            "SELECT column_index, generated_column_expr, generated_column_sources
-             FROM model_table_field_columns WHERE table_name = $1 ORDER BY column_index",
-        )
-        .bind(table_name)
-        .fetch(&self.metadata_database_pool);
+    ) -> Result<Vec<Option<GeneratedColumn>>, DeltaTableError> {
+        let batch = self
+            .query_table(
+                "model_table_field_columns",
+                &format!(
+                    "SELECT column_index, generated_column_expr, generated_column_sources
+                     FROM model_table_field_columns
+                     WHERE table_name = '{table_name}'
+                     ORDER BY column_index"
+                ),
+            )
+            .await?;
 
         let mut generated_columns = vec![None; df_schema.fields().len()];
 
-        while let Some(row) = rows.try_next().await? {
-            if let Some(original_expr) = row.try_get::<Option<&str>, _>("generated_column_expr")? {
+        let column_index_array = array!(batch, 0, Int16Array);
+        let generated_column_expr_array = array!(batch, 1, StringArray);
+        let generated_column_sources_array = array!(batch, 2, BinaryArray);
+
+        for row_index in 0..batch.num_rows() {
+            let generated_column_index = column_index_array.value(row_index);
+            let generated_column_expr = generated_column_expr_array.value(row_index);
+            let generated_column_sources = generated_column_sources_array.value(row_index);
+
+            // If generated_column_expr is null, it is saved as an empty string in the column values.
+            if !generated_column_expr.is_empty() {
                 // unwrap() is safe as the expression is checked before it is written to the database.
-                let expr = parser::parse_sql_expression(df_schema, original_expr).unwrap();
-                let source_columns = row
-                    .try_get::<Option<&[u8]>, _>("generated_column_sources")?
-                    .unwrap();
+                let expr = parser::parse_sql_expression(df_schema, generated_column_expr).unwrap();
 
                 let generated_column = GeneratedColumn {
                     expr,
-                    source_columns: try_convert_slice_u8_to_vec_usize(source_columns).unwrap(),
+                    source_columns: try_convert_slice_u8_to_vec_usize(generated_column_sources)?,
                     original_expr: None,
                 };
 
-                // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
-                // (https://www.sqlite.org/datatype3.html) both use signed integers and column_index
-                // is stored as an i64 instead of an u64 as a model table has at most 1024 columns.
-                let generated_columns_index: i64 = row.try_get("column_index")?;
-                generated_columns[generated_columns_index as usize] = Some(generated_column);
+                generated_columns[generated_column_index as usize] = Some(generated_column);
             }
         }
 
         Ok(generated_columns)
     }
-}
 
-// TODO: Find a way to fix the trait issue that forces us to have these outside the struct.
-/// Create a PostgreSQL [`TableMetadataManager`] and initialize the metadata database with the tables
-/// used for table and model table metadata. If the tables could not be created, [`Error`] is returned.
-pub async fn try_new_postgres_table_metadata_manager(
-    metadata_database_pool: Pool<Postgres>,
-) -> Result<TableMetadataManager<Postgres>, Error> {
-    let metadata_manager = new_table_metadata_manager(Postgres, metadata_database_pool);
+    /// Return the tag hash for the given list of tag values either by retrieving it from a cache
+    /// or, if the combination of tag values is not in the cache, by computing a new hash. If the
+    /// hash is not in the cache, it is saved to the cache, persisted to the `model_table_tags` table
+    /// if it does not already contain it, and persisted to the `model_table_hash_table_name` table if
+    /// it does not already contain it. If the hash was saved to the metadata delta lake, also return
+    /// [`true`]. If the `model_table_tags` or the `model_table_hash_table_name` table cannot
+    /// be accessed, [`DeltaTableError`] is returned.
+    pub async fn lookup_or_compute_tag_hash(
+        &self,
+        model_table_metadata: &ModelTableMetadata,
+        tag_values: &[String],
+    ) -> Result<(u64, bool), DeltaTableError> {
+        let cache_key = {
+            let mut cache_key_list = tag_values.to_vec();
+            cache_key_list.push(model_table_metadata.name.clone());
 
-    // Create the necessary tables in the metadata database.
-    metadata_manager.create_metadata_database_tables().await?;
+            cache_key_list.join(";")
+        };
 
-    Ok(metadata_manager)
-}
+        // Check if the tag hash is in the cache. If it is, retrieve it. If it is not, create a new
+        // one and save it both in the cache and in the metadata delta lake. There is a minor
+        // race condition because the check if a tag hash is in the cache and the addition of the
+        // hash is done without taking a lock on the tag_value_hashes. However, by allowing a hash
+        // to possibly be computed more than once, the cache can be used without an explicit lock.
+        if let Some(tag_hash) = self.tag_value_hashes.get(&cache_key) {
+            Ok((*tag_hash, false))
+        } else {
+            // Generate the 54-bit tag hash based on the tag values of the record batch and model
+            // table name.
+            let tag_hash = {
+                let mut hasher = DefaultHasher::new();
+                hasher.write(cache_key.as_bytes());
 
-/// Create a SQLite [`TableMetadataManager`] and initialize the metadata database with the tables used
-/// for table and model table metadata. If the tables could not be created, [`Error`] is returned.
-pub async fn try_new_sqlite_table_metadata_manager(
-    local_data_folder: &LocalFileSystem,
-) -> Result<TableMetadataManager<Sqlite>, Error> {
-    if !is_local_file_system_a_data_folder(local_data_folder).await {
-        warn!("The local data folder is not empty and does not contain data from ModelarDB.");
+                // The 64-bit hash is shifted to make the 10 least significant bits 0.
+                hasher.finish() << 10
+            };
+
+            // Save the tag hash in the metadata delta lake and in the cache.
+            // tag_column_indices are computed from the schema, so they can be used with input.
+            let tag_columns = model_table_metadata
+                .tag_column_indices
+                .iter()
+                .map(|index| model_table_metadata.schema.field(*index).name().clone())
+                .collect::<Vec<String>>();
+
+            let tag_hash_is_saved = self
+                .save_tag_hash_metadata(
+                    &model_table_metadata.name,
+                    tag_hash,
+                    &tag_columns,
+                    tag_values,
+                )
+                .await?;
+
+            self.tag_value_hashes.insert(cache_key, tag_hash);
+
+            Ok((tag_hash, tag_hash_is_saved))
+        }
     }
 
-    // unwrap() is safe since METADATA_DATABASE_NAME does not contain invalid characters.
-    let database_path = local_data_folder
-        .path_to_filesystem(&Path::from(METADATA_DATABASE_NAME))
-        .unwrap();
+    /// Save the given tag hash metadata to the `model_table_tags` table if it does not already
+    /// contain it, and to the `model_table_hash_table_name` table if it does not already contain it.
+    /// If the tables did not contain the tag hash, meaning it is a new tag combination, return
+    /// [`true`]. If the metadata cannot be inserted into either `model_table_tags` or
+    /// `model_table_hash_table_name`, [`DeltaTableError`] is returned.
+    pub async fn save_tag_hash_metadata(
+        &self,
+        table_name: &str,
+        tag_hash: u64,
+        tag_columns: &[String],
+        tag_values: &[String],
+    ) -> Result<bool, DeltaTableError> {
+        let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
-    // Specify the metadata database's path and that it should be created if it does not exist.
-    let options = SqliteConnectOptions::new()
-        .filename(database_path)
-        .create_if_missing(true);
+        // Save the tag hash metadata to the model_table_tags table if it does not already contain it.
+        let mut table_name_tags_columns: Vec<ArrayRef> =
+            vec![Arc::new(Int64Array::from(vec![signed_tag_hash]))];
 
-    let metadata_database_pool = SqlitePoolOptions::new()
-        .max_connections(10)
-        .connect_with(options)
+        table_name_tags_columns.append(
+            &mut tag_values
+                .iter()
+                .map(|tag_value| Arc::new(StringArray::from(vec![tag_value.clone()])) as ArrayRef)
+                .collect::<Vec<ArrayRef>>(),
+        );
+
+        let source = self.session.read_batch(
+            self.metadata_table_record_batch(
+                &format!("{table_name}_tags"),
+                table_name_tags_columns,
+            )
+            .await?,
+        )?;
+
+        let ops = self
+            .metadata_table_delta_ops(&format!("{table_name}_tags"))
+            .await?;
+
+        let (_table, insert_into_tags_metrics) = ops
+            .merge(source, col("target.hash").eq(col("source.hash")))
+            .with_source_alias("source")
+            .with_target_alias("target")
+            .when_not_matched_insert(|mut insert| {
+                for tag_column in tag_columns {
+                    insert = insert.set(tag_column, col(format!("source.{tag_column}")))
+                }
+
+                insert.set("hash", col("source.hash"))
+            })?
+            .await?;
+
+        // Save the tag hash metadata to the model_table_hash_table_name table if it does not
+        // already contain it.
+        let source = self.session.read_batch(
+            self.metadata_table_record_batch(
+                "model_table_hash_table_name",
+                vec![
+                    Arc::new(Int64Array::from(vec![signed_tag_hash])),
+                    Arc::new(StringArray::from(vec![table_name])),
+                ],
+            )
+            .await?,
+        )?;
+
+        let ops = self
+            .metadata_table_delta_ops("model_table_hash_table_name")
+            .await?;
+
+        let (_table, insert_into_hash_table_name_metrics) = ops
+            .merge(source, col("target.hash").eq(col("source.hash")))
+            .with_source_alias("source")
+            .with_target_alias("target")
+            .when_not_matched_insert(|insert| {
+                insert
+                    .set("hash", col("source.hash"))
+                    .set("table_name", col("source.table_name"))
+            })?
+            .await?;
+
+        Ok(insert_into_tags_metrics.num_target_rows_inserted > 0
+            || insert_into_hash_table_name_metrics.num_target_rows_inserted > 0)
+    }
+
+    /// Return the name of the table that contains the time series with `univariate_id`. Returns a
+    /// [`DeltaTableError`] if the necessary data cannot be retrieved from the metadata delta lake.
+    pub async fn univariate_id_to_table_name(
+        &self,
+        univariate_id: u64,
+    ) -> Result<String, DeltaTableError> {
+        let tag_hash = univariate_id_to_tag_hash(univariate_id);
+        let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
+
+        let batch = self
+            .query_table(
+                "model_table_hash_table_name",
+                &format!(
+                    "SELECT table_name
+                     FROM model_table_hash_table_name
+                     WHERE hash = '{signed_tag_hash}'
+                     LIMIT 1"
+                ),
+            )
+            .await?;
+
+        let table_names = array!(batch, 0, StringArray);
+        if table_names.is_empty() {
+            Err(DeltaTableError::Generic(format!(
+                "No table contains a time series with univariate ID '{univariate_id}'."
+            )))
+        } else {
+            Ok(table_names.value(0).to_owned())
+        }
+    }
+
+    /// Return a mapping from tag hashes to the tags in the columns with the names in
+    /// `tag_column_names` for the time series in the model table with the name `model_table_name`.
+    /// Returns a [`DeltaTableError`] if the necessary data cannot be retrieved from the metadata
+    /// delta lake.
+    pub async fn mapping_from_hash_to_tags(
+        &self,
+        model_table_name: &str,
+        tag_column_names: &[&str],
+    ) -> Result<HashMap<u64, Vec<String>>, DeltaTableError> {
+        // Return an empty HashMap if no tag column names are passed to keep the signature simple.
+        if tag_column_names.is_empty() {
+            return Ok(HashMap::new());
+        }
+
+        let batch = self
+            .query_table(
+                &format!("{model_table_name}_tags"),
+                &format!(
+                    "SELECT hash, {} FROM {model_table_name}_tags",
+                    tag_column_names.join(","),
+                ),
+            )
+            .await?;
+
+        let hash_array = array!(batch, 0, Int64Array);
+
+        // For each tag column, get the corresponding column array.
+        let tag_arrays: Vec<&StringArray> = tag_column_names
+            .iter()
+            .enumerate()
+            .map(|(index, _tag_column)| array!(batch, index + 1, StringArray))
+            .collect();
+
+        let mut hash_to_tags = HashMap::new();
+        for row_index in 0..batch.num_rows() {
+            let signed_tag_hash = hash_array.value(row_index);
+            let tag_hash = u64::from_ne_bytes(signed_tag_hash.to_ne_bytes());
+
+            // For each tag array, add the row index value to the tags for this tag hash.
+            let tags: Vec<String> = tag_arrays
+                .iter()
+                .map(|tag_array| tag_array.value(row_index).to_owned())
+                .collect();
+
+            hash_to_tags.insert(tag_hash, tags);
+        }
+
+        Ok(hash_to_tags)
+    }
+
+    /// Use `table_name` to create a delta lake table with `columns` in the location given by
+    /// `url_scheme` and `storage_options` if it does not already exist. The created table is
+    /// registered in the Apache Arrow Datafusion session. If the table could not be created or
+    /// registered, return [`DeltaTableError`].
+    async fn create_delta_lake_table(
+        &self,
+        table_name: &str,
+        columns: Vec<StructField>,
+    ) -> Result<(), DeltaTableError> {
+        let table = Arc::new(
+            CreateBuilder::new()
+                .with_save_mode(SaveMode::Ignore)
+                .with_storage_options(self.storage_options.clone())
+                .with_table_name(table_name)
+                .with_location(format!("{}/{table_name}", self.url_scheme))
+                .with_columns(columns)
+                .await?,
+        );
+
+        self.session.register_table(table_name, table.clone())?;
+
+        Ok(())
+    }
+
+    /// Append the columns to the table with the given `table_name`. If the columns are appended to
+    /// the table, return the updated [`DeltaTable`], otherwise return [`DeltaTableError`].
+    async fn append_to_table(
+        &self,
+        table_name: &str,
+        columns: Vec<ArrayRef>,
+    ) -> Result<DeltaTable, DeltaTableError> {
+        let batch = self
+            .metadata_table_record_batch(table_name, columns)
+            .await?;
+
+        let ops = self.metadata_table_delta_ops(table_name).await?;
+        ops.write(vec![batch]).await
+    }
+
+    /// Return a [`RecordBatch`] with the given `columns` for the metadata table with the given
+    /// `table_name`. If the table does not exist or the [`RecordBatch`] cannot be created, return
+    /// [`DeltaTableError`].
+    async fn metadata_table_record_batch(
+        &self,
+        table_name: &str,
+        columns: Vec<ArrayRef>,
+    ) -> Result<RecordBatch, DeltaTableError> {
+        let table_provider = self.session.table_provider(table_name).await?;
+        Ok(RecordBatch::try_new(table_provider.schema(), columns)?)
+    }
+
+    // TODO: Look into optimizing the way we store and access tables in the struct fields (avoid open_table() every time).
+    // TODO: Maybe we need to use the return value every time we do a table action to update the table.
+    /// Return the [`DeltaOps`] for the metadata table with the given `table_name`. If the
+    /// [`DeltaOps`] cannot be retrieved, return [`DeltaTableError`].
+    async fn metadata_table_delta_ops(
+        &self,
+        table_name: &str,
+    ) -> Result<DeltaOps, DeltaTableError> {
+        let table = open_table_with_storage_options(
+            format!("{}/{table_name}", self.url_scheme),
+            self.storage_options.clone(),
+        )
         .await?;
 
-    let metadata_manager = new_table_metadata_manager(Sqlite, metadata_database_pool);
+        Ok(DeltaOps::from(table))
+    }
 
-    // Create the necessary tables in the metadata database.
-    metadata_manager.create_metadata_database_tables().await?;
+    // TODO: Find a way to avoid having to re-register the table every time we want to read from it.
+    /// Query the table with the given `table_name` using the given `query`. If the table is queried,
+    /// return a [`RecordBatch`] with the query result, otherwise return [`DeltaTableError`].
+    async fn query_table(
+        &self,
+        table_name: &str,
+        query: &str,
+    ) -> Result<RecordBatch, DeltaTableError> {
+        let table = open_table_with_storage_options(
+            format!("{}/{table_name}", self.url_scheme),
+            self.storage_options.clone(),
+        )
+        .await?;
 
-    Ok(metadata_manager)
-}
+        self.session.deregister_table(table_name)?;
+        self.session.register_table(table_name, Arc::new(table))?;
 
-pub fn new_table_metadata_manager<DB: Database + MetadataDatabase>(
-    metadata_database_type: DB,
-    metadata_database_pool: Pool<DB>,
-) -> TableMetadataManager<DB> {
-    TableMetadataManager {
-        metadata_database_type,
-        metadata_database_pool,
-        tag_value_hashes: DashMap::new(),
+        let dataframe = self.session.sql(query).await?;
+        let schema = Schema::from(dataframe.schema());
+
+        let batches = dataframe.collect().await?;
+        let batch = concat_batches(&schema.into(), batches.as_slice())?;
+
+        Ok(batch)
+    }
+
+    // TODO: Remove placeholder method.
+    pub async fn save_compressed_file(
+        &self,
+        _model_table_name: &str,
+        _query_schema_index: usize,
+        _compressed_file: &CompressedFile,
+    ) -> Result<(), DeltaTableError> {
+        Err(DeltaTableError::Generic("Unimplemented.".to_owned()))
+    }
+
+    // TODO: Remove placeholder method.
+    pub async fn replace_compressed_files(
+        &self,
+        _model_table_name: &str,
+        _query_schema_index: usize,
+        _compressed_files_to_delete: &[ObjectMeta],
+        _replacement_compressed_file: Option<&CompressedFile>,
+    ) -> Result<(), DeltaTableError> {
+        Err(DeltaTableError::Generic("Unimplemented.".to_owned()))
+    }
+
+    // TODO: Remove placeholder method.
+    pub async fn compressed_files(
+        &self,
+        _model_table_name: &str,
+        _query_schema_index: usize,
+        _start_time: Option<Timestamp>,
+        _end_time: Option<Timestamp>,
+        _min_value: Option<Value>,
+        _max_value: Option<Value>,
+    ) -> Result<Vec<ObjectMeta>, DeltaTableError> {
+        Err(DeltaTableError::Generic("Unimplemented.".to_owned()))
     }
 }
 
-/// Return [`true`] if `local_file_system` is a data folder, otherwise [`false`].
-async fn is_local_file_system_a_data_folder(local_file_system: &LocalFileSystem) -> bool {
-    let files_and_folders = local_file_system.list(None).collect::<Vec<_>>().await;
+/// Convert a [`Schema`] to [`Vec<u8>`].
+fn try_convert_schema_to_bytes(schema: &Schema) -> Result<Vec<u8>, DeltaTableError> {
+    let options = IpcWriteOptions::default();
+    let schema_as_ipc = SchemaAsIpc::new(schema, &options);
 
-    let metadata_database_exists = local_file_system
-        .head(&Path::from(METADATA_DATABASE_NAME))
-        .await
-        .is_ok();
+    let ipc_message: IpcMessage =
+        schema_as_ipc
+            .try_into()
+            .map_err(|error: ArrowError| DeltaTableError::InvalidData {
+                violations: vec![error.to_string()],
+            })?;
 
-    files_and_folders.is_empty() || metadata_database_exists
+    Ok(ipc_message.0.to_vec())
+}
+
+/// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
+/// [`DeltaTableError`].
+fn try_convert_bytes_to_schema(schema_bytes: Vec<u8>) -> Result<Schema, DeltaTableError> {
+    let ipc_message = IpcMessage(schema_bytes.into());
+    Schema::try_from(ipc_message).map_err(|error| DeltaTableError::InvalidData {
+        violations: vec![error.to_string()],
+    })
+}
+
+/// Convert a [`&[usize]`] to a [`Vec<u8>`].
+fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
+    usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
+}
+
+/// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides evenly by
+/// [`mem::size_of::<usize>()`], otherwise [`DeltaTableError`] is returned.
+fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>, DeltaTableError> {
+    if bytes.len() % mem::size_of::<usize>() != 0 {
+        Err(DeltaTableError::InvalidData {
+            violations: vec!["Bytes is not a vector of usizes".to_owned()],
+        })
+    } else {
+        // unwrap() is safe as bytes divides evenly by mem::size_of::<usize>().
+        Ok(bytes
+            .chunks(mem::size_of::<usize>())
+            .map(|byte_slice| usize::from_le_bytes(byte_slice.try_into().unwrap()))
+            .collect())
+    }
 }
 
 /// Extract the first 54-bits from `univariate_id` which is a hash computed from tags.
@@ -1013,154 +949,6 @@ pub fn univariate_id_to_column_index(univariate_id: u64) -> u16 {
     (univariate_id & 1023) as u16
 }
 
-/// Check that the start time is before the end time and the minimum value is smaller than the
-/// maximum value in `compressed_file`.
-fn validate_compressed_file(compressed_file: &CompressedFile) -> Result<(), Error> {
-    if compressed_file.start_time > compressed_file.end_time {
-        return Err(Error::Configuration(Box::new(
-            ModelarDbError::DataRetrievalError(format!(
-                "Start time '{}' cannot be after end time '{}'.",
-                compressed_file.start_time, compressed_file.end_time
-            )),
-        )));
-    };
-
-    if compressed_file.min_value > compressed_file.max_value {
-        return Err(Error::Configuration(Box::new(
-            ModelarDbError::DataRetrievalError(format!(
-                "Min value '{}' cannot be larger than max value '{}'.",
-                compressed_file.min_value, compressed_file.max_value
-            )),
-        )));
-    };
-
-    Ok(())
-}
-
-/// Create a [`Query`] that, when executed, stores `compressed_file` in the metadata database
-/// for the column at `query_schema_index` using `insert_statement`.
-fn create_insert_compressed_file_query<'a, DB: Database>(
-    insert_statement: &'a str,
-    query_schema_index: usize,
-    compressed_file: &'a CompressedFile,
-) -> Query<'a, DB, <DB as HasArguments<'a>>::Arguments>
-where
-    i64: sqlx::Type<DB> + sqlx::Encode<'a, DB>,
-    f32: sqlx::Type<DB> + sqlx::Encode<'a, DB>,
-    String: sqlx::Type<DB> + sqlx::Encode<'a, DB>,
-{
-    let min_value = rewrite_special_value_to_normal_value(compressed_file.min_value);
-    let max_value = rewrite_special_value_to_normal_value(compressed_file.max_value);
-
-    let created_at = compressed_file
-        .file_metadata
-        .last_modified
-        .timestamp_millis();
-
-    // query_schema_index is simply cast as a model table contains at most 1024 columns.
-    // size is simply cast as it is unrealistic for a file to use more bytes than the max value
-    // of a signed 64-bit integer as it can represent a file with a size up to ~9000 PB.
-    sqlx::query(insert_statement)
-        .bind(compressed_file.file_metadata.location.to_string())
-        .bind(query_schema_index as i64)
-        .bind(compressed_file.file_metadata.size as i64)
-        .bind(created_at)
-        .bind(compressed_file.start_time)
-        .bind(compressed_file.end_time)
-        .bind(min_value)
-        .bind(max_value)
-}
-
-/// Rewrite the special values in [`Value`] (Negative Infinity, Infinity, and NaN) to the closet
-/// normal values in [`Value`] to simplify storing and querying them through the metadata database.
-fn rewrite_special_value_to_normal_value(value: Value) -> Value {
-    // Pattern matching on float values is not supported in Rust.
-    if value == Value::NEG_INFINITY {
-        Value::MIN
-    } else if value == Value::INFINITY || value.is_nan() {
-        Value::MAX
-    } else {
-        value
-    }
-}
-
-/// Convert a row in the table_name_compressed_files table to an [`ObjectMeta`]. If the
-/// necessary column values could not be extracted from the row, return [`Error`].
-fn convert_compressed_file_row_to_object_meta<R>(row: R) -> Result<ObjectMeta, Error>
-where
-    R: Row,
-    for<'a> &'a str: sqlx::ColumnIndex<R>,
-    for<'a> i64: sqlx::Type<<R as Row>::Database> + sqlx::Decode<'a, <R as Row>::Database>,
-    for<'a> String: sqlx::Type<<R as Row>::Database> + sqlx::Decode<'a, <R as Row>::Database>,
-{
-    let file_path: String = row.try_get("file_path")?;
-
-    // unwrap() is safe as the created_at timestamp cannot be out of range.
-    let last_modified = Utc
-        .timestamp_millis_opt(row.try_get("created_at")?)
-        .unwrap();
-
-    let size: i64 = row.try_get("size")?;
-
-    Ok(ObjectMeta {
-        location: Path::from(file_path),
-        last_modified,
-        size: size as usize,
-        e_tag: None,
-        version: None,
-    })
-}
-
-/// Convert a [`Schema`] to [`Vec<u8>`].
-pub fn try_convert_schema_to_blob(schema: &Schema) -> Result<Vec<u8>, Error> {
-    let options = IpcWriteOptions::default();
-    let schema_as_ipc = SchemaAsIpc::new(schema, &options);
-
-    let ipc_message: IpcMessage =
-        schema_as_ipc
-            .try_into()
-            .map_err(|error: ArrowError| Error::ColumnDecode {
-                index: "query_schema".to_owned(),
-                source: Box::new(error),
-            })?;
-
-    Ok(ipc_message.0.to_vec())
-}
-
-/// Return [`Schema`] if `schema_bytes` can be converted to an Apache Arrow schema, otherwise
-/// [`Error`].
-pub fn try_convert_blob_to_schema(schema_bytes: Vec<u8>) -> Result<Schema, Error> {
-    let ipc_message = IpcMessage(schema_bytes.into());
-    Schema::try_from(ipc_message).map_err(|error| Error::ColumnDecode {
-        index: "query_schema".to_owned(),
-        source: Box::new(error),
-    })
-}
-
-/// Convert a [`&[usize]`] to a [`Vec<u8>`].
-pub fn convert_slice_usize_to_vec_u8(usizes: &[usize]) -> Vec<u8> {
-    usizes.iter().flat_map(|v| v.to_le_bytes()).collect()
-}
-
-/// Convert a [`&[u8]`] to a [`Vec<usize>`] if the length of `bytes` divides evenly by
-/// [`mem::size_of::<usize>()`], otherwise [`Error`] is returned.
-pub fn try_convert_slice_u8_to_vec_usize(bytes: &[u8]) -> Result<Vec<usize>, Error> {
-    if bytes.len() % mem::size_of::<usize>() != 0 {
-        Err(Error::ColumnDecode {
-            index: "generated_column_sources".to_owned(),
-            source: Box::new(ModelarDbError::ImplementationError(
-                "Blob is not a vector of usizes".to_owned(),
-            )),
-        })
-    } else {
-        // unwrap() is safe as bytes divides evenly by mem::size_of::<usize>().
-        Ok(bytes
-            .chunks(mem::size_of::<usize>())
-            .map(|byte_slice| usize::from_le_bytes(byte_slice.try_into().unwrap()))
-            .collect())
-    }
-}
-
 /// Normalize `name` to allow direct comparisons between names.
 pub fn normalize_name(name: &str) -> String {
     name.to_lowercase()
@@ -1170,990 +958,209 @@ pub fn normalize_name(name: &str) -> String {
 mod tests {
     use super::*;
 
-    use std::sync::Arc;
-
-    use chrono::SubsecRound;
-    use datafusion::arrow::array::ArrowPrimitiveType;
-    use datafusion::arrow::datatypes::{Field, Schema};
-    use futures::TryStreamExt;
-    use once_cell::sync::Lazy;
+    use arrow::datatypes::{ArrowPrimitiveType, Field};
     use proptest::{collection, num, prop_assert_eq, proptest};
-    use sqlx::Row;
     use tempfile::TempDir;
-    use tonic::codegen::Bytes;
-    use uuid::Uuid;
 
     use crate::test;
     use crate::types::ArrowValue;
 
-    static SEVEN_COMPRESSED_FILES: Lazy<Vec<CompressedFile>> = Lazy::new(|| {
-        vec![
-            create_compressed_file(0, 0, 37.0, 73.0),
-            create_compressed_file(0, Timestamp::MAX, 37.0, 73.0),
-            create_compressed_file(100, 200, 37.0, 73.0),
-            create_compressed_file(300, 400, Value::NAN, Value::NAN),
-            create_compressed_file(500, 600, Value::NEG_INFINITY, 73.0),
-            create_compressed_file(700, 800, 37.0, Value::INFINITY),
-            create_compressed_file(Timestamp::MAX, Timestamp::MAX, 37.0, 73.0),
-        ]
-    });
-
     // Tests for TableMetadataManager.
     #[tokio::test]
-    async fn test_create_metadata_database_tables() {
+    async fn test_create_metadata_delta_lake_tables() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
-            .await
-            .unwrap();
-
-        // Verify that the tables were created and has the expected columns.
-        metadata_manager
-            .metadata_database_pool
-            .execute("SELECT table_name FROM table_metadata")
-            .await
-            .unwrap();
-
-        metadata_manager
-            .metadata_database_pool
-            .execute("SELECT table_name, query_schema FROM model_table_metadata")
-            .await
-            .unwrap();
-
-        metadata_manager
-            .metadata_database_pool
-            .execute("SELECT hash, table_name FROM model_table_hash_table_name")
-            .await
-            .unwrap();
-
-        metadata_manager
-            .metadata_database_pool
-            .execute(
-                "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
-                 generated_column_expr, generated_column_sources FROM model_table_field_columns",
-            )
-            .await
-            .unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_get_new_tag_hash() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
-            .await
-            .unwrap();
-
-        let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
-
-        let (_tag_hash, tag_hash_is_saved) = metadata_manager
-            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
-            .await
-            .unwrap();
-
-        // When a new tag hash is retrieved, the hash should be saved in the cache.
-        assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
-
-        // It should also be saved in the metadata database table.
-        let select_statement = format!("SELECT * FROM {}_tags", test::MODEL_TABLE_NAME);
-        let mut rows = metadata_manager
-            .metadata_database_pool
-            .fetch(&*select_statement);
-
-        assert!(tag_hash_is_saved);
-        assert_eq!(
-            rows.try_next()
-                .await
-                .unwrap()
-                .unwrap()
-                .try_get::<&str, _>(1)
-                .unwrap(),
-            "tag1"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_get_existing_tag_hash() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
-            .await
-            .unwrap();
-
-        let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
-
-        metadata_manager
-            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
-            .await
-            .unwrap();
-
-        assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
-
-        // When getting the same tag hash again, it should just be retrieved from the cache.
-        let (_tag_hash, tag_hash_is_saved) = metadata_manager
-            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
-            .await
-            .unwrap();
-
-        assert!(!tag_hash_is_saved);
-        assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
-    }
-
-    proptest! {
-        #[test]
-        fn test_univariate_id_to_tag_hash_and_column_index(
-            tag_hash in num::u64::ANY,
-            column_index in num::u16::ANY,
-        ) {
-            // Combine tag hash and column index into a univariate id.
-            let tag_hash = tag_hash << 10; // 54-bits is used for the tag hash.
-            let column_index = column_index % 1024; // 10-bits is used for the column index.
-            let univariate_id = tag_hash | column_index as u64;
-
-            // Split the univariate_id into the tag hash and column index.
-            let computed_tag_hash = univariate_id_to_tag_hash(univariate_id);
-            let computed_column_index = univariate_id_to_column_index(univariate_id);
-
-            // Original and split should match.
-            prop_assert_eq!(tag_hash, computed_tag_hash);
-            prop_assert_eq!(column_index, computed_column_index);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_compute_univariate_ids_using_fields_and_tags_for_missing_model_table() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
-            .await
-            .unwrap();
-
-        assert!(metadata_manager
-            .compute_univariate_ids_using_fields_and_tags(test::MODEL_TABLE_NAME, None, 10, &[])
-            .await
-            .is_err());
-    }
-
-    #[tokio::test]
-    async fn test_compute_univariate_ids_using_fields_and_tags_for_empty_model_table() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(&temp_dir).await;
-
-        // Lookup univariate ids using fields and tags for an empty table.
-        let univariate_ids = metadata_manager
-            .compute_univariate_ids_using_fields_and_tags(test::MODEL_TABLE_NAME, None, 10, &[])
-            .await
-            .unwrap();
-
-        assert!(univariate_ids.is_empty());
-    }
-
-    #[tokio::test]
-    async fn test_compute_univariate_ids_using_no_fields_and_tags_for_model_table() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        let mut metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
-            .await
-            .unwrap();
-
-        // Save a model table to the metadata database.
-        initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]).await;
-
-        // Lookup all univariate ids for the table by not passing any fields or tags.
-        let univariate_ids = metadata_manager
-            .compute_univariate_ids_using_fields_and_tags(test::MODEL_TABLE_NAME, None, 10, &[])
-            .await
-            .unwrap();
-
-        assert_eq!(2, univariate_ids.len());
-    }
-
-    #[tokio::test]
-    async fn test_compute_univariate_ids_for_the_fallback_column_using_only_a_tag_column_for_model_table(
-    ) {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        let mut metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
-            .await
-            .unwrap();
-
-        // Save a model table to the metadata database.
-        initialize_model_table_with_tag_values(&mut metadata_manager, &["tag_value1"]).await;
-
-        // Lookup the univariate ids for the fallback column by only requesting tag columns.
-        let univariate_ids = metadata_manager
-            .compute_univariate_ids_using_fields_and_tags(
-                test::MODEL_TABLE_NAME,
-                Some(&vec![0]),
-                10,
-                &[],
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(1, univariate_ids.len());
-    }
-
-    #[tokio::test]
-    async fn test_compute_the_univariate_ids_for_a_specific_field_column_for_model_table() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        let mut metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
-            .await
-            .unwrap();
-
-        // Save a model table to the metadata database.
-        initialize_model_table_with_tag_values(
-            &mut metadata_manager,
-            &["tag_value1", "tag_value2"],
-        )
-        .await;
-
-        // Lookup all univariate ids for the table by not requesting ids for columns.
-        let univariate_ids = metadata_manager
-            .compute_univariate_ids_using_fields_and_tags(test::MODEL_TABLE_NAME, None, 10, &[])
-            .await
-            .unwrap();
-        assert_eq!(4, univariate_ids.len());
-
-        // Lookup univariate ids for the table by requesting ids for a specific field column.
-        let univariate_ids = metadata_manager
-            .compute_univariate_ids_using_fields_and_tags(
-                test::MODEL_TABLE_NAME,
-                Some(&vec![1]),
-                10,
-                &[],
-            )
-            .await
-            .unwrap();
-        assert_eq!(2, univariate_ids.len());
-    }
-
-    #[tokio::test]
-    async fn test_compute_the_univariate_ids_for_a_specific_tag_value_for_model_table() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        let mut metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
-            .await
-            .unwrap();
-
-        // Save a model table to the metadata database.
-        initialize_model_table_with_tag_values(
-            &mut metadata_manager,
-            &["tag_value1", "tag_value2"],
-        )
-        .await;
-
-        // Lookup all univariate ids for the table by not requesting ids for a tag value.
-        let univariate_ids = metadata_manager
-            .compute_univariate_ids_using_fields_and_tags(test::MODEL_TABLE_NAME, None, 10, &[])
-            .await
-            .unwrap();
-        assert_eq!(4, univariate_ids.len());
-
-        // Lookup univariate ids for the table by requesting ids for a specific tag value.
-        let univariate_ids = metadata_manager
-            .compute_univariate_ids_using_fields_and_tags(
-                test::MODEL_TABLE_NAME,
-                None,
-                10,
-                &[("tag", "tag_value1")],
-            )
-            .await
-            .unwrap();
-        assert_eq!(2, univariate_ids.len());
-    }
-
-    async fn initialize_model_table_with_tag_values(
-        table_metadata_manager: &mut TableMetadataManager<Sqlite>,
-        tag_values: &[&str],
-    ) {
-        let model_table_metadata = test::model_table_metadata();
-        table_metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
-
-        for tag_value in tag_values {
-            let tag_value = tag_value.to_string();
-            table_metadata_manager
-                .lookup_or_compute_tag_hash(&model_table_metadata, &[tag_value])
-                .await
-                .unwrap();
-        }
-    }
-
-    #[tokio::test]
-    async fn test_save_compressed_file_for_column_in_existing_model_table() {
-        let compressed_file = create_compressed_file(100, 200, 37.0, 73.0);
-
-        // An assert is purposely not used so the test fails with information about why it failed.
-        create_metadata_manager_with_named_model_table_and_save_files(
-            test::MODEL_TABLE_NAME,
-            &[compressed_file],
-        )
-        .await
-        .unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_save_compressed_file_for_column_in_missing_model_table() {
-        let compressed_file = create_compressed_file(100, 200, 37.0, 73.0);
-
-        assert!(
-            create_metadata_manager_with_named_model_table_and_save_files(
-                "table_model",
-                &[compressed_file]
-            )
-            .await
-            .is_err()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_save_compressed_file_with_invalid_timestamps_for_column_in_existing_model_table()
-    {
-        let compressed_file = create_compressed_file(200, 100, 37.0, 73.0);
-
-        assert!(
-            create_metadata_manager_with_named_model_table_and_save_files(
-                test::MODEL_TABLE_NAME,
-                &[compressed_file]
-            )
-            .await
-            .is_err()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_save_compressed_file_with_invalid_values_for_column_in_existing_model_table() {
-        let compressed_file = create_compressed_file(100, 200, 73.0, 37.0);
-
-        assert!(
-            create_metadata_manager_with_named_model_table_and_save_files(
-                test::MODEL_TABLE_NAME,
-                &[compressed_file]
-            )
-            .await
-            .is_err()
-        );
-    }
-
-    #[tokio::test]
-    async fn test_replace_compressed_files_with_nothing() {
-        let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
-        let compressed_files_to_delete = &[
-            compressed_files[0].file_metadata.clone(),
-            compressed_files[1].file_metadata.clone(),
-            compressed_files[2].file_metadata.clone(),
-        ];
-        let returned_object_metas =
-            create_metadata_manager_with_named_model_table_save_files_delete_and_get(
-                &compressed_files,
-                compressed_files_to_delete,
-                None,
-            )
-            .await;
-
-        assert_eq!(4, returned_object_metas.len());
-        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[0]);
-        assert_eq!(compressed_files[4].file_metadata, returned_object_metas[1]);
-        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[2]);
-        assert_eq!(compressed_files[6].file_metadata, returned_object_metas[3]);
-    }
-
-    #[tokio::test]
-    async fn test_replace_compressed_files_with_replacement_file() {
-        let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
-        let compressed_files_to_delete = &[
-            compressed_files[0].file_metadata.clone(),
-            compressed_files[1].file_metadata.clone(),
-            compressed_files[2].file_metadata.clone(),
-        ];
-        let replacement_file = create_compressed_file(100, 200, 37.0, 73.0);
-
-        let returned_object_metas =
-            create_metadata_manager_with_named_model_table_save_files_delete_and_get(
-                &compressed_files,
-                compressed_files_to_delete,
-                Some(&replacement_file),
-            )
-            .await;
-
-        assert_eq!(5, returned_object_metas.len());
-        assert_eq!(replacement_file.file_metadata, returned_object_metas[0]);
-        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[1]);
-        assert_eq!(compressed_files[4].file_metadata, returned_object_metas[2]);
-        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[3]);
-        assert_eq!(compressed_files[6].file_metadata, returned_object_metas[4]);
-    }
-
-    async fn create_metadata_manager_with_named_model_table_save_files_delete_and_get(
-        compressed_files: &[CompressedFile],
-        compressed_files_to_delete: &[ObjectMeta],
-        replacement_file: Option<&CompressedFile>,
-    ) -> Vec<ObjectMeta> {
-        // create_metadata_manager_with_named_model_table_and_save_files() is not reused as dropping
-        // the TempDir which created the folder containing the database leaves it in read-only mode.
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(&temp_dir).await;
-
-        for compressed_file in compressed_files {
-            metadata_manager
-                .save_compressed_file(test::MODEL_TABLE_NAME, 1, compressed_file)
-                .await
-                .unwrap();
-        }
-
-        metadata_manager
-            .replace_compressed_files(
-                test::MODEL_TABLE_NAME,
-                1,
-                compressed_files_to_delete,
-                replacement_file,
-            )
-            .await
-            .unwrap();
-
-        metadata_manager
-            .compressed_files(test::MODEL_TABLE_NAME, 1, None, None, None, None)
-            .await
-            .unwrap()
-    }
-
-    #[tokio::test]
-    async fn test_replace_compressed_files_without_files_to_delete() {
-        assert_that_replace_compressed_files_fails(Some(&[]), None).await;
-    }
-
-    #[tokio::test]
-    async fn test_replace_compressed_files_with_invalid_timestamps() {
-        let replacement_file = create_compressed_file(200, 100, 37.0, 73.0);
-        assert_that_replace_compressed_files_fails(None, Some(&replacement_file)).await;
-    }
-
-    #[tokio::test]
-    async fn test_replace_compressed_files_with_invalid_values() {
-        let replacement_file = create_compressed_file(100, 200, 73.0, 37.0);
-        assert_that_replace_compressed_files_fails(None, Some(&replacement_file)).await;
-    }
-
-    async fn assert_that_replace_compressed_files_fails(
-        compressed_files_to_delete: Option<&[ObjectMeta]>,
-        replacement_compressed_file: Option<&CompressedFile>,
-    ) {
-        // create_metadata_manager_with_named_model_table_and_save_files() is not reused as dropping
-        // the TempDir which created the folder containing the database leaves it in read-only mode.
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(&temp_dir).await;
-
-        let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
-        for compressed_file in &compressed_files {
-            metadata_manager
-                .save_compressed_file(test::MODEL_TABLE_NAME, 1, compressed_file)
-                .await
-                .unwrap();
-        }
-
-        let compressed_files_first_object_meta = &[compressed_files[0].file_metadata.clone()];
-        let compressed_files_to_delete =
-            compressed_files_to_delete.unwrap_or(compressed_files_first_object_meta);
-
-        assert!(metadata_manager
-            .replace_compressed_files(
-                test::MODEL_TABLE_NAME,
-                1,
-                compressed_files_to_delete,
-                replacement_compressed_file,
-            )
-            .await
-            .is_err());
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_file_ends_within_time_range() {
-        assert!(
-            is_compressed_file_within_time_and_value_range(Some(150), Some(250), None, None).await
-        )
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_file_starts_within_time_range() {
-        assert!(
-            is_compressed_file_within_time_and_value_range(Some(50), Some(150), None, None).await
-        )
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_file_is_within_time_range() {
-        assert!(
-            is_compressed_file_within_time_and_value_range(Some(50), Some(250), None, None).await
-        )
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_file_is_before_time_range() {
-        assert!(
-            !is_compressed_file_within_time_and_value_range(Some(225), Some(275), None, None).await
-        )
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_file_is_after_time_range() {
-        assert!(
-            !is_compressed_file_within_time_and_value_range(Some(25), Some(75), None, None).await
-        )
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_without_filtering() {
-        let (compressed_files, returned_object_metas) =
-            create_metadata_manager_with_model_table_save_seven_files_and_get_files(
-                None, None, None, None,
-            )
-            .await;
-
-        assert_eq!(compressed_files.len(), returned_object_metas.len());
-        for (compressed_file, returned_object_meta) in
-            compressed_files.iter().zip(returned_object_metas)
-        {
-            assert_eq!(compressed_file.file_metadata, returned_object_meta);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_with_minimum_timestamp() {
-        let (compressed_files, returned_object_metas) =
-            create_metadata_manager_with_model_table_save_seven_files_and_get_files(
-                Some(400),
-                None,
-                None,
-                None,
-            )
-            .await;
-
-        assert_eq!(5, returned_object_metas.len());
-        assert_eq!(compressed_files[1].file_metadata, returned_object_metas[0]);
-        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[1]);
-        assert_eq!(compressed_files[4].file_metadata, returned_object_metas[2]);
-        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[3]);
-        assert_eq!(compressed_files[6].file_metadata, returned_object_metas[4]);
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_with_maximum_timestamp() {
-        let (compressed_files, returned_object_metas) =
-            create_metadata_manager_with_model_table_save_seven_files_and_get_files(
-                None,
-                Some(400),
-                None,
-                None,
-            )
-            .await;
-
-        assert_eq!(4, returned_object_metas.len());
-        assert_eq!(compressed_files[0].file_metadata, returned_object_metas[0]);
-        assert_eq!(compressed_files[1].file_metadata, returned_object_metas[1]);
-        assert_eq!(compressed_files[2].file_metadata, returned_object_metas[2]);
-        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[3]);
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_with_minimum_and_maximum_timestamp() {
-        let (compressed_files, returned_object_metas) =
-            create_metadata_manager_with_model_table_save_seven_files_and_get_files(
-                Some(400),
-                Some(400),
-                None,
-                None,
-            )
-            .await;
-
-        assert_eq!(2, returned_object_metas.len());
-        assert_eq!(compressed_files[1].file_metadata, returned_object_metas[0]);
-        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[1]);
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_file_max_is_within_value_range() {
-        assert!(
-            is_compressed_file_within_time_and_value_range(None, None, Some(50.0), Some(100.0))
-                .await
-        )
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_file_min_is_within_value_range() {
-        assert!(
-            is_compressed_file_within_time_and_value_range(None, None, Some(0.0), Some(50.0)).await
-        )
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_file_is_within_value_range() {
-        assert!(
-            is_compressed_file_within_time_and_value_range(None, None, Some(0.0), Some(100.0))
-                .await
-        )
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_file_is_less_than_value_range() {
-        assert!(
-            !is_compressed_file_within_time_and_value_range(None, None, Some(100.0), Some(150.0))
-                .await
-        )
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_file_is_greater_than_value_range() {
-        assert!(
-            !is_compressed_file_within_time_and_value_range(None, None, Some(0.0), Some(25.0))
-                .await
-        )
-    }
-
-    async fn is_compressed_file_within_time_and_value_range(
-        start_time: Option<Timestamp>,
-        end_time: Option<Timestamp>,
-        min_value: Option<Value>,
-        max_value: Option<Value>,
-    ) -> bool {
-        let compressed_files = vec![create_compressed_file(100, 200, 37.0, 73.0)];
-
-        let returned_object_metas =
-            create_metadata_manager_with_model_table_save_files_and_get_files(
-                &compressed_files,
-                start_time,
-                end_time,
-                min_value,
-                max_value,
-            )
-            .await;
-
-        compressed_files.len() == returned_object_metas.len()
-    }
-
-    fn create_compressed_file(
-        start_time: Timestamp,
-        end_time: Timestamp,
-        min_value: Value,
-        max_value: Value,
-    ) -> CompressedFile {
-        let file_metadata = ObjectMeta {
-            location: Path::from(format!("test/{}.parquet", Uuid::new_v4())),
-            last_modified: Utc::now().round_subsecs(3),
-            size: 0,
-            e_tag: None,
-            version: None,
-        };
-
-        CompressedFile::new(file_metadata, start_time, end_time, min_value, max_value)
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_with_minimum_value() {
-        let (compressed_files, returned_object_metas) =
-            create_metadata_manager_with_model_table_save_seven_files_and_get_files(
-                None,
-                None,
-                Some(80.0),
-                None,
-            )
-            .await;
-
-        assert_eq!(2, returned_object_metas.len());
-        assert_eq!(compressed_files[3].file_metadata, returned_object_metas[0]);
-        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[1]);
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_with_maximum_value() {
-        let (compressed_files, returned_object_metas) =
-            create_metadata_manager_with_model_table_save_seven_files_and_get_files(
-                None,
-                None,
-                None,
-                Some(80.0),
-            )
-            .await;
-
-        assert_eq!(6, returned_object_metas.len());
-        assert_eq!(compressed_files[0].file_metadata, returned_object_metas[0]);
-        assert_eq!(compressed_files[1].file_metadata, returned_object_metas[1]);
-        assert_eq!(compressed_files[2].file_metadata, returned_object_metas[2]);
-        assert_eq!(compressed_files[4].file_metadata, returned_object_metas[3]);
-        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[4]);
-        assert_eq!(compressed_files[6].file_metadata, returned_object_metas[5]);
-    }
-
-    #[tokio::test]
-    async fn test_compressed_files_with_minimum_and_maximum_value() {
-        let (compressed_files, returned_object_metas) =
-            create_metadata_manager_with_model_table_save_seven_files_and_get_files(
-                None,
-                None,
-                Some(75.0),
-                Some(80.0),
-            )
-            .await;
-
-        assert_eq!(1, returned_object_metas.len());
-        assert_eq!(compressed_files[5].file_metadata, returned_object_metas[0]);
-    }
-
-    async fn create_metadata_manager_with_model_table_save_seven_files_and_get_files(
-        start_time: Option<Timestamp>,
-        end_time: Option<Timestamp>,
-        min_value: Option<Value>,
-        max_value: Option<Value>,
-    ) -> (Vec<CompressedFile>, Vec<ObjectMeta>) {
-        let compressed_files = SEVEN_COMPRESSED_FILES.to_vec();
-
-        let returned_files = create_metadata_manager_with_model_table_save_files_and_get_files(
-            &compressed_files,
-            start_time,
-            end_time,
-            min_value,
-            max_value,
-        )
-        .await;
-
-        (compressed_files, returned_files)
-    }
-
-    async fn create_metadata_manager_with_model_table_save_files_and_get_files(
-        compressed_files: &[CompressedFile],
-        start_time: Option<Timestamp>,
-        end_time: Option<Timestamp>,
-        min_value: Option<Value>,
-        max_value: Option<Value>,
-    ) -> Vec<ObjectMeta> {
-        let metadata_manager = create_metadata_manager_with_named_model_table_and_save_files(
-            test::MODEL_TABLE_NAME,
-            compressed_files,
+        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
+            Path::from_absolute_path(temp_dir.path()).unwrap(),
         )
         .await
         .unwrap();
 
-        metadata_manager
-            .compressed_files(
-                test::MODEL_TABLE_NAME,
-                1,
-                start_time,
-                end_time,
-                min_value,
-                max_value,
-            )
+        // Verify that the tables were created, registered, and has the expected columns.
+        assert!(metadata_manager
+            .session
+            .sql("SELECT table_name, sql FROM table_metadata")
             .await
-            .unwrap()
-    }
+            .is_ok());
 
-    async fn create_metadata_manager_with_named_model_table_and_save_files(
-        model_table_name: &str,
-        compressed_files: &[CompressedFile],
-    ) -> Result<TableMetadataManager<Sqlite>, Error> {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(&temp_dir).await;
+        assert!(metadata_manager
+            .session
+            .sql("SELECT table_name, query_schema, sql FROM model_table_metadata")
+            .await
+            .is_ok());
 
-        for compressed_file in compressed_files {
-            metadata_manager
-                .save_compressed_file(model_table_name, 1, compressed_file)
-                .await?;
-        }
+        assert!(metadata_manager
+            .session
+            .sql("SELECT hash, table_name FROM model_table_hash_table_name")
+            .await
+            .is_ok());
 
-        Ok(metadata_manager)
+        assert!(metadata_manager
+            .session
+            .sql("SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
+                 generated_column_expr, generated_column_sources FROM model_table_field_columns")
+            .await
+            .is_ok());
     }
 
     #[tokio::test]
     async fn test_save_table_metadata() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
-            .await
-            .unwrap();
-
-        let table_name = "table_name";
+        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
+            Path::from_absolute_path(temp_dir.path()).unwrap(),
+        )
+        .await
+        .unwrap();
 
         metadata_manager
-            .save_table_metadata(table_name, test::TABLE_SQL)
+            .save_table_metadata("table_1", "CREATE TABLE table_1")
             .await
             .unwrap();
 
-        // Retrieve the table from the metadata database.
-        let mut rows = metadata_manager
-            .metadata_database_pool
-            .fetch("SELECT table_name, sql FROM table_metadata");
-
-        let row = rows.try_next().await.unwrap().unwrap();
-        let retrieved_table_name = row.try_get::<&str, _>(0).unwrap();
-        assert_eq!(table_name, retrieved_table_name);
-
-        let retrieved_sql = row.try_get::<&str, _>(1).unwrap();
-        assert_eq!(test::TABLE_SQL, retrieved_sql);
-
-        assert!(rows.try_next().await.unwrap().is_none());
-    }
-
-    #[tokio::test]
-    async fn test_save_model_table_metadata() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
-            .await
-            .unwrap();
-
-        // Save a model table to the metadata database.
-        let model_table_metadata = test::model_table_metadata();
         metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .save_table_metadata("table_2", "CREATE TABLE table_2")
             .await
             .unwrap();
 
-        // Retrieve the tables with metadata for the model table from the metadata database.
-        let select_statement = format!("SELECT hash FROM {}_tags", test::MODEL_TABLE_NAME);
-        let mut rows = metadata_manager
-            .metadata_database_pool
-            .fetch(&*select_statement);
-        assert!(rows.try_next().await.unwrap().is_none());
+        // Retrieve the table from the metadata delta lake.
+        let batch = metadata_manager
+            .query_table(
+                "table_metadata",
+                "SELECT table_name, sql FROM table_metadata ORDER BY table_name",
+            )
+            .await
+            .unwrap();
 
-        let select_statement = format!(
-            "SELECT file_path, field_column, size, created_at, start_time, end_time,
-             min_value, max_value FROM {}_compressed_files",
-            test::MODEL_TABLE_NAME
-        );
-        let mut rows = metadata_manager
-            .metadata_database_pool
-            .fetch(&*select_statement);
-        assert!(rows.try_next().await.unwrap().is_none());
-
-        // Retrieve the rows in model_table_metadata from the metadata database.
-        let mut rows = metadata_manager
-            .metadata_database_pool
-            .fetch("SELECT table_name, query_schema, sql FROM model_table_metadata");
-
-        let row = rows.try_next().await.unwrap().unwrap();
-        assert_eq!(test::MODEL_TABLE_NAME, row.try_get::<&str, _>(0).unwrap());
         assert_eq!(
-            try_convert_schema_to_blob(&model_table_metadata.query_schema).unwrap(),
-            row.try_get::<Vec<u8>, _>(1).unwrap()
+            **batch.column(0),
+            StringArray::from(vec!["table_1", "table_2"])
         );
-        assert_eq!(test::MODEL_TABLE_SQL, row.try_get::<&str, _>(2).unwrap());
-
-        assert!(rows.try_next().await.unwrap().is_none());
-
-        // Retrieve the rows in model_table_field_columns from the metadata database.
-        let mut rows = metadata_manager.metadata_database_pool.fetch(
-            "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
-             generated_column_expr, generated_column_sources FROM model_table_field_columns",
+        assert_eq!(
+            **batch.column(1),
+            StringArray::from(vec!["CREATE TABLE table_1", "CREATE TABLE table_2"])
         );
-
-        let row = rows.try_next().await.unwrap().unwrap();
-        assert_eq!(test::MODEL_TABLE_NAME, row.try_get::<&str, _>(0).unwrap());
-        assert_eq!("field_1", row.try_get::<&str, _>(1).unwrap());
-        assert_eq!(1, row.try_get::<i32, _>(2).unwrap());
-        assert_eq!(1.0, row.try_get::<f32, _>(3).unwrap());
-        assert_eq!(0, row.try_get::<i32, _>(4).unwrap());
-        assert_eq!(None, row.try_get::<Option<&str>, _>(5).unwrap());
-        assert_eq!(None, row.try_get::<Option<Vec<u8>>, _>(6).unwrap());
-
-        let row = rows.try_next().await.unwrap().unwrap();
-        assert_eq!(test::MODEL_TABLE_NAME, row.try_get::<&str, _>(0).unwrap());
-        assert_eq!("field_2", row.try_get::<&str, _>(1).unwrap());
-        assert_eq!(2, row.try_get::<i32, _>(2).unwrap());
-        assert_eq!(5.0, row.try_get::<f32, _>(3).unwrap());
-        assert_eq!(1, row.try_get::<i32, _>(4).unwrap());
-        assert_eq!(None, row.try_get::<Option<&str>, _>(5).unwrap());
-        assert_eq!(None, row.try_get::<Option<Vec<u8>>, _>(6).unwrap());
-
-        assert!(rows.try_next().await.unwrap().is_none());
     }
 
     #[tokio::test]
     async fn test_table_names() {
         let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
+        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
+            Path::from_absolute_path(temp_dir.path()).unwrap(),
+        )
+        .await
+        .unwrap();
 
-        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
+        metadata_manager
+            .save_table_metadata("table_1", "CREATE TABLE table_1")
             .await
             .unwrap();
 
         metadata_manager
-            .save_table_metadata("table_name", test::TABLE_SQL)
+            .save_table_metadata("table_2", "CREATE TABLE table_2")
             .await
             .unwrap();
 
         let table_names = metadata_manager.table_names().await.unwrap();
-        assert!(table_names.contains(&"table_name".to_owned()));
+        assert_eq!(table_names, vec!["table_2", "table_1"]);
+    }
+
+    #[tokio::test]
+    async fn test_save_model_table_metadata() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        // Verify that the tables were created, and has the expected columns.
+        assert!(metadata_manager
+            .session
+            .sql(&format!(
+                "SELECT hash, tag FROM {}_tags",
+                test::MODEL_TABLE_NAME
+            ))
+            .await
+            .is_ok());
+
+        assert!(metadata_manager
+            .session
+            .sql(&format!(
+                "SELECT file_path, field_column, size, created_at, start_time, end_time, min_value,
+                 max_value FROM {}_compressed_files",
+                test::MODEL_TABLE_NAME
+            ))
+            .await
+            .is_ok());
+
+        // Check that a row has been added to the model_table_metadata table.
+        let batch = metadata_manager
+            .query_table(
+                "model_table_metadata",
+                "SELECT table_name, query_schema, sql FROM model_table_metadata",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            StringArray::from(vec![test::MODEL_TABLE_NAME])
+        );
+        assert_eq!(
+            **batch.column(1),
+            BinaryArray::from_vec(vec![&try_convert_schema_to_bytes(
+                &test::model_table_metadata().query_schema
+            )
+            .unwrap()])
+        );
+        assert_eq!(
+            **batch.column(2),
+            StringArray::from(vec![test::MODEL_TABLE_SQL])
+        );
+
+        // Check that a row has been added to the model_table_field_columns table for each field column.
+        let batch = metadata_manager
+            .query_table(
+                "model_table_field_columns",
+                "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
+                 generated_column_expr, generated_column_sources FROM model_table_field_columns ORDER BY column_name",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            StringArray::from(vec![test::MODEL_TABLE_NAME, test::MODEL_TABLE_NAME])
+        );
+        assert_eq!(
+            **batch.column(1),
+            StringArray::from(vec!["field_1", "field_2"])
+        );
+        assert_eq!(**batch.column(2), Int16Array::from(vec![1, 2]));
+        assert_eq!(**batch.column(3), Float32Array::from(vec![1.0, 5.0]));
+        assert_eq!(**batch.column(4), BooleanArray::from(vec![false, true]));
+        assert_eq!(
+            **batch.column(5),
+            StringArray::from(vec![None, None] as Vec<Option<&str>>)
+        );
+        assert_eq!(**batch.column(6), BinaryArray::from(vec![None, None]));
     }
 
     #[tokio::test]
     async fn test_model_table_metadata() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let metadata_manager = create_metadata_manager_and_save_model_table(&temp_dir).await;
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let model_table_metadata = metadata_manager.model_table_metadata().await.unwrap();
 
         assert_eq!(
             model_table_metadata.first().unwrap().name,
-            test::model_table_metadata().name
+            test::model_table_metadata().name,
         );
-    }
-
-    async fn create_metadata_manager_and_save_model_table(
-        temp_dir: &TempDir,
-    ) -> TableMetadataManager<Sqlite> {
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
-            .await
-            .unwrap();
-
-        let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
-
-        metadata_manager
     }
 
     #[tokio::test]
     async fn test_error_bound() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
-            .await
-            .unwrap();
-
-        let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let error_bounds = metadata_manager
             .error_bounds(test::MODEL_TABLE_NAME, 4)
             .await
             .unwrap();
+
         let values: Vec<f32> = error_bounds
             .iter()
             .map(|error_bound| match error_bound {
@@ -2167,19 +1174,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_generated_columns() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        let metadata_manager = try_new_sqlite_table_metadata_manager(&object_store)
-            .await
-            .unwrap();
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
 
         let model_table_metadata = test::model_table_metadata();
-        metadata_manager
-            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
-            .await
-            .unwrap();
-
         let df_schema = model_table_metadata.query_schema.to_dfschema().unwrap();
         let generated_columns = metadata_manager
             .generated_columns(test::MODEL_TABLE_NAME, &df_schema)
@@ -2191,76 +1188,272 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn test_compute_new_tag_hash() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        let (tag_hash_1, tag_hash_1_is_saved) = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
+        let (tag_hash_2, tag_hash_2_is_saved) = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag2".to_owned()])
+            .await
+            .unwrap();
+
+        assert!(tag_hash_1_is_saved && tag_hash_2_is_saved);
+
+        // The tag hashes should be saved in the cache.
+        assert_eq!(metadata_manager.tag_value_hashes.len(), 2);
+
+        // The tag hashes should be saved in the model_table_tags table.
+        let batch = metadata_manager
+            .query_table(
+                &format!("{}_tags", test::MODEL_TABLE_NAME),
+                &format!("SELECT hash, tag FROM {}_tags", test::MODEL_TABLE_NAME),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            Int64Array::from(vec![
+                i64::from_ne_bytes(tag_hash_2.to_ne_bytes()),
+                i64::from_ne_bytes(tag_hash_1.to_ne_bytes()),
+            ])
+        );
+        assert_eq!(**batch.column(1), StringArray::from(vec!["tag2", "tag1"]));
+
+        // The tag hashes should be saved in the model_table_hash_table_name table.
+        let batch = metadata_manager
+            .query_table(
+                "model_table_hash_table_name",
+                "SELECT hash, table_name FROM model_table_hash_table_name",
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            Int64Array::from(vec![
+                i64::from_ne_bytes(tag_hash_2.to_ne_bytes()),
+                i64::from_ne_bytes(tag_hash_1.to_ne_bytes()),
+            ])
+        );
+        assert_eq!(
+            **batch.column(1),
+            StringArray::from(vec![test::MODEL_TABLE_NAME, test::MODEL_TABLE_NAME])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_lookup_existing_tag_hash() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        let (tag_hash_compute, tag_hash_compute_is_saved) = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
+        assert!(tag_hash_compute_is_saved);
+        assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
+
+        // When getting the same tag hash again, it should be retrieved from the cache.
+        let (tag_hash_lookup, tag_hash_lookup_is_saved) = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
+        assert!(!tag_hash_lookup_is_saved);
+        assert_eq!(metadata_manager.tag_value_hashes.len(), 1);
+
+        assert_eq!(tag_hash_compute, tag_hash_lookup);
+    }
+
+    #[tokio::test]
+    async fn test_compute_tag_hash_with_invalid_tag_values() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        let zero_tags_result = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &[])
+            .await;
+
+        let two_tags_result = metadata_manager
+            .lookup_or_compute_tag_hash(
+                &model_table_metadata,
+                &["tag1".to_owned(), "tag2".to_owned()],
+            )
+            .await;
+
+        assert!(zero_tags_result.is_err());
+        assert!(two_tags_result.is_err());
+
+        // The tag hashes should not be saved in either the cache or the metadata delta lake.
+        assert_eq!(metadata_manager.tag_value_hashes.len(), 0);
+
+        let batch = metadata_manager
+            .query_table(
+                &format!("{}_tags", test::MODEL_TABLE_NAME),
+                &format!("SELECT hash FROM {}_tags", test::MODEL_TABLE_NAME),
+            )
+            .await
+            .unwrap();
+
+        assert!(batch.column(0).is_empty());
+
+        let batch = metadata_manager
+            .query_table(
+                "model_table_hash_table_name",
+                "SELECT hash FROM model_table_hash_table_name",
+            )
+            .await
+            .unwrap();
+
+        assert!(batch.column(0).is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_univariate_id_to_table_name() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        let (tag_hash, _tag_hash_is_saved) = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
+        let table_name = metadata_manager
+            .univariate_id_to_table_name(tag_hash)
+            .await
+            .unwrap();
+
+        assert_eq!(table_name, test::MODEL_TABLE_NAME);
+    }
+
+    #[tokio::test]
+    async fn test_invalid_univariate_id_to_table_name() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
+            Path::from_absolute_path(temp_dir.path()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        assert!(metadata_manager
+            .univariate_id_to_table_name(0)
+            .await
+            .is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mapping_from_hash_to_tags() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        let (tag_hash_1, _tag_hash_is_saved) = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
+        let (tag_hash_2, _tag_hash_is_saved) = metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag2".to_owned()])
+            .await
+            .unwrap();
+
+        let mapping_from_hash_to_tags = metadata_manager
+            .mapping_from_hash_to_tags(test::MODEL_TABLE_NAME, &["tag"])
+            .await
+            .unwrap();
+
+        assert_eq!(mapping_from_hash_to_tags.len(), 2);
+        assert_eq!(
+            mapping_from_hash_to_tags.get(&tag_hash_1).unwrap(),
+            &vec!["tag1".to_owned()]
+        );
+        assert_eq!(
+            mapping_from_hash_to_tags.get(&tag_hash_2).unwrap(),
+            &vec!["tag2".to_owned()]
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mapping_from_hash_to_tags_with_invalid_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let result = metadata_manager
+            .mapping_from_hash_to_tags("invalid_table_name", &["tag"])
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_mapping_from_hash_to_tags_with_invalid_tag_column() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager_and_save_model_table().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .lookup_or_compute_tag_hash(&model_table_metadata, &["tag1".to_owned()])
+            .await
+            .unwrap();
+
+        let result = metadata_manager
+            .mapping_from_hash_to_tags(test::MODEL_TABLE_NAME, &["invalid_tag"])
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    async fn create_metadata_manager_and_save_model_table() -> (TempDir, TableMetadataManager) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let metadata_manager = TableMetadataManager::try_new_local_table_metadata_manager(
+            Path::from_absolute_path(temp_dir.path()).unwrap(),
+        )
+        .await
+        .unwrap();
+
+        // Save a model table to the metadata delta lake.
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        (temp_dir, metadata_manager)
+    }
+
     // Tests for conversion functions.
     #[test]
-    fn test_invalid_blob_to_schema() {
-        assert!(try_convert_blob_to_schema(vec!(1, 2, 4, 8)).is_err());
+    fn test_invalid_bytes_to_schema() {
+        assert!(try_convert_bytes_to_schema(vec!(1, 2, 4, 8)).is_err());
     }
 
     #[test]
-    fn test_blob_to_schema_and_schema_to_blob() {
+    fn test_schema_to_bytes_and_bytes_to_schema() {
         let schema = Arc::new(Schema::new(vec![
             Field::new("field_1", ArrowValue::DATA_TYPE, false),
             Field::new("field_2", ArrowValue::DATA_TYPE, false),
         ]));
 
-        // Serialize a schema to bytes.
-        let bytes = try_convert_schema_to_blob(&schema).unwrap();
+        // Serialize the schema to bytes.
+        let bytes = try_convert_schema_to_bytes(&schema).unwrap();
 
-        // Deserialize the bytes to a schema.
-        let retrieved_schema = try_convert_blob_to_schema(bytes).unwrap();
-        assert_eq!(*schema, retrieved_schema);
+        // Deserialize the bytes to the schema.
+        let bytes_schema = try_convert_bytes_to_schema(bytes).unwrap();
+        assert_eq!(*schema, bytes_schema);
     }
 
     proptest! {
         #[test]
-        fn test_usize_to_u8_and_u8_to_usize(values in collection::vec(num::usize::ANY, 0..50)) {
+        fn test_slice_usize_to_vec_u8_and_slice_u8_to_vec_usize(values in collection::vec(num::usize::ANY, 0..50)) {
             let bytes = convert_slice_usize_to_vec_u8(&values);
             let usizes = try_convert_slice_u8_to_vec_usize(&bytes).unwrap();
             prop_assert_eq!(values, usizes);
         }
-    }
-
-    // Tests for is_local_file_system_a_data_folder().
-    #[tokio::test]
-    async fn test_a_non_empty_local_file_system_without_metadata_database_is_not_a_data_folder() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let local_file_system = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        local_file_system
-            .put(&Path::from("folder/test.parquet"), Bytes::from(Vec::new()))
-            .await
-            .unwrap();
-
-        assert!(!is_local_file_system_a_data_folder(&local_file_system).await);
-    }
-
-    #[tokio::test]
-    async fn test_an_empty_local_file_system_is_a_data_folder() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let local_file_system = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        assert!(is_local_file_system_a_data_folder(&local_file_system).await);
-    }
-
-    #[tokio::test]
-    async fn test_a_non_empty_local_file_system_with_metadata_database_is_a_data_folder() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let local_file_system = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        local_file_system
-            .put(
-                &Path::from("table_folder/test.parquet"),
-                Bytes::from(Vec::new()),
-            )
-            .await
-            .unwrap();
-
-        try_new_sqlite_table_metadata_manager(&local_file_system)
-            .await
-            .unwrap();
-
-        assert!(is_local_file_system_a_data_folder(&local_file_system).await);
     }
 
     // Tests for normalize_name().
