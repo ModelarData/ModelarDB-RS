@@ -23,7 +23,7 @@ use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::ServerMode;
-use sqlx::{PgPool, Postgres, Row};
+use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
 use crate::cluster::Node;
@@ -35,7 +35,7 @@ pub struct MetadataManager {
     metadata_database_pool: PgPool,
     /// Metadata manager used to interface with the subset of the manager metadata database related
     /// to tables and model tables.
-    pub(crate) table_metadata_manager: TableMetadataManager<Postgres>,
+    pub(crate) table_metadata_manager: TableMetadataManager,
 }
 
 impl MetadataManager {

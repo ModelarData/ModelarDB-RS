@@ -52,14 +52,14 @@ pub struct Manager {
     key: String,
     /// Metadata for the tables and model tables in the remote data folder. Note that only cloud
     /// nodes have access to the remote metadata database.
-    pub(crate) table_metadata_manager: Option<Arc<TableMetadataManager<Postgres>>>,
+    pub(crate) table_metadata_manager: Option<Arc<TableMetadataManager>>,
 }
 
 impl Manager {
     pub fn new(
         flight_client: Arc<RwLock<FlightServiceClient<Channel>>>,
         key: String,
-        table_metadata_manager: Option<Arc<TableMetadataManager<Postgres>>>,
+        table_metadata_manager: Option<Arc<TableMetadataManager>>,
     ) -> Self {
         Self {
             flight_client,

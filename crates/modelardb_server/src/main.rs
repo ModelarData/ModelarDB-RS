@@ -33,7 +33,6 @@ use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::ServerMode;
 use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
-use sqlx::Postgres;
 use tokio::runtime::Runtime;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -58,7 +57,7 @@ pub enum ClusterMode {
 impl ClusterMode {
     /// Return the optional remote table metadata manager from the manager interface if the cluster
     /// mode is `MultiNode`, otherwise return [`None`].
-    fn remote_table_metadata_manager(&self) -> &Option<Arc<TableMetadataManager<Postgres>>> {
+    fn remote_table_metadata_manager(&self) -> &Option<Arc<TableMetadataManager>> {
         match self {
             ClusterMode::SingleNode => &None,
             ClusterMode::MultiNode(manager) => &manager.table_metadata_manager,

@@ -33,7 +33,6 @@ use modelardb_common::types::ServerMode;
 use modelardb_common::{metadata, parser};
 use object_store::path::Path;
 use object_store::ObjectStore;
-use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::info;
@@ -46,7 +45,7 @@ use crate::{optimizer, ClusterMode, DataFolders};
 /// Provides access to the system's configuration and components.
 pub struct Context {
     /// Metadata for the tables and model tables in the data folder.
-    pub table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+    pub table_metadata_manager: Arc<TableMetadataManager>,
     /// Updatable configuration of the server.
     pub configuration_manager: Arc<RwLock<ConfigurationManager>>,
     /// Main interface for Apache Arrow DataFusion.

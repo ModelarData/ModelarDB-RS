@@ -208,6 +208,18 @@ impl FlightServiceHandler {
 
             // For each tag metadata in the record batch, insert it into the metadata database.
             for row_index in 0..metadata.num_rows() {
+                let tag_columns: Vec<String> = tag_columns_array
+                    .value(row_index)
+                    .split(",")
+                    .map(|tag_column| tag_column.to_owned())
+                    .collect();
+
+                let tag_values: Vec<String> = tag_values_array
+                    .value(row_index)
+                    .split(",")
+                    .map(|tag_value| tag_value.to_owned())
+                    .collect();
+
                 self.context
                     .remote_metadata_manager
                     .metadata_manager()
@@ -215,8 +227,8 @@ impl FlightServiceHandler {
                     .save_tag_hash_metadata(
                         table_name_array.value(row_index),
                         tag_hash_array.value(row_index),
-                        tag_columns_array.value(row_index),
-                        tag_values_array.value(row_index),
+                        &tag_columns,
+                        &tag_values,
                     )
                     .await
                     .map_err(|error| Status::invalid_argument(error.to_string()))?;

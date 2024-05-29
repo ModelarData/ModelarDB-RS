@@ -32,7 +32,6 @@ use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
 use object_store::local::LocalFileSystem;
 use object_store::path::{Path, PathPart};
 use object_store::ObjectStore;
-use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
@@ -71,7 +70,7 @@ pub(super) struct UncompressedDataManager {
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
     /// Management of metadata for ingesting and compressing time series.
-    table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+    table_metadata_manager: Arc<TableMetadataManager>,
     /// The mode of the cluster used to determine the behaviour when inserting data points.
     cluster_mode: ClusterMode,
     /// Track how much memory is left for storing uncompressed and compressed data.
@@ -91,7 +90,7 @@ impl UncompressedDataManager {
         local_data_folder: Arc<LocalFileSystem>,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
-        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        table_metadata_manager: Arc<TableMetadataManager>,
         cluster_mode: ClusterMode,
         used_multivariate_memory_metric: Arc<Mutex<Metric>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,

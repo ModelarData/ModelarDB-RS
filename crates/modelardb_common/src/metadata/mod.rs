@@ -21,8 +21,9 @@ pub mod compressed_file;
 pub mod model_table_metadata;
 
 use std::collections::HashMap;
+use std::fmt::{Debug, Formatter};
 use std::hash::{DefaultHasher, Hasher};
-use std::mem;
+use std::{fmt, mem};
 use std::sync::Arc;
 
 use arrow::array::{
@@ -58,6 +59,7 @@ const METADATA_FOLDER: &str = "metadata";
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata delta lake.
+#[derive(Clone)]
 pub struct TableMetadataManager {
     /// URL to access the base folder of the location where the metadata tables are stored.
     url_scheme: String,
@@ -891,6 +893,14 @@ impl TableMetadataManager {
         _max_value: Option<Value>,
     ) -> Result<Vec<ObjectMeta>, DeltaTableError> {
         Err(DeltaTableError::Generic("Unimplemented.".to_owned()))
+    }
+}
+
+impl Debug for TableMetadataManager {
+    /// Write a string-based representation of the [`TableMetadataManager`] to `f`. Returns
+    /// `Err` if `std::write` cannot format the string and write it to `f`.
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.url_scheme)
     }
 }
 

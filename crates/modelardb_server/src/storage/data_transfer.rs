@@ -29,7 +29,6 @@ use modelardb_common::metadata::TableMetadataManager;
 use object_store::local::LocalFileSystem;
 use object_store::path::{Path, PathPart};
 use object_store::{ObjectMeta, ObjectStore};
-use sqlx::Sqlite;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle as TaskJoinHandle;
 use tracing::debug;
@@ -51,7 +50,7 @@ pub struct DataTransfer {
     /// The object store that the data should be transferred to.
     pub remote_data_folder: Arc<dyn ObjectStore>,
     /// Management of metadata for deleting file metadata after transferring.
-    table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+    table_metadata_manager: Arc<TableMetadataManager>,
     /// Map from table names and column indices to the combined size in bytes of the compressed
     /// files currently saved for the column in that table.
     compressed_files: DashMap<(String, u16), usize>,
@@ -74,7 +73,7 @@ impl DataTransfer {
     pub async fn try_new(
         local_data_folder: Arc<LocalFileSystem>,
         remote_data_folder: Arc<dyn ObjectStore>,
-        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        table_metadata_manager: Arc<TableMetadataManager>,
         manager: Manager,
         transfer_batch_size_in_bytes: Option<usize>,
         used_disk_space_metric: Arc<Mutex<Metric>>,

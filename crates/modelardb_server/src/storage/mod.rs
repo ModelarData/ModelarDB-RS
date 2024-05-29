@@ -42,7 +42,6 @@ use modelardb_common::types::{Timestamp, TimestampArray, Value};
 use object_store::local::LocalFileSystem;
 use object_store::{ObjectMeta, ObjectStore};
 use once_cell::sync::Lazy;
-use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tonic::Status;
@@ -108,7 +107,7 @@ impl StorageEngine {
         local_data_folder: Arc<LocalFileSystem>,
         maybe_remote_data_folder: Option<Arc<dyn ObjectStore>>,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
-        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        table_metadata_manager: Arc<TableMetadataManager>,
     ) -> Result<Self, IOError> {
         // Create shared memory pool.
         let configuration_manager = configuration_manager.read().await;
