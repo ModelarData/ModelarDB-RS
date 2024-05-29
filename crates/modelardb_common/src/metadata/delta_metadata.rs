@@ -941,6 +941,11 @@ pub fn univariate_id_to_tag_hash(univariate_id: u64) -> u64 {
     univariate_id & 18446744073709550592
 }
 
+/// Normalize `name` to allow direct comparisons between names.
+pub fn normalize_name(name: &str) -> String {
+    name.to_lowercase()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1441,5 +1446,21 @@ mod tests {
             let usizes = try_convert_slice_u8_to_vec_usize(&bytes).unwrap();
             prop_assert_eq!(values, usizes);
         }
+    }
+
+    // Tests for normalize_name().
+    #[test]
+    fn test_normalize_table_name_lowercase_no_effect() {
+        assert_eq!("table_name", crate::metadata::normalize_name("table_name"));
+    }
+
+    #[test]
+    fn test_normalize_table_name_uppercase() {
+        assert_eq!("table_name", crate::metadata::normalize_name("TABLE_NAME"));
+    }
+
+    #[test]
+    fn test_normalize_table_name_mixed_case() {
+        assert_eq!("table_name", crate::metadata::normalize_name("Table_Name"));
     }
 }
