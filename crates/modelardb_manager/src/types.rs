@@ -67,7 +67,10 @@ impl RemoteMetadataManager {
     /// connect to a remote database and create a [`MetadataManager`] with the connection. If the
     /// connection could not be established, or the [`MetadataManager`] could not be created,
     /// return [`ModelarDbError`].
-    pub async fn try_new(metadata_database_name: &str) -> Result<Self, ModelarDbError> {
+    pub async fn try_new(
+        metadata_database_name: &str,
+        remote_data_folder_connection_info: &[u8],
+    ) -> Result<Self, ModelarDbError> {
         let username = env::var("METADATA_DB_USER")
             .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
         let password = env::var("METADATA_DB_PASSWORD")
@@ -84,13 +87,14 @@ impl RemoteMetadataManager {
                     ))
                 })?;
 
-        let metadata_manager = MetadataManager::try_new(connection)
-            .await
-            .map_err(|error| {
-                ModelarDbError::ConfigurationError(format!(
-                    "Unable to setup metadata database: {error}"
-                ))
-            })?;
+        let metadata_manager =
+            MetadataManager::try_new(connection, remote_data_folder_connection_info)
+                .await
+                .map_err(|error| {
+                    ModelarDbError::ConfigurationError(format!(
+                        "Unable to setup metadata database: {error}"
+                    ))
+                })?;
 
         // Encode the connection information, so it can be transferred over Apache Arrow Flight.
         let connection_info: Vec<u8> = [

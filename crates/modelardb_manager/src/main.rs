@@ -122,12 +122,13 @@ async fn parse_command_line_arguments(
 ) -> Result<(RemoteMetadataManager, RemoteDataFolder), String> {
     match arguments {
         &[metadata_database, remote_data_folder] => {
-            let remote_metadata_manager = RemoteMetadataManager::try_new(metadata_database)
-                .await
-                .map_err(|error| error.to_string())?;
-
             let object_store = argument_to_remote_object_store(remote_data_folder)?;
             let connection_info = argument_to_connection_info(remote_data_folder)?;
+
+            let remote_metadata_manager =
+                RemoteMetadataManager::try_new(metadata_database, connection_info.as_slice())
+                    .await
+                    .map_err(|error| error.to_string())?;
 
             Ok((
                 remote_metadata_manager,

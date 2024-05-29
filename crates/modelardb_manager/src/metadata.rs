@@ -20,7 +20,6 @@ use std::str::FromStr;
 
 use futures::TryStreamExt;
 use modelardb_common::errors::ModelarDbError;
-use modelardb_common::metadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::ServerMode;
 use sqlx::{PgPool, Row};
@@ -41,11 +40,14 @@ pub struct MetadataManager {
 impl MetadataManager {
     /// Return [`MetadataManager`] if the necessary tables could be created in the metadata database,
     /// otherwise return [`sqlx::Error`].
-    pub async fn try_new(metadata_database_pool: PgPool) -> Result<Self, sqlx::Error> {
-        // Cloning the pool simply increments the reference count to the inner pool state.
+    pub async fn try_new(
+        metadata_database_pool: PgPool,
+        remote_data_folder_connection_info: &[u8],
+    ) -> Result<Self, sqlx::Error> {
         let table_metadata_manager =
-            metadata::try_new_postgres_table_metadata_manager(metadata_database_pool.clone())
-                .await?;
+            TableMetadataManager::try_from_connection_info(remote_data_folder_connection_info)
+                .await
+                .map_err(|error| sqlx::Error::Configuration(error.into()))?;
 
         let metadata_manager = Self {
             metadata_database_pool,
