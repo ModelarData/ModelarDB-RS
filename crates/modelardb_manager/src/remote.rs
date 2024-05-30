@@ -210,13 +210,13 @@ impl FlightServiceHandler {
             for row_index in 0..metadata.num_rows() {
                 let tag_columns: Vec<String> = tag_columns_array
                     .value(row_index)
-                    .split(",")
+                    .split(',')
                     .map(|tag_column| tag_column.to_owned())
                     .collect();
 
                 let tag_values: Vec<String> = tag_values_array
                     .value(row_index)
-                    .split(",")
+                    .split(',')
                     .map(|tag_value| tag_value.to_owned())
                     .collect();
 

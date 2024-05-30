@@ -536,7 +536,7 @@ mod tests {
     /// [`CompressedFile`] representing the created Apache Parquet file.
     async fn create_compressed_file(
         temp_dir: &TempDir,
-        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        table_metadata_manager: Arc<TableMetadataManager>,
     ) -> CompressedFile {
         let local_data_folder =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
@@ -575,7 +575,7 @@ mod tests {
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
     async fn create_data_transfer_component(
         temp_dir: &TempDir,
-        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
+        table_metadata_manager: Arc<TableMetadataManager>,
     ) -> (TempDir, DataTransfer) {
         let local_data_folder =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
@@ -611,7 +611,7 @@ mod tests {
     }
 
     /// Create a table metadata manager and save a single model table to the metadata database.
-    async fn create_metadata_manager(temp_dir: &TempDir) -> Arc<TableMetadataManager<Sqlite>> {
+    async fn create_metadata_manager(temp_dir: &TempDir) -> Arc<TableMetadataManager> {
         let local_data_folder = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
 
         let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(&local_data_folder)

@@ -1553,7 +1553,7 @@ mod tests {
     async fn create_managers(
         temp_dir: &TempDir,
     ) -> (
-        Arc<TableMetadataManager<Sqlite>>,
+        Arc<TableMetadataManager>,
         UncompressedDataManager,
         Arc<ModelTableMetadata>,
     ) {

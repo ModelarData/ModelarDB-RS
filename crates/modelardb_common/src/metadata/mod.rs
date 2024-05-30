@@ -55,7 +55,7 @@ use crate::types::{ErrorBound, Timestamp, Value};
 use crate::{array, parser};
 
 /// The folder storing metadata in the data folders.
-const METADATA_FOLDER: &str = "metadata";
+pub const METADATA_FOLDER: &str = "metadata";
 
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata delta lake.
@@ -150,36 +150,6 @@ impl TableMetadataManager {
 
         let table_metadata_manager = TableMetadataManager {
             url_scheme,
-            storage_options,
-            session: SessionContext::new(),
-            tag_value_hashes: DashMap::new(),
-        };
-
-        table_metadata_manager
-            .create_metadata_delta_lake_tables()
-            .await?;
-
-        Ok(table_metadata_manager)
-    }
-
-    /// Create a new table metadata manager that saves the metadata to [`METADATA_FOLDER`] in a S3
-    /// bucket and initialize the metadata tables. If the metadata tables could not be created,
-    /// return [`DeltaTableError`].
-    pub async fn try_new_s3_table_metadata_manager() -> Result<TableMetadataManager, DeltaTableError>
-    {
-        deltalake::aws::register_handlers(None);
-        let storage_options: HashMap<String, String> = HashMap::from([
-            ("REGION".to_owned(), "".to_owned()),
-            ("ALLOW_HTTP".to_owned(), "true".to_owned()),
-            ("ENDPOINT".to_owned(), "http://localhost:9000".to_owned()),
-            ("BUCKET_NAME".to_owned(), "modelardb".to_owned()),
-            ("ACCESS_KEY_ID".to_owned(), "minioadmin".to_owned()),
-            ("SECRET_ACCESS_KEY".to_owned(), "minioadmin".to_owned()),
-            ("AWS_S3_ALLOW_UNSAFE_RENAME".to_owned(), "true".to_owned()),
-        ]);
-
-        let table_metadata_manager = TableMetadataManager {
-            url_scheme: format!("s3://modelardb/{METADATA_FOLDER}"),
             storage_options,
             session: SessionContext::new(),
             tag_value_hashes: DashMap::new(),
@@ -407,7 +377,7 @@ impl TableMetadataManager {
     }
 
     /// Return the [`ModelTableMetadata`] of each model table currently in the metadata delta lake.
-    /// If the [`ModelTableMetadata`] cannot be retrieved, [`Error`] is returned.
+    /// If the [`ModelTableMetadata`] cannot be retrieved, [`DeltaTableError`] is returned.
     pub async fn model_table_metadata(
         &self,
     ) -> Result<Vec<Arc<ModelTableMetadata>>, DeltaTableError> {
