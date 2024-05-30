@@ -274,7 +274,9 @@ fn randomize_and_collect_iterator(
     let mut std_rng = create_random_number_generator();
     if let Some(noise_range) = maybe_noise_range {
         let distribution = Uniform::from(noise_range);
-        values.map(|value| value + std_rng.sample(distribution)).collect()
+        values
+            .map(|value| value + std_rng.sample(distribution))
+            .collect()
     } else {
         values.collect()
     }

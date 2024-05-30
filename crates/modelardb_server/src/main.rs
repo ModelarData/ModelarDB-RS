@@ -31,6 +31,7 @@ use std::sync::Arc;
 use modelardb_common::arguments::{collect_command_line_arguments, validate_remote_data_folder};
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::types::ServerMode;
+use object_store::path::Path;
 use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
@@ -68,7 +69,7 @@ impl ClusterMode {
 /// Folders for storing metadata and Apache Parquet files.
 pub struct DataFolders {
     /// Folder for storing metadata and Apache Parquet files on the local file system.
-    pub local_data_folder: Arc<LocalFileSystem>,
+    pub local_data_folder: (Arc<LocalFileSystem>, Arc<TableMetadataManager>),
     /// Folder for storing Apache Parquet files in a remote object store.
     pub remote_data_folder: Option<Arc<dyn ObjectStore>>,
     /// Folder from which Apache Parquet files will be read during query execution. It is equivalent
@@ -160,20 +161,20 @@ async fn parse_command_line_arguments(
 ) -> Result<(ServerMode, ClusterMode, DataFolders), String> {
     // Match the provided command line arguments to the supported inputs.
     match arguments {
-        &["edge", local_data_folder] | &[local_data_folder] => {
-            let local_object_store = argument_to_local_object_store(local_data_folder)?;
+        &["edge", local_data_folder_path] | &[local_data_folder_path] => {
+            let local_data_folder = argument_to_local_data_folder(local_data_folder_path).await?;
 
             Ok((
                 ServerMode::Edge,
                 ClusterMode::SingleNode,
                 DataFolders {
-                    local_data_folder: local_object_store.clone(),
+                    local_data_folder: local_data_folder.clone(),
                     remote_data_folder: None,
-                    query_data_folder: local_object_store,
+                    query_data_folder: local_data_folder.0,
                 },
             ))
         }
-        &["cloud", local_data_folder, manager_url] => {
+        &["cloud", local_data_folder_path, manager_url] => {
             let (manager, remote_object_store) =
                 Manager::register_node(manager_url, ServerMode::Cloud)
                     .await
@@ -183,14 +184,15 @@ async fn parse_command_line_arguments(
                 ServerMode::Cloud,
                 ClusterMode::MultiNode(manager),
                 DataFolders {
-                    local_data_folder: argument_to_local_object_store(local_data_folder)?,
+                    local_data_folder: argument_to_local_data_folder(local_data_folder_path)
+                        .await?,
                     remote_data_folder: Some(remote_object_store.clone()),
                     query_data_folder: remote_object_store,
                 },
             ))
         }
-        &["edge", local_data_folder, manager_url] | &[local_data_folder, manager_url] => {
-            let local_object_store = argument_to_local_object_store(local_data_folder)?;
+        &["edge", local_data_folder_path, manager_url] | &[local_data_folder_path, manager_url] => {
+            let local_data_folder = argument_to_local_data_folder(local_data_folder_path).await?;
             let (manager, remote_object_store) =
                 Manager::register_node(manager_url, ServerMode::Edge)
                     .await
@@ -200,9 +202,9 @@ async fn parse_command_line_arguments(
                 ServerMode::Edge,
                 ClusterMode::MultiNode(manager),
                 DataFolders {
-                    local_data_folder: local_object_store.clone(),
+                    local_data_folder: local_data_folder.clone(),
                     remote_data_folder: Some(remote_object_store),
-                    query_data_folder: local_object_store,
+                    query_data_folder: local_data_folder.0,
                 },
             ))
         }
@@ -217,11 +219,19 @@ async fn parse_command_line_arguments(
     }
 }
 
-/// Create an [`ObjectStore`] that represents the local path in `argument`.
-fn argument_to_local_object_store(argument: &str) -> Result<Arc<LocalFileSystem>, String> {
+/// Create an [`ObjectStore`] and a [`TableMetadataManager`] that represents the local path in `argument`.
+async fn argument_to_local_data_folder(
+    argument: &str,
+) -> Result<(Arc<LocalFileSystem>, Arc<TableMetadataManager>), String> {
     let object_store =
         LocalFileSystem::new_with_prefix(argument).map_err(|error| error.to_string())?;
-    Ok(Arc::new(object_store))
+
+    let table_metadata_manager =
+        TableMetadataManager::try_new_local_table_metadata_manager(Path::from(argument))
+            .await
+            .map_err(|error| error.to_string())?;
+
+    Ok((Arc::new(object_store), Arc::new(table_metadata_manager)))
 }
 
 /// Register a handler to execute when CTRL+C is pressed. The handler takes an exclusive lock for

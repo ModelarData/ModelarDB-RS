@@ -25,13 +25,13 @@ use datafusion::arrow::array::{StringArray, UInt64Array};
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
 use datafusion::arrow::record_batch::RecordBatch;
 use futures::stream;
+use modelardb_common::arguments;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::schemas::TAG_METADATA_SCHEMA;
 use modelardb_common::types::ServerMode;
-use modelardb_common::arguments;
 use object_store::ObjectStore;
 use tokio::sync::RwLock;
 use tonic::metadata::MetadataMap;
@@ -105,7 +105,7 @@ impl Manager {
         // if the node is a cloud node.
         let maybe_table_metadata_manager = if server_mode == ServerMode::Cloud {
             Some(Arc::new(
-                TableMetadataManager::try_from_connection_info(offset_data.clone())
+                TableMetadataManager::try_from_connection_info(offset_data)
                     .await
                     .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?,
             ))

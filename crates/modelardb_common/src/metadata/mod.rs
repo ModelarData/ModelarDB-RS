@@ -23,8 +23,8 @@ pub mod model_table_metadata;
 use std::collections::HashMap;
 use std::fmt::{Debug, Formatter};
 use std::hash::{DefaultHasher, Hasher};
-use std::{fmt, mem};
 use std::sync::Arc;
+use std::{fmt, mem};
 
 use arrow::array::{
     Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Int16Array, Int64Array, StringArray,

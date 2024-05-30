@@ -27,10 +27,10 @@ use datafusion::prelude::{ParquetReadOptions, SessionConfig, SessionContext};
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
+use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::storage;
 use modelardb_common::types::ServerMode;
-use modelardb_common::{metadata, parser};
 use object_store::path::Path;
 use object_store::ObjectStore;
 use tokio::runtime::Runtime;
@@ -63,18 +63,8 @@ impl Context {
         cluster_mode: ClusterMode,
         server_mode: ServerMode,
     ) -> Result<Self, ModelarDbError> {
-        let table_metadata_manager = Arc::new(
-            metadata::try_new_sqlite_table_metadata_manager(&data_folders.local_data_folder)
-                .await
-                .map_err(|error| {
-                    ModelarDbError::ConfigurationError(format!(
-                        "Unable to create a TableMetadataManager: {error}"
-                    ))
-                })?,
-        );
-
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            data_folders.local_data_folder.clone(),
+            data_folders.local_data_folder.0.clone(),
             cluster_mode,
             server_mode,
         )));
@@ -84,10 +74,10 @@ impl Context {
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(
                 runtime,
-                data_folders.local_data_folder.clone(),
+                data_folders.local_data_folder.0.clone(),
                 data_folders.remote_data_folder.clone(),
                 &configuration_manager,
-                table_metadata_manager.clone(),
+                data_folders.local_data_folder.1.clone(),
             )
             .await
             .map_err(|error| {
@@ -98,7 +88,7 @@ impl Context {
         ));
 
         Ok(Context {
-            table_metadata_manager,
+            table_metadata_manager: data_folders.local_data_folder.1.clone(),
             configuration_manager,
             session,
             storage_engine,
