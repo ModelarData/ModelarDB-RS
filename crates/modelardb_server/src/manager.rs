@@ -29,7 +29,7 @@ use modelardb_common::arguments;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::metadata::TableMetadataManager;
+use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::schemas::TAG_METADATA_SCHEMA;
 use modelardb_common::types::ServerMode;
 use object_store::ObjectStore;

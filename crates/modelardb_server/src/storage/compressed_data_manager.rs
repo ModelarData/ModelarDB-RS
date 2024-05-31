@@ -27,7 +27,7 @@ use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::compressed_file::CompressedFile;
-use modelardb_common::metadata::TableMetadataManager;
+use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::storage;
 use modelardb_common::types::{Timestamp, Value};
 use object_store::local::LocalFileSystem;

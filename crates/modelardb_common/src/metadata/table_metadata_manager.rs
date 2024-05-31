@@ -26,28 +26,21 @@ use std::{fmt, mem};
 use arrow::array::{
     Array, ArrayRef, BinaryArray, BooleanArray, Float32Array, Int16Array, Int64Array, StringArray,
 };
-use arrow::compute::concat_batches;
 use arrow::datatypes::Schema;
 use arrow::error::ArrowError;
 use arrow::ipc::writer::IpcWriteOptions;
-use arrow::record_batch::RecordBatch;
 use arrow_flight::{IpcMessage, SchemaAsIpc};
 use dashmap::DashMap;
 use datafusion::common::{DFSchema, ToDFSchema};
-use datafusion::prelude::{col, SessionContext};
+use datafusion::prelude::col;
 use deltalake::kernel::{DataType, StructField};
-use deltalake::operations::create::CreateBuilder;
-use deltalake::protocol::SaveMode;
-use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
+use deltalake::{DeltaTable, DeltaTableError};
 use object_store::path::Path;
 use object_store::ObjectMeta;
 
-use crate::arguments::{
-    decode_argument, extract_azure_blob_storage_arguments, extract_s3_arguments,
-};
 use crate::metadata::compressed_file::CompressedFile;
 use crate::metadata::model_table_metadata::{GeneratedColumn, ModelTableMetadata};
-use crate::metadata::MetadataDeltaLake;
+use crate::metadata::{univariate_id_to_tag_hash, MetadataDeltaLake};
 use crate::test::ERROR_BOUND_ZERO;
 use crate::types::{ErrorBound, Timestamp, Value};
 use crate::{array, parser};
@@ -111,52 +104,56 @@ impl TableMetadataManager {
     /// If the tables exist or were created, return [`Ok`], otherwise return [`DeltaTableError`].
     async fn create_metadata_delta_lake_tables(&self) -> Result<(), DeltaTableError> {
         // Create the table_metadata table if it does not exist.
-        self.create_delta_lake_table(
-            "table_metadata",
-            vec![
-                StructField::new("table_name", DataType::STRING, false),
-                StructField::new("sql", DataType::STRING, false),
-            ],
-        )
-        .await?;
+        self.metadata_delta_lake
+            .create_delta_lake_table(
+                "table_metadata",
+                vec![
+                    StructField::new("table_name", DataType::STRING, false),
+                    StructField::new("sql", DataType::STRING, false),
+                ],
+            )
+            .await?;
 
         // Create the model_table_metadata table if it does not exist.
-        self.create_delta_lake_table(
-            "model_table_metadata",
-            vec![
-                StructField::new("table_name", DataType::STRING, false),
-                StructField::new("query_schema", DataType::BINARY, false),
-                StructField::new("sql", DataType::STRING, false),
-            ],
-        )
-        .await?;
+        self.metadata_delta_lake
+            .create_delta_lake_table(
+                "model_table_metadata",
+                vec![
+                    StructField::new("table_name", DataType::STRING, false),
+                    StructField::new("query_schema", DataType::BINARY, false),
+                    StructField::new("sql", DataType::STRING, false),
+                ],
+            )
+            .await?;
 
         // Create the model_table_hash_table_name table if it does not exist.
-        self.create_delta_lake_table(
-            "model_table_hash_table_name",
-            vec![
-                StructField::new("hash", DataType::LONG, false),
-                StructField::new("table_name", DataType::STRING, false),
-            ],
-        )
-        .await?;
+        self.metadata_delta_lake
+            .create_delta_lake_table(
+                "model_table_hash_table_name",
+                vec![
+                    StructField::new("hash", DataType::LONG, false),
+                    StructField::new("table_name", DataType::STRING, false),
+                ],
+            )
+            .await?;
 
         // Create the model_table_field_columns table if it does not exist. Note that column_index
         // will only use a maximum of 10 bits. generated_column_* is NULL if the fields are stored
         // as segments.
-        self.create_delta_lake_table(
-            "model_table_field_columns",
-            vec![
-                StructField::new("table_name", DataType::STRING, false),
-                StructField::new("column_name", DataType::STRING, false),
-                StructField::new("column_index", DataType::SHORT, false),
-                StructField::new("error_bound_value", DataType::FLOAT, false),
-                StructField::new("error_bound_is_relative", DataType::BOOLEAN, false),
-                StructField::new("generated_column_expr", DataType::STRING, true),
-                StructField::new("generated_column_sources", DataType::BINARY, true),
-            ],
-        )
-        .await?;
+        self.metadata_delta_lake
+            .create_delta_lake_table(
+                "model_table_field_columns",
+                vec![
+                    StructField::new("table_name", DataType::STRING, false),
+                    StructField::new("column_name", DataType::STRING, false),
+                    StructField::new("column_index", DataType::SHORT, false),
+                    StructField::new("error_bound_value", DataType::FLOAT, false),
+                    StructField::new("error_bound_is_relative", DataType::BOOLEAN, false),
+                    StructField::new("generated_column_expr", DataType::STRING, true),
+                    StructField::new("generated_column_sources", DataType::BINARY, true),
+                ],
+            )
+            .await?;
 
         Ok(())
     }
@@ -170,20 +167,22 @@ impl TableMetadataManager {
         name: &str,
         sql: &str,
     ) -> Result<DeltaTable, DeltaTableError> {
-        self.append_to_table(
-            "table_metadata",
-            vec![
-                Arc::new(StringArray::from(vec![name])),
-                Arc::new(StringArray::from(vec![sql])),
-            ],
-        )
-        .await
+        self.metadata_delta_lake
+            .append_to_table(
+                "table_metadata",
+                vec![
+                    Arc::new(StringArray::from(vec![name])),
+                    Arc::new(StringArray::from(vec![sql])),
+                ],
+            )
+            .await
     }
 
     /// Return the name of each table currently in the metadata delta lake. Note that this does not
     /// include model tables. If the table names cannot be retrieved, [`DeltaTableError`] is returned.
     pub async fn table_names(&self) -> Result<Vec<String>, DeltaTableError> {
         let batch = self
+            .metadata_delta_lake
             .query_table("table_metadata", "SELECT table_name FROM table_metadata")
             .await?;
 
@@ -215,41 +214,44 @@ impl TableMetadataManager {
                 .collect::<Vec<StructField>>(),
         );
 
-        self.create_delta_lake_table(
-            format!("{}_tags", model_table_metadata.name).as_str(),
-            table_name_tags_columns,
-        )
-        .await?;
+        self.metadata_delta_lake
+            .create_delta_lake_table(
+                format!("{}_tags", model_table_metadata.name).as_str(),
+                table_name_tags_columns,
+            )
+            .await?;
 
         // Create a table_name_compressed_files table to save the metadata of the table's files.
-        self.create_delta_lake_table(
-            format!("{}_compressed_files", model_table_metadata.name).as_str(),
-            vec![
-                StructField::new("file_path", DataType::STRING, false),
-                StructField::new("field_column", DataType::SHORT, false),
-                StructField::new("size", DataType::LONG, false),
-                StructField::new("created_at", DataType::LONG, false),
-                StructField::new("start_time", DataType::LONG, false),
-                StructField::new("end_time", DataType::LONG, false),
-                StructField::new("min_value", DataType::FLOAT, false),
-                StructField::new("max_value", DataType::FLOAT, false),
-            ],
-        )
-        .await?;
+        self.metadata_delta_lake
+            .create_delta_lake_table(
+                format!("{}_compressed_files", model_table_metadata.name).as_str(),
+                vec![
+                    StructField::new("file_path", DataType::STRING, false),
+                    StructField::new("field_column", DataType::SHORT, false),
+                    StructField::new("size", DataType::LONG, false),
+                    StructField::new("created_at", DataType::LONG, false),
+                    StructField::new("start_time", DataType::LONG, false),
+                    StructField::new("end_time", DataType::LONG, false),
+                    StructField::new("min_value", DataType::FLOAT, false),
+                    StructField::new("max_value", DataType::FLOAT, false),
+                ],
+            )
+            .await?;
 
         // Convert the query schema to bytes, so it can be saved in the metadata delta lake.
         let query_schema_bytes = try_convert_schema_to_bytes(&model_table_metadata.query_schema)?;
 
         // Add a new row in the model_table_metadata table to persist the model table.
-        self.append_to_table(
-            "model_table_metadata",
-            vec![
-                Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
-                Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
-                Arc::new(StringArray::from(vec![sql])),
-            ],
-        )
-        .await?;
+        self.metadata_delta_lake
+            .append_to_table(
+                "model_table_metadata",
+                vec![
+                    Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
+                    Arc::new(BinaryArray::from_vec(vec![&query_schema_bytes])),
+                    Arc::new(StringArray::from(vec![sql])),
+                ],
+            )
+            .await?;
 
         // Add a row for each field column to the model_table_field_columns table.
         for (query_schema_index, field) in model_table_metadata
@@ -292,21 +294,22 @@ impl TableMetadataManager {
                     };
 
                 // query_schema_index is simply cast as a model table contains at most 1024 columns.
-                self.append_to_table(
-                    "model_table_field_columns",
-                    vec![
-                        Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
-                        Arc::new(StringArray::from(vec![field.name().clone()])),
-                        Arc::new(Int16Array::from(vec![query_schema_index as i16])),
-                        Arc::new(Float32Array::from(vec![error_bound_value])),
-                        Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
-                        Arc::new(StringArray::from(vec![generated_column_expr])),
-                        Arc::new(BinaryArray::from_opt_vec(vec![
-                            generated_column_sources.as_deref()
-                        ])),
-                    ],
-                )
-                .await?;
+                self.metadata_delta_lake
+                    .append_to_table(
+                        "model_table_field_columns",
+                        vec![
+                            Arc::new(StringArray::from(vec![model_table_metadata.name.clone()])),
+                            Arc::new(StringArray::from(vec![field.name().clone()])),
+                            Arc::new(Int16Array::from(vec![query_schema_index as i16])),
+                            Arc::new(Float32Array::from(vec![error_bound_value])),
+                            Arc::new(BooleanArray::from(vec![error_bound_is_relative])),
+                            Arc::new(StringArray::from(vec![generated_column_expr])),
+                            Arc::new(BinaryArray::from_opt_vec(vec![
+                                generated_column_sources.as_deref()
+                            ])),
+                        ],
+                    )
+                    .await?;
             }
         }
 
@@ -319,6 +322,7 @@ impl TableMetadataManager {
         &self,
     ) -> Result<Vec<Arc<ModelTableMetadata>>, DeltaTableError> {
         let batch = self
+            .metadata_delta_lake
             .query_table("model_table_metadata", "SELECT * FROM model_table_metadata")
             .await?;
 
@@ -366,6 +370,7 @@ impl TableMetadataManager {
         query_schema_columns: usize,
     ) -> Result<Vec<ErrorBound>, DeltaTableError> {
         let batch = self
+            .metadata_delta_lake
             .query_table(
                 "model_table_field_columns",
                 &format!(
@@ -411,6 +416,7 @@ impl TableMetadataManager {
         df_schema: &DFSchema,
     ) -> Result<Vec<Option<GeneratedColumn>>, DeltaTableError> {
         let batch = self
+            .metadata_delta_lake
             .query_table(
                 "model_table_field_columns",
                 &format!(
@@ -536,15 +542,14 @@ impl TableMetadataManager {
                 .collect::<Vec<ArrayRef>>(),
         );
 
-        let source = self.session.read_batch(
-            self.metadata_table_record_batch(
-                &format!("{table_name}_tags"),
-                table_name_tags_columns,
-            )
-            .await?,
+        let source = self.metadata_delta_lake.session.read_batch(
+            self.metadata_delta_lake
+                .metadata_table_record_batch(&format!("{table_name}_tags"), table_name_tags_columns)
+                .await?,
         )?;
 
         let ops = self
+            .metadata_delta_lake
             .metadata_table_delta_ops(&format!("{table_name}_tags"))
             .await?;
 
@@ -563,18 +568,20 @@ impl TableMetadataManager {
 
         // Save the tag hash metadata to the model_table_hash_table_name table if it does not
         // already contain it.
-        let source = self.session.read_batch(
-            self.metadata_table_record_batch(
-                "model_table_hash_table_name",
-                vec![
-                    Arc::new(Int64Array::from(vec![signed_tag_hash])),
-                    Arc::new(StringArray::from(vec![table_name])),
-                ],
-            )
-            .await?,
+        let source = self.metadata_delta_lake.session.read_batch(
+            self.metadata_delta_lake
+                .metadata_table_record_batch(
+                    "model_table_hash_table_name",
+                    vec![
+                        Arc::new(Int64Array::from(vec![signed_tag_hash])),
+                        Arc::new(StringArray::from(vec![table_name])),
+                    ],
+                )
+                .await?,
         )?;
 
         let ops = self
+            .metadata_delta_lake
             .metadata_table_delta_ops("model_table_hash_table_name")
             .await?;
 
@@ -603,6 +610,7 @@ impl TableMetadataManager {
         let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
         let batch = self
+            .metadata_delta_lake
             .query_table(
                 "model_table_hash_table_name",
                 &format!(
@@ -639,6 +647,7 @@ impl TableMetadataManager {
         }
 
         let batch = self
+            .metadata_delta_lake
             .query_table(
                 &format!("{model_table_name}_tags"),
                 &format!(
@@ -713,7 +722,7 @@ impl Debug for TableMetadataManager {
     /// Write a string-based representation of the [`TableMetadataManager`] to `f`. Returns
     /// `Err` if `std::write` cannot format the string and write it to `f`.
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.url_scheme)
+        write!(f, "{}", self.metadata_delta_lake.url_scheme)
     }
 }
 
@@ -784,24 +793,28 @@ mod tests {
 
         // Verify that the tables were created, registered, and has the expected columns.
         assert!(metadata_manager
+            .metadata_delta_lake
             .session
             .sql("SELECT table_name, sql FROM table_metadata")
             .await
             .is_ok());
 
         assert!(metadata_manager
+            .metadata_delta_lake
             .session
             .sql("SELECT table_name, query_schema, sql FROM model_table_metadata")
             .await
             .is_ok());
 
         assert!(metadata_manager
+            .metadata_delta_lake
             .session
             .sql("SELECT hash, table_name FROM model_table_hash_table_name")
             .await
             .is_ok());
 
         assert!(metadata_manager
+            .metadata_delta_lake
             .session
             .sql("SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
                  generated_column_expr, generated_column_sources FROM model_table_field_columns")
@@ -874,6 +887,7 @@ mod tests {
 
         // Verify that the tables were created, and has the expected columns.
         assert!(metadata_manager
+            .metadata_delta_lake
             .session
             .sql(&format!(
                 "SELECT hash, tag FROM {}_tags",
@@ -883,6 +897,7 @@ mod tests {
             .is_ok());
 
         assert!(metadata_manager
+            .metadata_delta_lake
             .session
             .sql(&format!(
                 "SELECT file_path, field_column, size, created_at, start_time, end_time, min_value,

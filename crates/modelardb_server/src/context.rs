@@ -26,7 +26,7 @@ use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::prelude::{ParquetReadOptions, SessionConfig, SessionContext};
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::metadata::TableMetadataManager;
+use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::parser;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::storage;

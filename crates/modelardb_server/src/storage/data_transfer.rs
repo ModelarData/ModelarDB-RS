@@ -25,7 +25,7 @@ use dashmap::DashMap;
 use datafusion::parquet::errors::ParquetError;
 use futures::StreamExt;
 use modelardb_common::metadata::compressed_file::CompressedFile;
-use modelardb_common::metadata::TableMetadataManager;
+use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use object_store::local::LocalFileSystem;
 use object_store::path::{Path, PathPart};
 use object_store::{ObjectMeta, ObjectStore};

@@ -20,7 +20,7 @@ use std::str::FromStr;
 
 use futures::TryStreamExt;
 use modelardb_common::errors::ModelarDbError;
-use modelardb_common::metadata::TableMetadataManager;
+use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::types::ServerMode;
 use sqlx::{PgPool, Row};
 use uuid::Uuid;

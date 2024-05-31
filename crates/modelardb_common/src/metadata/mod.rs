@@ -17,22 +17,17 @@
 //! created tables, and query the created tables.
 
 use std::collections::HashMap;
-use std::fmt::Debug;
-use std::hash::Hasher;
 use std::sync::Arc;
 
-use arrow::array::{
-    Array, ArrayRef,
-};
+use arrow::array::ArrayRef;
 use arrow::compute::concat_batches;
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
-use datafusion::common::ToDFSchema;
 use datafusion::prelude::SessionContext;
-use deltalake::{DeltaOps, DeltaTable, DeltaTableError, open_table_with_storage_options};
 use deltalake::kernel::StructField;
 use deltalake::operations::create::CreateBuilder;
 use deltalake::protocol::SaveMode;
+use deltalake::{open_table_with_storage_options, DeltaOps, DeltaTable, DeltaTableError};
 use object_store::path::Path;
 
 use crate::arguments::{
@@ -61,7 +56,7 @@ impl MetadataDeltaLake {
     // TODO: Maybe change to use the real from and try from.
     /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] under
     /// `folder_path`.
-    pub async fn from_path(folder_path: Path) -> MetadataDeltaLake {
+    pub fn from_path(folder_path: Path) -> MetadataDeltaLake {
         MetadataDeltaLake {
             url_scheme: format!("{folder_path}/{METADATA_FOLDER}"),
             storage_options: HashMap::new(),

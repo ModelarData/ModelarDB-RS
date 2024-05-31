@@ -29,7 +29,7 @@ use std::env;
 use std::sync::Arc;
 
 use modelardb_common::arguments::{collect_command_line_arguments, validate_remote_data_folder};
-use modelardb_common::metadata::TableMetadataManager;
+use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::types::ServerMode;
 use object_store::path::Path;
 use object_store::{local::LocalFileSystem, ObjectStore};
@@ -227,7 +227,7 @@ async fn argument_to_local_data_folder(
         LocalFileSystem::new_with_prefix(argument).map_err(|error| error.to_string())?;
 
     let table_metadata_manager =
-        TableMetadataManager::try_new_local_table_metadata_manager(Path::from(argument))
+        TableMetadataManager::try_from_path(Path::from(argument))
             .await
             .map_err(|error| error.to_string())?;
 

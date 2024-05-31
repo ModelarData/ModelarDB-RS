@@ -26,7 +26,7 @@ use dashmap::DashMap;
 use datafusion::arrow::array::{Array, StringArray};
 use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::metadata::TableMetadataManager;
+use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
 use object_store::local::LocalFileSystem;
