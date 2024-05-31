@@ -57,13 +57,191 @@ use crate::{array, parser};
 /// The folder storing metadata in the data folders.
 pub const METADATA_FOLDER: &str = "metadata";
 
+// TODO: Change module doc comment.
+/// Provides functionality to create and use metadata tables in a metadata delta lake.
+#[derive(Clone)]
+pub struct MetadataDeltaLake {
+    /// URL to access the base folder of the location where the metadata tables are stored.
+    url_scheme: String,
+    /// Storage options used to access delta lake tables in remote object stores.
+    storage_options: HashMap<String, String>,
+    /// Session used to read from the metadata delta lake using Apache Arrow DataFusion.
+    session: SessionContext,
+}
+
+impl MetadataDeltaLake {
+    /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] under
+    /// `folder_path`.
+    pub async fn try_new_local_table_metadata_manager(folder_path: Path) -> MetadataDeltaLake {
+        MetadataDeltaLake {
+            url_scheme: format!("{folder_path}/{METADATA_FOLDER}"),
+            storage_options: HashMap::new(),
+            session: SessionContext::new(),
+        }
+    }
+
+    /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] in a
+    /// remote object store given by `connection_info`. If `connection_info` could not be parsed
+    /// return [`DeltaTableError`].
+    pub async fn try_from_connection_info(
+        connection_info: &[u8],
+    ) -> Result<MetadataDeltaLake, DeltaTableError> {
+        let (object_store_type, offset_data) = decode_argument(connection_info)
+            .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+
+        let (url_scheme, storage_options) = match object_store_type {
+            "s3" => {
+                let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
+                    extract_s3_arguments(offset_data)
+                        .await
+                        .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+
+                let storage_options = HashMap::from([
+                    ("REGION".to_owned(), "".to_owned()),
+                    ("ALLOW_HTTP".to_owned(), "true".to_owned()),
+                    ("ENDPOINT".to_owned(), endpoint.to_owned()),
+                    ("BUCKET_NAME".to_owned(), bucket_name.to_owned()),
+                    ("ACCESS_KEY_ID".to_owned(), access_key_id.to_owned()),
+                    ("SECRET_ACCESS_KEY".to_owned(), secret_access_key.to_owned()),
+                    ("AWS_S3_ALLOW_UNSAFE_RENAME".to_owned(), "true".to_owned()),
+                ]);
+
+                Ok((
+                    format!("s3://{bucket_name}/{METADATA_FOLDER}"),
+                    storage_options,
+                ))
+            }
+            // TODO: Needs to be tested.
+            "azureblobstorage" => {
+                let (account, access_key, container_name, _offset_data) =
+                    extract_azure_blob_storage_arguments(offset_data)
+                        .await
+                        .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+
+                let storage_options = HashMap::from([
+                    ("ACCOUNT_NAME".to_owned(), account.to_owned()),
+                    ("ACCESS_KEY".to_owned(), access_key.to_owned()),
+                    ("CONTAINER_NAME".to_owned(), container_name.to_owned()),
+                ]);
+
+                Ok((
+                    format!("az://{container_name}/{METADATA_FOLDER}"),
+                    storage_options,
+                ))
+            }
+            _ => Err(DeltaTableError::Generic(format!(
+                "{object_store_type} is currently not supported."
+            ))),
+        }?;
+
+        Ok(MetadataDeltaLake {
+            url_scheme,
+            storage_options,
+            session: SessionContext::new(),
+        })
+    }
+
+    /// Use `table_name` to create a delta lake table with `columns` in the location given by
+    /// `url_scheme` and `storage_options` if it does not already exist. The created table is
+    /// registered in the Apache Arrow Datafusion session. If the table could not be created or
+    /// registered, return [`DeltaTableError`].
+    async fn create_delta_lake_table(
+        &self,
+        table_name: &str,
+        columns: Vec<StructField>,
+    ) -> Result<(), DeltaTableError> {
+        let table = Arc::new(
+            CreateBuilder::new()
+                .with_save_mode(SaveMode::Ignore)
+                .with_storage_options(self.storage_options.clone())
+                .with_table_name(table_name)
+                .with_location(format!("{}/{table_name}", self.url_scheme))
+                .with_columns(columns)
+                .await?,
+        );
+
+        self.session.register_table(table_name, table.clone())?;
+
+        Ok(())
+    }
+
+    /// Append the columns to the table with the given `table_name`. If the columns are appended to
+    /// the table, return the updated [`DeltaTable`], otherwise return [`DeltaTableError`].
+    async fn append_to_table(
+        &self,
+        table_name: &str,
+        columns: Vec<ArrayRef>,
+    ) -> Result<DeltaTable, DeltaTableError> {
+        let batch = self
+            .metadata_table_record_batch(table_name, columns)
+            .await?;
+
+        let ops = self.metadata_table_delta_ops(table_name).await?;
+        ops.write(vec![batch]).await
+    }
+
+    /// Return a [`RecordBatch`] with the given `columns` for the metadata table with the given
+    /// `table_name`. If the table does not exist or the [`RecordBatch`] cannot be created, return
+    /// [`DeltaTableError`].
+    async fn metadata_table_record_batch(
+        &self,
+        table_name: &str,
+        columns: Vec<ArrayRef>,
+    ) -> Result<RecordBatch, DeltaTableError> {
+        let table_provider = self.session.table_provider(table_name).await?;
+        Ok(RecordBatch::try_new(table_provider.schema(), columns)?)
+    }
+
+    // TODO: Look into optimizing the way we store and access tables in the struct fields (avoid open_table() every time).
+    // TODO: Maybe we need to use the return value every time we do a table action to update the table.
+    /// Return the [`DeltaOps`] for the metadata table with the given `table_name`. If the
+    /// [`DeltaOps`] cannot be retrieved, return [`DeltaTableError`].
+    async fn metadata_table_delta_ops(
+        &self,
+        table_name: &str,
+    ) -> Result<DeltaOps, DeltaTableError> {
+        let table = open_table_with_storage_options(
+            format!("{}/{table_name}", self.url_scheme),
+            self.storage_options.clone(),
+        )
+        .await?;
+
+        Ok(DeltaOps::from(table))
+    }
+
+    // TODO: Find a way to avoid having to re-register the table every time we want to read from it.
+    /// Query the table with the given `table_name` using the given `query`. If the table is queried,
+    /// return a [`RecordBatch`] with the query result, otherwise return [`DeltaTableError`].
+    async fn query_table(
+        &self,
+        table_name: &str,
+        query: &str,
+    ) -> Result<RecordBatch, DeltaTableError> {
+        let table = open_table_with_storage_options(
+            format!("{}/{table_name}", self.url_scheme),
+            self.storage_options.clone(),
+        )
+        .await?;
+
+        self.session.deregister_table(table_name)?;
+        self.session.register_table(table_name, Arc::new(table))?;
+
+        let dataframe = self.session.sql(query).await?;
+        let schema = Schema::from(dataframe.schema());
+
+        let batches = dataframe.collect().await?;
+        let batch = concat_batches(&schema.into(), batches.as_slice())?;
+
+        Ok(batch)
+    }
+}
+
 /// Stores the metadata required for reading from and writing to the tables and model tables.
 /// The data that needs to be persisted is stored in the metadata delta lake.
 #[derive(Clone)]
 pub struct TableMetadataManager {
     /// URL to access the base folder of the location where the metadata tables are stored.
     url_scheme: String,
-    // TODO: Look into using dash map or StorageOptions.
     /// Storage options used to access delta lake tables in remote object stores.
     storage_options: HashMap<String, String>,
     /// Session used to read from the metadata delta lake using Apache Arrow DataFusion.
@@ -735,100 +913,6 @@ impl TableMetadataManager {
         }
 
         Ok(hash_to_tags)
-    }
-
-    /// Use `table_name` to create a delta lake table with `columns` in the location given by
-    /// `url_scheme` and `storage_options` if it does not already exist. The created table is
-    /// registered in the Apache Arrow Datafusion session. If the table could not be created or
-    /// registered, return [`DeltaTableError`].
-    async fn create_delta_lake_table(
-        &self,
-        table_name: &str,
-        columns: Vec<StructField>,
-    ) -> Result<(), DeltaTableError> {
-        let table = Arc::new(
-            CreateBuilder::new()
-                .with_save_mode(SaveMode::Ignore)
-                .with_storage_options(self.storage_options.clone())
-                .with_table_name(table_name)
-                .with_location(format!("{}/{table_name}", self.url_scheme))
-                .with_columns(columns)
-                .await?,
-        );
-
-        self.session.register_table(table_name, table.clone())?;
-
-        Ok(())
-    }
-
-    /// Append the columns to the table with the given `table_name`. If the columns are appended to
-    /// the table, return the updated [`DeltaTable`], otherwise return [`DeltaTableError`].
-    async fn append_to_table(
-        &self,
-        table_name: &str,
-        columns: Vec<ArrayRef>,
-    ) -> Result<DeltaTable, DeltaTableError> {
-        let batch = self
-            .metadata_table_record_batch(table_name, columns)
-            .await?;
-
-        let ops = self.metadata_table_delta_ops(table_name).await?;
-        ops.write(vec![batch]).await
-    }
-
-    /// Return a [`RecordBatch`] with the given `columns` for the metadata table with the given
-    /// `table_name`. If the table does not exist or the [`RecordBatch`] cannot be created, return
-    /// [`DeltaTableError`].
-    async fn metadata_table_record_batch(
-        &self,
-        table_name: &str,
-        columns: Vec<ArrayRef>,
-    ) -> Result<RecordBatch, DeltaTableError> {
-        let table_provider = self.session.table_provider(table_name).await?;
-        Ok(RecordBatch::try_new(table_provider.schema(), columns)?)
-    }
-
-    // TODO: Look into optimizing the way we store and access tables in the struct fields (avoid open_table() every time).
-    // TODO: Maybe we need to use the return value every time we do a table action to update the table.
-    /// Return the [`DeltaOps`] for the metadata table with the given `table_name`. If the
-    /// [`DeltaOps`] cannot be retrieved, return [`DeltaTableError`].
-    async fn metadata_table_delta_ops(
-        &self,
-        table_name: &str,
-    ) -> Result<DeltaOps, DeltaTableError> {
-        let table = open_table_with_storage_options(
-            format!("{}/{table_name}", self.url_scheme),
-            self.storage_options.clone(),
-        )
-        .await?;
-
-        Ok(DeltaOps::from(table))
-    }
-
-    // TODO: Find a way to avoid having to re-register the table every time we want to read from it.
-    /// Query the table with the given `table_name` using the given `query`. If the table is queried,
-    /// return a [`RecordBatch`] with the query result, otherwise return [`DeltaTableError`].
-    async fn query_table(
-        &self,
-        table_name: &str,
-        query: &str,
-    ) -> Result<RecordBatch, DeltaTableError> {
-        let table = open_table_with_storage_options(
-            format!("{}/{table_name}", self.url_scheme),
-            self.storage_options.clone(),
-        )
-        .await?;
-
-        self.session.deregister_table(table_name)?;
-        self.session.register_table(table_name, Arc::new(table))?;
-
-        let dataframe = self.session.sql(query).await?;
-        let schema = Schema::from(dataframe.schema());
-
-        let batches = dataframe.collect().await?;
-        let batch = concat_batches(&schema.into(), batches.as_slice())?;
-
-        Ok(batch)
     }
 
     // TODO: Remove placeholder method.
