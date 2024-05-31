@@ -23,6 +23,7 @@ use arrow::array::ArrayRef;
 use arrow::compute::concat_batches;
 use arrow::datatypes::Schema;
 use arrow::record_batch::RecordBatch;
+use datafusion::dataframe::DataFrame;
 use datafusion::prelude::SessionContext;
 use deltalake::kernel::StructField;
 use deltalake::operations::create::CreateBuilder;
@@ -49,7 +50,7 @@ pub struct MetadataDeltaLake {
     /// Storage options used to access delta lake tables in remote object stores.
     storage_options: HashMap<String, String>,
     /// Session used to read from the metadata delta lake using Apache Arrow DataFusion.
-    pub session: SessionContext,
+    session: SessionContext,
 }
 
 impl MetadataDeltaLake {
@@ -156,24 +157,25 @@ impl MetadataDeltaLake {
         table_name: &str,
         columns: Vec<ArrayRef>,
     ) -> Result<DeltaTable, DeltaTableError> {
-        let batch = self
-            .metadata_table_record_batch(table_name, columns)
-            .await?;
+        let table_provider = self.session.table_provider(table_name).await?;
+        let batch = RecordBatch::try_new(table_provider.schema(), columns)?;
 
         let ops = self.metadata_table_delta_ops(table_name).await?;
         ops.write(vec![batch]).await
     }
 
-    /// Return a [`RecordBatch`] with the given `columns` for the metadata table with the given
-    /// `table_name`. If the table does not exist or the [`RecordBatch`] cannot be created, return
+    /// Return a [`DataFrame`] with the given `columns` for the metadata table with the given
+    /// `table_name`. If the table does not exist or the [`DataFrame`] cannot be created, return
     /// [`DeltaTableError`].
-    pub async fn metadata_table_record_batch(
+    pub async fn metadata_table_data_frame(
         &self,
         table_name: &str,
         columns: Vec<ArrayRef>,
-    ) -> Result<RecordBatch, DeltaTableError> {
+    ) -> Result<DataFrame, DeltaTableError> {
         let table_provider = self.session.table_provider(table_name).await?;
-        Ok(RecordBatch::try_new(table_provider.schema(), columns)?)
+        let batch = RecordBatch::try_new(table_provider.schema(), columns)?;
+
+        Ok(self.session.read_batch(batch)?)
     }
 
     // TODO: Look into optimizing the way we store and access tables in the struct fields (avoid open_table() every time).

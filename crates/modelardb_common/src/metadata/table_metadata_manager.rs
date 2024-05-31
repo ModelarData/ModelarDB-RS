@@ -542,11 +542,10 @@ impl TableMetadataManager {
                 .collect::<Vec<ArrayRef>>(),
         );
 
-        let source = self.metadata_delta_lake.session.read_batch(
-            self.metadata_delta_lake
-                .metadata_table_record_batch(&format!("{table_name}_tags"), table_name_tags_columns)
-                .await?,
-        )?;
+        let source = self
+            .metadata_delta_lake
+            .metadata_table_data_frame(&format!("{table_name}_tags"), table_name_tags_columns)
+            .await?;
 
         let ops = self
             .metadata_delta_lake
@@ -568,17 +567,16 @@ impl TableMetadataManager {
 
         // Save the tag hash metadata to the model_table_hash_table_name table if it does not
         // already contain it.
-        let source = self.metadata_delta_lake.session.read_batch(
-            self.metadata_delta_lake
-                .metadata_table_record_batch(
-                    "model_table_hash_table_name",
-                    vec![
-                        Arc::new(Int64Array::from(vec![signed_tag_hash])),
-                        Arc::new(StringArray::from(vec![table_name])),
-                    ],
-                )
-                .await?,
-        )?;
+        let source = self
+            .metadata_delta_lake
+            .metadata_table_data_frame(
+                "model_table_hash_table_name",
+                vec![
+                    Arc::new(Int64Array::from(vec![signed_tag_hash])),
+                    Arc::new(StringArray::from(vec![table_name])),
+                ],
+            )
+            .await?;
 
         let ops = self
             .metadata_delta_lake
@@ -842,6 +840,7 @@ mod tests {
 
         // Retrieve the table from the metadata delta lake.
         let batch = metadata_manager
+            .metadata_delta_lake
             .query_table(
                 "table_metadata",
                 "SELECT table_name, sql FROM table_metadata ORDER BY table_name",
@@ -909,6 +908,7 @@ mod tests {
 
         // Check that a row has been added to the model_table_metadata table.
         let batch = metadata_manager
+            .metadata_delta_lake
             .query_table(
                 "model_table_metadata",
                 "SELECT table_name, query_schema, sql FROM model_table_metadata",
@@ -934,6 +934,7 @@ mod tests {
 
         // Check that a row has been added to the model_table_field_columns table for each field column.
         let batch = metadata_manager
+            .metadata_delta_lake
             .query_table(
                 "model_table_field_columns",
                 "SELECT table_name, column_name, column_index, error_bound_value, error_bound_is_relative,
@@ -1030,6 +1031,7 @@ mod tests {
 
         // The tag hashes should be saved in the model_table_tags table.
         let batch = metadata_manager
+            .metadata_delta_lake
             .query_table(
                 &format!("{}_tags", test::MODEL_TABLE_NAME),
                 &format!("SELECT hash, tag FROM {}_tags", test::MODEL_TABLE_NAME),
@@ -1048,6 +1050,7 @@ mod tests {
 
         // The tag hashes should be saved in the model_table_hash_table_name table.
         let batch = metadata_manager
+            .metadata_delta_lake
             .query_table(
                 "model_table_hash_table_name",
                 "SELECT hash, table_name FROM model_table_hash_table_name",
@@ -1116,6 +1119,7 @@ mod tests {
         assert_eq!(metadata_manager.tag_value_hashes.len(), 0);
 
         let batch = metadata_manager
+            .metadata_delta_lake
             .query_table(
                 &format!("{}_tags", test::MODEL_TABLE_NAME),
                 &format!("SELECT hash FROM {}_tags", test::MODEL_TABLE_NAME),
@@ -1126,6 +1130,7 @@ mod tests {
         assert!(batch.column(0).is_empty());
 
         let batch = metadata_manager
+            .metadata_delta_lake
             .query_table(
                 "model_table_hash_table_name",
                 "SELECT hash FROM model_table_hash_table_name",
