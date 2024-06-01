@@ -16,6 +16,7 @@
 //! Management of the metadata delta lake for the manager. Metadata which is unique to the manager,
 //! such as metadata about registered edges, is handled here.
 
+use deltalake::kernel::{DataType, StructField};
 use deltalake::DeltaTableError;
 
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
@@ -61,6 +62,25 @@ impl MetadataManager {
     ///
     /// If the tables exist or were created, return [`Ok`], otherwise return [`DeltaTableError`].
     async fn create_manager_metadata_delta_lake_tables(&self) -> Result<(), DeltaTableError> {
+        // Create the manager_metadata table if it does not exist.
+        self.metadata_delta_lake
+            .create_delta_lake_table(
+                "manager_metadata",
+                vec![StructField::new("key", DataType::STRING, false)],
+            )
+            .await?;
+
+        // Create the nodes table if it does not exist.
+        self.metadata_delta_lake
+            .create_delta_lake_table(
+                "nodes",
+                vec![
+                    StructField::new("url", DataType::STRING, false),
+                    StructField::new("mode", DataType::STRING, false),
+                ],
+            )
+            .await?;
+
         Ok(())
     }
 }
