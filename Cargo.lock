@@ -2566,6 +2566,7 @@ dependencies = [
  "object_store",
  "once_cell",
  "sqlx",
+ "tempfile",
  "tokio",
  "tonic",
  "tracing",

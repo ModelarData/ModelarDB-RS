@@ -42,5 +42,8 @@ log = { workspace = true, features = ["max_level_debug", "release_max_level_info
 tracing = { workspace = true, features = ["max_level_debug", "release_max_level_info"] }
 tracing-subscriber.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [package.metadata.cargo-machete]
 ignored = ["log"]

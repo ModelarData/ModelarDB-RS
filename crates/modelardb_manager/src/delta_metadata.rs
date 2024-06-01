@@ -84,3 +84,44 @@ impl MetadataManager {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use object_store::path::Path;
+    use tempfile::TempDir;
+
+    // Tests for MetadataManager.
+    #[tokio::test]
+    async fn test_create_manager_metadata_delta_lake_tables() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
+
+        // Verify that the tables were created, registered, and has the expected columns.
+        assert!(metadata_manager
+            .metadata_delta_lake
+            .query_table("manager_metadata", "SELECT key FROM manager_metadata")
+            .await
+            .is_ok());
+
+        assert!(metadata_manager
+            .metadata_delta_lake
+            .query_table("nodes", "SELECT url, mode FROM nodes")
+            .await
+            .is_ok());
+    }
+
+    async fn create_metadata_manager() -> (TempDir, MetadataManager) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = Path::from_absolute_path(temp_dir.path()).unwrap();
+
+        let table_metadata_manager = TableMetadataManager::try_from_path(path).await.unwrap();
+
+        let metadata_manager = MetadataManager {
+            metadata_delta_lake: MetadataDeltaLake::from_path(path),
+            table_metadata_manager,
+        };
+
+        (temp_dir, metadata_manager)
+    }
+}
