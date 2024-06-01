@@ -16,13 +16,14 @@
 //! Management of the metadata delta lake for the manager. Metadata which is unique to the manager,
 //! such as metadata about registered edges, is handled here.
 
+use std::sync::Arc;
+
 use arrow::array::{Array, StringArray};
 use deltalake::kernel::{DataType, StructField};
 use deltalake::DeltaTableError;
 use modelardb_common::array;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::metadata::MetadataDeltaLake;
-use std::sync::Arc;
 use uuid::Uuid;
 
 /// Stores the metadata required for reading from and writing to the tables and model tables and
@@ -143,6 +144,43 @@ mod tests {
             .query_table("nodes", "SELECT url, mode FROM nodes")
             .await
             .is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_new_manager_key() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
+
+        // Verify that the manager key is created and saved correctly.
+        let manager_key = metadata_manager.manager_key().await.unwrap();
+
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table("manager_metadata", "SELECT key FROM manager_metadata")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            StringArray::from(vec![manager_key.to_string()])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_existing_manager_key() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
+
+        // Verify that only a single key is created and saved when retrieving multiple times.
+        let manager_key_1 = metadata_manager.manager_key().await.unwrap();
+        let manager_key_2 = metadata_manager.manager_key().await.unwrap();
+
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table("manager_metadata", "SELECT key FROM manager_metadata")
+            .await
+            .unwrap();
+
+        assert_eq!(manager_key_1, manager_key_2);
+        assert_eq!(batch.column(0).len(), 1);
     }
 
     async fn create_metadata_manager() -> (TempDir, MetadataManager) {
