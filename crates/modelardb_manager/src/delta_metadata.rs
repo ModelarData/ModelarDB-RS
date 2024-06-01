@@ -16,11 +16,14 @@
 //! Management of the metadata delta lake for the manager. Metadata which is unique to the manager,
 //! such as metadata about registered edges, is handled here.
 
+use arrow::array::{Array, StringArray};
 use deltalake::kernel::{DataType, StructField};
 use deltalake::DeltaTableError;
-
+use modelardb_common::array;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::metadata::MetadataDeltaLake;
+use std::sync::Arc;
+use uuid::Uuid;
 
 /// Stores the metadata required for reading from and writing to the tables and model tables and
 /// persisting edges. The data that needs to be persisted is stored in the metadata delta lake.
@@ -82,6 +85,37 @@ impl MetadataManager {
             .await?;
 
         Ok(())
+    }
+
+    /// Retrieve the key for the manager from the `manager_metadata` table. If a key does not
+    /// already exist, create one and save it to the delta lake. If a key could not be retrieved
+    /// or created, return [`DeltaTableError`].
+    pub async fn manager_key(&self) -> Result<Uuid, DeltaTableError> {
+        let batch = self
+            .metadata_delta_lake
+            .query_table("manager_metadata", "SELECT key FROM manager_metadata")
+            .await?;
+
+        let keys = array!(batch, 0, StringArray);
+        if keys.is_empty() {
+            let manager_key = Uuid::new_v4();
+
+            // Add a new row to the manager_metadata table to persist the key.
+            self.metadata_delta_lake
+                .append_to_table(
+                    "manager_metadata",
+                    vec![Arc::new(StringArray::from(vec![manager_key.to_string()]))],
+                )
+                .await?;
+
+            Ok(manager_key)
+        } else {
+            let manager_key: String = keys.value(0).to_owned();
+
+            Ok(manager_key
+                .parse()
+                .map_err(|error: uuid::Error| DeltaTableError::Generic(error.to_string()))?)
+        }
     }
 }
 
