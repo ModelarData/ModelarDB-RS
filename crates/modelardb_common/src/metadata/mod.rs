@@ -54,7 +54,6 @@ pub struct MetadataDeltaLake {
 }
 
 impl MetadataDeltaLake {
-    // TODO: Maybe change to use the real from and try from.
     /// Create a new [`MetadataDeltaLake`] that saves the metadata to [`METADATA_FOLDER`] under
     /// `folder_path`.
     pub fn from_path(folder_path: Path) -> MetadataDeltaLake {

@@ -2559,6 +2559,7 @@ dependencies = [
  "arrow",
  "arrow-flight",
  "chrono",
+ "deltalake",
  "futures",
  "log",
  "modelardb_common",

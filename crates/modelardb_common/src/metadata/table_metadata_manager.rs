@@ -59,8 +59,8 @@ impl TableMetadataManager {
     /// Create a new table metadata manager that saves the metadata to [`METADATA_FOLDER`] under
     /// `folder_path` and initialize the metadata tables. If the metadata tables could not be
     /// created, return [`DeltaTableError`].
-    pub async fn try_from_path(folder_path: Path) -> Result<TableMetadataManager, DeltaTableError> {
-        let table_metadata_manager = TableMetadataManager {
+    pub async fn try_from_path(folder_path: Path) -> Result<Self, DeltaTableError> {
+        let table_metadata_manager = Self {
             metadata_delta_lake: MetadataDeltaLake::from_path(folder_path),
             tag_value_hashes: DashMap::new(),
         };
@@ -72,14 +72,13 @@ impl TableMetadataManager {
         Ok(table_metadata_manager)
     }
 
-    /// Create a new table metadata manager that saves the metadata to [`METADATA_FOLDER`] in a
-    /// remote object store given by `connection_info` and initialize the metadata tables. If
-    /// `connection_info` could not be parsed or the metadata tables could not be created,
-    /// return [`DeltaTableError`].
+    /// Create a new [`TableMetadataManager`] that saves the metadata to a remote object store given
+    /// by `connection_info` and initialize the metadata tables. If `connection_info` could not be
+    /// parsed or the metadata tables could not be created, return [`DeltaTableError`].
     pub async fn try_from_connection_info(
         connection_info: &[u8],
-    ) -> Result<TableMetadataManager, DeltaTableError> {
-        let table_metadata_manager = TableMetadataManager {
+    ) -> Result<Self, DeltaTableError> {
+        let table_metadata_manager = Self {
             metadata_delta_lake: MetadataDeltaLake::try_from_connection_info(connection_info)
                 .await?,
             tag_value_hashes: DashMap::new(),
