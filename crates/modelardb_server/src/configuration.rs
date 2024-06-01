@@ -233,9 +233,10 @@ mod tests {
     use std::sync::Arc;
 
     use arrow_flight::flight_service_client::FlightServiceClient;
-    use modelardb_common::metadata;
+    use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
     use modelardb_common::types::ServerMode;
     use object_store::local::LocalFileSystem;
+    use object_store::path::Path;
     use tempfile::TempDir;
     use tokio::runtime::Runtime;
     use tokio::sync::RwLock;
@@ -400,9 +401,10 @@ mod tests {
         let local_data_folder =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
-        let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(&local_data_folder)
-            .await
-            .unwrap();
+        let metadata_manager =
+            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
+                .await
+                .unwrap();
 
         let channel = Channel::builder("grpc://server:9999".parse().unwrap()).connect_lazy();
         let lazy_flight_client = FlightServiceClient::new(channel);

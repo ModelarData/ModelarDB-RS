@@ -640,12 +640,17 @@ mod tests {
     async fn create_context(temp_dir: &TempDir) -> Arc<Context> {
         let local_data_folder =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let table_metadata_manager = Arc::new(
+            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
+                .await
+                .unwrap(),
+        );
 
         Arc::new(
             Context::try_new(
                 Arc::new(Runtime::new().unwrap()),
                 &DataFolders {
-                    local_data_folder: local_data_folder.clone(),
+                    local_data_folder: (local_data_folder.clone(), table_metadata_manager),
                     remote_data_folder: None,
                     query_data_folder: local_data_folder,
                 },

@@ -514,7 +514,6 @@ mod tests {
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
     use futures::StreamExt;
-    use modelardb_common::metadata;
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_common::test;
     use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
@@ -868,7 +867,7 @@ mod tests {
 
         // Create a metadata manager and save a single model table to the metadata database.
         let metadata_manager = Arc::new(
-            metadata::try_new_sqlite_table_metadata_manager(&object_store)
+            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
                 .await
                 .unwrap(),
         );

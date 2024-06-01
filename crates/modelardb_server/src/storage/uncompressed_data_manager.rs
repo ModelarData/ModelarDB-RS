@@ -856,7 +856,6 @@ mod tests {
     use datafusion::arrow::datatypes::SchemaRef;
     use datafusion::arrow::record_batch::RecordBatch;
     use futures::StreamExt;
-    use modelardb_common::metadata;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_common::test;
     use modelardb_common::types::{ServerMode, TimestampBuilder, ValueBuilder};
@@ -876,13 +875,18 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let local_data_folder =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let table_metadata_manager = Arc::new(
+            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
+                .await
+                .unwrap(),
+        );
 
         // Create a context with a storage engine.
         let context = Arc::new(
             Context::try_new(
                 Arc::new(Runtime::new().unwrap()),
                 &DataFolders {
-                    local_data_folder: local_data_folder.clone(),
+                    local_data_folder: (local_data_folder.clone(), table_metadata_manager),
                     remote_data_folder: None,
                     query_data_folder: local_data_folder,
                 },
@@ -1559,7 +1563,7 @@ mod tests {
     ) {
         let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
         let metadata_manager = Arc::new(
-            metadata::try_new_sqlite_table_metadata_manager(&object_store)
+            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
                 .await
                 .unwrap(),
         );

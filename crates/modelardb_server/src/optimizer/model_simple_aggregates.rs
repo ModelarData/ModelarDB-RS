@@ -996,9 +996,11 @@ mod tests {
     use datafusion::physical_plan::coalesce_batches::CoalesceBatchesExec;
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion::physical_plan::filter::FilterExec;
+    use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
     use modelardb_common::test;
     use modelardb_common::types::ServerMode;
     use object_store::local::LocalFileSystem;
+    use object_store::path::Path;
     use tempfile::TempDir;
     use tokio::runtime::Runtime;
 
@@ -1102,13 +1104,18 @@ mod tests {
     ) -> Arc<dyn ExecutionPlan> {
         let local_data_folder =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let table_metadata_manager = Arc::new(
+            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
+                .await
+                .unwrap(),
+        );
 
         // Create a simple context.
         let context = Arc::new(
             Context::try_new(
                 Arc::new(Runtime::new().unwrap()),
                 &DataFolders {
-                    local_data_folder: local_data_folder.clone(),
+                    local_data_folder: (local_data_folder.clone(), table_metadata_manager),
                     remote_data_folder: None,
                     query_data_folder: local_data_folder,
                 },

@@ -187,12 +187,19 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = Path::from_absolute_path(temp_dir.path()).unwrap();
 
-        let table_metadata_manager = TableMetadataManager::try_from_path(path).await.unwrap();
+        let table_metadata_manager = TableMetadataManager::try_from_path(path.clone())
+            .await
+            .unwrap();
 
         let metadata_manager = MetadataManager {
             metadata_delta_lake: MetadataDeltaLake::from_path(path),
             table_metadata_manager,
         };
+
+        metadata_manager
+            .create_manager_metadata_delta_lake_tables()
+            .await
+            .unwrap();
 
         (temp_dir, metadata_manager)
     }

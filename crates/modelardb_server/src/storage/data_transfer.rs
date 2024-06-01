@@ -333,8 +333,8 @@ mod tests {
     use super::*;
 
     use arrow_flight::flight_service_client::FlightServiceClient;
+    use modelardb_common::storage;
     use modelardb_common::test;
-    use modelardb_common::{metadata, storage};
     use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
     use tokio::sync::RwLock;
@@ -612,11 +612,10 @@ mod tests {
 
     /// Create a table metadata manager and save a single model table to the metadata database.
     async fn create_metadata_manager(temp_dir: &TempDir) -> Arc<TableMetadataManager> {
-        let local_data_folder = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-
-        let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(&local_data_folder)
-            .await
-            .unwrap();
+        let metadata_manager =
+            TableMetadataManager::try_from_path(Path::from_absolute_path(temp_dir.path()).unwrap())
+                .await
+                .unwrap();
 
         let model_table_metadata = test::model_table_metadata();
         metadata_manager
