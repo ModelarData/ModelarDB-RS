@@ -19,6 +19,7 @@
 use std::sync::Arc;
 
 use arrow::array::{Array, StringArray};
+use deltalake::datafusion::logical_expr::{col, lit};
 use deltalake::kernel::{DataType, StructField};
 use deltalake::DeltaTableError;
 use futures::TryStreamExt;
@@ -129,7 +130,7 @@ impl MetadataManager {
             .append_to_table(
                 "nodes",
                 vec![
-                    Arc::new(StringArray::from(vec![node.url])),
+                    Arc::new(StringArray::from(vec![node.url.clone()])),
                     Arc::new(StringArray::from(vec![node.mode.to_string()])),
                 ],
             )
@@ -141,6 +142,13 @@ impl MetadataManager {
     /// Remove the row in the `nodes` table that corresponds to the node with `url` and return
     /// [`Ok`]. If the row could not be removed, return [`DeltaTableError`].
     pub async fn remove_node(&self, url: &str) -> Result<(), DeltaTableError> {
+        let ops = self
+            .metadata_delta_lake
+            .metadata_table_delta_ops("nodes")
+            .await?;
+
+        ops.delete().with_predicate(col("url").eq(lit(url))).await?;
+
         Ok(())
     }
 
