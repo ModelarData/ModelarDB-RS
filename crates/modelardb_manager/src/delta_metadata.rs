@@ -171,7 +171,7 @@ impl MetadataManager {
             let url = url_array.value(row_index).to_owned();
             let mode = mode_array.value(row_index).to_owned();
 
-            let server_mode = ServerMode::from_str(mode)
+            let server_mode = ServerMode::from_str(&mode)
                 .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
 
             nodes.push(Node::new(url, server_mode));
@@ -183,7 +183,35 @@ impl MetadataManager {
     /// Return the SQL query used to create the table with the name `table_name`. If a table with
     /// that name does not exist, return [`DeltaTableError`].
     pub async fn table_sql(&self, table_name: &str) -> Result<String, DeltaTableError> {
-        Ok("Unimplemented".to_owned())
+        let batch = self
+            .metadata_delta_lake
+            .query_table(
+                "table_metadata",
+                &format!("SELECT sql FROM table_metadata WHERE table_name = '{table_name}'"),
+            )
+            .await?;
+
+        let sql = array!(batch, 0, StringArray);
+        if sql.is_empty() {
+            let batch = self
+                .metadata_delta_lake
+                .query_table(
+                    "model_table_metadata",
+                    &format!(
+                        "SELECT sql FROM model_table_metadata WHERE table_name = '{table_name}'"
+                    ),
+                )
+                .await?;
+
+            let sql = array!(batch, 0, StringArray);
+            if sql.is_empty() {
+                return Err(DeltaTableError::Generic(format!(
+                    "No table with the name '{table_name}' exists."
+                )));
+            }
+        }
+
+        Ok(sql.value(0).to_owned())
     }
 
     /// Retrieve all rows of `column` from both the table_metadata and model_table_metadata tables.
