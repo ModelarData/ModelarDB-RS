@@ -125,6 +125,16 @@ impl MetadataManager {
     /// Save the node to the metadata delta lake and return [`Ok`]. If the node could not be saved,
     /// return [`DeltaTableError`].
     pub async fn save_node(&self, node: &Node) -> Result<(), DeltaTableError> {
+        self.metadata_delta_lake
+            .append_to_table(
+                "nodes",
+                vec![
+                    Arc::new(StringArray::from(vec![node.url])),
+                    Arc::new(StringArray::from(vec![node.mode.to_string()])),
+                ],
+            )
+            .await?;
+
         Ok(())
     }
 

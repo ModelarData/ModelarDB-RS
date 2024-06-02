@@ -34,7 +34,7 @@ use dashmap::DashMap;
 use datafusion::common::{DFSchema, ToDFSchema};
 use datafusion::prelude::col;
 use deltalake::kernel::{DataType, StructField};
-use deltalake::{DeltaTable, DeltaTableError};
+use deltalake::DeltaTableError;
 use object_store::path::Path;
 use object_store::ObjectMeta;
 
@@ -75,9 +75,7 @@ impl TableMetadataManager {
     /// Create a new [`TableMetadataManager`] that saves the metadata to a remote object store given
     /// by `connection_info` and initialize the metadata tables. If `connection_info` could not be
     /// parsed or the metadata tables could not be created, return [`DeltaTableError`].
-    pub async fn try_from_connection_info(
-        connection_info: &[u8],
-    ) -> Result<Self, DeltaTableError> {
+    pub async fn try_from_connection_info(connection_info: &[u8]) -> Result<Self, DeltaTableError> {
         let table_metadata_manager = Self {
             metadata_delta_lake: MetadataDeltaLake::try_from_connection_info(connection_info)
                 .await?,
@@ -159,13 +157,8 @@ impl TableMetadataManager {
 
     /// Save the created table to the metadata delta lake. This consists of adding a row to the
     /// `table_metadata` table with the `name` of the table and the `sql` used to create the table.
-    /// If the table metadata was saved, return the updated [`DeltaTable`], otherwise return
-    /// [`DeltaTableError`].
-    pub async fn save_table_metadata(
-        &self,
-        name: &str,
-        sql: &str,
-    ) -> Result<DeltaTable, DeltaTableError> {
+    /// If the table metadata was saved, return [`Ok`], otherwise return [`DeltaTableError`].
+    pub async fn save_table_metadata(&self, name: &str, sql: &str) -> Result<(), DeltaTableError> {
         self.metadata_delta_lake
             .append_to_table(
                 "table_metadata",
@@ -174,7 +167,9 @@ impl TableMetadataManager {
                     Arc::new(StringArray::from(vec![sql])),
                 ],
             )
-            .await
+            .await?;
+
+        Ok(())
     }
 
     /// Return the name of each table currently in the metadata delta lake. Note that this does not
