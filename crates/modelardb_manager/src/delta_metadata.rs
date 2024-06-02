@@ -21,10 +21,13 @@ use std::sync::Arc;
 use arrow::array::{Array, StringArray};
 use deltalake::kernel::{DataType, StructField};
 use deltalake::DeltaTableError;
+use futures::TryStreamExt;
 use modelardb_common::array;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::metadata::MetadataDeltaLake;
 use uuid::Uuid;
+
+use crate::cluster::Node;
 
 /// Stores the metadata required for reading from and writing to the tables and model tables and
 /// persisting edges. The data that needs to be persisted is stored in the metadata delta lake.
@@ -117,6 +120,44 @@ impl MetadataManager {
                 .parse()
                 .map_err(|error: uuid::Error| DeltaTableError::Generic(error.to_string()))?)
         }
+    }
+
+    /// Save the node to the metadata delta lake and return [`Ok`]. If the node could not be saved,
+    /// return [`DeltaTableError`].
+    pub async fn save_node(&self, node: &Node) -> Result<(), DeltaTableError> {
+        Ok(())
+    }
+
+    /// Remove the row in the `nodes` table that corresponds to the node with `url` and return
+    /// [`Ok`]. If the row could not be removed, return [`DeltaTableError`].
+    pub async fn remove_node(&self, url: &str) -> Result<(), DeltaTableError> {
+        Ok(())
+    }
+
+    /// Return the nodes currently controlled by the manager that have been persisted to the
+    /// metadata delta lake. If the nodes could not be retrieved, [`DeltaTableError`] is returned.
+    pub async fn nodes(&self) -> Result<Vec<Node>, DeltaTableError> {
+        let mut nodes: Vec<Node> = vec![];
+
+        Ok(nodes)
+    }
+
+    /// Return the SQL query used to create the table with the name `table_name`. If a table with
+    /// that name does not exist, return [`DeltaTableError`].
+    pub async fn table_sql(&self, table_name: &str) -> Result<String, DeltaTableError> {
+        Ok("Unimplemented".to_owned())
+    }
+
+    /// Retrieve all rows of `column` from both the table_metadata and model_table_metadata tables.
+    /// If the column could not be retrieved, either because it does not exist or because it could
+    /// not be converted to a string, return [`DeltaTableError`].
+    pub async fn table_metadata_column(
+        &self,
+        column: &str,
+    ) -> Result<Vec<String>, DeltaTableError> {
+        let mut values: Vec<String> = vec![];
+
+        Ok(values)
     }
 }
 
