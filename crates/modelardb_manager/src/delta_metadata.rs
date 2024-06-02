@@ -23,7 +23,6 @@ use arrow::array::{Array, StringArray};
 use deltalake::datafusion::logical_expr::{col, lit};
 use deltalake::kernel::{DataType, StructField};
 use deltalake::DeltaTableError;
-use futures::TryStreamExt;
 use modelardb_common::array;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::metadata::MetadataDeltaLake;
@@ -221,9 +220,31 @@ impl MetadataManager {
         &self,
         column: &str,
     ) -> Result<Vec<String>, DeltaTableError> {
-        let mut values: Vec<String> = vec![];
+        // Retrieve the column from both tables containing table metadata.
+        let table_metadata_batch = self
+            .metadata_delta_lake
+            .query_table(
+                "table_metadata",
+                &format!("SELECT {column} FROM table_metadata"),
+            )
+            .await?;
 
-        Ok(values)
+        let model_table_metadata_batch = self
+            .metadata_delta_lake
+            .query_table(
+                "model_table_metadata",
+                &format!("SELECT {column} FROM model_table_metadata"),
+            )
+            .await?;
+
+        let table_metadata_column = array!(table_metadata_batch, 0, StringArray);
+        let model_table_metadata_column = array!(model_table_metadata_batch, 0, StringArray);
+
+        Ok(table_metadata_column
+            .iter()
+            .chain(model_table_metadata_column.iter())
+            .map(|column_value| column_value.unwrap().to_string())
+            .collect())
     }
 }
 
