@@ -16,6 +16,7 @@
 //! Management of the metadata delta lake for the manager. Metadata which is unique to the manager,
 //! such as metadata about registered edges, is handled here.
 
+use std::str::FromStr;
 use std::sync::Arc;
 
 use arrow::array::{Array, StringArray};
@@ -26,6 +27,7 @@ use futures::TryStreamExt;
 use modelardb_common::array;
 use modelardb_common::metadata::table_metadata_manager::TableMetadataManager;
 use modelardb_common::metadata::MetadataDeltaLake;
+use modelardb_common::types::ServerMode;
 use uuid::Uuid;
 
 use crate::cluster::Node;
@@ -156,6 +158,24 @@ impl MetadataManager {
     /// metadata delta lake. If the nodes could not be retrieved, [`DeltaTableError`] is returned.
     pub async fn nodes(&self) -> Result<Vec<Node>, DeltaTableError> {
         let mut nodes: Vec<Node> = vec![];
+
+        let batch = self
+            .metadata_delta_lake
+            .query_table("nodes", "SELECT url, mode FROM nodes")
+            .await?;
+
+        let url_array = array!(batch, 0, StringArray);
+        let mode_array = array!(batch, 1, StringArray);
+
+        for row_index in 0..batch.num_rows() {
+            let url = url_array.value(row_index).to_owned();
+            let mode = mode_array.value(row_index).to_owned();
+
+            let server_mode = ServerMode::from_str(mode)
+                .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+
+            nodes.push(Node::new(url, server_mode));
+        }
 
         Ok(nodes)
     }
