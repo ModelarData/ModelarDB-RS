@@ -2539,7 +2539,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tonic",
- "tracing",
  "uuid",
 ]
 
@@ -2595,7 +2594,6 @@ dependencies = [
  "proptest",
  "ringbuf",
  "snmalloc-rs",
- "sqlx",
  "sysinfo",
  "tempfile",
  "tokio",

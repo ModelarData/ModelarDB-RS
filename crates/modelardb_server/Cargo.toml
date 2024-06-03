@@ -39,8 +39,6 @@ once_cell.workspace = true
 parquet = { workspace = true, features = ["object_store"] }
 ringbuf.workspace = true
 snmalloc-rs = { workspace = true, features = ["build_cc"] }
-# Even though the server uses SQLite for the metadata database, "postgres" is required to run the integration tests.
-sqlx = { workspace = true, features = ["runtime-tokio-rustls", "sqlite", "postgres"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tokio-stream.workspace = true
 tonic.workspace = true

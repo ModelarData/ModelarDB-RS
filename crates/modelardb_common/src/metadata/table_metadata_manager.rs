@@ -56,9 +56,8 @@ pub struct TableMetadataManager {
 }
 
 impl TableMetadataManager {
-    /// Create a new table metadata manager that saves the metadata to [`METADATA_FOLDER`] under
-    /// `folder_path` and initialize the metadata tables. If the metadata tables could not be
-    /// created, return [`DeltaTableError`].
+    /// Create a new [`TableMetadataManager`] that saves the metadata to `folder_path` and initialize
+    /// the metadata tables. If the metadata tables could not be created, return [`DeltaTableError`].
     pub async fn try_from_path(folder_path: Path) -> Result<Self, DeltaTableError> {
         let table_metadata_manager = Self {
             metadata_delta_lake: MetadataDeltaLake::from_path(folder_path),
