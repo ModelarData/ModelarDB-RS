@@ -426,6 +426,48 @@ mod tests {
         assert!(result.is_err());
     }
 
+    #[tokio::test]
+    async fn test_table_metadata_column() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
+
+        metadata_manager
+            .table_metadata_manager
+            .save_table_metadata("table_1", "CREATE TABLE table_1")
+            .await
+            .unwrap();
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .table_metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        let table_names = metadata_manager
+            .table_metadata_column("table_name")
+            .await
+            .unwrap();
+
+        let table_sql = metadata_manager
+            .table_metadata_column("sql")
+            .await
+            .unwrap();
+
+        assert_eq!(table_names, vec!["table_1", &model_table_metadata.name]);
+        assert_eq!(table_sql, vec!["CREATE TABLE table_1", test::MODEL_TABLE_SQL]);
+    }
+
+    #[tokio::test]
+    async fn test_table_metadata_column_for_invalid_column() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
+
+        let result = metadata_manager
+            .table_metadata_column("invalid_column")
+            .await;
+
+        assert!(result.is_err());
+    }
+
     async fn create_metadata_manager() -> (TempDir, MetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = Path::from_absolute_path(temp_dir.path()).unwrap();
