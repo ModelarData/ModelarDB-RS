@@ -22,8 +22,6 @@ use std::str;
 use std::sync::Arc;
 
 use object_store::{aws::AmazonS3Builder, azure::MicrosoftAzureBuilder, path::Path, ObjectStore};
-use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
-use sqlx::PgPool;
 use tonic::Status;
 use uuid::Uuid;
 
@@ -221,27 +219,6 @@ pub async fn extract_azure_blob_storage_arguments(
     let (container_name, offset_data) = decode_argument(offset_data)?;
 
     Ok((account, access_key, container_name, offset_data))
-}
-
-/// Return a [`PgPool`] of connections to a PostgreSQL database using the given connection
-/// information. If the connection information is invalid, return [`sqlx::Error`].
-pub async fn connect_to_postgres(
-    username: &str,
-    password: &str,
-    host: &str,
-    metadata_database: &str,
-) -> Result<PgPool, sqlx::Error> {
-    let connection_options = PgConnectOptions::new()
-        .username(username)
-        .password(password)
-        .host(host)
-        .database(metadata_database);
-
-    // TODO: Look into what an ideal number of max connections would be.
-    PgPoolOptions::new()
-        .max_connections(10)
-        .connect_with(connection_options)
-        .await
 }
 
 /// Convert the given `argument` into bytes that contain the length of the byte representation of

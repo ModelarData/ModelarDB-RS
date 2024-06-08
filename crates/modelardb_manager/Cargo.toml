@@ -32,7 +32,6 @@ futures.workspace = true
 modelardb_common = { path = "../modelardb_common" }
 object_store = { workspace = true, features = ["aws", "azure"] }
 once_cell.workspace = true
-sqlx = { workspace = true, features = ["runtime-tokio-rustls", "postgres"] }
 tokio = { workspace = true, features = ["rt-multi-thread", "signal"] }
 tonic.workspace = true
 uuid.workspace = true
