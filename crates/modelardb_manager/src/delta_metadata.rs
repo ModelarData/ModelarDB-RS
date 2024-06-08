@@ -311,6 +311,62 @@ mod tests {
         assert_eq!(batch.column(0).len(), 1);
     }
 
+    #[tokio::test]
+    async fn test_save_node() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
+
+        let node_1 = Node::new("url".to_string(), ServerMode::Edge);
+        metadata_manager.save_node(&node_1).await.unwrap();
+
+        let node_2 = Node::new("url_2".to_string(), ServerMode::Edge);
+        metadata_manager.save_node(&node_2).await.unwrap();
+
+        // Verify that the nodes are saved correctly.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table("nodes", "SELECT url, mode FROM nodes")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            StringArray::from(vec![node_2.url.clone(), node_1.url.clone()])
+        );
+        assert_eq!(
+            **batch.column(1),
+            StringArray::from(vec![node_2.mode.to_string(), node_1.mode.to_string()])
+        );
+    }
+
+    #[tokio::test]
+    async fn test_remove_node() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
+
+        let node_1 = Node::new("url".to_string(), ServerMode::Edge);
+        metadata_manager.save_node(&node_1).await.unwrap();
+
+        let node_2 = Node::new("url_2".to_string(), ServerMode::Edge);
+        metadata_manager.save_node(&node_2).await.unwrap();
+
+        metadata_manager.remove_node(&node_1.url).await.unwrap();
+
+        // Verify that node_1 is removed correctly.
+        let batch = metadata_manager
+            .metadata_delta_lake
+            .query_table("nodes", "SELECT url, mode FROM nodes")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            **batch.column(0),
+            StringArray::from(vec![node_2.url.clone()])
+        );
+        assert_eq!(
+            **batch.column(1),
+            StringArray::from(vec![node_2.mode.to_string()])
+        );
+    }
+
     async fn create_metadata_manager() -> (TempDir, MetadataManager) {
         let temp_dir = tempfile::tempdir().unwrap();
         let path = Path::from_absolute_path(temp_dir.path()).unwrap();
