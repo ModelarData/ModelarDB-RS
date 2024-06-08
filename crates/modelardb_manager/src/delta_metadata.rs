@@ -190,8 +190,8 @@ impl MetadataManager {
             )
             .await?;
 
-        let sql = array!(batch, 0, StringArray);
-        if sql.is_empty() {
+        let table_sql = array!(batch, 0, StringArray);
+        if table_sql.is_empty() {
             let batch = self
                 .metadata_delta_lake
                 .query_table(
@@ -202,15 +202,17 @@ impl MetadataManager {
                 )
                 .await?;
 
-            let sql = array!(batch, 0, StringArray);
-            if sql.is_empty() {
-                return Err(DeltaTableError::Generic(format!(
+            let model_table_sql = array!(batch, 0, StringArray);
+            if model_table_sql.is_empty() {
+                Err(DeltaTableError::Generic(format!(
                     "No table with the name '{table_name}' exists."
-                )));
+                )))
+            } else {
+                Ok(model_table_sql.value(0).to_owned())
             }
+        } else {
+            Ok(table_sql.value(0).to_owned())
         }
-
-        Ok(sql.value(0).to_owned())
     }
 
     /// Retrieve all rows of `column` from both the table_metadata and model_table_metadata tables.
@@ -252,6 +254,7 @@ impl MetadataManager {
 mod tests {
     use super::*;
 
+    use modelardb_common::test;
     use object_store::path::Path;
     use tempfile::TempDir;
 
@@ -380,6 +383,47 @@ mod tests {
         let nodes = metadata_manager.nodes().await.unwrap();
 
         assert_eq!(nodes, vec![node_2, node_1]);
+    }
+
+    #[tokio::test]
+    async fn test_table_sql_for_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
+
+        metadata_manager
+            .table_metadata_manager
+            .save_table_metadata("table_1", "CREATE TABLE table_1")
+            .await
+            .unwrap();
+
+        let sql = metadata_manager.table_sql("table_1").await.unwrap();
+        assert_eq!(sql, "CREATE TABLE table_1");
+    }
+
+    #[tokio::test]
+    async fn test_table_sql_for_model_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
+
+        let model_table_metadata = test::model_table_metadata();
+        metadata_manager
+            .table_metadata_manager
+            .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
+            .await
+            .unwrap();
+
+        let sql = metadata_manager
+            .table_sql(&model_table_metadata.name)
+            .await
+            .unwrap();
+
+        assert_eq!(sql, test::MODEL_TABLE_SQL);
+    }
+
+    #[tokio::test]
+    async fn test_table_sql_for_invalid_table() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
+
+        let result = metadata_manager.table_sql("invalid_table").await;
+        assert!(result.is_err());
     }
 
     async fn create_metadata_manager() -> (TempDir, MetadataManager) {
