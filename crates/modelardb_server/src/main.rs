@@ -226,10 +226,9 @@ async fn argument_to_local_data_folder(
     let object_store =
         LocalFileSystem::new_with_prefix(argument).map_err(|error| error.to_string())?;
 
-    let table_metadata_manager =
-        TableMetadataManager::try_from_path(Path::from(argument))
-            .await
-            .map_err(|error| error.to_string())?;
+    let table_metadata_manager = TableMetadataManager::try_from_path(Path::from(argument))
+        .await
+        .map_err(|error| error.to_string())?;
 
     Ok((Arc::new(object_store), Arc::new(table_metadata_manager)))
 }

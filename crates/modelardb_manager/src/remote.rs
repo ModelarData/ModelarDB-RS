@@ -51,8 +51,7 @@ use tonic::{Request, Response, Status, Streaming};
 use tracing::{debug, info};
 
 use crate::cluster::Node;
-use crate::types::RemoteDataFolder;
-use crate::Context;
+use crate::{Context, RemoteDataFolder};
 
 /// Start an Apache Arrow Flight server on 0.0.0.0:`port`.
 pub fn start_apache_arrow_flight_server(
@@ -108,7 +107,6 @@ impl FlightServiceHandler {
         let existing_tables = self
             .context
             .remote_metadata_manager
-            .metadata_manager()
             .table_metadata_column("table_name")
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
@@ -135,7 +133,6 @@ impl FlightServiceHandler {
         // Persist the new table to the metadata database.
         self.context
             .remote_metadata_manager
-            .metadata_manager()
             .table_metadata_manager
             .save_table_metadata(&table_name, sql)
             .await
@@ -166,7 +163,6 @@ impl FlightServiceHandler {
         // Persist the new model table to the metadata database.
         self.context
             .remote_metadata_manager
-            .metadata_manager()
             .table_metadata_manager
             .save_model_table_metadata(&model_table_metadata, sql)
             .await
@@ -222,7 +218,6 @@ impl FlightServiceHandler {
 
                 self.context
                     .remote_metadata_manager
-                    .metadata_manager()
                     .table_metadata_manager
                     .save_tag_hash_metadata(
                         table_name_array.value(row_index),
@@ -289,7 +284,6 @@ impl FlightServiceHandler {
                 // Save the compressed file in the row to the metadata database.
                 self.context
                     .remote_metadata_manager
-                    .metadata_manager()
                     .table_metadata_manager
                     .save_compressed_file(
                         table_name_array.value(row_index),
@@ -339,7 +333,6 @@ impl FlightService for FlightServiceHandler {
         let table_names = self
             .context
             .remote_metadata_manager
-            .metadata_manager()
             .table_metadata_column("table_name")
             .await
             .map_err(|error| Status::internal(error.to_string()))?;
@@ -411,7 +404,6 @@ impl FlightService for FlightServiceHandler {
         let table_sql = self
             .context
             .remote_metadata_manager
-            .metadata_manager()
             .table_sql(table_name)
             .await
             .map_err(|error| {
@@ -542,7 +534,6 @@ impl FlightService for FlightServiceHandler {
             let cluster_tables = self
                 .context
                 .remote_metadata_manager
-                .metadata_manager()
                 .table_metadata_column("table_name")
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
@@ -567,7 +558,6 @@ impl FlightService for FlightServiceHandler {
                     table_sql_queries.push(
                         self.context
                             .remote_metadata_manager
-                            .metadata_manager()
                             .table_sql(table)
                             .await
                             .map_err(|error| Status::internal(error.to_string()))?,
@@ -647,7 +637,6 @@ impl FlightService for FlightServiceHandler {
             // Use the metadata manager to persist the node to the metadata database.
             self.context
                 .remote_metadata_manager
-                .metadata_manager()
                 .save_node(&node)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;
@@ -679,7 +668,6 @@ impl FlightService for FlightServiceHandler {
             // Remove the node with the given url from the metadata database.
             self.context
                 .remote_metadata_manager
-                .metadata_manager()
                 .remove_node(url)
                 .await
                 .map_err(|error| Status::internal(error.to_string()))?;

@@ -35,6 +35,7 @@ use tonic::metadata::{Ascii, MetadataValue};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::Cluster;
+use crate::metadata::MetadataManager;
 use crate::remote::start_apache_arrow_flight_server;
 
 /// The port of the Apache Arrow Flight Server. If the environment variable is not set, 9998 is used.
@@ -71,7 +72,7 @@ impl RemoteDataFolder {
 /// Provides access to the managers components.
 pub struct Context {
     /// Manager for the access to the metadata database.
-    pub remote_metadata_manager: RemoteMetadataManager,
+    pub remote_metadata_manager: MetadataManager,
     /// Folder for storing Apache Parquet files in a remote object store.
     pub remote_data_folder: RwLock<RemoteDataFolder>,
     /// Cluster of nodes currently controlled by the manager.
@@ -98,12 +99,11 @@ fn main() -> Result<(), String> {
     let arguments: Vec<&str> = arguments.iter().map(|arg| arg.as_str()).collect();
 
     let context = runtime.block_on(async {
-        let (remote_metadata_manager, remote_data_folder) =
+        let (metadata_manager, remote_data_folder) =
             parse_command_line_arguments(&arguments).await?;
         validate_remote_data_folder(remote_data_folder.object_store()).await?;
 
-        let nodes = remote_metadata_manager
-            .metadata_manager()
+        let nodes = metadata_manager
             .nodes()
             .await
             .map_err(|error| error.to_string())?;
@@ -116,8 +116,7 @@ fn main() -> Result<(), String> {
         }
 
         // Retrieve and parse the key to a tonic metadata value since it is used in tonic requests.
-        let key = remote_metadata_manager
-            .metadata_manager()
+        let key = metadata_manager
             .manager_key()
             .await
             .map_err(|error| error.to_string())?
@@ -127,7 +126,7 @@ fn main() -> Result<(), String> {
 
         // Create the Context.
         Ok::<Arc<Context>, String>(Arc::new(Context {
-            remote_metadata_manager,
+            remote_metadata_manager: metadata_manager,
             remote_data_folder: RwLock::new(remote_data_folder),
             cluster: RwLock::new(cluster),
             key,
@@ -140,24 +139,23 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-/// Parse the command line arguments into a [`RemoteMetadataManager`] and a [`RemoteDataFolder`]. If
+/// Parse the command line arguments into a [`MetadataManager`] and a [`RemoteDataFolder`]. If
 /// the necessary command line arguments are not provided, too many arguments are provided, or if
 /// the arguments are malformed, [`String`] is returned.
 async fn parse_command_line_arguments(
     arguments: &[&str],
-) -> Result<(RemoteMetadataManager, RemoteDataFolder), String> {
+) -> Result<(MetadataManager, RemoteDataFolder), String> {
     match arguments {
-        &[metadata_database, remote_data_folder] => {
+        &[remote_data_folder] => {
             let object_store = argument_to_remote_object_store(remote_data_folder)?;
             let connection_info = argument_to_connection_info(remote_data_folder)?;
 
-            let remote_metadata_manager =
-                RemoteMetadataManager::try_new(metadata_database, connection_info.as_slice())
-                    .await
-                    .map_err(|error| error.to_string())?;
+            let metadata_manager = MetadataManager::try_from_connection_info(&connection_info)
+                .await
+                .map_err(|error| error.to_string())?;
 
             Ok((
-                remote_metadata_manager,
+                metadata_manager,
                 RemoteDataFolder::new(connection_info, object_store),
             ))
         }
