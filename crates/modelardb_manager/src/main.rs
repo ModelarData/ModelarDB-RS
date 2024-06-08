@@ -18,7 +18,6 @@
 mod cluster;
 mod metadata;
 mod remote;
-mod types;
 
 use std::env;
 use std::sync::Arc;
@@ -27,6 +26,7 @@ use modelardb_common::arguments::{
     argument_to_connection_info, argument_to_remote_object_store, collect_command_line_arguments,
     validate_remote_data_folder,
 };
+use object_store::ObjectStore;
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -36,11 +36,37 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::cluster::Cluster;
 use crate::remote::start_apache_arrow_flight_server;
-use crate::types::{RemoteDataFolder, RemoteMetadataManager};
 
 /// The port of the Apache Arrow Flight Server. If the environment variable is not set, 9998 is used.
 pub static PORT: Lazy<u16> =
     Lazy::new(|| env::var("MODELARDBM_PORT").map_or(9998, |value| value.parse().unwrap()));
+
+/// Stores the connection information with the remote data folder to ensure that the information
+/// is consistent with the remote data folder.
+pub struct RemoteDataFolder {
+    /// Connection information saved as bytes to make it possible to transfer the information using
+    /// Arrow Flight.
+    connection_info: Vec<u8>,
+    /// Folder for storing Apache Parquet files in a remote object store.
+    object_store: Arc<dyn ObjectStore>,
+}
+
+impl RemoteDataFolder {
+    pub fn new(connection_info: Vec<u8>, object_store: Arc<dyn ObjectStore>) -> Self {
+        Self {
+            connection_info,
+            object_store,
+        }
+    }
+
+    pub fn connection_info(&self) -> &Vec<u8> {
+        &self.connection_info
+    }
+
+    pub fn object_store(&self) -> &Arc<dyn ObjectStore> {
+        &self.object_store
+    }
+}
 
 /// Provides access to the managers components.
 pub struct Context {
