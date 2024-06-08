@@ -19,7 +19,6 @@ mod cluster;
 mod metadata;
 mod remote;
 mod types;
-mod delta_metadata;
 
 use std::env;
 use std::sync::Arc;
