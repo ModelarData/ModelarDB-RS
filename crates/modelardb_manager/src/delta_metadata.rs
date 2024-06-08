@@ -315,7 +315,7 @@ mod tests {
     async fn test_save_node() {
         let (_temp_dir, metadata_manager) = create_metadata_manager().await;
 
-        let node_1 = Node::new("url".to_string(), ServerMode::Edge);
+        let node_1 = Node::new("url_1".to_string(), ServerMode::Edge);
         metadata_manager.save_node(&node_1).await.unwrap();
 
         let node_2 = Node::new("url_2".to_string(), ServerMode::Edge);
@@ -342,7 +342,7 @@ mod tests {
     async fn test_remove_node() {
         let (_temp_dir, metadata_manager) = create_metadata_manager().await;
 
-        let node_1 = Node::new("url".to_string(), ServerMode::Edge);
+        let node_1 = Node::new("url_1".to_string(), ServerMode::Edge);
         metadata_manager.save_node(&node_1).await.unwrap();
 
         let node_2 = Node::new("url_2".to_string(), ServerMode::Edge);
@@ -365,6 +365,21 @@ mod tests {
             **batch.column(1),
             StringArray::from(vec![node_2.mode.to_string()])
         );
+    }
+
+    #[tokio::test]
+    async fn test_nodes() {
+        let (_temp_dir, metadata_manager) = create_metadata_manager().await;
+
+        let node_1 = Node::new("url_1".to_string(), ServerMode::Edge);
+        metadata_manager.save_node(&node_1).await.unwrap();
+
+        let node_2 = Node::new("url_2".to_string(), ServerMode::Edge);
+        metadata_manager.save_node(&node_2).await.unwrap();
+
+        let nodes = metadata_manager.nodes().await.unwrap();
+
+        assert_eq!(nodes, vec![node_2, node_1]);
     }
 
     async fn create_metadata_manager() -> (TempDir, MetadataManager) {
