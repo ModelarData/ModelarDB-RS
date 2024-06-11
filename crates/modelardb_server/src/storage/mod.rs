@@ -53,7 +53,7 @@ use crate::context::Context;
 use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::{Channels, MemoryPool, Message, Metric, MetricType};
-use crate::storage::uncompressed_data_buffer::UncompressedDataMultivariate;
+use crate::storage::uncompressed_data_buffer::IngestedDataBuffer;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::ClusterMode;
 
@@ -292,7 +292,7 @@ impl StorageEngine {
     ) -> Result<(), String> {
         // TODO: write to a WAL and use it to ensure termination never duplicates or loses data.
         self.memory_pool
-            .wait_for_multivariate_memory(multivariate_data_points.get_array_memory_size());
+            .wait_for_ingested_memory(multivariate_data_points.get_array_memory_size());
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         self.used_multivariate_memory_metric.lock().unwrap().append(
@@ -301,8 +301,8 @@ impl StorageEngine {
         );
 
         self.channels
-            .multivariate_data_sender
-            .send(Message::Data(UncompressedDataMultivariate::new(
+            .ingested_data_sender
+            .send(Message::Data(IngestedDataBuffer::new(
                 model_table_metadata,
                 multivariate_data_points,
             )))
@@ -313,7 +313,7 @@ impl StorageEngine {
     /// the data is successfully flushed to disk, return [`Ok`], otherwise return [`String`].
     pub(super) async fn flush(&self) -> Result<(), String> {
         self.channels
-            .multivariate_data_sender
+            .ingested_data_sender
             .send(Message::Flush)
             .map_err(|error| format!("Unable to flush data in storage engine due to: {}", error))?;
 
@@ -343,7 +343,7 @@ impl StorageEngine {
     /// `self` so it can be called through an Arc.
     pub(super) fn close(&mut self) -> Result<(), String> {
         self.channels
-            .multivariate_data_sender
+            .ingested_data_sender
             .send(Message::Stop)
             .map_err(|error| format!("Unable to stop the storage engine due to: {}", error))?;
 
@@ -405,7 +405,7 @@ impl StorageEngine {
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         vec![
             (
-                MetricType::UsedMultivariateMemory,
+                MetricType::UsedIngestedMemory,
                 self.used_multivariate_memory_metric
                     .lock()
                     .unwrap()
@@ -467,7 +467,7 @@ impl StorageEngine {
 
     /// Change the amount of memory for multivariate data in bytes according to `value_change`.
     pub(super) async fn adjust_multivariate_remaining_memory_in_bytes(&self, value_change: isize) {
-        self.memory_pool.adjust_multivariate_memory(value_change)
+        self.memory_pool.adjust_ingested_memory(value_change)
     }
 
     /// Change the amount of memory for uncompressed data in bytes according to `value_change`.

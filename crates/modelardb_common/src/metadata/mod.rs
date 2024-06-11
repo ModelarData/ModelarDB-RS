@@ -324,12 +324,11 @@ where
             || insert_into_hash_table_name_result.rows_affected() > 0)
     }
 
-    /// Return the name of the table that contains the time series with `univariate_id`. Returns an
+    /// Return the name of the table that contains the time series with `tag_hash`. Returns an
     /// [`Error`] if the necessary data cannot be retrieved from the metadata database.
-    pub async fn univariate_id_to_table_name(&self, univariate_id: u64) -> Result<String, Error> {
+    pub async fn tag_hash_to_table_name(&self, tag_hash: u64) -> Result<String, Error> {
         // PostgreSQL (https://www.postgresql.org/docs/current/datatype.html) and SQLite
-        // (https://www.sqlite.org/datatype3.html) both use signed integers.
-        let tag_hash = univariate_id_to_tag_hash(univariate_id);
+        // (https://www.sqlite.org/datatype3.html) both only support signed integers.
         let signed_tag_hash = i64::from_ne_bytes(tag_hash.to_ne_bytes());
 
         sqlx::query("SELECT table_name FROM model_table_hash_table_name WHERE hash = $1")

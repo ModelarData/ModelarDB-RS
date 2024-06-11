@@ -32,9 +32,7 @@ use ringbuf::traits::{Consumer, RingBuffer};
 use ringbuf::HeapRb;
 
 use crate::storage::compressed_data_buffer::CompressedSegmentBatch;
-use crate::storage::uncompressed_data_buffer::{
-    UncompressedDataBuffer, UncompressedDataMultivariate,
-};
+use crate::storage::uncompressed_data_buffer::{IngestedDataBuffer, UncompressedDataBuffer};
 
 /// Resizeable pool of memory for tracking and limiting the amount of memory used by the
 /// [`StorageEngine`](crate::storage::StorageEngine). Signed integers are used to simplify updating
@@ -43,39 +41,40 @@ use crate::storage::uncompressed_data_buffer::{
 /// additional memory will be rejected while the amount of available memory is negative. Thus,
 /// [`StorageEngine`](crate::storage::StorageEngine) will decrease its memory usage.
 pub(super) struct MemoryPool {
-    /// Condition variable that allows threads to wait for more multivariate memory to be released.
-    wait_for_multivariate_memory: Condvar,
+    /// Condition variable that allows threads to wait for more ingested memory to be released.
+    wait_for_ingested_memory: Condvar,
     /// How many bytes of memory that are left for storing
-    /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) containing multivariate time
+    /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) containing ingested time
     /// series with metadata.
-    remaining_multivariate_memory_in_bytes: Mutex<isize>,
+    remaining_ingested_memory_in_bytes: Mutex<isize>,
     /// Condition variable that allows threads to wait for more uncompressed memory to be released.
     wait_for_uncompressed_memory: Condvar,
-    /// How many bytes of memory that are left for storing [`UncompressedDataBuffers`](UncompressedDataBuffer)
-    /// containing univariate time series without metadata.
+    /// How many bytes of memory that are left for storing
+    /// [`UncompressedDataBuffers`](UncompressedDataBuffer) containing time series without
+    /// metadata.
     remaining_uncompressed_memory_in_bytes: Mutex<isize>,
     /// How many bytes of memory that are left for storing
     /// [`CompressedDataBuffers`](crate::storage::compressed_data_buffer::CompressedDataBuffer).
     remaining_compressed_memory_in_bytes: Mutex<isize>,
 }
 
-/// The pool of memory the [`StorageEngine`](super::StorageEngine) can use for multivariate data, the
+/// The pool of memory the [`StorageEngine`](super::StorageEngine) can use for ingested data, the
 /// [`UncompressedDataManager`](crate::storage::uncompressed_data_manager::UncompressedDataManager)
 /// can use for uncompressed data, and the
 /// [`CompressedDataManager`](crate::storage::CompressedDataManager) can use for compressed data.
 impl MemoryPool {
-    /// Create a new [`MemoryPool`] with at most [`i64::MAX`] bytes of memory for multivariate,
+    /// Create a new [`MemoryPool`] with at most [`i64::MAX`] bytes of memory for received,
     /// uncompressed, and compressed data.
     pub(super) fn new(
-        multivariate_memory_in_bytes: usize,
+        ingested_memory_in_bytes: usize,
         uncompressed_memory_in_bytes: usize,
         compressed_memory_in_bytes: usize,
     ) -> Self {
         // unwrap() is safe as i64::MAX is 8192 PiB and the value is from ConfigurationManager.
         Self {
-            wait_for_multivariate_memory: Condvar::new(),
-            remaining_multivariate_memory_in_bytes: Mutex::new(
-                multivariate_memory_in_bytes.try_into().unwrap(),
+            wait_for_ingested_memory: Condvar::new(),
+            remaining_ingested_memory_in_bytes: Mutex::new(
+                ingested_memory_in_bytes.try_into().unwrap(),
             ),
             wait_for_uncompressed_memory: Condvar::new(),
             remaining_uncompressed_memory_in_bytes: Mutex::new(
@@ -87,33 +86,30 @@ impl MemoryPool {
         }
     }
 
-    /// Change the amount of memory available for multivariate data by `size_in_bytes`.
-    pub(super) fn adjust_multivariate_memory(&self, size_in_bytes: isize) {
+    /// Change the amount of memory available for ingested data by `size_in_bytes`.
+    pub(super) fn adjust_ingested_memory(&self, size_in_bytes: isize) {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        *self.remaining_multivariate_memory_in_bytes.lock().unwrap() += size_in_bytes;
-        self.wait_for_multivariate_memory.notify_all();
+        *self.remaining_ingested_memory_in_bytes.lock().unwrap() += size_in_bytes;
+        self.wait_for_ingested_memory.notify_all();
     }
 
-    /// Return the amount of memory available for multivariate data in bytes.
+    /// Return the amount of memory available for ingested data in bytes.
     #[cfg(test)]
     #[must_use]
-    pub(super) fn remaining_multivariate_memory_in_bytes(&self) -> isize {
+    pub(super) fn remaining_ingested_memory_in_bytes(&self) -> isize {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        *self.remaining_multivariate_memory_in_bytes.lock().unwrap()
+        *self.remaining_ingested_memory_in_bytes.lock().unwrap()
     }
 
-    /// Wait until `size_in_bytes` bytes of memory is available for multivariate data and then
-    /// reserve it.
-    pub(super) fn wait_for_multivariate_memory(&self, size_in_bytes: usize) {
+    /// Wait until `size_in_bytes` bytes of memory is available for ingested data and then reserve
+    /// it.
+    pub(super) fn wait_for_ingested_memory(&self, size_in_bytes: usize) {
         // unwrap() is safe as lock() only returns an error if the mutex is poisoned.
-        let mut memory_in_bytes = self.remaining_multivariate_memory_in_bytes.lock().unwrap();
+        let mut memory_in_bytes = self.remaining_ingested_memory_in_bytes.lock().unwrap();
 
         while *memory_in_bytes < size_in_bytes as isize {
             // unwrap() is safe as wait() only returns an error if the mutex is poisoned.
-            memory_in_bytes = self
-                .wait_for_multivariate_memory
-                .wait(memory_in_bytes)
-                .unwrap();
+            memory_in_bytes = self.wait_for_ingested_memory.wait(memory_in_bytes).unwrap();
         }
 
         *memory_in_bytes -= size_in_bytes as isize;
@@ -203,26 +199,26 @@ pub(super) enum Message<T> {
 
 /// Channels used by the threads in the storage engine to communicate.
 pub(super) struct Channels {
-    /// Sender of [`UncompressedDataMultivariates`](UncompressedDataMultivariate) with parts of a
-    /// multivariate time series from the [`StorageEngine`](super::StorageEngine) to the
-    /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are split into
-    /// univariate time series of bounded length.
-    pub(super) multivariate_data_sender: Sender<Message<UncompressedDataMultivariate>>,
-    /// Receiver of [`UncompressedDataMultivariates`](UncompressedDataMultivariate) with parts of a
-    /// multivariate time series from the [`StorageEngine`](super::StorageEngine) in the
-    /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are split into
-    /// univariate time series of bounded length.
-    pub(super) multivariate_data_receiver: Receiver<Message<UncompressedDataMultivariate>>,
-    /// Sender of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of a univariate
-    /// time series from the [`UncompressedDataManager`](super::UncompressedDataManager) to the
+    /// Sender of [`IngestedDataBuffers`](IngestedDataBuffer) with data points from one or more
+    /// time series from the [`StorageEngine`](super::StorageEngine) to the
+    /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are partitioned by
+    /// tags into buffers of static length.
+    pub(super) ingested_data_sender: Sender<Message<IngestedDataBuffer>>,
+    /// Receiver of [`IngestedDataBuffers`](IngestedDataBuffer) with data points from one or more
+    /// times series from the [`StorageEngine`](super::StorageEngine) to the
+    /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are partitioned by
+    /// tags into buffers of static length.
+    pub(super) ingested_data_receiver: Receiver<Message<IngestedDataBuffer>>,
+    /// Sender of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of a time series
+    /// from the [`UncompressedDataManager`](super::UncompressedDataManager) to the
     /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are compressed into
     /// compressed segments.
-    pub(super) univariate_data_sender: Sender<Message<UncompressedDataBuffer>>,
-    /// Receiver of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of a univariate
-    /// time series from the [`UncompressedDataManager`](super::UncompressedDataManager) in the
+    pub(super) uncompressed_data_sender: Sender<Message<UncompressedDataBuffer>>,
+    /// Receiver of [`UncompressedDataBuffers`](UncompressedDataBuffer) with parts of a time series
+    /// from the [`UncompressedDataManager`](super::UncompressedDataManager) in the
     /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are compressed into
     /// compressed segments.
-    pub(super) univariate_data_receiver: Receiver<Message<UncompressedDataBuffer>>,
+    pub(super) uncompressed_data_receiver: Receiver<Message<UncompressedDataBuffer>>,
     /// Sender of [`CompressedSegmentBatches`](CompressedSegmentBatch) with compressed segments from
     /// the [`UncompressedDataManager`](super::UncompressedDataManager) to the
     /// [`CompressedDataManager`](super::CompressedDataManager) where they are written to a local
@@ -247,16 +243,16 @@ pub(super) struct Channels {
 
 impl Channels {
     pub(super) fn new() -> Self {
-        let (multivariate_data_sender, multivariate_data_receiver) = crossbeam_channel::unbounded();
+        let (received_data_sender, received_data_receiver) = crossbeam_channel::unbounded();
         let (univariate_data_sender, univariate_data_receiver) = crossbeam_channel::unbounded();
         let (compressed_data_sender, compressed_data_receiver) = crossbeam_channel::unbounded();
         let (result_sender, result_receiver) = crossbeam_channel::unbounded();
 
         Self {
-            multivariate_data_sender,
-            multivariate_data_receiver,
-            univariate_data_sender,
-            univariate_data_receiver,
+            ingested_data_sender: received_data_sender,
+            ingested_data_receiver: received_data_receiver,
+            uncompressed_data_sender: univariate_data_sender,
+            uncompressed_data_receiver: univariate_data_receiver,
             compressed_data_sender,
             compressed_data_receiver,
             result_sender,
@@ -267,7 +263,7 @@ impl Channels {
 
 /// The different types of metrics that are collected in the storage engine.
 pub enum MetricType {
-    UsedMultivariateMemory,
+    UsedIngestedMemory,
     UsedUncompressedMemory,
     UsedCompressedMemory,
     IngestedDataPoints,
@@ -277,7 +273,7 @@ pub enum MetricType {
 impl fmt::Display for MetricType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::UsedMultivariateMemory => write!(f, "used_multivariate_memory"),
+            Self::UsedIngestedMemory => write!(f, "used_ingested_memory"),
             Self::UsedUncompressedMemory => write!(f, "used_uncompressed_memory"),
             Self::UsedCompressedMemory => write!(f, "used_compressed_memory"),
             Self::IngestedDataPoints => write!(f, "ingested_data_points"),
@@ -360,10 +356,10 @@ mod tests {
             test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool.adjust_multivariate_memory(test::COMPRESSED_SEGMENTS_SIZE as isize);
+        memory_pool.adjust_ingested_memory(test::COMPRESSED_SEGMENTS_SIZE as isize);
 
         assert_eq!(
-            memory_pool.remaining_multivariate_memory_in_bytes(),
+            memory_pool.remaining_ingested_memory_in_bytes(),
             (test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
         );
     }
@@ -372,14 +368,14 @@ mod tests {
     fn test_adjust_multivariate_memory_decrease_above_zero() {
         let memory_pool = create_memory_pool();
         assert_eq!(
-            memory_pool.remaining_multivariate_memory_in_bytes(),
+            memory_pool.remaining_ingested_memory_in_bytes(),
             test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool.adjust_multivariate_memory(-(test::COMPRESSED_SEGMENTS_SIZE as isize));
+        memory_pool.adjust_ingested_memory(-(test::COMPRESSED_SEGMENTS_SIZE as isize));
 
         assert_eq!(
-            memory_pool.remaining_multivariate_memory_in_bytes(),
+            memory_pool.remaining_ingested_memory_in_bytes(),
             (test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES - test::COMPRESSED_SEGMENTS_SIZE) as isize
         );
     }
@@ -388,15 +384,15 @@ mod tests {
     fn test_adjust_multivariate_memory_decrease_below_zero() {
         let memory_pool = create_memory_pool();
         assert_eq!(
-            memory_pool.remaining_multivariate_memory_in_bytes(),
+            memory_pool.remaining_ingested_memory_in_bytes(),
             test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
         );
 
         memory_pool
-            .adjust_multivariate_memory(-2 * test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize);
+            .adjust_ingested_memory(-2 * test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize);
 
         assert_eq!(
-            memory_pool.remaining_multivariate_memory_in_bytes(),
+            memory_pool.remaining_ingested_memory_in_bytes(),
             -(test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize)
         );
     }
@@ -405,14 +401,14 @@ mod tests {
     fn test_reserve_available_multivariate_memory() {
         let memory_pool = create_memory_pool();
         assert_eq!(
-            memory_pool.remaining_multivariate_memory_in_bytes(),
+            memory_pool.remaining_ingested_memory_in_bytes(),
             test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
         );
 
         // Blocks if memory cannot be reserved, thus forcing the test to never succeed.
-        memory_pool.wait_for_multivariate_memory(test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES);
+        memory_pool.wait_for_ingested_memory(test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES);
 
-        assert_eq!(memory_pool.remaining_multivariate_memory_in_bytes(), 0);
+        assert_eq!(memory_pool.remaining_ingested_memory_in_bytes(), 0);
     }
 
     #[test]
