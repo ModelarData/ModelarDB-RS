@@ -191,7 +191,7 @@ impl UncompressedInMemoryDataBuffer {
     /// data points from a model table with a `number_of_fields` will require.
     pub(super) fn compute_memory_size(number_of_fields: usize) -> usize {
         (*UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Timestamp>())
-            + number_of_fields * (*UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Value>())
+            + (number_of_fields * (*UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Value>()))
     }
 
     /// Return the total size of this [`UncompressedInMemoryDataBuffer`] in bytes.
@@ -358,7 +358,7 @@ impl UncompressedOnDiskDataBuffer {
         let data_points = self.record_batch().await?;
 
         let timestamp_column_array = modelardb_common::array!(data_points, 0, TimestampArray);
-        let field_column_arrays: Vec<_> = (1..data_points.num_rows())
+        let field_column_arrays: Vec<_> = (1..data_points.num_columns())
             .map(|index| modelardb_common::array!(data_points, index, ValueArray))
             .collect();
 
@@ -404,19 +404,30 @@ mod tests {
     use tokio::runtime::Runtime;
 
     const CURRENT_BATCH_INDEX: u64 = 1;
-    const UNIVARIATE_ID: u64 = 1;
+    const TAG_HASH: u64 = 1;
 
     // Tests for UncompressedInMemoryDataBuffer.
     #[test]
     fn test_get_in_memory_data_buffer_memory_size() {
         let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
+            TAG_HASH,
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
 
+        assert_eq!(
+            uncompressed_buffer.timestamps.capacity(),
+            *UNCOMPRESSED_DATA_BUFFER_CAPACITY
+        );
+        for values in &uncompressed_buffer.values {
+            assert_eq!(values.capacity(), *UNCOMPRESSED_DATA_BUFFER_CAPACITY);
+        }
+
+        let number_of_fields = test::model_table_metadata().field_column_indices.len();
         let expected = (uncompressed_buffer.timestamps.capacity() * mem::size_of::<Timestamp>())
-            + (uncompressed_buffer.values.capacity() * mem::size_of::<Value>());
+            + (number_of_fields
+                * uncompressed_buffer.values[0].capacity()
+                * mem::size_of::<Value>());
 
         assert_eq!(uncompressed_buffer.memory_size(), expected);
         assert_eq!(
@@ -428,7 +439,7 @@ mod tests {
     #[test]
     fn test_get_in_memory_data_buffer_len() {
         let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
+            TAG_HASH,
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -439,7 +450,7 @@ mod tests {
     #[test]
     fn test_can_insert_data_point_into_in_memory_data_buffer() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
+            TAG_HASH,
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -451,7 +462,7 @@ mod tests {
     #[test]
     fn test_check_if_in_memory_data_buffer_is_unused() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
+            TAG_HASH,
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX - 1,
         );
@@ -469,7 +480,7 @@ mod tests {
     #[test]
     fn test_check_is_in_memory_data_buffer_full() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
+            TAG_HASH,
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -481,7 +492,7 @@ mod tests {
     #[test]
     fn test_check_is_in_memory_data_buffer_not_full() {
         let uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
+            TAG_HASH,
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -494,7 +505,7 @@ mod tests {
     #[should_panic(expected = "Cannot insert data into full UncompressedInMemoryDataBuffer.")]
     fn test_in_memory_data_buffer_panic_if_inserting_data_point_when_full() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
+            TAG_HASH,
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -505,7 +516,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_record_batch_from_in_memory_data_buffer() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
+            TAG_HASH,
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -513,7 +524,7 @@ mod tests {
 
         let capacity = uncompressed_buffer.capacity();
         let data = uncompressed_buffer.record_batch().await.unwrap();
-        assert_eq!(data.num_columns(), 2);
+        assert_eq!(data.num_columns(), 3);
         assert_eq!(data.num_rows(), capacity);
     }
 
@@ -524,7 +535,7 @@ mod tests {
         let runtime = Runtime::new().unwrap();
 
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
+            TAG_HASH,
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -532,11 +543,11 @@ mod tests {
         // u64 is generated and then cast to i64 to ensure only positive values are generated.
         let values: &[Value] = &[37.0, 73.0];
         for timestamp in timestamps {
-            uncompressed_buffer.insert_data_point(CURRENT_BATCH_INDEX, timestamp as i64, &mut values.iter().map(|value| *value));
+            uncompressed_buffer.insert_data_point(CURRENT_BATCH_INDEX, timestamp as i64, &mut values.iter().copied());
         }
 
         let data = runtime.block_on(uncompressed_buffer.record_batch()).unwrap();
-        assert_eq!(data.num_columns(), 2);
+        assert_eq!(data.num_columns(), 3);
         let timestamps = modelardb_common::array!(data, 0, TimestampArray);
         assert!(timestamps.values().windows(2).all(|pair| pair[0] <= pair[1]));
     }
@@ -545,7 +556,7 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_data_buffer_can_spill_not_full_buffer() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
+            TAG_HASH,
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -569,7 +580,7 @@ mod tests {
     #[tokio::test]
     async fn test_in_memory_data_buffer_can_spill_full_buffer() {
         let mut uncompressed_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
+            TAG_HASH,
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -605,7 +616,7 @@ mod tests {
 
         let data = uncompressed_on_disk_buffer.record_batch().await.unwrap();
 
-        assert_eq!(data.num_columns(), 2);
+        assert_eq!(data.num_columns(), 3);
         assert_eq!(data.num_rows(), *UNCOMPRESSED_DATA_BUFFER_CAPACITY);
 
         let spilled_buffer_path = temp_dir
@@ -622,7 +633,7 @@ mod tests {
         let runtime = Runtime::new().unwrap();
 
         let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
+            TAG_HASH,
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -630,7 +641,7 @@ mod tests {
         // u64 is generated and then cast to i64 to ensure only positive values are generated.
         let values: &[Value] = &[37.0, 73.0];
         for timestamp in timestamps {
-            uncompressed_in_memory_buffer.insert_data_point(CURRENT_BATCH_INDEX, timestamp as i64, &mut values.iter().map(|value| *value));
+            uncompressed_in_memory_buffer.insert_data_point(CURRENT_BATCH_INDEX, timestamp as i64, &mut values.iter().copied());
         }
 
         let temp_dir = tempfile::tempdir().unwrap();
@@ -644,7 +655,7 @@ mod tests {
         assert_eq!(spilled_buffers.len(), 1);
 
         let data = runtime.block_on(uncompressed_on_disk_buffer.record_batch()).unwrap();
-        assert_eq!(data.num_columns(), 2);
+        assert_eq!(data.num_columns(), 3);
         let timestamps = modelardb_common::array!(data, 0, TimestampArray);
         assert!(timestamps.values().windows(2).all(|pair| pair[0] <= pair[1]));
 
@@ -658,7 +669,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let uncompressed_on_disk_buffer = create_on_disk_data_buffer(&temp_dir).await;
 
-        assert_eq!(uncompressed_on_disk_buffer.disk_size().await, 3135)
+        assert_eq!(uncompressed_on_disk_buffer.disk_size().await, 4110)
     }
 
     #[tokio::test]
@@ -682,7 +693,7 @@ mod tests {
 
         // The creation of record_batch empties uncompressed_in_memory_buffer_to_be_spilled.
         let mut uncompressed_in_memory_buffer = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
+            TAG_HASH,
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -697,11 +708,16 @@ mod tests {
             read_uncompressed_in_memory_buffer.timestamps.values_slice()
         );
 
+        assert_eq!(
+            uncompressed_in_memory_buffer.values.len(),
+            read_uncompressed_in_memory_buffer.values.len()
+        );
+
         let values_len = uncompressed_in_memory_buffer.values.len();
-        for index in 0..values_len {
+        for value_index in 0..values_len {
             assert_eq!(
-                uncompressed_in_memory_buffer.values[index].values_slice(),
-                read_uncompressed_in_memory_buffer.values[index].values_slice()
+                uncompressed_in_memory_buffer.values[value_index].values_slice(),
+                read_uncompressed_in_memory_buffer.values[value_index].values_slice()
             );
         }
     }
@@ -712,7 +728,7 @@ mod tests {
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
         let mut uncompressed_in_memory_buffer_to_be_spilled = UncompressedInMemoryDataBuffer::new(
-            UNIVARIATE_ID,
+            TAG_HASH,
             test::model_table_metadata_arc(),
             CURRENT_BATCH_INDEX,
         );
@@ -737,7 +753,7 @@ mod tests {
             uncompressed_buffer.insert_data_point(
                 CURRENT_BATCH_INDEX,
                 timestamp,
-                &mut values.iter().map(|value| *value),
+                &mut values.iter().copied(),
             );
         }
     }

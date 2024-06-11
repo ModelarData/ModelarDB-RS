@@ -76,8 +76,8 @@ pub(super) struct UncompressedDataManager {
     cluster_mode: ClusterMode,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
-    /// Metric for the used multivariate memory in bytes, updated every time the used memory changes.
-    pub(super) used_multivariate_memory_metric: Arc<Mutex<Metric>>,
+    /// Metric for the used ingested memory in bytes, updated every time the used memory changes.
+    pub(super) used_ingested_memory_metric: Arc<Mutex<Metric>>,
     /// Metric for the used uncompressed memory in bytes, updated every time the used memory changes.
     pub(super) used_uncompressed_memory_metric: Mutex<Metric>,
     /// Metric for the amount of ingested data points, updated every time a new batch of data is ingested.
@@ -93,7 +93,7 @@ impl UncompressedDataManager {
         channels: Arc<Channels>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         cluster_mode: ClusterMode,
-        used_multivariate_memory_metric: Arc<Mutex<Metric>>,
+        used_ingested_memory_metric: Arc<Mutex<Metric>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Self {
         Self {
@@ -105,7 +105,7 @@ impl UncompressedDataManager {
             table_metadata_manager,
             cluster_mode,
             memory_pool,
-            used_multivariate_memory_metric,
+            used_ingested_memory_metric,
             used_uncompressed_memory_metric: Mutex::new(Metric::new()),
             ingested_data_points_metric: Mutex::new(Metric::new()),
             used_disk_space_metric,
@@ -186,9 +186,9 @@ impl UncompressedDataManager {
                 .map_err(|error| error.to_string())?;
 
             match message {
-                Message::Data(uncompressed_data_multivariate) => {
+                Message::Data(ingested_data_buffer) => {
                     runtime
-                        .block_on(self.insert_data_points(uncompressed_data_multivariate))
+                        .block_on(self.insert_data_points(ingested_data_buffer))
                         .map_err(|error| error.to_string())?;
                 }
                 Message::Flush => {
@@ -212,14 +212,14 @@ impl UncompressedDataManager {
         Ok(())
     }
 
-    /// Insert `uncompressed_data_multivariate` into in-memory buffers managed by the storage
-    /// engine. Returns [`String`] if the channel or the metadata database could not be read from.
+    /// Insert `ingested_data_buffer` into in-memory buffers managed by the storage engine. Returns
+    /// [`String`] if the channel or the metadata database could not be read from.
     async fn insert_data_points(
         &self,
-        uncompressed_data_multivariate: IngestedDataBuffer,
+        ingested_data_buffer: IngestedDataBuffer,
     ) -> Result<(), String> {
-        let data_points = uncompressed_data_multivariate.data_points;
-        let model_table_metadata = uncompressed_data_multivariate.model_table_metadata;
+        let data_points = ingested_data_buffer.data_points;
+        let model_table_metadata = ingested_data_buffer.model_table_metadata;
 
         debug!(
             "Received record batch with {} data points for the table '{}'.",
@@ -311,7 +311,7 @@ impl UncompressedDataManager {
             .map_err(|error| error.to_string())?;
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        self.used_multivariate_memory_metric
+        self.used_ingested_memory_metric
             .lock()
             .unwrap()
             .append(-(data_points.get_array_memory_size() as isize), true);
@@ -590,7 +590,7 @@ impl UncompressedDataManager {
             debug!("Finished in-memory buffer for {tag_hash} as it is no longer used.",);
         }
 
-        // On-disk univariate ids are copied to prevent multiple borrows to the map the same time.
+        // On-disk tag hashes are copied to prevent multiple borrows to the map the same time.
         let tag_hashes_of_unused_on_disk_buffers = self
             .uncompressed_on_disk_data_buffers
             .iter()
@@ -619,8 +619,8 @@ impl UncompressedDataManager {
     }
 
     /// Compress the uncompressed data buffers that the [`UncompressedDataManager`] is currently
-    /// managing, and return the compressed buffers and their univariate ids. Writes a log message
-    /// if a [`Message`] cannot be sent to [`CompressedDataManager`](super::CompressedDataManager).
+    /// managing. Writes a log message if a [`Message`] cannot be sent to
+    /// [`CompressedDataManager`](super::CompressedDataManager).
     fn flush_and_log_errors(&self) {
         if let Err(error) = self.flush() {
             error!("Failed to flush data in uncompressed data manager due to: {error}");
@@ -745,8 +745,9 @@ impl UncompressedDataManager {
         for (value_index, field_column_index) in
             model_table_metadata.field_column_indices.iter().enumerate()
         {
+            // One is added to value_index as the first array contains the timestamps.
             let uncompressed_values =
-                modelardb_common::array!(data_points, value_index, ValueArray);
+                modelardb_common::array!(data_points, value_index + 1, ValueArray);
             let univariate_id = tag_hash | *field_column_index as u64;
             let error_bound = model_table_metadata.error_bounds[*field_column_index];
 
@@ -871,20 +872,17 @@ mod tests {
 
         sleep(Duration::from_millis(250)).await;
 
-        for _ in 0..2 {
-            storage_engine
-                .uncompressed_data_manager
-                .spill_in_memory_data_buffer()
-                .await
-                .unwrap();
-        }
+        storage_engine
+            .uncompressed_data_manager
+            .spill_in_memory_data_buffer()
+            .await
+            .unwrap();
 
-        // Compress the spilled buffers and sleep to allow the compression thread to finish.
-        let result = storage_engine.initialize(&context).await;
-        assert!(result.is_ok());
+        // Compress the spilled buffer and sleep to allow the compression thread to finish.
+        assert!(storage_engine.initialize(&context).await.is_ok());
         sleep(Duration::from_millis(250)).await;
 
-        // The two spilled buffers should be deleted and the content should be compressed.
+        // The spilled buffer should be deleted and the content should be compressed.
         let spilled_buffers = storage_engine
             .uncompressed_data_manager
             .local_data_folder
@@ -912,15 +910,15 @@ mod tests {
             create_managers(&temp_dir).await;
 
         let data = uncompressed_data(1, model_table_metadata.schema.clone());
-        let uncompressed_data_multivariate = IngestedDataBuffer::new(model_table_metadata, data);
+        let ingested_data_buffer = IngestedDataBuffer::new(model_table_metadata, data);
 
         data_manager
-            .insert_data_points(uncompressed_data_multivariate)
+            .insert_data_points(ingested_data_buffer)
             .await
             .unwrap();
 
-        // Two separate builders are created since the inserted data has two field columns.
-        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 2);
+        // Only a single data buffer is created despite the inserted data containing two field columns.
+        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(
             data_manager
                 .ingested_data_points_metric
@@ -939,15 +937,15 @@ mod tests {
             create_managers(&temp_dir).await;
 
         let data = uncompressed_data(2, model_table_metadata.schema.clone());
-        let uncompressed_data_multivariate = IngestedDataBuffer::new(model_table_metadata, data);
+        let ingested_data_buffer = IngestedDataBuffer::new(model_table_metadata, data);
 
         data_manager
-            .insert_data_points(uncompressed_data_multivariate)
+            .insert_data_points(ingested_data_buffer)
             .await
             .unwrap();
 
-        // Since the tag is different for each data point, 4 separate buffers should be created.
-        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 4);
+        // Since the tag is different for the two data point, two data buffers should be created.
+        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 2);
         assert_eq!(
             data_manager
                 .ingested_data_points_metric
@@ -960,7 +958,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_remaining_multivariate_memory_increased_after_processing_record_batch() {
+    async fn test_remaining_ingested_memory_increased_after_processing_record_batch() {
         let temp_dir = tempfile::tempdir().unwrap();
         let (_metadata_manager, data_manager, model_table_metadata) =
             create_managers(&temp_dir).await;
@@ -968,21 +966,21 @@ mod tests {
         let data = uncompressed_data(2, model_table_metadata.schema.clone());
         let data_size = data.get_array_memory_size();
 
-        // Simulate StorageEngine decrementing multivariate memory when receiving multivariate data.
-        let multivariate_memory_before = data_manager
+        // Simulate StorageEngine decrementing ingested memory when receiving ingested data.
+        let ingested_memory_before = data_manager
             .memory_pool
             .remaining_ingested_memory_in_bytes();
 
         data_manager
-            .used_multivariate_memory_metric
+            .used_ingested_memory_metric
             .lock()
             .unwrap()
             .append(data.get_array_memory_size() as isize, true);
 
-        let uncompressed_data_multivariate = IngestedDataBuffer::new(model_table_metadata, data);
+        let ingested_data_buffer = IngestedDataBuffer::new(model_table_metadata, data);
 
         data_manager
-            .insert_data_points(uncompressed_data_multivariate)
+            .insert_data_points(ingested_data_buffer)
             .await
             .unwrap();
 
@@ -990,12 +988,12 @@ mod tests {
             data_manager
                 .memory_pool
                 .remaining_ingested_memory_in_bytes(),
-            multivariate_memory_before + data_size as isize
+            ingested_memory_before + data_size as isize
         );
 
         assert_eq!(
             data_manager
-                .used_multivariate_memory_metric
+                .used_ingested_memory_metric
                 .lock()
                 .unwrap()
                 .values()
@@ -1135,19 +1133,18 @@ mod tests {
         )
         .unwrap();
 
-        let uncompressed_data_multivariate =
-            IngestedDataBuffer::new(model_table_metadata.clone(), data);
+        let ingested_data_buffer = IngestedDataBuffer::new(model_table_metadata.clone(), data);
         data_manager
-            .insert_data_points(uncompressed_data_multivariate)
+            .insert_data_points(ingested_data_buffer)
             .await
             .unwrap();
 
-        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 2);
+        assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 1);
         assert_eq!(data_manager.channels.uncompressed_data_receiver.len(), 0);
         assert_eq!(
             data_manager
                 .uncompressed_in_memory_data_buffers
-                .get(&4940964593210619905)
+                .get(&4940964593210619904)
                 .unwrap()
                 .len(),
             3
@@ -1155,16 +1152,16 @@ mod tests {
 
         // Insert using insert_data_points() to finish unused buffers.
         let empty_record_batch = RecordBatch::new_empty(model_table_metadata.schema.clone());
-        let uncompressed_data_multivariate =
+        let ingested_data_buffer =
             IngestedDataBuffer::new(model_table_metadata, empty_record_batch);
 
         data_manager
-            .insert_data_points(uncompressed_data_multivariate)
+            .insert_data_points(ingested_data_buffer)
             .await
             .unwrap();
 
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 0);
-        assert_eq!(data_manager.channels.uncompressed_data_receiver.len(), 2);
+        assert_eq!(data_manager.channels.uncompressed_data_receiver.len(), 1);
     }
 
     #[tokio::test]
@@ -1241,13 +1238,13 @@ mod tests {
         // message inserted would block the thread until the data messages have been processed.
         let number_of_buffers =
             reserved_memory / UncompressedInMemoryDataBuffer::compute_memory_size(number_fields);
-        for univariate_id in 0..number_of_buffers {
+        for tag_hash in 0..number_of_buffers {
             // Allocate many buffers that are never finished.
             insert_data_points(
                 1,
                 &mut data_manager,
                 &model_table_metadata.clone(),
-                univariate_id as u64,
+                tag_hash as u64,
             )
             .await;
         }
@@ -1277,7 +1274,7 @@ mod tests {
         assert_eq!(data_manager.uncompressed_on_disk_data_buffers.len(), 1);
         assert_eq!(data_manager.channels.uncompressed_data_receiver.len(), 0);
 
-        // The UncompressedDataBuffer should be spilled to univariate id in the uncompressed folder.
+        // The UncompressedDataBuffer should be spilled to tag hash in the uncompressed folder.
         let spilled_buffers = data_manager
             .local_data_folder
             .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
@@ -1492,7 +1489,7 @@ mod tests {
                 .insert_data_point(
                     tag_hash,
                     i as i64,
-                    &mut values.iter().map(|value| *value),
+                    &mut values.iter().copied(),
                     model_table_metadata.clone(),
                     current_batch_index,
                 )
@@ -1531,14 +1528,14 @@ mod tests {
             .unwrap();
 
         let memory_pool = Arc::new(MemoryPool::new(
-            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES,
+            test::INGESTED_RESERVED_MEMORY_IN_BYTES,
             test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
             test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         ));
 
         let channels = Arc::new(Channels::new());
 
-        // UncompressedDataManager::try_new() lookup the error bounds for each univariate_id.
+        // UncompressedDataManager::try_new() lookup the error bounds for each tag hash.
         let uncompressed_data_manager = UncompressedDataManager::new(
             object_store,
             memory_pool,

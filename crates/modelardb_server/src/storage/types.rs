@@ -353,14 +353,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_uncompressed_memory_in_bytes(),
-            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
+            test::INGESTED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
         memory_pool.adjust_ingested_memory(test::COMPRESSED_SEGMENTS_SIZE as isize);
 
         assert_eq!(
             memory_pool.remaining_ingested_memory_in_bytes(),
-            (test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
+            (test::INGESTED_RESERVED_MEMORY_IN_BYTES + test::COMPRESSED_SEGMENTS_SIZE) as isize
         );
     }
 
@@ -369,14 +369,14 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_ingested_memory_in_bytes(),
-            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
+            test::INGESTED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
         memory_pool.adjust_ingested_memory(-(test::COMPRESSED_SEGMENTS_SIZE as isize));
 
         assert_eq!(
             memory_pool.remaining_ingested_memory_in_bytes(),
-            (test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES - test::COMPRESSED_SEGMENTS_SIZE) as isize
+            (test::INGESTED_RESERVED_MEMORY_IN_BYTES - test::COMPRESSED_SEGMENTS_SIZE) as isize
         );
     }
 
@@ -385,15 +385,15 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_ingested_memory_in_bytes(),
-            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
+            test::INGESTED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
         memory_pool
-            .adjust_ingested_memory(-2 * test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize);
+            .adjust_ingested_memory(-2 * test::INGESTED_RESERVED_MEMORY_IN_BYTES as isize);
 
         assert_eq!(
             memory_pool.remaining_ingested_memory_in_bytes(),
-            -(test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize)
+            -(test::INGESTED_RESERVED_MEMORY_IN_BYTES as isize)
         );
     }
 
@@ -402,11 +402,11 @@ mod tests {
         let memory_pool = create_memory_pool();
         assert_eq!(
             memory_pool.remaining_ingested_memory_in_bytes(),
-            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES as isize
+            test::INGESTED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
         // Blocks if memory cannot be reserved, thus forcing the test to never succeed.
-        memory_pool.wait_for_ingested_memory(test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES);
+        memory_pool.wait_for_ingested_memory(test::INGESTED_RESERVED_MEMORY_IN_BYTES);
 
         assert_eq!(memory_pool.remaining_ingested_memory_in_bytes(), 0);
     }
@@ -594,7 +594,7 @@ mod tests {
 
     fn create_memory_pool() -> MemoryPool {
         MemoryPool::new(
-            test::MULTIVARIATE_RESERVED_MEMORY_IN_BYTES,
+            test::INGESTED_RESERVED_MEMORY_IN_BYTES,
             test::UNCOMPRESSED_RESERVED_MEMORY_IN_BYTES,
             test::COMPRESSED_RESERVED_MEMORY_IN_BYTES,
         )

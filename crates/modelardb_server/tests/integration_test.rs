@@ -70,6 +70,9 @@ const TIME_SERIES_TEST_LENGTH: usize = 5000;
 /// length is `2 * SEGMENT_TEST_MINIMUM_LENGTH`.
 const SEGMENT_TEST_MINIMUM_LENGTH: usize = 50;
 
+/// Expected size of the uncompressed data buffers produced in the integration tests.
+const UNCOMPRESSED_BUFFER_SIZE: usize = 1835008;
+
 /// The different types of tables used in the integration tests.
 enum TableType {
     NormalTable,
@@ -670,7 +673,7 @@ fn test_can_collect_metrics() {
     // Check that all metrics are present in the response.
     let metrics_array = modelardb_common::array!(metrics, 0, StringArray);
 
-    assert_eq!(metrics_array.value(0), "used_multivariate_memory");
+    assert_eq!(metrics_array.value(0), "used_ingested_memory");
     assert_eq!(metrics_array.value(1), "used_uncompressed_memory");
     assert_eq!(metrics_array.value(2), "used_compressed_memory");
     assert_eq!(metrics_array.value(3), "ingested_data_points");
@@ -679,8 +682,8 @@ fn test_can_collect_metrics() {
     // Check that the metrics are populated when ingesting and flushing.
     let values_array = modelardb_common::array!(metrics, 2, ListArray);
 
-    // The used_multivariate_memory metric should record when data is received and ingested.
-    let multivariate_data_size = test::MULTIVARIATE_DATA_SIZE as u32;
+    // The used_ingested_memory metric should record when data is received and ingested.
+    let ingested_buffer_size = test::INGESTED_BUFFER_SIZE as u32;
     assert_eq!(
         values_array
             .value(0)
@@ -688,11 +691,11 @@ fn test_can_collect_metrics() {
             .downcast_ref::<UInt32Array>()
             .unwrap()
             .values(),
-        &[multivariate_data_size, 0]
+        &[ingested_buffer_size, 0]
     );
 
     // The used_uncompressed_memory metric should record the change when ingesting and when flushing.
-    let uncompressed_buffer_size = test::UNCOMPRESSED_BUFFER_SIZE as u32;
+    let uncompressed_buffer_size = UNCOMPRESSED_BUFFER_SIZE as u32;
     assert_eq!(
         values_array
             .value(1)
@@ -700,18 +703,7 @@ fn test_can_collect_metrics() {
             .downcast_ref::<UInt32Array>()
             .unwrap()
             .values(),
-        &[
-            uncompressed_buffer_size,
-            uncompressed_buffer_size * 2,
-            uncompressed_buffer_size * 3,
-            uncompressed_buffer_size * 4,
-            uncompressed_buffer_size * 5,
-            uncompressed_buffer_size * 4,
-            uncompressed_buffer_size * 3,
-            uncompressed_buffer_size * 2,
-            uncompressed_buffer_size,
-            0,
-        ]
+        &[uncompressed_buffer_size, 0]
     );
 
     // The amount of bytes used for compressed memory changes depending on the compression, so we
@@ -731,7 +723,7 @@ fn test_can_collect_metrics() {
 
     // The amount of bytes used for disk space changes depending on the compression, so we
     // can only check that the metric is populated when initializing and when flushing.
-    assert_eq!(values_array.value(4).len(), 11);
+    assert_eq!(values_array.value(4).len(), 7);
 }
 
 #[test]
