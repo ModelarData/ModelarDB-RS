@@ -25,6 +25,7 @@ use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::common::{DFSchema, DataFusionError, ToDFSchema};
 use datafusion::config::ConfigOptions;
 use datafusion::execution::context::ExecutionProps;
+use datafusion::functions;
 use datafusion::logical_expr::{AggregateUDF, Expr as DFExpr, ScalarUDF, TableSource, WindowUDF};
 use datafusion::physical_expr::planner;
 use datafusion::sql::planner::{ContextProvider, PlannerContext, SqlToRel};
@@ -394,9 +395,7 @@ pub fn semantic_checks_for_create_table(
             Ok(ValidStatement::CreateModelTable(model_table_metadata))
         } else {
             // Create a table that supports all columns types supported by Apache Arrow DataFusion.
-            let context_provider = EmptyContextProvider {
-                options: ConfigOptions::default(),
-            };
+            let context_provider = ParserContextProvider::new();
             let sql_to_rel = SqlToRel::new(&context_provider);
             let schema = sql_to_rel
                 .build_schema(columns)
@@ -660,9 +659,7 @@ fn tokens_to_error_bound(dialect_specific_tokens: &[Token]) -> Result<(f32, bool
 fn extract_generation_exprs_for_all_columns(
     column_defs: &[ColumnDef],
 ) -> Result<Vec<Option<GeneratedColumn>>, DataFusionError> {
-    let context_provider = EmptyContextProvider {
-        options: ConfigOptions::default(),
-    };
+    let context_provider = ParserContextProvider::new();
     let sql_to_rel = SqlToRel::new(&context_provider);
     let schema = sql_to_rel.build_schema(column_defs.to_vec())?;
     let df_schema = schema.clone().to_dfschema()?;
@@ -723,9 +720,7 @@ fn extract_generation_exprs_for_all_columns(
 /// Parse `sql_expr` into a [`DFExpr`] if it is a correctly formatted SQL arithmetic expression
 /// that only references columns in [`DFSchema`], otherwise [`ParserError`] is returned.
 pub fn parse_sql_expression(df_schema: &DFSchema, sql_expr: &str) -> Result<DFExpr, ParserError> {
-    let context_provider = EmptyContextProvider {
-        options: ConfigOptions::default(),
-    };
+    let context_provider = ParserContextProvider::new();
     let sql_to_rel = SqlToRel::new(&context_provider);
     let mut planner_context = PlannerContext::new();
 
@@ -742,11 +737,28 @@ pub fn parse_sql_expression(df_schema: &DFSchema, sql_expr: &str) -> Result<DFEx
 /// which was released under version 2.0 of the Apache License.
 ///
 /// [rewrite_expr.rs]: https://github.com/apache/arrow-datafusion/blob/main/datafusion-examples/examples/rewrite_expr.rs
-struct EmptyContextProvider {
+struct ParserContextProvider {
     options: ConfigOptions,
+    udfs: HashMap<String, Arc<ScalarUDF>>,
 }
 
-impl ContextProvider for EmptyContextProvider {
+impl ParserContextProvider {
+    fn new() -> Self {
+        let mut functions = functions::all_default_functions();
+
+        let udfs = functions
+            .drain(0..)
+            .map(|udf| (udf.name().to_owned(), udf))
+            .collect::<HashMap<String, Arc<ScalarUDF>>>();
+
+        ParserContextProvider {
+            options: ConfigOptions::default(),
+            udfs,
+        }
+    }
+}
+
+impl ContextProvider for ParserContextProvider {
     fn get_table_source(
         &self,
         _name: TableReference,
@@ -756,8 +768,8 @@ impl ContextProvider for EmptyContextProvider {
         ))
     }
 
-    fn get_function_meta(&self, _name: &str) -> Option<Arc<ScalarUDF>> {
-        None
+    fn get_function_meta(&self, name: &str) -> Option<Arc<ScalarUDF>> {
+        self.udfs.get(name).cloned()
     }
 
     fn get_aggregate_meta(&self, _name: &str) -> Option<Arc<AggregateUDF>> {
@@ -776,15 +788,15 @@ impl ContextProvider for EmptyContextProvider {
         &self.options
     }
 
-    fn udfs_names(&self) -> Vec<String> {
+    fn udf_names(&self) -> Vec<String> {
+        self.udfs.keys().cloned().collect()
+    }
+
+    fn udaf_names(&self) -> Vec<String> {
         vec![]
     }
 
-    fn udafs_names(&self) -> Vec<String> {
-        vec![]
-    }
-
-    fn udwfs_names(&self) -> Vec<String> {
+    fn udwf_names(&self) -> Vec<String> {
         vec![]
     }
 }
@@ -1136,8 +1148,7 @@ mod tests {
             "field_1 + field_2",
             "COS(field_1 * PI() / 180)",
             "SIN(field_1 * PI() / 180)",
-            // DataFusion 37.1 fails with Invalid function 'tan'. Did you mean 'atan'?.
-            // "TAN(field_1 * PI() / 180)", // TODO: Remove comment with DataFusion 38.
+            "TAN(field_1 * PI() / 180)",
         ];
 
         let df_schema = Schema::new(vec![

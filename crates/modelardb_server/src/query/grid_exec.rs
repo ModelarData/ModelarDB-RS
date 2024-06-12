@@ -121,8 +121,8 @@ impl ExecutionPlan for GridExec {
     }
 
     /// Return the single execution plan batches of rows are read from.
-    fn children(&self) -> Vec<Arc<dyn ExecutionPlan>> {
-        vec![self.input.clone()]
+    fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
+        vec![&self.input]
     }
 
     /// Return a new [`GridExec`] with the execution plan to read batches of compressed segments

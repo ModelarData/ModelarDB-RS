@@ -117,8 +117,9 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Return the single execution plan batches of rows are read from.
-    fn children(&self) -> Vec<Arc<(dyn ExecutionPlan)>> {
-        self.inputs.clone()
+    fn children(&self) -> Vec<&Arc<(dyn ExecutionPlan)>> {
+        // iter() returns an iterator that produces elements of type &T.
+        self.inputs.iter().collect()
     }
 
     /// Return a new [`SortedJoinExec`] with the execution plan to read batches of reconstructed

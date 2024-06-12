@@ -33,7 +33,6 @@ use datafusion::arrow::datatypes::{
     ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit,
 };
 use datafusion::common::ToDFSchema;
-use datafusion::config::TableParquetOptions;
 use datafusion::datasource::listing::PartitionedFile;
 use datafusion::datasource::object_store::ObjectStoreUrl;
 use datafusion::datasource::physical_plan::parquet::ParquetExec;
@@ -45,7 +44,7 @@ use datafusion::execution::context::{ExecutionProps, SessionState};
 use datafusion::logical_expr::{self, utils, BinaryExpr, Expr, Operator};
 use datafusion::physical_expr::planner;
 use datafusion::physical_plan::expressions::{Column, PhysicalSortExpr};
-use datafusion::physical_plan::insert::FileSinkExec;
+use datafusion::physical_plan::insert::DataSinkExec;
 use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr, Statistics};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::{COMPRESSED_SCHEMA, QUERY_SCHEMA};
@@ -230,6 +229,7 @@ impl ModelTable {
                 object_meta,
                 partition_values: vec![],
                 range: None,
+                statistics: None,
                 extensions: None,
             })
             .collect::<Vec<PartitionedFile>>();
@@ -247,26 +247,22 @@ impl ModelTable {
             output_ordering: vec![QUERY_ORDER_SEGMENT.clone()],
         };
 
-        let maybe_physical_parquet_predicates =
-            if let Some(parquet_predicates) = maybe_parquet_predicates {
-                Some(convert_logical_expr_to_physical_expr(
-                    &parquet_predicates,
-                    COMPRESSED_SCHEMA.0.clone(),
-                )?)
-            } else {
-                None
-            };
+        let apache_parquet_exec_builder = if let Some(parquet_predicates) = maybe_parquet_predicates
+        {
+            let predicate = convert_logical_expr_to_physical_expr(
+                &parquet_predicates,
+                COMPRESSED_SCHEMA.0.clone(),
+            )?;
 
-        let apache_parquet_exec = Arc::new(
-            ParquetExec::new(
-                file_scan_config,
-                maybe_physical_parquet_predicates,
-                None,
-                TableParquetOptions::default(),
-            )
+            ParquetExec::builder(file_scan_config).with_predicate(predicate)
+        } else {
+            ParquetExec::builder(file_scan_config)
+        };
+
+        let apache_parquet_exec = apache_parquet_exec_builder
+            .build()
             .with_pushdown_filters(true)
-            .with_reorder_filters(true),
-        );
+            .with_reorder_filters(true);
 
         // Create the gridding operator.
         let maybe_physical_grid_predicates = if let Some(grid_predicates) = maybe_grid_predicates {
@@ -281,7 +277,7 @@ impl ModelTable {
         Ok(GridExec::new(
             maybe_physical_grid_predicates,
             limit,
-            apache_parquet_exec,
+            Arc::new(apache_parquet_exec),
         ))
     }
 }
@@ -427,8 +423,14 @@ impl TableProvider for ModelTable {
     }
 
     /// Specify that model tables performs inexact predicate push-down.
-    fn supports_filter_pushdown(&self, _filter: &Expr) -> Result<TableProviderFilterPushDown> {
-        Ok(TableProviderFilterPushDown::Inexact)
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> Result<Vec<TableProviderFilterPushDown>> {
+        Ok(filters
+            .iter()
+            .map(|_filter| TableProviderFilterPushDown::Inexact)
+            .collect())
     }
 
     /// Create an [`ExecutionPlan`] that will insert the result of `input` into the table. `inputs`
@@ -448,7 +450,7 @@ impl TableProvider for ModelTable {
             self.model_table_metadata.clone(),
         ));
 
-        let file_sink = Arc::new(FileSinkExec::new(
+        let file_sink = Arc::new(DataSinkExec::new(
             input,
             data_sink,
             self.model_table_metadata.query_schema.clone(),

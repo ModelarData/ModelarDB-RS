@@ -111,7 +111,7 @@ pub async fn write_record_batch_to_apache_parquet_file(
         writer.close().await?;
 
         object_store
-            .put(file_path, Bytes::from(buffer))
+            .put(file_path, Bytes::from(buffer).into())
             .await
             .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
 
@@ -194,7 +194,7 @@ mod tests {
 
         let path = Path::from("test.txt");
         object_store
-            .put(&path, Bytes::from(Vec::new()))
+            .put(&path, Bytes::from(Vec::new()).into())
             .await
             .unwrap();
 
