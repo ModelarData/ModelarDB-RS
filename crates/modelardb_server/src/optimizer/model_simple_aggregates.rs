@@ -201,7 +201,7 @@ fn try_rewrite_aggregate_exprs(
             .as_any()
             .downcast_ref::<AggregateFunctionExpr>()
         {
-            // A sum aggregate query be an AggregateFunctionExpr instead of simply Sum.
+            // A sum aggregate query can be an AggregateFunctionExpr instead of simply Sum.
             let aggregate_function_expr_name = aggregate_function_expr.fun().name();
             match aggregate_function_expr_name {
                 "SUM" => {
