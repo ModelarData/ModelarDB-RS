@@ -160,7 +160,7 @@ fn try_new_aggregate_exec(
         ));
     }
 
-    let model_based_aggregate_exprs = try_rewrite_aggregate_exprs(aggregate_exec).unwrap();
+    let model_based_aggregate_exprs = try_rewrite_aggregate_exprs(aggregate_exec)?;
 
     // unwrap() is safe as the input is from the existing AggregateExec.
     Ok(Arc::new(

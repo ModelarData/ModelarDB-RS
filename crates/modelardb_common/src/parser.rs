@@ -732,13 +732,16 @@ pub fn parse_sql_expression(df_schema: &DFSchema, sql_expr: &str) -> Result<DFEx
         .map_err(|error| ParserError::ParserError(error.to_string()))
 }
 
-/// Empty context provider required for converting [`Expr`](sqlparser::ast::Expr) to [`DFExpr`]. It
-/// is implemented based on [rewrite_expr.rs] in the Apache Arrow DataFusion GitHub repository
-/// which was released under version 2.0 of the Apache License.
+/// Context used when converting [`Expr`](sqlparser::ast::Expr) to [`DFExpr`], e.g., when validating
+/// generation expressions. It is empty except for the functions included in Apache DataFusion. It
+/// is an extended version of the empty context provider in [rewrite_expr.rs] in the Apache
+/// DataFusion GitHub repository which was released under version 2.0 of the Apache License.
 ///
 /// [rewrite_expr.rs]: https://github.com/apache/arrow-datafusion/blob/main/datafusion-examples/examples/rewrite_expr.rs
 struct ParserContextProvider {
+    /// The default options for Apache DataFusion.
     options: ConfigOptions,
+    /// The functions included in Apache DataFusion.
     udfs: HashMap<String, Arc<ScalarUDF>>,
 }
 
