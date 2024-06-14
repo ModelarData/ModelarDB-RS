@@ -117,8 +117,8 @@ impl ExecutionPlan for GeneratedAsExec {
     }
 
     /// Return the single execution plan batches of rows are read from.
-    fn children(&self) -> Vec<Arc<(dyn ExecutionPlan)>> {
-        vec![self.input.clone()]
+    fn children(&self) -> Vec<&Arc<(dyn ExecutionPlan)>> {
+        vec![&self.input]
     }
 
     /// Return a new [`GeneratedAsExec`] with the execution plan to read rows from replaced.

@@ -29,7 +29,7 @@ use crate::schemas::COMPRESSED_SCHEMA;
 use crate::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, ValueArray};
 
 /// Expected size of the multivariate data produced in the tests.
-pub const MULTIVARIATE_DATA_SIZE: usize = 1436344;
+pub const MULTIVARIATE_DATA_SIZE: usize = 1438392;
 
 /// Expected size of the uncompressed data buffers produced in the tests.
 pub const UNCOMPRESSED_BUFFER_SIZE: usize = 786432;

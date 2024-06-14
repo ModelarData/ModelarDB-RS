@@ -2227,7 +2227,10 @@ mod tests {
         let local_file_system = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
 
         local_file_system
-            .put(&Path::from("folder/test.parquet"), Bytes::from(Vec::new()))
+            .put(
+                &Path::from("folder/test.parquet"),
+                Bytes::from(Vec::new()).into(),
+            )
             .await
             .unwrap();
 
@@ -2250,7 +2253,7 @@ mod tests {
         local_file_system
             .put(
                 &Path::from("table_folder/test.parquet"),
-                Bytes::from(Vec::new()),
+                Bytes::new().into(),
             )
             .await
             .unwrap();

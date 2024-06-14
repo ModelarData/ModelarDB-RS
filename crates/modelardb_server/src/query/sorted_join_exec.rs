@@ -117,8 +117,9 @@ impl ExecutionPlan for SortedJoinExec {
     }
 
     /// Return the single execution plan batches of rows are read from.
-    fn children(&self) -> Vec<Arc<(dyn ExecutionPlan)>> {
-        self.inputs.clone()
+    fn children(&self) -> Vec<&Arc<(dyn ExecutionPlan)>> {
+        // iter() returns an iterator that produces elements of type &T.
+        self.inputs.iter().collect()
     }
 
     /// Return a new [`SortedJoinExec`] with the execution plan to read batches of reconstructed
@@ -262,7 +263,7 @@ impl SortedJoinStream {
         let first_batch_num_rows = self.batches[0].as_ref().unwrap().num_rows();
 
         let mut all_same_num_rows = true;
-        let mut smallest_num_rows = usize::max_value();
+        let mut smallest_num_rows = usize::MAX;
         for batch in &self.batches {
             let batch_num_rows = batch.as_ref().unwrap().num_rows();
             all_same_num_rows = all_same_num_rows && batch_num_rows == first_batch_num_rows;
