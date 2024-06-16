@@ -1862,7 +1862,7 @@ mod tests {
             version: None,
         };
 
-        CompressedFile::new(file_metadata, start_time, end_time, min_value, max_value)
+        CompressedFile::new(file_metadata, 0, start_time, end_time, min_value, max_value)
     }
 
     #[tokio::test]

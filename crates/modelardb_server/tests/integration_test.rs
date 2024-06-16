@@ -708,7 +708,7 @@ fn test_can_collect_metrics() {
 
     // The amount of bytes used for compressed memory changes depending on the compression, so we
     // can only check that the metric is populated when compressing and when flushing.
-    assert_eq!(values_array.value(2).len(), 10);
+    assert_eq!(values_array.value(2).len(), 2);
 
     // The ingested_data_points metric should record the single request to ingest data points.
     assert_eq!(

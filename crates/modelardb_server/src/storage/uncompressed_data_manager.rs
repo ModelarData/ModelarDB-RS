@@ -734,40 +734,41 @@ impl UncompressedDataManager {
 
         let data_points = maybe_data_points.map_err(|_| {
             SendError(Message::Data(CompressedSegmentBatch::new(
-                tag_hash,
                 model_table_metadata.clone(),
-                RecordBatch::new_empty(COMPRESSED_SCHEMA.0.clone()),
+                vec![RecordBatch::new_empty(COMPRESSED_SCHEMA.0.clone())],
             )))
         })?;
 
         let uncompressed_timestamps = modelardb_common::array!(data_points, 0, TimestampArray);
 
-        for (value_index, field_column_index) in
-            model_table_metadata.field_column_indices.iter().enumerate()
-        {
-            // One is added to value_index as the first array contains the timestamps.
-            let uncompressed_values =
-                modelardb_common::array!(data_points, value_index + 1, ValueArray);
-            let univariate_id = tag_hash | *field_column_index as u64;
-            let error_bound = model_table_metadata.error_bounds[*field_column_index];
+        let compressed_segments = model_table_metadata
+            .field_column_indices
+            .iter()
+            .enumerate()
+            .map(|(value_index, field_column_index)| {
+                // One is added to value_index as the first array contains the timestamps.
+                let uncompressed_values =
+                    modelardb_common::array!(data_points, value_index + 1, ValueArray);
+                let univariate_id = tag_hash | *field_column_index as u64;
+                let error_bound = model_table_metadata.error_bounds[*field_column_index];
 
-            // unwrap() is safe as uncompressed_timestamps and uncompressed_values have the same length.
-            let compressed_segments = modelardb_compression::try_compress(
-                univariate_id,
-                error_bound,
-                uncompressed_timestamps,
-                uncompressed_values,
-            )
-            .unwrap();
-
-            self.channels.compressed_data_sender.send(Message::Data(
-                CompressedSegmentBatch::new(
+                // unwrap() is safe as uncompressed_timestamps and uncompressed_values have the same length.
+                modelardb_compression::try_compress(
                     univariate_id,
-                    model_table_metadata.clone(),
-                    compressed_segments,
-                ),
-            ))?;
-        }
+                    error_bound,
+                    uncompressed_timestamps,
+                    uncompressed_values,
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+
+        self.channels
+            .compressed_data_sender
+            .send(Message::Data(CompressedSegmentBatch::new(
+                model_table_metadata.clone(),
+                compressed_segments,
+            )))?;
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         self.used_uncompressed_memory_metric
@@ -899,7 +900,7 @@ mod tests {
                 .unwrap()
                 .values()
                 .occupied_len(),
-            2
+            1
         );
     }
 

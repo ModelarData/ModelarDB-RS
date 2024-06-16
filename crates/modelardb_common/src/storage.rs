@@ -124,17 +124,22 @@ pub async fn write_record_batch_to_apache_parquet_file(
     }
 }
 
-/// Write `compressed_segments` to an Apache Parquet file with a unique file name in `folder_path`.
-/// Return the path to the file if the file was written successfully, otherwise return [`ParquetError`].
+/// Write `compressed_segments` for the column `field_column_index` in the table with `table_name`to
+/// an Apache Parquet file with an UUID as the file name in `compressed_data_folder`. Return the
+/// path to the file if the file was written successfully, otherwise return [`ParquetError`].
 pub async fn write_compressed_segments_to_apache_parquet_file(
-    folder_path: &Path,
+    compressed_data_folder: &str,
+    table_name: &str,
+    field_column_index: u16,
     compressed_segments: &RecordBatch,
     object_store: &dyn ObjectStore,
 ) -> Result<Path, ParquetError> {
     if compressed_segments.schema() == COMPRESSED_SCHEMA.0 {
-        // Use a UUID for the file name to ensure the name is unique.
+        // Use a UUID for the file name to make it very likely that the name is unique.
         let uuid = Uuid::new_v4();
-        let output_file_path = Path::from(format!("{folder_path}/{uuid}.parquet"));
+        let output_file_path = Path::from(format!(
+            "{compressed_data_folder}/{table_name}/{field_column_index}/{uuid}.parquet"
+        ));
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
         let sorting_columns = Some(vec![
@@ -332,7 +337,9 @@ mod tests {
         let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
 
         write_compressed_segments_to_apache_parquet_file(
-            &Path::from("compressed"),
+            "compressed",
+            test::MODEL_TABLE_NAME,
+            0,
             compressed_segments,
             &object_store,
         )

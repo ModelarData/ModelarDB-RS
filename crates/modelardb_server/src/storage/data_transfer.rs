@@ -118,14 +118,14 @@ impl DataTransfer {
             .append(initial_disk_space as isize, true);
 
         // Check if data should be transferred immediately.
-        for table_name_column_index_size_in_bytes in compressed_files.iter() {
-            let table_name = &table_name_column_index_size_in_bytes.key().0;
-            let column_index = table_name_column_index_size_in_bytes.key().1;
-            let size_in_bytes = table_name_column_index_size_in_bytes.value();
+        for table_name_field_column_index_size_in_bytes in compressed_files.iter() {
+            let table_name = &table_name_field_column_index_size_in_bytes.key().0;
+            let field_column_index = table_name_field_column_index_size_in_bytes.key().1;
+            let size_in_bytes = table_name_field_column_index_size_in_bytes.value();
 
             if transfer_batch_size_in_bytes.is_some_and(|batch_size| size_in_bytes >= &batch_size) {
                 data_transfer
-                    .transfer_data(table_name, column_index)
+                    .transfer_data(table_name, field_column_index)
                     .await
                     .map_err(|err| IOError::new(Other, err.to_string()))?;
             }
@@ -139,10 +139,10 @@ impl DataTransfer {
     pub async fn add_compressed_file(
         &self,
         table_name: &str,
-        column_index: u16,
+        field_column_index: u16,
         compressed_file: &CompressedFile,
     ) -> Result<(), ParquetError> {
-        let key = (table_name.to_owned(), column_index);
+        let key = (table_name.to_owned(), field_column_index);
 
         // entry() is not used as it would require the allocation of a new String for each lookup as
         // it must be given as a K, while get_mut() accepts the key as a &K so one K can be used.
@@ -156,7 +156,7 @@ impl DataTransfer {
         if self.transfer_batch_size_in_bytes.is_some_and(|batch_size| {
             self.compressed_files.get(&key).unwrap().value() >= &batch_size
         }) {
-            self.transfer_data(table_name, column_index).await?;
+            self.transfer_data(table_name, field_column_index).await?;
         }
 
         Ok(())
@@ -244,9 +244,13 @@ impl DataTransfer {
     /// `table_name` to the remote object store. Once successfully transferred, the data is deleted
     /// from local storage. Return [`Ok`] if the files were transferred successfully, otherwise
     /// [`ParquetError`].
-    async fn transfer_data(&self, table_name: &str, column_index: u16) -> Result<(), ParquetError> {
+    async fn transfer_data(
+        &self,
+        table_name: &str,
+        field_column_index: u16,
+    ) -> Result<(), ParquetError> {
         // Read all files that is currently stored for the table with table_name.
-        let path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}").into();
+        let path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{field_column_index}").into();
         let object_metas = self
             .local_data_folder
             .list(Some(&path))
@@ -266,15 +270,14 @@ impl DataTransfer {
             &(self.local_data_folder.clone() as Arc<dyn ObjectStore>),
             &object_metas,
             &self.remote_data_folder,
-            &Path::from(format!(
-                "{COMPRESSED_DATA_FOLDER}/{table_name}/{column_index}"
-            )),
+            table_name,
+            field_column_index,
         )
         .await?;
 
         // Delete the metadata for the transferred files from the metadata database.
         self.table_metadata_manager
-            .replace_compressed_files(table_name, column_index.into(), &object_metas, None)
+            .replace_compressed_files(table_name, field_column_index.into(), &object_metas, None)
             .await
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
@@ -282,7 +285,7 @@ impl DataTransfer {
         let transferred_bytes: usize = object_metas.iter().map(|meta| meta.size).sum();
         *self
             .compressed_files
-            .get_mut(&(table_name.to_owned(), column_index))
+            .get_mut(&(table_name.to_owned(), field_column_index))
             .unwrap() -= transferred_bytes;
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
@@ -298,7 +301,11 @@ impl DataTransfer {
 
         // Transfer the metadata of the transferred file to the manager.
         self.manager
-            .transfer_compressed_file_metadata(table_name, column_index.into(), compressed_file)
+            .transfer_compressed_file_metadata(
+                table_name,
+                field_column_index.into(),
+                compressed_file,
+            )
             .await
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
@@ -542,15 +549,12 @@ mod tests {
         let local_data_folder =
             Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
-        let folder_path = format!(
-            "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}",
-            test::MODEL_TABLE_NAME
-        );
-
         let batch = test::compressed_segments_record_batch();
 
         let file_path = storage::write_compressed_segments_to_apache_parquet_file(
-            &Path::from(folder_path),
+            COMPRESSED_DATA_FOLDER,
+            test::MODEL_TABLE_NAME,
+            COLUMN_INDEX,
             &batch,
             &(local_data_folder.clone() as Arc<dyn ObjectStore>),
         )
@@ -558,7 +562,8 @@ mod tests {
         .unwrap();
 
         let object_meta = local_data_folder.head(&file_path).await.unwrap();
-        let compressed_file = CompressedFile::from_compressed_data(object_meta, &batch);
+        let compressed_file =
+            CompressedFile::from_compressed_data(object_meta, COLUMN_INDEX, &batch);
 
         // Save the metadata of the compressed file to the metadata database.
         table_metadata_manager

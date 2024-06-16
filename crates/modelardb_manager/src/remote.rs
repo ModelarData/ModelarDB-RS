@@ -266,8 +266,10 @@ impl FlightServiceHandler {
                     version: None,
                 };
 
+                // Cast is safe as ModelTableMetadata ensures there are no more than 1024 columns.
                 let compressed_file = CompressedFile::new(
                     file_metadata,
+                    field_column_array.value(row_index) as u16,
                     start_time_array.value(row_index),
                     end_time_array.value(row_index),
                     min_value_array.value(row_index),
