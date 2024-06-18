@@ -313,7 +313,7 @@ fn rewrite_filter(query_schema: &SchemaRef, filter: &Expr) -> Option<(Expr, Expr
                 // unwrap() is safe as it has already been checked that the fields exists.
                 let field = query_schema.field_with_name(&column.name).unwrap();
                 // Type aliases cannot be used as a constructor and thus cannot be used here.
-                if *field.data_type() == DataType::Timestamp(TimeUnit::Millisecond, None) {
+                if *field.data_type() == DataType::Timestamp(TimeUnit::Microsecond, None) {
                     match op {
                         Operator::Gt | Operator::GtEq => Some((
                             new_binary_expr(logical_expr::col("end_time"), *op, *right.clone()),
@@ -348,7 +348,7 @@ fn rewrite_filter(query_schema: &SchemaRef, filter: &Expr) -> Option<(Expr, Expr
                 // unwrap() is safe as it has already been checked that the fields exists.
                 let field = query_schema.field_with_name(&column.name).unwrap();
                 // Type aliases cannot be used as a constructor and thus cannot be used here.
-                if *field.data_type() == DataType::Timestamp(TimeUnit::Millisecond, None) {
+                if *field.data_type() == DataType::Timestamp(TimeUnit::Microsecond, None) {
                     match op {
                         Operator::Gt | Operator::GtEq => Some((
                             new_binary_expr(*left.clone(), *op, logical_expr::col("start_time")),

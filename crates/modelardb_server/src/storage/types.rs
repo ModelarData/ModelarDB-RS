@@ -286,7 +286,7 @@ impl fmt::Display for MetricType {
 /// and values of the metric is stored in ring buffers to ensure the amount of memory used by the
 /// metric is capped.
 pub struct Metric {
-    /// Ring buffer consisting of a capped amount of millisecond precision timestamps.
+    /// Ring buffer consisting of a capped amount of microseconds precision timestamps.
     timestamps: HeapRb<Timestamp>,
     /// Ring buffer consisting of a capped amount of values.
     values: HeapRb<u32>,
@@ -309,12 +309,12 @@ impl Metric {
         }
     }
 
-    /// Add a new entry to the metric, where the timestamp is the current milliseconds since the Unix
-    /// epoch and the value is either set directly or based on the last value in the metric.
+    /// Add a new entry to the metric, where the timestamp is the current microseconds since the
+    /// Unix epoch and the value is either set directly or based on the last value in the metric.
     pub(super) fn append(&mut self, value: isize, based_on_last: bool) {
         // unwrap() is safe since the Unix epoch is always earlier than now.
         let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let timestamp = since_the_epoch.as_millis() as Timestamp;
+        let timestamp = since_the_epoch.as_micros() as Timestamp;
 
         let mut new_value = value;
         if based_on_last {
@@ -610,7 +610,7 @@ mod tests {
         // timestamp is measured just before metric.append() to minimize the chance that enough time
         // has passed that the timestamp written to metric is different from what the test expects.
         let since_the_epoch = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        let timestamp = since_the_epoch.as_millis() as Timestamp;
+        let timestamp = since_the_epoch.as_micros() as Timestamp;
         metric.append(30, false);
 
         assert_eq!(metric.timestamps.pop_iter().last(), Some(timestamp));

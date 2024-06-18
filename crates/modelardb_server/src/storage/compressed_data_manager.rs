@@ -115,7 +115,7 @@ impl CompressedDataManager {
 
         let file_path = Path::from(format!(
             "{COMPRESSED_DATA_FOLDER}/{table_name}/{}.parquet",
-            since_the_epoch.as_millis()
+            since_the_epoch.as_micros()
         ));
 
         storage::write_record_batch_to_apache_parquet_file(

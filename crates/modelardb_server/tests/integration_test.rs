@@ -35,7 +35,7 @@ use datafusion::arrow::array::{
     Array, Float64Array, ListArray, StringArray, UInt32Array, UInt64Array,
 };
 use datafusion::arrow::compute;
-use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Millisecond};
+use datafusion::arrow::datatypes::{DataType, Field, Schema, TimeUnit::Microsecond};
 use datafusion::arrow::ipc::convert;
 use datafusion::arrow::ipc::reader::StreamReader;
 use datafusion::arrow::ipc::writer::{DictionaryTracker, IpcDataGenerator, IpcWriteOptions};
@@ -298,7 +298,7 @@ impl TestContext {
         let time_series_len = uncompressed_timestamps.len();
 
         let mut fields = vec![
-            Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
+            Field::new("timestamp", DataType::Timestamp(Microsecond, None), false),
             Field::new("field_one", DataType::Float32, false),
             Field::new("field_two", DataType::Float32, false),
             Field::new("field_three", DataType::Float32, false),
@@ -613,7 +613,7 @@ fn test_can_get_schema() {
     assert_eq!(
         schema,
         Schema::new(vec![
-            Field::new("timestamp", DataType::Timestamp(Millisecond, None), false),
+            Field::new("timestamp", DataType::Timestamp(Microsecond, None), false),
             Field::new("field_one", DataType::Float32, false),
             Field::new("field_two", DataType::Float32, false),
             Field::new("field_three", DataType::Float32, false),

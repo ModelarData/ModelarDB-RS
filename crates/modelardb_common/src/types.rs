@@ -32,8 +32,8 @@ pub type ArrowUnivariateId = arrow::datatypes::UInt64Type;
 pub type UnivariateIdBuilder = arrow::array::PrimitiveBuilder<ArrowUnivariateId>;
 
 // Types used for a single timestamp.
-pub type Timestamp = std::primitive::i64; // It is signed to match TimestampMillisecondType.
-pub type ArrowTimestamp = arrow::datatypes::TimestampMillisecondType;
+pub type Timestamp = std::primitive::i64; // It is signed to match TimestampMicrosecondType.
+pub type ArrowTimestamp = arrow::datatypes::TimestampMicrosecondType;
 
 // Types used for a collection of timestamps.
 pub type TimestampBuilder = arrow::array::PrimitiveBuilder<ArrowTimestamp>;

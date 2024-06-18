@@ -249,7 +249,7 @@ data in memory and on disk to an object store using `\F`, and printing operation
 ModelarDB> \dt
 wind_turbine
 ModelarDB> \d wind_turbine
-timestamp: Timestamp(Millisecond, None)
+timestamp: Timestamp(Microsecond, None)
 wind_turbine: Utf8
 wind_direction: Float32
 wind_speed: Float32, Error Bound 1%
