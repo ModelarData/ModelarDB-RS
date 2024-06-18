@@ -39,6 +39,7 @@ use datafusion::physical_optimizer::optimizer::PhysicalOptimizerRule;
 use datafusion::physical_plan::aggregates::AggregateExec;
 use datafusion::physical_plan::expressions::{self, Avg, Count, Max, Min, Sum};
 use datafusion::physical_plan::repartition::RepartitionExec;
+use datafusion::physical_plan::udaf::AggregateFunctionExpr;
 use datafusion::physical_plan::{
     Accumulator, AggregateExpr, ColumnarValue, ExecutionPlan, PhysicalExpr,
 };
@@ -106,7 +107,7 @@ fn rewrite_aggregates_to_use_segments(
                 {
                     repartition_exec.children()[0].clone()
                 } else {
-                    maybe_repartition_exec.clone()
+                    (*maybe_repartition_exec).clone()
                 };
 
                 if let Some(sorted_join_exec) = aggregate_exec_input
@@ -135,7 +136,7 @@ fn rewrite_aggregates_to_use_segments(
 /// column, otherwise [`DataFusionError`] is returned.
 fn try_new_aggregate_exec(
     aggregate_exec: &AggregateExec,
-    grid_execs: Vec<Arc<dyn ExecutionPlan>>,
+    grid_execs: Vec<&Arc<dyn ExecutionPlan>>,
 ) -> Result<Arc<dyn ExecutionPlan>> {
     // aggregate_exec.input_schema().fields.len() == 1 should prevent this, but SortedJoinExec can
     // be constructed with multiple inputs so the number of children is checked just to be sure.
@@ -168,7 +169,7 @@ fn try_new_aggregate_exec(
             aggregate_exec.group_expr().clone(),
             model_based_aggregate_exprs,
             aggregate_exec.filter_expr().to_vec(),
-            grid_execs[0].children().remove(0),
+            grid_execs[0].children()[0].clone(),
             aggregate_exec.schema(),
         )
         .unwrap(),
@@ -196,6 +197,23 @@ fn try_rewrite_aggregate_exprs(
             rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Sum));
         } else if aggregate_expr.as_any().is::<Avg>() {
             rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Avg));
+        } else if let Some(aggregate_function_expr) = aggregate_expr
+            .as_any()
+            .downcast_ref::<AggregateFunctionExpr>()
+        {
+            // A sum aggregate query can be an AggregateFunctionExpr instead of simply Sum.
+            let aggregate_function_expr_name = aggregate_function_expr.fun().name();
+            match aggregate_function_expr_name {
+                "SUM" => {
+                    rewritten_aggregate_exprs.push(ModelAggregateExpr::new(ModelAggregateType::Sum))
+                }
+                _ => {
+                    return Err(DataFusionError::Internal(format!(
+                        "Aggregate function expression {} is currently not supported.",
+                        aggregate_function_expr_name
+                    )))
+                }
+            }
         } else {
             return Err(DataFusionError::Internal(format!(
                 "Aggregate expression {} is currently not supported.",
@@ -380,7 +398,7 @@ impl PhysicalExpr for ModelCountPhysicalExpr {
     }
 
     /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provide input to this [`PhysicalExpr`].
-    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
         vec![]
     }
 
@@ -495,7 +513,7 @@ impl PhysicalExpr for ModelMinPhysicalExpr {
     }
 
     /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provide input to this [`PhysicalExpr`].
-    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
         vec![]
     }
 
@@ -613,7 +631,7 @@ impl PhysicalExpr for ModelMaxPhysicalExpr {
     }
 
     /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provide input to this [`PhysicalExpr`].
-    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
         vec![]
     }
 
@@ -762,7 +780,7 @@ impl PhysicalExpr for ModelSumPhysicalExpr {
     }
 
     /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provide input to this [`PhysicalExpr`].
-    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
         vec![]
     }
 
@@ -913,7 +931,7 @@ impl PhysicalExpr for ModelAvgPhysicalExpr {
     }
 
     /// Return the list of [`PhysicalExprs`](PhysicalExpr) that provide input to this [`PhysicalExpr`].
-    fn children(&self) -> Vec<Arc<dyn PhysicalExpr>> {
+    fn children(&self) -> Vec<&Arc<dyn PhysicalExpr>> {
         vec![]
     }
 
@@ -1168,7 +1186,7 @@ mod tests {
 
             for (current, expected) in current_execs.iter().zip(expected_execs) {
                 assert_eq!(current.as_any().type_id(), *expected);
-                next_execs.extend(current.children());
+                next_execs.extend(current.children().iter().map(|exec| (*exec).clone()));
             }
 
             level += 1;
