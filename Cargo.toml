@@ -26,7 +26,7 @@ crossbeam-channel = "0.5.13"
 crossbeam-queue = "0.3.11"
 dashmap = "5.5.3"
 datafusion = "39.0.0"
-deltalake = { git = "https://github.com/delta-io/delta-rs.git", rev = "85089b1" }
+deltalake = { git = "https://github.com/delta-io/delta-rs.git", rev = "b7b572b" }
 dirs = "5.0.1"
 futures = "0.3.30"
 log = "0.4.21"
