@@ -18,8 +18,9 @@
 use std::debug_assert;
 use std::sync::Arc;
 
-use arrow::array::{BinaryBuilder, Float32Builder, UInt64Builder, UInt8Builder};
+use arrow::array::{BinaryBuilder, Float32Builder, UInt16Builder, UInt64Builder, UInt8Builder};
 use arrow::record_batch::RecordBatch;
+use modelardb_common::metadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
 use modelardb_common::types::{
     ErrorBound, Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
@@ -400,9 +401,11 @@ impl CompressedSegmentBuilder {
 
 /// A batch of compressed segments being built.
 pub(crate) struct CompressedSegmentBatchBuilder {
-    /// Univariate ids of each compressed segment in the batch.
+    /// Field column of each compressed segment in the batch.
+    field_columns: UInt16Builder,
+    /// Univariate id of each compressed segment in the batch.
     univariate_ids: UInt64Builder,
-    /// Model type ids of each compressed segment in the batch.
+    /// Model type id of each compressed segment in the batch.
     model_type_ids: UInt8Builder,
     /// First timestamp of each compressed segment in the batch.
     start_times: TimestampBuilder,
@@ -430,6 +433,7 @@ pub(crate) struct CompressedSegmentBatchBuilder {
 impl CompressedSegmentBatchBuilder {
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
+            field_columns: UInt16Builder::with_capacity(capacity),
             univariate_ids: UInt64Builder::with_capacity(capacity),
             model_type_ids: UInt8Builder::with_capacity(capacity),
             start_times: TimestampBuilder::with_capacity(capacity),
@@ -457,6 +461,8 @@ impl CompressedSegmentBatchBuilder {
         residuals: &[u8],
         error: f32,
     ) {
+        let field_column_index = metadata::univariate_id_to_column_index(univariate_id);
+        self.field_columns.append_value(field_column_index);
         self.univariate_ids.append_value(univariate_id);
         self.model_type_ids.append_value(model_type_id);
         self.start_times.append_value(start_time);
@@ -474,6 +480,7 @@ impl CompressedSegmentBatchBuilder {
         RecordBatch::try_new(
             COMPRESSED_SCHEMA.0.clone(),
             vec![
+                Arc::new(self.field_columns.finish()),
                 Arc::new(self.univariate_ids.finish()),
                 Arc::new(self.model_type_ids.finish()),
                 Arc::new(self.start_times.finish()),
