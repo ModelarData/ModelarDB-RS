@@ -29,7 +29,6 @@ use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::parser::ValidStatement;
 use modelardb_common::types::ServerMode;
 use modelardb_common::{metadata, parser};
-use object_store::local::LocalFileSystem;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -62,13 +61,8 @@ impl Context {
         server_mode: ServerMode,
     ) -> Result<Self, ModelarDbError> {
         // TODO: replace with DeltaLake when merging support for storing metadata in delta lake.
-        let prefix = data_folders
-            .local_data_folder
-            .path()
-            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
-        let local_data_folder = LocalFileSystem::new_with_prefix(prefix.to_string())
-            .map_err(|error| ModelarDbError::ConfigurationError(error.to_string()))?;
-
+        // unwrap() is safe as the local data folder is always located on the local file system.
+        let local_data_folder = data_folders.local_data_folder.local_file_system().unwrap();
         let table_metadata_manager = Arc::new(
             metadata::try_new_sqlite_table_metadata_manager(&local_data_folder)
                 .await

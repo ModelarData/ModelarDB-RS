@@ -35,7 +35,7 @@ use deltalake::writer::{DeltaWriter, RecordBatchWriter};
 use deltalake::{open_table, DeltaOps, DeltaTable, DeltaTableError};
 use futures::StreamExt;
 use object_store::local::LocalFileSystem;
-use object_store::path::{Error as ObjectStorePathError, Path};
+use object_store::path::Path;
 use object_store::ObjectStore;
 use tonic::codegen::Bytes;
 use tonic::Status;
@@ -67,21 +67,23 @@ pub struct DeltaLake {
     storage_options: HashMap<String, String>,
     /// [`ObjectStore`] to access the root of the delta lake.
     object_store: Arc<dyn ObjectStore>,
+    /// [`LocalFileSystem`] to access the root of the delta lake.
+    maybe_local_file_system: Option<Arc<LocalFileSystem>>,
 }
 
 impl DeltaLake {
     /// Create a new [`DeltaLake`] that manages tables in `folder_path`.
-    pub fn from_local_path(data_folder_path: Path) -> Result<Self, DeltaTableError> {
-        let location = data_folder_path.to_string();
-        let object_store = Arc::new(
-            LocalFileSystem::new_with_prefix(&location)
+    pub fn from_local_path(data_folder_path: &str) -> Result<Self, DeltaTableError> {
+        let local_file_system = Arc::new(
+            LocalFileSystem::new_with_prefix(data_folder_path)
                 .map_err(|error| DeltaTableError::ObjectStore { source: error })?,
         );
 
         Ok(Self {
-            location,
+            location: data_folder_path.to_string(),
             storage_options: HashMap::new(),
-            object_store,
+            object_store: local_file_system.clone(),
+            maybe_local_file_system: Some(local_file_system),
         })
     }
 
@@ -141,17 +143,18 @@ impl DeltaLake {
             location,
             storage_options,
             object_store: Arc::new(object_store),
+            maybe_local_file_system: None,
         })
     }
 
-    /// Return an [`ObjectStore`] to the root of the delta lake..
+    /// Return an [`ObjectStore`] to the root of the delta lake.
     pub fn object_store(&self) -> Arc<dyn ObjectStore> {
         self.object_store.clone()
     }
 
-    /// Return a [`Path`] to the delta lake or a [`ObjectStorePathError`] if it is not a [`Path`].
-    pub fn path(&self) -> Result<Path, ObjectStorePathError> {
-        Path::parse(&self.location)
+    /// Return n [`LocalFileSystem`] to the root of the delta lake if it uses a local data folder.
+    pub fn local_file_system(&self) -> Option<Arc<LocalFileSystem>> {
+        self.maybe_local_file_system.clone()
     }
 
     /// Return a [`DeltaTable`] for manipulating the table with `table_name` in the Delta Lake, or an

@@ -223,8 +223,8 @@ async fn parse_command_line_arguments(
 
 /// Return a [`DeltaLake`] created from `local_data_folder` or [`String`] if it does not exist.
 fn create_local_data_lake(local_data_folder: &str) -> Result<Arc<DeltaLake>, String> {
-    let delta_lake =
-        DeltaLake::from_local_path(local_data_folder.into()).map_err(|error| error.to_string())?;
+    let delta_lake = DeltaLake::from_local_path(local_data_folder)
+        .map_err(|error| error.to_string())?;
     Ok(Arc::new(delta_lake))
 }
 
