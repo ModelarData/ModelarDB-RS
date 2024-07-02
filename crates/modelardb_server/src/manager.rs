@@ -30,9 +30,9 @@ use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::schemas::TAG_METADATA_SCHEMA;
+use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::ServerMode;
 use modelardb_common::{arguments, metadata};
-use object_store::ObjectStore;
 use sqlx::Postgres;
 use tokio::sync::RwLock;
 use tonic::metadata::MetadataMap;
@@ -75,7 +75,7 @@ impl Manager {
     pub(crate) async fn register_node(
         manager_url: &str,
         server_mode: ServerMode,
-    ) -> Result<(Self, Arc<dyn ObjectStore>), ModelarDbError> {
+    ) -> Result<(Self, Arc<DeltaLake>), ModelarDbError> {
         let flight_client = Arc::new(RwLock::new(
             FlightServiceClient::connect(manager_url.to_owned())
                 .await
@@ -103,10 +103,11 @@ impl Manager {
         let (key, offset_data) = arguments::decode_argument(&message.body)
             .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
 
-        let (remote_object_store, offset_data) =
-            arguments::parse_object_store_arguments(offset_data)
+        let remote_delta_lake = Arc::new(
+            DeltaLake::try_remote_from_connection_info(offset_data)
                 .await
-                .map_err(|error| ModelarDbError::ImplementationError(error.to_string()))?;
+                .map_err(|error| ModelarDbError::ClusterError(error.to_string()))?,
+        );
 
         // Use the connection information to create a metadata manager for the remote metadata
         // database if the node is a cloud node.
@@ -124,7 +125,7 @@ impl Manager {
 
         let manager = Manager::new(flight_client, key.to_owned(), maybe_table_metadata_manager);
 
-        Ok((manager, remote_object_store))
+        Ok((manager, remote_delta_lake))
     }
 
     /// Initialize the local database schema with the tables and model tables from the managers

@@ -15,10 +15,12 @@
 
 //! Utility functions to read and write Apache Parquet files to and from an object store.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use arrow::array::RecordBatch;
 use arrow::compute;
+use arrow::datatypes::{Field, Schema};
 use datafusion::parquet::arrow::async_reader::{
     AsyncFileReader, ParquetObjectReader, ParquetRecordBatchStream,
 };
@@ -27,13 +29,297 @@ use datafusion::parquet::basic::{Compression, Encoding, ZstdLevel};
 use datafusion::parquet::errors::ParquetError;
 use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties};
 use datafusion::parquet::format::SortingColumn;
+use deltalake::kernel::StructField;
+use deltalake::operations::create::CreateBuilder;
+use deltalake::writer::{DeltaWriter, RecordBatchWriter};
+use deltalake::{open_table, DeltaOps, DeltaTable, DeltaTableError};
 use futures::StreamExt;
-use object_store::path::Path;
+use object_store::local::LocalFileSystem;
+use object_store::path::{Error as ObjectStorePathError, Path};
 use object_store::ObjectStore;
 use tonic::codegen::Bytes;
+use tonic::Status;
+use url::Url;
 use uuid::Uuid;
 
+use crate::arguments::decode_argument;
+
 use crate::schemas::COMPRESSED_SCHEMA;
+
+// TODO: Remove folders from storage
+//
+
+/// The folder storing uncompressed data in the data folders.
+#[allow(dead_code)]
+const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
+
+/// The folder storing compressed data in the data folders.
+const COMPRESSED_DATA_FOLDER: &str = "compressed";
+
+/// The folder storing metadata in the data folders.
+const METADATA_FOLDER: &str = "metadata";
+
+/// Functionality for managing delta lake tables in a local folder or an object store.
+pub struct DeltaLake {
+    /// URL to access the root of the delta lake.
+    location: String,
+    /// Storage options required to access delta lake.
+    storage_options: HashMap<String, String>,
+    /// [`ObjectStore`] to access the root of the delta lake.
+    object_store: Arc<dyn ObjectStore>,
+}
+
+impl DeltaLake {
+    /// Create a new [`DeltaLake`] that manages tables in `folder_path`.
+    pub fn from_local_path(data_folder_path: Path) -> Result<Self, DeltaTableError> {
+        let location = data_folder_path.to_string();
+        let object_store = Arc::new(
+            LocalFileSystem::new_with_prefix(&location)
+                .map_err(|error| DeltaTableError::ObjectStore { source: error })?,
+        );
+
+        Ok(Self {
+            location,
+            storage_options: HashMap::new(),
+            object_store,
+        })
+    }
+
+    /// Create a new [`DeltaLake`] that manage delta tables in the remote object store given by
+    /// `connection_info`. Returns [`DeltaTableError`] if `connection_info` could not be parsed.
+    pub async fn try_remote_from_connection_info(
+        connection_info: &[u8],
+    ) -> Result<Self, DeltaTableError> {
+        let (object_store_type, offset_data) = decode_argument(connection_info)
+            .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+
+        let (location, storage_options) = match object_store_type {
+            "s3" => {
+                let (endpoint, bucket_name, access_key_id, secret_access_key, _offset_data) =
+                    extract_s3_arguments(offset_data)
+                        .await
+                        .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+
+                // TODO: Determine if safe with AWS_S3_ALLOW_UNSAFE_RENAME.
+                let storage_options = HashMap::from([
+                    ("REGION".to_owned(), "".to_owned()),
+                    ("ALLOW_HTTP".to_owned(), "true".to_owned()),
+                    ("ENDPOINT".to_owned(), endpoint.to_owned()),
+                    ("BUCKET_NAME".to_owned(), bucket_name.to_owned()),
+                    ("ACCESS_KEY_ID".to_owned(), access_key_id.to_owned()),
+                    ("SECRET_ACCESS_KEY".to_owned(), secret_access_key.to_owned()),
+                    ("AWS_S3_ALLOW_UNSAFE_RENAME".to_owned(), "true".to_owned()),
+                ]);
+
+                Ok((format!("s3://{bucket_name}"), storage_options))
+            }
+            // TODO: Needs to be tested.
+            "azureblobstorage" => {
+                let (account, access_key, container_name, _offset_data) =
+                    extract_azure_blob_storage_arguments(offset_data)
+                        .await
+                        .map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+
+                let storage_options = HashMap::from([
+                    ("ACCOUNT_NAME".to_owned(), account.to_owned()),
+                    ("ACCESS_KEY".to_owned(), access_key.to_owned()),
+                    ("CONTAINER_NAME".to_owned(), container_name.to_owned()),
+                ]);
+
+                Ok((format!("az://{container_name}"), storage_options))
+            }
+            _ => Err(DeltaTableError::Generic(format!(
+                "{object_store_type} is currently not supported."
+            ))),
+        }?;
+
+        let url =
+            Url::parse(&location).map_err(|error| DeltaTableError::Generic(error.to_string()))?;
+        let (object_store, _path) = object_store::parse_url_opts(&url, &storage_options)?;
+
+        Ok(DeltaLake {
+            location,
+            storage_options,
+            object_store: Arc::new(object_store),
+        })
+    }
+
+    /// Return an [`ObjectStore`] to the root of the delta lake..
+    pub fn object_store(&self) -> Arc<dyn ObjectStore> {
+        self.object_store.clone()
+    }
+
+    /// Return a [`Path`] to the delta lake or a [`ObjectStorePathError`] if it is not a [`Path`].
+    pub fn path(&self) -> Result<Path, ObjectStorePathError> {
+        Path::parse(&self.location)
+    }
+
+    /// Return a [`DeltaTable`] for manipulating the table with `table_name` in the Delta Lake, or an
+    /// [`DeltaTableError`] if a connection cannot be established or the table does not exist.
+    pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable, DeltaTableError> {
+        let table_path = self.location_of_compressed_table(table_name);
+        deltalake::open_table_with_storage_options(&table_path, self.storage_options.clone()).await
+    }
+
+    /// Return a [`DeltaOps`] for manipulating the table with `table_name` in the Delta Lake, or an
+    /// [`DeltaTableError`] if a connection cannot be established or the table does not exist.
+    pub async fn delta_ops(&self, table_name: &str) -> Result<DeltaOps, DeltaTableError> {
+        let table_path = self.location_of_compressed_table(table_name);
+        DeltaOps::try_from_uri_with_storage_options(&table_path, self.storage_options.clone()).await
+    }
+
+    /// Create a Delta Lake table with `schema` at
+    /// `url_scheme`/[`COMPRESSED_DATA_FOLDER`]/`table_name` if it does not already exist. If the
+    /// table could not be created, e.g., because it already exists, [`DeltaTableError`] is
+    /// returned.
+    pub async fn create_delta_lake_table(
+        &self,
+        table_name: &str,
+        schema: &Schema,
+    ) -> Result<(), DeltaTableError> {
+        let mut columns: Vec<StructField> = Vec::with_capacity(schema.fields().len());
+        for field in schema.fields() {
+            let field: &Field = field;
+            let struct_field: StructField = field.try_into()?;
+            columns.push(struct_field);
+        }
+
+        CreateBuilder::new()
+            .with_storage_options(self.storage_options.clone())
+            .with_table_name(table_name)
+            .with_location(format!(
+                "{}/{COMPRESSED_DATA_FOLDER}/{table_name}",
+                self.location
+            ))
+            .with_columns(columns)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Write the `record_batch` to a Delta Lake table for a normal table with `table_name`.
+    /// Returns [`Ok`] if the file was written successfully, otherwise returns [`DeltaLakeError`].
+    pub async fn write_record_batch_to_table(
+        &self,
+        table_name: &str,
+        record_batch: RecordBatch,
+    ) -> Result<(), DeltaTableError> {
+        let table_path = self.location_of_compressed_table(table_name);
+        let writer_properties = apache_parquet_writer_properties(None);
+
+        self.write_record_batch_to_a_delta_lake_file(
+            table_path,
+            record_batch,
+            None,
+            writer_properties,
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Write the `compressed_segments` to a Delta Lake table for a model table with `table_name`.
+    /// Returns [`Ok`] if the file was written successfully, otherwise returns [`DeltaLakeError`].
+    pub async fn write_compressed_segments_to_model_table(
+        &self,
+        table_name: &str,
+        compressed_segments: RecordBatch,
+    ) -> Result<(), DeltaTableError> {
+        let table_path = self.location_of_compressed_table(table_name);
+
+        // Specify that the file must be sorted by univariate_id and then by start_time.
+        let sorting_columns = Some(vec![
+            SortingColumn::new(0, false, false),
+            SortingColumn::new(2, false, false),
+        ]);
+
+        let partition_columns = Some(vec!["field_column".to_owned()]);
+        let writer_properties = apache_parquet_writer_properties(sorting_columns);
+
+        self.write_record_batch_to_a_delta_lake_file(
+            table_path,
+            compressed_segments,
+            partition_columns,
+            writer_properties,
+        )
+        .await?;
+
+        Ok(())
+    }
+
+    /// Write the rows in `record_batch` to a DeltaLake table at the location given by `table_path` in
+    /// `object_store`. `sorting_columns` can be set to control the sorting order of the rows in the
+    /// written file. Return [`Ok`] if the file was written successfully, otherwise return
+    /// [`ParquetError`].
+    async fn write_record_batch_to_a_delta_lake_file(
+        &self,
+        table_path: String,
+        record_batch: RecordBatch,
+        partition_columns: Option<Vec<String>>,
+        writer_properties: WriterProperties,
+    ) -> Result<(), DeltaTableError> {
+        let mut delta_table = open_table(&table_path).await?;
+
+        // Write the record batch to the object store.
+        let mut writer = RecordBatchWriter::try_new(
+            &table_path,
+            record_batch.schema(),
+            partition_columns,
+            None,
+        )?
+        .with_writer_properties(writer_properties);
+
+        writer.write(record_batch).await?;
+        writer.flush_and_commit(&mut delta_table).await?;
+
+        Ok(())
+    }
+
+    /// Return the location of the compressed model or normal table with `table_name`.
+    fn location_of_compressed_table(&self, table_name: &str) -> String {
+        format!("{}/{COMPRESSED_DATA_FOLDER}/{table_name}", self.location)
+    }
+
+    /// Return the location of the metadata table with `table_name`.
+    #[allow(dead_code)]
+    fn location_of_metadata_table(&self, table_name: &str) -> String {
+        format!("{}/{METADATA_FOLDER}/{table_name}", self.location)
+    }
+}
+
+// TODO: replace with arguments.rs when dev/delta-metadata is merged.
+/// Parse the arguments in `data` and return the arguments to connect to an
+/// [`Amazon S3`](object_store::aws::AmazonS3) object store and what is remaining of `data`
+/// after parsing. If `data` is missing arguments, [`Status`] is returned.
+pub async fn extract_s3_arguments(data: &[u8]) -> Result<(&str, &str, &str, &str, &[u8]), Status> {
+    let (endpoint, offset_data) = decode_argument(data)?;
+    let (bucket_name, offset_data) = decode_argument(offset_data)?;
+    let (access_key_id, offset_data) = decode_argument(offset_data)?;
+    let (secret_access_key, offset_data) = decode_argument(offset_data)?;
+
+    Ok((
+        endpoint,
+        bucket_name,
+        access_key_id,
+        secret_access_key,
+        offset_data,
+    ))
+}
+
+// TODO: replace with arguments.rs when dev/delta-metadata is merged.
+/// Parse the arguments in `data` and return the arguments to connect to an
+/// [`Azure Blob Storage`](object_store::azure::MicrosoftAzure)
+/// object store and what is remaining of `data` after parsing. If `data` is missing arguments,
+/// [`Status`] is returned.
+pub async fn extract_azure_blob_storage_arguments(
+    data: &[u8],
+) -> Result<(&str, &str, &str, &[u8]), Status> {
+    let (account, offset_data) = decode_argument(data)?;
+    let (access_key, offset_data) = decode_argument(offset_data)?;
+    let (container_name, offset_data) = decode_argument(offset_data)?;
+
+    Ok((account, access_key, container_name, offset_data))
+}
 
 /// Read all rows from the Apache Parquet file at the location given by `file_path` in
 /// `object_store` and return them as a [`RecordBatch`]. If the file could not be read successfully,
@@ -80,50 +366,6 @@ where
     Ok(record_batches)
 }
 
-/// Write the rows in `record_batch` to an Apache Parquet file at the location given by `file_path`
-/// in `object_store`. `file_path` must use the extension `.parquet`. `sorting_columns` can be
-/// set to control the sorting order of the rows in the written file. Return [`Ok`] if the file
-/// was written successfully, otherwise return [`ParquetError`].
-pub async fn write_record_batch_to_apache_parquet_file(
-    file_path: &Path,
-    record_batch: &RecordBatch,
-    sorting_columns: Option<Vec<SortingColumn>>,
-    object_store: &dyn ObjectStore,
-) -> Result<(), ParquetError> {
-    // Check if the extension of the given path is correct.
-    if file_path.extension() == Some("parquet") {
-        let props = WriterProperties::builder()
-            .set_data_page_size_limit(16384)
-            .set_max_row_group_size(65536)
-            .set_encoding(Encoding::PLAIN)
-            .set_compression(Compression::ZSTD(ZstdLevel::default()))
-            .set_dictionary_enabled(false)
-            .set_statistics_enabled(EnabledStatistics::None)
-            .set_bloom_filter_enabled(false)
-            .set_sorting_columns(sorting_columns)
-            .build();
-
-        // Write the record batch to the object store.
-        let mut buffer = Vec::new();
-        let mut writer =
-            AsyncArrowWriter::try_new(&mut buffer, record_batch.schema(), Some(props))?;
-        writer.write(record_batch).await?;
-        writer.close().await?;
-
-        object_store
-            .put(file_path, Bytes::from(buffer).into())
-            .await
-            .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
-
-        Ok(())
-    } else {
-        Err(ParquetError::General(format!(
-            "'{}' is not a valid file path for an Apache Parquet file.",
-            file_path.as_ref()
-        )))
-    }
-}
-
 /// Write `compressed_segments` for the column `field_column_index` in the table with `table_name`to
 /// an Apache Parquet file with an UUID as the file name in `compressed_data_folder`. Return the
 /// path to the file if the file was written successfully, otherwise return [`ParquetError`].
@@ -161,6 +403,57 @@ pub async fn write_compressed_segments_to_apache_parquet_file(
             "The data in the record batch is not compressed segments.".to_string(),
         ))
     }
+}
+
+/// Write the rows in `record_batch` to an Apache Parquet file at the location given by `file_path`
+/// in `object_store`. `file_path` must use the extension `.parquet`. `sorting_columns` can be
+/// set to control the sorting order of the rows in the written file. Return [`Ok`] if the file
+/// was written successfully, otherwise return [`ParquetError`].
+pub async fn write_record_batch_to_apache_parquet_file(
+    file_path: &Path,
+    record_batch: &RecordBatch,
+    sorting_columns: Option<Vec<SortingColumn>>,
+    object_store: &dyn ObjectStore,
+) -> Result<(), ParquetError> {
+    // Check if the extension of the given path is correct.
+    if file_path.extension() == Some("parquet") {
+        let props = apache_parquet_writer_properties(sorting_columns);
+
+        // Write the record batch to the object store.
+        let mut buffer = Vec::new();
+        let mut writer =
+            AsyncArrowWriter::try_new(&mut buffer, record_batch.schema(), Some(props))?;
+        writer.write(record_batch).await?;
+        writer.close().await?;
+
+        object_store
+            .put(file_path, Bytes::from(buffer).into())
+            .await
+            .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
+
+        Ok(())
+    } else {
+        Err(ParquetError::General(format!(
+            "'{}' is not a valid file path for an Apache Parquet file.",
+            file_path.as_ref()
+        )))
+    }
+}
+
+/// Return [`WriterProperties`] for Apache Parquet and Delta Lake.
+fn apache_parquet_writer_properties(
+    sorting_columns: Option<Vec<SortingColumn>>,
+) -> WriterProperties {
+    WriterProperties::builder()
+        .set_data_page_size_limit(16384)
+        .set_max_row_group_size(65536)
+        .set_encoding(Encoding::PLAIN)
+        .set_compression(Compression::ZSTD(ZstdLevel::default()))
+        .set_dictionary_enabled(false)
+        .set_statistics_enabled(EnabledStatistics::None)
+        .set_bloom_filter_enabled(false)
+        .set_sorting_columns(sorting_columns)
+        .build()
 }
 
 #[cfg(test)]

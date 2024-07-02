@@ -35,11 +35,13 @@ use std::thread::{self, JoinHandle};
 use datafusion::arrow::array::UInt32Array;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
+use deltalake::DeltaTableError;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
+use modelardb_common::schemas::COMPRESSED_SCHEMA;
+use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::{Timestamp, TimestampArray, Value};
-use object_store::local::LocalFileSystem;
 use object_store::{ObjectMeta, ObjectStore};
 use once_cell::sync::Lazy;
 use sqlx::Sqlite;
@@ -105,8 +107,8 @@ impl StorageEngine {
     /// `remote_data_folder` is given but [`DataTransfer`] cannot not be created.
     pub(super) async fn try_new(
         runtime: Arc<Runtime>,
-        local_data_folder: Arc<LocalFileSystem>,
-        maybe_remote_data_folder: Option<Arc<dyn ObjectStore>>,
+        local_data_folder: Arc<DeltaLake>,
+        maybe_remote_data_folder: Option<Arc<DeltaLake>>,
         configuration_manager: &Arc<RwLock<ConfigurationManager>>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     ) -> Result<Self, IOError> {
@@ -174,21 +176,26 @@ impl StorageEngine {
         }
 
         // Create the compressed data manager.
-        let data_transfer = if let (ClusterMode::MultiNode(manager), Some(remote_data_folder)) = (
+        let data_transfer = if let (ClusterMode::MultiNode(_manager), Some(remote_data_folder)) = (
             &configuration_manager.cluster_mode,
             maybe_remote_data_folder,
         ) {
-            Some(
-                DataTransfer::try_new(
-                    local_data_folder.clone(),
-                    remote_data_folder,
-                    table_metadata_manager.clone(),
-                    manager.clone(),
-                    configuration_manager.transfer_batch_size_in_bytes(),
-                    used_disk_space_metric.clone(),
-                )
-                .await?,
+            let table_names = table_metadata_manager
+                .table_names()
+                .await
+                .map_err(IOError::other)?;
+
+            let data_transfer = DataTransfer::try_new(
+                local_data_folder.clone(),
+                remote_data_folder,
+                table_names,
+                configuration_manager.transfer_batch_size_in_bytes(),
+                used_disk_space_metric.clone(),
             )
+            .await
+            .map_err(IOError::other)?;
+
+            Some(data_transfer)
         } else {
             None
         };
@@ -271,13 +278,29 @@ impl StorageEngine {
         self.uncompressed_data_manager.initialize(context).await
     }
 
+    /// Create a Delta Lake table for storing compressed segments for a model table with `table_name` in
+    /// [`COMPRESSED_DATA_FOLDER`]. If the table already exists, or otherwise fails, a
+    /// [`ModelarDbError`] is returned.
+    pub(super) async fn create_model_delta_lake_table(
+        &self,
+        table_name: &str,
+    ) -> Result<(), ModelarDbError> {
+        self.compressed_data_manager
+            .local_data_folder
+            .create_delta_lake_table(table_name, &COMPRESSED_SCHEMA.0)
+            .await
+            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
+
+        Ok(())
+    }
+
     /// Pass `record_batch` to [`CompressedDataManager`]. Return [`Ok`] if `record_batch` was
     /// successfully written to an Apache Parquet file, otherwise return [`Err`].
     pub(super) async fn insert_record_batch(
         &self,
         table_name: &str,
         record_batch: RecordBatch,
-    ) -> Result<(), ParquetError> {
+    ) -> Result<(), DeltaTableError> {
         self.compressed_data_manager
             .insert_record_batch(table_name, record_batch)
             .await
@@ -450,12 +473,14 @@ impl StorageEngine {
     /// a data transfer component does not exist, return [`ModelarDbError].
     pub(super) async fn update_remote_data_folder(
         &mut self,
-        remote_data_folder: Arc<dyn ObjectStore>,
+        remote_data_folder: Arc<DeltaLake>,
     ) -> Result<(), ModelarDbError> {
         let maybe_data_transfer = &mut *self.compressed_data_manager.data_transfer.write().await;
 
         if let Some(data_transfer) = maybe_data_transfer {
-            data_transfer.remote_data_folder = remote_data_folder;
+            data_transfer
+                .update_remote_data_folder(remote_data_folder)
+                .await;
 
             Ok(())
         } else {

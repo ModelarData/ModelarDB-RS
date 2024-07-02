@@ -36,6 +36,7 @@ pub static UNCOMPRESSED_SCHEMA: Lazy<UncompressedSchema> = Lazy::new(|| {
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed data buffers.
 pub static COMPRESSED_SCHEMA: Lazy<CompressedSchema> = Lazy::new(|| {
     CompressedSchema(Arc::new(Schema::new(vec![
+        Field::new("field_column", DataType::UInt16, false),
         Field::new("univariate_id", DataType::UInt64, false),
         Field::new("model_type_id", DataType::UInt8, false),
         Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),

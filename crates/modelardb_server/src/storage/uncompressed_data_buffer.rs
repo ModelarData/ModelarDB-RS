@@ -32,7 +32,6 @@ use modelardb_common::storage;
 use modelardb_common::types::{
     Timestamp, TimestampArray, TimestampBuilder, Value, ValueArray, ValueBuilder,
 };
-use object_store::local::LocalFileSystem;
 use object_store::path::Path;
 use object_store::ObjectStore;
 use tracing::debug;
@@ -203,7 +202,7 @@ impl UncompressedInMemoryDataBuffer {
     /// an [`UncompressedOnDiskDataBuffer`] when finished.
     pub(super) async fn spill_to_apache_parquet(
         &mut self,
-        local_data_folder: Arc<LocalFileSystem>,
+        local_data_folder: Arc<dyn ObjectStore>,
     ) -> Result<UncompressedOnDiskDataBuffer, IOError> {
         // unwrap() is safe since the schema is known and the columns are always the same length.
         let data_points = self.record_batch().await.unwrap();
@@ -241,8 +240,8 @@ pub(super) struct UncompressedOnDiskDataBuffer {
     model_table_metadata: Arc<ModelTableMetadata>,
     /// Index of the last batch that added data points to this buffer.
     updated_by_batch_index: u64,
-    /// Folder for storing spilled buffers on the local file system.
-    local_data_folder: Arc<LocalFileSystem>,
+    /// Location for storing spilled buffers at `file_path`.
+    local_data_folder: Arc<dyn ObjectStore>,
     /// Path to the Apache Parquet file containing the uncompressed data in the
     /// [`UncompressedOnDiskDataBuffer`].
     file_path: Path,
@@ -256,7 +255,7 @@ impl UncompressedOnDiskDataBuffer {
         tag_hash: u64,
         model_table_metadata: Arc<ModelTableMetadata>,
         updated_by_batch_index: u64,
-        local_data_folder: Arc<LocalFileSystem>,
+        local_data_folder: Arc<dyn ObjectStore>,
         data_points: RecordBatch,
     ) -> Result<Self, IOError> {
         // Create a path that uses the first timestamp as the filename.
@@ -289,7 +288,7 @@ impl UncompressedOnDiskDataBuffer {
         tag_hash: u64,
         model_table_metadata: Arc<ModelTableMetadata>,
         updated_by_batch_index: u64,
-        local_data_folder: Arc<LocalFileSystem>,
+        local_data_folder: Arc<dyn ObjectStore>,
         file_name: &str,
     ) -> Result<Self, IOError> {
         let file_path = Path::from(format!("{UNCOMPRESSED_DATA_FOLDER}/{tag_hash}/{file_name}"));

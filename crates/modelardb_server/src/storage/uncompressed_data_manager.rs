@@ -25,16 +25,15 @@ use crossbeam_channel::SendError;
 use dashmap::DashMap;
 use datafusion::arrow::array::StringArray;
 use datafusion::arrow::record_batch::RecordBatch;
+use futures::StreamExt;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
+use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
-use object_store::local::LocalFileSystem;
 use object_store::path::{Path, PathPart};
-use object_store::ObjectStore;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
-use tokio_stream::StreamExt;
 use tracing::{debug, error, warn};
 
 use crate::context::Context;
@@ -54,7 +53,7 @@ use crate::ClusterMode;
 pub(super) struct UncompressedDataManager {
     /// Path to the folder containing all uncompressed data managed by the
     /// [`StorageEngine`](crate::storage::StorageEngine).
-    local_data_folder: Arc<LocalFileSystem>,
+    local_data_folder: Arc<DeltaLake>,
     /// Counter incremented for each [`RecordBatch`] of data points ingested. The value is assigned
     /// to buffers that are created or updated and is used to flush buffers that are no longer used.
     current_batch_index: AtomicU64,
@@ -88,7 +87,7 @@ pub(super) struct UncompressedDataManager {
 
 impl UncompressedDataManager {
     pub(super) fn new(
-        local_data_folder: Arc<LocalFileSystem>,
+        local_data_folder: Arc<DeltaLake>,
         memory_pool: Arc<MemoryPool>,
         channels: Arc<Channels>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
@@ -116,13 +115,11 @@ impl UncompressedDataManager {
     /// to [`UncompressedDataManager`] which immediately will start compressing them.
     pub(super) async fn initialize(&self, context: &Context) -> Result<(), IOError> {
         let mut initial_disk_space = 0;
+        let local_data_folder = self.local_data_folder.object_store();
 
-        for maybe_spilled_buffer in self
-            .local_data_folder
-            .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
-            .collect::<Vec<_>>()
-            .await
-        {
+        let mut spilled_buffers =
+            local_data_folder.list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)));
+        while let Some(maybe_spilled_buffer) = spilled_buffers.next().await {
             let spilled_buffer = maybe_spilled_buffer?;
             let path_parts: Vec<PathPart> = spilled_buffer.location.parts().collect();
 
@@ -150,7 +147,7 @@ impl UncompressedDataManager {
                 tag_hash,
                 model_table_metadata,
                 self.current_batch_index.load(Ordering::Relaxed),
-                self.local_data_folder.clone(),
+                local_data_folder.clone(),
                 file_name,
             )?;
 
@@ -517,7 +514,7 @@ impl UncompressedDataManager {
             .1;
 
         let maybe_uncompressed_on_disk_data_buffer = uncompressed_in_memory_data_buffer
-            .spill_to_apache_parquet(self.local_data_folder.clone())
+            .spill_to_apache_parquet(self.local_data_folder.object_store())
             .await;
 
         // If an error occurs the in-memory buffer must be re-added to the map before returning.

@@ -18,20 +18,18 @@
 
 use std::io::{Error as IOError, ErrorKind};
 use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
 use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use datafusion::parquet::errors::ParquetError;
+use deltalake::DeltaTableError;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::compressed_file::CompressedFile;
 use modelardb_common::metadata::TableMetadataManager;
-use modelardb_common::storage;
+use modelardb_common::storage::{self, DeltaLake};
 use modelardb_common::types::{Timestamp, Value};
-use object_store::local::LocalFileSystem;
-use object_store::path::Path;
 use object_store::{ObjectMeta, ObjectStore};
 use parquet::arrow::async_reader::ParquetObjectReader;
 use sqlx::Sqlite;
@@ -53,7 +51,7 @@ pub(super) struct CompressedDataManager {
     pub(super) data_transfer: Arc<RwLock<Option<DataTransfer>>>,
     /// Path to the folder containing all compressed data managed by the
     /// [`StorageEngine`](crate::storage::StorageEngine).
-    pub(crate) local_data_folder: Arc<LocalFileSystem>,
+    pub(crate) local_data_folder: Arc<DeltaLake>,
     /// The compressed segments before they are saved to persistent storage. The key is the name of
     /// the table the compressed segments represents data points for so the Apache Parquet files can
     /// be partitioned by table and then column.
@@ -77,7 +75,7 @@ pub(super) struct CompressedDataManager {
 impl CompressedDataManager {
     pub(super) fn new(
         data_transfer: Arc<RwLock<Option<DataTransfer>>>,
-        local_data_folder: Arc<LocalFileSystem>,
+        local_data_folder: Arc<DeltaLake>,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
@@ -101,30 +99,16 @@ impl CompressedDataManager {
         &self,
         table_name: &str,
         record_batch: RecordBatch,
-    ) -> Result<(), ParquetError> {
+    ) -> Result<(), DeltaTableError> {
         debug!(
             "Received record batch with {} rows for the table '{}'.",
             record_batch.num_rows(),
             table_name
         );
 
-        // Create a path that uses the current timestamp as the filename.
-        let since_the_epoch = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|error| ParquetError::General(error.to_string()))?;
-
-        let file_path = Path::from(format!(
-            "{COMPRESSED_DATA_FOLDER}/{table_name}/{}.parquet",
-            since_the_epoch.as_micros()
-        ));
-
-        storage::write_record_batch_to_apache_parquet_file(
-            &file_path,
-            &record_batch,
-            None,
-            &(self.local_data_folder.clone() as Arc<dyn ObjectStore>),
-        )
-        .await
+        self.local_data_folder
+            .write_record_batch_to_table(table_name, record_batch)
+            .await
     }
 
     /// Read and process messages received from the
@@ -191,8 +175,7 @@ impl CompressedDataManager {
             let model_table_name = model_table_name.to_owned();
             debug!("Creating compressed data buffer for table '{model_table_name}' as none exist.",);
 
-            let mut compressed_data_buffer =
-                CompressedDataBuffer::new(compressed_segment_batch.model_table_metadata().clone());
+            let mut compressed_data_buffer = CompressedDataBuffer::new();
             let segment_size = compressed_data_buffer
                 .append_compressed_segments(compressed_segment_batch.compressed_segments);
 
@@ -201,7 +184,7 @@ impl CompressedDataManager {
             self.compressed_queue.push(model_table_name);
 
             segment_size
-        };
+        }?;
 
         // Update the remaining memory for compressed data and record the change.
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
@@ -364,67 +347,53 @@ impl CompressedDataManager {
         Ok(())
     }
 
-    /// Save the compressed data that belongs to the table with `table_name` to disk and save the
-    /// metadata to the metadata database. The size of the saved compressed data is added back to
-    /// the remaining reserved memory. If the data is written successfully to disk, return [`Ok`],
-    /// otherwise return [`IOError`].
+    /// Save the compressed data that belongs to the table with `table_name` The size of the saved
+    /// compressed data is added back to the remaining compressed memory. If the data is written
+    /// successfully to disk, return [`Ok`], otherwise return [`IOError`].
     async fn save_compressed_data(&self, table_name: &str) -> Result<(), IOError> {
-        debug!("Saving compressed time series segments to disk.");
+        debug!("Saving compressed segments to disk for {table_name}.");
 
         // unwrap() is safe as table_name is read from compressed_queue.
-        let (_table_name, mut compressed_data_buffer) =
+        let (_table_name, compressed_data_buffer) =
             self.compressed_data_buffers.remove(table_name).unwrap();
 
-        let compressed_files = compressed_data_buffer
-            .save_to_apache_parquet(&self.local_data_folder, COMPRESSED_DATA_FOLDER)
-            .await?;
+        // Disk space use is over approximated as Apache Parquet applies lossless compression.
+        let compressed_data_buffer_size_in_bytes = compressed_data_buffer.size_in_bytes;
+        let compressed_segments = compressed_data_buffer.record_batch().await;
+        self.local_data_folder
+            .write_compressed_segments_to_model_table(table_name, compressed_segments)
+            .await
+            .map_err(|error| IOError::new(ErrorKind::Other, error.to_string()))?;
 
-        let model_table_metadata = compressed_data_buffer.model_table_metadata();
-        for (index, compressed_file) in compressed_files.iter().enumerate() {
-            // Cast is safe as ModelTableMetadata ensures there are no more than 1024 columns.
-            let field_column_index = model_table_metadata.field_column_indices[index] as u16;
+        // unwrap() is safe as lock() only returns an error if the lock is poisoned.
+        self.used_disk_space_metric
+            .lock()
+            .unwrap()
+            .append(compressed_data_buffer_size_in_bytes as isize, true);
 
-            // Save the metadata of the compressed file to the metadata database.
-            self.table_metadata_manager
-                .save_compressed_file(
-                    table_name,
-                    compressed_file.query_schema_index.into(),
-                    compressed_file,
-                )
+        // Inform the data transfer component about the new data if a remote data folder was
+        // provided. If the total size of the data related to table_name have reached the transfer
+        // threshold, all of the data is transferred to the remote object store.
+        if let Some(data_transfer) = &*self.data_transfer.read().await {
+            data_transfer
+                .increase_table_size(table_name, compressed_data_buffer_size_in_bytes)
                 .await
-                .unwrap();
-
-            // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-            self.used_disk_space_metric
-                .lock()
-                .unwrap()
-                .append(compressed_file.file_metadata.size as isize, true);
-
-            // Pass the saved compressed file to the data transfer component if a remote data folder
-            // was provided. If the total size of the files related to table_name have reached the
-            // transfer threshold, the files are transferred to the remote object store.
-            if let Some(data_transfer) = &*self.data_transfer.read().await {
-                data_transfer
-                    .add_compressed_file(table_name, field_column_index, compressed_file)
-                    .await
-                    .map_err(|error| IOError::new(ErrorKind::Other, error.to_string()))?;
-            }
+                .map_err(|error| IOError::new(ErrorKind::Other, error.to_string()))?;
         }
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-        let freed_memory = compressed_data_buffer.size_in_bytes;
         self.used_compressed_memory_metric
             .lock()
             .unwrap()
-            .append(-(freed_memory as isize), true);
+            .append(-(compressed_data_buffer_size_in_bytes as isize), true);
 
         // Update the remaining memory for compressed data.
         self.memory_pool
-            .adjust_compressed_memory(freed_memory as isize);
+            .adjust_compressed_memory(compressed_data_buffer_size_in_bytes as isize);
 
         debug!(
             "Saved {} bytes of compressed data to disk. Remaining reserved bytes: {}.",
-            freed_memory,
+            compressed_data_buffer_size_in_bytes,
             self.memory_pool.remaining_compressed_memory_in_bytes()
         );
 

@@ -24,9 +24,9 @@ use std::env;
 use std::sync::Arc;
 
 use modelardb_common::arguments::{
-    argument_to_connection_info, argument_to_remote_object_store, collect_command_line_arguments,
-    validate_remote_data_folder,
+    argument_to_connection_info, collect_command_line_arguments, validate_remote_data_folder,
 };
+use modelardb_common::storage::DeltaLake;
 use once_cell::sync::Lazy;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
@@ -74,7 +74,7 @@ fn main() -> Result<(), String> {
     let context = runtime.block_on(async {
         let (remote_metadata_manager, remote_data_folder) =
             parse_command_line_arguments(&arguments).await?;
-        validate_remote_data_folder(remote_data_folder.object_store()).await?;
+        validate_remote_data_folder(&remote_data_folder.delta_lake()).await?;
 
         let nodes = remote_metadata_manager
             .metadata_manager()
@@ -126,7 +126,11 @@ async fn parse_command_line_arguments(
                 .await
                 .map_err(|error| error.to_string())?;
 
-            let object_store = argument_to_remote_object_store(remote_data_folder)?;
+            let object_store = Arc::new(
+                DeltaLake::try_remote_from_connection_info(remote_data_folder.as_bytes())
+                    .await
+                    .map_err(|error| error.to_string())?,
+            );
             let connection_info = argument_to_connection_info(remote_data_folder)?;
 
             Ok((

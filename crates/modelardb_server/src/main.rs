@@ -30,8 +30,8 @@ use std::sync::Arc;
 
 use modelardb_common::arguments::{collect_command_line_arguments, validate_remote_data_folder};
 use modelardb_common::metadata::TableMetadataManager;
+use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::ServerMode;
-use object_store::{local::LocalFileSystem, ObjectStore};
 use once_cell::sync::Lazy;
 use sqlx::Postgres;
 use tokio::runtime::Runtime;
@@ -69,13 +69,13 @@ impl ClusterMode {
 /// Folders for storing metadata and Apache Parquet files.
 pub struct DataFolders {
     /// Folder for storing metadata and Apache Parquet files on the local file system.
-    pub local_data_folder: Arc<LocalFileSystem>,
+    pub local_data_folder: Arc<DeltaLake>,
     /// Folder for storing Apache Parquet files in a remote object store.
-    pub remote_data_folder: Option<Arc<dyn ObjectStore>>,
+    pub remote_data_folder: Option<Arc<DeltaLake>>,
     /// Folder from which Apache Parquet files will be read during query execution. It is equivalent
     /// to `local_data_folder` when deployed on the edge and `remote_data_folder` when deployed
     /// in the cloud.
-    pub query_data_folder: Arc<dyn ObjectStore>,
+    pub query_data_folder: Arc<DeltaLake>,
 }
 
 /// Setup tracing that prints to stdout, parse the command line arguments to extract [`DataFolders`],
@@ -162,48 +162,51 @@ async fn parse_command_line_arguments(
     // Match the provided command line arguments to the supported inputs.
     match arguments {
         &["edge", local_data_folder] | &[local_data_folder] => {
-            let local_object_store = argument_to_local_object_store(local_data_folder)?;
+            let local_delta_lake = create_local_data_lake(local_data_folder)?;
 
             Ok((
                 ServerMode::Edge,
                 ClusterMode::SingleNode,
                 DataFolders {
-                    local_data_folder: local_object_store.clone(),
+                    local_data_folder: local_delta_lake.clone(),
                     remote_data_folder: None,
-                    query_data_folder: local_object_store,
+                    query_data_folder: local_delta_lake,
                 },
             ))
         }
         &["cloud", local_data_folder, manager_url] => {
-            let (manager, remote_object_store) =
+            let (manager, remote_delta_lake) =
                 Manager::register_node(manager_url, ServerMode::Cloud)
                     .await
                     .map_err(|error| error.to_string())?;
+
+            let local_delta_lake = create_local_data_lake(local_data_folder)?;
 
             Ok((
                 ServerMode::Cloud,
                 ClusterMode::MultiNode(manager),
                 DataFolders {
-                    local_data_folder: argument_to_local_object_store(local_data_folder)?,
-                    remote_data_folder: Some(remote_object_store.clone()),
-                    query_data_folder: remote_object_store,
+                    local_data_folder: local_delta_lake,
+                    remote_data_folder: Some(remote_delta_lake.clone()),
+                    query_data_folder: remote_delta_lake,
                 },
             ))
         }
         &["edge", local_data_folder, manager_url] | &[local_data_folder, manager_url] => {
-            let local_object_store = argument_to_local_object_store(local_data_folder)?;
-            let (manager, remote_object_store) =
+            let (manager, remote_delta_lake) =
                 Manager::register_node(manager_url, ServerMode::Edge)
                     .await
                     .map_err(|error| error.to_string())?;
+
+            let local_delta_lake = create_local_data_lake(local_data_folder)?;
 
             Ok((
                 ServerMode::Edge,
                 ClusterMode::MultiNode(manager),
                 DataFolders {
-                    local_data_folder: local_object_store.clone(),
-                    remote_data_folder: Some(remote_object_store),
-                    query_data_folder: local_object_store,
+                    local_data_folder: local_delta_lake.clone(),
+                    remote_data_folder: Some(remote_delta_lake),
+                    query_data_folder: local_delta_lake,
                 },
             ))
         }
@@ -218,11 +221,11 @@ async fn parse_command_line_arguments(
     }
 }
 
-/// Create an [`ObjectStore`] that represents the local path in `argument`.
-fn argument_to_local_object_store(argument: &str) -> Result<Arc<LocalFileSystem>, String> {
-    let object_store =
-        LocalFileSystem::new_with_prefix(argument).map_err(|error| error.to_string())?;
-    Ok(Arc::new(object_store))
+/// Return a [`DeltaLake`] created from `local_data_folder` or [`String`] if it does not exist.
+fn create_local_data_lake(local_data_folder: &str) -> Result<Arc<DeltaLake>, String> {
+    let delta_lake =
+        DeltaLake::from_local_path(local_data_folder.into()).map_err(|error| error.to_string())?;
+    Ok(Arc::new(delta_lake))
 }
 
 /// Register a handler to execute when CTRL+C is pressed. The handler takes an exclusive lock for

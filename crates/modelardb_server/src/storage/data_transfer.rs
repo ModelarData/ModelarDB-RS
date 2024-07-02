@@ -23,42 +23,31 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use datafusion::parquet::errors::ParquetError;
-use futures::StreamExt;
-use modelardb_common::metadata::compressed_file::CompressedFile;
-use modelardb_common::metadata::TableMetadataManager;
-use object_store::local::LocalFileSystem;
-use object_store::path::{Path, PathPart};
-use object_store::{ObjectMeta, ObjectStore};
-use sqlx::Sqlite;
+use deltalake::arrow::array::RecordBatch;
+use deltalake::arrow::compute;
+use deltalake::{DeltaOps, DeltaTableError};
+use futures::TryStreamExt;
+use modelardb_common::storage::DeltaLake;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle as TaskJoinHandle;
 use tracing::debug;
 
-use crate::manager::Manager;
-use crate::storage::compressed_data_manager::CompressedDataManager;
 use crate::storage::Metric;
-use crate::storage::COMPRESSED_DATA_FOLDER;
 
 // TODO: Handle the case where a connection can not be established when transferring data.
 // TODO: Handle deleting the files after the transfer is complete in a safe way to avoid
-//       transferring the same data multiple times or deleting files that are currently used
-//       elsewhere.
+//       transferring the same data multiple times.
 
 pub struct DataTransfer {
-    /// The object store containing all compressed data managed by the
+    /// The delta lake containing all compressed data managed by the
     /// [`StorageEngine`](crate::storage::StorageEngine).
-    local_data_folder: Arc<LocalFileSystem>,
-    /// The object store that the data should be transferred to.
-    pub remote_data_folder: Arc<dyn ObjectStore>,
-    /// Management of metadata for deleting file metadata after transferring.
-    table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
-    /// Map from table names and column indices to the combined size in bytes of the compressed
-    /// files currently saved for the column in that table.
-    compressed_files: DashMap<(String, u16), usize>,
-    /// Interface to access the manager and transfer metadata when data is transferred.
-    manager: Manager,
+    local_data_folder: Arc<DeltaLake>,
+    /// The delta lake that the data should be transferred to.
+    remote_data_folder: Arc<DeltaLake>,
+    /// Map from table names to the current size of the table in bytes.
+    table_size_in_bytes: DashMap<String, usize>,
     /// The number of bytes that are required before transferring a batch of data to the remote
-    /// object store. If [`None`], data is not transferred based on batch size.
+    /// delta lake. If [`None`], data is not transferred based on batch size.
     transfer_batch_size_in_bytes: Option<usize>,
     /// Handle to the task that transfers data periodically to the remote object store. If [`None`],
     /// data is not transferred based on time.
@@ -68,47 +57,43 @@ pub struct DataTransfer {
 }
 
 impl DataTransfer {
-    /// Create a new data transfer instance and initialize it with the compressed files already
-    /// existing in `local_data_folder_path`. If `local_data_folder_path` or a path within
-    /// `local_data_folder_path` could not be read, return [`IOError`].
+    /// Create a new data transfer instance and initialize it with the data already in
+    /// `local_data_folder_path`. If `local_data_folder_path` or a path within
+    /// `local_data_folder_path` could not be read, return [`DeltaLake`].
     pub async fn try_new(
-        local_data_folder: Arc<LocalFileSystem>,
-        remote_data_folder: Arc<dyn ObjectStore>,
-        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
-        manager: Manager,
+        local_data_folder: Arc<DeltaLake>,
+        remote_data_folder: Arc<DeltaLake>,
+        table_names: Vec<String>,
         transfer_batch_size_in_bytes: Option<usize>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
-    ) -> Result<Self, IOError> {
-        // Parse through the data folder to retrieve already existing files that should be transferred.
-        let list_stream = local_data_folder.list(None);
+    ) -> Result<Self, DeltaTableError> {
+        // The size of tables is computed manually as datafusion_table_statistics() is not exact.
+        let object_store = local_data_folder.object_store();
+        let table_size_in_bytes = DashMap::with_capacity(table_names.len());
+        for table_name in table_names {
+            let delta_table = local_data_folder.delta_table(&table_name).await?;
+            let mut table_size_in_bytes = table_size_in_bytes.entry(table_name).or_insert(0);
 
-        let compressed_files = list_stream
-            .fold(DashMap::new(), |acc, maybe_meta| async {
-                if let Ok(meta) = maybe_meta {
-                    // If the file is a compressed file, add the size of it to the total size of the
-                    // files stored for the table with that table name.
-                    if let Some(table_name) = Self::path_is_compressed_file(meta.location) {
-                        *acc.entry(table_name).or_insert(0) += meta.size;
-                    }
-                }
-
-                acc
-            })
-            .await;
+            for compressed_file in delta_table.get_files_iter()? {
+                let object_meta = object_store
+                    .head(&compressed_file)
+                    .await
+                    .map_err(|error| DeltaTableError::MetadataError(error.to_string()))?;
+                *table_size_in_bytes += object_meta.size;
+            }
+        }
 
         let data_transfer = Self {
             local_data_folder,
             remote_data_folder,
-            table_metadata_manager,
-            compressed_files: compressed_files.clone(),
-            manager,
+            table_size_in_bytes: table_size_in_bytes.clone(),
             transfer_batch_size_in_bytes,
             transfer_scheduler_handle: None,
             used_disk_space_metric,
         };
 
         // Record the initial used disk space.
-        let initial_disk_space: usize = compressed_files.iter().map(|kv| *kv.value()).sum();
+        let initial_disk_space: usize = table_size_in_bytes.iter().map(|kv| *kv.value()).sum();
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         data_transfer
@@ -118,14 +103,13 @@ impl DataTransfer {
             .append(initial_disk_space as isize, true);
 
         // Check if data should be transferred immediately.
-        for table_name_field_column_index_size_in_bytes in compressed_files.iter() {
-            let table_name = &table_name_field_column_index_size_in_bytes.key().0;
-            let field_column_index = table_name_field_column_index_size_in_bytes.key().1;
+        for table_name_field_column_index_size_in_bytes in table_size_in_bytes.iter() {
+            let table_name = &table_name_field_column_index_size_in_bytes.key();
             let size_in_bytes = table_name_field_column_index_size_in_bytes.value();
 
             if transfer_batch_size_in_bytes.is_some_and(|batch_size| size_in_bytes >= &batch_size) {
                 data_transfer
-                    .transfer_data(table_name, field_column_index)
+                    .transfer_data(table_name)
                     .await
                     .map_err(|err| IOError::new(Other, err.to_string()))?;
             }
@@ -134,32 +118,33 @@ impl DataTransfer {
         Ok(data_transfer)
     }
 
-    /// Insert the compressed file into the files to be transferred. Retrieve the size of the file
-    /// and add it to the total size of the current local files in the table with `table_name`.
-    pub async fn add_compressed_file(
+    /// Increase the size of the table with `table_name` by `size_in_bytes`.
+    pub async fn increase_table_size(
         &self,
         table_name: &str,
-        field_column_index: u16,
-        compressed_file: &CompressedFile,
-    ) -> Result<(), ParquetError> {
-        let key = (table_name.to_owned(), field_column_index);
-
+        size_in_bytes: usize,
+    ) -> Result<(), DeltaTableError> {
         // entry() is not used as it would require the allocation of a new String for each lookup as
         // it must be given as a K, while get_mut() accepts the key as a &K so one K can be used.
-        if !self.compressed_files.contains_key(&key) {
-            self.compressed_files.insert(key.clone(), 0);
+        if !self.table_size_in_bytes.contains_key(table_name) {
+            self.table_size_in_bytes.insert(table_name.to_owned(), 0);
         }
-        *self.compressed_files.get_mut(&key).unwrap() += compressed_file.file_metadata.size;
+        *self.table_size_in_bytes.get_mut(table_name).unwrap() += size_in_bytes;
 
         // If the combined size of the files is larger than the batch size, transfer the data to the
         // remote object store. unwrap() is safe as key has just been added to the map.
         if self.transfer_batch_size_in_bytes.is_some_and(|batch_size| {
-            self.compressed_files.get(&key).unwrap().value() >= &batch_size
+            self.table_size_in_bytes.get(table_name).unwrap().value() >= &batch_size
         }) {
-            self.transfer_data(table_name, field_column_index).await?;
+            self.transfer_data(table_name).await?;
         }
 
         Ok(())
+    }
+
+    /// Update the remote data folder, used to transfer data to.
+    pub(super) async fn update_remote_data_folder(&mut self, remote_data_folder: Arc<DeltaLake>) {
+        self.remote_data_folder = remote_data_folder;
     }
 
     /// Set the transfer batch size to `new_value`. For each table that compressed data is saved
@@ -225,13 +210,12 @@ impl DataTransfer {
         threshold: usize,
     ) -> Result<(), ParquetError> {
         // The clone is performed to not create a deadlock with transfer_data().
-        for table_name_column_index_size_in_bytes in self.compressed_files.clone().iter() {
-            let table_name = &table_name_column_index_size_in_bytes.key().0;
-            let column_index = table_name_column_index_size_in_bytes.key().1;
+        for table_name_column_index_size_in_bytes in self.table_size_in_bytes.clone().iter() {
+            let table_name = table_name_column_index_size_in_bytes.key();
             let size_in_bytes = table_name_column_index_size_in_bytes.value();
 
             if size_in_bytes > &threshold {
-                self.transfer_data(table_name, column_index)
+                self.transfer_data(table_name)
                     .await
                     .map_err(|err| IOError::new(Other, err.to_string()))?;
             }
@@ -240,99 +224,49 @@ impl DataTransfer {
         Ok(())
     }
 
-    /// Transfer the data stored locally for the column with `column_index` in table with
-    /// `table_name` to the remote object store. Once successfully transferred, the data is deleted
-    /// from local storage. Return [`Ok`] if the files were transferred successfully, otherwise
-    /// [`ParquetError`].
-    async fn transfer_data(
-        &self,
-        table_name: &str,
-        field_column_index: u16,
-    ) -> Result<(), ParquetError> {
-        // Read all files that is currently stored for the table with table_name.
-        let path = format!("{COMPRESSED_DATA_FOLDER}/{table_name}/{field_column_index}").into();
-        let object_metas = self
-            .local_data_folder
-            .list(Some(&path))
-            .filter_map(|maybe_meta| async { maybe_meta.ok() })
-            .collect::<Vec<ObjectMeta>>()
-            .await;
+    /// Transfer the data stored locally for the table with `table_name` to the remote object store.
+    /// Once successfully transferred, the data is deleted from local storage. Return [`Ok`] if the
+    /// files were transferred successfully, otherwise [`DeltaTableError`].
+    async fn transfer_data(&self, table_name: &str) -> Result<(), DeltaTableError> {
+        // All compressed segments will be transferred so the current size in bytes is also the
+        // amount of data that will be transferred. unwrap() is safe as the table contains data.
+        let current_size_in_bytes = *self.table_size_in_bytes.get(table_name).unwrap().value();
+        let local_delta_ops = self.local_data_folder.delta_ops(table_name).await?;
+
+        // Read the data that is currently stored for the table with table_name.
+        let (table, stream) = local_delta_ops.load().await?;
+        let record_batches: Vec<RecordBatch> = stream.try_collect().await?;
+
+        // unwrap() is safe as all of the record batches are from the same delta table.
+        let compressed_segments =
+            compute::concat_batches(&record_batches[0].schema(), &record_batches).unwrap();
 
         debug!(
-            "Transferring {} compressed files for the table '{}'.",
-            object_metas.len(),
-            table_name
+            "Transferring {current_size_in_bytes} as {} compressed segments for the table '{table_name}'.",
+            compressed_segments.num_rows(),
         );
 
-        // Merge the files and transfer them to the remote object store by setting the remote data
-        // folder as the output data folder for the merged file.
-        let compressed_file = CompressedDataManager::merge_compressed_apache_parquet_files(
-            &(self.local_data_folder.clone() as Arc<dyn ObjectStore>),
-            &object_metas,
-            &self.remote_data_folder,
-            table_name,
-            field_column_index,
-        )
-        .await?;
+        // Write the data to the remote delta lake and commit it.
+        self.remote_data_folder
+            .write_compressed_segments_to_model_table(table_name, compressed_segments)
+            .await?;
 
-        // Delete the metadata for the transferred files from the metadata database.
-        self.table_metadata_manager
-            .replace_compressed_files(table_name, field_column_index.into(), &object_metas, None)
-            .await
-            .map_err(|error| ParquetError::General(error.to_string()))?;
+        // Delete the data that has been transferred to the remote delta lake.
+        let local_delta_ops: DeltaOps = table.into();
+        local_delta_ops.delete().await?;
 
-        // Remove the transferred files from the in-memory tracking of compressed files.
-        let transferred_bytes: usize = object_metas.iter().map(|meta| meta.size).sum();
-        *self
-            .compressed_files
-            .get_mut(&(table_name.to_owned(), field_column_index))
-            .unwrap() -= transferred_bytes;
+        // Remove the transferred data from the in-memory tracking of compressed files.
+        *self.table_size_in_bytes.get_mut(table_name).unwrap() -= current_size_in_bytes;
 
         // unwrap() is safe as lock() only returns an error if the lock is poisoned.
         self.used_disk_space_metric
             .lock()
             .unwrap()
-            .append(-(transferred_bytes as isize), true);
+            .append(-(current_size_in_bytes as isize), true);
 
-        debug!(
-            "Transferred {} bytes of compressed data to path '{}' in remote object store.",
-            transferred_bytes, path,
-        );
-
-        // Transfer the metadata of the transferred file to the manager.
-        self.manager
-            .transfer_compressed_file_metadata(
-                table_name,
-                field_column_index.into(),
-                compressed_file,
-            )
-            .await
-            .map_err(|error| ParquetError::General(error.to_string()))?;
+        debug!("Transferred {current_size_in_bytes} bytes to the remote table '{table_name}'.");
 
         Ok(())
-    }
-
-    /// Return the table name and column index if `path` is an Apache Parquet file with compressed
-    /// data, otherwise [`None`].
-    fn path_is_compressed_file(path: Path) -> Option<(String, u16)> {
-        let path_parts: Vec<PathPart> = path.parts().collect();
-
-        if Some(&PathPart::from(COMPRESSED_DATA_FOLDER)) == path_parts.first() {
-            if let Some(table_name) = path_parts.get(1) {
-                if let Some(column_index) = path_parts.get(2) {
-                    if let Some(file_name) = path_parts.get(3) {
-                        if file_name.as_ref().ends_with(".parquet") {
-                            // unwrap() is safe as the column index folder is created by the system.
-                            return Some((
-                                table_name.as_ref().to_owned(),
-                                column_index.as_ref().parse().unwrap(),
-                            ));
-                        }
-                    }
-                }
-            }
-        }
-        None
     }
 }
 
@@ -409,7 +343,7 @@ mod tests {
 
         assert_eq!(
             *data_transfer
-                .compressed_files
+                .table_size_in_bytes
                 .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
                 .unwrap(),
             COMPRESSED_FILE_SIZE * 2
@@ -436,13 +370,13 @@ mod tests {
         let compressed_file = create_compressed_file(&temp_dir, metadata_manager).await;
 
         assert!(data_transfer
-            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .increase_table_size(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .is_ok());
 
         assert_eq!(
             *data_transfer
-                .compressed_files
+                .table_size_in_bytes
                 .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
                 .unwrap(),
             COMPRESSED_FILE_SIZE
@@ -459,17 +393,17 @@ mod tests {
         let compressed_file = create_compressed_file(&temp_dir, metadata_manager).await;
 
         data_transfer
-            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .increase_table_size(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .unwrap();
         data_transfer
-            .add_compressed_file(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .increase_table_size(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
             .await
             .unwrap();
 
         assert_eq!(
             *data_transfer
-                .compressed_files
+                .table_size_in_bytes
                 .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
                 .unwrap(),
             COMPRESSED_FILE_SIZE * 2
@@ -500,7 +434,7 @@ mod tests {
         // Data should not have been transferred.
         assert_eq!(
             *data_transfer
-                .compressed_files
+                .table_size_in_bytes
                 .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
                 .unwrap(),
             COMPRESSED_FILE_SIZE * 2
@@ -533,7 +467,7 @@ mod tests {
         // Data should not have been transferred.
         assert_eq!(
             *data_transfer
-                .compressed_files
+                .table_size_in_bytes
                 .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
                 .unwrap(),
             COMPRESSED_FILE_SIZE * 2
@@ -605,8 +539,7 @@ mod tests {
         let data_transfer = DataTransfer::try_new(
             local_data_folder,
             remote_data_folder_object_store,
-            table_metadata_manager,
-            manager,
+            table_metadata_manager.table_names(),
             Some(COMPRESSED_FILE_SIZE * 3 - 1),
             Arc::new(Mutex::new(Metric::new())),
         )
