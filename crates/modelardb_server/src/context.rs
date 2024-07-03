@@ -42,6 +42,8 @@ use crate::{optimizer, ClusterMode, DataFolders};
 
 /// Provides access to the system's configuration and components.
 pub struct Context {
+    /// Location of local and remote data.
+    pub data_folders: DataFolders,
     /// Metadata for the tables and model tables in the data folder.
     pub table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     /// Updatable configuration of the server.
@@ -57,7 +59,7 @@ impl Context {
     /// a metadata manager or storage engine could not be created, [`ModelarDbError`] is returned.
     pub async fn try_new(
         runtime: Arc<Runtime>,
-        data_folders: &DataFolders,
+        data_folders: DataFolders,
         cluster_mode: ClusterMode,
         server_mode: ServerMode,
     ) -> Result<Self, ModelarDbError> {
@@ -75,7 +77,6 @@ impl Context {
         );
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            data_folders.local_data_folder.clone(),
             cluster_mode,
             server_mode,
         )));
@@ -99,6 +100,7 @@ impl Context {
         ));
 
         Ok(Context {
+            data_folders,
             table_metadata_manager,
             configuration_manager,
             session,
@@ -171,16 +173,15 @@ impl Context {
         schema: Schema,
         context: &Arc<Context>,
     ) -> Result<(), ModelarDbError> {
-        let configuration_manager = self.configuration_manager.read().await;
-
         // Create an empty delta lake table.
-        configuration_manager
+        self.data_folders
             .local_data_folder
             .create_delta_lake_table(table_name, &schema)
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
-        let delta_table = configuration_manager
+        let delta_table = self
+            .data_folders
             .local_data_folder
             .delta_table(table_name)
             .await
@@ -244,11 +245,10 @@ impl Context {
             .await
             .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
-        let configuration_manager = self.configuration_manager.read().await;
-
         for table_name in table_names {
             // Compute the path to the folder containing data for the table.
-            let delta_table = configuration_manager
+            let delta_table = self
+                .data_folders
                 .local_data_folder
                 .delta_table(&table_name)
                 .await

@@ -109,7 +109,7 @@ fn main() -> Result<(), String> {
         runtime
             .block_on(Context::try_new(
                 runtime.clone(),
-                &data_folders,
+                data_folders,
                 cluster_mode.clone(),
                 server_mode,
             ))

@@ -20,7 +20,6 @@ use std::env;
 use std::sync::Arc;
 
 use modelardb_common::errors::ModelarDbError;
-use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::ServerMode;
 use tokio::sync::RwLock;
 
@@ -30,8 +29,6 @@ use crate::ClusterMode;
 /// Manages the system's configuration and provides functionality for updating the configuration.
 #[derive(Clone)]
 pub struct ConfigurationManager {
-    /// Folder for storing metadata and Apache Parquet files on the local file system.
-    pub(crate) local_data_folder: Arc<DeltaLake>,
     /// The mode of the cluster used to determine the behaviour when starting the server,
     /// creating tables, updating the remote object store, and querying.
     pub(crate) cluster_mode: ClusterMode,
@@ -60,11 +57,7 @@ pub struct ConfigurationManager {
 }
 
 impl ConfigurationManager {
-    pub fn new(
-        local_data_folder: Arc<DeltaLake>,
-        cluster_mode: ClusterMode,
-        server_mode: ServerMode,
-    ) -> Self {
+    pub fn new(cluster_mode: ClusterMode, server_mode: ServerMode) -> Self {
         let multivariate_reserved_memory_in_bytes =
             env::var("MODELARDBD_MULTIVARIATE_RESERVED_MEMORY_IN_BYTES")
                 .map_or(512 * 1024 * 1024, |value| value.parse().unwrap());
@@ -84,7 +77,6 @@ impl ConfigurationManager {
             .map_or(None, |value| Some(value.parse().unwrap()));
 
         Self {
-            local_data_folder,
             cluster_mode,
             server_mode,
             multivariate_reserved_memory_in_bytes,
