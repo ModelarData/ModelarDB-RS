@@ -35,7 +35,8 @@ use tokio::sync::RwLock;
 use tracing::info;
 
 use crate::configuration::ConfigurationManager;
-use crate::query::ModelTable;
+use crate::query::model_table::ModelTable;
+use crate::query::table::Table;
 use crate::storage::StorageEngine;
 use crate::{optimizer, ClusterMode, DataFolders};
 
@@ -144,7 +145,7 @@ impl Context {
         match valid_statement {
             ValidStatement::CreateTable { name, schema } => {
                 self.check_if_table_exists(&name).await?;
-                self.register_and_save_table(&name, sql, schema).await?;
+                self.register_and_save_table(&name, sql, schema, context).await?;
             }
             ValidStatement::CreateModelTable(model_table_metadata) => {
                 let storage_engine = context.storage_engine.read().await;
@@ -167,6 +168,7 @@ impl Context {
         table_name: &str,
         sql: &str,
         schema: Schema,
+        context: &Arc<Context>
     ) -> Result<(), ModelarDbError> {
         let configuration_manager = self.configuration_manager.read().await;
 
@@ -183,9 +185,11 @@ impl Context {
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
+        let table = Arc::new(Table::new(delta_table, context.storage_engine.clone()));
+
         // Save the table in the Apache DataFusion catalog.
         self.session
-            .register_table(table_name, Arc::new(delta_table))
+            .register_table(table_name, table)
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
         // Persist the new table to the metadata database.
@@ -232,7 +236,7 @@ impl Context {
     /// For each table saved in the metadata database, register the table in Apache Arrow
     /// DataFusion. If the tables could not be retrieved from the metadata database or a table
     /// could not be registered, return [`ModelarDbError`].
-    pub async fn register_tables(&self) -> Result<(), ModelarDbError> {
+    pub async fn register_tables(&self, context: &Arc<Context>) -> Result<(), ModelarDbError> {
         let table_names = self
             .table_metadata_manager
             .table_names()
@@ -249,9 +253,11 @@ impl Context {
                 .await
                 .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
 
+            let table = Arc::new(Table::new(delta_table, context.storage_engine.clone()));
+
             // unwrap() is safe since the path is created from the table name which is valid UTF-8.
             self.session
-                .register_table(&table_name, Arc::new(delta_table))
+                .register_table(&table_name, table)
                 .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 
             info!("Registered table '{table_name}'.");

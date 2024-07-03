@@ -118,7 +118,7 @@ fn main() -> Result<(), String> {
 
     // Register tables and model tables.
     runtime
-        .block_on(context.register_tables())
+        .block_on(context.register_tables(&context))
         .map_err(|error| format!("Unable to register tables: {error}"))?;
 
     runtime
