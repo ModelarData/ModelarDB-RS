@@ -28,7 +28,7 @@ use modelardb_common::schemas::COMPRESSED_SCHEMA;
 #[derive(Clone, Debug)]
 pub(super) struct CompressedSegmentBatch {
     /// Metadata of the model table to insert the data points into.
-    model_table_metadata: Arc<ModelTableMetadata>,
+    pub(super) model_table_metadata: Arc<ModelTableMetadata>,
     /// Compressed segments representing the data points to insert.
     pub(super) compressed_segments: Vec<RecordBatch>,
 }
@@ -130,8 +130,7 @@ mod tests {
 
     #[test]
     fn test_can_append_valid_compressed_segments() {
-        let mut compressed_data_buffer =
-            CompressedDataBuffer::new(test::model_table_metadata_arc());
+        let mut compressed_data_buffer = CompressedDataBuffer::new();
 
         compressed_data_buffer.append_compressed_segments(vec![
             test::compressed_segments_record_batch(),
@@ -139,14 +138,13 @@ mod tests {
         ]);
 
         assert_eq!(compressed_data_buffer.compressed_segments.len(), 2);
-        assert_eq!(compressed_data_buffer.compressed_segments[0].len(), 1);
-        assert_eq!(compressed_data_buffer.compressed_segments[1].len(), 1);
+        assert_eq!(compressed_data_buffer.compressed_segments[0].num_rows(), 1);
+        assert_eq!(compressed_data_buffer.compressed_segments[1].num_rows(), 1);
     }
 
     #[test]
     fn test_compressed_data_buffer_size_updated_when_appending() {
-        let mut compressed_data_buffer =
-            CompressedDataBuffer::new(test::model_table_metadata_arc());
+        let mut compressed_data_buffer = CompressedDataBuffer::new();
 
         compressed_data_buffer.append_compressed_segments(vec![
             test::compressed_segments_record_batch(),
@@ -158,8 +156,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_can_save_compressed_data_buffer_to_apache_parquet() {
-        let mut compressed_data_buffer =
-            CompressedDataBuffer::new(test::model_table_metadata_arc());
+        let mut compressed_data_buffer = CompressedDataBuffer::new();
         let compressed_segments = vec![
             test::compressed_segments_record_batch(),
             test::compressed_segments_record_batch(),
@@ -167,12 +164,8 @@ mod tests {
         compressed_data_buffer.append_compressed_segments(compressed_segments);
 
         let temp_dir = tempfile::tempdir().unwrap();
-        let object_store = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
 
-        compressed_data_buffer
-            .record_batch(&object_store, ".")
-            .await
-            .unwrap();
+        compressed_data_buffer.record_batch().await;
 
         assert_eq!(temp_dir.path().read_dir().unwrap().count(), 1);
     }
@@ -181,14 +174,7 @@ mod tests {
     #[cfg(debug_assertions)]
     #[should_panic(expected = "Cannot save CompressedDataBuffer with no data.")]
     async fn test_panic_if_saving_empty_compressed_data_buffer_to_apache_parquet() {
-        let object_store = LocalFileSystem::new();
-        let mut empty_compressed_data_buffer =
-            CompressedDataBuffer::new(test::model_table_metadata_arc());
-
-        empty_compressed_data_buffer
-            .record_batch(&object_store, "")
-            .await
-            .unwrap();
+        CompressedDataBuffer::new().record_batch().await;
     }
 
     #[test]

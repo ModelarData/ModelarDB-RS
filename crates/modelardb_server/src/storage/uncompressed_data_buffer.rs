@@ -397,6 +397,7 @@ mod tests {
 
     use futures::StreamExt;
     use modelardb_common::test;
+    use object_store::local::LocalFileSystem;
     use proptest::num::u64 as ProptestTimestamp;
     use proptest::{collection, proptest};
     use tempfile::TempDir;

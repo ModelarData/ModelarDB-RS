@@ -397,10 +397,9 @@ mod tests {
         Arc<RwLock<StorageEngine>>,
         Arc<RwLock<ConfigurationManager>>,
     ) {
-        let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+        let object_store = Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
 
-        let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(&local_data_folder)
+        let metadata_manager = metadata::try_new_sqlite_table_metadata_manager(&object_store)
             .await
             .unwrap();
 
@@ -413,6 +412,9 @@ mod tests {
             None,
         );
 
+        let local_data_folder =
+            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
             local_data_folder.clone(),
             ClusterMode::MultiNode(manager),
@@ -420,13 +422,14 @@ mod tests {
         )));
 
         let target_dir = tempfile::tempdir().unwrap();
-        let target_fs = LocalFileSystem::new_with_prefix(target_dir.path()).unwrap();
+        let target_fs =
+            Arc::new(DeltaLake::from_local_path(target_dir.path().to_str().unwrap()).unwrap());
 
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(
                 Arc::new(Runtime::new().unwrap()),
                 local_data_folder,
-                Some(Arc::new(target_fs)),
+                Some(target_fs),
                 &configuration_manager,
                 Arc::new(metadata_manager),
             )

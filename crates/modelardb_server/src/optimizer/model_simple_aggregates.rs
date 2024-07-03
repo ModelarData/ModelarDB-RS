@@ -1014,15 +1014,15 @@ mod tests {
     use datafusion::physical_plan::coalesce_batches::CoalesceBatchesExec;
     use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
     use datafusion::physical_plan::filter::FilterExec;
+    use modelardb_common::storage::DeltaLake;
     use modelardb_common::test;
     use modelardb_common::types::ServerMode;
-    use object_store::local::LocalFileSystem;
     use tempfile::TempDir;
     use tokio::runtime::Runtime;
 
     use crate::context::Context;
     use crate::query::grid_exec::GridExec;
-    use crate::query::ModelTable;
+    use crate::query::model_table::ModelTable;
     use crate::{ClusterMode, DataFolders};
 
     // Tests for ModelSimpleAggregatesPhysicalOptimizerRule.
@@ -1119,7 +1119,7 @@ mod tests {
         query: &str,
     ) -> Arc<dyn ExecutionPlan> {
         let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         // Create a simple context.
         let context = Arc::new(

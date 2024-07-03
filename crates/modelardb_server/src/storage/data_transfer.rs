@@ -74,9 +74,9 @@ impl DataTransfer {
             let delta_table = local_data_folder.delta_table(&table_name).await?;
             let mut table_size_in_bytes = table_size_in_bytes.entry(table_name).or_insert(0);
 
-            for compressed_file in delta_table.get_files_iter()? {
+            for file_path in delta_table.get_files_iter()? {
                 let object_meta = object_store
-                    .head(&compressed_file)
+                    .head(&file_path)
                     .await
                     .map_err(|error| DeltaTableError::MetadataError(error.to_string()))?;
                 *table_size_in_bytes += object_meta.size;
@@ -274,60 +274,17 @@ impl DataTransfer {
 mod tests {
     use super::*;
 
-    use arrow_flight::flight_service_client::FlightServiceClient;
+    use deltalake::ObjectStore;
+    use modelardb_common::metadata;
+    use modelardb_common::metadata::TableMetadataManager;
     use modelardb_common::test;
-    use modelardb_common::{metadata, storage};
+    use object_store::local::LocalFileSystem;
     use ringbuf::traits::observer::Observer;
+    use sqlx::Sqlite;
     use tempfile::{self, TempDir};
-    use tokio::sync::RwLock;
-    use tonic::transport::Channel;
-    use uuid::Uuid;
 
     const COLUMN_INDEX: u16 = 5;
-    const COMPRESSED_FILE_SIZE: usize = 2395;
-
-    // Tests for path_is_compressed_file().
-    #[test]
-    fn test_empty_path_is_not_compressed_file() {
-        let path = Path::from("");
-        assert!(DataTransfer::path_is_compressed_file(path).is_none());
-    }
-
-    #[test]
-    fn test_folder_path_is_not_compressed_file() {
-        let path = Path::from(format!(
-            "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}",
-            test::MODEL_TABLE_NAME
-        ));
-        assert!(DataTransfer::path_is_compressed_file(path).is_none());
-    }
-
-    #[test]
-    fn test_table_folder_without_compressed_folder_is_not_compressed_file() {
-        let path = Path::from(format!("test/{}/test.parquet", test::MODEL_TABLE_NAME));
-        assert!(DataTransfer::path_is_compressed_file(path).is_none());
-    }
-
-    #[test]
-    fn test_non_apache_parquet_file_is_not_compressed_file() {
-        let path = Path::from(format!(
-            "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}/test.txt",
-            test::MODEL_TABLE_NAME
-        ));
-        assert!(DataTransfer::path_is_compressed_file(path).is_none());
-    }
-
-    #[test]
-    fn test_compressed_file_is_compressed_file() {
-        let path = Path::from(format!(
-            "{COMPRESSED_DATA_FOLDER}/{}/{COLUMN_INDEX}/test.parquet",
-            test::MODEL_TABLE_NAME
-        ));
-        assert_eq!(
-            DataTransfer::path_is_compressed_file(path),
-            Some((test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
-        );
-    }
+    const FILE_SIZE: usize = 2395;
 
     // Tests for data transfer component.
     #[tokio::test]
@@ -335,8 +292,8 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = create_metadata_manager(&temp_dir).await;
 
-        create_compressed_file(&temp_dir, metadata_manager.clone()).await;
-        create_compressed_file(&temp_dir, metadata_manager.clone()).await;
+        create_delta_table_and_segments(&temp_dir).await;
+        create_delta_table_and_segments(&temp_dir).await;
 
         let (_target_dir, data_transfer) =
             create_data_transfer_component(&temp_dir, metadata_manager).await;
@@ -344,9 +301,9 @@ mod tests {
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
-                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            COMPRESSED_FILE_SIZE * 2
+            FILE_SIZE * 2
         );
 
         assert_eq!(
@@ -361,52 +318,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_add_compressed_file_for_new_table() {
+    async fn test_add_batch_to_new_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = create_metadata_manager(&temp_dir).await;
 
         let (_target_dir, data_transfer) =
             create_data_transfer_component(&temp_dir, metadata_manager.clone()).await;
-        let compressed_file = create_compressed_file(&temp_dir, metadata_manager).await;
+        let files_size = create_delta_table_and_segments(&temp_dir).await;
 
         assert!(data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .increase_table_size(test::MODEL_TABLE_NAME, files_size)
             .await
             .is_ok());
 
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
-                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            COMPRESSED_FILE_SIZE
+            FILE_SIZE
         );
     }
 
     #[tokio::test]
-    async fn test_add_compressed_file_for_existing_table() {
+    async fn test_add_batch_to_existing_table() {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = create_metadata_manager(&temp_dir).await;
 
         let (_target_dir, data_transfer) =
             create_data_transfer_component(&temp_dir, metadata_manager.clone()).await;
-        let compressed_file = create_compressed_file(&temp_dir, metadata_manager).await;
+        let files_size = create_delta_table_and_segments(&temp_dir).await;
 
         data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .increase_table_size(test::MODEL_TABLE_NAME, files_size)
             .await
             .unwrap();
         data_transfer
-            .increase_table_size(test::MODEL_TABLE_NAME, COLUMN_INDEX, &compressed_file)
+            .increase_table_size(test::MODEL_TABLE_NAME, files_size)
             .await
             .unwrap();
 
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
-                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            COMPRESSED_FILE_SIZE * 2
+            FILE_SIZE * 2
         );
     }
 
@@ -415,29 +372,29 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = create_metadata_manager(&temp_dir).await;
 
-        create_compressed_file(&temp_dir, metadata_manager.clone()).await;
-        create_compressed_file(&temp_dir, metadata_manager.clone()).await;
+        create_delta_table_and_segments(&temp_dir).await;
+        create_delta_table_and_segments(&temp_dir).await;
 
         let (_, mut data_transfer) =
             create_data_transfer_component(&temp_dir, metadata_manager).await;
 
         data_transfer
-            .set_transfer_batch_size_in_bytes(Some(COMPRESSED_FILE_SIZE * 10))
+            .set_transfer_batch_size_in_bytes(Some(FILE_SIZE * 10))
             .await
             .unwrap();
 
         assert_eq!(
             data_transfer.transfer_batch_size_in_bytes,
-            Some(COMPRESSED_FILE_SIZE * 10)
+            Some(FILE_SIZE * 10)
         );
 
         // Data should not have been transferred.
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
-                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            COMPRESSED_FILE_SIZE * 2
+            FILE_SIZE * 2
         );
     }
 
@@ -446,15 +403,15 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = create_metadata_manager(&temp_dir).await;
 
-        create_compressed_file(&temp_dir, metadata_manager.clone()).await;
-        create_compressed_file(&temp_dir, metadata_manager.clone()).await;
+        create_delta_table_and_segments(&temp_dir).await;
+        create_delta_table_and_segments(&temp_dir).await;
 
         let (_, mut data_transfer) =
             create_data_transfer_component(&temp_dir, metadata_manager).await;
 
         assert_eq!(
             data_transfer.transfer_batch_size_in_bytes,
-            Some(COMPRESSED_FILE_SIZE * 3 - 1)
+            Some(FILE_SIZE * 3 - 1)
         );
 
         data_transfer
@@ -468,48 +425,40 @@ mod tests {
         assert_eq!(
             *data_transfer
                 .table_size_in_bytes
-                .get(&(test::MODEL_TABLE_NAME.to_owned(), COLUMN_INDEX))
+                .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            COMPRESSED_FILE_SIZE * 2
+            FILE_SIZE * 2
         );
     }
 
-    /// Set up a data folder with a table folder that has a single compressed file in it. Return the
-    /// [`CompressedFile`] representing the created Apache Parquet file.
-    async fn create_compressed_file(
-        temp_dir: &TempDir,
-        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
-    ) -> CompressedFile {
+    /// Set up a delta table and write a batch of compressed segments to it. Return the size of the
+    /// files on disk.
+    async fn create_delta_table_and_segments(temp_dir: &TempDir) -> usize {
         let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
-        let batch = test::compressed_segments_record_batch();
+        let compressed_segments = test::compressed_segments_record_batch();
+        local_data_folder
+            .write_compressed_segments_to_model_table(test::MODEL_TABLE_NAME, compressed_segments);
 
-        let file_path = storage::write_compressed_segments_to_apache_parquet_file(
-            COMPRESSED_DATA_FOLDER,
-            test::MODEL_TABLE_NAME,
-            COLUMN_INDEX,
-            &batch,
-            &(local_data_folder.clone() as Arc<dyn ObjectStore>),
-        )
-        .await
-        .unwrap();
-
-        let object_meta = local_data_folder.head(&file_path).await.unwrap();
-        let compressed_file =
-            CompressedFile::from_compressed_data(object_meta, COLUMN_INDEX, &batch);
-
-        // Save the metadata of the compressed file to the metadata database.
-        table_metadata_manager
-            .save_compressed_file(
-                test::MODEL_TABLE_NAME,
-                COLUMN_INDEX.into(),
-                &compressed_file,
-            )
+        let mut delta_table = local_data_folder
+            .delta_table(test::MODEL_TABLE_NAME)
             .await
             .unwrap();
+        delta_table.load().await.unwrap();
 
-        compressed_file
+        let mut files_size = 0;
+        let mut files_iter = delta_table.get_files_iter().unwrap();
+        while let Some(file_path) = files_iter.next() {
+            files_size += local_data_folder
+                .object_store()
+                .head(&file_path)
+                .await
+                .unwrap()
+                .size;
+        }
+
+        files_size
     }
 
     /// Create a data transfer component with a target object store that is deleted once the test is finished.
@@ -518,29 +467,17 @@ mod tests {
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     ) -> (TempDir, DataTransfer) {
         let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         let target_dir = tempfile::tempdir().unwrap();
-
-        // Create the target object store.
-        let local_fs = LocalFileSystem::new_with_prefix(target_dir.path()).unwrap();
-        let remote_data_folder_object_store = Arc::new(local_fs);
-
-        // Create a manager interface.
-        let channel = Channel::builder("grpc://server:9999".parse().unwrap()).connect_lazy();
-        let lazy_flight_client = FlightServiceClient::new(channel);
-
-        let manager = Manager::new(
-            Arc::new(RwLock::new(lazy_flight_client)),
-            Uuid::new_v4().to_string(),
-            None,
-        );
+        let remote_data_folder =
+            Arc::new(DeltaLake::from_local_path(target_dir.path().to_str().unwrap()).unwrap());
 
         let data_transfer = DataTransfer::try_new(
             local_data_folder,
-            remote_data_folder_object_store,
-            table_metadata_manager.table_names(),
-            Some(COMPRESSED_FILE_SIZE * 3 - 1),
+            remote_data_folder,
+            table_metadata_manager.table_names().await.unwrap(),
+            Some(FILE_SIZE * 3 - 1),
             Arc::new(Mutex::new(Metric::new())),
         )
         .await

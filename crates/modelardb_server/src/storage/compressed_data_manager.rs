@@ -479,6 +479,7 @@ mod tests {
     use super::*;
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
+    use deltalake::Path;
     use futures::StreamExt;
     use modelardb_common::metadata;
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
@@ -579,15 +580,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_first_compressed_data_buffer_if_out_of_memory() {
-        let compressed_segment_batch = compressed_segments_record_batch();
         let (_temp_dir, data_manager) = create_compressed_data_manager().await;
+
+        let compressed_segment_batch = compressed_segments_record_batch();
         let reserved_memory = data_manager
             .memory_pool
             .remaining_compressed_memory_in_bytes() as usize;
 
         // Insert compressed data into the storage engine until data is saved to Apache Parquet.
         let compressed_buffer_size = compressed_segment_batch
-            .model_table_metadata()
+            .model_table_metadata
             .field_column_indices
             .len()
             * test::COMPRESSED_SEGMENTS_SIZE;
@@ -600,33 +602,15 @@ mod tests {
         }
 
         // The compressed data should be saved to the table_name folder in the compressed folder.
-        let parquet_files = data_manager
+        let delta_table = data_manager
             .local_data_folder
-            .list(Some(&Path::from(format!(
-                "{COMPRESSED_DATA_FOLDER}/{}",
-                test::MODEL_TABLE_NAME
-            ))))
-            .collect::<Vec<_>>()
-            .await;
+            .delta_table(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
+        let parquet_files = delta_table.get_files_iter().unwrap().collect::<Vec<_>>();
 
         // One Apache Parquet file is created for each field column in the batch.
         assert_eq!(parquet_files.len(), 2);
-
-        // The metadata of the compressed data should be saved to the metadata database.
-        let compressed_files = data_manager
-            .table_metadata_manager
-            .compressed_files(
-                test::MODEL_TABLE_NAME,
-                COLUMN_INDEX.into(),
-                None,
-                None,
-                None,
-                None,
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(compressed_files.len(), 1);
     }
 
     #[tokio::test]
@@ -844,6 +828,9 @@ mod tests {
                 .unwrap(),
         );
 
+        let local_data_folder =
+            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+
         let model_table_metadata = test::model_table_metadata();
         metadata_manager
             .save_model_table_metadata(&model_table_metadata, test::MODEL_TABLE_SQL)
@@ -854,7 +841,7 @@ mod tests {
             temp_dir,
             CompressedDataManager::new(
                 Arc::new(RwLock::new(None)),
-                object_store,
+                local_data_folder,
                 channels,
                 memory_pool,
                 metadata_manager,

@@ -814,12 +814,11 @@ mod tests {
     use datafusion::arrow::array::StringBuilder;
     use datafusion::arrow::datatypes::SchemaRef;
     use datafusion::arrow::record_batch::RecordBatch;
-    use futures::StreamExt;
     use modelardb_common::metadata;
     use modelardb_common::schemas::UNCOMPRESSED_SCHEMA;
     use modelardb_common::test;
     use modelardb_common::types::{ServerMode, TimestampBuilder, ValueBuilder};
-    use object_store::ObjectStore;
+    use object_store::local::LocalFileSystem;
     use ringbuf::traits::observer::Observer;
     use tempfile::TempDir;
     use tokio::time::{sleep, Duration};
@@ -834,7 +833,7 @@ mod tests {
     async fn test_can_compress_existing_on_disk_data_buffers_when_initializing() {
         let temp_dir = tempfile::tempdir().unwrap();
         let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         // Create a context with a storage engine.
         let context = Arc::new(
@@ -884,6 +883,7 @@ mod tests {
         let spilled_buffers = storage_engine
             .uncompressed_data_manager
             .local_data_folder
+            .object_store()
             .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
             .collect::<Vec<_>>()
             .await;
@@ -1275,6 +1275,7 @@ mod tests {
         // The UncompressedDataBuffer should be spilled to tag hash in the uncompressed folder.
         let spilled_buffers = data_manager
             .local_data_folder
+            .object_store()
             .list(Some(&Path::from(UNCOMPRESSED_DATA_FOLDER)))
             .collect::<Vec<_>>()
             .await;
@@ -1512,6 +1513,9 @@ mod tests {
                 .unwrap(),
         );
 
+        let local_data_folder =
+            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+
         // Ensure the expected metadata is available through the metadata manager.
         let model_table_metadata = test::model_table_metadata();
 
@@ -1535,7 +1539,7 @@ mod tests {
 
         // UncompressedDataManager::try_new() lookup the error bounds for each tag hash.
         let uncompressed_data_manager = UncompressedDataManager::new(
-            object_store,
+            local_data_folder,
             memory_pool,
             channels,
             metadata_manager.clone(),

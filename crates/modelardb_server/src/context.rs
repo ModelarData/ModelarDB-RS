@@ -145,7 +145,8 @@ impl Context {
         match valid_statement {
             ValidStatement::CreateTable { name, schema } => {
                 self.check_if_table_exists(&name).await?;
-                self.register_and_save_table(&name, sql, schema, context).await?;
+                self.register_and_save_table(&name, sql, schema, context)
+                    .await?;
             }
             ValidStatement::CreateModelTable(model_table_metadata) => {
                 let storage_engine = context.storage_engine.read().await;
@@ -168,7 +169,7 @@ impl Context {
         table_name: &str,
         sql: &str,
         schema: Schema,
-        context: &Arc<Context>
+        context: &Arc<Context>,
     ) -> Result<(), ModelarDbError> {
         let configuration_manager = self.configuration_manager.read().await;
 
@@ -385,8 +386,7 @@ impl Context {
 mod tests {
     use super::*;
 
-    use modelardb_common::test;
-    use object_store::local::LocalFileSystem;
+    use modelardb_common::{storage::DeltaLake, test};
     use tempfile::TempDir;
 
     #[tokio::test]
@@ -413,7 +413,7 @@ mod tests {
         // An Apache Parquet file should be created to save the schema.
         let folder_path = temp_dir
             .path()
-            .join(COMPRESSED_DATA_FOLDER)
+            .join("compressed")
             .join("table_name")
             .join("empty_for_schema.parquet");
 
@@ -505,7 +505,7 @@ mod tests {
         let context_2 = create_context(&temp_dir).await;
 
         // Register the table with Apache Arrow DataFusion.
-        context_2.register_tables().await.unwrap();
+        context_2.register_tables(&context).await.unwrap();
     }
 
     #[tokio::test]
@@ -633,7 +633,7 @@ mod tests {
     /// Create a simple [`Context`] that uses `temp_dir` as the local data folder and query data folder.
     async fn create_context(temp_dir: &TempDir) -> Arc<Context> {
         let local_data_folder =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
+            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         Arc::new(
             Context::try_new(
