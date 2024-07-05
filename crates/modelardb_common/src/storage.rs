@@ -203,12 +203,13 @@ impl DeltaLake {
     }
 
     /// Write the `record_batch` to a Delta Lake table for a normal table with `table_name`.
-    /// Returns [`Ok`] if the file was written successfully, otherwise returns [`DeltaLakeError`].
+    /// Returns the new delta lake version if the file was written successfully, otherwise returns
+    /// [`DeltaLakeError`].
     pub async fn write_record_batch_to_table(
         &self,
         table_name: &str,
         record_batch: RecordBatch,
-    ) -> Result<(), DeltaTableError> {
+    ) -> Result<i64, DeltaTableError> {
         let table_path = self.location_of_compressed_table(table_name);
         let writer_properties = apache_parquet_writer_properties(None);
 
@@ -218,18 +219,17 @@ impl DeltaLake {
             None,
             writer_properties,
         )
-        .await?;
-
-        Ok(())
+        .await
     }
 
     /// Write the `compressed_segments` to a Delta Lake table for a model table with `table_name`.
-    /// Returns [`Ok`] if the file was written successfully, otherwise returns [`DeltaLakeError`].
+    /// Returns the new delta lake table version if the file was written successfully, otherwise
+    /// returns [`DeltaLakeError`].
     pub async fn write_compressed_segments_to_model_table(
         &self,
         table_name: &str,
         compressed_segments: RecordBatch,
-    ) -> Result<(), DeltaTableError> {
+    ) -> Result<i64, DeltaTableError> {
         let table_path = self.location_of_compressed_table(table_name);
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
@@ -247,22 +247,20 @@ impl DeltaLake {
             partition_columns,
             writer_properties,
         )
-        .await?;
-
-        Ok(())
+        .await
     }
 
     /// Write the rows in `record_batch` to a DeltaLake table at the location given by `table_path` in
     /// `object_store`. `sorting_columns` can be set to control the sorting order of the rows in the
-    /// written file. Return [`Ok`] if the file was written successfully, otherwise return
-    /// [`ParquetError`].
+    /// written file. Returns the new delta lake table version if the file was written successfully,
+    /// otherwise return [`ParquetError`].
     async fn write_record_batch_to_a_delta_lake_file(
         &self,
         table_path: String,
         record_batch: RecordBatch,
         partition_columns: Option<Vec<String>>,
         writer_properties: WriterProperties,
-    ) -> Result<(), DeltaTableError> {
+    ) -> Result<i64, DeltaTableError> {
         let mut delta_table = open_table(&table_path).await?;
 
         // Write the record batch to the object store.
@@ -275,9 +273,7 @@ impl DeltaLake {
         .with_writer_properties(writer_properties);
 
         writer.write(record_batch).await?;
-        writer.flush_and_commit(&mut delta_table).await?;
-
-        Ok(())
+        writer.flush_and_commit(&mut delta_table).await
     }
 
     /// Return the location of the compressed model or normal table with `table_name`.

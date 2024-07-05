@@ -357,7 +357,9 @@ impl CompressedDataManager {
         let (_table_name, compressed_data_buffer) =
             self.compressed_data_buffers.remove(table_name).unwrap();
 
-        // Disk space use is over approximated as Apache Parquet applies lossless compression.
+        // Disk space use is over approximated as Apache Parquet applies lossless compression. The
+        // actual size is not computed as DeltaTable seems to have no support for listing the files
+        // added in a version without iterating through all of the Add actions from file_actions().
         let compressed_data_buffer_size_in_bytes = compressed_data_buffer.size_in_bytes;
         let compressed_segments = compressed_data_buffer.record_batch().await;
         self.local_data_folder
