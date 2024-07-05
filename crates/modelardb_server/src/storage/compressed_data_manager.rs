@@ -108,7 +108,9 @@ impl CompressedDataManager {
 
         self.local_data_folder
             .write_record_batch_to_table(table_name, record_batch)
-            .await
+            .await?;
+
+        Ok(())
     }
 
     /// Read and process messages received from the

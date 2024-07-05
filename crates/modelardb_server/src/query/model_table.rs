@@ -131,7 +131,6 @@ impl ModelTable {
         &self,
         delta_table: &DeltaTable,
         partition_filters: &[PartitionFilter],
-        start_time_column_index: usize,
         maybe_limit: Option<usize>,
         maybe_parquet_filters: &Option<Arc<dyn PhysicalExpr>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
@@ -373,44 +372,6 @@ impl TableProvider for ModelTable {
         TableType::Base
     }
 
-    /// Specify that model tables performs inexact predicate push-down.
-    fn supports_filters_pushdown(
-        &self,
-        filters: &[&Expr],
-    ) -> Result<Vec<TableProviderFilterPushDown>> {
-        Ok(filters
-            .iter()
-            .map(|_filter| TableProviderFilterPushDown::Inexact)
-            .collect())
-    }
-
-    /// Create an [`ExecutionPlan`] that will insert the result of `input` into the model table.
-    /// `inputs` must include generated columns to match the query schema returned by
-    /// [`TableProvider::schema()`]. The generated columns are immediately dropped. Generally,
-    /// [`arrow_flight::flight_service_server::FlightService::do_put()`] should be used instead of
-    /// this method as it is more efficient. Returns a [`DataFusionError::Plan`] if the necessary
-    /// metadata cannot be retrieved from the metadata database.
-    async fn insert_into(
-        &self,
-        _state: &SessionState,
-        input: Arc<dyn ExecutionPlan>,
-        _overwrite: bool,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        let data_sink = Arc::new(ModelTableDataSink::new(
-            self.model_table_metadata.clone(),
-            self.context.storage_engine.clone(),
-        ));
-
-        let data_sink_exec = Arc::new(DataSinkExec::new(
-            input,
-            data_sink,
-            self.model_table_metadata.query_schema.clone(),
-            None,
-        ));
-
-        Ok(data_sink_exec)
-    }
-
     /// Create an [`ExecutionPlan`] that will scan the table. Returns a [`DataFusionError::Plan`] if
     /// the necessary metadata cannot be retrieved.
     async fn scan(
@@ -535,13 +496,6 @@ impl TableProvider for ModelTable {
             stored_field_columns_in_projection.push(self.fallback_field_column);
         }
 
-        // The files for each column is sorted by their minimum start time so the compressed
-        // segments are returned in the same sorted order for each for the field columns.
-        let start_time_column_index = QUERY_COMPRESSED_SCHEMA
-            .0
-            .index_of("start_time")
-            .map_err(|error| DataFusionError::ArrowError(error, None))?;
-
         // Request the matching files from the delta lake table and construct one or more GridExecs
         // and a SortedJoinExec. The write lock on the storage engine is held until object metas for
         // all columns have been retrieved to ensure they have the same number of data points.
@@ -560,7 +514,6 @@ impl TableProvider for ModelTable {
             let parquet_exec = self.new_apache_parquet_exec(
                 &delta_table,
                 &partition_filters,
-                start_time_column_index,
                 limit,
                 &maybe_physical_parquet_filters,
             )?;
@@ -587,6 +540,44 @@ impl TableProvider for ModelTable {
                 sorted_join_exec,
             ))
         }
+    }
+
+    /// Specify that model tables performs inexact predicate push-down.
+    fn supports_filters_pushdown(
+        &self,
+        filters: &[&Expr],
+    ) -> Result<Vec<TableProviderFilterPushDown>> {
+        Ok(filters
+            .iter()
+            .map(|_filter| TableProviderFilterPushDown::Inexact)
+            .collect())
+    }
+
+    /// Create an [`ExecutionPlan`] that will insert the result of `input` into the model table.
+    /// `inputs` must include generated columns to match the query schema returned by
+    /// [`TableProvider::schema()`]. The generated columns are immediately dropped. Generally,
+    /// [`arrow_flight::flight_service_server::FlightService::do_put()`] should be used instead of
+    /// this method as it is more efficient. Returns a [`DataFusionError::Plan`] if the necessary
+    /// metadata cannot be retrieved from the metadata database.
+    async fn insert_into(
+        &self,
+        _state: &SessionState,
+        input: Arc<dyn ExecutionPlan>,
+        _overwrite: bool,
+    ) -> Result<Arc<dyn ExecutionPlan>> {
+        let data_sink = Arc::new(ModelTableDataSink::new(
+            self.model_table_metadata.clone(),
+            self.context.storage_engine.clone(),
+        ));
+
+        let data_sink_exec = Arc::new(DataSinkExec::new(
+            input,
+            data_sink,
+            self.model_table_metadata.schema.clone(),
+            None,
+        ));
+
+        Ok(data_sink_exec)
     }
 }
 
