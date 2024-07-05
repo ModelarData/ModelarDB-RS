@@ -19,6 +19,7 @@ pub mod data_generation;
 
 use std::sync::Arc;
 
+use arrow::array::UInt16Array;
 use datafusion::arrow::array::ArrowPrimitiveType;
 use datafusion::arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt8Array};
 use datafusion::arrow::datatypes::{DataType, Field, Schema};
@@ -127,6 +128,7 @@ pub fn compressed_segments_record_batch_with_time(
     let min_values = vec![offset + 5.2, offset + 10.3, offset + 30.2];
     let max_values = vec![offset + 20.2, offset + 12.2, offset + 34.2];
 
+    let field_column = UInt16Array::from(vec![0, 0, 0]);
     let univariate_id = UInt64Array::from(vec![univariate_id, univariate_id, univariate_id]);
     let model_type_id = UInt8Array::from(vec![1, 1, 2]);
     let start_time = TimestampArray::from(start_times);
@@ -143,6 +145,7 @@ pub fn compressed_segments_record_batch_with_time(
     RecordBatch::try_new(
         schema.0,
         vec![
+            Arc::new(field_column),
             Arc::new(univariate_id),
             Arc::new(model_type_id),
             Arc::new(start_time),

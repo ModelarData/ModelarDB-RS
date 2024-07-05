@@ -39,7 +39,7 @@ use deltalake::DeltaTableError;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
-use modelardb_common::schemas::COMPRESSED_SCHEMA;
+use modelardb_common::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
 use modelardb_common::storage::DeltaLake;
 use modelardb_common::types::{Timestamp, TimestampArray, Value};
 use object_store::{ObjectMeta, ObjectStore};
@@ -61,12 +61,6 @@ use crate::ClusterMode;
 
 /// The folder storing uncompressed data in the data folders.
 const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
-
-/// The folder storing compressed data in the data folders.
-pub(super) const COMPRESSED_DATA_FOLDER: &str = "compressed";
-
-/// The scheme with host at which the query data folder is stored.
-pub(super) const QUERY_DATA_FOLDER_SCHEME_WITH_HOST: &str = "query://query";
 
 /// The capacity of each uncompressed data buffer as the number of elements in the buffer where each
 /// element is a [`Timestamp`] and a [`Value`](use crate::types::Value). Note that the resulting
@@ -287,7 +281,7 @@ impl StorageEngine {
     ) -> Result<(), ModelarDbError> {
         self.compressed_data_manager
             .local_data_folder
-            .create_delta_lake_table(table_name, &COMPRESSED_SCHEMA.0)
+            .create_delta_lake_table(table_name, &COMPRESSED_SCHEMA.0, &[FIELD_COLUMN.to_owned()])
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 

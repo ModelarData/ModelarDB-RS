@@ -176,7 +176,7 @@ impl Context {
         // Create an empty delta lake table.
         self.data_folders
             .local_data_folder
-            .create_delta_lake_table(table_name, &schema)
+            .create_delta_lake_table(table_name, &schema, &[])
             .await
             .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
 

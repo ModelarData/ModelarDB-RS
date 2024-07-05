@@ -58,7 +58,9 @@ pub fn try_compress(
 
     // If there is no uncompressed data to compress, an empty [`RecordBatch`] can be returned.
     if uncompressed_timestamps.is_empty() {
-        return Ok(RecordBatch::new_empty(COMPRESSED_SCHEMA.0.clone()));
+        return Ok(RecordBatch::new_empty(
+            COMPRESSED_SCHEMA.0.clone(),
+        ));
     }
 
     // Enough memory for end_index compressed segments are allocated to never require reallocation

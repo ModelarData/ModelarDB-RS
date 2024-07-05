@@ -19,17 +19,16 @@
 
 use std::any::Any;
 use std::collections::HashSet;
+use std::result::Result as StdResult;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use datafusion::arrow::datatypes::{
     ArrowPrimitiveType, DataType, Field, Schema, SchemaRef, TimeUnit,
 };
-use datafusion::common::ToDFSchema;
+use datafusion::common::{Statistics, ToDFSchema};
 use datafusion::datasource::listing::PartitionedFile;
-use datafusion::datasource::object_store::ObjectStoreUrl;
-use datafusion::datasource::physical_plan::parquet::ParquetExec;
-use datafusion::datasource::physical_plan::FileScanConfig;
+use datafusion::datasource::physical_plan::{FileScanConfig, ParquetExec};
 use datafusion::datasource::provider::TableProviderFilterPushDown;
 use datafusion::datasource::{TableProvider, TableType};
 use datafusion::error::{DataFusionError, Result};
@@ -37,19 +36,18 @@ use datafusion::execution::context::{ExecutionProps, SessionState};
 use datafusion::logical_expr::{self, utils, BinaryExpr, Expr, Operator};
 use datafusion::physical_expr::planner;
 use datafusion::physical_plan::insert::DataSinkExec;
-use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr, Statistics};
+use datafusion::physical_plan::{ExecutionPlan, PhysicalExpr};
+use deltalake::kernel::LogicalFile;
+use deltalake::{DeltaTable, DeltaTableError, ObjectMeta, PartitionFilter, PartitionValue};
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
-use modelardb_common::schemas::{COMPRESSED_SCHEMA, QUERY_SCHEMA};
+use modelardb_common::schemas::{FIELD_COLUMN, GRID_SCHEMA, QUERY_COMPRESSED_SCHEMA};
 use modelardb_common::types::{ArrowTimestamp, ArrowValue};
-use object_store::ObjectStore;
-use tokio::sync::RwLockWriteGuard;
 
 use crate::context::Context;
+use crate::query::data_sinks::ModelTableDataSink;
 use crate::query::generated_as_exec::{ColumnToGenerate, GeneratedAsExec};
 use crate::query::grid_exec::GridExec;
 use crate::query::sorted_join_exec::{SortedJoinColumnType, SortedJoinExec};
-use crate::query::data_sinks::ModelTableDataSink;
-use crate::storage::{self, StorageEngine};
 
 use super::QUERY_ORDER_SEGMENT;
 
@@ -60,8 +58,6 @@ use super::QUERY_ORDER_SEGMENT;
 pub struct ModelTable {
     /// Access to the system's configuration and components.
     context: Arc<Context>,
-    /// Location of the object store used by the storage engine.
-    object_store_url: ObjectStoreUrl,
     /// Metadata required to read from and write to the model table.
     model_table_metadata: Arc<ModelTableMetadata>,
     /// Field column to use for queries that do not include fields.
@@ -85,14 +81,9 @@ impl ModelTable {
                 .unwrap() as u16 // unwrap() is safe as all model tables contain at least one field.
         };
 
-        // unwrap() is safe as the url is predefined as a constant in storage.
-        let object_store_url =
-            ObjectStoreUrl::parse(storage::QUERY_DATA_FOLDER_SCHEME_WITH_HOST).unwrap();
-
         Arc::new(ModelTable {
             context,
             model_table_metadata,
-            object_store_url,
             fallback_field_column,
         })
     }
@@ -132,72 +123,49 @@ impl ModelTable {
         Ok(self.model_table_metadata.schema.index_of(column_name)?)
     }
 
-    /// Create an [`ExecutionPlan`] that will scan the column at `column_index` in the table with
-    /// `table_name`. Returns a [`DataFusionError::Plan`] if the necessary metadata cannot be
-    /// retrieved from the metadata database.
-    async fn scan_column(
+    /// Create an [`ExecutionPlan`] that will return the compressed segments that represents the
+    /// data points for `field_column_index` in the table with `table_name`. Returns a
+    /// [`DataFusionError::Plan`] if the necessary metadata cannot be retrieved from the metadata
+    /// database.
+    fn new_apache_parquet_exec(
         &self,
-        storage_engine: &mut RwLockWriteGuard<'_, StorageEngine>,
-        query_object_store: &Arc<dyn ObjectStore>,
-        table_name: &str,
-        column_index: u16,
-        maybe_parquet_predicates: Option<Expr>,
-        maybe_grid_predicates: Option<Expr>,
-        limit: Option<usize>,
+        delta_table: &DeltaTable,
+        partition_filters: &[PartitionFilter],
+        start_time_column_index: usize,
+        maybe_limit: Option<usize>,
+        maybe_parquet_filters: &Option<Arc<dyn PhysicalExpr>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        let configuration_manager = self.context.configuration_manager.read().await;
+        // Collect the LogicalFiles into a Vec so they can be sorted the same for all field columns.
+        let mut logical_files = delta_table
+            .get_active_add_actions_by_partitions(partition_filters)
+            .map_err(|error| DataFusionError::Internal(error.to_string()))?
+            .collect::<StdResult<Vec<LogicalFile>, DeltaTableError>>()
+            .map_err(|error| DataFusionError::Internal(error.to_string()))?;
 
-        // unwrap() is safe to use as compressed_files() only fails if a table with the name
-        // table_name and column with column_index does not exists, if end time is before start
-        // time, or if max value is larger than min value.
-        // TODO: extract predicates on time and value and push them to the storage engine.
-        let object_metas = storage_engine
-            .compressed_files(
-                table_name,
-                column_index,
-                None,
-                None,
-                None,
-                None,
-                &configuration_manager.cluster_mode,
-                query_object_store,
-            )
-            .await
-            .unwrap();
+        logical_files.sort_by_key(|logical_file| logical_file.modification_time());
 
         // Create the data source operator. Assumes the ObjectStore exists.
-        let partitioned_files: Vec<PartitionedFile> = object_metas
-            .into_iter()
-            .map(|object_meta| PartitionedFile {
-                object_meta,
-                partition_values: vec![],
-                range: None,
-                statistics: None,
-                extensions: None,
-            })
-            .collect::<Vec<PartitionedFile>>();
+        let partitioned_files = logical_files
+            .iter()
+            .map(|logical_file| logical_file_to_partitioned_file(logical_file))
+            .collect::<Result<Vec<PartitionedFile>>>()?;
 
         // TODO: give the optimizer more info for timestamps and values through statistics, e.g, min
         // can be computed using only the metadata database due to the aggregate_statistics rule.
+        let log_store = delta_table.log_store();
         let file_scan_config = FileScanConfig {
-            object_store_url: self.object_store_url.clone(),
-            file_schema: COMPRESSED_SCHEMA.0.clone(),
+            object_store_url: log_store.object_store_url(),
+            file_schema: QUERY_COMPRESSED_SCHEMA.0.clone(),
             file_groups: vec![partitioned_files],
-            statistics: Statistics::new_unknown(&COMPRESSED_SCHEMA.0),
+            statistics: Statistics::new_unknown(&QUERY_COMPRESSED_SCHEMA.0),
             projection: None,
-            limit,
+            limit: maybe_limit,
             table_partition_cols: vec![],
             output_ordering: vec![QUERY_ORDER_SEGMENT.clone()],
         };
 
-        let apache_parquet_exec_builder = if let Some(parquet_predicates) = maybe_parquet_predicates
-        {
-            let predicate = convert_logical_expr_to_physical_expr(
-                &parquet_predicates,
-                COMPRESSED_SCHEMA.0.clone(),
-            )?;
-
-            ParquetExec::builder(file_scan_config).with_predicate(predicate)
+        let apache_parquet_exec_builder = if let Some(parquet_filters) = maybe_parquet_filters {
+            ParquetExec::builder(file_scan_config).with_predicate(parquet_filters.clone())
         } else {
             ParquetExec::builder(file_scan_config)
         };
@@ -207,42 +175,40 @@ impl ModelTable {
             .with_pushdown_filters(true)
             .with_reorder_filters(true);
 
-        // Create the gridding operator.
-        let maybe_physical_grid_predicates = if let Some(grid_predicates) = maybe_grid_predicates {
-            Some(convert_logical_expr_to_physical_expr(
-                &grid_predicates,
-                QUERY_SCHEMA.0.clone(),
-            )?)
-        } else {
-            None
-        };
-
-        Ok(GridExec::new(
-            maybe_physical_grid_predicates,
-            limit,
-            Arc::new(apache_parquet_exec),
-        ))
+        Ok(Arc::new(apache_parquet_exec))
     }
 }
 
 /// Rewrite and combine the `filters` that is written in terms of the model table's query schema, to
 /// a filter that is written in terms of the schema used for compressed segments by the storage
 /// engine and a filter that is written in terms of the schema used for univariate time series by
-/// [`GridExec`] for its output. If the filters cannot be rewritten [`None`] is returned for both.
+/// [`GridExec`] for its output. If the filters cannot be rewritten an empty [`Vec`] is returned for
+/// the first an [`None`] is returned for the second. If the filters for [`GridExec`] cannot be
+/// converted to [`PhysicalExpr`] a [`DataFusionError`] is returned.
 fn rewrite_and_combine_filters(
     schema: &SchemaRef,
     filters: &[Expr],
-) -> (Option<Expr>, Option<Expr>) {
+) -> Result<(Option<Arc<dyn PhysicalExpr>>, Option<Arc<dyn PhysicalExpr>>)> {
     let rewritten_filters = filters
         .iter()
         .filter_map(|filter| rewrite_filter(schema, filter));
 
     let (parquet_rewritten_filters, grid_rewritten_filters): (Vec<Expr>, Vec<Expr>) =
         rewritten_filters.unzip();
-    (
-        utils::conjunction(parquet_rewritten_filters),
-        utils::conjunction(grid_rewritten_filters),
-    )
+
+    let maybe_parquet_rewritten_filters = utils::conjunction(parquet_rewritten_filters);
+    let maybe_physical_parquet_filters = maybe_convert_logical_expr_to_physical_expr(
+        maybe_parquet_rewritten_filters.as_ref(),
+        QUERY_COMPRESSED_SCHEMA.0.clone(),
+    )?;
+
+    let maybe_grid_rewritten_filters = utils::conjunction(grid_rewritten_filters);
+    let maybe_physical_grid_filters = maybe_convert_logical_expr_to_physical_expr(
+        maybe_grid_rewritten_filters.as_ref(),
+        GRID_SCHEMA.0.clone(),
+    )?;
+
+    Ok((maybe_physical_parquet_filters, maybe_physical_grid_filters))
 }
 
 /// Rewrite the `filter` that is written in terms of the model table's query schema, to a filter
@@ -339,6 +305,22 @@ fn new_binary_expr(left: Expr, op: Operator, right: Expr) -> Expr {
     })
 }
 
+/// Convert `expr` to a [`Option<PhysicalExpr>`] with the types in `query_schema`.
+fn maybe_convert_logical_expr_to_physical_expr(
+    maybe_expr: Option<&Expr>,
+    query_schema: SchemaRef,
+) -> Result<Option<Arc<dyn PhysicalExpr>>> {
+    if let Some(maybe_expr) = maybe_expr {
+        // unwrap() is safe as the branch is entered if maybe_grid_rewritten_filters is not none.
+        Ok(Some(convert_logical_expr_to_physical_expr(
+            maybe_expr,
+            query_schema,
+        )?))
+    } else {
+        Ok(None)
+    }
+}
+
 /// Convert `expr` to a [`PhysicalExpr`] with the types in `query_schema`.
 fn convert_logical_expr_to_physical_expr(
     expr: &Expr,
@@ -346,6 +328,32 @@ fn convert_logical_expr_to_physical_expr(
 ) -> Result<Arc<dyn PhysicalExpr>> {
     let df_query_schema = query_schema.clone().to_dfschema()?;
     planner::create_physical_expr(expr, &df_query_schema, &ExecutionProps::new())
+}
+
+// Convert the [`LogicalFile`] `logical_file` to a [`PartitionFilter`]. A [`DataFusionError`] is
+// returned if the modified cannot be read from `logical_file`.
+fn logical_file_to_partitioned_file(logical_file: &LogicalFile) -> Result<PartitionedFile> {
+    let last_modified = logical_file
+        .modification_datetime()
+        .map_err(|error| DataFusionError::Internal(error.to_string()))?;
+
+    let object_meta = ObjectMeta {
+        location: logical_file.object_store_path(),
+        last_modified,
+        size: logical_file.size() as usize,
+        e_tag: None,
+        version: None,
+    };
+
+    let partitioned_file = PartitionedFile {
+        object_meta,
+        partition_values: vec![],
+        range: None,
+        statistics: None,
+        extensions: None,
+    };
+
+    Ok(partitioned_file)
 }
 
 #[async_trait]
@@ -419,6 +427,21 @@ impl TableProvider for ModelTable {
         let query_schema = &self.model_table_metadata.query_schema;
         let generated_columns = &self.model_table_metadata.generated_columns;
 
+        // Create DeltaTable to access data and metadata from the delta lake table.
+        let delta_table = self
+            .context
+            .data_folders
+            .query_data_folder
+            .delta_table(table_name)
+            .await
+            .map_err(|error| DataFusionError::Plan(error.to_string()))?;
+
+        // Register the object store as done in DeltaTable so paths are from the table root.
+        let log_store = delta_table.log_store();
+        let object_store_url = log_store.object_store_url();
+        ctx.runtime_env()
+            .register_object_store(object_store_url.as_ref(), log_store.object_store());
+
         // Ensures a projection is always present for looking up the columns to return.
         let mut projection: Vec<usize> = if let Some(projection) = projection {
             projection.to_vec()
@@ -487,8 +510,8 @@ impl TableProvider for ModelTable {
 
         // TODO: extract all of the predicates that consist of tag = tag_value from the query so the
         // segments can be pruned by univariate_id in ParquetExec and hash_to_tags can be minimized.
-        let (maybe_parquet_predicates, maybe_grid_predicates) =
-            rewrite_and_combine_filters(schema, filters);
+        let (maybe_physical_parquet_filters, maybe_physical_grid_filters) =
+            rewrite_and_combine_filters(schema, filters)?;
 
         // Compute a mapping from hashes to the requested tag values in the requested order. If the
         // server is a cloud node, use the table metadata manager for the remote metadata database.
@@ -508,39 +531,43 @@ impl TableProvider for ModelTable {
         }
         .map_err(|error| DataFusionError::Plan(error.to_string()))?;
 
-        // unwrap() is safe as the store is set by create_session_context().
-        let query_object_store = ctx
-            .runtime_env()
-            .object_store(&self.object_store_url)
-            .unwrap();
-
-        // At least one field column must be read for the univariate_ids and timestamps.
         if stored_field_columns_in_projection.is_empty() {
             stored_field_columns_in_projection.push(self.fallback_field_column);
         }
 
-        // Request the matching files from the storage engine and construct one or more GridExecs
+        // The files for each column is sorted by their minimum start time so the compressed
+        // segments are returned in the same sorted order for each for the field columns.
+        let start_time_column_index = QUERY_COMPRESSED_SCHEMA
+            .0
+            .index_of("start_time")
+            .map_err(|error| DataFusionError::ArrowError(error, None))?;
+
+        // Request the matching files from the delta lake table and construct one or more GridExecs
         // and a SortedJoinExec. The write lock on the storage engine is held until object metas for
         // all columns have been retrieved to ensure they have the same number of data points.
         let mut field_column_execution_plans: Vec<Arc<dyn ExecutionPlan>> =
             Vec::with_capacity(stored_field_columns_in_projection.len());
 
-        let mut storage_engine = self.context.storage_engine.write().await;
+        let mut partition_filters = vec![PartitionFilter {
+            key: FIELD_COLUMN.to_owned(),
+            value: PartitionValue::Equal("".to_owned()),
+        }];
 
+        // An expression is added so it is simple to replace with one that filters by field column.
         for field_column_index in stored_field_columns_in_projection {
-            let execution_plan = self
-                .scan_column(
-                    &mut storage_engine,
-                    &query_object_store,
-                    table_name,
-                    field_column_index,
-                    maybe_parquet_predicates.clone(),
-                    maybe_grid_predicates.clone(),
-                    limit,
-                )
-                .await?;
+            partition_filters[0].value = PartitionValue::Equal(field_column_index.to_string());
 
-            field_column_execution_plans.push(execution_plan);
+            let parquet_exec = self.new_apache_parquet_exec(
+                &delta_table,
+                &partition_filters,
+                start_time_column_index,
+                limit,
+                &maybe_physical_parquet_filters,
+            )?;
+
+            let grid_exec = GridExec::new(maybe_physical_grid_filters.clone(), limit, parquet_exec);
+
+            field_column_execution_plans.push(grid_exec);
         }
 
         let sorted_join_exec = SortedJoinExec::new(

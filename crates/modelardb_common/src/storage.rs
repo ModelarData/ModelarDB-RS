@@ -44,7 +44,7 @@ use uuid::Uuid;
 
 use crate::arguments::decode_argument;
 
-use crate::schemas::COMPRESSED_SCHEMA;
+use crate::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
 
 // TODO: Remove folders from storage
 //
@@ -171,7 +171,7 @@ impl DeltaLake {
         DeltaOps::try_from_uri_with_storage_options(&table_path, self.storage_options.clone()).await
     }
 
-    /// Create a Delta Lake table with `schema` at
+    /// Create a Delta Lake table with `schema` and `partition_columns` at
     /// `url_scheme`/[`COMPRESSED_DATA_FOLDER`]/`table_name` if it does not already exist. If the
     /// table could not be created, e.g., because it already exists, [`DeltaTableError`] is
     /// returned.
@@ -179,6 +179,7 @@ impl DeltaLake {
         &self,
         table_name: &str,
         schema: &Schema,
+        partition_columns: &[String],
     ) -> Result<(), DeltaTableError> {
         let mut columns: Vec<StructField> = Vec::with_capacity(schema.fields().len());
         for field in schema.fields() {
@@ -195,6 +196,7 @@ impl DeltaLake {
                 self.location
             ))
             .with_columns(columns)
+            .with_partition_columns(partition_columns)
             .await?;
 
         Ok(())
@@ -236,7 +238,7 @@ impl DeltaLake {
             SortingColumn::new(2, false, false),
         ]);
 
-        let partition_columns = Some(vec!["field_column".to_owned()]);
+        let partition_columns = Some(vec![FIELD_COLUMN.to_owned()]);
         let writer_properties = apache_parquet_writer_properties(sorting_columns);
 
         self.write_record_batch_to_a_delta_lake_file(

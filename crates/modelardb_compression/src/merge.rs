@@ -341,8 +341,10 @@ mod tests {
 
     #[test]
     fn test_merge_compressed_segments_empty_batch_correct_schema() {
-        let merged_record_batch =
-            try_merge_segments(RecordBatch::new_empty(COMPRESSED_SCHEMA.0.clone())).unwrap();
+        let merged_record_batch = try_merge_segments(RecordBatch::new_empty(
+            COMPRESSED_SCHEMA.0.clone(),
+        ))
+        .unwrap();
 
         assert_eq!(0, merged_record_batch.num_rows())
     }

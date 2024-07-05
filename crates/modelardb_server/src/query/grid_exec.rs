@@ -45,7 +45,7 @@ use datafusion::physical_plan::{
     SendableRecordBatchStream, Statistics,
 };
 use futures::stream::{Stream, StreamExt};
-use modelardb_common::schemas::QUERY_SCHEMA;
+use modelardb_common::schemas::GRID_SCHEMA;
 use modelardb_common::types::{TimestampArray, TimestampBuilder, ValueArray, ValueBuilder};
 use modelardb_compression::{self, MODEL_TYPE_COUNT, MODEL_TYPE_NAMES};
 
@@ -76,7 +76,7 @@ impl GridExec {
         limit: Option<usize>,
         input: Arc<dyn ExecutionPlan>,
     ) -> Arc<Self> {
-        let schema = QUERY_SCHEMA.0.clone();
+        let schema = GRID_SCHEMA.0.clone();
 
         // The global order for the data points produced by the set of GridExec instances producing
         // input for a SortedJoinExec must be the same. This is needed because SortedJoinExec

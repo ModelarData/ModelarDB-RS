@@ -55,6 +55,9 @@ pub struct UncompressedSchema(pub arrow::datatypes::SchemaRef);
 pub struct CompressedSchema(pub arrow::datatypes::SchemaRef);
 
 #[derive(Clone)]
+pub struct QueryCompressedSchema(pub arrow::datatypes::SchemaRef);
+
+#[derive(Clone)]
 pub struct MetricSchema(pub arrow::datatypes::SchemaRef);
 
 #[derive(Clone)]

@@ -41,7 +41,7 @@ use crate::storage::compressed_data_buffer::{CompressedDataBuffer, CompressedSeg
 use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
 use crate::storage::types::{Channels, MemoryPool};
-use crate::storage::{Metric, COMPRESSED_DATA_FOLDER};
+use crate::storage::Metric;
 use crate::ClusterMode;
 
 /// Stores data points compressed as segments containing metadata and models in memory to batch the
@@ -438,7 +438,7 @@ impl CompressedDataManager {
             .map_err(|error| ParquetError::General(error.to_string()))?;
 
         let output_file_path = storage::write_compressed_segments_to_apache_parquet_file(
-            COMPRESSED_DATA_FOLDER,
+            "compressed",
             table_name,
             field_column_index,
             &merged,
