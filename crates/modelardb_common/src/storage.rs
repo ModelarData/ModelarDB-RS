@@ -59,15 +59,15 @@ const COMPRESSED_DATA_FOLDER: &str = "compressed";
 /// The folder storing metadata in the data folders.
 const METADATA_FOLDER: &str = "metadata";
 
-/// Functionality for managing delta lake tables in a local folder or an object store.
+/// Functionality for managing Delta Lake tables in a local folder or an object store.
 pub struct DeltaLake {
-    /// URL to access the root of the delta lake.
+    /// URL to access the root of the Delta Lake.
     location: String,
-    /// Storage options required to access delta lake.
+    /// Storage options required to access Delta Lake.
     storage_options: HashMap<String, String>,
-    /// [`ObjectStore`] to access the root of the delta lake.
+    /// [`ObjectStore`] to access the root of the Delta Lake.
     object_store: Arc<dyn ObjectStore>,
-    /// [`LocalFileSystem`] to access the root of the delta lake.
+    /// [`LocalFileSystem`] to access the root of the Delta Lake.
     maybe_local_file_system: Option<Arc<LocalFileSystem>>,
 }
 
@@ -147,12 +147,12 @@ impl DeltaLake {
         })
     }
 
-    /// Return an [`ObjectStore`] to the root of the delta lake.
+    /// Return an [`ObjectStore`] to the root of the Delta Lake.
     pub fn object_store(&self) -> Arc<dyn ObjectStore> {
         self.object_store.clone()
     }
 
-    /// Return n [`LocalFileSystem`] to the root of the delta lake if it uses a local data folder.
+    /// Return n [`LocalFileSystem`] to the root of the Delta Lake if it uses a local data folder.
     pub fn local_file_system(&self) -> Option<Arc<LocalFileSystem>> {
         self.maybe_local_file_system.clone()
     }
@@ -171,16 +171,38 @@ impl DeltaLake {
         DeltaOps::try_from_uri_with_storage_options(&table_path, self.storage_options.clone()).await
     }
 
-    /// Create a Delta Lake table with `schema` and `partition_columns` at
-    /// `url_scheme`/[`COMPRESSED_DATA_FOLDER`]/`table_name` if it does not already exist. If the
-    /// table could not be created, e.g., because it already exists, [`DeltaTableError`] is
-    /// returned.
+    /// Create a Delta Lake table for a normal table with `table_name` and `schema` if it does not
+    /// already exist. If the table could not be created, e.g., because it already exists,
+    /// [`DeltaTableError`] is returned.
     pub async fn create_delta_lake_table(
         &self,
         table_name: &str,
         schema: &Schema,
+    ) -> Result<DeltaTable, DeltaTableError> {
+        self.create_partitioned_delta_lake_table(table_name, schema, &[])
+            .await
+    }
+
+    /// Create a Delta Lake table for a model table with `table_name` and `schema` if it does not
+    /// already exist. Returns [`DeltaTable`] if the table could be created and [`DeltaTableError`]
+    /// if it could not.
+    pub async fn create_delta_lake_model_table(
+        &self,
+        table_name: &str,
+    ) -> Result<DeltaTable, DeltaTableError> {
+        self.create_partitioned_delta_lake_table(table_name, &COMPRESSED_SCHEMA.0, &[FIELD_COLUMN.to_owned()])
+            .await
+    }
+
+    /// Create a Delta Lake table with `table_name`, `schema`, and `partition_columns` if it does
+    /// not already exist. Returns [`DeltaTable`] if the table could be created and
+    /// [`DeltaTableError`] if it could not.
+    async fn create_partitioned_delta_lake_table(
+        &self,
+        table_name: &str,
+        schema: &Schema,
         partition_columns: &[String],
-    ) -> Result<(), DeltaTableError> {
+    ) -> Result<DeltaTable, DeltaTableError> {
         let mut columns: Vec<StructField> = Vec::with_capacity(schema.fields().len());
         for field in schema.fields() {
             let field: &Field = field;
@@ -188,23 +210,20 @@ impl DeltaLake {
             columns.push(struct_field);
         }
 
+        let location = self.location_of_compressed_table(table_name);
+
         CreateBuilder::new()
             .with_storage_options(self.storage_options.clone())
             .with_table_name(table_name)
-            .with_location(format!(
-                "{}/{COMPRESSED_DATA_FOLDER}/{table_name}",
-                self.location
-            ))
+            .with_location(location)
             .with_columns(columns)
             .with_partition_columns(partition_columns)
-            .await?;
-
-        Ok(())
+            .await
     }
 
     /// Write the `record_batch` to a Delta Lake table for a normal table with `table_name`.
-    /// Returns the new delta lake version if the file was written successfully, otherwise returns
-    /// [`DeltaLakeError`].
+    /// Returns the new Delta Lake version if the file was written successfully, otherwise returns
+    /// [`DeltaTableError`].
     pub async fn write_record_batch_to_table(
         &self,
         table_name: &str,
@@ -213,18 +232,13 @@ impl DeltaLake {
         let table_path = self.location_of_compressed_table(table_name);
         let writer_properties = apache_parquet_writer_properties(None);
 
-        self.write_record_batch_to_a_delta_lake_file(
-            table_path,
-            record_batch,
-            None,
-            writer_properties,
-        )
-        .await
+        self.write_record_batch_to_delta_table(table_path, record_batch, None, writer_properties)
+            .await
     }
 
     /// Write the `compressed_segments` to a Delta Lake table for a model table with `table_name`.
-    /// Returns the new delta lake table version if the file was written successfully, otherwise
-    /// returns [`DeltaLakeError`].
+    /// Returns the new Delta Lake table version if the file was written successfully, otherwise
+    /// returns [`DeltaTableError`].
     pub async fn write_compressed_segments_to_model_table(
         &self,
         table_name: &str,
@@ -241,7 +255,7 @@ impl DeltaLake {
         let partition_columns = Some(vec![FIELD_COLUMN.to_owned()]);
         let writer_properties = apache_parquet_writer_properties(sorting_columns);
 
-        self.write_record_batch_to_a_delta_lake_file(
+        self.write_record_batch_to_delta_table(
             table_path,
             compressed_segments,
             partition_columns,
@@ -250,11 +264,11 @@ impl DeltaLake {
         .await
     }
 
-    /// Write the rows in `record_batch` to a DeltaLake table at the location given by `table_path` in
+    /// Write the rows in `record_batch` to a Delta Lake table at the location given by `table_path` in
     /// `object_store`. `sorting_columns` can be set to control the sorting order of the rows in the
-    /// written file. Returns the new delta lake table version if the file was written successfully,
+    /// written file. Returns the new Delta Lake table version if the file was written successfully,
     /// otherwise return [`ParquetError`].
-    async fn write_record_batch_to_a_delta_lake_file(
+    async fn write_record_batch_to_delta_table(
         &self,
         table_path: String,
         record_batch: RecordBatch,

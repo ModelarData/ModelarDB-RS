@@ -18,7 +18,7 @@
 //! are full or [`StorageEngine::flush()`] is called, stores the resulting data points compressed as
 //! metadata and models in in-memory buffers to batch them before saving them to immutable Apache
 //! Parquet files. The path to the Apache Parquet files containing relevant compressed data points
-//! for a query can be retrieved by the query engine using [`StorageEngine::compressed_files()`].
+//! for a query can be retrieved by the query engine using [`DeltaLake`].
 
 mod compressed_data_buffer;
 mod compressed_data_manager;
@@ -39,10 +39,8 @@ use deltalake::DeltaTableError;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::metadata::TableMetadataManager;
-use modelardb_common::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
 use modelardb_common::storage::DeltaLake;
-use modelardb_common::types::{Timestamp, TimestampArray, Value};
-use object_store::{ObjectMeta, ObjectStore};
+use modelardb_common::types::TimestampArray;
 use once_cell::sync::Lazy;
 use sqlx::Sqlite;
 use tokio::runtime::Runtime;
@@ -63,9 +61,10 @@ use crate::ClusterMode;
 const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
 
 /// The capacity of each uncompressed data buffer as the number of elements in the buffer where each
-/// element is a [`Timestamp`] and a [`Value`](use crate::types::Value). Note that the resulting
-/// size of the buffer has to be a multiple of 64 bytes to avoid the actual capacity being larger
-/// than the requested due to internal alignment when allocating memory for the two array builders.
+/// element is a [`Timestamp`](modelardb_common::types::Timestamp) and a
+/// [`Value`](modelardb_common::types::Value). Note that the resulting size of the buffer has to be
+/// a multiple of 64 bytes to avoid the actual capacity being larger than the requested due to
+/// internal alignment when allocating memory for the two array builders.
 pub static UNCOMPRESSED_DATA_BUFFER_CAPACITY: Lazy<usize> = Lazy::new(|| {
     env::var("MODELARDBD_UNCOMPRESSED_DATA_BUFFER_CAPACITY").map_or(64 * 1024, |value| {
         let parsed = value.parse::<usize>().unwrap();
@@ -200,7 +199,6 @@ impl StorageEngine {
             local_data_folder,
             channels.clone(),
             memory_pool.clone(),
-            table_metadata_manager,
             used_disk_space_metric,
         ));
 
@@ -270,22 +268,6 @@ impl StorageEngine {
     /// disk to [`UncompressedDataManager`] which immediately will start compressing them.
     pub(super) async fn initialize(&self, context: &Context) -> Result<(), IOError> {
         self.uncompressed_data_manager.initialize(context).await
-    }
-
-    /// Create a Delta Lake table for storing compressed segments for a model table with `table_name` in
-    /// [`COMPRESSED_DATA_FOLDER`]. If the table already exists, or otherwise fails, a
-    /// [`ModelarDbError`] is returned.
-    pub(super) async fn create_model_delta_lake_table(
-        &self,
-        table_name: &str,
-    ) -> Result<(), ModelarDbError> {
-        self.compressed_data_manager
-            .local_data_folder
-            .create_delta_lake_table(table_name, &COMPRESSED_SCHEMA.0, &[FIELD_COLUMN.to_owned()])
-            .await
-            .map_err(|error| ModelarDbError::TableError(error.to_string()))?;
-
-        Ok(())
     }
 
     /// Pass `record_batch` to [`CompressedDataManager`]. Return [`Ok`] if `record_batch` was
@@ -377,41 +359,6 @@ impl StorageEngine {
             .for_each(|join_handle: JoinHandle<()>| join_handle.join().unwrap());
 
         Ok(())
-    }
-
-    /// Return an [`ObjectMeta`] for each compressed file that belongs to the column at `column_index`
-    /// in the table with `table_name` and contains compressed segments within the given range of
-    /// time and value. If no files belong to the column at `column_index` for the table with
-    /// `table_name` an empty [`Vec`] is returned, while a
-    /// [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
-    /// * A table with `table_name` does not exist.
-    /// * The compressed files could not be listed.
-    /// * A column with `column_index` does not exist.
-    /// * The end time is before the start time.
-    /// * The max value is smaller than the min value.
-    pub(super) async fn compressed_files(
-        &mut self,
-        table_name: &str,
-        column_index: u16,
-        start_time: Option<Timestamp>,
-        end_time: Option<Timestamp>,
-        min_value: Option<Value>,
-        max_value: Option<Value>,
-        cluster_mode: &ClusterMode,
-        query_data_folder: &Arc<dyn ObjectStore>,
-    ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
-        self.compressed_data_manager
-            .compressed_files(
-                table_name,
-                column_index,
-                start_time,
-                end_time,
-                min_value,
-                max_value,
-                cluster_mode,
-                query_data_folder,
-            )
-            .await
     }
 
     /// Collect and return the metrics of used uncompressed/compressed memory, used disk space, and ingested

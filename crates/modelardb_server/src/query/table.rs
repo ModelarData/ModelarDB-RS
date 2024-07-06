@@ -13,9 +13,10 @@
  * limitations under the License.
  */
 
-//! Implementation of [`ModelTable`] which allows model tables to be queried through Apache Arrow
-//! DataFusion. It takes the projection, filters as [`Exprs`](Expr), and limit of a query as input
-//! and returns a physical query plan that produces all the data points required for the query.
+//! Implementation of [`Table`] which allows normal tables to be queried through Apache DataFusion.
+//! It wraps a [`DeltaTable`] and forwards most method calls to it. However, for
+//! [`TableProvider::scan()`] it updates the [`DeltaTable`] to the latest version and it implements
+//! [`TableProvider::insert_into()`] so rows can be inserted with INSERT.
 
 use std::{any::Any, sync::Arc};
 

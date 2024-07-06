@@ -13,9 +13,8 @@
  * limitations under the License.
  */
 
-//! Implementation of [`ModelTable`] which allows model tables to be queried through Apache Arrow
-//! DataFusion. It takes the projection, filters as [`Exprs`](Expr), and limit of a query as input
-//! and returns a physical query plan that produces all the data points required for the query.
+//! Implementation of types which allows both normal tables and model tables to be added to Apache
+//! DataFusion. This allow them to be queried and small amounts of data to be added with INSERT.
 
 use std::sync::Arc;
 
@@ -23,21 +22,25 @@ use datafusion::physical_plan::expressions::{Column, PhysicalSortExpr};
 use deltalake::arrow::compute::SortOptions;
 use once_cell::sync::Lazy;
 
-// Public so the rules added to Apache Arrow DataFusion's physical optimizer can access GridExec.
-pub mod data_sinks;
-pub mod generated_as_exec;
-pub mod grid_exec;
-pub mod model_table;
-pub mod sorted_join_exec;
-pub mod table;
+// grid_exec and sorted_join_exec are pub(crate) so the rules added to Apache DataFusion's physical
+// optimizer can access them.
+mod data_sinks;
+mod generated_as_exec;
+pub(crate) mod grid_exec;
+pub(crate) mod model_table;
+pub(crate) mod sorted_join_exec;
+pub(crate) mod table;
 
-/// The global sort order [`ParquetExec`] guarantees for the segments it produces and that
-/// [`GridExec`] requires for the segments its receives as its input. It is guaranteed by
-/// [`ParquetExec`] because the storage engine uses this sort order for each Apache Parquet file and
-/// these files are read sequentially by [`ParquetExec`]. Another sort order could also be used, the
-/// current query pipeline simply requires that the
-/// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) [`SortedJoinExec`] receive from
-/// its inputs all contain data points for the same time interval and that they are sorted the same.
+/// The global sort order [`datafusion::datasource::physical_plan::parquet::ParquetExec`] guarantees
+/// for the segments it produces and that [`grid_exec::GridExec`] requires for the segments its
+/// receives as its input. It is guaranteed by
+/// [`datafusion::datasource::physical_plan::parquet::ParquetExec`] because the storage engine uses
+/// this sort order for each Apache Parquet file and these files are read sequentially by
+/// [`datafusion::datasource::physical_plan::parquet::ParquetExec`]. Another sort order could also
+/// be used, the current query pipeline simply requires that the
+/// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch)
+/// [`sorted_join_exec::SortedJoinExec`] receive from its inputs all contain data points for the
+/// same time interval and that they are sorted the same.
 static QUERY_ORDER_SEGMENT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
     let sort_options = SortOptions {
         descending: false,
@@ -56,13 +59,15 @@ static QUERY_ORDER_SEGMENT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
     ]
 });
 
-/// The global sort order [`GridExec`] guarantees for the data points it produces and that
-/// [`SortedJoinExec`] requires for the data points it receives as its input. It is guaranteed by
-/// [`GridExec`] because it receives segments sorted by [`QUERY_ORDER_SEGMENT`] from [`ParquetExec`]
-/// and because these segments cannot contain data points for overlapping time intervals. Another
-/// sort order could also be used, the current query pipeline simply requires that the
-/// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch) [`SortedJoinExec`] receive from
-/// its inputs all contain data points for the same time interval and that they are sorted the same.
+/// The global sort order [`grid_exec::GridExec`] guarantees for the data points it produces and
+/// that [`sorted_join_exec::SortedJoinExec`] requires for the data points it receives as its input.
+/// It is guaranteed by [`grid_exec::GridExec`] because it receives segments sorted by
+/// [`QUERY_ORDER_SEGMENT`] from [`datafusion::datasource::physical_plan::parquet::ParquetExec`] and
+/// because these segments cannot contain data points for overlapping time intervals. Another sort
+/// order could also be used, the current query pipeline simply requires that the
+/// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch)
+/// [`sorted_join_exec::SortedJoinExec`] receive from its inputs all contain data points for the
+/// same time interval and that they are sorted the same.
 static QUERY_ORDER_DATA_POINT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
     let sort_options = SortOptions {
         descending: false,

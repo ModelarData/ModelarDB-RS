@@ -122,60 +122,6 @@ impl ModelTable {
         let column_name = query_schema.field(query_schema_index).name();
         Ok(self.model_table_metadata.schema.index_of(column_name)?)
     }
-
-    /// Create an [`ExecutionPlan`] that will return the compressed segments that represents the
-    /// data points for `field_column_index` in the table with `table_name`. Returns a
-    /// [`DataFusionError::Plan`] if the necessary metadata cannot be retrieved from the metadata
-    /// database.
-    fn new_apache_parquet_exec(
-        &self,
-        delta_table: &DeltaTable,
-        partition_filters: &[PartitionFilter],
-        maybe_limit: Option<usize>,
-        maybe_parquet_filters: &Option<Arc<dyn PhysicalExpr>>,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
-        // Collect the LogicalFiles into a Vec so they can be sorted the same for all field columns.
-        let mut logical_files = delta_table
-            .get_active_add_actions_by_partitions(partition_filters)
-            .map_err(|error| DataFusionError::Internal(error.to_string()))?
-            .collect::<StdResult<Vec<LogicalFile>, DeltaTableError>>()
-            .map_err(|error| DataFusionError::Internal(error.to_string()))?;
-
-        logical_files.sort_by_key(|logical_file| logical_file.modification_time());
-
-        // Create the data source operator. Assumes the ObjectStore exists.
-        let partitioned_files = logical_files
-            .iter()
-            .map(|logical_file| logical_file_to_partitioned_file(logical_file))
-            .collect::<Result<Vec<PartitionedFile>>>()?;
-
-        // TODO: give the optimizer more info for timestamps and values through statistics, e.g, min
-        // can be computed using only the metadata database due to the aggregate_statistics rule.
-        let log_store = delta_table.log_store();
-        let file_scan_config = FileScanConfig {
-            object_store_url: log_store.object_store_url(),
-            file_schema: QUERY_COMPRESSED_SCHEMA.0.clone(),
-            file_groups: vec![partitioned_files],
-            statistics: Statistics::new_unknown(&QUERY_COMPRESSED_SCHEMA.0),
-            projection: None,
-            limit: maybe_limit,
-            table_partition_cols: vec![],
-            output_ordering: vec![QUERY_ORDER_SEGMENT.clone()],
-        };
-
-        let apache_parquet_exec_builder = if let Some(parquet_filters) = maybe_parquet_filters {
-            ParquetExec::builder(file_scan_config).with_predicate(parquet_filters.clone())
-        } else {
-            ParquetExec::builder(file_scan_config)
-        };
-
-        let apache_parquet_exec = apache_parquet_exec_builder
-            .build()
-            .with_pushdown_filters(true)
-            .with_reorder_filters(true);
-
-        Ok(Arc::new(apache_parquet_exec))
-    }
 }
 
 /// Rewrite and combine the `filters` that is written in terms of the model table's query schema, to
@@ -327,6 +273,59 @@ fn convert_logical_expr_to_physical_expr(
 ) -> Result<Arc<dyn PhysicalExpr>> {
     let df_query_schema = query_schema.clone().to_dfschema()?;
     planner::create_physical_expr(expr, &df_query_schema, &ExecutionProps::new())
+}
+
+/// Create an [`ExecutionPlan`] that will return the compressed segments that represents the data
+/// points for `field_column_index` in `delta_table`. Returns a [`DataFusionError::Plan`] if the
+/// necessary metadata cannot be retrieved from the metadata database.
+fn new_apache_parquet_exec(
+    delta_table: &DeltaTable,
+    partition_filters: &[PartitionFilter],
+    maybe_limit: Option<usize>,
+    maybe_parquet_filters: &Option<Arc<dyn PhysicalExpr>>,
+) -> Result<Arc<dyn ExecutionPlan>> {
+    // Collect the LogicalFiles into a Vec so they can be sorted the same for all field columns.
+    let mut logical_files = delta_table
+        .get_active_add_actions_by_partitions(partition_filters)
+        .map_err(|error| DataFusionError::Internal(error.to_string()))?
+        .collect::<StdResult<Vec<LogicalFile>, DeltaTableError>>()
+        .map_err(|error| DataFusionError::Internal(error.to_string()))?;
+
+    // TODO: prune the Apache Parquet files using metadata and maybe_parquet_filters if possible.
+    logical_files.sort_by_key(|logical_file| logical_file.modification_time());
+
+    // Create the data source operator. Assumes the ObjectStore exists.
+    let partitioned_files = logical_files
+        .iter()
+        .map(|logical_file| logical_file_to_partitioned_file(logical_file))
+        .collect::<Result<Vec<PartitionedFile>>>()?;
+
+    // TODO: give the optimizer more info for timestamps and values through statistics, e.g, min
+    // can be computed using only the metadata database due to the aggregate_statistics rule.
+    let log_store = delta_table.log_store();
+    let file_scan_config = FileScanConfig {
+        object_store_url: log_store.object_store_url(),
+        file_schema: QUERY_COMPRESSED_SCHEMA.0.clone(),
+        file_groups: vec![partitioned_files],
+        statistics: Statistics::new_unknown(&QUERY_COMPRESSED_SCHEMA.0),
+        projection: None,
+        limit: maybe_limit,
+        table_partition_cols: vec![],
+        output_ordering: vec![QUERY_ORDER_SEGMENT.clone()],
+    };
+
+    let apache_parquet_exec_builder = if let Some(parquet_filters) = maybe_parquet_filters {
+        ParquetExec::builder(file_scan_config).with_predicate(parquet_filters.clone())
+    } else {
+        ParquetExec::builder(file_scan_config)
+    };
+
+    let apache_parquet_exec = apache_parquet_exec_builder
+        .build()
+        .with_pushdown_filters(true)
+        .with_reorder_filters(true);
+
+    Ok(Arc::new(apache_parquet_exec))
 }
 
 // Convert the [`LogicalFile`] `logical_file` to a [`PartitionFilter`]. A [`DataFusionError`] is
@@ -511,7 +510,7 @@ impl TableProvider for ModelTable {
         for field_column_index in stored_field_columns_in_projection {
             partition_filters[0].value = PartitionValue::Equal(field_column_index.to_string());
 
-            let parquet_exec = self.new_apache_parquet_exec(
+            let parquet_exec = new_apache_parquet_exec(
                 &delta_table,
                 &partition_filters,
                 limit,

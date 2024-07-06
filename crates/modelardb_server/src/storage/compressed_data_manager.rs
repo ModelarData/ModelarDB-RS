@@ -21,18 +21,9 @@ use std::sync::{Arc, Mutex};
 
 use crossbeam_queue::SegQueue;
 use dashmap::DashMap;
-use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
-use datafusion::parquet::errors::ParquetError;
 use deltalake::DeltaTableError;
-use modelardb_common::errors::ModelarDbError;
-use modelardb_common::metadata::compressed_file::CompressedFile;
-use modelardb_common::metadata::TableMetadataManager;
-use modelardb_common::storage::{self, DeltaLake};
-use modelardb_common::types::{Timestamp, Value};
-use object_store::{ObjectMeta, ObjectStore};
-use parquet::arrow::async_reader::ParquetObjectReader;
-use sqlx::Sqlite;
+use modelardb_common::storage::DeltaLake;
 use tokio::runtime::Runtime;
 use tokio::sync::RwLock;
 use tracing::{debug, error, info};
@@ -42,7 +33,6 @@ use crate::storage::data_transfer::DataTransfer;
 use crate::storage::types::Message;
 use crate::storage::types::{Channels, MemoryPool};
 use crate::storage::Metric;
-use crate::ClusterMode;
 
 /// Stores data points compressed as segments containing metadata and models in memory to batch the
 /// compressed segments before saving them to Apache Parquet files.
@@ -61,8 +51,6 @@ pub(super) struct CompressedDataManager {
     compressed_queue: SegQueue<String>,
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
-    /// Management of metadata for saving compressed file metadata.
-    table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     /// Track how much memory is left for storing uncompressed and compressed data.
     memory_pool: Arc<MemoryPool>,
     /// Metric for the used compressed memory in bytes, updated every time the used memory changes.
@@ -78,7 +66,6 @@ impl CompressedDataManager {
         local_data_folder: Arc<DeltaLake>,
         channels: Arc<Channels>,
         memory_pool: Arc<MemoryPool>,
-        table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Self {
         Self {
@@ -87,7 +74,6 @@ impl CompressedDataManager {
             compressed_data_buffers: DashMap::new(),
             compressed_queue: SegQueue::new(),
             channels,
-            table_metadata_manager,
             memory_pool,
             used_compressed_memory_metric: Mutex::new(Metric::new()),
             used_disk_space_metric,
@@ -207,100 +193,6 @@ impl CompressedDataManager {
         Ok(())
     }
 
-    /// Return an [`ObjectMeta`] for each compressed file that belongs to the column at `column_index`
-    /// in the table with `table_name` and contains compressed segments within the given range of
-    /// time and value. If no files belong to the column at `column_index` for the table with
-    /// `table_name` an empty [`Vec`] is returned, while a
-    /// [`DataRetrievalError`](ModelarDbError::DataRetrievalError) is returned if:
-    /// * A table with `table_name` does not exist.
-    /// * The compressed files could not be listed.
-    /// * A column with `column_index` does not exist.
-    /// * The end time is before the start time.
-    /// * The max value is smaller than the min value.
-    pub(super) async fn compressed_files(
-        &self,
-        table_name: &str,
-        field_column_index: u16,
-        start_time: Option<Timestamp>,
-        end_time: Option<Timestamp>,
-        min_value: Option<Value>,
-        max_value: Option<Value>,
-        cluster_mode: &ClusterMode,
-        query_data_folder: &Arc<dyn ObjectStore>,
-    ) -> Result<Vec<ObjectMeta>, ModelarDbError> {
-        // Retrieve the metadata of all files that fit the given arguments. If the server is a cloud
-        // node, use the table metadata manager for the remote metadata database.
-        let relevant_object_metas =
-            if let Some(table_metadata_manager) = cluster_mode.remote_table_metadata_manager() {
-                table_metadata_manager
-                    .compressed_files(
-                        table_name,
-                        field_column_index.into(),
-                        start_time,
-                        end_time,
-                        min_value,
-                        max_value,
-                    )
-                    .await
-            } else {
-                self.table_metadata_manager
-                    .compressed_files(
-                        table_name,
-                        field_column_index.into(),
-                        start_time,
-                        end_time,
-                        min_value,
-                        max_value,
-                    )
-                    .await
-            }
-            .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
-
-        // Merge the compressed Apache Parquet files if multiple are retrieved to ensure order.
-        if relevant_object_metas.len() > 1 {
-            let compressed_file = Self::merge_compressed_apache_parquet_files(
-                query_data_folder,
-                &relevant_object_metas,
-                query_data_folder,
-                table_name,
-                field_column_index,
-            )
-                .await
-                .map_err(|error| {
-                    ModelarDbError::DataRetrievalError(format!(
-                        "Compressed data could not be merged for column '{field_column_index}' in table '{table_name}': {error}"
-                    ))
-                })?;
-
-            // Replace the merged files in the metadata database. If the server is a cloud node,
-            // use the table metadata manager for the remote metadata database.
-            if let Some(table_metadata_manager) = cluster_mode.remote_table_metadata_manager() {
-                table_metadata_manager
-                    .replace_compressed_files(
-                        table_name,
-                        field_column_index.into(),
-                        &relevant_object_metas,
-                        Some(&compressed_file),
-                    )
-                    .await
-            } else {
-                self.table_metadata_manager
-                    .replace_compressed_files(
-                        table_name,
-                        field_column_index.into(),
-                        &relevant_object_metas,
-                        Some(&compressed_file),
-                    )
-                    .await
-            }
-            .map_err(|error| ModelarDbError::DataRetrievalError(error.to_string()))?;
-
-            Ok(vec![compressed_file.file_metadata])
-        } else {
-            Ok(relevant_object_metas)
-        }
-    }
-
     /// Save [`CompressedDataBuffers`](CompressedDataBuffer) to disk until at least `size_in_bytes`
     /// bytes of memory is available. If all the data is saved successfully, return [`Ok`],
     /// otherwise return [`IOError`].
@@ -415,66 +307,6 @@ impl CompressedDataManager {
         self.save_compressed_data_to_free_memory(0).await?;
 
         Ok(())
-    }
-
-    /// Merge the Apache Parquet files in `input_data_folder`/`input_files` and write them to a an
-    /// Apache Parquet file in `output_data_folder`. Return a [`CompressedFile`] that represents the
-    /// merged file if it is written successfully, otherwise [`ParquetError`] is returned.
-    pub(super) async fn merge_compressed_apache_parquet_files(
-        input_data_folder: &Arc<dyn ObjectStore>,
-        input_files: &[ObjectMeta],
-        output_data_folder: &Arc<dyn ObjectStore>,
-        table_name: &str,
-        field_column_index: u16,
-    ) -> Result<CompressedFile, ParquetError> {
-        // Read input files, for_each is not used so errors can be returned with ?.
-        let mut record_batches = Vec::with_capacity(input_files.len());
-        for input_file in input_files {
-            let reader = ParquetObjectReader::new(input_data_folder.clone(), input_file.clone());
-            record_batches
-                .append(&mut storage::read_batches_from_apache_parquet_file(reader).await?);
-        }
-
-        // Merge the record batches into a single concatenated and merged record batch.
-        let schema = record_batches[0].schema();
-        let concatenated = compute::concat_batches(&schema, &record_batches)?;
-        let merged = modelardb_compression::try_merge_segments(concatenated)
-            .map_err(|error| ParquetError::General(error.to_string()))?;
-
-        let output_file_path = storage::write_compressed_segments_to_apache_parquet_file(
-            "compressed",
-            table_name,
-            field_column_index,
-            &merged,
-            output_data_folder,
-        )
-        .await?;
-
-        // Delete the input files as the output file has been written.
-        for input_file in input_files {
-            input_data_folder
-                .delete(&input_file.location)
-                .await
-                .map_err(|error: object_store::Error| ParquetError::General(error.to_string()))?;
-        }
-
-        debug!(
-            "Merged {} compressed files into single Apache Parquet file with {} rows.",
-            input_files.len(),
-            merged.num_rows()
-        );
-
-        // Return a CompressedFile that represents the successfully merged and written file.
-        let object_meta = output_data_folder
-            .head(&output_file_path)
-            .await
-            .map_err(|error| ParquetError::General(error.to_string()))?;
-
-        Ok(CompressedFile::from_compressed_data(
-            object_meta,
-            field_column_index,
-            &merged,
-        ))
     }
 }
 
