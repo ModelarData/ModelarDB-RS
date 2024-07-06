@@ -92,9 +92,24 @@ impl CompressedDataManager {
             table_name
         );
 
+        // Disk space use is over approximated as Apache Parquet applies lossless compression. The
+        // actual size is not computed as DeltaTable seems to have no support for listing the files
+        // added in a version without iterating through all of the Add actions from file_actions().
+        let record_batch_size_in_bytes = record_batch.get_array_memory_size();
+
         self.local_data_folder
             .write_record_batch_to_table(table_name, record_batch)
             .await?;
+
+        // Inform the data transfer component about the new data if a remote data folder was
+        // provided. If the total size of the data related to table_name have reached the transfer
+        // threshold, all of the data is transferred to the remote object store.
+        if let Some(data_transfer) = &*self.data_transfer.read().await {
+            data_transfer
+                .increase_table_size(table_name, record_batch_size_in_bytes)
+                .await
+                .map_err(|error| IOError::new(ErrorKind::Other, error.to_string()))?;
+        }
 
         Ok(())
     }
