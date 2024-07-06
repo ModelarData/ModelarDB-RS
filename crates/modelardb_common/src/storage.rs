@@ -241,8 +241,8 @@ impl DeltaLake {
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
         let sorting_columns = Some(vec![
-            SortingColumn::new(0, false, false),
-            SortingColumn::new(2, false, false),
+            SortingColumn::new(1, false, false),
+            SortingColumn::new(3, false, false),
         ]);
 
         let partition_columns = Some(vec![FIELD_COLUMN.to_owned()]);
@@ -393,8 +393,8 @@ pub async fn write_compressed_segments_to_apache_parquet_file(
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
         let sorting_columns = Some(vec![
-            SortingColumn::new(0, false, false),
-            SortingColumn::new(2, false, false),
+            SortingColumn::new(1, false, false),
+            SortingColumn::new(3, false, false),
         ]);
 
         write_record_batch_to_apache_parquet_file(
@@ -593,8 +593,8 @@ mod tests {
         let builder = ParquetRecordBatchStreamBuilder::new(reader).await.unwrap();
 
         let expected_sorting_columns = Some(vec![
-            SortingColumn::new(0, false, false),
-            SortingColumn::new(2, false, false),
+            SortingColumn::new(1, false, false),
+            SortingColumn::new(3, false, false),
         ]);
 
         for row_group in builder.metadata().row_groups() {

@@ -140,8 +140,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(compressed_data_buffer.compressed_segments.len(), 2);
-        assert_eq!(compressed_data_buffer.compressed_segments[0].num_rows(), 1);
-        assert_eq!(compressed_data_buffer.compressed_segments[1].num_rows(), 1);
+        assert_eq!(compressed_data_buffer.compressed_segments[0].num_rows(), 3);
+        assert_eq!(compressed_data_buffer.compressed_segments[1].num_rows(), 3);
     }
 
     #[test]
@@ -159,7 +159,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_can_save_compressed_data_buffer_to_apache_parquet() {
+    async fn test_can_return_single_apache_parquet_from_compressed_data_buffer() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
         let compressed_segments = vec![
             test::compressed_segments_record_batch(),
@@ -169,17 +169,15 @@ mod tests {
             .append_compressed_segments(compressed_segments)
             .unwrap();
 
-        let temp_dir = tempfile::tempdir().unwrap();
-
-        compressed_data_buffer.record_batch().await;
-
-        assert_eq!(temp_dir.path().read_dir().unwrap().count(), 1);
+        let record_batch = compressed_data_buffer.record_batch().await;
+        assert_eq!(record_batch.num_columns(), 11);
+        assert_eq!(record_batch.num_rows(), 6);
     }
 
     #[tokio::test]
     #[cfg(debug_assertions)]
-    #[should_panic(expected = "Cannot save CompressedDataBuffer with no data.")]
-    async fn test_panic_if_saving_empty_compressed_data_buffer_to_apache_parquet() {
+    #[should_panic(expected = "index out of bounds: the len is 0 but the index is 0")]
+    async fn test_panic_if_returning_record_batch_from_empty_compressed_data_buffer() {
         CompressedDataBuffer::new().record_batch().await;
     }
 

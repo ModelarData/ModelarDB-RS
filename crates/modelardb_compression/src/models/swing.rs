@@ -390,7 +390,7 @@ fn compute_slope_and_intercept(
 mod tests {
     use super::*;
 
-    use arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt8Array};
+    use arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt8Array, UInt16Array};
     use modelardb_common::test::{
         ERROR_BOUND_ABSOLUTE_MAX, ERROR_BOUND_FIVE, ERROR_BOUND_RELATIVE_MAX, ERROR_BOUND_ZERO,
     };
@@ -901,6 +901,7 @@ mod tests {
         // Extract the individual columns from the record batch.
         modelardb_common::arrays!(
             segments,
+            _field_columns,
             _univariate_id_array,
             model_type_id_array,
             start_time_array,

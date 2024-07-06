@@ -35,7 +35,7 @@ use crate::storage::StorageEngine;
 
 use super::data_sinks::TableDataSink;
 
-/// A queryable representation of a normal table. [`Table`] wraps  the [`TableProvider`]
+/// A queryable representation of a normal table. [`Table`] wraps the [`TableProvider`]
 /// [`DeltaTable`] and passes most methods call directly to it. Thus, it can be registered with
 /// Apache Arrow DataFusion. [`DeltaTable`] is extended in two ways, delta table is updated to the
 /// latest snapshot when accessed and support for inserting has been added.
@@ -82,7 +82,7 @@ impl TableProvider for Table {
         self.delta_table.get_table_definition()
     }
 
-    /// Get the [`LogicalPlan`] of this table, if available
+    /// Get the [`LogicalPlan`] of this table, if available.
     fn get_logical_plan(&self) -> Option<&LogicalPlan> {
         self.delta_table.get_logical_plan()
     }
@@ -123,7 +123,7 @@ impl TableProvider for Table {
         self.delta_table.supports_filters_pushdown(filters)
     }
 
-    /// Get statistics for this table, if available
+    /// Get statistics for this table, if available.
     fn statistics(&self) -> Option<Statistics> {
         self.delta_table.statistics()
     }

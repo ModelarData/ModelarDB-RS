@@ -27,7 +27,8 @@ use std::mem;
 use std::sync::Arc;
 
 use datafusion::arrow::array::{
-    ArrayRef, BinaryArray, Float32Array, Float64Array, Int64Array, UInt64Array, UInt8Array,
+    ArrayRef, BinaryArray, Float32Array, Float64Array, Int64Array, UInt64Array,
+    UInt8Array,
 };
 use datafusion::arrow::datatypes::{ArrowPrimitiveType, DataType, Field, Schema};
 use datafusion::arrow::record_batch::RecordBatch;
@@ -1138,6 +1139,13 @@ mod tests {
         );
 
         let model_table_metadata = test::model_table_metadata_arc();
+
+        context
+            .data_folders
+            .local_data_folder
+            .create_delta_lake_model_table(&model_table_metadata.name)
+            .await
+            .unwrap();
 
         context
             .table_metadata_manager

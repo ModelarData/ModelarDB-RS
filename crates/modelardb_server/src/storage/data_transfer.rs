@@ -68,12 +68,12 @@ impl DataTransfer {
         used_disk_space_metric: Arc<Mutex<Metric>>,
     ) -> Result<Self, DeltaTableError> {
         // The size of tables is computed manually as datafusion_table_statistics() is not exact.
-        let object_store = local_data_folder.object_store();
         let table_size_in_bytes = DashMap::with_capacity(table_names.len());
         for table_name in table_names {
             let delta_table = local_data_folder.delta_table(&table_name).await?;
             let mut table_size_in_bytes = table_size_in_bytes.entry(table_name).or_insert(0);
 
+            let object_store = delta_table.object_store();
             for file_path in delta_table.get_files_iter()? {
                 let object_meta = object_store
                     .head(&file_path)
@@ -274,7 +274,6 @@ impl DataTransfer {
 mod tests {
     use super::*;
 
-    use deltalake::ObjectStore;
     use modelardb_common::metadata;
     use modelardb_common::metadata::TableMetadataManager;
     use modelardb_common::test;
@@ -291,8 +290,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = create_metadata_manager(&temp_dir).await;
 
-        create_delta_table_and_segments(&temp_dir).await;
-        create_delta_table_and_segments(&temp_dir).await;
+        create_delta_table_and_segments(&temp_dir, &metadata_manager, 1).await;
 
         let (_target_dir, data_transfer) =
             create_data_transfer_component(&temp_dir, metadata_manager).await;
@@ -302,7 +300,7 @@ mod tests {
                 .table_size_in_bytes
                 .get(test::MODEL_TABLE_NAME)
                 .unwrap(),
-            FILE_SIZE * 2
+            FILE_SIZE
         );
 
         assert_eq!(
@@ -323,7 +321,7 @@ mod tests {
 
         let (_target_dir, data_transfer) =
             create_data_transfer_component(&temp_dir, metadata_manager.clone()).await;
-        let files_size = create_delta_table_and_segments(&temp_dir).await;
+        let files_size = create_delta_table_and_segments(&temp_dir, &metadata_manager, 1).await;
 
         assert!(data_transfer
             .increase_table_size(test::MODEL_TABLE_NAME, files_size)
@@ -346,7 +344,7 @@ mod tests {
 
         let (_target_dir, data_transfer) =
             create_data_transfer_component(&temp_dir, metadata_manager.clone()).await;
-        let files_size = create_delta_table_and_segments(&temp_dir).await;
+        let files_size = create_delta_table_and_segments(&temp_dir, &metadata_manager, 1).await;
 
         data_transfer
             .increase_table_size(test::MODEL_TABLE_NAME, files_size)
@@ -371,8 +369,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = create_metadata_manager(&temp_dir).await;
 
-        create_delta_table_and_segments(&temp_dir).await;
-        create_delta_table_and_segments(&temp_dir).await;
+        create_delta_table_and_segments(&temp_dir, &metadata_manager, 2).await;
 
         let (_, mut data_transfer) =
             create_data_transfer_component(&temp_dir, metadata_manager).await;
@@ -402,8 +399,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let metadata_manager = create_metadata_manager(&temp_dir).await;
 
-        create_delta_table_and_segments(&temp_dir).await;
-        create_delta_table_and_segments(&temp_dir).await;
+        create_delta_table_and_segments(&temp_dir, &metadata_manager, 2).await;
 
         let (_, mut data_transfer) =
             create_data_transfer_component(&temp_dir, metadata_manager).await;
@@ -430,15 +426,34 @@ mod tests {
         );
     }
 
-    /// Set up a delta table and write a batch of compressed segments to it. Return the size of the
-    /// files on disk.
-    async fn create_delta_table_and_segments(temp_dir: &TempDir) -> usize {
+    /// Set up a delta table and write `batch_write_count` batches of compressed segments to it.
+    /// Returns the size of the files on disk.
+    async fn create_delta_table_and_segments(
+        temp_dir: &TempDir,
+        metadata_manager: &Arc<TableMetadataManager<Sqlite>>,
+        batch_write_count: usize
+    ) -> usize {
         let local_data_folder =
             Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
-        let compressed_segments = test::compressed_segments_record_batch();
         local_data_folder
-            .write_compressed_segments_to_model_table(test::MODEL_TABLE_NAME, compressed_segments).await.unwrap();
+            .create_delta_lake_model_table(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
+
+        // Registered as a normal table as it does not require construction of a metadata object.
+        metadata_manager
+            .save_table_metadata(test::MODEL_TABLE_NAME, "")
+            .await
+            .unwrap();
+
+        for _ in 0..batch_write_count {
+            let compressed_segments = test::compressed_segments_record_batch();
+            local_data_folder
+                .write_compressed_segments_to_model_table(test::MODEL_TABLE_NAME, compressed_segments)
+                .await
+                .unwrap();
+        }
 
         let mut delta_table = local_data_folder
             .delta_table(test::MODEL_TABLE_NAME)
@@ -448,7 +463,7 @@ mod tests {
 
         let mut files_size = 0;
         for file_path in delta_table.get_files_iter().unwrap() {
-            files_size += local_data_folder
+            files_size += delta_table
                 .object_store()
                 .head(&file_path)
                 .await

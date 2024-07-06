@@ -409,12 +409,12 @@ mod tests {
             .await
             .unwrap();
 
-        // An Apache Parquet file should be created to save the schema.
+        // A Delta Lake log should be created to save the schema.
         let folder_path = temp_dir
             .path()
             .join("compressed")
             .join("table_name")
-            .join("empty_for_schema.parquet");
+            .join("_delta_log");
 
         assert!(folder_path.exists());
 

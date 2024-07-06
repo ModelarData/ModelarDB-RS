@@ -54,7 +54,7 @@ macro_rules! array {
 /// ```
 /// # use std::sync::Arc;
 /// #
-/// # use arrow::array::{BinaryArray, Float32Array, UInt64Array, UInt8Array};
+/// # use arrow::array::{BinaryArray, Float32Array, UInt8Array, UInt16Array, UInt64Array};
 /// # use arrow::record_batch::RecordBatch;
 /// # use modelardb_common::schemas::COMPRESSED_SCHEMA;
 /// # use modelardb_common::types::{Timestamp, TimestampArray, Value, ValueArray};
@@ -62,6 +62,7 @@ macro_rules! array {
 /// # let record_batch = RecordBatch::try_new(
 /// #     COMPRESSED_SCHEMA.0.clone(),
 /// #     vec![
+/// #         Arc::new(UInt16Array::from(Vec::<u16>::new())),
 /// #         Arc::new(UInt64Array::from(Vec::<u64>::new())),
 /// #         Arc::new(UInt8Array::from(Vec::<u8>::new())),
 /// #         Arc::new(TimestampArray::from(Vec::<Timestamp>::new())),
@@ -74,15 +75,16 @@ macro_rules! array {
 /// #         Arc::new(Float32Array::from(Vec::<f32>::new())),
 /// #     ],
 /// # ).unwrap();
-/// modelardb_common::arrays!(record_batch, univariate_ids, model_type_ids, start_times, end_times,
-/// timestamps, min_values, max_values, values, residuals, errors);
+/// modelardb_common::arrays!(record_batch, field_columns, univariate_ids, model_type_ids,
+/// start_times, end_times, timestamps, min_values, max_values, values, residuals, errors);
 /// ```
 ///
 /// # Panics
 ///
-/// Panics if `batch` does not contain ten columns or if the columns are not UInt64Array,
-/// UInt8Array, TimestampArray, TimestampArray, BinaryArray, ValueArray, ValueArray, BinaryArray,
-/// BinaryArray, and Float32Array.
+/// Panics if `batch` does not contain ten columns of type UInt64Array, UInt8Array, TimestampArray,
+/// TimestampArray, BinaryArray, ValueArray, ValueArray, BinaryArray, BinaryArray, and Float32Array
+/// or eleven columns of type UInt16Array, UInt64Array, UInt8Array, TimestampArray, TimestampArray,
+/// BinaryArray, ValueArray, ValueArray, BinaryArray, BinaryArray, and Float32Array.
 #[macro_export]
 macro_rules! arrays {
     ($batch:ident, $univariate_ids:ident, $model_type_ids:ident, $start_times:ident, $end_times:ident, $timestamps:ident, $min_values:ident, $max_values:ident, $values:ident, $residuals:ident, $errors:ident) => {
@@ -96,5 +98,18 @@ macro_rules! arrays {
         let $values = $crate::array!($batch, 7, BinaryArray);
         let $residuals = $crate::array!($batch, 8, BinaryArray);
         let $errors = $crate::array!($batch, 9, Float32Array);
+    };
+    ($batch:ident, $field_columns:ident, $univariate_ids:ident, $model_type_ids:ident, $start_times:ident, $end_times:ident, $timestamps:ident, $min_values:ident, $max_values:ident, $values:ident, $residuals:ident, $errors:ident) => {
+        let $field_columns = $crate::array!($batch, 0, UInt16Array);
+        let $univariate_ids = $crate::array!($batch, 1, UInt64Array);
+        let $model_type_ids = $crate::array!($batch, 2, UInt8Array);
+        let $start_times = $crate::array!($batch, 3, TimestampArray);
+        let $end_times = $crate::array!($batch, 4, TimestampArray);
+        let $timestamps = $crate::array!($batch, 5, BinaryArray);
+        let $min_values = $crate::array!($batch, 6, ValueArray);
+        let $max_values = $crate::array!($batch, 7, ValueArray);
+        let $values = $crate::array!($batch, 8, BinaryArray);
+        let $residuals = $crate::array!($batch, 9, BinaryArray);
+        let $errors = $crate::array!($batch, 10, Float32Array);
     };
 }

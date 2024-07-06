@@ -315,14 +315,11 @@ mod tests {
     use super::*;
 
     use datafusion::arrow::datatypes::{ArrowPrimitiveType, Field, Schema};
-    use deltalake::Path;
-    use futures::StreamExt;
     use modelardb_common::metadata;
     use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
     use modelardb_common::test;
     use modelardb_common::types::{ArrowTimestamp, ArrowValue, ErrorBound};
     use object_store::local::LocalFileSystem;
-    use object_store::ObjectStore;
     use ringbuf::traits::observer::Observer;
     use tempfile::{self, TempDir};
 
@@ -335,25 +332,21 @@ mod tests {
         let record_batch = test::compressed_segments_record_batch();
         let (temp_dir, data_manager) = create_compressed_data_manager().await;
 
-        let local_data_folder = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-        let table_folder = Path::parse(format!("compressed/{}/", test::MODEL_TABLE_NAME)).unwrap();
+        let local_data_folder =
+            DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
 
-        let table_folder_files = local_data_folder
-            .list(Some(&table_folder))
-            .collect::<Vec<_>>()
-            .await;
-        assert!(table_folder_files.is_empty());
+        let mut delta_table = local_data_folder
+            .create_delta_lake_model_table(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
+        assert_eq!(delta_table.get_files_count(), 0);
 
         data_manager
             .insert_record_batch(test::MODEL_TABLE_NAME, record_batch)
             .await
             .unwrap();
-
-        let table_folder_files = local_data_folder
-            .list(Some(&table_folder))
-            .collect::<Vec<_>>()
-            .await;
-        assert_eq!(table_folder_files.len(), 1);
+        delta_table.load().await.unwrap();
+        assert_eq!(delta_table.get_files_count(), 1);
     }
 
     // Tests for insert_compressed_segments().
@@ -412,7 +405,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_save_first_compressed_data_buffer_if_out_of_memory() {
-        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
+        let (temp_dir, data_manager) = create_compressed_data_manager().await;
+        let local_data_folder =
+            DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
+        let mut delta_table = local_data_folder
+            .create_delta_lake_model_table(test::MODEL_TABLE_NAME)
+            .await
+            .unwrap();
 
         let compressed_segment_batch = compressed_segments_record_batch();
         let reserved_memory = data_manager
@@ -434,11 +433,7 @@ mod tests {
         }
 
         // The compressed data should be saved to the table_name folder in the compressed folder.
-        let delta_table = data_manager
-            .local_data_folder
-            .delta_table(test::MODEL_TABLE_NAME)
-            .await
-            .unwrap();
+        delta_table.load().await.unwrap();
         let parquet_files = delta_table.get_files_iter().unwrap().collect::<Vec<_>>();
 
         // One Apache Parquet file is created for each field column in the batch.
@@ -477,8 +472,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_remaining_memory_incremented_when_saving_compressed_segments() {
+        let (temp_dir, data_manager) = create_compressed_data_manager().await;
+        let local_data_folder =
+            DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
+
         let segments = compressed_segments_record_batch();
-        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
+        local_data_folder
+            .create_delta_lake_model_table(segments.model_table_name())
+            .await
+            .unwrap();
 
         data_manager
             .insert_compressed_segments(segments.clone())
@@ -519,7 +521,7 @@ mod tests {
                 .unwrap()
                 .values()
                 .occupied_len(),
-            2
+            1
         );
     }
 
@@ -543,10 +545,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_decrease_compressed_remaining_memory_in_bytes() {
-        let (_temp_dir, data_manager) = create_compressed_data_manager().await;
+        let (temp_dir, data_manager) = create_compressed_data_manager().await;
+        let local_data_folder =
+            DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
 
         // Insert data that should be saved when the remaining memory is decreased.
         let segments = compressed_segments_record_batch();
+        local_data_folder
+            .create_delta_lake_model_table(segments.model_table_name())
+            .await
+            .unwrap();
         data_manager
             .insert_compressed_segments(segments)
             .await
@@ -563,7 +571,7 @@ mod tests {
             data_manager
                 .memory_pool
                 .remaining_compressed_memory_in_bytes(),
-            0
+            1437
         );
 
         // There should no longer be any compressed data in memory.
@@ -654,12 +662,20 @@ mod tests {
             .unwrap(),
         );
 
-        let compressed_segments =
-            test::compressed_segments_record_batch_with_time(COLUMN_INDEX as u64, time_ms, offset);
-
         CompressedSegmentBatch::new(
             model_table_metadata,
-            vec![compressed_segments.clone(), compressed_segments],
+            vec![
+                test::compressed_segments_record_batch_with_time(
+                    COLUMN_INDEX as u64,
+                    time_ms,
+                    offset,
+                ),
+                test::compressed_segments_record_batch_with_time(
+                    (COLUMN_INDEX + 1) as u64,
+                    time_ms,
+                    offset,
+                ),
+            ],
         )
     }
 }

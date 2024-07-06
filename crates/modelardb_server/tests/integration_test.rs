@@ -723,7 +723,7 @@ fn test_can_collect_metrics() {
 
     // The amount of bytes used for disk space changes depending on the compression, so we
     // can only check that the metric is populated when initializing and when flushing.
-    assert_eq!(values_array.value(4).len(), 7);
+    assert_eq!(values_array.value(4).len(), 3);
 }
 
 #[test]
@@ -885,6 +885,12 @@ fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
         .unwrap();
 
     let expected = compute::concat_batches(&time_series[0].schema(), time_series).unwrap();
+
+    // More specific asserts are included before checking the results sets to simplify debugging.
+    assert_eq!(expected.num_columns(), 7);
+    assert_eq!(expected.num_columns(), query_result.num_columns());
+    assert_eq!(expected.num_columns(), query_result.num_columns());
+    assert_eq!(expected.num_rows(), query_result.num_rows());
     assert_eq!(expected, query_result);
 }
 

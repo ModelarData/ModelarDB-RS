@@ -58,9 +58,7 @@ pub fn try_compress(
 
     // If there is no uncompressed data to compress, an empty [`RecordBatch`] can be returned.
     if uncompressed_timestamps.is_empty() {
-        return Ok(RecordBatch::new_empty(
-            COMPRESSED_SCHEMA.0.clone(),
-        ));
+        return Ok(RecordBatch::new_empty(COMPRESSED_SCHEMA.0.clone()));
     }
 
     // Enough memory for end_index compressed segments are allocated to never require reallocation
@@ -264,7 +262,8 @@ mod tests {
     use super::*;
 
     use arrow::array::{
-        ArrayBuilder, BinaryArray, Float32Array, UInt64Array, UInt64Builder, UInt8Array,
+        ArrayBuilder, BinaryArray, Float32Array, UInt16Array, UInt64Array, UInt64Builder,
+        UInt8Array,
     };
     use modelardb_common::array;
     use modelardb_common::test::data_generation::{self, ValuesStructure};
@@ -696,7 +695,7 @@ mod tests {
             compressed_record_batch,
         );
 
-        let model_type_ids = array!(compressed_record_batch, 1, UInt8Array);
+        let model_type_ids = array!(compressed_record_batch, 2, UInt8Array);
         assert_eq!(model_type_ids.values(), expected_model_type_ids);
     }
 
@@ -902,6 +901,7 @@ mod tests {
 
         modelardb_common::arrays!(
             compressed_record_batch,
+            _field_columns,
             univariate_ids,
             model_type_ids,
             start_times,
@@ -981,6 +981,7 @@ mod tests {
         let compressed_record_batch = compressed_segment_batch_builder.finish();
         modelardb_common::arrays!(
             compressed_record_batch,
+            _field_columns,
             univariate_ids,
             model_type_ids,
             start_times,
