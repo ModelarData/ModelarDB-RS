@@ -177,7 +177,7 @@ from pyarrow import flight
 
 flight_client = flight.FlightClient("grpc://127.0.0.1:9999")
 
-sql = "CREATE MODEL TABLE wind_turbine(timestamp TIMESTAMP, wind_turbine TAG, wind_direction FIELD, wind_speed FIELD(1.0))"
+sql = "CREATE MODEL TABLE wind_turbine(timestamp TIMESTAMP, wind_turbine TAG, wind_direction FIELD, wind_speed FIELD(1.0%))"
 action = flight.Action("CommandStatementUpdate", str.encode(sql))
 result = flight_client.do_action(action)
 
