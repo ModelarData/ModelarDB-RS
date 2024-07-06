@@ -132,10 +132,12 @@ mod tests {
     fn test_can_append_valid_compressed_segments() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
 
-        compressed_data_buffer.append_compressed_segments(vec![
-            test::compressed_segments_record_batch(),
-            test::compressed_segments_record_batch(),
-        ]);
+        compressed_data_buffer
+            .append_compressed_segments(vec![
+                test::compressed_segments_record_batch(),
+                test::compressed_segments_record_batch(),
+            ])
+            .unwrap();
 
         assert_eq!(compressed_data_buffer.compressed_segments.len(), 2);
         assert_eq!(compressed_data_buffer.compressed_segments[0].num_rows(), 1);
@@ -146,10 +148,12 @@ mod tests {
     fn test_compressed_data_buffer_size_updated_when_appending() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
 
-        compressed_data_buffer.append_compressed_segments(vec![
-            test::compressed_segments_record_batch(),
-            test::compressed_segments_record_batch(),
-        ]);
+        compressed_data_buffer
+            .append_compressed_segments(vec![
+                test::compressed_segments_record_batch(),
+                test::compressed_segments_record_batch(),
+            ])
+            .unwrap();
 
         assert!(compressed_data_buffer.size_in_bytes > 0);
     }
@@ -161,7 +165,9 @@ mod tests {
             test::compressed_segments_record_batch(),
             test::compressed_segments_record_batch(),
         ];
-        compressed_data_buffer.append_compressed_segments(compressed_segments);
+        compressed_data_buffer
+            .append_compressed_segments(compressed_segments)
+            .unwrap();
 
         let temp_dir = tempfile::tempdir().unwrap();
 

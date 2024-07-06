@@ -57,7 +57,7 @@ use crate::storage::uncompressed_data_buffer::IngestedDataBuffer;
 use crate::storage::uncompressed_data_manager::UncompressedDataManager;
 use crate::ClusterMode;
 
-/// The folder storing uncompressed data in the data folders.
+/// The folder storing spilled uncompressed data buffers in the local data folder.
 const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
 
 /// The capacity of each uncompressed data buffer as the number of elements in the buffer where each

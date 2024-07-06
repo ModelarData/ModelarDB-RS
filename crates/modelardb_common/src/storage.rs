@@ -46,13 +46,6 @@ use crate::arguments::decode_argument;
 
 use crate::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
 
-// TODO: Remove folders from storage
-//
-
-/// The folder storing uncompressed data in the data folders.
-#[allow(dead_code)]
-const UNCOMPRESSED_DATA_FOLDER: &str = "uncompressed";
-
 /// The folder storing compressed data in the data folders.
 const COMPRESSED_DATA_FOLDER: &str = "compressed";
 

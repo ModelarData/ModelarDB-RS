@@ -283,7 +283,6 @@ mod tests {
     use sqlx::Sqlite;
     use tempfile::{self, TempDir};
 
-    const COLUMN_INDEX: u16 = 5;
     const FILE_SIZE: usize = 2395;
 
     // Tests for data transfer component.
@@ -439,7 +438,7 @@ mod tests {
 
         let compressed_segments = test::compressed_segments_record_batch();
         local_data_folder
-            .write_compressed_segments_to_model_table(test::MODEL_TABLE_NAME, compressed_segments);
+            .write_compressed_segments_to_model_table(test::MODEL_TABLE_NAME, compressed_segments).await.unwrap();
 
         let mut delta_table = local_data_folder
             .delta_table(test::MODEL_TABLE_NAME)
@@ -448,8 +447,7 @@ mod tests {
         delta_table.load().await.unwrap();
 
         let mut files_size = 0;
-        let mut files_iter = delta_table.get_files_iter().unwrap();
-        while let Some(file_path) = files_iter.next() {
+        for file_path in delta_table.get_files_iter().unwrap() {
             files_size += local_data_folder
                 .object_store()
                 .head(&file_path)

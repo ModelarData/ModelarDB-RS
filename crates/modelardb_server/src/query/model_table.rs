@@ -127,13 +127,11 @@ impl ModelTable {
 /// Rewrite and combine the `filters` that is written in terms of the model table's query schema, to
 /// a filter that is written in terms of the schema used for compressed segments by the storage
 /// engine and a filter that is written in terms of the schema used for univariate time series by
-/// [`GridExec`] for its output. If the filters cannot be rewritten an empty [`Vec`] is returned for
-/// the first an [`None`] is returned for the second. If the filters for [`GridExec`] cannot be
-/// converted to [`PhysicalExpr`] a [`DataFusionError`] is returned.
+/// [`GridExec`] for its output. If the filters cannot be rewritten an empty [`None`] is returned.
 fn rewrite_and_combine_filters(
     schema: &SchemaRef,
     filters: &[Expr],
-) -> Result<(Option<Arc<dyn PhysicalExpr>>, Option<Arc<dyn PhysicalExpr>>)> {
+) -> (Option<Expr>, Option<Expr>) {
     let rewritten_filters = filters
         .iter()
         .filter_map(|filter| rewrite_filter(schema, filter));
@@ -141,19 +139,13 @@ fn rewrite_and_combine_filters(
     let (parquet_rewritten_filters, grid_rewritten_filters): (Vec<Expr>, Vec<Expr>) =
         rewritten_filters.unzip();
 
-    let maybe_parquet_rewritten_filters = utils::conjunction(parquet_rewritten_filters);
-    let maybe_physical_parquet_filters = maybe_convert_logical_expr_to_physical_expr(
-        maybe_parquet_rewritten_filters.as_ref(),
-        QUERY_COMPRESSED_SCHEMA.0.clone(),
-    )?;
+    let maybe_rewritten_parquet_filters = utils::conjunction(parquet_rewritten_filters);
+    let maybe_rewritten_grid_filters = utils::conjunction(grid_rewritten_filters);
 
-    let maybe_grid_rewritten_filters = utils::conjunction(grid_rewritten_filters);
-    let maybe_physical_grid_filters = maybe_convert_logical_expr_to_physical_expr(
-        maybe_grid_rewritten_filters.as_ref(),
-        GRID_SCHEMA.0.clone(),
-    )?;
-
-    Ok((maybe_physical_parquet_filters, maybe_physical_grid_filters))
+    (
+        maybe_rewritten_parquet_filters,
+        maybe_rewritten_grid_filters,
+    )
 }
 
 /// Rewrite the `filter` that is written in terms of the model table's query schema, to a filter
@@ -470,8 +462,20 @@ impl TableProvider for ModelTable {
 
         // TODO: extract all of the predicates that consist of tag = tag_value from the query so the
         // segments can be pruned by univariate_id in ParquetExec and hash_to_tags can be minimized.
-        let (maybe_physical_parquet_filters, maybe_physical_grid_filters) =
-            rewrite_and_combine_filters(schema, filters)?;
+        // Filters are not converted to PhysicalExpr in rewrite_and_combine_filters() to simplify
+        // testing rewrite_and_combine_filters() as Expr can be compared while PhysicalExpr cannot.
+        let (maybe_rewritten_parquet_filters, maybe_rewritten_grid_filters) =
+            rewrite_and_combine_filters(schema, filters);
+
+        let maybe_physical_parquet_filters = maybe_convert_logical_expr_to_physical_expr(
+            maybe_rewritten_parquet_filters.as_ref(),
+            QUERY_COMPRESSED_SCHEMA.0.clone(),
+        )?;
+
+        let maybe_physical_grid_filters = maybe_convert_logical_expr_to_physical_expr(
+            maybe_rewritten_grid_filters.as_ref(),
+            GRID_SCHEMA.0.clone(),
+        )?;
 
         // Compute a mapping from hashes to the requested tag values in the requested order. If the
         // server is a cloud node, use the table metadata manager for the remote metadata database.

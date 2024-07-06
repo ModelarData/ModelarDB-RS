@@ -226,6 +226,7 @@ mod tests {
 
     use arrow_flight::flight_service_client::FlightServiceClient;
     use modelardb_common::metadata;
+    use modelardb_common::storage::DeltaLake;
     use modelardb_common::types::ServerMode;
     use object_store::local::LocalFileSystem;
     use tempfile::TempDir;
@@ -408,7 +409,6 @@ mod tests {
             Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
-            local_data_folder.clone(),
             ClusterMode::MultiNode(manager),
             ServerMode::Edge,
         )));

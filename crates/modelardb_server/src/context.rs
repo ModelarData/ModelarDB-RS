@@ -637,7 +637,7 @@ mod tests {
         Arc::new(
             Context::try_new(
                 Arc::new(Runtime::new().unwrap()),
-                &DataFolders {
+                DataFolders {
                     local_data_folder: local_data_folder.clone(),
                     remote_data_folder: None,
                     query_data_folder: local_data_folder,

@@ -336,11 +336,7 @@ mod tests {
         let (temp_dir, data_manager) = create_compressed_data_manager().await;
 
         let local_data_folder = LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap();
-        let table_folder = Path::parse(format!(
-            "{COMPRESSED_DATA_FOLDER}/{}/",
-            test::MODEL_TABLE_NAME
-        ))
-        .unwrap();
+        let table_folder = Path::parse(format!("compressed/{}/", test::MODEL_TABLE_NAME)).unwrap();
 
         let table_folder_files = local_data_folder
             .list(Some(&table_folder))
@@ -527,62 +523,6 @@ mod tests {
         );
     }
 
-    // Tests for compressed_files().
-    #[tokio::test]
-    async fn test_can_get_compressed_file_for_table() {
-        let (temp_dir, data_manager) = create_compressed_data_manager().await;
-
-        // Insert compressed segments into the same table.
-        let segments = compressed_segments_record_batch();
-        data_manager
-            .insert_compressed_segments(segments.clone())
-            .await
-            .unwrap();
-        data_manager
-            .insert_compressed_segments(segments)
-            .await
-            .unwrap();
-        data_manager.flush().await.unwrap();
-
-        let object_store: Arc<dyn ObjectStore> =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager
-            .compressed_files(
-                test::MODEL_TABLE_NAME,
-                COLUMN_INDEX,
-                None,
-                None,
-                None,
-                None,
-                &ClusterMode::SingleNode,
-                &object_store,
-            )
-            .await;
-
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().len(), 1);
-    }
-
-    #[tokio::test]
-    async fn test_get_no_compressed_files_for_non_existent_table() {
-        let (temp_dir, data_manager) = create_compressed_data_manager().await;
-
-        let object_store: Arc<dyn ObjectStore> =
-            Arc::new(LocalFileSystem::new_with_prefix(temp_dir.path()).unwrap());
-        let result = data_manager.compressed_files(
-            test::MODEL_TABLE_NAME,
-            COLUMN_INDEX,
-            None,
-            None,
-            None,
-            None,
-            &ClusterMode::SingleNode,
-            &object_store,
-        );
-
-        assert!(result.await.unwrap().is_empty());
-    }
-
     // Tests for adjust_compressed_remaining_memory_in_bytes().
     #[tokio::test]
     async fn test_increase_compressed_remaining_memory_in_bytes() {
@@ -680,7 +620,6 @@ mod tests {
                 local_data_folder,
                 channels,
                 memory_pool,
-                metadata_manager,
                 Arc::new(Mutex::new(Metric::new())),
             ),
         )
