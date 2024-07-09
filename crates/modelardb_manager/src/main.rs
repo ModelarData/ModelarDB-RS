@@ -126,7 +126,7 @@ async fn parse_command_line_arguments(
                 .await
                 .map_err(|error| error.to_string())?;
 
-            let object_store = Arc::new(
+            let delta_lake = Arc::new(
                 DeltaLake::try_remote_from_connection_info(remote_data_folder.as_bytes())
                     .await
                     .map_err(|error| error.to_string())?,
@@ -135,7 +135,7 @@ async fn parse_command_line_arguments(
 
             Ok((
                 remote_metadata_manager,
-                RemoteDataFolder::new(connection_info, object_store),
+                RemoteDataFolder::new(connection_info, delta_lake),
             ))
         }
         _ => {

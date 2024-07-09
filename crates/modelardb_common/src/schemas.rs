@@ -39,19 +39,10 @@ pub static UNCOMPRESSED_SCHEMA: Lazy<UncompressedSchema> = Lazy::new(|| {
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed segments.
 pub static COMPRESSED_SCHEMA: Lazy<CompressedSchema> = Lazy::new(|| {
-    CompressedSchema(Arc::new(Schema::new(vec![
-        Field::new(FIELD_COLUMN, DataType::UInt16, false),
-        Field::new("univariate_id", DataType::UInt64, false),
-        Field::new("model_type_id", DataType::UInt8, false),
-        Field::new("start_time", ArrowTimestamp::DATA_TYPE, false),
-        Field::new("end_time", ArrowTimestamp::DATA_TYPE, false),
-        Field::new("timestamps", DataType::Binary, false),
-        Field::new("min_value", ArrowValue::DATA_TYPE, false),
-        Field::new("max_value", ArrowValue::DATA_TYPE, false),
-        Field::new("values", DataType::Binary, false),
-        Field::new("residuals", DataType::Binary, false),
-        Field::new("error", DataType::Float32, false),
-    ])))
+    let mut query_compressed_schema_fields = QUERY_COMPRESSED_SCHEMA.0.fields().to_vec();
+    let field_column = Arc::new(Field::new(FIELD_COLUMN, DataType::UInt16, false));
+    query_compressed_schema_fields.push(field_column);
+    CompressedSchema(Arc::new(Schema::new(query_compressed_schema_fields)))
 });
 
 /// [`RecordBatch`](arrow::record_batch::RecordBatch) [`Schema`] used for compressed segments when

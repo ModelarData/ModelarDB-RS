@@ -42,7 +42,7 @@ use crate::storage::types::Channels;
 use crate::storage::types::MemoryPool;
 use crate::storage::types::Message;
 use crate::storage::uncompressed_data_buffer::{
-    IngestedDataBuffer, UncompressedDataBuffer, UncompressedInMemoryDataBuffer,
+    self, IngestedDataBuffer, UncompressedDataBuffer, UncompressedInMemoryDataBuffer,
     UncompressedOnDiskDataBuffer,
 };
 use crate::storage::{Metric, UNCOMPRESSED_DATA_FOLDER};
@@ -378,7 +378,7 @@ impl UncompressedDataManager {
                 .await?;
 
             // unwrap() is safe as lock() only returns an error if the lock is poisoned.
-            let memory_to_reserve = UncompressedInMemoryDataBuffer::compute_memory_size(
+            let memory_to_reserve = uncompressed_data_buffer::compute_memory_size(
                 model_table_metadata.field_column_indices.len(),
             );
             self.used_uncompressed_memory_metric
@@ -427,8 +427,8 @@ impl UncompressedDataManager {
 
                 debug!(
                     "Created buffer for {}. Remaining reserved bytes: {}.",
+                    tag_hash,
                     self.memory_pool.remaining_uncompressed_memory_in_bytes(),
-                    tag_hash
                 );
 
                 uncompressed_in_memory_data_buffer.insert_data_point(
@@ -444,7 +444,7 @@ impl UncompressedDataManager {
 
         // Transfer the full buffer to the compressor.
         if buffer_is_full {
-            debug!("Buffer for {tag_hash} is full, transfering it to the compressor.");
+            debug!("Buffer for {tag_hash} is full, transferring it to the compressor.");
 
             // unwrap() is safe as this is only reachable if the buffer exists in the HashMap.
             let (_tag_hash, full_uncompressed_in_memory_data_buffer) = self
@@ -482,7 +482,7 @@ impl UncompressedDataManager {
         // It is not guaranteed that compressing the data buffers in the channel releases any memory
         // as all the data buffers that are waiting to be compressed may all be stored on disk.
         if self.memory_pool.wait_for_uncompressed_memory_until(
-            UncompressedInMemoryDataBuffer::compute_memory_size(number_of_fields),
+            uncompressed_data_buffer::compute_memory_size(number_of_fields),
             || self.channels.uncompressed_data_sender.is_empty(),
         ) {
             Ok(false)
@@ -571,7 +571,7 @@ impl UncompressedDataManager {
             .collect::<Vec<u64>>();
 
         for tag_hash in tag_hashes_of_unused_in_memory_buffers {
-            // unwrap() is safe as tag_hash were just extracted from the map.
+            // unwrap() is safe as the tag hashes were just extracted from the map.
             let (_tag_hash, uncompressed_in_memory_data_buffer) = self
                 .uncompressed_in_memory_data_buffers
                 .remove(&tag_hash)
@@ -596,7 +596,7 @@ impl UncompressedDataManager {
             .collect::<Vec<u64>>();
 
         for tag_hash in tag_hashes_of_unused_on_disk_buffers {
-            // unwrap() is safe as tag_hash were just extracted from the map.
+            // unwrap() is safe as the tag hashes were just extracted from the map.
             let (_tag_hash, uncompressed_on_disk_data_buffer) = self
                 .uncompressed_on_disk_data_buffers
                 .remove(&tag_hash)
@@ -833,7 +833,7 @@ mod tests {
     async fn test_can_compress_existing_on_disk_data_buffers_when_initializing() {
         let temp_dir = tempfile::tempdir().unwrap();
         let local_data_folder =
-            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         // Create a context with a storage engine.
         let context = Arc::new(
@@ -942,7 +942,7 @@ mod tests {
             .await
             .unwrap();
 
-        // Since the tag is different for the two data point, two data buffers should be created.
+        // Since the tag is different for the two data points, two data buffers should be created.
         assert_eq!(data_manager.uncompressed_in_memory_data_buffers.len(), 2);
         assert_eq!(
             data_manager
@@ -1230,12 +1230,12 @@ mod tests {
         let reserved_memory = data_manager
             .memory_pool
             .remaining_uncompressed_memory_in_bytes() as usize;
-        let number_fields = model_table_metadata.field_column_indices.len();
+        let number_of_fields = model_table_metadata.field_column_indices.len();
 
         // Insert messages into the storage engine until all the memory is used and the next
         // message inserted would block the thread until the data messages have been processed.
         let number_of_buffers =
-            reserved_memory / UncompressedInMemoryDataBuffer::compute_memory_size(number_fields);
+            reserved_memory / uncompressed_data_buffer::compute_memory_size(number_of_fields);
         for tag_hash in 0..number_of_buffers {
             // Allocate many buffers that are never finished.
             insert_data_points(
@@ -1258,7 +1258,7 @@ mod tests {
             data_manager
                 .memory_pool
                 .remaining_uncompressed_memory_in_bytes()
-                < UncompressedInMemoryDataBuffer::compute_memory_size(number_fields) as isize
+                < uncompressed_data_buffer::compute_memory_size(number_of_fields) as isize
         );
 
         // If there is enough memory to hold n full buffers, n + 1 are needed to spill a buffer.
@@ -1514,7 +1514,7 @@ mod tests {
         );
 
         let local_data_folder =
-            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         // Ensure the expected metadata is available through the metadata manager.
         let model_table_metadata = test::model_table_metadata();

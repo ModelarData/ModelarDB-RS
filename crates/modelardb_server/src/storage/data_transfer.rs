@@ -39,15 +39,15 @@ use crate::storage::Metric;
 //       transferring the same data multiple times.
 
 pub struct DataTransfer {
-    /// The delta lake containing all compressed data managed by the
+    /// The Delta Lake containing all compressed data managed by the
     /// [`StorageEngine`](crate::storage::StorageEngine).
     local_data_folder: Arc<DeltaLake>,
-    /// The delta lake that the data should be transferred to.
+    /// The Delta Lake that the data should be transferred to.
     remote_data_folder: Arc<DeltaLake>,
     /// Map from table names to the current size of the table in bytes.
     table_size_in_bytes: DashMap<String, usize>,
     /// The number of bytes that are required before transferring a batch of data to the remote
-    /// delta lake. If [`None`], data is not transferred based on batch size.
+    /// Delta Lake. If [`None`], data is not transferred based on batch size.
     transfer_batch_size_in_bytes: Option<usize>,
     /// Handle to the task that transfers data periodically to the remote object store. If [`None`],
     /// data is not transferred based on time.
@@ -103,9 +103,9 @@ impl DataTransfer {
             .append(initial_disk_space as isize, true);
 
         // Check if data should be transferred immediately.
-        for table_name_field_column_index_size_in_bytes in table_size_in_bytes.iter() {
-            let table_name = &table_name_field_column_index_size_in_bytes.key();
-            let size_in_bytes = table_name_field_column_index_size_in_bytes.value();
+        for table_name_size_in_bytes in table_size_in_bytes.iter() {
+            let table_name = &table_name_size_in_bytes.key();
+            let size_in_bytes = table_name_size_in_bytes.value();
 
             if transfer_batch_size_in_bytes.is_some_and(|batch_size| size_in_bytes >= &batch_size) {
                 data_transfer
@@ -210,9 +210,9 @@ impl DataTransfer {
         threshold: usize,
     ) -> Result<(), ParquetError> {
         // The clone is performed to not create a deadlock with transfer_data().
-        for table_name_column_index_size_in_bytes in self.table_size_in_bytes.clone().iter() {
-            let table_name = table_name_column_index_size_in_bytes.key();
-            let size_in_bytes = table_name_column_index_size_in_bytes.value();
+        for table_name_size_in_bytes in self.table_size_in_bytes.clone().iter() {
+            let table_name = table_name_size_in_bytes.key();
+            let size_in_bytes = table_name_size_in_bytes.value();
 
             if size_in_bytes > &threshold {
                 self.transfer_data(table_name)
@@ -242,16 +242,16 @@ impl DataTransfer {
             compute::concat_batches(&record_batches[0].schema(), &record_batches).unwrap();
 
         debug!(
-            "Transferring {current_size_in_bytes} as {} compressed segments for the table '{table_name}'.",
+            "Transferring {current_size_in_bytes} bytes as {} compressed segments for the table '{table_name}'.",
             compressed_segments.num_rows(),
         );
 
-        // Write the data to the remote delta lake and commit it.
+        // Write the data to the remote Delta Lake and commit it.
         self.remote_data_folder
             .write_compressed_segments_to_model_table(table_name, compressed_segments)
             .await?;
 
-        // Delete the data that has been transferred to the remote delta lake.
+        // Delete the data that has been transferred to the remote Delta Lake.
         let local_delta_ops: DeltaOps = table.into();
         local_delta_ops.delete().await?;
 
@@ -431,10 +431,10 @@ mod tests {
     async fn create_delta_table_and_segments(
         temp_dir: &TempDir,
         metadata_manager: &Arc<TableMetadataManager<Sqlite>>,
-        batch_write_count: usize
+        batch_write_count: usize,
     ) -> usize {
         let local_data_folder =
-            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         local_data_folder
             .create_delta_lake_model_table(test::MODEL_TABLE_NAME)
@@ -450,7 +450,10 @@ mod tests {
         for _ in 0..batch_write_count {
             let compressed_segments = test::compressed_segments_record_batch();
             local_data_folder
-                .write_compressed_segments_to_model_table(test::MODEL_TABLE_NAME, compressed_segments)
+                .write_compressed_segments_to_model_table(
+                    test::MODEL_TABLE_NAME,
+                    compressed_segments,
+                )
                 .await
                 .unwrap();
         }
@@ -480,11 +483,11 @@ mod tests {
         table_metadata_manager: Arc<TableMetadataManager<Sqlite>>,
     ) -> (TempDir, DataTransfer) {
         let local_data_folder =
-            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         let target_dir = tempfile::tempdir().unwrap();
         let remote_data_folder =
-            Arc::new(DeltaLake::from_local_path(target_dir.path().to_str().unwrap()).unwrap());
+            Arc::new(DeltaLake::try_from_local_path(target_dir.path().to_str().unwrap()).unwrap());
 
         let data_transfer = DataTransfer::try_new(
             local_data_folder,

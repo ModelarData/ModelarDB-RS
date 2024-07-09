@@ -63,7 +63,7 @@ pub(super) struct MemoryPool {
 /// can use for uncompressed data, and the
 /// [`CompressedDataManager`](crate::storage::CompressedDataManager) can use for compressed data.
 impl MemoryPool {
-    /// Create a new [`MemoryPool`] with at most [`i64::MAX`] bytes of memory for received,
+    /// Create a new [`MemoryPool`] with at most [`i64::MAX`] bytes of memory for ingested,
     /// uncompressed, and compressed data.
     pub(super) fn new(
         ingested_memory_in_bytes: usize,
@@ -205,7 +205,7 @@ pub(super) struct Channels {
     /// tags into buffers of static length.
     pub(super) ingested_data_sender: Sender<Message<IngestedDataBuffer>>,
     /// Receiver of [`IngestedDataBuffers`](IngestedDataBuffer) with data points from one or more
-    /// times series from the [`StorageEngine`](super::StorageEngine) to the
+    /// time series from the [`StorageEngine`](super::StorageEngine) to the
     /// [`UncompressedDataManager`](super::UncompressedDataManager) where they are partitioned by
     /// tags into buffers of static length.
     pub(super) ingested_data_receiver: Receiver<Message<IngestedDataBuffer>>,
@@ -243,16 +243,16 @@ pub(super) struct Channels {
 
 impl Channels {
     pub(super) fn new() -> Self {
-        let (received_data_sender, received_data_receiver) = crossbeam_channel::unbounded();
-        let (univariate_data_sender, univariate_data_receiver) = crossbeam_channel::unbounded();
+        let (ingested_data_sender, ingested_data_receiver) = crossbeam_channel::unbounded();
+        let (uncompressed_data_sender, uncompressed_data_receiver) = crossbeam_channel::unbounded();
         let (compressed_data_sender, compressed_data_receiver) = crossbeam_channel::unbounded();
         let (result_sender, result_receiver) = crossbeam_channel::unbounded();
 
         Self {
-            ingested_data_sender: received_data_sender,
-            ingested_data_receiver: received_data_receiver,
-            uncompressed_data_sender: univariate_data_sender,
-            uncompressed_data_receiver: univariate_data_receiver,
+            ingested_data_sender,
+            ingested_data_receiver,
+            uncompressed_data_sender,
+            uncompressed_data_receiver,
             compressed_data_sender,
             compressed_data_receiver,
             result_sender,
@@ -286,7 +286,7 @@ impl fmt::Display for MetricType {
 /// and values of the metric is stored in ring buffers to ensure the amount of memory used by the
 /// metric is capped.
 pub struct Metric {
-    /// Ring buffer consisting of a capped amount of microseconds precision timestamps.
+    /// Ring buffer consisting of a capped amount of microsecond precision timestamps.
     timestamps: HeapRb<Timestamp>,
     /// Ring buffer consisting of a capped amount of values.
     values: HeapRb<u32>,
@@ -388,8 +388,7 @@ mod tests {
             test::INGESTED_RESERVED_MEMORY_IN_BYTES as isize
         );
 
-        memory_pool
-            .adjust_ingested_memory(-2 * test::INGESTED_RESERVED_MEMORY_IN_BYTES as isize);
+        memory_pool.adjust_ingested_memory(-2 * test::INGESTED_RESERVED_MEMORY_IN_BYTES as isize);
 
         assert_eq!(
             memory_pool.remaining_ingested_memory_in_bytes(),

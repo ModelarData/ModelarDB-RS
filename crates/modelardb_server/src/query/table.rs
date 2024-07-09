@@ -37,10 +37,10 @@ use super::data_sinks::TableDataSink;
 
 /// A queryable representation of a normal table. [`Table`] wraps the [`TableProvider`]
 /// [`DeltaTable`] and passes most methods call directly to it. Thus, it can be registered with
-/// Apache Arrow DataFusion. [`DeltaTable`] is extended in two ways, delta table is updated to the
+/// Apache Arrow DataFusion. [`DeltaTable`] is extended in two ways, `delta_table` is updated to the
 /// latest snapshot when accessed and support for inserting has been added.
 pub struct Table {
-    /// Access to the delta lake table.
+    /// Access to the Delta Lake table.
     delta_table: DeltaTable,
     /// Manages all uncompressed and compressed data in the system.
     storage_engine: Arc<RwLock<StorageEngine>>,
@@ -72,7 +72,7 @@ impl TableProvider for Table {
         self.delta_table.constraints()
     }
 
-    /// Specify that model tables are base tables and not views or temporary tables.
+    /// Specify that tables are base tables and not views or temporary tables.
     fn table_type(&self) -> TableType {
         self.delta_table.table_type()
     }
@@ -101,7 +101,7 @@ impl TableProvider for Table {
         filters: &[Expr],
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        // Clone the delta lake table and update it to the latest version. self.delta_lake.load(
+        // Clone the Delta Lake table and update it to the latest version. self.delta_lake.load(
         // &mut self) is not an option due to TypeProvider::scan(&self, ...). Storing the
         // DeltaTable in a Mutex and RwLock is also not an option since most of the methods in
         // TypeProvider returns a reference and the locks will be dropped at the end of the method.
@@ -115,7 +115,7 @@ impl TableProvider for Table {
         delta_table.scan(state, projection, filters, limit).await
     }
 
-    /// Specify that predicate push-down supported by tables.
+    /// Specify that predicate push-down is supported by tables.
     fn supports_filters_pushdown(
         &self,
         filters: &[&Expr],
@@ -138,7 +138,7 @@ impl TableProvider for Table {
         input: Arc<dyn ExecutionPlan>,
         _overwrite: bool,
     ) -> Result<Arc<dyn ExecutionPlan>> {
-        // unwrap() is safe as all delta table are given a name.
+        // unwrap() is safe as all delta tables are given a name.
         let table_name = self
             .delta_table
             .metadata()

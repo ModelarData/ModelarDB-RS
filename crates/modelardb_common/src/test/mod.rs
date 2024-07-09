@@ -33,13 +33,13 @@ use crate::types::{ArrowTimestamp, ArrowValue, ErrorBound, TimestampArray, Value
 /// Expected size of the ingested data buffer produced in the tests.
 pub const INGESTED_BUFFER_SIZE: usize = 1438392;
 
-/// Expected size of the uncompressed data buffers produced in the unit tests.
+/// Expected size of the uncompressed data buffers produced in the tests.
 pub const UNCOMPRESSED_BUFFER_SIZE: usize = 1048576;
 
 /// Expected size of the compressed segments produced in the tests.
 pub const COMPRESSED_SEGMENTS_SIZE: usize = 1437;
 
-/// Number of bytes reserved for multivariate data in tests.
+/// Number of bytes reserved for ingested data in tests.
 pub const INGESTED_RESERVED_MEMORY_IN_BYTES: usize = 5 * 1024 * 1024; // 5 MiB
 
 /// Number of bytes reserved for uncompressed data in tests.
@@ -130,7 +130,6 @@ pub fn compressed_segments_record_batch_with_time(
     let min_values = vec![offset + 5.2, offset + 10.3, offset + 30.2];
     let max_values = vec![offset + 20.2, offset + 12.2, offset + 34.2];
 
-    let field_column = UInt16Array::from(vec![field_column, field_column, field_column]);
     let univariate_id = UInt64Array::from(vec![univariate_id, univariate_id, univariate_id]);
     let model_type_id = UInt8Array::from(vec![1, 1, 2]);
     let start_time = TimestampArray::from(start_times);
@@ -141,13 +140,13 @@ pub fn compressed_segments_record_batch_with_time(
     let values = BinaryArray::from_vec(vec![b"", b"", b""]);
     let residuals = BinaryArray::from_vec(vec![b"", b"", b""]);
     let error = Float32Array::from(vec![0.2, 0.5, 0.1]);
+    let field_column = UInt16Array::from(vec![field_column, field_column, field_column]);
 
     let schema = COMPRESSED_SCHEMA.clone();
 
     RecordBatch::try_new(
         schema.0,
         vec![
-            Arc::new(field_column),
             Arc::new(univariate_id),
             Arc::new(model_type_id),
             Arc::new(start_time),
@@ -158,6 +157,7 @@ pub fn compressed_segments_record_batch_with_time(
             Arc::new(values),
             Arc::new(residuals),
             Arc::new(error),
+            Arc::new(field_column),
         ],
     )
     .unwrap()

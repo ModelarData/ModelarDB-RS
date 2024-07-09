@@ -106,7 +106,7 @@ impl DisplayAs for TableDataSink {
 }
 
 /// [`DataSink`] that writes [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch)
-/// containing multivariate time series to [`StorageEngine`]. Assume the generated columns are
+/// containing multivariate time series to [`StorageEngine`]. Assumes the generated columns are
 /// included, thus they are dropped without checking the schema.
 pub struct ModelTableDataSink {
     /// Metadata for the model table inserted data will be written to.

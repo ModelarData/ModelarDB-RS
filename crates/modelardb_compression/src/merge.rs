@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 
-use arrow::array::{Array, BinaryArray, Float32Array, UInt16Array, UInt64Array, UInt8Array};
+use arrow::array::{Array, BinaryArray, Float32Array, UInt64Array, UInt8Array};
 use arrow::record_batch::RecordBatch;
 use modelardb_common::errors::ModelarDbError;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
@@ -46,7 +46,6 @@ pub fn try_merge_segments(compressed_segments: RecordBatch) -> Result<RecordBatc
 
     modelardb_common::arrays!(
         compressed_segments,
-        _field_columns,
         univariate_ids,
         model_type_ids,
         start_times,
@@ -374,7 +373,6 @@ mod tests {
         // Decompress merged segments.
         modelardb_common::arrays!(
             merged_compressed_segments,
-            _field_columns,
             univariate_ids,
             model_type_ids,
             start_times,

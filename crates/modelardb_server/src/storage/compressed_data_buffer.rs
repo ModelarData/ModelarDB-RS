@@ -81,14 +81,15 @@ impl CompressedDataBuffer {
         {
             return Err(IOError::new(
                 ErrorKind::InvalidInput,
-                "Compressed segments must all use COMPRESSED_SCHEMA".to_owned(),
+                "Compressed segments must all use COMPRESSED_SCHEMA.".to_owned(),
             ));
         }
 
         let mut compressed_segments_size = 0;
-        for compressed_segments in compressed_segments.drain(0..) {
-            compressed_segments_size += Self::size_of_compressed_segments(&compressed_segments);
-            self.compressed_segments.push(compressed_segments);
+        for compressed_segment_batch in compressed_segments.drain(0..) {
+            compressed_segments_size +=
+                Self::size_of_compressed_segments(&compressed_segment_batch);
+            self.compressed_segments.push(compressed_segment_batch);
             self.size_in_bytes += compressed_segments_size;
         }
 
@@ -159,7 +160,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_can_return_single_apache_parquet_from_compressed_data_buffer() {
+    async fn test_can_get_single_record_batch_from_compressed_data_buffer() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
         let compressed_segments = vec![
             test::compressed_segments_record_batch(),

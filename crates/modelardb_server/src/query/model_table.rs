@@ -248,7 +248,6 @@ fn maybe_convert_logical_expr_to_physical_expr(
     query_schema: SchemaRef,
 ) -> Result<Option<Arc<dyn PhysicalExpr>>> {
     if let Some(maybe_expr) = maybe_expr {
-        // unwrap() is safe as the branch is entered if maybe_grid_rewritten_filters is not none.
         Ok(Some(convert_logical_expr_to_physical_expr(
             maybe_expr,
             query_schema,
@@ -321,7 +320,7 @@ fn new_apache_parquet_exec(
 }
 
 // Convert the [`LogicalFile`] `logical_file` to a [`PartitionFilter`]. A [`DataFusionError`] is
-// returned if the modified cannot be read from `logical_file`.
+// returned if the time the file was last modified cannot be read from `logical_file`.
 fn logical_file_to_partitioned_file(logical_file: &LogicalFile) -> Result<PartitionedFile> {
     let last_modified = logical_file
         .modification_datetime()
@@ -374,12 +373,12 @@ impl TableProvider for ModelTable {
     ) -> Result<Arc<dyn ExecutionPlan>> {
         // Create shorthands for the metadata used during planning to improve readability.
         let table_name = self.model_table_metadata.name.as_str();
-        let schema = &self.model_table_metadata.query_schema;
+        let schema = &self.model_table_metadata.schema;
         let tag_column_indices = &self.model_table_metadata.tag_column_indices;
         let query_schema = &self.model_table_metadata.query_schema;
         let generated_columns = &self.model_table_metadata.generated_columns;
 
-        // Create DeltaTable to access data and metadata from the delta lake table.
+        // Create a DeltaTable to access data and metadata from the Delta Lake table.
         let delta_table = self
             .context
             .data_folders
@@ -499,7 +498,7 @@ impl TableProvider for ModelTable {
             stored_field_columns_in_projection.push(self.fallback_field_column);
         }
 
-        // Request the matching files from the delta lake table and construct one or more GridExecs
+        // Request the matching files from the Delta Lake table and construct one or more GridExecs
         // and a SortedJoinExec. The write lock on the storage engine is held until object metas for
         // all columns have been retrieved to ensure they have the same number of data points.
         let mut field_column_execution_plans: Vec<Arc<dyn ExecutionPlan>> =
@@ -545,7 +544,7 @@ impl TableProvider for ModelTable {
         }
     }
 
-    /// Specify that model tables performs inexact predicate push-down.
+    /// Specify that model tables perform inexact predicate push-down.
     fn supports_filters_pushdown(
         &self,
         filters: &[&Expr],
@@ -560,8 +559,8 @@ impl TableProvider for ModelTable {
     /// `inputs` must include generated columns to match the query schema returned by
     /// [`TableProvider::schema()`]. The generated columns are immediately dropped. Generally,
     /// [`arrow_flight::flight_service_server::FlightService::do_put()`] should be used instead of
-    /// this method as it is more efficient. Returns a [`DataFusionError::Plan`] if the necessary
-    /// metadata cannot be retrieved from the metadata database.
+    /// this method as it is more efficient. This method cannot fail, but it must return a
+    /// [`DataFusionError`] to match the [`TableProvider`] trait.
     async fn insert_into(
         &self,
         _state: &SessionState,

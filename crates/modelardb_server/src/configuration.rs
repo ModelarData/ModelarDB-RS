@@ -406,7 +406,7 @@ mod tests {
         );
 
         let local_data_folder =
-            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         let configuration_manager = Arc::new(RwLock::new(ConfigurationManager::new(
             ClusterMode::MultiNode(manager),
@@ -415,7 +415,7 @@ mod tests {
 
         let target_dir = tempfile::tempdir().unwrap();
         let target_fs =
-            Arc::new(DeltaLake::from_local_path(target_dir.path().to_str().unwrap()).unwrap());
+            Arc::new(DeltaLake::try_from_local_path(target_dir.path().to_str().unwrap()).unwrap());
 
         let storage_engine = Arc::new(RwLock::new(
             StorageEngine::try_new(

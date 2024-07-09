@@ -161,9 +161,9 @@ impl Context {
     }
 
     /// Create a normal table, register it with Apache DataFusion's catalog, and save it to the
-    /// [`TableMetadataManager`]. If the table exists, the Apache Parquet file cannot be created, or
-    /// if the table cannot be saved to the [`TableMetadataManager`], return [`ModelarDbError`]
-    /// error.
+    /// [`TableMetadataManager`]. `context` is needed as an argument instead of using `self` to
+    /// avoid having to copy the context when registering normal tables. If the table exists or if
+    /// the table cannot be saved to the [`TableMetadataManager`], return [`ModelarDbError`] error.
     async fn register_and_save_table(
         &self,
         table_name: &str,
@@ -234,9 +234,11 @@ impl Context {
         Ok(())
     }
 
-    /// For each table saved in the metadata database, register the table in Apache DataFusion. If
-    /// the tables could not be retrieved from the metadata database or a table could not be
-    /// registered, return [`ModelarDbError`].
+    /// For each normal table saved in the metadata database, register the normal table in Apache
+    /// DataFusion. `context` is needed as an argument instead of using `self` to avoid having to
+    /// copy the context when registering normal tables. If the normal tables could not be retrieved
+    /// from the metadata database or a normal table could not be registered, return
+    /// [`ModelarDbError`].
     pub async fn register_tables(&self, context: &Arc<Context>) -> Result<(), ModelarDbError> {
         let table_names = self
             .table_metadata_manager
@@ -267,10 +269,10 @@ impl Context {
     }
 
     /// For each model table saved in the metadata database, register the model table in Apache
-    /// Arrow DataFusion. `context` is needed as an argument instead of using `self` to avoid
-    /// having to copy the context when registering model tables. If the model tables could not be
-    /// retrieved from the metadata database or a model table could not be registered,
-    /// return [`ModelarDbError`].
+    /// DataFusion. `context` is needed as an argument instead of using `self` to avoid having to
+    /// copy the context when registering model tables. If the model tables could not be retrieved
+    /// from the metadata database or a model table could not be registered, return
+    /// [`ModelarDbError`].
     pub async fn register_model_tables(
         &self,
         context: &Arc<Context>,
@@ -632,7 +634,7 @@ mod tests {
     /// Create a simple [`Context`] that uses `temp_dir` as the local data folder and query data folder.
     async fn create_context(temp_dir: &TempDir) -> Arc<Context> {
         let local_data_folder =
-            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         Arc::new(
             Context::try_new(

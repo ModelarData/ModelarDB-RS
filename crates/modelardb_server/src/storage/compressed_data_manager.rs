@@ -43,11 +43,11 @@ pub(super) struct CompressedDataManager {
     /// [`StorageEngine`](crate::storage::StorageEngine).
     pub(crate) local_data_folder: Arc<DeltaLake>,
     /// The compressed segments before they are saved to persistent storage. The key is the name of
-    /// the table the compressed segments represents data points for so the Apache Parquet files can
-    /// be partitioned by table and then column.
+    /// the model table the compressed segments represents data points for so the Apache Parquet
+    /// files can be partitioned by table.
     compressed_data_buffers: DashMap<String, CompressedDataBuffer>,
-    /// FIFO queue of table names and column indices referring to [`CompressedDataBuffer`] that can
-    /// be saved to persistent storage.
+    /// FIFO queue of table names referring to [`CompressedDataBuffers`](CompressedDataBuffer) that
+    /// can be saved to persistent storage.
     compressed_queue: SegQueue<String>,
     /// Channels used by the storage engine's threads to communicate.
     channels: Arc<Channels>,
@@ -348,7 +348,7 @@ mod tests {
         let (temp_dir, data_manager) = create_compressed_data_manager().await;
 
         let local_data_folder =
-            DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
+            DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
 
         let mut delta_table = local_data_folder
             .create_delta_lake_model_table(test::MODEL_TABLE_NAME)
@@ -422,7 +422,7 @@ mod tests {
     async fn test_save_first_compressed_data_buffer_if_out_of_memory() {
         let (temp_dir, data_manager) = create_compressed_data_manager().await;
         let local_data_folder =
-            DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
+            DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
         let mut delta_table = local_data_folder
             .create_delta_lake_model_table(test::MODEL_TABLE_NAME)
             .await
@@ -489,7 +489,7 @@ mod tests {
     async fn test_remaining_memory_incremented_when_saving_compressed_segments() {
         let (temp_dir, data_manager) = create_compressed_data_manager().await;
         let local_data_folder =
-            DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
+            DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
 
         let segments = compressed_segments_record_batch();
         local_data_folder
@@ -562,7 +562,7 @@ mod tests {
     async fn test_decrease_compressed_remaining_memory_in_bytes() {
         let (temp_dir, data_manager) = create_compressed_data_manager().await;
         let local_data_folder =
-            DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
+            DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
 
         // Insert data that should be saved when the remaining memory is decreased.
         let segments = compressed_segments_record_batch();
@@ -628,7 +628,7 @@ mod tests {
         );
 
         let local_data_folder =
-            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         let model_table_metadata = test::model_table_metadata();
         metadata_manager

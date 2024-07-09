@@ -1120,7 +1120,7 @@ mod tests {
         query: &str,
     ) -> Arc<dyn ExecutionPlan> {
         let local_data_folder =
-            Arc::new(DeltaLake::from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
+            Arc::new(DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap());
 
         // Create a simple context.
         let context = Arc::new(

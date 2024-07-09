@@ -43,7 +43,6 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::arguments::decode_argument;
-
 use crate::schemas::{COMPRESSED_SCHEMA, FIELD_COLUMN};
 
 /// The folder storing compressed data in the data folders.
@@ -65,8 +64,9 @@ pub struct DeltaLake {
 }
 
 impl DeltaLake {
-    /// Create a new [`DeltaLake`] that manages tables in `folder_path`.
-    pub fn from_local_path(data_folder_path: &str) -> Result<Self, DeltaTableError> {
+    /// Create a new [`DeltaLake`] that manages the delta tables in `data_folder_path` if it exists.
+    /// Returns a [`DeltaTableError`] if `data_folder_path` is not accessible.
+    pub fn try_from_local_path(data_folder_path: &str) -> Result<Self, DeltaTableError> {
         let local_file_system = Arc::new(
             LocalFileSystem::new_with_prefix(data_folder_path)
                 .map_err(|error| DeltaTableError::ObjectStore { source: error })?,
@@ -80,7 +80,7 @@ impl DeltaLake {
         })
     }
 
-    /// Create a new [`DeltaLake`] that manage delta tables in the remote object store given by
+    /// Create a new [`DeltaLake`] that manages delta tables in the remote object store given by
     /// `connection_info`. Returns [`DeltaTableError`] if `connection_info` could not be parsed.
     pub async fn try_remote_from_connection_info(
         connection_info: &[u8],
@@ -140,24 +140,25 @@ impl DeltaLake {
         })
     }
 
-    /// Return an [`ObjectStore`] to the root of the Delta Lake.
+    /// Return an [`ObjectStore`] to access the root of the Delta Lake.
     pub fn object_store(&self) -> Arc<dyn ObjectStore> {
         self.object_store.clone()
     }
 
-    /// Return n [`LocalFileSystem`] to the root of the Delta Lake if it uses a local data folder.
+    /// Return n [`LocalFileSystem`] to access the root of the Delta Lake if it uses a local data
+    /// folder.
     pub fn local_file_system(&self) -> Option<Arc<LocalFileSystem>> {
         self.maybe_local_file_system.clone()
     }
 
-    /// Return a [`DeltaTable`] for manipulating the table with `table_name` in the Delta Lake, or an
+    /// Return a [`DeltaTable`] for manipulating the table with `table_name` in the Delta Lake, or a
     /// [`DeltaTableError`] if a connection cannot be established or the table does not exist.
     pub async fn delta_table(&self, table_name: &str) -> Result<DeltaTable, DeltaTableError> {
         let table_path = self.location_of_compressed_table(table_name);
         deltalake::open_table_with_storage_options(&table_path, self.storage_options.clone()).await
     }
 
-    /// Return a [`DeltaOps`] for manipulating the table with `table_name` in the Delta Lake, or an
+    /// Return a [`DeltaOps`] for manipulating the table with `table_name` in the Delta Lake, or a
     /// [`DeltaTableError`] if a connection cannot be established or the table does not exist.
     pub async fn delta_ops(&self, table_name: &str) -> Result<DeltaOps, DeltaTableError> {
         let table_path = self.location_of_compressed_table(table_name);
@@ -183,8 +184,12 @@ impl DeltaLake {
         &self,
         table_name: &str,
     ) -> Result<DeltaTable, DeltaTableError> {
-        self.create_partitioned_delta_lake_table(table_name, &COMPRESSED_SCHEMA.0, &[FIELD_COLUMN.to_owned()])
-            .await
+        self.create_partitioned_delta_lake_table(
+            table_name,
+            &COMPRESSED_SCHEMA.0,
+            &[FIELD_COLUMN.to_owned()],
+        )
+        .await
     }
 
     /// Create a Delta Lake table with `table_name`, `schema`, and `partition_columns` if it does
@@ -241,8 +246,8 @@ impl DeltaLake {
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
         let sorting_columns = Some(vec![
-            SortingColumn::new(1, false, false),
-            SortingColumn::new(3, false, false),
+            SortingColumn::new(0, false, false),
+            SortingColumn::new(2, false, false),
         ]);
 
         let partition_columns = Some(vec![FIELD_COLUMN.to_owned()]);
@@ -257,10 +262,10 @@ impl DeltaLake {
         .await
     }
 
-    /// Write the rows in `record_batch` to a Delta Lake table at the location given by `table_path` in
-    /// `object_store`. `sorting_columns` can be set to control the sorting order of the rows in the
-    /// written file. Returns the new Delta Lake table version if the file was written successfully,
-    /// otherwise return [`ParquetError`].
+    /// Write the rows in `record_batch` to a Delta Lake table at `table_path` using
+    /// `writer_properties`. A `partition_column` can optionally be provided to specify that
+    /// `record_batch` should be partitioned by that column. Returns the new Delta Lake table
+    /// version if the file was written successfully, otherwise returns [`ParquetError`].
     async fn write_record_batch_to_delta_table(
         &self,
         table_path: String,
@@ -374,8 +379,8 @@ where
     Ok(record_batches)
 }
 
-/// Write `compressed_segments` for the column `field_column_index` in the table with `table_name`to
-/// an Apache Parquet file with an UUID as the file name in `compressed_data_folder`. Return the
+/// Write `compressed_segments` for the column `field_column_index` in the table with `table_name`
+/// to an Apache Parquet file with a `UUID` as the file name in `compressed_data_folder`. Return the
 /// path to the file if the file was written successfully, otherwise return [`ParquetError`].
 pub async fn write_compressed_segments_to_apache_parquet_file(
     compressed_data_folder: &str,
@@ -393,8 +398,8 @@ pub async fn write_compressed_segments_to_apache_parquet_file(
 
         // Specify that the file must be sorted by univariate_id and then by start_time.
         let sorting_columns = Some(vec![
-            SortingColumn::new(1, false, false),
-            SortingColumn::new(3, false, false),
+            SortingColumn::new(0, false, false),
+            SortingColumn::new(2, false, false),
         ]);
 
         write_record_batch_to_apache_parquet_file(
@@ -448,7 +453,7 @@ pub async fn write_record_batch_to_apache_parquet_file(
     }
 }
 
-/// Return [`WriterProperties`] for Apache Parquet and Delta Lake.
+/// Return [`WriterProperties`] optimized for compressed segments for Apache Parquet and Delta Lake.
 fn apache_parquet_writer_properties(
     sorting_columns: Option<Vec<SortingColumn>>,
 ) -> WriterProperties {
@@ -593,8 +598,8 @@ mod tests {
         let builder = ParquetRecordBatchStreamBuilder::new(reader).await.unwrap();
 
         let expected_sorting_columns = Some(vec![
-            SortingColumn::new(1, false, false),
-            SortingColumn::new(3, false, false),
+            SortingColumn::new(0, false, false),
+            SortingColumn::new(2, false, false),
         ]);
 
         for row_group in builder.metadata().row_groups() {

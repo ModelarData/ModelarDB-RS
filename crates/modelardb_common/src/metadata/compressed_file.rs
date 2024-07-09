@@ -70,15 +70,15 @@ impl CompressedFile {
         batch: &RecordBatch,
     ) -> Self {
         // unwrap() is safe as None is only returned if all the values are None.
-        let start_time = aggregate::min(array!(batch, 3, TimestampArray)).unwrap();
-        let end_time = aggregate::max(array!(batch, 4, TimestampArray)).unwrap();
+        let start_time = aggregate::min(array!(batch, 2, TimestampArray)).unwrap();
+        let end_time = aggregate::max(array!(batch, 3, TimestampArray)).unwrap();
 
         // unwrap() is safe as None is only returned if all the values are None.
         // Both aggregate::min() and aggregate::max() consider NaN to be greater than other non-null
         // values. So since min_values and max_values cannot contain null, min_value will be NaN if all
         // values in min_values are NaN while max_value will be NaN if any value in max_values is NaN.
-        let min_value = aggregate::min(array!(batch, 6, ValueArray)).unwrap();
-        let max_value = aggregate::max(array!(batch, 7, ValueArray)).unwrap();
+        let min_value = aggregate::min(array!(batch, 5, ValueArray)).unwrap();
+        let max_value = aggregate::max(array!(batch, 6, ValueArray)).unwrap();
 
         Self {
             file_metadata,

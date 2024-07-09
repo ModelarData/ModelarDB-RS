@@ -71,16 +71,16 @@ pub(super) enum UncompressedDataBuffer {
 }
 
 /// A writeable in-memory data buffer that new data points from a time series can be efficiently
-/// appended to. It consists of an ordered sequence of data points with each part stored in an
-/// [`PrimitiveBuilders`](datafusion::arrow::array::PrimitiveBuilder).
+/// appended to. It consists of an ordered sequence of data points with each part stored in a
+/// separate [`PrimitiveBuilders`](datafusion::arrow::array::PrimitiveBuilder).
 pub(super) struct UncompressedInMemoryDataBuffer {
-    /// ID that uniquely identifies the time series the buffer stores data points for.
+    /// Id that uniquely identifies the time series the buffer stores data points for.
     tag_hash: u64,
     /// Metadata of the model table the buffer stores data for.
     model_table_metadata: Arc<ModelTableMetadata>,
     /// Index of the last batch that caused the buffer to be updated.
     updated_by_batch_index: u64,
-    /// Builder that timestamps is appended to.
+    /// Builder that timestamps are appended to.
     timestamps: TimestampBuilder,
     /// Builders for each stored field that float values are appended to.
     values: Vec<ValueBuilder>,
@@ -186,16 +186,9 @@ impl UncompressedInMemoryDataBuffer {
         &self.model_table_metadata
     }
 
-    /// Return the total amount of memory in bytes an [`UncompressedInMemoryDataBuffer`] storing
-    /// data points from a model table with a `number_of_fields` will require.
-    pub(super) fn compute_memory_size(number_of_fields: usize) -> usize {
-        (*UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Timestamp>())
-            + (number_of_fields * (*UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Value>()))
-    }
-
     /// Return the total size of this [`UncompressedInMemoryDataBuffer`] in bytes.
     pub(super) fn memory_size(&self) -> usize {
-        UncompressedInMemoryDataBuffer::compute_memory_size(self.values.len())
+        compute_memory_size(self.values.len())
     }
 
     /// Spill the in-memory [`UncompressedInMemoryDataBuffer`] to an Apache Parquet file and return
@@ -231,10 +224,17 @@ impl fmt::Debug for UncompressedInMemoryDataBuffer {
     }
 }
 
+/// Return the total amount of memory in bytes an [`UncompressedInMemoryDataBuffer`] storing data
+/// points from a model table with a `number_of_fields` will require.
+pub(super) fn compute_memory_size(number_of_fields: usize) -> usize {
+    (*UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Timestamp>())
+        + (number_of_fields * (*UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Value>()))
+}
+
 /// A read only uncompressed buffer containing data points from a time series that has been spilled
 /// to disk as an Apache Parquet file due to memory constraints during ingestion.
 pub(super) struct UncompressedOnDiskDataBuffer {
-    /// ID that uniquely identifies the time series the buffer stores data points for.
+    /// Id that uniquely identifies the time series the buffer stores data points for.
     tag_hash: u64,
     /// Metadata of the model table the buffer stores data for.
     model_table_metadata: Arc<ModelTableMetadata>,

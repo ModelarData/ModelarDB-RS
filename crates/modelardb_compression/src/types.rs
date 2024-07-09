@@ -145,7 +145,7 @@ impl ModelBuilder {
 
 /// A compressed segment being built from metadata and a model.
 pub(crate) struct CompressedSegmentBuilder {
-    /// ID of the model type that created the model in this segment.
+    /// Id of the model type that created the model in this segment.
     pub model_type_id: u8,
     /// Index of the first data point in the `UncompressedDataBuffer` that this segment represents.
     pub start_index: usize,
@@ -401,8 +401,6 @@ impl CompressedSegmentBuilder {
 
 /// A batch of compressed segments being built.
 pub(crate) struct CompressedSegmentBatchBuilder {
-    /// Field column of each compressed segment in the batch.
-    field_columns: UInt16Builder,
     /// Univariate id of each compressed segment in the batch.
     univariate_ids: UInt64Builder,
     /// Model type id of each compressed segment in the batch.
@@ -428,12 +426,13 @@ pub(crate) struct CompressedSegmentBatchBuilder {
     residuals: BinaryBuilder,
     /// Actual error of each compressed segment in the batch.
     error: Float32Builder,
+    /// Field column of each compressed segment in the batch.
+    field_columns: UInt16Builder,
 }
 
 impl CompressedSegmentBatchBuilder {
     pub(crate) fn new(capacity: usize) -> Self {
         Self {
-            field_columns: UInt16Builder::with_capacity(capacity),
             univariate_ids: UInt64Builder::with_capacity(capacity),
             model_type_ids: UInt8Builder::with_capacity(capacity),
             start_times: TimestampBuilder::with_capacity(capacity),
@@ -444,6 +443,7 @@ impl CompressedSegmentBatchBuilder {
             values: BinaryBuilder::with_capacity(capacity, capacity),
             residuals: BinaryBuilder::with_capacity(capacity, capacity),
             error: Float32Builder::with_capacity(capacity),
+            field_columns: UInt16Builder::with_capacity(capacity),
         }
     }
 
@@ -462,7 +462,6 @@ impl CompressedSegmentBatchBuilder {
         error: f32,
     ) {
         let field_column_index = metadata::univariate_id_to_column_index(univariate_id);
-        self.field_columns.append_value(field_column_index);
         self.univariate_ids.append_value(univariate_id);
         self.model_type_ids.append_value(model_type_id);
         self.start_times.append_value(start_time);
@@ -473,6 +472,7 @@ impl CompressedSegmentBatchBuilder {
         self.values.append_value(values);
         self.residuals.append_value(residuals);
         self.error.append_value(error);
+        self.field_columns.append_value(field_column_index);
     }
 
     /// Return [`RecordBatch`] of compressed segments and consume the builder.
@@ -480,7 +480,6 @@ impl CompressedSegmentBatchBuilder {
         RecordBatch::try_new(
             COMPRESSED_SCHEMA.0.clone(),
             vec![
-                Arc::new(self.field_columns.finish()),
                 Arc::new(self.univariate_ids.finish()),
                 Arc::new(self.model_type_ids.finish()),
                 Arc::new(self.start_times.finish()),
@@ -491,6 +490,7 @@ impl CompressedSegmentBatchBuilder {
                 Arc::new(self.values.finish()),
                 Arc::new(self.residuals.finish()),
                 Arc::new(self.error.finish()),
+                Arc::new(self.field_columns.finish()),
             ],
         )
         .unwrap()
@@ -814,9 +814,9 @@ mod tests {
         let batch = compressed_segment_batch_builder.finish();
         assert_eq!(1, batch.num_rows());
 
-        let segment_min_value = modelardb_common::array!(batch, 6, ValueArray).value(0);
-        let segment_max_value = modelardb_common::array!(batch, 7, ValueArray).value(0);
-        let segment_values = modelardb_common::array!(batch, 8, BinaryArray).value(0);
+        let segment_min_value = modelardb_common::array!(batch, 5, ValueArray).value(0);
+        let segment_max_value = modelardb_common::array!(batch, 6, ValueArray).value(0);
+        let segment_values = modelardb_common::array!(batch, 7, BinaryArray).value(0);
 
         assert_eq!(expected_segment_min_value, segment_min_value);
         assert_eq!(expected_segment_max_value, segment_max_value);
