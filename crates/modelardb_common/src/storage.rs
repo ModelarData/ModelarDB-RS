@@ -145,7 +145,7 @@ impl DeltaLake {
         self.object_store.clone()
     }
 
-    /// Return n [`LocalFileSystem`] to access the root of the Delta Lake if it uses a local data
+    /// Return a [`LocalFileSystem`] to access the root of the Delta Lake if it uses a local data
     /// folder.
     pub fn local_file_system(&self) -> Option<Arc<LocalFileSystem>> {
         self.maybe_local_file_system.clone()
@@ -263,8 +263,8 @@ impl DeltaLake {
     }
 
     /// Write the rows in `record_batch` to a Delta Lake table at `table_path` using
-    /// `writer_properties`. A `partition_column` can optionally be provided to specify that
-    /// `record_batch` should be partitioned by that column. Returns the new Delta Lake table
+    /// `writer_properties`. `partition_columns` can optionally be provided to specify that
+    /// `record_batch` should be partitioned by these columns. Returns the new Delta Lake table
     /// version if the file was written successfully, otherwise returns [`ParquetError`].
     async fn write_record_batch_to_delta_table(
         &self,

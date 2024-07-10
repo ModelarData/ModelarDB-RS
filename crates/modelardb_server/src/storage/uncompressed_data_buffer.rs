@@ -72,7 +72,7 @@ pub(super) enum UncompressedDataBuffer {
 
 /// A writeable in-memory data buffer that new data points from a time series can be efficiently
 /// appended to. It consists of an ordered sequence of data points with each part stored in a
-/// separate [`PrimitiveBuilders`](datafusion::arrow::array::PrimitiveBuilder).
+/// separate [`PrimitiveBuilder`](datafusion::arrow::array::PrimitiveBuilder).
 pub(super) struct UncompressedInMemoryDataBuffer {
     /// Id that uniquely identifies the time series the buffer stores data points for.
     tag_hash: u64,
@@ -225,7 +225,7 @@ impl fmt::Debug for UncompressedInMemoryDataBuffer {
 }
 
 /// Return the total amount of memory in bytes an [`UncompressedInMemoryDataBuffer`] storing data
-/// points from a model table with a `number_of_fields` will require.
+/// points from a model table with `number_of_fields` field columns will require.
 pub(super) fn compute_memory_size(number_of_fields: usize) -> usize {
     (*UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Timestamp>())
         + (number_of_fields * (*UNCOMPRESSED_DATA_BUFFER_CAPACITY * mem::size_of::<Value>()))
