@@ -102,9 +102,9 @@ impl TableProvider for Table {
         limit: Option<usize>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         // Clone the Delta Lake table and update it to the latest version. self.delta_lake.load(
-        // &mut self) is not an option due to TypeProvider::scan(&self, ...). Storing the
-        // DeltaTable in a Mutex and RwLock is also not an option since most of the methods in
-        // TypeProvider returns a reference and the locks will be dropped at the end of the method.
+        // &mut self) is not an option due to TypeProvider::scan(&self, ...). Storing the DeltaTable
+        // in a Mutex and RwLock is also not an option since most of the methods in TypeProvider
+        // return a reference and the locks will be dropped at the end of the method.
         let mut delta_table = self.delta_table.clone();
 
         delta_table

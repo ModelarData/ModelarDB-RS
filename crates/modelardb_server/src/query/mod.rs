@@ -14,7 +14,7 @@
  */
 
 //! Implementation of types which allows both normal tables and model tables to be added to Apache
-//! DataFusion. This allow them to be queried and small amounts of data to be added with INSERT.
+//! DataFusion. This allows them to be queried and small amounts of data to be added with INSERT.
 
 use std::sync::Arc;
 
@@ -39,7 +39,7 @@ pub(crate) mod table;
 /// [`datafusion::datasource::physical_plan::parquet::ParquetExec`]. Another sort order could also
 /// be used, the current query pipeline simply requires that the
 /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch)
-/// [`sorted_join_exec::SortedJoinExec`] receive from its inputs all contain data points for the
+/// [`sorted_join_exec::SortedJoinExec`] receives from its inputs all contain data points for the
 /// same time interval and that they are sorted the same.
 static QUERY_ORDER_SEGMENT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
     let sort_options = SortOptions {
@@ -66,7 +66,7 @@ static QUERY_ORDER_SEGMENT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
 /// because these segments cannot contain data points for overlapping time intervals. Another sort
 /// order could also be used, the current query pipeline simply requires that the
 /// [`RecordBatches`](datafusion::arrow::record_batch::RecordBatch)
-/// [`sorted_join_exec::SortedJoinExec`] receive from its inputs all contain data points for the
+/// [`sorted_join_exec::SortedJoinExec`] receives from its inputs all contain data points for the
 /// same time interval and that they are sorted the same.
 static QUERY_ORDER_DATA_POINT: Lazy<Vec<PhysicalSortExpr>> = Lazy::new(|| {
     let sort_options = SortOptions {

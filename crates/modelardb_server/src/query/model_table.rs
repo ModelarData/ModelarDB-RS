@@ -124,8 +124,8 @@ impl ModelTable {
     }
 }
 
-/// Rewrite and combine the `filters` that is written in terms of the model table's query schema, to
-/// a filter that is written in terms of the schema used for compressed segments by the storage
+/// Rewrite and combine the `filters` that are written in terms of the model table's query schema,
+/// to a filter that is written in terms of the schema used for compressed segments by the storage
 /// engine and a filter that is written in terms of the schema used for univariate time series by
 /// [`GridExec`] for its output. If the filters cannot be rewritten an empty [`None`] is returned.
 fn rewrite_and_combine_filters(
@@ -266,7 +266,7 @@ fn convert_logical_expr_to_physical_expr(
     planner::create_physical_expr(expr, &df_query_schema, &ExecutionProps::new())
 }
 
-/// Create an [`ExecutionPlan`] that will return the compressed segments that represents the data
+/// Create an [`ExecutionPlan`] that will return the compressed segments that represent the data
 /// points for `field_column_index` in `delta_table`. Returns a [`DataFusionError::Plan`] if the
 /// necessary metadata cannot be retrieved from the metadata database.
 fn new_apache_parquet_exec(

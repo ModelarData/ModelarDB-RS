@@ -63,7 +63,7 @@ impl DataSink for TableDataSink {
         None
     }
 
-    /// Write all rows in `data` to [`StorageEngine`]. Returns the number of rows that has been
+    /// Write all rows in `data` to [`StorageEngine`]. Returns the number of rows that have been
     /// written or a [`DataFusionError`] if the rows could not be inserted.
     async fn write_all(
         &self,
