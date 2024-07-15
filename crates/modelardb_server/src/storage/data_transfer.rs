@@ -24,7 +24,6 @@ use std::time::Duration;
 use dashmap::DashMap;
 use datafusion::parquet::errors::ParquetError;
 use deltalake::arrow::array::RecordBatch;
-use deltalake::arrow::compute;
 use deltalake::{DeltaOps, DeltaTableError};
 use futures::TryStreamExt;
 use modelardb_common::storage::DeltaLake;
@@ -235,15 +234,11 @@ impl DataTransfer {
 
         // Read the data that is currently stored for the table with table_name.
         let (table, stream) = local_delta_ops.load().await?;
-        let record_batches: Vec<RecordBatch> = stream.try_collect().await?;
-
-        // unwrap() is safe as all of the record batches are from the same delta table.
-        let compressed_segments =
-            compute::concat_batches(&record_batches[0].schema(), &record_batches).unwrap();
+        let compressed_segments: Vec<RecordBatch> = stream.try_collect().await?;
 
         debug!(
-            "Transferring {current_size_in_bytes} bytes as {} compressed segments for the table '{table_name}'.",
-            compressed_segments.num_rows(),
+            "Transferring {current_size_in_bytes} bytes as {} batches of compressed segments for the table '{table_name}'.",
+            compressed_segments.len(),
         );
 
         // Write the data to the remote Delta Lake and commit it.
@@ -282,7 +277,7 @@ mod tests {
     use sqlx::Sqlite;
     use tempfile::{self, TempDir};
 
-    const FILE_SIZE: usize = 2395;
+    const FILE_SIZE: usize = 2374;
 
     // Tests for data transfer component.
     #[tokio::test]
@@ -452,7 +447,7 @@ mod tests {
             local_data_folder
                 .write_compressed_segments_to_model_table(
                     test::MODEL_TABLE_NAME,
-                    compressed_segments,
+                    vec![compressed_segments],
                 )
                 .await
                 .unwrap();

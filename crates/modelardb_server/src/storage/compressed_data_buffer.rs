@@ -18,7 +18,6 @@
 use std::io::{Error as IOError, ErrorKind};
 use std::sync::Arc;
 
-use datafusion::arrow::compute;
 use datafusion::arrow::record_batch::RecordBatch;
 use modelardb_common::metadata::model_table_metadata::ModelTableMetadata;
 use modelardb_common::schemas::COMPRESSED_SCHEMA;
@@ -96,14 +95,9 @@ impl CompressedDataBuffer {
         Ok(compressed_segments_size)
     }
 
-    /// Return the compressed segments as a single [`RecordBatch`].
-    pub(super) async fn record_batch(self) -> RecordBatch {
-        // unwrap() is safe as the schema of the record batches are checked when appended.
-        compute::concat_batches(
-            &self.compressed_segments[0].schema(),
-            &self.compressed_segments,
-        )
-        .unwrap()
+    /// Return the compressed segments as a [`Vec<RecordBatch>`].
+    pub(super) fn record_batches(self) -> Vec<RecordBatch> {
+        self.compressed_segments
     }
 
     /// Return the size in bytes of `compressed_segments`.
@@ -127,6 +121,7 @@ impl CompressedDataBuffer {
 mod tests {
     use super::*;
 
+    use deltalake::arrow::compute;
     use modelardb_common::test;
 
     #[test]
@@ -160,7 +155,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_can_get_single_record_batch_from_compressed_data_buffer() {
+    async fn test_can_get_record_batches_from_compressed_data_buffer() {
         let mut compressed_data_buffer = CompressedDataBuffer::new();
         let compressed_segments = vec![
             test::compressed_segments_record_batch(),
@@ -170,16 +165,11 @@ mod tests {
             .append_compressed_segments(compressed_segments)
             .unwrap();
 
-        let record_batch = compressed_data_buffer.record_batch().await;
+        let record_batches = compressed_data_buffer.record_batches();
+        let record_batch =
+            compute::concat_batches(&record_batches[0].schema(), &record_batches).unwrap();
         assert_eq!(record_batch.num_columns(), 11);
         assert_eq!(record_batch.num_rows(), 6);
-    }
-
-    #[tokio::test]
-    #[cfg(debug_assertions)]
-    #[should_panic(expected = "index out of bounds: the len is 0 but the index is 0")]
-    async fn test_panic_if_returning_record_batch_from_empty_compressed_data_buffer() {
-        CompressedDataBuffer::new().record_batch().await;
     }
 
     #[test]

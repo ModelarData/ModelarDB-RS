@@ -31,8 +31,7 @@ use datafusion::parquet::file::properties::{EnabledStatistics, WriterProperties}
 use datafusion::parquet::format::SortingColumn;
 use deltalake::kernel::StructField;
 use deltalake::operations::create::CreateBuilder;
-use deltalake::writer::{DeltaWriter, RecordBatchWriter};
-use deltalake::{open_table, DeltaOps, DeltaTable, DeltaTableError};
+use deltalake::{DeltaOps, DeltaTable, DeltaTableError};
 use futures::StreamExt;
 use object_store::local::LocalFileSystem;
 use object_store::path::Path;
@@ -219,42 +218,43 @@ impl DeltaLake {
             .await
     }
 
-    /// Write the `record_batch` to a Delta Lake table for a normal table with `table_name`.
-    /// Returns the new Delta Lake version if the file was written successfully, otherwise returns
+    /// Write the `record_batch` to a Delta Lake table for a normal table with `table_name`. Returns
+    /// an updated [`DeltaTable`] version if the file was written successfully, otherwise returns
     /// [`DeltaTableError`].
     pub async fn write_record_batch_to_table(
         &self,
         table_name: &str,
         record_batch: RecordBatch,
-    ) -> Result<i64, DeltaTableError> {
-        let table_path = self.location_of_compressed_table(table_name);
+    ) -> Result<DeltaTable, DeltaTableError> {
         let writer_properties = apache_parquet_writer_properties(None);
-
-        self.write_record_batch_to_delta_table(table_path, record_batch, None, writer_properties)
-            .await
+        self.write_record_batch_to_delta_table(
+            table_name,
+            vec![record_batch],
+            vec![],
+            writer_properties,
+        )
+        .await
     }
 
-    /// Write the `compressed_segments` to a Delta Lake table for a model table with `table_name`.
-    /// Returns the new Delta Lake table version if the file was written successfully, otherwise
-    /// returns [`DeltaTableError`].
+    /// Write `compressed_segments` to a Delta Lake table for a model table with `table_name`.
+    /// Returns an updated [`DeltaTable`] if the file was written successfully, otherwise returns
+    /// [`DeltaTableError`].
     pub async fn write_compressed_segments_to_model_table(
         &self,
         table_name: &str,
-        compressed_segments: RecordBatch,
-    ) -> Result<i64, DeltaTableError> {
-        let table_path = self.location_of_compressed_table(table_name);
-
+        compressed_segments: Vec<RecordBatch>,
+    ) -> Result<DeltaTable, DeltaTableError> {
         // Specify that the file must be sorted by univariate_id and then by start_time.
         let sorting_columns = Some(vec![
             SortingColumn::new(0, false, false),
             SortingColumn::new(2, false, false),
         ]);
 
-        let partition_columns = Some(vec![FIELD_COLUMN.to_owned()]);
+        let partition_columns = vec![FIELD_COLUMN.to_owned()];
         let writer_properties = apache_parquet_writer_properties(sorting_columns);
 
         self.write_record_batch_to_delta_table(
-            table_path,
+            table_name,
             compressed_segments,
             partition_columns,
             writer_properties,
@@ -262,30 +262,25 @@ impl DeltaLake {
         .await
     }
 
-    /// Write the rows in `record_batch` to a Delta Lake table at `table_path` using
-    /// `writer_properties`. `partition_columns` can optionally be provided to specify that
-    /// `record_batch` should be partitioned by these columns. Returns the new Delta Lake table
-    /// version if the file was written successfully, otherwise returns [`ParquetError`].
+    /// Write `record_batches` to a Delta Lake table with `table_name` using `writer_properties`.
+    /// `partition_columns` can optionally be provided to specify that `record_batch` should be
+    /// partitioned by these columns. Returns an updated [`DeltaTable`]` if the file was written
+    /// successfully, otherwise returns [`ParquetError`].
     async fn write_record_batch_to_delta_table(
         &self,
-        table_path: String,
-        record_batch: RecordBatch,
-        partition_columns: Option<Vec<String>>,
+        table_name: &str,
+        record_batches: Vec<RecordBatch>,
+        partition_columns: Vec<String>,
         writer_properties: WriterProperties,
-    ) -> Result<i64, DeltaTableError> {
-        let mut delta_table = open_table(&table_path).await?;
+    ) -> Result<DeltaTable, DeltaTableError> {
+        let delta_table_ops = self.delta_ops(table_name).await?;
+        let write_builder = delta_table_ops.write(record_batches);
 
         // Write the record batch to the object store.
-        let mut writer = RecordBatchWriter::try_new(
-            &table_path,
-            record_batch.schema(),
-            partition_columns,
-            None,
-        )?
-        .with_writer_properties(writer_properties);
-
-        writer.write(record_batch).await?;
-        writer.flush_and_commit(&mut delta_table).await
+        write_builder
+            .with_partition_columns(partition_columns)
+            .with_writer_properties(writer_properties)
+            .await
     }
 
     /// Return the location of the compressed model or normal table with `table_name`.

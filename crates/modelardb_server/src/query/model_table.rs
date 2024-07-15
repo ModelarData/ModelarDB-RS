@@ -67,7 +67,7 @@ pub struct ModelTable {
 impl ModelTable {
     pub fn new(context: Arc<Context>, model_table_metadata: Arc<ModelTableMetadata>) -> Arc<Self> {
         // Compute the index of the first stored field column in the model table's query schema. It
-        // is for queries without fields as the uids, timestamps, and values are stored together.
+        // is used for queries without fields as uids, timestamps, and values are stored together.
         let fallback_field_column = {
             model_table_metadata
                 .query_schema
@@ -247,6 +247,7 @@ fn maybe_convert_logical_expr_to_physical_expr(
     maybe_expr: Option<&Expr>,
     query_schema: SchemaRef,
 ) -> Result<Option<Arc<dyn PhysicalExpr>>> {
+    // Option.map() is not used so errors can be returned with ?.
     if let Some(maybe_expr) = maybe_expr {
         Ok(Some(convert_logical_expr_to_physical_expr(
             maybe_expr,

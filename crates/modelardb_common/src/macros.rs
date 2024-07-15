@@ -62,7 +62,6 @@ macro_rules! array {
 /// # let record_batch = RecordBatch::try_new(
 /// #     COMPRESSED_SCHEMA.0.clone(),
 /// #     vec![
-/// #         Arc::new(UInt16Array::from(Vec::<u16>::new())),
 /// #         Arc::new(UInt64Array::from(Vec::<u64>::new())),
 /// #         Arc::new(UInt8Array::from(Vec::<u8>::new())),
 /// #         Arc::new(TimestampArray::from(Vec::<Timestamp>::new())),
@@ -73,6 +72,7 @@ macro_rules! array {
 /// #         Arc::new(BinaryArray::from(Vec::<&[u8]>::new())),
 /// #         Arc::new(BinaryArray::from(Vec::<&[u8]>::new())),
 /// #         Arc::new(Float32Array::from(Vec::<f32>::new())),
+/// #         Arc::new(UInt16Array::from(Vec::<u16>::new())),
 /// #     ],
 /// # ).unwrap();
 /// modelardb_common::arrays!(record_batch, field_columns, univariate_ids, model_type_ids,

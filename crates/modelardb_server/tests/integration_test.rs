@@ -871,9 +871,9 @@ fn test_do_put_can_ingest_multiple_time_series_with_different_tags() {
     let mut test_context = TestContext::new();
 
     let time_series_with_tag_one: RecordBatch =
-        TestContext::generate_time_series_with_tag(false, None, Some("tag_one"));
+        TestContext::generate_time_series_with_tag(false, None, Some("a"));
     let time_series_with_tag_two: RecordBatch =
-        TestContext::generate_time_series_with_tag(false, None, Some("tag_two"));
+        TestContext::generate_time_series_with_tag(false, None, Some("b"));
     let time_series = &[time_series_with_tag_one, time_series_with_tag_two];
 
     ingest_time_series_and_flush_data(&mut test_context, time_series, TableType::ModelTable);

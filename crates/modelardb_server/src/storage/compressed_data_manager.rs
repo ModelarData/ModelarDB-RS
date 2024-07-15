@@ -270,7 +270,7 @@ impl CompressedDataManager {
         // actual size is not computed as DeltaTable seems to have no support for listing the files
         // added in a version without iterating through all of the Add actions from file_actions().
         let compressed_data_buffer_size_in_bytes = compressed_data_buffer.size_in_bytes;
-        let compressed_segments = compressed_data_buffer.record_batch().await;
+        let compressed_segments = compressed_data_buffer.record_batches();
         self.local_data_folder
             .write_compressed_segments_to_model_table(table_name, compressed_segments)
             .await
@@ -351,7 +351,7 @@ mod tests {
             DeltaLake::try_from_local_path(temp_dir.path().to_str().unwrap()).unwrap();
 
         let mut delta_table = local_data_folder
-            .create_delta_lake_model_table(test::MODEL_TABLE_NAME)
+            .create_delta_lake_table(test::MODEL_TABLE_NAME, &record_batch.schema())
             .await
             .unwrap();
         assert_eq!(delta_table.get_files_count(), 0);
